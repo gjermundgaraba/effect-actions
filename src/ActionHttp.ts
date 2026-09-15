@@ -84,9 +84,7 @@ export const layer = <Actions extends ReadonlyArray<Action.Any>, R, EX, RX>(
     // Only the handler closure is needed. HttpApiBuilder must not capture the
     // application's build context and merge it over subsequent requests.
     const isolated = Layer.fromBuildMemo((memoMap, scope) =>
-      Layer.buildWithMemoMap(group, memoMap, scope).pipe(
-        Effect.updateContext<never, never>(() => Context.empty()),
-      ),
+      Layer.buildWithMemoMap(group, memoMap, scope).pipe(Effect.setContext(Context.empty())),
     );
     return HttpApiBuilder.layer(httpApi, {
       openapiPath: options.openapiPath ?? "/openapi.json",

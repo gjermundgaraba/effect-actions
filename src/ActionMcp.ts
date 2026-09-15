@@ -179,9 +179,7 @@ export const layer = <Actions extends ReadonlyArray<Action.Any>, R, EX, RX>(
           yield* Effect.context<never>(),
         );
         return yield* Layer.buildWithMemoMap(native, memoMap, scope).pipe(
-          Effect.updateContext<never, HttpRouter.HttpRouter>(() =>
-            Context.make(HttpRouter.HttpRouter, router),
-          ),
+          Effect.setContext(Context.make(HttpRouter.HttpRouter, router)),
         );
       }),
     );

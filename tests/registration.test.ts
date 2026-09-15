@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Deferred, Effect, JsonPointer, Layer, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -86,12 +86,9 @@ describe("projection boundaries", () => {
     const app = ActionGroup.make(Hidden).implement({ hidden: () => Effect.succeed("hidden") });
     expect(() => ActionHttp.api(app)).toThrow("No HTTP-enabled actions");
     const web = makeTestHttp(app, Layer.empty);
-    try {
-      expect((await web.handler(post("/api/actions/hidden"))).status).toBe(404);
-      expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    expect((await web.handler(post("/api/actions/hidden"))).status).toBe(404);
+    expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
   });
 
   it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
@@ -113,18 +110,15 @@ describe("projection boundaries", () => {
     const options = { prefix: "/rpc", openapiPath: "/schema.json" } as const;
     expect(Object.keys(ActionHttp.openapi(app, options).paths ?? {})).toEqual(["/rpc/echo"]);
     const web = makeTestHttp(app, Layer.empty, options);
+    onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
-    try {
-      const response = await web.handler(post("/rpc/echo", "hello"));
-      expect(response.status).toBe(200);
-      expect(await response.json()).toBe("hello");
-      expect((await web.handler(new Request("http://localhost/schema.json"))).status).toBe(200);
-      expect((await web.handler(post("/rpc/hidden"))).status).toBe(404);
-      expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["hidden"]);
-    } finally {
-      await web.dispose();
-      await mcp.dispose();
-    }
+    onTestFinished(() => mcp.dispose());
+    const response = await web.handler(post("/rpc/echo", "hello"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toBe("hello");
+    expect((await web.handler(new Request("http://localhost/schema.json"))).status).toBe(200);
+    expect((await web.handler(post("/rpc/hidden"))).status).toBe(404);
+    expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["hidden"]);
   });
 
   it.each([409, undefined])(
@@ -143,13 +137,10 @@ describe("projection boundaries", () => {
         String(status ?? 500),
       );
       const web = makeTestHttp(app, Layer.empty);
-      try {
-        const response = await web.handler(post("/api/actions/fail"));
-        expect(response.status).toBe(status ?? 500);
-        expect(await response.json()).toEqual({ _tag: "Failure", message: "Safe failure" });
-      } finally {
-        await web.dispose();
-      }
+      onTestFinished(() => web.dispose());
+      const response = await web.handler(post("/api/actions/fail"));
+      expect(response.status).toBe(status ?? 500);
+      expect(await response.json()).toEqual({ _tag: "Failure", message: "Safe failure" });
     },
   );
 
@@ -171,21 +162,14 @@ describe("projection boundaries", () => {
     expect(responses).toHaveProperty("409");
     expect(responses).not.toHaveProperty("500");
     const web = makeTestHttp(app, Layer.empty);
+    onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
-    try {
-      expect((await web.handler(post("/api/actions/fail", { which: "missing" }))).status).toBe(404);
-      expect((await web.handler(post("/api/actions/fail", { which: "conflict" }))).status).toBe(
-        409,
-      );
-      expect(
-        await (await mcp.handler(mcpCall("fail", { which: "conflict" }))).json(),
-      ).toMatchObject({
-        result: { isError: true, structuredContent: { _tag: "Conflict" } },
-      });
-    } finally {
-      await web.dispose();
-      await mcp.dispose();
-    }
+    onTestFinished(() => mcp.dispose());
+    expect((await web.handler(post("/api/actions/fail", { which: "missing" }))).status).toBe(404);
+    expect((await web.handler(post("/api/actions/fail", { which: "conflict" }))).status).toBe(409);
+    expect(await (await mcp.handler(mcpCall("fail", { which: "conflict" }))).json()).toMatchObject({
+      result: { isError: true, structuredContent: { _tag: "Conflict" } },
+    });
   });
 
   it("accepts a union of object errors for MCP", async () => {
@@ -198,13 +182,10 @@ describe("projection boundaries", () => {
     });
     const app = ActionGroup.make(Fail).implement({ fail: () => Effect.fail(Conflict.make({})) });
     const mcp = makeTestMcp(app, Layer.empty);
-    try {
-      expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
-        result: { isError: true, structuredContent: { _tag: "Conflict" } },
-      });
-    } finally {
-      await mcp.dispose();
-    }
+    onTestFinished(() => mcp.dispose());
+    expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
+      result: { isError: true, structuredContent: { _tag: "Conflict" } },
+    });
   });
 
   describe.each(["HTTP", "MCP"])(
@@ -250,11 +231,8 @@ describe("projection boundaries", () => {
             placed.pipe(Layer.provide(HttpServer.layerServices)),
             { disableLogger: true },
           );
-          try {
-            expect(await call(web)).toBe("request");
-          } finally {
-            await web.dispose();
-          }
+          onTestFinished(() => web.dispose());
+          expect(await call(web)).toBe("request");
         },
       );
     },
@@ -289,27 +267,24 @@ describe("projection boundaries", () => {
         ActionGroup.make(Tree).implement({ tree: Effect.succeed }),
         Layer.empty,
       );
-      try {
-        const tools = await listTools(web.handler);
-        expect(tools).toHaveLength(1);
-        const tool = tools[0];
-        if (tool === undefined) throw new Error("Missing tree tool");
-        expect(tool.inputSchema.type).toBe("object");
-        const definitions = Schema.decodeUnknownSync(
-          Schema.Record(Schema.String, Schema.JsonObject),
-        )(tool.inputSchema.$defs);
-        expect(definitions[identifier]).toMatchObject({ type: "object" });
-        expectReferencesResolve(tool.inputSchema, "#/$defs/");
-        expectReferencesResolve(tool.outputSchema, "#/$defs/");
+      onTestFinished(() => web.dispose());
+      const tools = await listTools(web.handler);
+      expect(tools).toHaveLength(1);
+      const tool = tools[0];
+      if (tool === undefined) throw new Error("Missing tree tool");
+      expect(tool.inputSchema.type).toBe("object");
+      const definitions = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.JsonObject))(
+        tool.inputSchema.$defs,
+      );
+      expect(definitions[identifier]).toMatchObject({ type: "object" });
+      expectReferencesResolve(tool.inputSchema, "#/$defs/");
+      expectReferencesResolve(tool.outputSchema, "#/$defs/");
 
-        const value = { name: "root", children: [{ name: "leaf", children: [] }] };
-        const response = await web.handler(mcpCall("tree", value));
-        expect(await response.json()).toMatchObject({
-          result: { isError: false, structuredContent: { value } },
-        });
-      } finally {
-        await web.dispose();
-      }
+      const value = { name: "root", children: [{ name: "leaf", children: [] }] };
+      const response = await web.handler(mcpCall("tree", value));
+      expect(await response.json()).toMatchObject({
+        result: { isError: false, structuredContent: { value } },
+      });
     },
   );
 
@@ -326,19 +301,16 @@ describe("projection boundaries", () => {
       }),
       Layer.empty,
     );
-    try {
-      const tools = await listTools(web.handler);
-      const tool = tools[0];
-      if (tool === undefined) throw new Error("Missing nested tool");
-      expect(tool.inputSchema).toMatchObject({
-        properties: { item: { $ref: "#/$defs/Item" } },
-        $defs: { Item: { type: "object" } },
-      });
-      expectReferencesResolve(tool.inputSchema, "#/$defs/");
-      expectReferencesResolve(tool.outputSchema, "#/$defs/");
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    const tools = await listTools(web.handler);
+    const tool = tools[0];
+    if (tool === undefined) throw new Error("Missing nested tool");
+    expect(tool.inputSchema).toMatchObject({
+      properties: { item: { $ref: "#/$defs/Item" } },
+      $defs: { Item: { type: "object" } },
+    });
+    expectReferencesResolve(tool.inputSchema, "#/$defs/");
+    expectReferencesResolve(tool.outputSchema, "#/$defs/");
   });
 
   it.each([Schema.String, Schema.Struct({})])(
@@ -373,13 +345,10 @@ describe("projection boundaries", () => {
       "scalar: MCP error must have an object root",
     );
     const web = makeTestHttp(app, Layer.empty);
-    try {
-      const response = await web.handler(post("/api/actions/scalar"));
-      expect(response.status).toBe(500);
-      expect(await response.json()).toBe("failure");
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    const response = await web.handler(post("/api/actions/scalar"));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toBe("failure");
   });
 
   it("encodes output and optional input correctly through native MCP", async () => {
@@ -392,12 +361,9 @@ describe("projection boundaries", () => {
       ActionGroup.make(Encode).implement({ encode: ({ value }) => Effect.succeed(value ?? 42) }),
       Layer.empty,
     );
-    try {
-      const response = await web.handler(mcpCall("encode"));
-      expect(await response.text()).toContain('"structuredContent":{"value":"42"}');
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    const response = await web.handler(mcpCall("encode"));
+    expect(await response.text()).toContain('"structuredContent":{"value":"42"}');
   });
 
   it("reports invalid MCP arguments through the native InvalidParams path, never as a declared failure", async () => {
@@ -410,15 +376,12 @@ describe("projection boundaries", () => {
       ActionGroup.make(Echo).implement({ echo: ({ value }) => Effect.succeed(value) }),
       Layer.empty,
     );
-    try {
-      // This McpServer snapshot presents InvalidParams from a tool as an isError result carrying the message.
-      const reply = await (await web.handler(mcpCall("echo", { value: "nope" }))).json();
-      expect(reply).toMatchObject({ result: { isError: true } });
-      expect(reply).not.toHaveProperty("result.structuredContent");
-      expect(JSON.stringify(reply)).toContain("Expected a finite number");
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    // This McpServer snapshot presents InvalidParams from a tool as an isError result carrying the message.
+    const reply = await (await web.handler(mcpCall("echo", { value: "nope" }))).json();
+    expect(reply).toMatchObject({ result: { isError: true } });
+    expect(reply).not.toHaveProperty("result.structuredContent");
+    expect(JSON.stringify(reply)).toContain("Expected a finite number");
   });
 
   it("turns invalid output and defects into sanitized native failures on both transports", async () => {
@@ -429,23 +392,20 @@ describe("projection boundaries", () => {
       boom: () => Effect.die(new Error("secret database password")),
     });
     const web = makeTestHttp(app, Layer.empty);
+    onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
-    try {
-      // HttpApi renders a response-encoding failure as an empty 400 and a defect as an empty 500.
-      for (const [name, status] of [
-        ["broken", 400],
-        ["boom", 500],
-      ] as const) {
-        const http = await web.handler(post(`/api/actions/${name}`));
-        expect(http.status).toBe(status);
-        expect(await http.text()).toBe("");
-        const reply = await (await mcp.handler(mcpCall(name))).text();
-        expect(reply).toContain('"code":-32603');
-        expect(reply).not.toContain("secret");
-      }
-    } finally {
-      await web.dispose();
-      await mcp.dispose();
+    onTestFinished(() => mcp.dispose());
+    // HttpApi renders a response-encoding failure as an empty 400 and a defect as an empty 500.
+    for (const [name, status] of [
+      ["broken", 400],
+      ["boom", 500],
+    ] as const) {
+      const http = await web.handler(post(`/api/actions/${name}`));
+      expect(http.status).toBe(status);
+      expect(await http.text()).toBe("");
+      const reply = await (await mcp.handler(mcpCall(name))).text();
+      expect(reply).toContain('"code":-32603');
+      expect(reply).not.toContain("secret");
     }
   });
 
@@ -458,20 +418,17 @@ describe("projection boundaries", () => {
     const app = ActionGroup.make(Stamp).implement({ stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
     const web = makeTestHttp(app, Layer.empty);
+    onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
-    try {
-      const tools = await listTools(mcp.handler);
-      expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
-      const http = await web.handler(post("/api/actions/stamp", { d: iso }));
-      expect(http.status).toBe(200);
-      expect(await http.json()).toEqual({ d: iso });
-      expect(await (await mcp.handler(mcpCall("stamp", { d: iso }))).json()).toMatchObject({
-        result: { isError: false, structuredContent: { value: { d: iso } } },
-      });
-    } finally {
-      await web.dispose();
-      await mcp.dispose();
-    }
+    onTestFinished(() => mcp.dispose());
+    const tools = await listTools(mcp.handler);
+    expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
+    const http = await web.handler(post("/api/actions/stamp", { d: iso }));
+    expect(http.status).toBe(200);
+    expect(await http.json()).toEqual({ d: iso });
+    expect(await (await mcp.handler(mcpCall("stamp", { d: iso }))).json()).toMatchObject({
+      result: { isError: false, structuredContent: { value: { d: iso } } },
+    });
   });
 
   it("decodes input and encodes output natively over HTTP", async () => {
@@ -484,14 +441,11 @@ describe("projection boundaries", () => {
       ActionGroup.make(Echo).implement({ echo: ({ value }) => Effect.succeed(value * 2) }),
       Layer.empty,
     );
-    try {
-      const response = await web.handler(post("/api/actions/echo", { value: "21" }));
-      expect(response.status).toBe(200);
-      expect(await response.json()).toBe("42");
-      expect((await web.handler(post("/api/actions/echo", { value: "nope" }))).status).toBe(400);
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    const response = await web.handler(post("/api/actions/echo", { value: "21" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toBe("42");
+    expect((await web.handler(post("/api/actions/echo", { value: "nope" }))).status).toBe(400);
   });
 
   it("passes HTTP cancellation to the running Effect and finalizes it", async () => {
@@ -506,6 +460,7 @@ describe("projection boundaries", () => {
         ),
     });
     const web = makeTestHttp(app, Layer.empty);
+    onTestFinished(() => web.dispose());
     const abort = new AbortController();
     const request = new Request("http://localhost/api/actions/slow", {
       method: "POST",
@@ -513,14 +468,10 @@ describe("projection boundaries", () => {
       body: "{}",
       signal: abort.signal,
     });
-    try {
-      const running = web.handler(request);
-      await Effect.runPromise(Deferred.await(started));
-      abort.abort();
-      expect((await running).status).toBe(499);
-      await Effect.runPromise(Deferred.await(stopped));
-    } finally {
-      await web.dispose();
-    }
+    const running = web.handler(request);
+    await Effect.runPromise(Deferred.await(started));
+    abort.abort();
+    expect((await running).status).toBe(499);
+    await Effect.runPromise(Deferred.await(stopped));
   });
 });

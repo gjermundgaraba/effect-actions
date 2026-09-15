@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema } from "effect";
 import { Action, ActionGroup, ActionHttp } from "../src/index.js";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -60,11 +60,8 @@ describe("implementations", () => {
     expect(app).not.toHaveProperty("handlers");
     expect(app).not.toHaveProperty("layer");
     const web = makeTestHttp(app, Layer.empty);
-    try {
-      expect(await (await web.handler(request("/api/actions"))).json()).toBe("hi Ada");
-    } finally {
-      await web.dispose();
-    }
+    onTestFinished(() => web.dispose());
+    expect(await (await web.handler(request("/api/actions"))).json()).toBe("hi Ada");
   });
 
   it.each(["same contract", "different contracts"])(
@@ -92,14 +89,11 @@ describe("implementations", () => {
         ).pipe(Layer.provide(HttpServer.layerServices)),
         { disableLogger: true },
       );
-      try {
-        expect(await (await web.handler(request("/a"))).json()).toBe("from A");
-        expect(await (await web.handler(request("/b"))).json()).toBe(
-          kind === "same contract" ? "from B" : 42,
-        );
-      } finally {
-        await web.dispose();
-      }
+      onTestFinished(() => web.dispose());
+      expect(await (await web.handler(request("/a"))).json()).toBe("from A");
+      expect(await (await web.handler(request("/b"))).json()).toBe(
+        kind === "same contract" ? "from B" : 42,
+      );
     },
   );
 });
