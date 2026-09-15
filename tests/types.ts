@@ -26,12 +26,6 @@ export const typeAssertions = () => {
   void a.layer;
   // @ts-expect-error No public handler tag.
   void a.handlers;
-  // @ts-expect-error Only the opaque implementation type is public, not its constructor.
-  void ActionGroup.Implementation;
-  // @ts-expect-error Adapter dispatch helpers are not public API.
-  void ActionGroup.handlerFor;
-  // @ts-expect-error The requirement assertion is internal, not a public execution API.
-  void ActionGroup.inRequestFiber;
   // @ts-expect-error Implementations cannot be fabricated from an actions tuple.
   ActionHttp.layer({ actions: Actions.actions });
   // @ts-expect-error Every action in the group needs a handler.

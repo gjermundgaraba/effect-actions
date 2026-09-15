@@ -203,12 +203,12 @@ export const layer = <
           allowedOrigins: options.allowedOrigins,
         }),
       ),
-      // Each endpoint owns its native tool registry and sessions. The handler
-      // implementation is acquired outside this fresh subgraph and stays shared.
+      // Each endpoint owns its native tool registry and sessions; the handler
+      // build is acquired outside this subgraph and stays shared.
       Layer.fresh,
     );
-    // Isolate the entire native server, including RPC handler installation.
-    // Its captured context is a fallback when a request omits a service.
+    // Build the native server with only the router so build-time application
+    // services cannot become request fallbacks.
     return Layer.fromBuildMemo((memoMap, scope) =>
       Effect.gen(function* () {
         const router = registrationRouter(

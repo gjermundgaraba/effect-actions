@@ -7,12 +7,8 @@ import type * as Action from "../Action.js";
 type Erased<R> = { handle(input: unknown): Effect.Effect<unknown, unknown, R> }["handle"];
 export type Handlers<R> = Readonly<Record<string, Erased<R>>>;
 
-/**
- * Adapter dispatch. `R` is a request requirement the adapter Layers declare
- * through `HttpRouter.Request.From<"Requires", R>`, so the host provides it per
- * request. This assertion does not prove service provenance: construction-context
- * isolation prevents build-only services from leaking into the request context.
- */
+// `R` is erased here because the adapter Layers declare it as a per-request
+// requirement through `HttpRouter.Request.From<"Requires", R>`.
 type Dispatch = (input: unknown) => Effect.Effect<unknown, unknown>;
 
 export const handlerFor = <R>(table: Handlers<R>, action: Action.Any): Dispatch => {
@@ -28,9 +24,9 @@ interface HandlersId {
 let implementations = 0;
 
 /**
- * Opaque implementation value. Only its type is exported publicly. `R` is
- * required per request; `EX`/`RX` describe handler acquisition at Layer build.
- * The private Layer is shared by both adapters through native Layer memoization.
+ * Opaque implementation value; only its type is public. `R` is required per
+ * request, `EX`/`RX` describe handler acquisition at Layer build. Layer
+ * memoization lets both adapters share one handler build per runtime.
  */
 export class Implementation<Actions extends ReadonlyArray<Action.Any>, R, EX, RX> {
   readonly #handlers: Context.Service<HandlersId, Handlers<R>>;

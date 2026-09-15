@@ -21,5 +21,5 @@
     "noUnusedParameters": true
   },
   "include": ["src/**/*.ts", "examples/**/*.ts", "tests/**/*.ts", "vite.config.ts"],
-  "exclude": ["dist", "docs"]
+  "exclude": ["dist"]
 }

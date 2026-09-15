@@ -291,7 +291,7 @@ describe("one implementation, both transports", () => {
     async (era) => {
       const versions = new Set<string | null>();
       const client = new Client(
-        { name: "spike-test", version: "1.0.0" },
+        { name: "test", version: "1.0.0" },
         { versionNegotiation: { mode: era === "modern" ? { pin: "2026-07-28" } : "legacy" } },
       );
       const transport = new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {

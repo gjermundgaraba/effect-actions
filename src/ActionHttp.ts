@@ -110,8 +110,6 @@ export const layer = <
   if (exposed.length === 0) return Layer.empty;
   const policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined =
     options.schemaError;
-  // Only this adapter-owned middleware enters the isolated native handler build.
-  // Its pure mapping closure cannot resolve application services at startup.
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
     "effect-actions/http/SchemaErrors",
     { error: policy?.errors ?? [] },
@@ -145,8 +143,8 @@ export const layer = <
         ),
       ),
     );
-    // Only the handler closure is needed. HttpApiBuilder must not capture the
-    // application's build context and merge it over subsequent requests.
+    // Build the native group with an empty context so build-time application
+    // services cannot become request fallbacks.
     const isolated = Layer.fromBuildMemo((memoMap, scope) =>
       Layer.buildWithMemoMap(group.pipe(Layer.provide(schemaErrors)), memoMap, scope).pipe(
         Effect.setContext(Context.empty()),

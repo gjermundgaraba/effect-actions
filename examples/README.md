@@ -60,4 +60,4 @@ Every action uses a generated `POST /api/actions/<name>` endpoint:
 
 To add an action, define its contract, add it to `Actions`, and add its handler to `Actions.implement`; the missing handler is a compile error until you do. Default HTTP and MCP registration need no further wiring.
 
-This is a demo: bearer tokens are hardcoded, data is not persistent, and the Effect RpcGroup protocol is not implemented.
+This is a demo: bearer tokens are hardcoded and data is not persistent.

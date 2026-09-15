@@ -25,7 +25,7 @@ const mcpRequest = (method: string, params: Record<string, unknown> = {}) =>
         _meta: {
           "io.modelcontextprotocol/protocolVersion": "2026-07-28",
           "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "spike-test", version: "0" },
+          "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
         },
       },
     }),

@@ -22,7 +22,7 @@ export default defineConfig({
     exports: true,
   },
   lint: {
-    ignorePatterns: ["docs/research/**", "dist/**"],
+    ignorePatterns: ["dist/**"],
     options: {
       typeAware: true,
       typeCheck: true,
