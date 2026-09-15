@@ -1,7 +1,8 @@
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import { HttpApiClient } from "effect/unstable/httpapi";
+import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
 import { makeTestHttp, makeTestMcp } from "./http.js";
 import { CurrentActor } from "../examples/auth.js";
 import { Actions } from "../examples/contracts.js";
@@ -107,3 +108,48 @@ export const typeAssertions = () => {
     void (build satisfies Effect.Effect<unknown, never>);
   }
 };
+
+export const clientTypes = Effect.gen(function* () {
+  const client = yield* HttpApiClient.make(ActionHttp.api(Actions));
+  const doubled: number = yield* client.actions.double({ payload: { value: 21 } });
+  void doubled;
+  // @ts-expect-error Action names are exact.
+  client.actions.missing({ payload: {} });
+  // @ts-expect-error Clients take decoded, not wire, inputs.
+  client.actions.double({ payload: { value: "21" } });
+  // @ts-expect-error Results retain the success type.
+  const wrong: string = yield* client.actions.double({ payload: { value: 21 } });
+  void wrong;
+  const mixed = ActionGroup.make(
+    Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
+    Action.make("visible", { description: "HTTP", success: Schema.Boolean }),
+  );
+  const selected = yield* HttpApiClient.make(ActionHttp.api(mixed));
+  // @ts-expect-error MCP-only actions are not HTTP client methods.
+  selected.actions.hidden({ payload: {} });
+  const visible: boolean = yield* selected.actions.visible({ payload: {} });
+  void visible;
+});
+
+export const policyTypes = Effect.gen(function* () {
+  class PolicyFailure extends Schema.TaggedError<PolicyFailure>()("PolicyFailure", {}) {}
+  const options = { schemaError: { errors: [PolicyFailure], map: () => new PolicyFailure() } };
+  const client = yield* HttpApiClient.make(ActionHttp.api(Actions, options));
+  yield* client.actions
+    .double({ payload: { value: 1 } })
+    .pipe(Effect.catchTag("PolicyFailure", () => Effect.succeed(0)));
+  ActionHttp.api(Actions, {
+    schemaError: {
+      errors: [PolicyFailure],
+      // @ts-expect-error The mapper can return only errors declared by this policy.
+      map: () => "undeclared",
+    },
+  });
+  ActionHttp.api(Actions, {
+    schemaError: {
+      errors: [PolicyFailure],
+      // @ts-expect-error Policy mapping is pure, not a service-requiring Effect.
+      map: () => Effect.as(CurrentActor, new PolicyFailure()),
+    },
+  });
+});

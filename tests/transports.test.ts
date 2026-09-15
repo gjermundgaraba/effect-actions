@@ -273,10 +273,9 @@ describe("one implementation, both transports", () => {
           transformClient: (client) =>
             client.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken("alice"))),
         });
-        // Runtime codec behavior, not exact client inference: encode 21 to the wire string and decode the reply.
-        const double = client.actions.double;
-        if (double === undefined) throw new Error("Missing native endpoint");
-        return yield* double({ payload: { value: 21 } });
+        // The typed client encodes decoded 21 to the wire string and decodes the reply.
+        const result: number = yield* client.actions.double({ payload: { value: 21 } });
+        return result;
       }).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, (input, init) =>

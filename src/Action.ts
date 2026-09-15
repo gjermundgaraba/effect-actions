@@ -15,6 +15,7 @@ export interface Options<
   Input extends Codec,
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
+  Http extends boolean = boolean,
 > {
   readonly description: string;
   /** Defaults to `NoInput`. */
@@ -22,7 +23,7 @@ export interface Options<
   readonly success: Output;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
   readonly error?: Errors;
-  readonly http?: boolean;
+  readonly http?: Http;
   readonly mcp?: false | McpOptions;
 }
 
@@ -32,13 +33,14 @@ export interface Action<
   Input extends Codec,
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
+  Http extends boolean = boolean,
 > {
   readonly name: Name;
   readonly description: string;
   readonly input: Input;
   readonly success: Output;
   readonly errors: Errors;
-  readonly http: boolean;
+  readonly http: Http;
   readonly mcp:
     | false
     | {
@@ -63,7 +65,11 @@ export function make<
   Input extends Codec = typeof NoInput,
   Output extends Codec = never,
   const Errors extends ReadonlyArray<Codec> = [],
->(name: Name, options: Options<Input, Output, Errors>): Action<Name, Input, Output, Errors>;
+  const Http extends boolean = true,
+>(
+  name: Name,
+  options: Options<Input, Output, Errors, Http>,
+): Action<Name, Input, Output, Errors, Http>;
 export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<Codec>>): Any {
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid action name: ${name}`);
 

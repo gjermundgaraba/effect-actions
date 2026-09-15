@@ -475,3 +475,27 @@ describe("projection boundaries", () => {
     await Effect.runPromise(Deferred.await(stopped));
   });
 });
+
+it("can leave OpenAPI registration to the host without disabling action routes", async () => {
+  const app = ActionGroup.make(
+    Action.make("ping", {
+      description: "Ping",
+      success: Schema.String,
+    }),
+  ).implement({ ping: () => Effect.succeed("pong") });
+  const web = makeTestHttp(app, Layer.empty, { openapiPath: false });
+  try {
+    const response = await web.handler(
+      new Request("http://localhost/api/actions/ping", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toBe("pong");
+    expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
+  } finally {
+    await web.dispose();
+  }
+});
