@@ -10,7 +10,7 @@ import {
   OpenApi,
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
-import { handlerFor, Implementation, requestEffect } from "./internal/implementation.js";
+import { handlerFor, Implementation } from "./internal/implementation.js";
 
 export interface Options {
   readonly prefix?: `/${string}`;
@@ -75,7 +75,7 @@ export const layer = <Actions extends ReadonlyArray<Action.Any>, R, EX, RX>(
             const handle = handlerFor(table, action);
             return [
               action.name,
-              (request: { readonly payload: unknown }) => requestEffect(handle(request.payload)),
+              (request: { readonly payload: unknown }) => handle(request.payload),
             ];
           }),
         ),

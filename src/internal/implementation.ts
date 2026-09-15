@@ -7,21 +7,19 @@ import type * as Action from "../Action.js";
 type Erased<R> = { handle(input: unknown): Effect.Effect<unknown, unknown, R> }["handle"];
 export type Handlers<R> = Readonly<Record<string, Erased<R>>>;
 
-export const handlerFor = <R>(table: Handlers<R>, action: Action.Any): Erased<R> => {
-  const handle = table[action.name];
-  if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
-  return handle;
-};
-
 /**
- * Adapt native handler signatures to the requirements declared by our router
- * Layers. This assertion does not prove service provenance: construction-context
+ * Adapter dispatch. `R` is a request requirement the adapter Layers declare
+ * through `HttpRouter.Request.From<"Requires", R>`, so the host provides it per
+ * request. This assertion does not prove service provenance: construction-context
  * isolation prevents build-only services from leaking into the request context.
  */
-export const requestEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E> =>
-  Effect.flatMap(Effect.context<never>(), (context) =>
-    Effect.provideContext(effect, context as Context.Context<R>),
-  );
+type Dispatch = (input: unknown) => Effect.Effect<unknown, unknown>;
+
+export const handlerFor = <R>(table: Handlers<R>, action: Action.Any): Dispatch => {
+  const handle = table[action.name];
+  if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
+  return handle as Dispatch;
+};
 
 interface HandlersId {
   readonly _tag: "effect-actions/Handlers";

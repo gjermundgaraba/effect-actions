@@ -188,6 +188,25 @@ describe("projection boundaries", () => {
     }
   });
 
+  it("accepts a union of object errors for MCP", async () => {
+    const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
+    const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
+    const Fail = Action.make("fail", {
+      description: "Union failure",
+      success: Schema.String,
+      error: [Schema.Union([Missing, Conflict])],
+    });
+    const app = ActionGroup.make(Fail).implement({ fail: () => Effect.fail(Conflict.make({})) });
+    const mcp = makeTestMcp(app, Layer.empty);
+    try {
+      expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
+        result: { isError: true, structuredContent: { _tag: "Conflict" } },
+      });
+    } finally {
+      await mcp.dispose();
+    }
+  });
+
   describe.each(["HTTP", "MCP"])(
     "uses the request service, never a startup copy, over %s",
     (transport) => {
@@ -424,6 +443,31 @@ describe("projection boundaries", () => {
         expect(reply).toContain('"code":-32603');
         expect(reply).not.toContain("secret");
       }
+    } finally {
+      await web.dispose();
+      await mcp.dispose();
+    }
+  });
+
+  it("lowers declaration schemas to JSON identically on both transports", async () => {
+    const Stamp = Action.make("stamp", {
+      description: "Date round trip",
+      input: Schema.Struct({ d: Schema.Date }),
+      success: Schema.Struct({ d: Schema.Date }),
+    });
+    const app = ActionGroup.make(Stamp).implement({ stamp: Effect.succeed });
+    const iso = "1970-01-01T00:00:00.000Z";
+    const web = makeTestHttp(app, Layer.empty);
+    const mcp = makeTestMcp(app, Layer.empty);
+    try {
+      const tools = await listTools(mcp.handler);
+      expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
+      const http = await web.handler(post("/api/actions/stamp", { d: iso }));
+      expect(http.status).toBe(200);
+      expect(await http.json()).toEqual({ d: iso });
+      expect(await (await mcp.handler(mcpCall("stamp", { d: iso }))).json()).toMatchObject({
+        result: { isError: false, structuredContent: { value: { d: iso } } },
+      });
     } finally {
       await web.dispose();
       await mcp.dispose();

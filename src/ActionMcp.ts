@@ -2,15 +2,10 @@ import { Context, Effect, JsonPointer, Layer, Schema } from "effect";
 import type { Cause } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import type * as JsonSchema from "effect/JsonSchema";
-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import {
-  handlerFor,
-  type Handlers,
-  Implementation,
-  requestEffect,
-} from "./internal/implementation.js";
+import { handlerFor, type Handlers, Implementation } from "./internal/implementation.js";
 
 export interface Options {
   readonly name: string;
@@ -30,12 +25,9 @@ export const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
   McpProtocol.v2024_11_05,
 ];
 
-/** Encode with the declared codec; `structuredContent` must be JSON. Failure is a defect, as on HTTP. */
-const toJson = (schema: Action.Codec, value: unknown) =>
-  Schema.encodeUnknownEffect(schema)(value).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)),
-    Effect.orDie,
-  );
+/** Encoded output is statically `Json`. Failure is a defect, as on HTTP. */
+const encode = (codec: Schema.Codec<unknown, Schema.Json>, value: unknown) =>
+  Schema.encodeUnknownEffect(codec)(value).pipe(Effect.orDie);
 
 const toolResult = (structuredContent: Schema.Json, isError: boolean) =>
   new McpSchema.CallToolResult({
@@ -44,34 +36,52 @@ const toolResult = (structuredContent: Schema.Json, isError: boolean) =>
     content: [{ type: "text", text: JSON.stringify(structuredContent) }],
   });
 
-const withDefinitions = (schema: JsonSchema.JsonSchema, definitions: JsonSchema.Definitions) => ({
-  ...schema,
-  ...(Object.keys(definitions).length === 0 ? {} : { $defs: definitions }),
-});
-
-// MCP structuredContent must be an object. Only resolve the generated root
-// reference; recursive references still need the complete definitions pool,
-// including the inlined root's definition.
-const objectJsonSchema = (name: string, what: string, schema: Action.Codec, hint = "") => {
-  const document = Schema.toJsonSchemaDocument(schema);
-  let root = document.schema;
-  if (typeof root.$ref === "string") {
-    const reference = root.$ref;
-    const path = JsonPointer.parseUriFragment(reference);
-    const key = path?.[1];
-    if (path?.length !== 2 || path[0] !== "$defs" || key === undefined) {
-      throw new Error(`${name}: unsupported MCP ${what} reference ${reference}`);
-    }
-    const definition = Object.hasOwn(document.definitions, key)
-      ? document.definitions[key]
-      : undefined;
-    if (definition === undefined)
-      throw new Error(`${name}: missing MCP ${what} reference ${reference}`);
-    root = definition;
+// Only the generated root reference is resolved; recursive references still
+// need the complete definitions pool, including the inlined root's definition.
+const resolveReference = (
+  name: string,
+  what: string,
+  schema: JsonSchema.JsonSchema,
+  definitions: JsonSchema.Definitions,
+): JsonSchema.JsonSchema => {
+  if (typeof schema.$ref !== "string") return schema;
+  const reference = schema.$ref;
+  const path = JsonPointer.parseUriFragment(reference);
+  const key = path?.[1];
+  if (path?.length !== 2 || path[0] !== "$defs" || key === undefined) {
+    throw new Error(`${name}: unsupported MCP ${what} reference ${reference}`);
   }
-  if (root.type !== "object")
-    throw new Error(`${name}: MCP ${what} must have an object root${hint}`);
-  return withDefinitions(root, document.definitions);
+  const definition = Object.hasOwn(definitions, key) ? definitions[key] : undefined;
+  if (definition === undefined)
+    throw new Error(`${name}: missing MCP ${what} reference ${reference}`);
+  return definition;
+};
+
+/** MCP `inputSchema` requires a literal object root. */
+const inputJsonSchema = (action: Action.Any) => {
+  const { schema, definitions } = Schema.toJsonSchemaDocument(action.input);
+  const root = resolveReference(action.name, "input", schema, definitions);
+  if (root.type !== "object") {
+    throw new Error(
+      `${action.name}: MCP input must have an object root; use Action.NoInput for no arguments`,
+    );
+  }
+  return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
+};
+
+/** Declared errors are published as-is in `structuredContent`, so each must encode to an object. */
+const assertObjectError = (action: Action.Any, error: Action.Codec) => {
+  const { schema, definitions } = Schema.toJsonSchemaDocument(error);
+  const visited = new Set<JsonSchema.JsonSchema>();
+  // A union qualifies when every member does; a revisited node is already being checked.
+  const encodesObject = (candidate: JsonSchema.JsonSchema): boolean => {
+    const root = resolveReference(action.name, "error", candidate, definitions);
+    if (root.type === "object" || visited.has(root)) return true;
+    visited.add(root);
+    const members = root.anyOf ?? root.oneOf;
+    return Array.isArray(members) && members.length > 0 && members.every(encodesObject);
+  };
+  if (!encodesObject(schema)) throw new Error(`${action.name}: MCP error must have an object root`);
 };
 
 const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
@@ -79,13 +89,14 @@ const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
     if (action.mcp === false) return;
     const server = yield* McpServer.McpServer;
     const inputSchema = yield* Schema.decodeUnknownEffect(McpSchema.ToolJson)(
-      objectJsonSchema(action.name, "input", action.input, "; use Action.NoInput for no arguments"),
+      inputJsonSchema(action),
     ).pipe(Effect.orDie);
-    // Successes are wrapped as { value }; declared errors are published as-is, so
-    // each must already encode to an object.
-    for (const error of action.errors) objectJsonSchema(action.name, "error", error);
-    const output = Schema.toJsonSchemaDocument(Schema.Struct({ value: action.success }));
-    const failure = Schema.Union(action.errors);
+    // Successes are wrapped as { value }; declared errors are not.
+    for (const error of action.errors) assertObjectError(action, error);
+    // The same JSON lowering HttpApiEndpoint applies, so both transports agree on the wire shape.
+    const input = Schema.toCodecJson(action.input);
+    const success = Schema.toCodecJson(action.success);
+    const failure = Schema.toCodecJson(Schema.Union(action.errors));
     const handle = handlerFor(table, action);
 
     yield* server.addTool({
@@ -93,7 +104,7 @@ const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
         name: action.mcp.name,
         description: action.description,
         inputSchema,
-        outputSchema: withDefinitions(output.schema, output.definitions),
+        outputSchema: Tool.getJsonSchemaFromSchema(Schema.Struct({ value: action.success })),
         annotations: {
           readOnlyHint: action.mcp.readOnly,
           destructiveHint: action.mcp.destructive,
@@ -103,17 +114,15 @@ const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
       handle: (payload: unknown) =>
         Effect.gen(function* () {
           // Signal native InvalidParams; this snapshot presents it as an isError tool result.
-          const input = yield* Schema.decodeUnknownEffect(action.input)(payload).pipe(
+          const decoded = yield* Schema.decodeUnknownEffect(input)(payload).pipe(
             Effect.mapError((error) => new McpSchema.InvalidParams({ message: error.message })),
           );
-          return yield* requestEffect(handle(input)).pipe(
+          return yield* handle(decoded).pipe(
             Effect.matchEffect({
               onSuccess: (value) =>
-                Effect.map(toJson(action.success, value), (json) =>
-                  toolResult({ value: json }, false),
-                ),
+                Effect.map(encode(success, value), (json) => toolResult({ value: json }, false)),
               onFailure: (error) =>
-                Effect.map(toJson(failure, error), (json) => toolResult(json, true)),
+                Effect.map(encode(failure, error), (json) => toolResult(json, true)),
             }),
           );
         }),
