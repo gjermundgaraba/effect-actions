@@ -1,7 +1,6 @@
 {
-  "name": "effect-actions",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@gjermundgaraba/effect-actions",
+  "version": "0.1.0-rc.0",
   "description": "Define Effect action contracts once and expose them over HTTP and MCP.",
   "license": "MIT",
   "files": [
@@ -28,17 +27,18 @@
     "prepare": "vp config",
     "example": "node --import tsx examples/server.ts"
   },
-  "dependencies": {
-    "effect": "https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6"
-  },
   "devDependencies": {
     "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect/@effect/platform-node@4e4a3a6",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.5.1",
+    "effect": "https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.115"
   },
   "devEngines": {
     "packageManager": {

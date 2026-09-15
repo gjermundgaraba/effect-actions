@@ -177,10 +177,6 @@ overrides:
 importers:
 
   .:
-    dependencies:
-      effect:
-        specifier: https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6
-        version: https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6
     devDependencies:
       '@effect/platform-node':
         specifier: https://pkg.pr.new/Effect-TS/effect/@effect/platform-node@4e4a3a6
@@ -191,6 +187,9 @@ importers:
       '@types/node':
         specifier: 26.5.1
         version: 26.5.1
+      effect:
+        specifier: https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6
+        version: https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6
       tsx:
         specifier: 4.23.13
         version: 4.23.13

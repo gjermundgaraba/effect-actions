@@ -1,4 +1,4 @@
-# effect-actions
+# @gjermundgaraba/effect-actions
 
 Define an action contract once, implement it once, expose it through **HTTP RPC and MCP**.
 
@@ -65,8 +65,8 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 ## Package build
 
 Run `vp run build` to emit ESM and TypeScript declarations into `dist/`.
-The public entry points are `effect-actions`, `effect-actions/Action`,
-`effect-actions/ActionGroup`, `effect-actions/http`, and `effect-actions/mcp`.
+The public entry points are `@gjermundgaraba/effect-actions`, `@gjermundgaraba/effect-actions/Action`,
+`@gjermundgaraba/effect-actions/ActionGroup`, `@gjermundgaraba/effect-actions/http`, and `@gjermundgaraba/effect-actions/mcp`.
 Internal implementation bindings are not exported.
 
 `vp run dev` watches the library build; `vp run example` starts the example
@@ -79,7 +79,7 @@ The package remains private while it depends on the unreleased Effect snapshot.
 
 ```ts
 import { Schema } from "effect";
-import { Action, ActionGroup } from "effect-actions";
+import { Action, ActionGroup } from "@gjermundgaraba/effect-actions";
 import { Forbidden } from "./examples/auth.js"; // the application's error, not the library's
 
 const User = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -214,7 +214,7 @@ their prefix and schema policy stay bound. `openapiPath` is not a client option.
 
 ```ts
 import { Effect } from "effect";
-import { ActionHttp } from "effect-actions";
+import { ActionHttp } from "@gjermundgaraba/effect-actions";
 import { Actions } from "./contracts.js";
 
 export const lookup = Effect.gen(function* () {
