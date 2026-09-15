@@ -1,0 +1,54 @@
+{
+  "name": "effect-actions",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Define Effect action contracts once and expose them over HTTP and MCP.",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./Action": "./dist/Action.mjs",
+    "./ActionGroup": "./dist/ActionGroup.mjs",
+    "./http": "./dist/http.mjs",
+    "./mcp": "./dist/mcp.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check",
+    "prepublishOnly": "vp run build",
+    "prepare": "vp config",
+    "example": "node --import tsx examples/server.ts"
+  },
+  "dependencies": {
+    "effect": "https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect/@effect/platform-node@4e4a3a6",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@types/node": "26.5.1",
+    "bumpp": "^11.1.0",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.4.1",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
+  }
+}
