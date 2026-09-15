@@ -1,12 +1,12 @@
-import { Context, Effect, Layer, type Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
+import type { Etag, HttpClient, HttpPlatform, HttpRouter } from "effect/unstable/http";
 import {
   HttpApi,
   HttpApiBuilder,
   HttpApiEndpoint,
-  HttpApiError,
+  HttpApiClient,
   HttpApiMiddleware,
   HttpApiGroup,
   OpenApi,
@@ -14,14 +14,8 @@ import {
 import type * as Action from "./Action.js";
 import { handlerFor, Implementation } from "./internal/implementation.js";
 
-/** Service-free HTTP error policy. The application owns the declared errors. */
-export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Action.Codec>> {
-  readonly errors: Errors;
-  readonly map: (failure: HttpApiError.HttpApiSchemaError) => NoInfer<Errors[number]["Type"]>;
-}
-
 export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
-  readonly schemaError?: SchemaErrorPolicy<Errors>;
+  readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
   readonly prefix?: `/${string}`;
   /** Set false when the host serves a combined document for multiple groups. */
   readonly openapiPath?: `/${string}` | false;
@@ -114,7 +108,8 @@ export const layer = <
 > => {
   const exposed = app.actions.filter((action) => action.http);
   if (exposed.length === 0) return Layer.empty;
-  const policy: SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined = options.schemaError;
+  const policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined =
+    options.schemaError;
   // Only this adapter-owned middleware enters the isolated native handler build.
   // Its pure mapping closure cannot resolve application services at startup.
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
@@ -122,7 +117,15 @@ export const layer = <
     { error: policy?.errors ?? [] },
   ) {}
   const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
-    Effect.fail(policy === undefined ? failure : policy.map(failure)),
+    Effect.fail(
+      policy === undefined
+        ? failure
+        : policy.map({
+            phase:
+              failure.kind === "Body" || failure.kind === "ResponseHeaders" ? "output" : "input",
+            cause: failure.cause,
+          }),
+    ),
   );
   const httpApi = api<ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>>(
     app,
@@ -155,3 +158,74 @@ export const layer = <
     }).pipe(Layer.provide(isolated));
   });
 };
+
+type NativeClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
+
+/** Connection options plus the transport configuration used by HTTP clients. */
+export type ClientOptions<Errors extends ReadonlyArray<Action.Codec> = []> = NativeClientOptions &
+  Pick<Options<Errors>, "prefix" | "schemaError">;
+
+/** Direct decoded-input methods, excluding MCP-only actions. */
+export type Client<A extends ReadonlyArray<Action.Any>, E extends Action.Codec = never> = {
+  readonly [Item in A[number] as Item["http"] extends false ? never : Item["name"]]: (
+    ...args: {} extends Item["input"]["Type"]
+      ? [input?: Item["input"]["Type"]]
+      : [input: Item["input"]["Type"]]
+  ) => HttpApiClient.Client.MethodReturn<Endpoint<Item, E>, never, never, "decoded-only">;
+};
+
+/** Bind transport configuration once for contracts, routes, documents and clients. */
+export const configure = <Errors extends ReadonlyArray<Action.Codec> = []>(
+  options: Options<Errors> = {},
+) => ({
+  api: <A extends ReadonlyArray<Action.Any>>(group: Actions<A>) => api(group, options),
+  openapi: (group: Actions) => openapi(group, options),
+  layer: <A extends ReadonlyArray<Action.Any>, R, EX, RX>(app: Implementation<A, R, EX, RX>) =>
+    layer(app, options),
+  client: <A extends ReadonlyArray<Action.Any>>(
+    group: Actions<A>,
+    { baseUrl, transformClient, transformResponse }: NativeClientOptions = {},
+  ) => client(group, { ...options, baseUrl, transformClient, transformResponse }),
+});
+
+/** Direct action methods backed by the native HTTP client and its codecs. */
+export function client<
+  A extends ReadonlyArray<Action.Any>,
+  Errors extends ReadonlyArray<Action.Codec> = [],
+>(
+  group: Actions<A>,
+  options?: ClientOptions<Errors>,
+): Effect.Effect<Client<A, Errors[number]>, never, HttpClient.HttpClient>;
+export function client(
+  group: Actions,
+  options: ClientOptions<ReadonlyArray<Action.Codec>> = {},
+): Effect.Effect<
+  Readonly<Record<string, (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>>>,
+  never,
+  HttpClient.HttpClient
+> {
+  return Effect.map(HttpApiClient.make(api(group, options), options), (native) => {
+    // Decide once from decoded input schemas: undefined is omitted input for
+    // structs, but remains a value for codecs that explicitly accept it.
+    const acceptsUndefined = new Set(
+      group.actions
+        .filter((action) => Schema.is(action.input)(undefined))
+        .map((action) => action.name),
+    );
+    return Object.fromEntries(
+      Object.entries(native.actions).map(([name, method]) => {
+        // Callable "then" would make Promise resolution assimilate this client.
+        if (name === "then")
+          throw new Error('Action "then" requires the native grouped HttpApiClient');
+        return [
+          name,
+          (input?: unknown) =>
+            method({
+              payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
+              responseMode: "decoded-only",
+            }),
+        ];
+      }),
+    );
+  });
+}

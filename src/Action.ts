@@ -4,6 +4,19 @@ import type { Effect } from "effect";
 // Schemas must be service-free. Handler dependencies are unrestricted.
 export type Codec = Schema.Codec<unknown, unknown, never, never>;
 
+/** Failed request decoding or successful-result encoding, independent of transport terminology. */
+export interface SchemaFailure {
+  readonly phase: "input" | "output";
+  /** May contain sensitive values. Do not reflect it in public error messages. */
+  readonly cause: Schema.SchemaError;
+}
+
+/** Pure application-owned mapping, shared by the HTTP and MCP adapters. */
+export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
+  readonly errors: Errors;
+  readonly map: (failure: SchemaFailure) => NoInfer<Errors[number]["Type"]>;
+}
+
 export interface McpOptions {
   readonly name?: string;
   readonly readOnly?: boolean;

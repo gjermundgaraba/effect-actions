@@ -153,3 +153,90 @@ export const policyTypes = Effect.gen(function* () {
     },
   });
 });
+
+export const configuredClientTypes = () => {
+  void Effect.gen(function* () {
+    class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {}) {}
+    const schemaError = {
+      errors: [Invalid],
+      map: (_failure: Action.SchemaFailure) => new Invalid(),
+    };
+    const Http = ActionHttp.configure({ prefix: "/rpc", schemaError });
+    const client = yield* Http.client(Actions);
+    // @ts-expect-error Prefix is bound by configure, not a connection option.
+    Http.client(Actions, { prefix: "/different" });
+    // @ts-expect-error Schema policy is also bound by configure.
+    Http.client(Actions, { schemaError });
+    // @ts-expect-error OpenAPI route configuration has no client-side meaning.
+    ActionHttp.client(Actions, { baseUrl: "http://localhost", openapiPath: "/schema" });
+    yield* (yield* ActionHttp.client(Actions, {
+      baseUrl: "http://localhost",
+      prefix: "/rpc",
+      schemaError,
+    }))
+      .double({ value: 1 })
+      .pipe(Effect.catchTag("Invalid", () => Effect.succeed(0)));
+    const doubled: number = yield* client.double({ value: 21 });
+    void doubled;
+    const identity: { readonly id: string; readonly tenantId: string } = yield* client.whoAmI();
+    void identity;
+    yield* client.getUser({ id: "1" }).pipe(
+      Effect.catchTag("UserNotFound", () => Effect.succeed(null)),
+      Effect.catchTag("Invalid", () => Effect.succeed(null)),
+    );
+    // @ts-expect-error No HTTP wrapper objects on direct action calls.
+    client.double({ payload: { value: 21 } });
+    // @ts-expect-error Required input cannot be omitted.
+    client.double();
+    // @ts-expect-error Input is decoded, not its string wire representation.
+    client.double({ value: "21" });
+    // @ts-expect-error The output is not erased to unknown or any.
+    const wrong: string = yield* client.double({ value: 21 });
+    void wrong;
+    // @ts-expect-error No-input actions do not accept invented input fields.
+    client.whoAmI({ actor: "alice" });
+    // @ts-expect-error Names remain exact.
+    client.missing();
+
+    const mixed = ActionGroup.make(
+      Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
+      Action.make("optional", {
+        description: "Optional input",
+        input: Schema.Struct({ value: Schema.optional(Schema.Number) }),
+        success: Schema.Number,
+      }),
+    );
+    const selected = yield* ActionHttp.client(mixed, { prefix: "/rpc", schemaError });
+    // @ts-expect-error Standalone clients preserve required input as well.
+    (yield* ActionHttp.client(Actions)).double();
+    yield* (yield* ActionHttp.client(Actions, { schemaError }))
+      .double({ value: 1 })
+      .pipe(Effect.catchTag("Invalid", () => Effect.succeed(0)));
+    // @ts-expect-error MCP-only actions have no direct HTTP method.
+    selected.hidden();
+    yield* selected.optional();
+    yield* selected.optional(undefined);
+    yield* selected.optional({ value: 1 });
+    // @ts-expect-error Optional inputs still have a checked shape.
+    selected.optional({ value: "1" });
+
+    const services = Layer.provide(HttpServer.layerServices);
+    // @ts-expect-error Configuring the adapter must preserve acquisition requirements.
+    HttpRouter.toWebHandler(Http.layer(App).pipe(services));
+    const web = HttpRouter.toWebHandler(
+      Http.layer(App).pipe(Layer.provide(Users.layerMemory), services),
+    );
+    // @ts-expect-error Configuring the adapter must preserve request requirements.
+    void web.handler(new Request("http://localhost"), Context.empty());
+    ActionMcp.layer(App, { name: "test", version: "0", schemaError });
+    ActionMcp.layer(App, {
+      name: "test",
+      version: "0",
+      schemaError: {
+        errors: [Invalid],
+        // @ts-expect-error MCP shares the declared-error mapper constraint.
+        map: () => "undeclared",
+      },
+    });
+  });
+};

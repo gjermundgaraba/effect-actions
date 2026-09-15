@@ -7,7 +7,8 @@ import { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import { handlerFor, type Handlers, Implementation } from "./internal/implementation.js";
 
-export interface Options {
+export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
+  readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
   readonly name: string;
   readonly version: string;
   readonly path?: HttpRouter.PathInput;
@@ -70,21 +71,25 @@ const inputJsonSchema = (action: Action.Any) => {
 };
 
 /** Declared errors are published as-is in `structuredContent`, so each must encode to an object. */
-const assertObjectError = (action: Action.Any, error: Action.Codec) => {
+const assertObjectError = (owner: string, error: Action.Codec) => {
   const { schema, definitions } = Schema.toJsonSchemaDocument(error);
   const visited = new Set<JsonSchema.JsonSchema>();
   // A union qualifies when every member does; a revisited node is already being checked.
   const encodesObject = (candidate: JsonSchema.JsonSchema): boolean => {
-    const root = resolveReference(action.name, "error", candidate, definitions);
+    const root = resolveReference(owner, "error", candidate, definitions);
     if (root.type === "object" || visited.has(root)) return true;
     visited.add(root);
     const members = root.anyOf ?? root.oneOf;
     return Array.isArray(members) && members.length > 0 && members.every(encodesObject);
   };
-  if (!encodesObject(schema)) throw new Error(`${action.name}: MCP error must have an object root`);
+  if (!encodesObject(schema)) throw new Error(`${owner}: MCP error must have an object root`);
 };
 
-const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
+const registerTool = <R>(
+  action: Action.Any,
+  table: Handlers<R>,
+  policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined,
+) =>
   Effect.gen(function* () {
     if (action.mcp === false) return;
     const server = yield* McpServer.McpServer;
@@ -92,12 +97,28 @@ const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
       inputJsonSchema(action),
     ).pipe(Effect.orDie);
     // Successes are wrapped as { value }; declared errors are not.
-    for (const error of action.errors) assertObjectError(action, error);
+    const errors = [...action.errors, ...(policy?.errors ?? [])];
+    for (const error of action.errors) assertObjectError(action.name, error);
     // The same JSON lowering HttpApiEndpoint applies, so both transports agree on the wire shape.
     const input = Schema.toCodecJson(action.input);
     const success = Schema.toCodecJson(action.success);
-    const failure = Schema.toCodecJson(Schema.Union(action.errors));
+    const failure = Schema.toCodecJson(Schema.Union(errors));
     const handle = handlerFor(table, action);
+    const failureResult = (error: unknown) =>
+      Effect.map(encode(failure, error), (json) => toolResult(json, true));
+    const schemaFailure = (phase: Action.SchemaFailure["phase"], cause: Schema.SchemaError) =>
+      policy === undefined
+        ? phase === "input"
+          ? Effect.fail(new McpSchema.InvalidParams({ message: cause.message }))
+          : Effect.die(cause)
+        : failureResult(policy.map({ phase, cause }));
+    const successResult = (value: unknown) =>
+      Schema.encodeUnknownEffect(success)(value).pipe(
+        Effect.matchEffect({
+          onFailure: (cause) => schemaFailure("output", cause),
+          onSuccess: (json) => Effect.succeed(toolResult({ value: json }, false)),
+        }),
+      );
 
     yield* server.addTool({
       tool: new McpSchema.Tool({
@@ -112,20 +133,18 @@ const registerTool = <R>(action: Action.Any, table: Handlers<R>) =>
       }),
       annotations: Context.empty(),
       handle: (payload: unknown) =>
-        Effect.gen(function* () {
-          // Signal native InvalidParams; this snapshot presents it as an isError tool result.
-          const decoded = yield* Schema.decodeUnknownEffect(input)(payload).pipe(
-            Effect.mapError((error) => new McpSchema.InvalidParams({ message: error.message })),
-          );
-          return yield* handle(decoded).pipe(
-            Effect.matchEffect({
-              onSuccess: (value) =>
-                Effect.map(encode(success, value), (json) => toolResult({ value: json }, false)),
-              onFailure: (error) =>
-                Effect.map(encode(failure, error), (json) => toolResult(json, true)),
-            }),
-          );
-        }),
+        Schema.decodeUnknownEffect(input)(payload).pipe(
+          Effect.matchEffect({
+            onFailure: (cause) => schemaFailure("input", cause),
+            onSuccess: (decoded) =>
+              handle(decoded).pipe(
+                Effect.matchEffect({
+                  onSuccess: successResult,
+                  onFailure: failureResult,
+                }),
+              ),
+          }),
+        ),
     });
   });
 
@@ -144,9 +163,15 @@ const registrationRouter = (
   });
 
 /** A Streamable HTTP MCP endpoint serving the group's MCP-enabled actions. */
-export const layer = <Actions extends ReadonlyArray<Action.Any>, R, EX, RX>(
+export const layer = <
+  Actions extends ReadonlyArray<Action.Any>,
+  R,
+  EX,
+  RX,
+  Errors extends ReadonlyArray<Action.Codec> = [],
+>(
   app: Implementation<Actions, R, EX, RX>,
-  options: Options,
+  options: Options<Errors>,
 ): Layer.Layer<
   never,
   EX | Cause.IllegalArgumentError,
@@ -154,7 +179,19 @@ export const layer = <Actions extends ReadonlyArray<Action.Any>, R, EX, RX>(
 > =>
   Implementation.register(app, (table) => {
     const native = Layer.effectDiscard(
-      Effect.forEach(app.actions, (action) => registerTool(action, table), { discard: true }),
+      Effect.gen(function* () {
+        if (app.actions.some((action) => action.mcp !== false)) {
+          for (const error of options.schemaError?.errors ?? [])
+            assertObjectError("Schema-error policy", error);
+        }
+        yield* Effect.forEach(
+          app.actions,
+          (action) => registerTool(action, table, options.schemaError),
+          {
+            discard: true,
+          },
+        );
+      }),
     ).pipe(
       Layer.provide(
         McpServer.layerHttp({

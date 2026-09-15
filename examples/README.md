@@ -10,6 +10,8 @@ Run `vp run example` from the repository root. See the [main README](../README.m
 4. **[app.ts](app.ts)** — project the implementation to HTTP and MCP, wrap both in authentication middleware, and supply `Users` once.
 5. **[server.ts](server.ts)** — serve the native router with `NodeHttpServer`; let Effect manage shutdown.
 
+[client.ts](client.ts) demonstrates typed action calls from a consumer; supply an Effect HTTP client and authentication for your server.
+
 [users.ts](users.ts) is the supporting domain service. Its in-memory implementation owns tenant-scoped reads and writes; it knows nothing about HTTP or MCP.
 
 ## Registration

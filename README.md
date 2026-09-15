@@ -134,41 +134,124 @@ export const layer = Layer.mergeAll(
 
 Both adapters are ordinary Layers over Effect's `HttpRouter`. The implementation's private binding is memoized, so both transports share one handler build and one set of application services per runtime. Scoped handler acquisition is finalized with that runtime. Omitting the authentication middleware is a **compile error** at `HttpRouter.serve`/`toWebHandler` for HTTP and MCP alike.
 
-- `ActionHttp.layer(App, { prefix?, openapiPath? })` registers `POST <prefix>/<name>` per HTTP-enabled action plus `GET /openapi.json` (default prefix `/api/actions`). It registers nothing for an MCP-only group. Set `openapiPath: false` to let the host serve one combined document for multiple groups.
-- `ActionHttp.api(Actions)` / `ActionHttp.openapi(Actions)` give the native `HttpApi` (for `HttpApiClient`) and the OpenAPI document.
-- `ActionMcp.layer(App, { name, version, path?, protocols?, allowedOrigins?, instructions? })` mounts `McpServer.layerHttp` at `/mcp` with every published protocol revision and registers one tool per MCP-enabled action. Tool input JSON Schema is compiled at Layer construction; a non-object root fails there.
+| Entry point                  | Purpose                                       | Configuration                                                                  |
+| ---------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------ |
+| `ActionHttp.layer`           | HTTP action routes and optional OpenAPI route | `prefix`, `openapiPath`, `schemaError`                                         |
+| `ActionHttp.api` / `openapi` | Native client contract / OpenAPI document     | `prefix`, `schemaError`                                                        |
+| `ActionHttp.client`          | Direct, typed action calls                    | `prefix`, `schemaError`, `baseUrl`, native client transforms                   |
+| `ActionHttp.configure`       | Bind HTTP configuration across projections    | Same transport options as `layer`                                              |
+| `ActionMcp.layer`            | Native MCP tools and protocol endpoint        | Server identity, path, protocols, allowed origins, instructions, `schemaError` |
+
+HTTP defaults to `POST /api/actions/<name>` and `GET /openapi.json`; set
+`openapiPath: false` when the host owns the document. MCP defaults to `/mcp`
+with all published revisions. MCP tool schemas are checked at Layer construction.
+See [shared schema-error policy](#shared-schema-error-policy) for mapping semantics.
 
 [`examples/auth.ts`](examples/auth.ts) is the application's policy: `CurrentActor`, `Forbidden`, `Unauthenticated`, `authorize`. [`examples/app.ts`](examples/app.ts) wires authentication and both transports. [`examples/server.ts`](examples/server.ts) serves the result with `HttpRouter.serve` and `NodeHttpServer.layer`.
 
-### HTTP schema-error policy
+### Shared schema-error policy
 
-By default, HTTP retains Effect’s native empty 400 for decoding/encoding failures.
-Applications can instead supply one service-free policy to the contract and adapter:
+By default, HTTP retains Effect's native empty 400 for decoding/encoding failures;
+MCP retains native invalid-argument handling and treats output-encoding failures
+as defects. Applications can supply the **same policy to both adapters**:
 
 ```ts
-const httpOptions = {
-  schemaError: {
-    errors: [BadRequest, InternalServerError], // application-owned schemas
-    map: (failure) =>
-      failure.kind === "Body" || failure.kind === "ResponseHeaders"
-        ? new InternalServerError({ error: "Request could not be completed" })
-        : new BadRequest({ error: "Invalid request" }),
-  },
-} satisfies ActionHttp.Options<readonly [typeof BadRequest, typeof InternalServerError]>;
-const api = ActionHttp.api(Actions, httpOptions);
-const routes = ActionHttp.layer(App, httpOptions);
+const schemaError = {
+  errors: [BadRequest, InternalServerError], // application-owned schemas
+  map: ({ phase }) =>
+    phase === "output"
+      ? new InternalServerError({ error: "Request could not be completed" })
+      : new BadRequest({ error: "Invalid request" }),
+} satisfies Action.SchemaErrorPolicy<readonly [typeof BadRequest, typeof InternalServerError]>;
+
+const Http = ActionHttp.configure({ schemaError });
+const api = Http.api(Actions);
+const routes = Layer.mergeAll(
+  Http.layer(App),
+  ActionMcp.layer(App, { name: "my-app", version: "0", schemaError }),
+);
 ```
 
-Policy error schemas are included in the generated client types and OpenAPI;
-the mapper can only return a declared error. Native schema-error middleware runs
-inside the isolated handler build: startup application services still cannot
-become request fallbacks. Mapping changes only HTTP schema failures, not domain
-errors, defects, media-type handling, or MCP. Keep persisted/provider-data
-validation in application services when both transports need a typed domain error.
+The mapper receives `{ phase: "input" | "output", cause: Schema.SchemaError }`
+and returns a declared policy error without requiring services. Causes may contain
+sensitive values: do not reflect them in public messages. Policy errors augment
+transport contracts, not the errors handlers may return.
+
+HTTP uses the mapped error's status annotation and includes its schema in clients
+and OpenAPI. MCP returns an `isError` tool result; policy errors must encode to
+objects. Supply the policy to both adapters explicitly.
+
+`input` covers request decoding; `output` covers successful-result encoding.
+Domain errors, defects, interruptions, and protocol errors remain unchanged.
+An unencodable declared error is a defect; broken policy errors are not
+recursively remapped. Keep decoding untrusted provider data at its boundary;
+whole-response decoding is not needed solely for HTTP/MCP error parity.
+
+### Configure HTTP once
+
+Bind options once, then reuse the configured adapter for every projection:
+
+```ts
+export const Http = ActionHttp.configure({
+  prefix: "/api/actions",
+  openapiPath: false, // host owns one combined document
+  schemaError,
+});
+export const Api = Http.api(Actions);
+
+// In server composition, keep distinct authentication boundaries:
+const ownerRoutes = Http.layer(owner);
+const issuerRoutes = Http.layer(issuer);
+const document = Http.openapi(Actions);
+```
+
+Standalone `api(group, options)`, `openapi(group, options)`,
+`layer(implementation, options)`, and `client(group, options)`
+are also available. `configure` binds the same transport options for all four;
+configured clients accept only `baseUrl`, `transformClient`, and `transformResponse`;
+their prefix and schema policy stay bound. `openapiPath` is not a client option.
+
+### Action-shaped HTTP client
+
+```ts
+import { Effect } from "effect";
+import { ActionHttp } from "effect-actions";
+import { Actions } from "./contracts.js";
+
+export const lookup = Effect.gen(function* () {
+  const client = yield* ActionHttp.client(Actions, {
+    baseUrl: "https://api.example.com",
+  });
+  const user = yield* client.getUser({ id: "1" });
+  const identity = yield* client.whoAmI();
+  return { user, identity };
+});
+```
+
+This example is type-checked in [examples/client.ts](examples/client.ts).
+
+Client construction requires Effect's `HttpClient` service (for example,
+`FetchHttpClient.layer`). Methods take decoded inputs, return decoded results,
+and retain declared domain errors, policy errors, `SchemaError`, and native
+`HttpClientError`. MCP-only actions are absent. An argument is optional when the
+input type accepts `{}`. Omitted input and explicit `undefined` behave alike:
+they send `{}` unless the decoded input schema accepts `undefined` as a value.
+`null` is always passed through unchanged.
+
+The client delegates to `HttpApiClient`: codecs, HTTP status handling,
+interruption, and HTTP service configuration are native. Client options support
+`baseUrl`, `transformClient` (for authentication headers, for example), and
+`transformResponse`. Local client codec failures remain `SchemaError`; the
+shared policy runs on the server, not on the client.
+
+Use `HttpApiClient.make(Http.api(Actions), options)` when you need native
+per-call response modes, or `makeWith` for a custom client's additional error and
+service channels. The action-shaped client always returns decoded results.
+Actions named `then` require the native grouped client to avoid JavaScript thenable assimilation.
 
 ## Wire behaviour
 
-Transport status and protocol error handling use Effect's native behaviour. The MCP adapter wraps successful values in `{ value }` and publishes declared errors as-is; the library defines no application error types.
+The table below describes default behavior without a schema-error policy. Transport status and protocol error handling use Effect's native behaviour. The MCP adapter wraps successful values in `{ value }` and publishes declared errors as-is; the library defines no application error types.
 
 |                             | HTTP (`HttpApi`)                                                                                            | MCP (`McpServer`)                                                                                                                      |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -189,7 +272,8 @@ Object schemas keep Effect's default excess-field behaviour (stripped unless the
 - Generated native HTTP RPC endpoints, configurable prefixes, MCP-only groups, and runtime codec integration with `HttpApiClient` (including exact per-action client inference).
 - MCP discovery and execution using hand-crafted stateless 2026-07-28 requests **and the official v2 client in legacy (2025-11-25) and pinned 2026-07-28 modes**, including structured `isError` results.
 - Bidirectional write/read parity through one memoized implementation; scoped acquisition runs once across transports, finalizes once, and is fresh in another runtime.
-- Input/output transformations, optional inputs, per-error HTTP statuses and native defaults, native validation errors, output-encoding failures and defect sanitization on both transports.
+- Input/output transformations, optional inputs, per-error HTTP statuses and native defaults, native validation errors, shared schema-failure policies without extra codec passes, output-encoding failures and defect sanitization on both transports.
+- Configured HTTP projections and direct action clients: exact types, optional inputs, transforms, mapped errors, native response validation and request cancellation.
 - Application-owned authorization on every call over both transports, actor spoofing via arguments and `_meta`, concurrent tenant isolation, and build-time vs request-time service resolution.
 - Request-provided services win over a startup copy on **both** transports, whether the copy is provided to the routes' build or present in the runtime context. With no request service, a build-only copy cannot satisfy execution: HTTP fails with 500 and modern/legacy MCP fails with a sanitized internal error.
 - Independent implementations of the same contract stay separate across HTTP prefixes and MCP endpoints; non-object MCP error schemas fail at Layer construction.
