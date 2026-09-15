@@ -43,8 +43,6 @@ type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readon
       >
     : never;
 
-// HttpApi decodes the payload with the full input codec, encodes the result with
-// the success codec, and renders each declared error by its status annotation.
 const endpoint = (prefix: `/${string}`, action: Action.Any, errors: ReadonlyArray<Action.Codec>) =>
   HttpApiEndpoint.post(action.name, `${prefix}/${action.name}`, {
     payload: action.input,

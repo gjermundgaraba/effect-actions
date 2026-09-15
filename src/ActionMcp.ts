@@ -17,7 +17,7 @@ export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   readonly instructions?: string;
 }
 
-/** Every published revision; 2026-07-28 is the single stateless one. */
+/** Protocol revisions served over Streamable HTTP; 2026-07-28 is stateless. */
 export const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
   McpProtocol.v2026_07_28,
   McpProtocol.v2025_11_25,
@@ -25,10 +25,6 @@ export const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
   McpProtocol.v2025_03_26,
   McpProtocol.v2024_11_05,
 ];
-
-/** Encoded output is statically `Json`. Failure is a defect, as on HTTP. */
-const encode = (codec: Schema.Codec<unknown, Schema.Json>, value: unknown) =>
-  Schema.encodeUnknownEffect(codec)(value).pipe(Effect.orDie);
 
 const toolResult = (structuredContent: Schema.Json, isError: boolean) =>
   new McpSchema.CallToolResult({
@@ -105,13 +101,16 @@ const registerTool = <R>(
     const failure = Schema.toCodecJson(Schema.Union(errors));
     const handle = handlerFor(table, action);
     const failureResult = (error: unknown) =>
-      Effect.map(encode(failure, error), (json) => toolResult(json, true));
-    const schemaFailure = (phase: Action.SchemaFailure["phase"], cause: Schema.SchemaError) =>
-      policy === undefined
-        ? phase === "input"
-          ? Effect.fail(new McpSchema.InvalidParams({ message: cause.message }))
-          : Effect.die(cause)
-        : failureResult(policy.map({ phase, cause }));
+      Schema.encodeUnknownEffect(failure)(error).pipe(
+        Effect.orDie,
+        Effect.map((json) => toolResult(json, true)),
+      );
+    const schemaFailure = (phase: Action.SchemaFailure["phase"], cause: Schema.SchemaError) => {
+      if (policy !== undefined) return failureResult(policy.map({ phase, cause }));
+      if (phase === "input")
+        return Effect.fail(new McpSchema.InvalidParams({ message: cause.message }));
+      return Effect.die(cause);
+    };
     const successResult = (value: unknown) =>
       Schema.encodeUnknownEffect(success)(value).pipe(
         Effect.matchEffect({

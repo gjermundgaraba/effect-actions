@@ -1,9 +1,10 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import { mcpRequest as toolRequest } from "./mcp.js";
 
 class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
   "InvalidRequest",
@@ -54,48 +55,45 @@ it("maps input and output failures and exposes the same error contract to client
     ActionHttp.layer(app, options).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-  try {
-    const malformed = await web.handler(request("secret input"));
-    expect(malformed.status).toBe(400);
-    expect(await malformed.json()).toEqual({ _tag: "InvalidRequest", error: "Invalid request" });
-    const invalidJson = await web.handler(
-      new Request("http://localhost/api/actions/echo", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{secret",
-      }),
+  onTestFinished(() => web.dispose());
+  const malformed = await web.handler(request("secret input"));
+  expect(malformed.status).toBe(400);
+  expect(await malformed.json()).toEqual({ _tag: "InvalidRequest", error: "Invalid request" });
+  const invalidJson = await web.handler(
+    new Request("http://localhost/api/actions/echo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{secret",
+    }),
+  );
+  expect(invalidJson.status).toBe(400);
+  expect(await invalidJson.json()).toEqual({ _tag: "InvalidRequest", error: "Invalid request" });
+  const broken = await web.handler(request(0));
+  expect(broken.status).toBe(500);
+  expect(await broken.json()).toEqual({ _tag: "InvalidResponse", error: "Invalid response" });
+  const rejected = await web.handler(request(-1));
+  expect(rejected.status).toBe(409);
+  expect(await rejected.json()).toEqual({ _tag: "Rejected", error: "Negative value" });
+  const api = ActionHttp.api(actions, options);
+  await Effect.gen(function* () {
+    const client = yield* HttpApiClient.make(api, { baseUrl: "http://localhost" });
+    expect(yield* client.actions.echo({ payload: { value: 12 } })).toBe(12);
+    expect(yield* Effect.flip(client.actions.echo({ payload: { value: 0 } }))).toEqual(
+      new InvalidResponse({ error: "Invalid response" }),
     );
-    expect(invalidJson.status).toBe(400);
-    expect(await invalidJson.json()).toEqual({ _tag: "InvalidRequest", error: "Invalid request" });
-    const broken = await web.handler(request(0));
-    expect(broken.status).toBe(500);
-    expect(await broken.json()).toEqual({ _tag: "InvalidResponse", error: "Invalid response" });
-    const rejected = await web.handler(request(-1));
-    expect(rejected.status).toBe(409);
-    expect(await rejected.json()).toEqual({ _tag: "Rejected", error: "Negative value" });
-    const api = ActionHttp.api(actions, options);
-    await Effect.gen(function* () {
-      const client = yield* HttpApiClient.make(api, { baseUrl: "http://localhost" });
-      expect(yield* client.actions.echo({ payload: { value: 12 } })).toBe(12);
-      expect(yield* Effect.flip(client.actions.echo({ payload: { value: 0 } }))).toEqual(
-        new InvalidResponse({ error: "Invalid response" }),
-      );
-      expect(yield* Effect.flip(client.actions.echo({ payload: { value: -1 } }))).toEqual(
-        new Rejected({ error: "Negative value" }),
-      );
-    }).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-        web.handler(new Request(input, init)),
-      ),
-      Effect.runPromise,
+    expect(yield* Effect.flip(client.actions.echo({ payload: { value: -1 } }))).toEqual(
+      new Rejected({ error: "Negative value" }),
     );
-    const document = ActionHttp.openapi(actions, options);
-    expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("400");
-    expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("500");
-  } finally {
-    await web.dispose();
-  }
+  }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+      web.handler(new Request(input, init)),
+    ),
+    Effect.runPromise,
+  );
+  const document = ActionHttp.openapi(actions, options);
+  expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("400");
+  expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("500");
 });
 
 it("policy middleware does not turn startup services into request fallbacks", async () => {
@@ -108,16 +106,13 @@ it("policy middleware does not turn startup services into request fallbacks", as
     ),
     { disableLogger: true },
   );
-  try {
-    // @ts-expect-error Deliberately omit the required request service at runtime.
-    const absent = await web.handler(request(1), Context.empty());
-    expect(absent.status).toBe(500);
-    expect(await absent.text()).toBe("");
-    const present = await web.handler(request(1), Context.make(Value, 7));
-    expect(await present.json()).toBe(7);
-  } finally {
-    await web.dispose();
-  }
+  onTestFinished(() => web.dispose());
+  // @ts-expect-error Deliberately omit the required request service at runtime.
+  const absent = await web.handler(request(1), Context.empty());
+  expect(absent.status).toBe(500);
+  expect(await absent.text()).toBe("");
+  const present = await web.handler(request(1), Context.make(Value, 7));
+  expect(await present.json()).toBe(7);
 });
 
 it("keeps separate policies isolated on projections of one implementation", async () => {
@@ -136,53 +131,27 @@ it("keeps separate policies isolated on projections of one implementation", asyn
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-  try {
-    for (const [path, status, message] of [
-      ["a", 400, "Invalid request"],
-      ["b", 500, "Second policy"],
-    ] as const) {
-      const response = await web.handler(
-        new Request(`http://localhost/${path}/echo`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        }),
-      );
-      expect(response.status).toBe(status);
-      expect(await response.json()).toMatchObject({ error: message });
-    }
-  } finally {
-    await web.dispose();
+  onTestFinished(() => web.dispose());
+  for (const [path, status, message] of [
+    ["a", 400, "Invalid request"],
+    ["b", 500, "Second policy"],
+  ] as const) {
+    const response = await web.handler(
+      new Request(`http://localhost/${path}/echo`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ error: message });
   }
 });
 
 const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }));
 
 const mcpRequest = (value: unknown) =>
-  new Request("http://localhost/mcp", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": "2026-07-28",
-      "mcp-method": "tools/call",
-      "mcp-name": "echo",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name: "echo",
-        arguments: { value },
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "policy-test", version: "0" },
-        },
-      },
-    }),
-  });
+  toolRequest("tools/call", { name: "echo", arguments: { value } });
 
 it("shares input/output policy with MCP without converting domain errors or defects", async () => {
   const failures: Action.SchemaFailure[] = [];
@@ -214,36 +183,28 @@ it("shares input/output policy with MCP without converting domain errors or defe
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-  try {
-    for (const [value, tag] of [
-      ["secret input", "InvalidRequest"],
-      [0, "InvalidResponse"],
-      [-1, "Rejected"],
-    ] as const) {
-      const http = await web.handler(request(value));
-      const mcp = await web.handler(mcpRequest(value));
-      expect(mcp.status).toBe(200);
-      const { result } = decodeMcp(await mcp.json());
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toEqual(await http.json());
-      expect(result.structuredContent).toMatchObject({ _tag: tag });
-    }
-    expect(calls).toBe(4); // Neither transport invokes the handler for invalid input.
-    expect(failures.map((failure) => failure.phase)).toEqual([
-      "input",
-      "input",
-      "output",
-      "output",
-    ]);
-    expect(failures.every((failure) => Schema.isSchemaError(failure.cause))).toBe(true);
-    const success = await web.handler(mcpRequest(7));
-    expect(decodeMcp(await success.json()).result.structuredContent).toEqual({ value: 7 });
-    const defect = await web.handler(mcpRequest(-2));
-    expect(await defect.text()).not.toContain("private defect");
-    expect(failures).toHaveLength(4);
-  } finally {
-    await web.dispose();
+  onTestFinished(() => web.dispose());
+  for (const [value, tag] of [
+    ["secret input", "InvalidRequest"],
+    [0, "InvalidResponse"],
+    [-1, "Rejected"],
+  ] as const) {
+    const http = await web.handler(request(value));
+    const mcp = await web.handler(mcpRequest(value));
+    expect(mcp.status).toBe(200);
+    const { result } = decodeMcp(await mcp.json());
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual(await http.json());
+    expect(result.structuredContent).toMatchObject({ _tag: tag });
   }
+  expect(calls).toBe(4); // Neither transport invokes the handler for invalid input.
+  expect(failures.map((failure) => failure.phase)).toEqual(["input", "input", "output", "output"]);
+  expect(failures.every((failure) => Schema.isSchemaError(failure.cause))).toBe(true);
+  const success = await web.handler(mcpRequest(7));
+  expect(decodeMcp(await success.json()).result.structuredContent).toEqual({ value: 7 });
+  const defect = await web.handler(mcpRequest(-2));
+  expect(await defect.text()).not.toContain("private defect");
+  expect(failures).toHaveLength(4);
 });
 
 it("rejects non-object policy errors at MCP construction", async () => {
@@ -295,16 +256,13 @@ it("executes each input/output transformation once with a policy enabled", async
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-  try {
-    expect(await (await web.handler(request("7"))).json()).toBe("7");
-    expect(
-      decodeMcp(await (await web.handler(mcpRequest("7"))).json()).result.structuredContent,
-    ).toEqual({ value: "7" });
-    expect(decodes).toBe(2);
-    expect(encodes).toBe(2);
-  } finally {
-    await web.dispose();
-  }
+  onTestFinished(() => web.dispose());
+  expect(await (await web.handler(request("7"))).json()).toBe("7");
+  expect(
+    decodeMcp(await (await web.handler(mcpRequest("7"))).json()).result.structuredContent,
+  ).toEqual({ value: "7" });
+  expect(decodes).toBe(2);
+  expect(encodes).toBe(2);
 });
 
 it("does not recursively map a broken policy error", async () => {
@@ -324,16 +282,13 @@ it("does not recursively map a broken policy error", async () => {
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-  try {
-    const http = await web.handler(request("private"));
-    expect(http.status).toBeGreaterThanOrEqual(400);
-    expect(await http.text()).not.toContain("private");
-    const mcp = await web.handler(mcpRequest("private"));
-    expect(await mcp.text()).not.toContain("private");
-    expect(mappings).toBe(2);
-  } finally {
-    await web.dispose();
-  }
+  onTestFinished(() => web.dispose());
+  const http = await web.handler(request("private"));
+  expect(http.status).toBeGreaterThanOrEqual(400);
+  expect(await http.text()).not.toContain("private");
+  const mcp = await web.handler(mcpRequest("private"));
+  expect(await mcp.text()).not.toContain("private");
+  expect(mappings).toBe(2);
 });
 
 it("keeps invalid declared-error encoding a defect on both transports", async () => {
@@ -364,18 +319,15 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-  try {
-    const http = await web.handler(request(1));
-    expect(http.status).toBe(500);
-    expect(await http.text()).toBe("");
-    const mcp = await web.handler(mcpRequest(1));
-    const body = await mcp.text();
-    expect(body).not.toContain("Domain");
-    expect(body).not.toContain("InvalidResponse");
-    expect(mappings).toBe(0);
-  } finally {
-    await web.dispose();
-  }
+  onTestFinished(() => web.dispose());
+  const http = await web.handler(request(1));
+  expect(http.status).toBe(500);
+  expect(await http.text()).toBe("");
+  const mcp = await web.handler(mcpRequest(1));
+  const body = await mcp.text();
+  expect(body).not.toContain("Domain");
+  expect(body).not.toContain("InvalidResponse");
+  expect(mappings).toBe(0);
 });
 
 it("ignores unused policy errors when no MCP tools are exposed", async () => {

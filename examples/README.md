@@ -1,63 +1,79 @@
-# One action, two transports
+# Authenticated HTTP and MCP example
 
-Run `vp run example` from the repository root. See the [main README](../README.md#run-it) for curl commands and demo credentials.
+Run `vp run example` from the repository root after `vp install`.
 
-## Read in this order
+The example listens on **127.0.0.1:3000**. It uses an in-memory repository and deliberately fake bearer tokens:
 
-1. **[contracts.ts](contracts.ts)** — define input, success, and error schemas with `Action.make`; collect them with `ActionGroup.make`.
-2. **[auth.ts](auth.ts)** — the application's identity model: `CurrentActor`, `Forbidden`, `Unauthenticated`, `authorize`. The library imports none of it.
-3. **[handlers.ts](handlers.ts)** — implement the whole group with `Actions.implement`; `Users` is resolved once at build, `CurrentActor` per request.
-4. **[app.ts](app.ts)** — project the implementation to HTTP and MCP, wrap both in authentication middleware, and supply `Users` once.
-5. **[server.ts](server.ts)** — serve the native router with `NodeHttpServer`; let Effect manage shutdown.
+| Token    | Actor / tenant | Permissions             |
+| -------- | -------------- | ----------------------- |
+| `alice`  | alice / acme   | users:read, users:write |
+| `reader` | reader / acme  | users:read              |
+| `bob`    | bob / other    | users:read, users:write |
 
-[client.ts](client.ts) demonstrates typed action calls from a consumer; supply an Effect HTTP client and authentication for your server.
+**Do not deploy these credentials or this authentication implementation.** State resets when the process restarts.
 
-[users.ts](users.ts) is the supporting domain service. Its in-memory implementation owns tenant-scoped reads and writes; it knows nothing about HTTP or MCP.
+```sh
+# A generated HTTP RPC endpoint over the getUser action
+curl -s http://127.0.0.1:3000/api/actions/getUser \
+  -H 'Authorization: Bearer alice' \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"1"}'
+# {"id":"1","name":"Ada"}
 
-## Registration
+# A generated HTTP route; the schema transforms "21" to numeric 21
+curl -s http://127.0.0.1:3000/api/actions/double \
+  -H 'Authorization: Bearer alice' \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"21"}'
+# 42
 
-```ts
-export const layer = Layer.mergeAll(
-  ActionHttp.layer(App),
-  ActionMcp.layer(App, { name: "effect-actions", version: "0.0.0" }),
-).pipe(Layer.provide(Authentication.layer), Layer.provide(Users.layerMemory));
+# The same action over MCP. The 2026-07-28 revision is stateless, so a single
+# request needs no initialize handshake. Older revisions negotiate a session
+# first; see the official-client tests.
+curl -s http://127.0.0.1:3000/mcp \
+  -H 'Authorization: Bearer alice' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'MCP-Method: tools/call' \
+  -H 'MCP-Name: double' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"double","arguments":{"value":"21"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"}}}}'
+# ... "structuredContent":{"value":42} ...
+
+# Generated OpenAPI 3.1 document
+curl -s http://127.0.0.1:3000/openapi.json \
+  -H 'Authorization: Bearer alice'
 ```
 
-`ActionHttp.layer` registers one native `POST /api/actions/<name>` endpoint per HTTP-enabled action, plus `GET /openapi.json`. All endpoints belong to one `actions` group, with operation IDs such as `actions.getUser`. `ActionMcp.layer` mounts Effect's native `McpServer` at `/mcp` and registers one tool per MCP-enabled action.
+For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list; a tool call the application's authorization rejects returns an `isError` result. The HTTP endpoint runs the same handler and therefore the same check.
 
-The implementation is opaque; there is no public `App.handlers` or `App.layer`. Both adapters acquire the same private binding once per runtime, and release scoped resources when that runtime closes.
+## Application structure
 
-`Authentication` is `HttpRouter.middleware<{ provides: CurrentActor }>`. Because the handlers read `CurrentActor`, both adapters require it per request; the middleware satisfies that requirement for every route it wraps, including `/mcp`. Leave it out and `HttpRouter.serve` does not compile. A build-only actor cannot serve as a runtime fallback on either transport; a value explicitly supplied in the request context is still the host's responsibility.
+- [contracts.ts](contracts.ts): user schemas and action contracts.
+- [auth.ts](auth.ts): identity, permissions, and authorization errors.
+- [users.ts](users.ts): an in-memory, tenant-scoped repository.
+- [handlers.ts](handlers.ts): handlers with startup and request dependencies.
+- [app.ts](app.ts): authentication middleware and adapter registration.
+- [server.ts](server.ts): the Node HTTP server and shutdown handling.
+- [client.ts](client.ts): typed HTTP calls; supply an HTTP client and authentication.
 
 ## Follow a request
 
 ```text
-POST /api/actions/getUser     MCP get_user({ id: "1" })
-body: { "id": "1" }
-      │                                 │
-      └──────── host authentication ────┘   provides CurrentActor to the request fiber
-                         │
-        HttpApiBuilder / McpServer.addTool   decode input with the action's codec
-                         │
-              bound getUser handler
-              authorize("users:read")        reads CurrentActor, fails with Forbidden
-                         │
-             Users.get(actor.tenantId, id)
-                         │
-       encode result, or fail with UserNotFound / Forbidden
-                         │
-     HttpApi encodes 404 / 403 · MCP encodes an isError result
+HTTP getUser / MCP get_user
+  → authentication middleware provides CurrentActor
+  → adapter decodes input
+  → handler checks users:read
+  → Users.get(actor.tenantId, id)
+  → adapter encodes the user or declared error
 ```
 
-`UserNotFound` declares `{ httpApiStatus: 404 }` and `Forbidden` `{ httpApiStatus: 403 }` on their schemas; each appears in the action's `error` list and in the OpenAPI document. Unannotated errors use the native 500 default.
+`UserNotFound` uses HTTP 404 and `Forbidden` uses 403. MCP returns the same
+encoded errors in an `isError` tool result. Tool discovery is not filtered by actor.
 
-Every action uses a generated `POST /api/actions/<name>` endpoint:
+A write through `renameUser` is visible through both transports. `double`
+demonstrates string-to-number input decoding. `whoAmI` reads the authenticated
+identity from request context, not action arguments.
 
-- `getUser` — a tenant-scoped read, also published under the MCP alias `get_user`.
-- `renameUser` — a write whose result is visible through both transports.
-- `double` — encoded input `{ "value": "21" }` becomes numeric input inside the handler, which returns `42`.
-- `whoAmI` — trusted identity arrives from the request context, never from action arguments.
-
-To add an action, define its contract, add it to `Actions`, and add its handler to `Actions.implement`; the missing handler is a compile error until you do. Default HTTP and MCP registration need no further wiring.
-
-This is a demo: bearer tokens are hardcoded and data is not persistent.
+See [dependency lifetimes](../docs/behavior.md#dependency-lifetimes) for how the
+handlers share `Users` while resolving `CurrentActor` on each request.

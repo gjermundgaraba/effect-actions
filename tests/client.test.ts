@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, Fiber, Layer, Schema, SchemaTransformation } from "effect";
 import {
   FetchHttpClient,
@@ -54,61 +54,58 @@ it.each(["configured", "standalone"] as const)(
       },
     );
     const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
-    try {
-      const response = await web.handler(new Request("http://localhost/schema"));
-      expect(response.status).toBe(200);
-      const document = Http.openapi(actions);
-      expect(await response.json()).toEqual(document);
-      expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
-      expect(document.paths).not.toHaveProperty("/rpc/hidden");
-      expect(Http.api(actions).groups.actions.endpoints.double).toBeDefined();
-      await Effect.gen(function* () {
-        const connection = {
-          baseUrl: "http://localhost",
-          transformClient: (client: HttpClient.HttpClient) =>
-            client.pipe(
-              HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer test")),
-            ),
-        };
-        const client = yield* mode === "configured"
-          ? Http.client(actions, connection)
-          : ActionHttp.client(actions, {
-              ...connection,
-              prefix: "/rpc",
-              schemaError,
-            });
-        expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
-        expect(yield* client.double({ value: 21 })).toBe(42);
-        expect(yield* client.ping()).toBe(true);
-        expect(yield* client.ping(undefined)).toBe(true);
-        expect(yield* client.optional()).toBe(7);
-        expect(yield* client.optional(undefined)).toBe(7);
-        expect(yield* client.optional({ value: 3 })).toBe(3);
-        expect(yield* Effect.flip(client.double({ value: 0 }))).toEqual(
-          new Invalid({ message: "Invalid output" }),
-        );
-      }).pipe(
-        Effect.provide(FetchHttpClient.layer),
-        Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
-          const request = new Request(input, init);
-          sent.push({
-            url: request.url,
-            body: await request.clone().json(),
-            token: request.headers.get("authorization"),
+    onTestFinished(() => web.dispose());
+    const response = await web.handler(new Request("http://localhost/schema"));
+    expect(response.status).toBe(200);
+    const document = Http.openapi(actions);
+    expect(await response.json()).toEqual(document);
+    expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
+    expect(document.paths).not.toHaveProperty("/rpc/hidden");
+    expect(Http.api(actions).groups.actions.endpoints.double).toBeDefined();
+    await Effect.gen(function* () {
+      const connection = {
+        baseUrl: "http://localhost",
+        transformClient: (client: HttpClient.HttpClient) =>
+          client.pipe(
+            HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer test")),
+          ),
+      };
+      const client = yield* mode === "configured"
+        ? Http.client(actions, connection)
+        : ActionHttp.client(actions, {
+            ...connection,
+            prefix: "/rpc",
+            schemaError,
           });
-          return web.handler(request);
-        }),
-        Effect.runPromise,
+      expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
+      expect(yield* client.double({ value: 21 })).toBe(42);
+      expect(yield* client.ping()).toBe(true);
+      expect(yield* client.ping(undefined)).toBe(true);
+      expect(yield* client.optional()).toBe(7);
+      expect(yield* client.optional(undefined)).toBe(7);
+      expect(yield* client.optional({ value: 3 })).toBe(3);
+      expect(yield* Effect.flip(client.double({ value: 0 }))).toEqual(
+        new Invalid({ message: "Invalid output" }),
       );
-      expect(sent[0]).toEqual({
-        url: "http://localhost/rpc/double",
-        body: { value: "21" },
-        token: "Bearer test",
-      });
-      expect(sent.slice(1, 5).map((request) => request.body)).toEqual([{}, {}, {}, {}]);
-    } finally {
-      await web.dispose();
-    }
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
+        const request = new Request(input, init);
+        sent.push({
+          url: request.url,
+          body: await request.clone().json(),
+          token: request.headers.get("authorization"),
+        });
+        return web.handler(request);
+      }),
+      Effect.runPromise,
+    );
+    expect(sent[0]).toEqual({
+      url: "http://localhost/rpc/double",
+      body: { value: "21" },
+      token: "Bearer test",
+    });
+    expect(sent.slice(1, 5).map((request) => request.body)).toEqual([{}, {}, {}, {}]);
   },
 );
 

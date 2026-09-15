@@ -22,11 +22,10 @@ export default defineConfig({
     exports: true,
   },
   lint: {
-    ignorePatterns: ["dist/**"],
+    ignorePatterns: ["dist/**", "scripts/package-consumer/**"],
     options: {
       typeAware: true,
       typeCheck: true,
     },
   },
-  fmt: {},
 });

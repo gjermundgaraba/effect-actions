@@ -4,32 +4,7 @@ import { McpSchema } from "effect/unstable/ai";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
 import { makeTestHttp, makeTestMcp } from "./http.js";
-
-/** A stateless 2026-07-28 request. */
-const mcpRequest = (method: string, params: Record<string, unknown> = {}) =>
-  new Request("http://localhost/mcp", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": "2026-07-28",
-      "mcp-method": method,
-      ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: {
-        ...params,
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
-        },
-      },
-    }),
-  });
+import { mcpRequest } from "./mcp.js";
 
 const mcpCall = (name: string, args: unknown = {}) =>
   mcpRequest("tools/call", { name, arguments: args });
@@ -484,18 +459,15 @@ it("can leave OpenAPI registration to the host without disabling action routes",
     }),
   ).implement({ ping: () => Effect.succeed("pong") });
   const web = makeTestHttp(app, Layer.empty, { openapiPath: false });
-  try {
-    const response = await web.handler(
-      new Request("http://localhost/api/actions/ping", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }),
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toBe("pong");
-    expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
-  } finally {
-    await web.dispose();
-  }
+  onTestFinished(() => web.dispose());
+  const response = await web.handler(
+    new Request("http://localhost/api/actions/ping", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toBe("pong");
+  expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
 });

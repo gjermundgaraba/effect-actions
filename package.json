@@ -25,7 +25,8 @@
     "check": "vp check",
     "prepublishOnly": "vp run build",
     "prepare": "vp config",
-    "example": "node --import tsx examples/server.ts"
+    "example": "node --import tsx examples/server.ts",
+    "test:package": "vp run build && node scripts/test-package.mjs"
   },
   "devDependencies": {
     "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect/@effect/platform-node@4e4a3a6",

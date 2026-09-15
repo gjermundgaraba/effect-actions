@@ -20,9 +20,7 @@ const authenticate = (request: HttpServerRequest.HttpServerRequest) => {
 
 const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated);
 
-// Host policy: provides CurrentActor to every route it wraps, including /mcp.
-// Because it `provides` CurrentActor, it satisfies the request requirement the
-// handlers declare; omitting it is a compile error at HttpRouter.serve.
+// Provide CurrentActor to both HTTP and MCP requests.
 const Authentication = HttpRouter.middleware<{ provides: CurrentActor }>()((httpEffect) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -50,11 +48,8 @@ const Authentication = HttpRouter.middleware<{ provides: CurrentActor }>()((http
   }),
 );
 
-/** The native HttpApi, for clients and documentation. */
 export const api = ActionHttp.api(App);
 
-// Both transports serve the same implementation. Users is a build-time
-// dependency of the handlers; CurrentActor arrives per request.
 export const layer = Layer.mergeAll(
   ActionHttp.layer(App),
   ActionMcp.layer(App, {

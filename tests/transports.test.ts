@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
@@ -7,13 +7,14 @@ import { makeTestApp } from "./http.js";
 import { api } from "../examples/app.js";
 import { ActionHttp } from "../src/index.js";
 import { Actions } from "../examples/contracts.js";
+import { withMcpClient } from "./mcp.js";
 
 let app: ReturnType<typeof makeTestApp>;
 beforeEach(() => {
   app = makeTestApp();
 });
 afterEach(async () => {
-  await app.close();
+  await app.dispose();
 });
 
 const request = (path: string, token = "alice", body?: unknown, method?: string) =>
@@ -23,30 +24,20 @@ const request = (path: string, token = "alice", body?: unknown, method?: string)
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 
-// Semantic tests use the SDK; registration.test.ts retains hand-crafted wire coverage.
-const withMcp = async <A>(run: (client: Client) => Promise<A>, token = "alice") => {
-  const client = new Client(
-    { name: "test", version: "0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
-  );
-  try {
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
-        requestInit: { headers: { authorization: `Bearer ${token}` } },
-        fetch: (input, init) => app.fetch(new Request(input, init)),
-      }),
-    );
-    return await run(client);
-  } finally {
-    await client.close();
-  }
+const authenticatedFetch = (token: string) => (request: Request) => {
+  request.headers.set("authorization", `Bearer ${token}`);
+  return app.handler(request);
 };
+
+const withMcp = <A>(run: (client: Client) => Promise<A>, token = "alice") =>
+  withMcpClient(authenticatedFetch(token), run);
+
 const tool = (name: string, args: Record<string, unknown>, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
 
 describe("one implementation, both transports", () => {
   it("serves generated POST endpoints with the natural encoding", async () => {
-    const response = await app.fetch(request("/api/actions/getUser", "alice", { id: "1" }));
+    const response = await app.handler(request("/api/actions/getUser", "alice", { id: "1" }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: "1", name: "Ada" });
   });
@@ -65,7 +56,7 @@ describe("one implementation, both transports", () => {
   });
 
   it("decodes input transforms on both transports; MCP wraps results as { value }", async () => {
-    const http = await app.fetch(request("/api/actions/double", "alice", { value: "21" }));
+    const http = await app.handler(request("/api/actions/double", "alice", { value: "21" }));
     expect(await http.json()).toBe(42);
     const reply = await tool("double", { value: "21" });
     expect(reply.isError).toBe(false);
@@ -75,21 +66,21 @@ describe("one implementation, both transports", () => {
   it("a write through MCP is immediately visible through HTTP", async () => {
     const reply = await tool("rename_user", { id: "1", name: "Lovelace" });
     expect(reply.isError).toBe(false);
-    const response = await app.fetch(request("/api/actions/getUser", "alice", { id: "1" }));
+    const response = await app.handler(request("/api/actions/getUser", "alice", { id: "1" }));
     expect(await response.json()).toEqual({ id: "1", name: "Lovelace" });
-    const other = await app.fetch(request("/api/actions/getUser", "bob", { id: "1" }));
+    const other = await app.handler(request("/api/actions/getUser", "bob", { id: "1" }));
     expect(await other.json()).toEqual({ id: "1", name: "Grace" });
   });
 
   it("a write through HTTP is immediately visible through MCP", async () => {
-    await app.fetch(request("/api/actions/renameUser", "alice", { id: "1", name: "Byron" }));
+    await app.handler(request("/api/actions/renameUser", "alice", { id: "1", name: "Byron" }));
     expect((await tool("get_user", { id: "1" })).structuredContent).toEqual({
       value: { id: "1", name: "Byron" },
     });
   });
 
   it("preserves structured domain errors, with transport-specific status", async () => {
-    const http = await app.fetch(request("/api/actions/getUser", "alice", { id: "missing" }));
+    const http = await app.handler(request("/api/actions/getUser", "alice", { id: "missing" }));
     expect(http.status).toBe(404);
     const body = await http.json();
     expect(body).toEqual({ _tag: "UserNotFound", id: "missing" });
@@ -100,11 +91,12 @@ describe("one implementation, both transports", () => {
 
   it("rejects malformed input with each protocol's native error", async () => {
     expect(
-      (await app.fetch(request("/api/actions/double", "alice", { value: "nope" }))).status,
+      (await app.handler(request("/api/actions/double", "alice", { value: "nope" }))).status,
     ).toBe(400);
     expect(await tool("double", { value: "nope" })).toMatchObject({ isError: true });
     expect(
-      (await app.fetch(request("/api/actions/renameUser", "alice", { id: "1", name: "" }))).status,
+      (await app.handler(request("/api/actions/renameUser", "alice", { id: "1", name: "" })))
+        .status,
     ).toBe(400);
   });
 
@@ -118,13 +110,13 @@ describe("one implementation, both transports", () => {
       _tag: "Forbidden",
       permission: "users:write",
     });
-    const forbidden = await app.fetch(
+    const forbidden = await app.handler(
       request("/api/actions/renameUser", "reader", { id: "1", name: "unauthorized" }),
     );
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual(denied.structuredContent);
     expect(
-      await (await app.fetch(request("/api/actions/getUser", "alice", { id: "1" }))).json(),
+      await (await app.handler(request("/api/actions/getUser", "alice", { id: "1" }))).json(),
     ).toEqual({
       id: "1",
       name: "Ada",
@@ -161,7 +153,7 @@ describe("one implementation, both transports", () => {
     const tokens = Array.from({ length: 20 }, (_, index) => (index % 2 === 0 ? "alice" : "bob"));
     const responses = await Promise.all(
       tokens.map(async (token) =>
-        (await app.fetch(request("/api/actions/whoAmI", token, {}))).json(),
+        (await app.handler(request("/api/actions/whoAmI", token, {}))).json(),
       ),
     );
     expect(responses).toEqual(
@@ -171,20 +163,22 @@ describe("one implementation, both transports", () => {
 
   it("authenticates both transports before execution", async () => {
     for (const path of ["/api/actions/getUser", "/mcp"]) {
-      const response = await app.fetch(new Request(`http://localhost${path}`, { method: "POST" }));
+      const response = await app.handler(
+        new Request(`http://localhost${path}`, { method: "POST" }),
+      );
       expect(response.status).toBe(401);
       expect(response.headers.get("www-authenticate")).toBe("Bearer");
       expect(await response.json()).toMatchObject({ _tag: "Unauthenticated" });
     }
-    expect((await app.fetch(request("/api/actions/getUser", "toString", { id: "1" }))).status).toBe(
-      401,
-    );
+    expect(
+      (await app.handler(request("/api/actions/getUser", "toString", { id: "1" }))).status,
+    ).toBe(401);
   });
 
   it("marks authenticated responses as uncacheable", async () => {
-    const response = await app.fetch(request("/api/actions/getUser", "alice", { id: "1" }));
+    const response = await app.handler(request("/api/actions/getUser", "alice", { id: "1" }));
     expect(response.headers.get("cache-control")).toBe("no-store");
-    const failure = await app.fetch(request("/api/actions/getUser", "alice", { id: "missing" }));
+    const failure = await app.handler(request("/api/actions/getUser", "alice", { id: "missing" }));
     expect(failure.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -193,23 +187,23 @@ describe("one implementation, both transports", () => {
       method: "POST",
       headers: { authorization: "Bearer alice" },
     });
-    expect((await app.fetch(foreign)).status).toBe(403);
+    expect((await app.handler(foreign)).status).toBe(403);
     const crossOrigin = request("/api/actions/getUser", "alice", { id: "1" });
     crossOrigin.headers.set("origin", "https://evil.example");
-    expect((await app.fetch(crossOrigin)).status).toBe(403);
+    expect((await app.handler(crossOrigin)).status).toBe(403);
   });
 
   it("uses native Effect HTTP request semantics", async () => {
-    expect((await app.fetch(request("/does-not-exist"))).status).toBe(404);
-    expect((await app.fetch(request("/api/actions/getUser"))).status).toBe(404);
+    expect((await app.handler(request("/does-not-exist"))).status).toBe(404);
+    expect((await app.handler(request("/api/actions/getUser"))).status).toBe(404);
     const malformed = new Request(request("/api/actions/double", "alice", {}), {
       method: "POST",
       body: "{",
     });
-    expect((await app.fetch(malformed)).status).toBe(400);
+    expect((await app.handler(malformed)).status).toBe(400);
     const wrongType = request("/api/actions/double", "alice", {});
     wrongType.headers.set("content-type", "text/plain");
-    expect((await app.fetch(wrongType)).status).toBe(415);
+    expect((await app.handler(wrongType)).status).toBe(415);
   });
 
   it("derives OpenAPI request/response contracts, including declared errors", async () => {
@@ -219,7 +213,7 @@ describe("one implementation, both transports", () => {
       components: Schema.Struct({ schemas: Schema.JsonObject }),
     });
     const document = Schema.decodeUnknownSync(schema)(
-      await (await app.fetch(request("/openapi.json"))).json(),
+      await (await app.handler(request("/openapi.json"))).json(),
     );
     expect(document.openapi).toBe("3.1.0");
     expect(Object.keys(document.paths)).toEqual([
@@ -279,7 +273,7 @@ describe("one implementation, both transports", () => {
       }).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-          app.fetch(new Request(input, init)),
+          app.handler(new Request(input, init)),
         ),
       ),
     );
@@ -290,31 +284,23 @@ describe("one implementation, both transports", () => {
     "supports the official v2 MCP client in %s mode",
     async (era) => {
       const versions = new Set<string | null>();
-      const client = new Client(
-        { name: "test", version: "1.0.0" },
-        { versionNegotiation: { mode: era === "modern" ? { pin: "2026-07-28" } : "legacy" } },
-      );
-      const transport = new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
-        requestInit: { headers: { authorization: "Bearer alice" } },
-        fetch: (input, init) => {
-          const req = new Request(input, init);
-          versions.add(req.headers.get("mcp-protocol-version"));
-          return app.fetch(req);
+      await withMcpClient(
+        (request) => {
+          versions.add(request.headers.get("mcp-protocol-version"));
+          return authenticatedFetch("alice")(request);
         },
-      });
-      try {
-        await client.connect(transport);
-        const tools = await client.listTools();
-        expect(tools.tools.map((tool) => tool.name)).toContain("double");
-        const result = await client.callTool({ name: "double", arguments: { value: "7" } });
-        expect(result.structuredContent).toEqual({ value: 14 });
-        const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
-        expect(failure.isError).toBe(true);
-        expect(failure.structuredContent).toEqual({ _tag: "UserNotFound", id: "missing" });
-        expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
-      } finally {
-        await client.close();
-      }
+        async (client) => {
+          const tools = await client.listTools();
+          expect(tools.tools.map((tool) => tool.name)).toContain("double");
+          const result = await client.callTool({ name: "double", arguments: { value: "7" } });
+          expect(result.structuredContent).toEqual({ value: 14 });
+          const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
+          expect(failure.isError).toBe(true);
+          expect(failure.structuredContent).toEqual({ _tag: "UserNotFound", id: "missing" });
+          expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
+        },
+        { mode: era },
+      );
     },
   );
 });

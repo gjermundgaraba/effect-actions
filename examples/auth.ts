@@ -1,8 +1,5 @@
 import { Context, Effect, Schema } from "effect";
 
-// Identity and authorization are the application's policy. The action library
-// never reads any of this; handlers reach it through the request context.
-
 export type Permission = "users:read" | "users:write";
 
 export interface Actor {
