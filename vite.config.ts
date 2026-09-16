@@ -14,6 +14,9 @@ export default defineConfig({
       ActionGroup: "src/ActionGroup.ts",
       http: "src/ActionHttp.ts",
       mcp: "src/ActionMcp.ts",
+      authentication: "src/Authentication.ts",
+      testing: "src/Testing.ts",
+      "testing/client": "src/TestingClient.ts",
     },
     deps: { resolveDepSubpath: true },
     dts: {
@@ -22,7 +25,11 @@ export default defineConfig({
     exports: true,
   },
   lint: {
-    ignorePatterns: ["dist/**", "scripts/package-consumer/**"],
+    ignorePatterns: [
+      "dist/**",
+      "scripts/package-consumer/**",
+      "scripts/package-testing-consumer.ts",
+    ],
     options: {
       typeAware: true,
       typeCheck: true,

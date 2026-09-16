@@ -1,20 +1,14 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Deferred, Effect, JsonPointer, Layer, Schema } from "effect";
+import { Deferred, Effect, JsonPointer, Layer, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter } from "effect/unstable/http";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
-import { makeTestHttp, makeTestMcp } from "./http.js";
-import { mcpRequest } from "./mcp.js";
+import { makeTestHttp, makeTestMcp } from "./server.js";
+import { mcpRequest } from "../src/Testing.js";
+import { post } from "./requests.js";
 
 const mcpCall = (name: string, args: unknown = {}) =>
   mcpRequest("tools/call", { name, arguments: args });
-
-const post = (path: string, body: unknown = {}) =>
-  new Request(`http://localhost${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
   const response = await handler(mcpRequest("tools/list"));
@@ -162,56 +156,6 @@ describe("projection boundaries", () => {
       result: { isError: true, structuredContent: { _tag: "Conflict" } },
     });
   });
-
-  describe.each(["HTTP", "MCP"])(
-    "uses the request service, never a startup copy, over %s",
-    (transport) => {
-      class Who extends Context.Service<Who, string>()("test/Who") {}
-      const Identity = Action.make("identity", {
-        description: "Request identity",
-        success: Schema.String,
-      });
-      const app = ActionGroup.make(Identity).implement({ identity: () => Who });
-      const request = Layer.succeed(Who, "request");
-      const startup = Layer.succeed(Who, "startup");
-      const routes = () =>
-        transport === "HTTP"
-          ? ActionHttp.layer(app)
-          : ActionMcp.layer(app, { name: "test", version: "0" });
-      const call = async (web: { handler: (request: Request) => Promise<Response> }) => {
-        const response = await web.handler(
-          transport === "HTTP" ? post("/api/actions/identity") : mcpCall("identity"),
-        );
-        expect(response.status).toBe(200);
-        const body: unknown = await response.json();
-        return transport === "HTTP"
-          ? body
-          : Schema.decodeUnknownSync(
-              Schema.Struct({
-                result: Schema.Struct({
-                  structuredContent: Schema.Struct({ value: Schema.String }),
-                }),
-              }),
-            )(body).result.structuredContent.value;
-      };
-
-      it.each(["provided to the routes' build", "present in the runtime context"])(
-        "with a startup copy %s",
-        async (placement) => {
-          const withRequest = routes().pipe(HttpRouter.provideRequest(request));
-          const placed = placement.startsWith("provided")
-            ? withRequest.pipe(Layer.provide(startup))
-            : Layer.merge(withRequest, startup);
-          const web = HttpRouter.toWebHandler(
-            placed.pipe(Layer.provide(HttpServer.layerServices)),
-            { disableLogger: true },
-          );
-          onTestFinished(() => web.dispose());
-          expect(await call(web)).toBe("request");
-        },
-      );
-    },
-  );
 
   it("keeps schema refs valid when nesting documents in OpenAPI", () => {
     const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });

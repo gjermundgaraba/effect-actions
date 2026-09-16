@@ -3,7 +3,7 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
-import { makeTestHttp, makeTestMcp } from "./http.js";
+import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/auth.js";
 import { Actions } from "../examples/contracts.js";
 import { App } from "../examples/handlers.js";

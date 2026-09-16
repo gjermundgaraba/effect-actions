@@ -4,12 +4,10 @@ import type * as Action from "./Action.js";
 
 export type { Implementation } from "./internal/implementation.js";
 
-/** The exhaustive handler record for a group; each handler is typed by its contract. */
 type HandlersFrom<Actions extends ReadonlyArray<Action.Any>> = {
   readonly [A in Actions[number] as A["name"]]: Action.Handler<A, any>;
 };
 
-/** The union of every handler's requirements. */
 type HandlersContext<H> = {
   [K in keyof H]: H[K] extends (input: never) => Effect.Effect<infer _A, infer _E, infer R>
     ? R

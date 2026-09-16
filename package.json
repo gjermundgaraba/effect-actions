@@ -2,7 +2,15 @@
   "name": "@gjermundgaraba/effect-actions",
   "version": "0.1.0-rc.0",
   "description": "Define Effect action contracts once and expose them over HTTP and MCP.",
+  "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
+  "bugs": {
+    "url": "https://github.com/gjermundgaraba/effect-actions/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gjermundgaraba/effect-actions.git"
+  },
   "files": [
     "dist"
   ],
@@ -11,8 +19,11 @@
     ".": "./dist/index.mjs",
     "./Action": "./dist/Action.mjs",
     "./ActionGroup": "./dist/ActionGroup.mjs",
+    "./authentication": "./dist/authentication.mjs",
     "./http": "./dist/http.mjs",
     "./mcp": "./dist/mcp.mjs",
+    "./testing": "./dist/testing.mjs",
+    "./testing/client": "./dist/testing/client.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -39,7 +50,13 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "effect": "4.0.0-rc.115"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/client": {
+      "optional": true
+    }
   },
   "devEngines": {
     "packageManager": {

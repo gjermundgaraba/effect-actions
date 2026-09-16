@@ -1,6 +1,7 @@
 # Authenticated HTTP and MCP example
 
 Run `vp run example` from the repository root after `vp install`.
+In another terminal, run `node --import tsx examples/client.ts` for typed HTTP calls.
 
 The example listens on **127.0.0.1:3000**. It uses an in-memory repository and deliberately fake bearer tokens:
 
@@ -53,9 +54,9 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 - [auth.ts](auth.ts): identity, permissions, and authorization errors.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository.
 - [handlers.ts](handlers.ts): handlers with startup and request dependencies.
-- [app.ts](app.ts): authentication middleware and adapter registration.
+- [app.ts](app.ts): `Authentication.middleware`, application Host/Origin policy, and adapter registration.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
-- [client.ts](client.ts): typed HTTP calls; supply an HTTP client and authentication.
+- [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 
 ## Follow a request
 

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,17 @@ try {
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
   run(process.execPath, ["index.js"]);
+  if (existsSync(join(consumer, "node_modules/@modelcontextprotocol/client"))) {
+    throw new Error("The optional testing peer was installed for a core and raw-request consumer");
+  }
+  run("vp", [
+    "add",
+    "--ignore-scripts",
+    `@modelcontextprotocol/client@${manifest.devDependencies["@modelcontextprotocol/client"]}`,
+  ]);
+  cpSync(join(root, "scripts/package-testing-consumer.ts"), join(consumer, "testing.ts"));
+  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
+  run(process.execPath, ["testing.js"]);
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

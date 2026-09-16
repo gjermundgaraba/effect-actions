@@ -2,7 +2,9 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Schema, Tracer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
-import { withMcpClient } from "./mcp.js";
+import { mcpRequest } from "../src/Testing.js";
+import { withMcpClient } from "../src/TestingClient.js";
+import { post } from "./requests.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
@@ -10,12 +12,6 @@ const identity = Action.make("identity", {
   description: "Request identity",
   success: Schema.String,
 });
-const post = (path: string) =>
-  new Request(`http://localhost${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: "{}",
-  });
 
 describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
   "context isolation: %s",
@@ -220,5 +216,56 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
     }
     expect(logs).toContainEqual(["handler ran"]);
     expect(spans).toContain("action.identity");
+  },
+);
+
+describe.each(["HTTP", "MCP"])(
+  "uses the request service, never a startup copy, over %s",
+  (transport) => {
+    class Who extends Context.Service<Who, string>()("test/Who") {}
+    const Identity = Action.make("identity", {
+      description: "Request identity",
+      success: Schema.String,
+    });
+    const app = ActionGroup.make(Identity).implement({ identity: () => Who });
+    const request = Layer.succeed(Who, "request");
+    const startup = Layer.succeed(Who, "startup");
+    const routes = () =>
+      transport === "HTTP"
+        ? ActionHttp.layer(app)
+        : ActionMcp.layer(app, { name: "test", version: "0" });
+    const call = async (web: { handler: (request: Request) => Promise<Response> }) => {
+      const response = await web.handler(
+        transport === "HTTP"
+          ? post("/api/actions/identity")
+          : mcpRequest("tools/call", { name: "identity", arguments: {} }),
+      );
+      expect(response.status).toBe(200);
+      const body: unknown = await response.json();
+      return transport === "HTTP"
+        ? body
+        : Schema.decodeUnknownSync(
+            Schema.Struct({
+              result: Schema.Struct({
+                structuredContent: Schema.Struct({ value: Schema.String }),
+              }),
+            }),
+          )(body).result.structuredContent.value;
+    };
+
+    it.each(["provided to the routes' build", "present in the runtime context"])(
+      "with a startup copy %s",
+      async (placement) => {
+        const withRequest = routes().pipe(HttpRouter.provideRequest(request));
+        const placed = placement.startsWith("provided")
+          ? withRequest.pipe(Layer.provide(startup))
+          : Layer.merge(withRequest, startup);
+        const web = HttpRouter.toWebHandler(placed.pipe(Layer.provide(HttpServer.layerServices)), {
+          disableLogger: true,
+        });
+        onTestFinished(() => web.dispose());
+        expect(await call(web)).toBe("request");
+      },
+    );
   },
 );

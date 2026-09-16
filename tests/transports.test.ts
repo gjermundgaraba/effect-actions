@@ -3,11 +3,11 @@ import type { Client } from "@modelcontextprotocol/client";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
-import { makeTestApp } from "./http.js";
+import { makeTestApp } from "./server.js";
 import { api } from "../examples/app.js";
 import { ActionHttp } from "../src/index.js";
 import { Actions } from "../examples/contracts.js";
-import { withMcpClient } from "./mcp.js";
+import { withMcpClient } from "../src/TestingClient.js";
 
 let app: ReturnType<typeof makeTestApp>;
 beforeEach(() => {

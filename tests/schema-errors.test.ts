@@ -4,7 +4,7 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
-import { mcpRequest as toolRequest } from "./mcp.js";
+import { mcpRequest as toolRequest } from "../src/Testing.js";
 
 class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
   "InvalidRequest",
@@ -284,10 +284,14 @@ it("does not recursively map a broken policy error", async () => {
   );
   onTestFinished(() => web.dispose());
   const http = await web.handler(request("private"));
-  expect(http.status).toBeGreaterThanOrEqual(400);
-  expect(await http.text()).not.toContain("private");
+  expect(http.status).toBe(500);
+  expect(await http.text()).toBe("");
   const mcp = await web.handler(mcpRequest("private"));
-  expect(await mcp.text()).not.toContain("private");
+  expect(await mcp.json()).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    error: { _tag: "InternalError", code: -32603, message: "Internal error" },
+  });
   expect(mappings).toBe(2);
 });
 
@@ -324,9 +328,11 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
   expect(http.status).toBe(500);
   expect(await http.text()).toBe("");
   const mcp = await web.handler(mcpRequest(1));
-  const body = await mcp.text();
-  expect(body).not.toContain("Domain");
-  expect(body).not.toContain("InvalidResponse");
+  expect(await mcp.json()).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    error: { _tag: "InternalError", code: -32603, message: "Internal error" },
+  });
   expect(mappings).toBe(0);
 });
 

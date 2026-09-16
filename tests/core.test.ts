@@ -2,7 +2,7 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema } from "effect";
 import { Action, ActionGroup, ActionHttp } from "../src/index.js";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { makeTestHttp } from "./http.js";
+import { makeTestHttp } from "./server.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
 
 describe("contracts", () => {

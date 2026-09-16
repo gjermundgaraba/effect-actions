@@ -1,6 +1,6 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { ActionHttp, ActionMcp } from "../src/index.js";
+import { ActionHttp, ActionMcp, Authentication } from "../src/index.js";
 import { type Actor, CurrentActor, Unauthenticated } from "./auth.js";
 import { App } from "./handlers.js";
 import { Users } from "./users.js";
@@ -15,13 +15,24 @@ export const actors: Readonly<Record<string, Actor>> = {
 const authenticate = (request: HttpServerRequest.HttpServerRequest) => {
   const authorization = request.headers.authorization;
   const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
-  return Object.hasOwn(actors, token) ? Option.some(actors[token]) : Option.none();
+  return Object.hasOwn(actors, token) ? Option.fromUndefinedOr(actors[token]) : Option.none();
 };
 
-const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated);
+// Authentication owns error serialization and CurrentActor provision. The host
+// keeps its concrete Host/Origin policy at the HTTP boundary.
+const authentication = Authentication.middleware(CurrentActor, {
+  authenticate: Effect.gen(function* () {
+    const actor = authenticate(yield* HttpServerRequest.HttpServerRequest);
+    if (Option.isNone(actor)) {
+      return yield* new Unauthenticated({ message: "A demo bearer token is required." });
+    }
+    return actor.value;
+  }),
+  errors: [Unauthenticated],
+  headers: () => ({ "www-authenticate": "Bearer" }),
+});
 
-// Provide CurrentActor to both HTTP and MCP requests.
-const Authentication = HttpRouter.middleware<{ provides: CurrentActor }>()((httpEffect) =>
+const requestPolicy = HttpRouter.middleware((httpEffect) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request.modify({ url: request.originalUrl }));
@@ -32,19 +43,7 @@ const Authentication = HttpRouter.middleware<{ provides: CurrentActor }>()((http
     if (origin !== undefined && origin !== url.value.origin) {
       return HttpServerResponse.text("Origin not allowed", { status: 403 });
     }
-
-    const actor = authenticate(request);
-    const response = Option.isNone(actor)
-      ? yield* unauthenticated(
-          new Unauthenticated({ message: "A demo bearer token is required." }),
-          {
-            status: 401,
-            headers: { "www-authenticate": "Bearer" },
-          },
-        ).pipe(Effect.orDie)
-      : yield* httpEffect.pipe(Effect.provideService(CurrentActor, actor.value));
-    // Authenticated responses must never be cached by intermediaries.
-    return HttpServerResponse.setHeader(response, "cache-control", "no-store");
+    return yield* httpEffect;
   }),
 );
 
@@ -57,4 +56,7 @@ export const layer = Layer.mergeAll(
     version: "0.0.0",
     allowedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000"],
   }),
-).pipe(Layer.provide(Authentication.layer), Layer.provide(Users.layerMemory));
+).pipe(
+  Layer.provide(authentication.combine(requestPolicy).layer),
+  Layer.provide(Users.layerMemory),
+);
