@@ -15,10 +15,16 @@ import type * as Action from "./Action.js";
 import { handlerFor, Implementation } from "./internal/implementation.js";
 
 export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
+  readonly apiPath: `/${string}`;
   readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
-  readonly prefix?: `/${string}`;
+}
+
+/** Layer/configure options: mount path plus OpenAPI document route. */
+export interface LayerOptions<
+  Errors extends ReadonlyArray<Action.Codec> = [],
+> extends Options<Errors> {
   /** Set false when the host serves a combined document for multiple groups. */
-  readonly openapiPath?: `/${string}` | false;
+  readonly openapiPath: `/${string}` | false;
 }
 
 /** A group or its implementation. */
@@ -43,32 +49,31 @@ type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readon
       >
     : never;
 
-const endpoint = (prefix: `/${string}`, action: Action.Any, errors: ReadonlyArray<Action.Codec>) =>
-  HttpApiEndpoint.post(action.name, `${prefix}/${action.name}`, {
+const endpoint = (apiPath: `/${string}`, action: Action.Any, errors: ReadonlyArray<Action.Codec>) =>
+  HttpApiEndpoint.post(action.name, `${apiPath}/${action.name}`, {
     payload: action.input,
     success: action.success,
     error: [...action.errors, ...errors],
   }).annotate(OpenApi.Description, action.description);
 
-/** The native `HttpApi` for every HTTP-enabled action: `POST <prefix>/<name>`. */
+/** The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`. */
 export function api<
   A extends ReadonlyArray<Action.Any>,
   Errors extends ReadonlyArray<Action.Codec> = [],
 >(
   group: Actions<A>,
-  options?: Options<Errors>,
+  options: Options<Errors>,
 ): HttpApi.HttpApi<
   "actions",
   HttpApiGroup.HttpApiGroup<"actions", Endpoint<A[number], Errors[number]>>
 >;
 export function api(
   group: Actions,
-  options: Options<ReadonlyArray<Action.Codec>> = {},
+  options: Options<ReadonlyArray<Action.Codec>>,
 ): HttpApi.Constraint {
-  const prefix = options.prefix ?? "/api/actions";
   const [first, ...rest] = group.actions
     .filter((action) => action.http)
-    .map((action) => endpoint(prefix, action, options.schemaError?.errors ?? []));
+    .map((action) => endpoint(options.apiPath, action, options.schemaError?.errors ?? []));
   if (first === undefined) throw new Error("No HTTP-enabled actions");
   return HttpApi.make("actions").add(HttpApiGroup.make("actions").add(first, ...rest));
 }
@@ -76,12 +81,12 @@ export function api(
 /** The OpenAPI 3.1 document Effect derives from `api`. */
 export const openapi = <Errors extends ReadonlyArray<Action.Codec> = []>(
   group: Actions,
-  options: Options<Errors> = {},
+  options: Options<Errors>,
 ) => OpenApi.fromApi(api(group, options));
 
 /**
- * Register the endpoints and `GET /openapi.json` on the router. Handler
- * requirements are request-level requirements, exactly as native
+ * Register the endpoints and optional OpenAPI document route on the router.
+ * Handler requirements are request-level requirements, exactly as native
  * `HttpApiBuilder` handlers' are. Groups with no HTTP action register nothing.
  */
 export const layer = <
@@ -92,7 +97,7 @@ export const layer = <
   Errors extends ReadonlyArray<Action.Codec> = [],
 >(
   app: Implementation<Actions, R, EX, RX>,
-  options: Options<Errors> = {},
+  options: LayerOptions<Errors>,
 ): Layer.Layer<
   never,
   EX,
@@ -149,8 +154,7 @@ export const layer = <
       ),
     );
     return HttpApiBuilder.layer(httpApi, {
-      openapiPath:
-        options.openapiPath === false ? undefined : (options.openapiPath ?? "/openapi.json"),
+      openapiPath: options.openapiPath === false ? undefined : options.openapiPath,
     }).pipe(Layer.provide(isolated));
   });
 };
@@ -159,7 +163,7 @@ type NativeClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>
 
 /** Connection options plus the transport configuration used by HTTP clients. */
 export type ClientOptions<Errors extends ReadonlyArray<Action.Codec> = []> = NativeClientOptions &
-  Pick<Options<Errors>, "prefix" | "schemaError">;
+  Options<Errors>;
 
 /** Direct decoded-input methods, excluding MCP-only actions. */
 export type Client<A extends ReadonlyArray<Action.Any>, E extends Action.Codec = never> = {
@@ -172,7 +176,7 @@ export type Client<A extends ReadonlyArray<Action.Any>, E extends Action.Codec =
 
 /** Bind transport configuration once for contracts, routes, documents and clients. */
 export const configure = <Errors extends ReadonlyArray<Action.Codec> = []>(
-  options: Options<Errors> = {},
+  options: LayerOptions<Errors>,
 ) => ({
   api: <A extends ReadonlyArray<Action.Any>>(group: Actions<A>) => api(group, options),
   openapi: (group: Actions) => openapi(group, options),
@@ -190,11 +194,11 @@ export function client<
   Errors extends ReadonlyArray<Action.Codec> = [],
 >(
   group: Actions<A>,
-  options?: ClientOptions<Errors>,
+  options: ClientOptions<Errors>,
 ): Effect.Effect<Client<A, Errors[number]>, never, HttpClient.HttpClient>;
 export function client(
   group: Actions,
-  options: ClientOptions<ReadonlyArray<Action.Codec>> = {},
+  options: ClientOptions<ReadonlyArray<Action.Codec>>,
 ): Effect.Effect<
   Readonly<Record<string, (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>>>,
   never,

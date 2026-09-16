@@ -1,13 +1,13 @@
 /** A stateless 2026-07-28 request. */
 export interface McpRequestOptions {
-  readonly url?: string | URL;
+  readonly url: string | URL;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
 export const mcpRequest = (
   method: string,
   params: Record<string, unknown> & { readonly _meta?: Record<string, unknown> } = {},
-  options: McpRequestOptions = {},
+  options: McpRequestOptions,
 ): Request => {
   const headers = new Headers(options.headers);
   for (const [name, value] of Object.entries({
@@ -18,7 +18,7 @@ export const mcpRequest = (
     ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
   }))
     headers.set(name, value);
-  return new Request(options.url ?? "http://localhost/mcp", {
+  return new Request(options.url, {
     method: "POST",
     headers,
     body: JSON.stringify({

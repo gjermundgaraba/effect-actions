@@ -84,8 +84,8 @@ describe("implementations", () => {
           ).implement({ hello: () => Effect.succeed(42) });
       const web = HttpRouter.toWebHandler(
         Layer.mergeAll(
-          ActionHttp.layer(appA, { prefix: "/a", openapiPath: "/a.json" }),
-          ActionHttp.layer(appB, { prefix: "/b", openapiPath: "/b.json" }),
+          ActionHttp.layer(appA, { apiPath: "/a", openapiPath: "/a.json" }),
+          ActionHttp.layer(appB, { apiPath: "/b", openapiPath: "/b.json" }),
         ).pipe(Layer.provide(HttpServer.layerServices)),
         { disableLogger: true },
       );

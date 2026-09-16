@@ -2,7 +2,7 @@ import { expect, it } from "vite-plus/test";
 import { mcpRequest } from "../src/Testing.js";
 
 it("supplies consistent stateless protocol defaults", async () => {
-  const request = mcpRequest("tools/list");
+  const request = mcpRequest("tools/list", {}, { url: "http://localhost/mcp" });
   const body = await request.json();
   expect(body).toMatchObject({
     params: {
@@ -22,7 +22,11 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
     "io.modelcontextprotocol/clientInfo": { name: "consumer", version: "2" },
     "io.modelcontextprotocol/protocolVersion": "2025-11-25",
   };
-  const request = mcpRequest("tools/call", { name: "inspect", arguments: {}, _meta: metadata });
+  const request = mcpRequest(
+    "tools/call",
+    { name: "inspect", arguments: {}, _meta: metadata },
+    { url: "http://localhost/mcp" },
+  );
   expect(await request.json()).toMatchObject({
     params: {
       name: "inspect",

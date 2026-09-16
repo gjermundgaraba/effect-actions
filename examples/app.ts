@@ -47,13 +47,17 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
   }),
 );
 
-export const api = ActionHttp.api(App);
+export const api = ActionHttp.api(App, { apiPath: "/api/actions" });
 
 export const layer = Layer.mergeAll(
-  ActionHttp.layer(App),
+  ActionHttp.layer(App, {
+    apiPath: "/api/actions",
+    openapiPath: "/openapi.json",
+  }),
   ActionMcp.layer(App, {
     name: "effect-actions",
     version: "0.0.0",
+    path: "/mcp",
     allowedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000"],
   }),
 ).pipe(

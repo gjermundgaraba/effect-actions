@@ -3,15 +3,15 @@ import { Deferred, Effect, JsonPointer, Layer, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
-import { makeTestHttp, makeTestMcp } from "./server.js";
+import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
 import { mcpRequest } from "../src/Testing.js";
 import { post } from "./requests.js";
 
 const mcpCall = (name: string, args: unknown = {}) =>
-  mcpRequest("tools/call", { name, arguments: args });
+  mcpRequest("tools/call", { name, arguments: args }, { url: testMcpUrl });
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
-  const response = await handler(mcpRequest("tools/list"));
+  const response = await handler(mcpRequest("tools/list", {}, { url: testMcpUrl }));
   expect(response.status).toBe(200);
   const reply = Schema.decodeUnknownSync(
     Schema.Struct({ result: Schema.Struct({ tools: Schema.Array(McpSchema.Tool) }) }),
@@ -53,7 +53,9 @@ describe("projection boundaries", () => {
       http: false,
     });
     const app = ActionGroup.make(Hidden).implement({ hidden: () => Effect.succeed("hidden") });
-    expect(() => ActionHttp.api(app)).toThrow("No HTTP-enabled actions");
+    expect(() => ActionHttp.api(app, { apiPath: "/api/actions" })).toThrow(
+      "No HTTP-enabled actions",
+    );
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
     expect((await web.handler(post("/api/actions/hidden"))).status).toBe(404);
@@ -76,7 +78,7 @@ describe("projection boundaries", () => {
       echo: Effect.succeed,
       hidden: () => Effect.succeed("hidden"),
     });
-    const options = { prefix: "/rpc", openapiPath: "/schema.json" } as const;
+    const options = { apiPath: "/rpc", openapiPath: "/schema.json" } as const;
     expect(Object.keys(ActionHttp.openapi(app, options).paths ?? {})).toEqual(["/rpc/echo"]);
     const web = makeTestHttp(app, Layer.empty, options);
     onTestFinished(() => web.dispose());
@@ -102,9 +104,10 @@ describe("projection boundaries", () => {
       const app = ActionGroup.make(Fail).implement({
         fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
       });
-      expect(ActionHttp.openapi(app).paths?.["/api/actions/fail"]?.post?.responses).toHaveProperty(
-        String(status ?? 500),
-      );
+      expect(
+        ActionHttp.openapi(app, { apiPath: "/api/actions" }).paths?.["/api/actions/fail"]?.post
+          ?.responses,
+      ).toHaveProperty(String(status ?? 500));
       const web = makeTestHttp(app, Layer.empty);
       onTestFinished(() => web.dispose());
       const response = await web.handler(post("/api/actions/fail"));
@@ -126,7 +129,9 @@ describe("projection boundaries", () => {
       fail: ({ which }) =>
         which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
     });
-    const responses = ActionHttp.openapi(app).paths?.["/api/actions/fail"]?.post?.responses;
+    const responses = ActionHttp.openapi(app, { apiPath: "/api/actions" }).paths?.[
+      "/api/actions/fail"
+    ]?.post?.responses;
     expect(responses).toHaveProperty("404");
     expect(responses).toHaveProperty("409");
     expect(responses).not.toHaveProperty("500");
@@ -163,7 +168,10 @@ describe("projection boundaries", () => {
       description: "Referenced schema",
       success: Schema.Struct({ first: Item, second: Item }),
     });
-    expectReferencesResolve(ActionHttp.openapi(ActionGroup.make(Read)), "#/components/schemas/");
+    expectReferencesResolve(
+      ActionHttp.openapi(ActionGroup.make(Read), { apiPath: "/api/actions" }),
+      "#/components/schemas/",
+    );
   });
 
   it.each(["Node", "acme/Node~x", "Node % 雪"])(
@@ -241,7 +249,7 @@ describe("projection boundaries", () => {
         success: Schema.String,
       });
       const app = ActionGroup.make(Invalid).implement({ invalid: () => Effect.succeed("unused") });
-      const layer = ActionMcp.layer(app, { name: "test", version: "0" }).pipe(
+      const layer = ActionMcp.layer(app, { name: "test", version: "0", path: "/mcp" }).pipe(
         Layer.provide(HttpRouter.layer),
       );
       await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(
@@ -257,7 +265,7 @@ describe("projection boundaries", () => {
       error: [Schema.String],
     });
     const app = ActionGroup.make(Scalar).implement({ scalar: () => Effect.fail("failure") });
-    const layer = ActionMcp.layer(app, { name: "test", version: "0" }).pipe(
+    const layer = ActionMcp.layer(app, { name: "test", version: "0", path: "/mcp" }).pipe(
       Layer.provide(HttpRouter.layer),
     );
     await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(

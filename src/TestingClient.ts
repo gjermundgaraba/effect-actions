@@ -1,8 +1,8 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 export interface McpClientOptions {
+  readonly path: string;
   readonly mode?: "legacy" | "modern";
-  readonly path?: string;
   readonly baseUrl?: string | URL;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
@@ -11,7 +11,7 @@ export interface McpClientOptions {
 export const withMcpClient = async <A>(
   fetch: (request: Request) => Promise<Response>,
   run: (client: Client) => Promise<A>,
-  { mode = "modern", path = "/mcp", baseUrl = "http://localhost", headers }: McpClientOptions = {},
+  { mode = "modern", path, baseUrl = "http://localhost", headers }: McpClientOptions,
 ): Promise<A> => {
   const client = new Client(
     { name: "test", version: "0" },

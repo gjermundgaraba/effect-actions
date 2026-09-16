@@ -11,7 +11,7 @@ export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
   readonly name: string;
   readonly version: string;
-  readonly path?: HttpRouter.PathInput;
+  readonly path: HttpRouter.PathInput;
   readonly protocols?: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>;
   readonly allowedOrigins?: ReadonlyArray<string>;
   readonly instructions?: string;
@@ -197,7 +197,7 @@ export const layer = <
           name: options.name,
           version: options.version,
           instructions: options.instructions,
-          path: options.path ?? "/mcp",
+          path: options.path,
           protocols: options.protocols ?? protocols,
           allowedOrigins: options.allowedOrigins,
         }),

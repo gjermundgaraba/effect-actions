@@ -3,6 +3,17 @@ import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { type Action, type ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
 import { layer } from "../examples/app.js";
 
+/** Test-local mount paths; production callers must pass their own. */
+export const testApiPath = "/api/actions" as const;
+export const testOpenapiPath = "/openapi.json" as const;
+export const testMcpPath = "/mcp" as const;
+export const testMcpUrl = "http://localhost/mcp";
+
+const defaultHttpOptions = {
+  apiPath: testApiPath,
+  openapiPath: testOpenapiPath,
+} as const satisfies ActionHttp.LayerOptions;
+
 // Each call builds fresh example state.
 export const makeTestApp = () =>
   HttpRouter.toWebHandler(layer.pipe(Layer.provide(HttpServer.layerServices)), {
@@ -13,23 +24,23 @@ export const makeTestApp = () =>
 export const makeTestHttp = <Actions extends ReadonlyArray<Action.Any>, R, EX>(
   app: ActionGroup.Implementation<Actions, R, EX, never>,
   request: Layer.Layer<NoInfer<R>>,
-  options?: ActionHttp.Options,
+  options?: Partial<ActionHttp.LayerOptions>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionHttp.layer(app, options).pipe(
+    ActionHttp.layer(app, { ...defaultHttpOptions, ...options }).pipe(
       HttpRouter.provideRequest(request),
       Layer.provide(HttpServer.layerServices),
     ),
     { disableLogger: true },
   );
 
-/** Serve an implementation over MCP at /mcp; `request` supplies its per-request services. */
+/** Serve an implementation over MCP; `request` supplies its per-request services. */
 export const makeTestMcp = <Actions extends ReadonlyArray<Action.Any>, R, EX>(
   app: ActionGroup.Implementation<Actions, R, EX, never>,
   request: Layer.Layer<NoInfer<R>>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionMcp.layer(app, { name: "test", version: "0" }).pipe(
+    ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }).pipe(
       HttpRouter.provideRequest(request),
       Layer.provide(HttpServer.layerServices),
     ),

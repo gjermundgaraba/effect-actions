@@ -5,6 +5,7 @@ import { Actions } from "./contracts.js";
 
 const lookup = Effect.gen(function* () {
   const client = yield* ActionHttp.client(Actions, {
+    apiPath: "/api/actions",
     baseUrl: "http://127.0.0.1:3000",
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
   });

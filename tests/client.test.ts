@@ -33,7 +33,7 @@ const schemaError = {
   map: () => new Invalid({ message: "Invalid output" }),
 };
 const Http = ActionHttp.configure({
-  prefix: "/rpc",
+  apiPath: "/rpc",
   openapiPath: "/schema",
   schemaError,
 });
@@ -74,7 +74,7 @@ it.each(["configured", "standalone"] as const)(
         ? Http.client(actions, connection)
         : ActionHttp.client(actions, {
             ...connection,
-            prefix: "/rpc",
+            apiPath: "/rpc",
             schemaError,
           });
       expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
@@ -215,7 +215,10 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
   );
   const bodies: unknown[] = [];
   await Effect.gen(function* () {
-    const client = yield* ActionHttp.client(group, { baseUrl: "http://localhost" });
+    const client = yield* ActionHttp.client(group, {
+      apiPath: "/api/actions",
+      baseUrl: "http://localhost",
+    });
     yield* client.nullable(null);
     yield* client.nullable(undefined);
     yield* client.undefinedValue(undefined);

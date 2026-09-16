@@ -3,7 +3,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
-import { makeTestApp } from "./server.js";
+import { makeTestApp, testMcpPath } from "./server.js";
 import { api } from "../examples/app.js";
 import { ActionHttp } from "../src/index.js";
 import { Actions } from "../examples/contracts.js";
@@ -30,7 +30,7 @@ const authenticatedFetch = (token: string) => (request: Request) => {
 };
 
 const withMcp = <A>(run: (client: Client) => Promise<A>, token = "alice") =>
-  withMcpClient(authenticatedFetch(token), run);
+  withMcpClient(authenticatedFetch(token), run, { path: testMcpPath });
 
 const tool = (name: string, args: Record<string, unknown>, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
@@ -253,7 +253,9 @@ describe("one implementation, both transports", () => {
         },
       },
     });
-    const doubleOperation = ActionHttp.openapi(Actions).paths?.["/api/actions/double"]?.post;
+    const doubleOperation = ActionHttp.openapi(Actions, { apiPath: "/api/actions" }).paths?.[
+      "/api/actions/double"
+    ]?.post;
     expect(doubleOperation?.operationId).toBe("actions.double");
     expect(doubleOperation?.responses).not.toHaveProperty("404");
     expect(Object.keys(document.components.schemas)).toContain("UserNotFoundEncoded");
@@ -299,7 +301,7 @@ describe("one implementation, both transports", () => {
           expect(failure.structuredContent).toEqual({ _tag: "UserNotFound", id: "missing" });
           expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
         },
-        { mode: era },
+        { mode: era, path: testMcpPath },
       );
     },
   );

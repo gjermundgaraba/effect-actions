@@ -29,6 +29,11 @@ const schemaError = {
       : new InvalidRequest({ error: "Invalid request" }),
 } satisfies Action.SchemaErrorPolicy<readonly [typeof InvalidRequest, typeof InvalidResponse]>;
 const options = { schemaError };
+const httpOptions = {
+  apiPath: "/api/actions" as const,
+  openapiPath: "/openapi.json" as const,
+  schemaError,
+};
 const actions = ActionGroup.make(
   Action.make("echo", {
     description: "Echo",
@@ -52,7 +57,7 @@ it("maps input and output failures and exposes the same error contract to client
         : Effect.succeed(value === 0 ? Infinity : value),
   });
   const web = HttpRouter.toWebHandler(
-    ActionHttp.layer(app, options).pipe(Layer.provide(HttpServer.layerServices)),
+    ActionHttp.layer(app, httpOptions).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
   onTestFinished(() => web.dispose());
@@ -74,7 +79,7 @@ it("maps input and output failures and exposes the same error contract to client
   const rejected = await web.handler(request(-1));
   expect(rejected.status).toBe(409);
   expect(await rejected.json()).toEqual({ _tag: "Rejected", error: "Negative value" });
-  const api = ActionHttp.api(actions, options);
+  const api = ActionHttp.api(actions, httpOptions);
   await Effect.gen(function* () {
     const client = yield* HttpApiClient.make(api, { baseUrl: "http://localhost" });
     expect(yield* client.actions.echo({ payload: { value: 12 } })).toBe(12);
@@ -91,7 +96,7 @@ it("maps input and output failures and exposes the same error contract to client
     ),
     Effect.runPromise,
   );
-  const document = ActionHttp.openapi(actions, options);
+  const document = ActionHttp.openapi(actions, httpOptions);
   expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("400");
   expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("500");
 });
@@ -100,7 +105,7 @@ it("policy middleware does not turn startup services into request fallbacks", as
   class Value extends Context.Service<Value, number>()("policy-test/Value") {}
   const app = actions.implement({ echo: () => Effect.map(Value, (value) => value) });
   const web = HttpRouter.toWebHandler(
-    ActionHttp.layer(app, options).pipe(
+    ActionHttp.layer(app, httpOptions).pipe(
       Layer.provide(Layer.succeed(Value, 42)),
       Layer.provide(HttpServer.layerServices),
     ),
@@ -119,9 +124,9 @@ it("keeps separate policies isolated on projections of one implementation", asyn
   const app = actions.implement({ echo: ({ value }) => Effect.succeed(value) });
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.layer(app, { prefix: "/a", openapiPath: false, ...options }),
+      ActionHttp.layer(app, { apiPath: "/a", openapiPath: false, ...options }),
       ActionHttp.layer(app, {
-        prefix: "/b",
+        apiPath: "/b",
         openapiPath: false,
         schemaError: {
           errors: [InvalidResponse],
@@ -151,7 +156,11 @@ it("keeps separate policies isolated on projections of one implementation", asyn
 const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }));
 
 const mcpRequest = (value: unknown) =>
-  toolRequest("tools/call", { name: "echo", arguments: { value } });
+  toolRequest(
+    "tools/call",
+    { name: "echo", arguments: { value } },
+    { url: "http://localhost/mcp" },
+  );
 
 it("shares input/output policy with MCP without converting domain errors or defects", async () => {
   const failures: Action.SchemaFailure[] = [];
@@ -171,13 +180,18 @@ it("shares input/output policy with MCP without converting domain errors or defe
       return schemaError.map(failure);
     },
   };
-  const Http = ActionHttp.configure({ schemaError: policy });
+  const Http = ActionHttp.configure({
+    apiPath: "/api/actions",
+    openapiPath: "/openapi.json",
+    schemaError: policy,
+  });
   const web = HttpRouter.toWebHandler(
     Layer.merge(
       Http.layer(app),
       ActionMcp.layer(app, {
         name: "test",
         version: "0",
+        path: "/mcp",
         schemaError: policy,
       }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
@@ -212,6 +226,7 @@ it("rejects non-object policy errors at MCP construction", async () => {
   const routes = ActionMcp.layer(app, {
     name: "test",
     version: "0",
+    path: "/mcp",
     schemaError: { errors: [Schema.String], map: () => "invalid" },
   });
   await expect(
@@ -251,8 +266,17 @@ it("executes each input/output transformation once with a policy enabled", async
   const app = group.implement({ echo: ({ value }) => Effect.succeed(value) });
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.configure({ schemaError }).layer(app),
-      ActionMcp.layer(app, { name: "test", version: "0", schemaError }),
+      ActionHttp.configure({
+        apiPath: "/api/actions",
+        openapiPath: "/openapi.json",
+        schemaError,
+      }).layer(app),
+      ActionMcp.layer(app, {
+        name: "test",
+        version: "0",
+        path: "/mcp",
+        schemaError,
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -277,8 +301,17 @@ it("does not recursively map a broken policy error", async () => {
   const app = actions.implement({ echo: ({ value }) => Effect.succeed(value) });
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.configure({ schemaError: broken }).layer(app),
-      ActionMcp.layer(app, { name: "test", version: "0", schemaError: broken }),
+      ActionHttp.configure({
+        apiPath: "/api/actions",
+        openapiPath: "/openapi.json",
+        schemaError: broken,
+      }).layer(app),
+      ActionMcp.layer(app, {
+        name: "test",
+        version: "0",
+        path: "/mcp",
+        schemaError: broken,
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -318,8 +351,17 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
   });
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.configure({ schemaError: policy }).layer(app),
-      ActionMcp.layer(app, { name: "test", version: "0", schemaError: policy }),
+      ActionHttp.configure({
+        apiPath: "/api/actions",
+        openapiPath: "/openapi.json",
+        schemaError: policy,
+      }).layer(app),
+      ActionMcp.layer(app, {
+        name: "test",
+        version: "0",
+        path: "/mcp",
+        schemaError: policy,
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -347,6 +389,7 @@ it("ignores unused policy errors when no MCP tools are exposed", async () => {
   const routes = ActionMcp.layer(group.implement({ httpOnly: () => Effect.succeed(true) }), {
     name: "test",
     version: "0",
+    path: "/mcp",
     schemaError: { errors: [Schema.String], map: () => "not an MCP error" },
   });
   await Effect.runPromise(

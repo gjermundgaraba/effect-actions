@@ -27,8 +27,11 @@ const app = Actions.implement({
 });
 
 export const routes = Layer.mergeAll(
-  ActionHttp.layer(app),
-  ActionMcp.layer(app, { name: "greetings", version: "1.0.0" }),
+  ActionHttp.layer(app, {
+    apiPath: "/api/actions",
+    openapiPath: "/openapi.json",
+  }),
+  ActionMcp.layer(app, { name: "greetings", version: "1.0.0", path: "/mcp" }),
 );
 ```
 
@@ -61,6 +64,7 @@ import { Actions } from "./quickstart.js";
 
 export const greeting = Effect.gen(function* () {
   const client = yield* ActionHttp.client(Actions, {
+    apiPath: "/api/actions",
     baseUrl: "http://127.0.0.1:3000",
   });
   return yield* client.greet({ name: "Ada" });
@@ -76,14 +80,16 @@ for error types, optional inputs, and native grouped clients.
 
 | API                          | Options                                                                                 |
 | ---------------------------- | --------------------------------------------------------------------------------------- |
-| `ActionHttp.layer`           | `prefix`, `openapiPath`, `schemaError`                                                  |
-| `ActionHttp.api` / `openapi` | `prefix`, `schemaError`                                                                 |
-| `ActionHttp.client`          | `prefix`, `schemaError`, `baseUrl`, `transformClient`, `transformResponse`              |
+| `ActionHttp.layer`           | `apiPath`, `openapiPath`, `schemaError`                                                 |
+| `ActionHttp.api` / `openapi` | `apiPath`, `schemaError`                                                                |
+| `ActionHttp.client`          | `apiPath`, `schemaError`, `baseUrl`, `transformClient`, `transformResponse`             |
 | `ActionMcp.layer`            | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions`, `schemaError` |
 
-`ActionHttp.configure(options)` binds HTTP configuration for its `layer`, `api`,
-`openapi`, and `client` methods. Configured clients accept only connection options.
-Set `openapiPath: false` when the host serves a combined document.
+`apiPath`, `openapiPath` (on `layer` / `configure`), and MCP `path` are required —
+the library has no defaults. `ActionHttp.configure(options)` binds HTTP configuration
+for its `layer`, `api`, `openapi`, and `client` methods. Configured clients accept
+only connection options. Set `openapiPath: false` when the host serves a combined
+document.
 
 See [adapter behavior](docs/behavior.md) for shared schema-error policies,
 dependency lifetimes, wire formats, and MCP protocol support.
@@ -155,10 +161,10 @@ Import `mcpRequest` from `@gjermundgaraba/effect-actions/testing`; it requires n
 Import `withMcpClient` from `@gjermundgaraba/effect-actions/testing/client` and install
 its optional peer `@modelcontextprotocol/client@^2.0.0`. Only the client entry point loads this peer.
 
-- `mcpRequest(method, params?, { url?, headers? }?)` builds a stateless 2026-07-28 request.
-  Caller `params._meta` fields override the default client capabilities and information;
-  application metadata is preserved. The protocol version stays pinned to 2026-07-28
-  in both the request header and metadata. Metadata is merged shallowly.
-- `withMcpClient(fetch, async client => ..., { mode?, baseUrl?, path?, headers? }?)`
-  connects the official client and closes it in a `finally` block. `mode` defaults to
-  `"modern"` (2026-07-28); use `"legacy"` to exercise session negotiation.
+- `mcpRequest(method, params?, { url, headers? })` builds a stateless 2026-07-28 request.
+  `url` is required. Caller `params._meta` fields override the default client capabilities
+  and information; application metadata is preserved. The protocol version stays pinned to
+  2026-07-28 in both the request header and metadata. Metadata is merged shallowly.
+- `withMcpClient(fetch, async client => ..., { path, mode?, baseUrl?, headers? })`
+  connects the official client and closes it in a `finally` block. `path` is required.
+  `mode` defaults to `"modern"` (2026-07-28); use `"legacy"` to exercise session negotiation.

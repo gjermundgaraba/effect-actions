@@ -8,6 +8,7 @@ import {
 } from "effect/unstable/http";
 import { Action, ActionGroup, ActionHttp, ActionMcp, Authentication } from "../src/index.js";
 import { mcpRequest } from "../src/Testing.js";
+import { testApiPath, testMcpPath, testMcpUrl, testOpenapiPath } from "./server.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 class Tokens extends Context.Service<Tokens, { readonly prefix: string }>()("test/Tokens") {}
@@ -294,8 +295,8 @@ describe("Authentication.middleware", () => {
       });
       const routes =
         transport === "http"
-          ? ActionHttp.layer(app)
-          : ActionMcp.layer(app, { name: "scope-test", version: "0" });
+          ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+          : ActionMcp.layer(app, { name: "scope-test", version: "0", path: testMcpPath });
       const web = HttpRouter.toWebHandler(
         routes.pipe(Layer.provide(auth.layer), Layer.provide(HttpServer.layerServices)),
         { disableLogger: true },
@@ -311,7 +312,7 @@ describe("Authentication.middleware", () => {
               headers: { "content-type": "application/json" },
               body: "{}",
             })
-          : mcpRequest("tools/call", { name: "identify", arguments: {} }),
+          : mcpRequest("tools/call", { name: "identify", arguments: {} }, { url: testMcpUrl }),
       );
       expect(response.status).toBe(200);
       expect(await response.text()).toContain("alice");

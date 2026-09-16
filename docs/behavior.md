@@ -53,11 +53,15 @@ const schemaError = {
       : new BadRequest({ error: "Invalid request" }),
 } satisfies Action.SchemaErrorPolicy<readonly [typeof BadRequest, typeof InternalServerError]>;
 
-const Http = ActionHttp.configure({ schemaError });
+const Http = ActionHttp.configure({
+  apiPath: "/api/actions",
+  openapiPath: "/openapi.json",
+  schemaError,
+});
 const api = Http.api(Actions);
 const routes = Layer.mergeAll(
   Http.layer(App),
-  ActionMcp.layer(App, { name: "my-app", version: "0", schemaError }),
+  ActionMcp.layer(App, { name: "my-app", version: "0", path: "/mcp", schemaError }),
 );
 ```
 
@@ -103,7 +107,7 @@ An argument is optional when the input type accepts `{}`. Omitted input and
 explicit `undefined` send `{}` unless the decoded input schema accepts
 `undefined` as a value. `null` passes through unchanged.
 
-Use `HttpApiClient.make(ActionHttp.api(Actions), options)` for grouped methods
+Use `HttpApiClient.make(ActionHttp.api(Actions, { apiPath: "/api/actions" }), options)` for grouped methods
 such as `client.actions.double({ payload: { value: 21 } })` and per-call response
 modes. Use `makeWith` for custom client error and service channels. Actions named
 `then` require this grouped client to avoid JavaScript thenable assimilation.

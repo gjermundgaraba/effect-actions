@@ -4,6 +4,7 @@ import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
 import { mcpRequest } from "../src/Testing.js";
 import { withMcpClient } from "../src/TestingClient.js";
+import { testApiPath, testMcpPath, testMcpUrl, testOpenapiPath } from "./server.js";
 import { post } from "./requests.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
@@ -30,8 +31,8 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
         });
         const routes =
           transport === "HTTP"
-            ? ActionHttp.layer(app)
-            : ActionMcp.layer(app, { name: "test", version: "0" });
+            ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+            : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
         const web = HttpRouter.toWebHandler(
           routes.pipe(
             Layer.provide(Layer.succeed(Actor, "startup-admin")),
@@ -60,7 +61,7 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
                 await expect(call).rejects.toThrow("Internal error");
               }
             },
-            { mode: transport === "modern MCP" ? "modern" : "legacy" },
+            { mode: transport === "modern MCP" ? "modern" : "legacy", path: testMcpPath },
           );
         }
         expect(executions).toBe(present ? 1 : 0);
@@ -87,8 +88,8 @@ it.each(["legacy", "modern"] as const)(
       }),
     );
     const routes = Layer.mergeAll(
-      ActionHttp.layer(app),
-      ActionMcp.layer(app, { name: "test", version: "0" }),
+      ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath }),
+      ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }),
     ).pipe(Layer.provide(Layer.succeed(Actor, "build")), Layer.provide(HttpServer.layerServices));
     // Reuse the same implementation in separate runtimes: memoization must not
     // become process-global, and each acquisition must have its own finalizer.
@@ -107,7 +108,7 @@ it.each(["legacy", "modern"] as const)(
               (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
             ).toEqual({ value: "build/mcp" });
           },
-          { mode: era },
+          { mode: era, path: testMcpPath },
         );
         expect(acquired).toBe(runtime);
         expect(finalized).toBe(runtime - 1);
@@ -164,7 +165,7 @@ it("releases scoped handler acquisition when native registration fails", async (
       () => Effect.sync(() => finalized++),
     ),
   );
-  const layer = ActionMcp.layer(app, { name: "test", version: "0" }).pipe(
+  const layer = ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }).pipe(
     Layer.provide(HttpRouter.layer),
   );
   await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(
@@ -192,8 +193,8 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
     });
     const routes =
       transport === "HTTP"
-        ? ActionHttp.layer(app)
-        : ActionMcp.layer(app, { name: "test", version: "0" });
+        ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+        : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
     const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
       disableLogger: true,
     });
@@ -211,7 +212,7 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
             (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
           ).toEqual({ value: "ok" });
         },
-        { mode: transport === "modern MCP" ? "modern" : "legacy" },
+        { mode: transport === "modern MCP" ? "modern" : "legacy", path: testMcpPath },
       );
     }
     expect(logs).toContainEqual(["handler ran"]);
@@ -232,13 +233,13 @@ describe.each(["HTTP", "MCP"])(
     const startup = Layer.succeed(Who, "startup");
     const routes = () =>
       transport === "HTTP"
-        ? ActionHttp.layer(app)
-        : ActionMcp.layer(app, { name: "test", version: "0" });
+        ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+        : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
     const call = async (web: { handler: (request: Request) => Promise<Response> }) => {
       const response = await web.handler(
         transport === "HTTP"
           ? post("/api/actions/identity")
-          : mcpRequest("tools/call", { name: "identity", arguments: {} }),
+          : mcpRequest("tools/call", { name: "identity", arguments: {} }, { url: testMcpUrl }),
       );
       expect(response.status).toBe(200);
       const body: unknown = await response.json();

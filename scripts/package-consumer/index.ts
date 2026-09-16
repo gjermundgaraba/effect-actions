@@ -32,11 +32,14 @@ const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerSe
   disableLogger: true,
 });
 try {
-  const response = await web.handler(mcpRequest("tools/list"));
+  const response = await web.handler(mcpRequest("tools/list", {}, { url: "http://localhost/mcp" }));
   if (response.status !== 200)
     throw new Error("Stateless MCP request failed without the optional client peer");
   const greeting = await Effect.gen(function* () {
-    const client = yield* ActionHttp.client(Actions, { baseUrl: "http://localhost" });
+    const client = yield* ActionHttp.client(Actions, {
+      apiPath: "/api/actions",
+      baseUrl: "http://localhost",
+    });
     return yield* client.greet({ name: "Ada" });
   }).pipe(
     Effect.provide(FetchHttpClient.layer),
