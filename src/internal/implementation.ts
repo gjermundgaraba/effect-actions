@@ -2,18 +2,27 @@ import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 
+/** Decoded action values after schema parsing, erased across actions at the adapter boundary. */
+export type ErasedValue = Action.Any["input"]["Type"];
+
 // Method syntax allows precisely typed handlers to satisfy this adapter-only
 // executor. Dispatch must use the matching action's decoded input.
-type Erased<R> = { handle(input: unknown): Effect.Effect<unknown, unknown, R> }["handle"];
+type Erased<R> = {
+  handle(input: ErasedValue): Effect.Effect<ErasedValue, ErasedValue, R>;
+}["handle"];
+
 export type Handlers<R> = Readonly<Record<string, Erased<R>>>;
 
 // `R` is erased here because the adapter Layers declare it as a per-request
 // requirement through `HttpRouter.Request.From<"Requires", R>`.
-type Dispatch = (input: unknown) => Effect.Effect<unknown, unknown>;
+type Dispatch = (input: ErasedValue) => Effect.Effect<ErasedValue, ErasedValue>;
 
 export const handlerFor = <R>(table: Handlers<R>, action: Action.Any): Dispatch => {
   const handle = table[action.name];
+
   if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
+
+  // SAFETY: handlers are stored erased; each adapter supplies the matching action's decoded input.
   return handle as Dispatch;
 };
 
@@ -48,6 +57,7 @@ export class Implementation<Actions extends ReadonlyArray<Action.Any>, R, EX, RX
     const handlers = Context.Service<HandlersId, Handlers<R>>(
       `effect-actions/Handlers#${++implementations}`,
     );
+
     return new Implementation(actions, handlers, Layer.effect(handlers, build));
   }
 

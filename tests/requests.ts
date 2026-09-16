@@ -1,4 +1,6 @@
-export const post = (path: string, body: unknown = {}): Request =>
+import type { Schema } from "effect";
+
+export const post = (path: string, body: Schema.Json = {}): Request =>
   new Request(`http://localhost${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

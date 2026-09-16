@@ -9,8 +9,10 @@ const lookup = Effect.gen(function* () {
     baseUrl: "http://127.0.0.1:3000",
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
   });
+
   const user = yield* client.getUser({ id: "1" });
   const identity = yield* client.whoAmI();
+
   return { user, identity };
 });
 

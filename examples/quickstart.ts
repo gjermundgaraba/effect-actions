@@ -9,6 +9,7 @@ const Greet = Action.make("greet", {
 });
 
 export const Actions = ActionGroup.make(Greet);
+
 const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });

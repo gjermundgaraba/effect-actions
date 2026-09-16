@@ -20,11 +20,14 @@ it.each([
     authorizationServers: ["https://auth.example.com"],
     scopesSupported: ["admin:read", "admin:write"],
   });
+
   expect(discovery.metadataUrl).toBe(`https://api.example.com${path}`);
+
   const web = HttpRouter.toWebHandler(
     discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
+
   onTestFinished(() => web.dispose());
   const response = await web.handler(new Request(discovery.metadataUrl));
   expect(response.status).toBe(200);
@@ -53,10 +56,12 @@ it("omits empty optional metadata and accepts loopback development URLs", async 
     authorizationServers: ["http://localhost:3000/api/auth"],
     scopesSupported: [],
   });
+
   const web = HttpRouter.toWebHandler(
     discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
+
   onTestFinished(() => web.dispose());
   expect(await (await web.handler(new Request(discovery.metadataUrl))).json()).not.toHaveProperty(
     "scopes_supported",
@@ -74,6 +79,7 @@ it("rejects unsafe URLs and challenge parameter injection", () => {
       ActionMcp.protectedResource({ resource, authorizationServers: ["https://auth.example.com"] }),
     ).toThrow();
   }
+
   for (const issuer of ["https://auth.example.com?", "https://auth.example.com?tenant=alice"]) {
     expect(() =>
       ActionMcp.protectedResource({
@@ -82,10 +88,12 @@ it("rejects unsafe URLs and challenge parameter injection", () => {
       }),
     ).toThrow("issuers must not contain a query");
   }
+
   const discovery = ActionMcp.protectedResource({
     resource: "https://example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
   });
+
   expect(() => discovery.challenge({ errorDescription: 'bad"\r\nheader' })).toThrow();
   expect(() => discovery.challenge({ scope: 'read"' })).toThrow();
   expect(() => discovery.challenge({ scope: "read  write" })).toThrow();
@@ -96,6 +104,7 @@ it("percent-encodes quote characters in the discovery challenge URL", () => {
     resource: 'https://example.com/mcp"',
     authorizationServers: ["https://auth.example.com"],
   });
+
   expect(discovery.challenge()).toBe(
     'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp%22"',
   );
@@ -109,16 +118,19 @@ it.each([
     resource: `https://example.com/mcp?tenant=${query}`,
     authorizationServers: ["https://auth.example.com"],
   });
+
   expect(discovery.metadataUrl).toBe(
     `https://example.com/.well-known/oauth-protected-resource/mcp?tenant=${query}`,
   );
   expect(discovery.challenge({ error: "invalid_token" })).toBe(
     `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp?tenant=${quotedQuery}", error="invalid_token"`,
   );
+
   const web = HttpRouter.toWebHandler(
     discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
+
   onTestFinished(() => web.dispose());
   const response = await web.handler(new Request(discovery.metadataUrl));
   expect(response.status).toBe(200);
@@ -141,13 +153,16 @@ it("matches literal resource paths exactly and delegates other requests to the h
     "/mcp?",
     "/mcp",
   ];
+
   const discoveries = paths.map((path) =>
     ActionMcp.protectedResource({
       resource: `https://api.example.com${path}`,
       authorizationServers: ["https://auth.example.com"],
     }),
   );
+
   const prefix = "/.well-known/oauth-protected-resource";
+
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
       HttpRouter.add("GET", `${prefix}/mcp/unrelated`, HttpServerResponse.text("host route")),
@@ -156,7 +171,9 @@ it("matches literal resource paths exactly and delegates other requests to the h
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
+
   onTestFinished(() => web.dispose());
+
   for (const [index, discovery] of discoveries.entries()) {
     const response = await web.handler(new Request(discovery.metadataUrl));
     expect(response.status).toBe(200);
@@ -168,10 +185,13 @@ it("matches literal resource paths exactly and delegates other requests to the h
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
   }
+
   const unrelated = await web.handler(
     new Request(`https://api.example.com${prefix}/mcp/unrelated`),
   );
+
   expect(await unrelated.text()).toBe("host route");
+
   for (const path of [
     "/mcp/unregistered",
     "/mcp/a/b",
@@ -186,8 +206,10 @@ it("matches literal resource paths exactly and delegates other requests to the h
       404,
     );
   }
+
   const post = await web.handler(
     new Request(`https://api.example.com${prefix}/mcp/:tenant`, { method: "POST" }),
   );
+
   expect(await post.text()).toBe("host post");
 });

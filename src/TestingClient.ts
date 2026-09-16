@@ -17,13 +17,18 @@ export const withMcpClient = async <A>(
     { name: "test", version: "0" },
     { versionNegotiation: { mode: mode === "modern" ? { pin: "2026-07-28" } : "legacy" } },
   );
+
   try {
+    const transportOptions: ConstructorParameters<typeof StreamableHTTPClientTransport>[1] = {
+      fetch: (input, init) => fetch(new Request(input, init)),
+    };
+
+    if (headers !== undefined) transportOptions.requestInit = { headers };
+
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(path, baseUrl), {
-        ...(headers === undefined ? {} : { requestInit: { headers } }),
-        fetch: (input, init) => fetch(new Request(input, init)),
-      }),
+      new StreamableHTTPClientTransport(new URL(path, baseUrl), transportOptions),
     );
+
     return await run(client);
   } finally {
     await client.close();

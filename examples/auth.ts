@@ -25,6 +25,8 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
 
 export const authorize = Effect.fn("authorize")(function* (permission: Permission) {
   const actor = yield* CurrentActor;
+
   if (!actor.permissions.includes(permission)) return yield* new Forbidden({ permission });
+
   return actor;
 });

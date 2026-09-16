@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+
 const consumer = mkdtempSync(join(tmpdir(), "effect-actions-consumer-"));
+
 const run = (command, args, cwd = consumer) =>
   execFileSync(command, args, { cwd, stdio: "inherit" });
 
@@ -38,9 +41,11 @@ try {
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
   run(process.execPath, ["index.js"]);
+
   if (existsSync(join(consumer, "node_modules/@modelcontextprotocol/client"))) {
     throw new Error("The optional testing peer was installed for a core and raw-request consumer");
   }
+
   run("vp", [
     "add",
     "--ignore-scripts",

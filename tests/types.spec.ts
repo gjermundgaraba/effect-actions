@@ -11,6 +11,7 @@ import { Users } from "../examples/users.js";
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
+
   const ok = {
     getUser: ({ id }: { id: string }) => Effect.succeed({ id, name: "Ada" }),
     renameUser: ({ id, name }: { id: string; name: string }) => Effect.succeed({ id, name }),
@@ -50,12 +51,14 @@ export const typeAssertions = () => {
     // @ts-expect-error Build-time handler dependencies are Layer requirements.
     ActionHttp.layer(App, { apiPath: "/api/actions", openapiPath: "/openapi.json" }).pipe(services),
   );
+
   const http = HttpRouter.toWebHandler(
     ActionHttp.layer(App, { apiPath: "/api/actions", openapiPath: "/openapi.json" }).pipe(
       Layer.provide(Users.layerMemory),
       services,
     ),
   );
+
   // @ts-expect-error Request-scoped handler dependencies must be present per request.
   void http.handler(new Request("http://localhost"), Context.empty());
   void http.handler(new Request("http://localhost"), Context.make(CurrentActor, actor));
@@ -71,6 +74,7 @@ export const typeAssertions = () => {
 
   // A startup actor is not a request actor: it does not satisfy the request requirement.
   const startup = Layer.succeed(CurrentActor, actor);
+
   const withStartup = HttpRouter.toWebHandler(
     ActionHttp.layer(App, { apiPath: "/api/actions", openapiPath: "/openapi.json" }).pipe(
       Layer.provide(Users.layerMemory),
@@ -78,12 +82,14 @@ export const typeAssertions = () => {
       services,
     ),
   );
+
   // @ts-expect-error Still required per request.
   void withStartup.handler(new Request("http://localhost"), Context.empty());
 
   const mcpWithStartup = HttpRouter.toWebHandler(
     mcpLayer.pipe(Layer.provide(Users.layerMemory), Layer.provide(startup), services),
   );
+
   // @ts-expect-error A build-only actor does not satisfy MCP request wiring either.
   void mcpWithStartup.handler(new Request("http://localhost/mcp"), Context.empty());
 
@@ -91,6 +97,7 @@ export const typeAssertions = () => {
     ...ok,
     whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
   });
+
   // @ts-expect-error Test helpers require an explicit request Layer.
   makeTestHttp(requestOnly);
   // @ts-expect-error Test helpers must not erase missing request services.
@@ -103,6 +110,7 @@ export const typeAssertions = () => {
   makeTestMcp(requestOnly, startup);
 
   const fallible = Actions.implement(Effect.fail("build-failed" as const).pipe(Effect.as(ok)));
+
   for (const routes of [
     ActionHttp.layer(fallible, { apiPath: "/api/actions", openapiPath: "/openapi.json" }),
     ActionMcp.layer(fallible, { name: "test", version: "0", path: "/mcp" }),
@@ -110,6 +118,7 @@ export const typeAssertions = () => {
     const build = Layer.build(routes.pipe(Layer.provide(HttpRouter.layer), services)).pipe(
       Effect.scoped,
     );
+
     // @ts-expect-error Private bindings must not erase acquisition failures.
     void (build satisfies Effect.Effect<unknown, never>);
   }
@@ -126,10 +135,12 @@ export const clientTypes = Effect.gen(function* () {
   // @ts-expect-error Results retain the success type.
   const wrong: string = yield* client.actions.double({ payload: { value: 21 } });
   void wrong;
+
   const mixed = ActionGroup.make(
     Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
     Action.make("visible", { description: "HTTP", success: Schema.Boolean }),
   );
+
   const selected = yield* HttpApiClient.make(ActionHttp.api(mixed, { apiPath: "/api/actions" }));
   // @ts-expect-error MCP-only actions are not HTTP client methods.
   selected.actions.hidden({ payload: {} });
@@ -139,10 +150,12 @@ export const clientTypes = Effect.gen(function* () {
 
 export const policyTypes = Effect.gen(function* () {
   class PolicyFailure extends Schema.TaggedError<PolicyFailure>()("PolicyFailure", {}) {}
+
   const options = {
     apiPath: "/api/actions" as const,
     schemaError: { errors: [PolicyFailure], map: () => new PolicyFailure() },
   };
+
   const client = yield* HttpApiClient.make(ActionHttp.api(Actions, options));
   yield* client.actions
     .double({ payload: { value: 1 } })
@@ -168,10 +181,12 @@ export const policyTypes = Effect.gen(function* () {
 export const configuredClientTypes = () => {
   void Effect.gen(function* () {
     class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {}) {}
+
     const schemaError = {
       errors: [Invalid],
       map: (_failure: Action.SchemaFailure) => new Invalid(),
     };
+
     const Http = ActionHttp.configure({ apiPath: "/rpc", openapiPath: "/schema", schemaError });
     const client = yield* Http.client(Actions);
     // @ts-expect-error apiPath is bound by configure, not a connection option.
@@ -217,6 +232,7 @@ export const configuredClientTypes = () => {
         success: Schema.Number,
       }),
     );
+
     const selected = yield* ActionHttp.client(mixed, { apiPath: "/rpc", schemaError });
     // @ts-expect-error Standalone clients preserve required input as well.
     (yield* ActionHttp.client(Actions, { apiPath: "/api/actions" })).double();
@@ -234,9 +250,11 @@ export const configuredClientTypes = () => {
     const services = Layer.provide(HttpServer.layerServices);
     // @ts-expect-error Configuring the adapter must preserve acquisition requirements.
     HttpRouter.toWebHandler(Http.layer(App).pipe(services));
+
     const web = HttpRouter.toWebHandler(
       Http.layer(App).pipe(Layer.provide(Users.layerMemory), services),
     );
+
     // @ts-expect-error Configuring the adapter must preserve request requirements.
     void web.handler(new Request("http://localhost"), Context.empty());
     ActionMcp.layer(App, { name: "test", version: "0", path: "/mcp", schemaError });

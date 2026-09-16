@@ -21,18 +21,22 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
       "with a build-only actor; request actor present: %s",
       async (present) => {
         let executions = 0;
+
         const app = ActionGroup.make(identity).implement({
           identity: () =>
             Effect.gen(function* () {
               const actor = yield* Actor;
               yield* Effect.sync(() => executions++);
+
               return actor;
             }),
         });
+
         const routes =
           transport === "HTTP"
             ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
             : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
+
         const web = HttpRouter.toWebHandler(
           routes.pipe(
             Layer.provide(Layer.succeed(Actor, "startup-admin")),
@@ -40,12 +44,16 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
           ),
           { disableLogger: true },
         );
+
         const fetch = (request: Request) => {
           if (present) return web.handler(request, Context.make(Actor, "request-reader"));
+
           // @ts-expect-error Deliberately misconfigured host: runtime must not inherit the build-only actor.
           return web.handler(request, Context.empty());
         };
+
         onTestFinished(() => web.dispose());
+
         if (transport === "HTTP") {
           const response = await fetch(post("/api/actions/identity"));
           expect(response.status).toBe(present ? 200 : 500);
@@ -55,6 +63,7 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
             fetch,
             async (client) => {
               const call = client.callTool({ name: "identity", arguments: {} });
+
               if (present) {
                 expect((await call).structuredContent).toEqual({ value: "request-reader" });
               } else {
@@ -64,6 +73,7 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
             { mode: transport === "modern MCP" ? "modern" : "legacy", path: testMcpPath },
           );
         }
+
         expect(executions).toBe(present ? 1 : 0);
       },
     );
@@ -75,31 +85,38 @@ it.each(["legacy", "modern"] as const)(
   async (era) => {
     let acquired = 0;
     let finalized = 0;
+
     const app = ActionGroup.make(identity).implement(
       Effect.gen(function* () {
         const greeting = yield* Effect.acquireRelease(
           Effect.gen(function* () {
             yield* Effect.sync(() => acquired++);
+
             return yield* Actor;
           }),
           () => Effect.sync(() => finalized++),
         );
+
         return { identity: () => Effect.map(Actor, (actor) => `${greeting}/${actor}`) };
       }),
     );
+
     const routes = Layer.mergeAll(
       ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath }),
       ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }),
     ).pipe(Layer.provide(Layer.succeed(Actor, "build")), Layer.provide(HttpServer.layerServices));
+
     // Reuse the same implementation in separate runtimes: memoization must not
     // become process-global, and each acquisition must have its own finalizer.
     for (let runtime = 1; runtime <= 2; runtime++) {
       const web = HttpRouter.toWebHandler(routes, { disableLogger: true });
+
       try {
         const response = await web.handler(
           post("/api/actions/identity"),
           Context.make(Actor, "http"),
         );
+
         expect(await response.json()).toBe("build/http");
         await withMcpClient(
           (request) => web.handler(request, Context.make(Actor, "mcp")),
@@ -115,6 +132,7 @@ it.each(["legacy", "modern"] as const)(
       } finally {
         await web.dispose();
       }
+
       expect(finalized).toBe(runtime);
     }
   },
@@ -126,6 +144,7 @@ it.each(["legacy", "modern"] as const)(
     const group = ActionGroup.make(identity);
     const a = group.implement({ identity: () => Effect.succeed("a") });
     const b = group.implement({ identity: () => Effect.succeed("b") });
+
     const web = HttpRouter.toWebHandler(
       Layer.mergeAll(
         ActionMcp.layer(a, { name: "a", version: "0", path: "/a" }),
@@ -133,7 +152,9 @@ it.each(["legacy", "modern"] as const)(
       ).pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
+
     onTestFinished(() => web.dispose());
+
     for (const name of ["a", "b", "a"]) {
       await withMcpClient(
         web.handler,
@@ -151,23 +172,28 @@ it.each(["legacy", "modern"] as const)(
 it("releases scoped handler acquisition when native registration fails", async () => {
   let acquired = 0;
   let finalized = 0;
+
   const invalid = Action.make("invalid", {
     description: "Non-object MCP input",
     input: Schema.String,
     success: Schema.String,
   });
+
   const app = ActionGroup.make(invalid).implement(
     Effect.acquireRelease(
       Effect.sync(() => {
         acquired++;
+
         return { invalid: Effect.succeed };
       }),
       () => Effect.sync(() => finalized++),
     ),
   );
+
   const layer = ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }).pipe(
     Layer.provide(HttpRouter.layer),
   );
+
   await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(
     "MCP input must have an object root",
   );
@@ -181,27 +207,35 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
     const logs: unknown[] = [];
     const spans: string[] = [];
     const logger = Logger.make((options) => logs.push(options.message));
+
     const tracer = Tracer.make({
       span(options) {
         spans.push(options.name);
+
         return Tracer.nativeTracer.span(options);
       },
     });
+
     const app = ActionGroup.make(identity).implement({
       identity: () =>
         Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
     });
+
     const routes =
       transport === "HTTP"
         ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
         : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
+
     const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
       disableLogger: true,
     });
+
     const context = Context.make(Logger.CurrentLoggers, new Set([logger])).pipe(
       Context.add(Tracer.Tracer, tracer),
     );
+
     onTestFinished(() => web.dispose());
+
     if (transport === "HTTP") {
       expect(await (await web.handler(post("/api/actions/identity"), context)).json()).toBe("ok");
     } else {
@@ -215,6 +249,7 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
         { mode: transport === "modern MCP" ? "modern" : "legacy", path: testMcpPath },
       );
     }
+
     expect(logs).toContainEqual(["handler ran"]);
     expect(spans).toContain("action.identity");
   },
@@ -224,25 +259,31 @@ describe.each(["HTTP", "MCP"])(
   "uses the request service, never a startup copy, over %s",
   (transport) => {
     class Who extends Context.Service<Who, string>()("test/Who") {}
+
     const Identity = Action.make("identity", {
       description: "Request identity",
       success: Schema.String,
     });
+
     const app = ActionGroup.make(Identity).implement({ identity: () => Who });
     const request = Layer.succeed(Who, "request");
     const startup = Layer.succeed(Who, "startup");
+
     const routes = () =>
       transport === "HTTP"
         ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
         : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
+
     const call = async (web: { handler: (request: Request) => Promise<Response> }) => {
       const response = await web.handler(
         transport === "HTTP"
           ? post("/api/actions/identity")
           : mcpRequest("tools/call", { name: "identity", arguments: {} }, { url: testMcpUrl }),
       );
+
       expect(response.status).toBe(200);
       const body: unknown = await response.json();
+
       return transport === "HTTP"
         ? body
         : Schema.decodeUnknownSync(
@@ -258,12 +299,15 @@ describe.each(["HTTP", "MCP"])(
       "with a startup copy %s",
       async (placement) => {
         const withRequest = routes().pipe(HttpRouter.provideRequest(request));
+
         const placed = placement.startsWith("provided")
           ? withRequest.pipe(Layer.provide(startup))
           : Layer.merge(withRequest, startup);
+
         const web = HttpRouter.toWebHandler(placed.pipe(Layer.provide(HttpServer.layerServices)), {
           disableLogger: true,
         });
+
         onTestFinished(() => web.dispose());
         expect(await call(web)).toBe("request");
       },

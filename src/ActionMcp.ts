@@ -1,11 +1,16 @@
-import { Context, Effect, JsonPointer, Layer, Schema } from "effect";
+import { Context, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import type { Cause } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import type * as JsonSchema from "effect/JsonSchema";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import { handlerFor, type Handlers, Implementation } from "./internal/implementation.js";
+import {
+  handlerFor,
+  type ErasedValue,
+  type Handlers,
+  Implementation,
+} from "./internal/implementation.js";
 
 export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
@@ -41,16 +46,20 @@ const resolveReference = (
   schema: JsonSchema.JsonSchema,
   definitions: JsonSchema.Definitions,
 ): JsonSchema.JsonSchema => {
-  if (typeof schema.$ref !== "string") return schema;
+  if (!Predicate.isString(schema.$ref)) return schema;
   const reference = schema.$ref;
   const path = JsonPointer.parseUriFragment(reference);
   const key = path?.[1];
+
   if (path?.length !== 2 || path[0] !== "$defs" || key === undefined) {
     throw new Error(`${name}: unsupported MCP ${what} reference ${reference}`);
   }
+
   const definition = Object.hasOwn(definitions, key) ? definitions[key] : undefined;
+
   if (definition === undefined)
     throw new Error(`${name}: missing MCP ${what} reference ${reference}`);
+
   return definition;
 };
 
@@ -58,11 +67,13 @@ const resolveReference = (
 const inputJsonSchema = (action: Action.Any) => {
   const { schema, definitions } = Schema.toJsonSchemaDocument(action.input);
   const root = resolveReference(action.name, "input", schema, definitions);
+
   if (root.type !== "object") {
     throw new Error(
       `${action.name}: MCP input must have an object root; use Action.NoInput for no arguments`,
     );
   }
+
   return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
 };
 
@@ -70,14 +81,18 @@ const inputJsonSchema = (action: Action.Any) => {
 const assertObjectError = (owner: string, error: Action.Codec) => {
   const { schema, definitions } = Schema.toJsonSchemaDocument(error);
   const visited = new Set<JsonSchema.JsonSchema>();
+
   // A union qualifies when every member does; a revisited node is already being checked.
   const encodesObject = (candidate: JsonSchema.JsonSchema): boolean => {
     const root = resolveReference(owner, "error", candidate, definitions);
+
     if (root.type === "object" || visited.has(root)) return true;
     visited.add(root);
     const members = root.anyOf ?? root.oneOf;
+
     return Array.isArray(members) && members.length > 0 && members.every(encodesObject);
   };
+
   if (!encodesObject(schema)) throw new Error(`${owner}: MCP error must have an object root`);
 };
 
@@ -89,29 +104,39 @@ const registerTool = <R>(
   Effect.gen(function* () {
     if (action.mcp === false) return;
     const server = yield* McpServer.McpServer;
+
     const inputSchema = yield* Schema.decodeUnknownEffect(McpSchema.ToolJson)(
       inputJsonSchema(action),
     ).pipe(Effect.orDie);
+
     // Successes are wrapped as { value }; declared errors are not.
     const errors = [...action.errors, ...(policy?.errors ?? [])];
+
     for (const error of action.errors) assertObjectError(action.name, error);
     // The same JSON lowering HttpApiEndpoint applies, so both transports agree on the wire shape.
     const input = Schema.toCodecJson(action.input);
     const success = Schema.toCodecJson(action.success);
     const failure = Schema.toCodecJson(Schema.Union(errors));
     const handle = handlerFor(table, action);
-    const failureResult = (error: unknown) =>
+
+    const failureResult = (error: ErasedValue) =>
       Schema.encodeUnknownEffect(failure)(error).pipe(
         Effect.orDie,
         Effect.map((json) => toolResult(json, true)),
       );
+
     const schemaFailure = (phase: Action.SchemaFailure["phase"], cause: Schema.SchemaError) => {
-      if (policy !== undefined) return failureResult(policy.map({ phase, cause }));
+      if (policy !== undefined) {
+        return failureResult(policy.map({ phase, cause }));
+      }
+
       if (phase === "input")
         return Effect.fail(new McpSchema.InvalidParams({ message: cause.message }));
+
       return Effect.die(cause);
     };
-    const successResult = (value: unknown) =>
+
+    const successResult = (value: ErasedValue) =>
       Schema.encodeUnknownEffect(success)(value).pipe(
         Effect.matchEffect({
           onFailure: (cause) => schemaFailure("output", cause),
@@ -131,7 +156,7 @@ const registerTool = <R>(
         },
       }),
       annotations: Context.empty(),
-      handle: (payload: unknown) =>
+      handle: (payload: Schema.Json) =>
         Schema.decodeUnknownEffect(input)(payload).pipe(
           Effect.matchEffect({
             onFailure: (cause) => schemaFailure("input", cause),
@@ -183,6 +208,7 @@ export const layer = <
           for (const error of options.schemaError?.errors ?? [])
             assertObjectError("Schema-error policy", error);
         }
+
         yield* Effect.forEach(
           app.actions,
           (action) => registerTool(action, table, options.schemaError),
@@ -206,6 +232,7 @@ export const layer = <
       // build is acquired outside this subgraph and stays shared.
       Layer.fresh,
     );
+
     // Build the native server with only the router so build-time application
     // services cannot become request fallbacks.
     return Layer.fromBuildMemo((memoMap, scope) =>
@@ -214,6 +241,7 @@ export const layer = <
           yield* HttpRouter.HttpRouter,
           yield* Effect.context<never>(),
         );
+
         return yield* Layer.buildWithMemoMap(native, memoMap, scope).pipe(
           Effect.setContext(Context.make(HttpRouter.HttpRouter, router)),
         );
@@ -236,9 +264,18 @@ export interface BearerChallengeOptions {
   readonly scope?: string;
 }
 
+interface ProtectedResourceMetadata {
+  resource: string;
+  authorization_servers: NonEmptyReadonlyArray<string>;
+  bearer_methods_supported: ReadonlyArray<string>;
+  scopes_supported?: ReadonlyArray<string>;
+  resource_name?: string;
+}
+
 const oauthUrl = (value: string): URL => {
   const url = new URL(value);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+
   if (
     (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
     url.username !== "" ||
@@ -247,6 +284,7 @@ const oauthUrl = (value: string): URL => {
   ) {
     throw new Error("OAuth URLs must use HTTPS (or loopback HTTP) without credentials or fragment");
   }
+
   return url;
 };
 
@@ -258,30 +296,43 @@ const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
  */
 export const protectedResource = (options: ProtectedResourceOptions) => {
   const resource = oauthUrl(options.resource);
+
   if (options.authorizationServers.length === 0)
     throw new Error("An authorization server is required");
+
   for (const issuer of options.authorizationServers) {
     oauthUrl(issuer);
+
     if (issuer.includes("?"))
       throw new Error("Authorization server issuers must not contain a query");
   }
+
   for (const scope of options.scopesSupported ?? []) {
     if (!scopeToken.test(scope)) throw new Error("Invalid OAuth scope token");
   }
+
   const path =
     `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}` as const;
+
   const discoveryUrl = new URL(resource);
   discoveryUrl.pathname = path;
   const metadataUrl = discoveryUrl.href;
   const target = metadataUrl.slice(discoveryUrl.origin.length);
-  const metadata = {
+
+  const metadata: ProtectedResourceMetadata = {
     resource: options.resource,
     authorization_servers: options.authorizationServers,
     bearer_methods_supported: ["header"],
-    ...(options.scopesSupported?.length ? { scopes_supported: options.scopesSupported } : {}),
-    ...(options.resourceName === undefined ? {} : { resource_name: options.resourceName }),
   };
+
+  if (options.scopesSupported !== undefined && options.scopesSupported.length > 0) {
+    metadata.scopes_supported = options.scopesSupported;
+  }
+
+  if (options.resourceName !== undefined) metadata.resource_name = options.resourceName;
+
   const response = HttpServerResponse.jsonUnsafe(metadata);
+
   return {
     // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
     // to the host, including other discovery documents on the same router.
@@ -290,11 +341,13 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
           const url = new URL(request.url, resource.origin);
+
           if (
             (request.method === "GET" || request.method === "HEAD") &&
             url.href.slice(url.origin.length) === target
           )
             return response;
+
           return yield* next;
         }),
       { global: true },
@@ -302,19 +355,25 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
     metadataUrl,
     challenge: (challenge: BearerChallengeOptions = {}): string => {
       const parameters = [`resource_metadata="${metadataUrl.replace(/["\\]/g, "\\$&")}"`];
+
       if (challenge.error !== undefined) parameters.push(`error="${challenge.error}"`);
+
       if (challenge.errorDescription !== undefined) {
         if (!/^[\x20-\x21\x23-\x5B\x5D-\x7E]*$/.test(challenge.errorDescription)) {
           throw new Error("Invalid OAuth error description");
         }
+
         parameters.push(`error_description="${challenge.errorDescription}"`);
       }
+
       if (challenge.scope !== undefined) {
         if (!challenge.scope.split(" ").every((scope) => scopeToken.test(scope))) {
           throw new Error("Invalid OAuth challenge scope");
         }
+
         parameters.push(`scope="${challenge.scope}"`);
       }
+
       return `Bearer ${parameters.join(", ")}`;
     },
   };

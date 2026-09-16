@@ -23,17 +23,20 @@ export const middleware = <I, A, const Errors extends ReadonlyArray<Action.Codec
     encode: HttpServerResponse.schemaJson(schema),
     status: SchemaAST.resolveAt<number>("httpApiStatus")(schema.ast) ?? 500,
   }));
+
   return HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
     options.authenticate.pipe(
       Effect.matchEffect({
         onFailure: (error) => {
           const selected = errors.find((candidate) => candidate.matches(error));
+
           if (selected === undefined)
             return Effect.die(new Error("Undeclared authentication error"));
+
           return selected
             .encode(error, {
               status: selected.status,
-              ...(options.headers === undefined ? {} : { headers: options.headers(error) }),
+              headers: options.headers?.(error),
             })
             .pipe(Effect.orDie);
         },

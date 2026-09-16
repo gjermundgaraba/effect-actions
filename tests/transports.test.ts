@@ -1,38 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
-import { Effect, Schema } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import { makeTestApp, testMcpPath } from "./server.js";
 import { api } from "../examples/app.js";
 import { ActionHttp } from "../src/index.js";
-import { Actions } from "../examples/contracts.js";
+import { Actions, UserNotFound } from "../examples/contracts.js";
+import { Forbidden } from "../examples/auth.js";
 import { withMcpClient } from "../src/TestingClient.js";
 
 let app: ReturnType<typeof makeTestApp>;
+
 beforeEach(() => {
   app = makeTestApp();
 });
+
 afterEach(async () => {
   await app.dispose();
 });
 
-const request = (path: string, token = "alice", body?: unknown, method?: string) =>
-  new Request(`http://localhost${path}`, {
+const request = (path: string, token = "alice", body?: Schema.Json, method?: string) => {
+  const init: RequestInit = {
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  };
+
+  if (body !== undefined) init.body = JSON.stringify(body);
+
+  return new Request(`http://localhost${path}`, init);
+};
 
 const authenticatedFetch = (token: string) => (request: Request) => {
   request.headers.set("authorization", `Bearer ${token}`);
+
   return app.handler(request);
 };
 
 const withMcp = <A>(run: (client: Client) => Promise<A>, token = "alice") =>
   withMcpClient(authenticatedFetch(token), run, { path: testMcpPath });
 
-const tool = (name: string, args: Record<string, unknown>, token = "alice") =>
+const tool = (name: string, args: Schema.JsonObject, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
 
 describe("one implementation, both transports", () => {
@@ -83,7 +91,7 @@ describe("one implementation, both transports", () => {
     const http = await app.handler(request("/api/actions/getUser", "alice", { id: "missing" }));
     expect(http.status).toBe(404);
     const body = await http.json();
-    expect(body).toEqual({ _tag: "UserNotFound", id: "missing" });
+    expect(body).toEqual(Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" })));
     const reply = await tool("get_user", { id: "missing" });
     expect(reply.isError).toBe(true);
     expect(reply.structuredContent).toEqual(body);
@@ -106,13 +114,14 @@ describe("one implementation, both transports", () => {
     expect(reply.tools.map((tool) => tool.name)).toContain("rename_user");
     const denied = await tool("rename_user", { id: "1", name: "unauthorized" }, "reader");
     expect(denied.isError).toBe(true);
-    expect(denied.structuredContent).toEqual({
-      _tag: "Forbidden",
-      permission: "users:write",
-    });
+    expect(denied.structuredContent).toEqual(
+      Schema.encodeSync(Forbidden)(new Forbidden({ permission: "users:write" })),
+    );
+
     const forbidden = await app.handler(
       request("/api/actions/renameUser", "reader", { id: "1", name: "unauthorized" }),
     );
+
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual(denied.structuredContent);
     expect(
@@ -126,6 +135,7 @@ describe("one implementation, both transports", () => {
   it("keeps concurrent request actors isolated over MCP", async () => {
     const requests = Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? "alice" : "bob"));
     const results = await Promise.all(requests.map((token) => tool("whoAmI", {}, token)));
+
     for (const [i, reply] of results.entries()) {
       const id = requests[i];
       expect(reply.structuredContent).toEqual({
@@ -139,6 +149,7 @@ describe("one implementation, both transports", () => {
     // Effect's default object behavior strips excess fields on both paths.
     const reply = await tool("get_user", args);
     expect(reply.structuredContent).toEqual({ value: { id: "1", name: "Ada" } });
+
     const spoof = await withMcp((client) =>
       client.callTool({
         name: "get_user",
@@ -146,16 +157,19 @@ describe("one implementation, both transports", () => {
         _meta: { actor: { id: "bob", tenantId: "other" } },
       }),
     );
+
     expect(spoof.structuredContent).toEqual({ value: { id: "1", name: "Ada" } });
   });
 
   it("keeps concurrent request actors isolated over HTTP", async () => {
     const tokens = Array.from({ length: 20 }, (_, index) => (index % 2 === 0 ? "alice" : "bob"));
+
     const responses = await Promise.all(
       tokens.map(async (token) =>
         (await app.handler(request("/api/actions/whoAmI", token, {}))).json(),
       ),
     );
+
     expect(responses).toEqual(
       tokens.map((id) => ({ id, tenantId: id === "alice" ? "acme" : "other" })),
     );
@@ -166,10 +180,12 @@ describe("one implementation, both transports", () => {
       const response = await app.handler(
         new Request(`http://localhost${path}`, { method: "POST" }),
       );
+
       expect(response.status).toBe(401);
       expect(response.headers.get("www-authenticate")).toBe("Bearer");
-      expect(await response.json()).toMatchObject({ _tag: "Unauthenticated" });
+      expect(Predicate.isTagged("Unauthenticated")(await response.json())).toBe(true);
     }
+
     expect(
       (await app.handler(request("/api/actions/getUser", "toString", { id: "1" }))).status,
     ).toBe(401);
@@ -187,6 +203,7 @@ describe("one implementation, both transports", () => {
       method: "POST",
       headers: { authorization: "Bearer alice" },
     });
+
     expect((await app.handler(foreign)).status).toBe(403);
     const crossOrigin = request("/api/actions/getUser", "alice", { id: "1" });
     crossOrigin.headers.set("origin", "https://evil.example");
@@ -196,10 +213,12 @@ describe("one implementation, both transports", () => {
   it("uses native Effect HTTP request semantics", async () => {
     expect((await app.handler(request("/does-not-exist"))).status).toBe(404);
     expect((await app.handler(request("/api/actions/getUser"))).status).toBe(404);
+
     const malformed = new Request(request("/api/actions/double", "alice", {}), {
       method: "POST",
       body: "{",
     });
+
     expect((await app.handler(malformed)).status).toBe(400);
     const wrongType = request("/api/actions/double", "alice", {});
     wrongType.headers.set("content-type", "text/plain");
@@ -212,9 +231,11 @@ describe("one implementation, both transports", () => {
       paths: Schema.JsonObject,
       components: Schema.Struct({ schemas: Schema.JsonObject }),
     });
+
     const document = Schema.decodeUnknownSync(schema)(
       await (await app.handler(request("/openapi.json"))).json(),
     );
+
     expect(document.openapi).toBe("3.1.0");
     expect(Object.keys(document.paths)).toEqual([
       "/api/actions/getUser",
@@ -253,9 +274,11 @@ describe("one implementation, both transports", () => {
         },
       },
     });
+
     const doubleOperation = ActionHttp.openapi(Actions, { apiPath: "/api/actions" }).paths?.[
       "/api/actions/double"
     ]?.post;
+
     expect(doubleOperation?.operationId).toBe("actions.double");
     expect(doubleOperation?.responses).not.toHaveProperty("404");
     expect(Object.keys(document.components.schemas)).toContain("UserNotFoundEncoded");
@@ -269,8 +292,10 @@ describe("one implementation, both transports", () => {
           transformClient: (client) =>
             client.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken("alice"))),
         });
+
         // The typed client encodes decoded 21 to the wire string and decodes the reply.
         const result: number = yield* client.actions.double({ payload: { value: 21 } });
+
         return result;
       }).pipe(
         Effect.provide(FetchHttpClient.layer),
@@ -279,6 +304,7 @@ describe("one implementation, both transports", () => {
         ),
       ),
     );
+
     expect(result).toBe(42);
   });
 
@@ -289,6 +315,7 @@ describe("one implementation, both transports", () => {
       await withMcpClient(
         (request) => {
           versions.add(request.headers.get("mcp-protocol-version"));
+
           return authenticatedFetch("alice")(request);
         },
         async (client) => {
@@ -298,7 +325,9 @@ describe("one implementation, both transports", () => {
           expect(result.structuredContent).toEqual({ value: 14 });
           const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
           expect(failure.isError).toBe(true);
-          expect(failure.structuredContent).toEqual({ _tag: "UserNotFound", id: "missing" });
+          expect(failure.structuredContent).toEqual(
+            Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" })),
+          );
           expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
         },
         { mode: era, path: testMcpPath },

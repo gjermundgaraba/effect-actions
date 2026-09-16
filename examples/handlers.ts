@@ -7,15 +7,18 @@ import { Users } from "./users.js";
 export const App = Actions.implement(
   Effect.gen(function* () {
     const users = yield* Users;
+
     return {
       getUser: ({ id }) =>
         Effect.gen(function* () {
           const actor = yield* authorize("users:read");
+
           return yield* users.get(actor.tenantId, id);
         }),
       renameUser: ({ id, name }) =>
         Effect.gen(function* () {
           const actor = yield* authorize("users:write");
+
           return yield* users.rename(actor.tenantId, id, name);
         }),
       double: ({ value }) => Effect.succeed(value * 2),

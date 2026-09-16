@@ -31,11 +31,13 @@ describe("contracts", () => {
 
   it("rejects duplicate names at definition time", () => {
     expect(() => ActionGroup.make(GetUser, GetUser)).toThrow("Duplicate action");
+
     const Alias = Action.make("alias", {
       description: "Alias collision",
       success: Schema.String,
       mcp: { name: "get_user" },
     });
+
     expect(() => ActionGroup.make(GetUser, Alias)).toThrow("Duplicate MCP");
   });
 });
@@ -46,7 +48,9 @@ describe("implementations", () => {
     input: Schema.Struct({ name: Schema.String }),
     success: Schema.String,
   });
+
   const Group = ActionGroup.make(Hello);
+
   const request = (prefix: string) =>
     new Request(`http://localhost${prefix}/hello`, {
       method: "POST",
@@ -68,6 +72,7 @@ describe("implementations", () => {
     "keeps implementations apart: %s",
     async (kind) => {
       const appA = Group.implement({ hello: () => Effect.succeed("from A") });
+
       const appB: ActionGroup.Implementation<
         ReadonlyArray<Action.Any>,
         never,
@@ -82,6 +87,7 @@ describe("implementations", () => {
               success: Schema.Number,
             }),
           ).implement({ hello: () => Effect.succeed(42) });
+
       const web = HttpRouter.toWebHandler(
         Layer.mergeAll(
           ActionHttp.layer(appA, { apiPath: "/a", openapiPath: "/a.json" }),
@@ -89,6 +95,7 @@ describe("implementations", () => {
         ).pipe(Layer.provide(HttpServer.layerServices)),
         { disableLogger: true },
       );
+
       onTestFinished(() => web.dispose());
       expect(await (await web.handler(request("/a"))).json()).toBe("from A");
       expect(await (await web.handler(request("/b"))).json()).toBe(

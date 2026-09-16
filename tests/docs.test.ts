@@ -12,6 +12,7 @@ it.each([
   const source = readFileSync(new URL(`../examples/${file}`, import.meta.url), "utf8")
     .trim()
     .replace("../src/index.js", "@gjermundgaraba/effect-actions");
+
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const section = readme.split(heading)[1];
   const snippet = section?.match(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/)?.[1];
@@ -22,7 +23,9 @@ it("runs the documented client against the quickstart routes", async () => {
   const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
     disableLogger: true,
   });
+
   onTestFinished(() => web.dispose());
+
   const result = await Effect.runPromise(
     greeting.pipe(
       Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
@@ -30,5 +33,6 @@ it("runs the documented client against the quickstart routes", async () => {
       ),
     ),
   );
+
   expect(result).toBe("Hello, Ada!");
 });

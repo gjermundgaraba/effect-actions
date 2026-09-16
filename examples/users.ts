@@ -22,9 +22,11 @@ export class Users extends Context.Service<Users, UsersService>()("example/Users
 
     const get = Effect.fn("Users.get")(function* (tenantId: string, id: string) {
       const user = users.get(`${tenantId}/${id}`);
+
       if (user === undefined) {
         return yield* new UserNotFound({ id });
       }
+
       return user;
     });
 
@@ -36,6 +38,7 @@ export class Users extends Context.Service<Users, UsersService>()("example/Users
       yield* get(tenantId, id);
       const user = { id, name };
       users.set(`${tenantId}/${id}`, user);
+
       return user;
     });
 

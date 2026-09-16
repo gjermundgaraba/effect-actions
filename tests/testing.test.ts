@@ -22,11 +22,13 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
     "io.modelcontextprotocol/clientInfo": { name: "consumer", version: "2" },
     "io.modelcontextprotocol/protocolVersion": "2025-11-25",
   };
+
   const request = mcpRequest(
     "tools/call",
     { name: "inspect", arguments: {}, _meta: metadata },
     { url: "http://localhost/mcp" },
   );
+
   expect(await request.json()).toMatchObject({
     params: {
       name: "inspect",
@@ -36,4 +38,17 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
   });
   expect(request.headers.get("mcp-protocol-version")).toBe("2026-07-28");
   expect(metadata["io.modelcontextprotocol/protocolVersion"]).toBe("2025-11-25");
+});
+
+it("preserves malformed tool names without inventing a routing header", async () => {
+  const request = mcpRequest(
+    "tools/call",
+    { name: 123, arguments: {} },
+    {
+      url: "http://localhost/mcp",
+    },
+  );
+
+  expect(request.headers.has("mcp-name")).toBe(false);
+  expect(await request.json()).toMatchObject({ params: { name: 123, arguments: {} } });
 });

@@ -32,9 +32,11 @@ export const make = <const Actions extends ReadonlyArray<Action.Any>>(
 ): Group<Actions> => {
   const names = new Set<string>();
   const toolNames = new Set<string>();
+
   for (const action of actions) {
     if (names.has(action.name)) throw new Error(`Duplicate action: ${action.name}`);
     names.add(action.name);
+
     if (action.mcp !== false) {
       if (toolNames.has(action.mcp.name)) throw new Error(`Duplicate MCP tool: ${action.mcp.name}`);
       toolNames.add(action.mcp.name);
@@ -49,6 +51,7 @@ export const make = <const Actions extends ReadonlyArray<Action.Any>>(
       const built: Effect.Effect<H, EX, RX> = Effect.isEffect(build)
         ? build
         : Effect.succeed(build);
+
       return Implementation.make<Actions, HandlersContext<H>, EX, RX>(actions, built);
     },
   };

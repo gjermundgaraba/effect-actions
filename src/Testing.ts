@@ -1,23 +1,29 @@
+import { Predicate, type Schema } from "effect";
+
 /** A stateless 2026-07-28 request. */
 export interface McpRequestOptions {
   readonly url: string | URL;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
+export interface McpRequestParams {
+  readonly _meta?: Schema.JsonObject;
+  readonly [key: string]: Schema.Json | undefined;
+}
+
 export const mcpRequest = (
   method: string,
-  params: Record<string, unknown> & { readonly _meta?: Record<string, unknown> } = {},
+  params: McpRequestParams = {},
   options: McpRequestOptions,
 ): Request => {
   const headers = new Headers(options.headers);
-  for (const [name, value] of Object.entries({
-    "content-type": "application/json",
-    accept: "application/json, text/event-stream",
-    "mcp-protocol-version": "2026-07-28",
-    "mcp-method": method,
-    ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
-  }))
-    headers.set(name, value);
+  headers.set("content-type", "application/json");
+  headers.set("accept", "application/json, text/event-stream");
+  headers.set("mcp-protocol-version", "2026-07-28");
+  headers.set("mcp-method", method);
+
+  if (Predicate.isString(params.name)) headers.set("mcp-name", params.name);
+
   return new Request(options.url, {
     method: "POST",
     headers,
@@ -27,12 +33,14 @@ export const mcpRequest = (
       method,
       params: {
         ...params,
-        _meta: {
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
-          ...params._meta,
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        },
+        _meta: Object.assign(
+          {
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
+          },
+          params._meta,
+          { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+        ),
       },
     }),
   });

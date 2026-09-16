@@ -5,8 +5,11 @@ import { layer } from "../examples/app.js";
 
 /** Test-local mount paths; production callers must pass their own. */
 export const testApiPath = "/api/actions" as const;
+
 export const testOpenapiPath = "/openapi.json" as const;
+
 export const testMcpPath = "/mcp" as const;
+
 export const testMcpUrl = "http://localhost/mcp";
 
 const defaultHttpOptions = {

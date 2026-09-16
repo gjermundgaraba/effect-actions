@@ -87,6 +87,7 @@ export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid action name: ${name}`);
 
   const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? false);
+
   const mcp =
     options.mcp === false
       ? false
@@ -95,6 +96,7 @@ export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<
           readOnly,
           destructive: options.mcp?.destructive ?? !readOnly,
         };
+
   if (mcp !== false && !/^[A-Za-z0-9_-]{1,128}$/.test(mcp.name)) {
     throw new Error(`Invalid MCP name: ${mcp.name}`);
   }

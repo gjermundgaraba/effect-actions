@@ -12,7 +12,7 @@ import {
   OpenApi,
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
-import { handlerFor, Implementation } from "./internal/implementation.js";
+import { handlerFor, type ErasedValue, Implementation } from "./internal/implementation.js";
 
 export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   readonly apiPath: `/${string}`;
@@ -74,7 +74,9 @@ export function api(
   const [first, ...rest] = group.actions
     .filter((action) => action.http)
     .map((action) => endpoint(options.apiPath, action, options.schemaError?.errors ?? []));
+
   if (first === undefined) throw new Error("No HTTP-enabled actions");
+
   return HttpApi.make("actions").add(HttpApiGroup.make("actions").add(first, ...rest));
 }
 
@@ -110,13 +112,17 @@ export const layer = <
   | Path
 > => {
   const exposed = app.actions.filter((action) => action.http);
+
   if (exposed.length === 0) return Layer.empty;
+
   const policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined =
     options.schemaError;
+
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
     "effect-actions/http/SchemaErrors",
     { error: policy?.errors ?? [] },
   ) {}
+
   const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
     Effect.fail(
       policy === undefined
@@ -128,24 +134,28 @@ export const layer = <
           }),
     ),
   );
+
   const httpApi = api<ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>>(
     app,
     options,
   ).middleware(SchemaErrors);
+
   return Implementation.register(app, (table) => {
     const group = HttpApiBuilder.group(httpApi, "actions", (handlers) =>
       handlers.handleAll(
         Object.fromEntries(
           exposed.map((action) => {
             const handle = handlerFor(table, action);
+
             return [
               action.name,
-              (request: { readonly payload: unknown }) => handle(request.payload),
+              (request: { readonly payload: ErasedValue }) => handle(request.payload),
             ];
           }),
         ),
       ),
     );
+
     // Build the native group with an empty context so build-time application
     // services cannot become request fallbacks.
     const isolated = Layer.fromBuildMemo((memoMap, scope) =>
@@ -153,6 +163,7 @@ export const layer = <
         Effect.setContext(Context.empty()),
       ),
     );
+
     return HttpApiBuilder.layer(httpApi, {
       openapiPath: options.openapiPath === false ? undefined : options.openapiPath,
     }).pipe(Layer.provide(isolated));
@@ -200,7 +211,7 @@ export function client(
   group: Actions,
   options: ClientOptions<ReadonlyArray<Action.Codec>>,
 ): Effect.Effect<
-  Readonly<Record<string, (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>>>,
+  Readonly<Record<string, (input?: ErasedValue) => Effect.Effect<unknown, unknown>>>,
   never,
   HttpClient.HttpClient
 > {
@@ -212,14 +223,16 @@ export function client(
         .filter((action) => Schema.is(action.input)(undefined))
         .map((action) => action.name),
     );
+
     return Object.fromEntries(
       Object.entries(native.actions).map(([name, method]) => {
         // Callable "then" would make Promise resolution assimilate this client.
         if (name === "then")
           throw new Error('Action "then" requires the native grouped HttpApiClient');
+
         return [
           name,
-          (input?: unknown) =>
+          (input?: ErasedValue) =>
             method({
               payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
               responseMode: "decoded-only",

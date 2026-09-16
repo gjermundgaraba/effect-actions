@@ -22,6 +22,7 @@ const Greet = Action.make("greet", {
 });
 
 export const Actions = ActionGroup.make(Greet);
+
 const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });
@@ -67,6 +68,7 @@ export const greeting = Effect.gen(function* () {
     apiPath: "/api/actions",
     baseUrl: "http://127.0.0.1:3000",
   });
+
   return yield* client.greet({ name: "Ada" });
 }).pipe(Effect.provide(FetchHttpClient.layer));
 ```

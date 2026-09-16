@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Deferred, Effect, Fiber, Layer, Schema, SchemaTransformation } from "effect";
+import { Deferred, Effect, Fiber, Layer, Predicate, Schema, SchemaTransformation } from "effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -14,6 +14,7 @@ class Invalid extends Schema.TaggedError<Invalid>()(
   { message: Schema.String },
   { httpApiStatus: 500 },
 ) {}
+
 const actions = ActionGroup.make(
   Action.make("double", {
     description: "Transform in both directions",
@@ -28,15 +29,18 @@ const actions = ActionGroup.make(
   }),
   Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
 );
+
 const schemaError = {
   errors: [Invalid],
   map: () => new Invalid({ message: "Invalid output" }),
 };
+
 const Http = ActionHttp.configure({
   apiPath: "/rpc",
   openapiPath: "/schema",
   schemaError,
 });
+
 const app = actions.implement({
   double: ({ value }) => Effect.succeed(value === 0 ? Infinity : value * 2),
   ping: () => Effect.succeed(true),
@@ -53,6 +57,7 @@ it.each(["configured", "standalone"] as const)(
         disableLogger: true,
       },
     );
+
     const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
     onTestFinished(() => web.dispose());
     const response = await web.handler(new Request("http://localhost/schema"));
@@ -70,6 +75,7 @@ it.each(["configured", "standalone"] as const)(
             HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer test")),
           ),
       };
+
       const client = yield* mode === "configured"
         ? Http.client(actions, connection)
         : ActionHttp.client(actions, {
@@ -77,6 +83,7 @@ it.each(["configured", "standalone"] as const)(
             apiPath: "/rpc",
             schemaError,
           });
+
       expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
       expect(yield* client.double({ value: 21 })).toBe(42);
       expect(yield* client.ping()).toBe(true);
@@ -96,6 +103,7 @@ it.each(["configured", "standalone"] as const)(
           body: await request.clone().json(),
           token: request.headers.get("authorization"),
         });
+
         return web.handler(request);
       }),
       Effect.runPromise,
@@ -111,6 +119,7 @@ it.each(["configured", "standalone"] as const)(
 
 it("retains native response validation, transport errors and response transforms", async () => {
   let transformed = 0;
+
   const call = Effect.gen(function* () {
     const client = yield* Http.client(actions, {
       baseUrl: "http://localhost",
@@ -121,15 +130,19 @@ it("retains native response validation, transport errors and response transforms
           }),
         ),
     });
+
     return yield* Effect.flip(client.ping());
   }).pipe(Effect.provide(FetchHttpClient.layer));
+
   const malformed = await Effect.runPromise(
     call.pipe(
       Effect.provideService(FetchHttpClient.Fetch, async () => Response.json("not a boolean")),
     ),
   );
+
   expect(Schema.isSchemaError(malformed)).toBe(true);
   expect(transformed).toBe(1);
+
   const unavailable = await Effect.runPromise(
     call.pipe(
       Effect.provideService(FetchHttpClient.Fetch, async () => {
@@ -137,14 +150,17 @@ it("retains native response validation, transport errors and response transforms
       }),
     ),
   );
-  expect(unavailable).toMatchObject({ _tag: "HttpClientError" });
+
+  expect(Predicate.isTagged("HttpClientError")(unavailable)).toBe(true);
 });
 
 it("propagates interruption to the native fetch signal", async () => {
   const started = Effect.runSync(Deferred.make<void>());
   let aborted = false;
+
   const call = Effect.gen(function* () {
     const client = yield* Http.client(actions, { baseUrl: "http://localhost" });
+
     return yield* client.ping();
   }).pipe(
     Effect.provide(FetchHttpClient.layer),
@@ -153,6 +169,7 @@ it("propagates interruption to the native fetch signal", async () => {
       (_input, init) =>
         new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
+
           if (!signal) throw new Error("Missing native abort signal");
           signal.addEventListener(
             "abort",
@@ -166,12 +183,15 @@ it("propagates interruption to the native fetch signal", async () => {
         }),
     ),
   );
+
   const fiber = Effect.runFork(call);
+
   try {
     await Effect.runPromise(Deferred.await(started));
   } finally {
     await Effect.runPromise(Fiber.interrupt(fiber));
   }
+
   expect(aborted).toBe(true);
 });
 
@@ -182,6 +202,7 @@ it("rejects a flattened then method rather than hanging Promise resolution", asy
       success: Schema.String,
     }),
   );
+
   await expect(
     Effect.runPromise(Http.client(group).pipe(Effect.provide(FetchHttpClient.layer))),
   ).rejects.toThrow('Action "then" requires the native grouped HttpApiClient');
@@ -190,6 +211,7 @@ it("rejects a flattened then method rather than hanging Promise resolution", asy
 
 it("preserves null and explicitly undefined-valued input codecs", async () => {
   const optional = Schema.Struct({ value: Schema.optional(Schema.Number) });
+
   const undefinedFromString = Schema.Literal("absent").pipe(
     Schema.decodeTo(
       Schema.Undefined,
@@ -199,6 +221,7 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
       }),
     ),
   );
+
   const group = ActionGroup.make(
     Action.make("nullable", {
       description: "Nullable object",
@@ -213,12 +236,14 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
       mcp: false,
     }),
   );
+
   const bodies: unknown[] = [];
   await Effect.gen(function* () {
     const client = yield* ActionHttp.client(group, {
       apiPath: "/api/actions",
       baseUrl: "http://localhost",
     });
+
     yield* client.nullable(null);
     yield* client.nullable(undefined);
     yield* client.undefinedValue(undefined);
@@ -226,6 +251,7 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
       bodies.push(await new Request(input, init).json());
+
       return Response.json(true);
     }),
     Effect.runPromise,
