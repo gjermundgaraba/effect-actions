@@ -16,12 +16,12 @@ import { httpClient, mcpRequest } from "../src/Testing.js";
 class Tenant extends Context.Service<Tenant, string>()("groups-test/Tenant") {}
 
 const Users = ActionGroup.make(
-  "users",
+  { name: "users" },
   Action.make("whoAmI", { description: "Current user", success: Schema.String }),
 );
 
 const Billing = ActionGroup.make(
-  "billing",
+  { name: "billing" },
   Action.make("invoice", {
     description: "Invoice total",
     input: Schema.Struct({ amount: Schema.FiniteFromString }),
@@ -108,7 +108,7 @@ it("serves several groups as the tools of one MCP endpoint", async () => {
 
 const Alpha = Action.make("alpha", { description: "Alpha", success: Schema.String });
 
-const A = ActionGroup.make("a", Alpha);
+const A = ActionGroup.make({ name: "a" }, Alpha);
 
 const post = (path: string) =>
   new Request(`http://localhost${path}`, {
@@ -117,10 +117,10 @@ const post = (path: string) =>
     body: "{}",
   });
 
-const handlerOf = (
+const handlerOf = <E>(
   routes: Layer.Layer<
     never,
-    never,
+    E,
     HttpRouter.HttpRouter | Layer.Success<typeof HttpServer.layerServices>
   >,
 ) => {
@@ -135,7 +135,7 @@ const handlerOf = (
 
 it("never dispatches to a handler its own group did not declare", async () => {
   const B = ActionGroup.make(
-    "b",
+    { name: "b" },
     Action.make("beta", { description: "Beta", success: Schema.String }),
   );
 
@@ -158,8 +158,14 @@ it("never dispatches to a handler its own group did not declare", async () => {
 });
 
 it("mounts only implementations of the groups it was made with", () => {
-  const lookAlike = ActionGroup.make("a", Alpha).implement({ alpha: () => Effect.succeed("x") });
-  const other = ActionGroup.make("other", Alpha).implement({ alpha: () => Effect.succeed("x") });
+  const lookAlike = ActionGroup.make({ name: "a" }, Alpha).implement({
+    alpha: () => Effect.succeed("x"),
+  });
+
+  const other = ActionGroup.make({ name: "other" }, Alpha).implement({
+    alpha: () => Effect.succeed("x"),
+  });
+
   const bound = ActionHttp.make({ apiPath: "/api" }, A);
 
   // Pairing is by identity: the same name and actions do not make it this group.
@@ -183,12 +189,12 @@ it("acquires only the implementations a transport serves", async () => {
     });
 
   const McpOnly = ActionGroup.make(
-    "mcpOnly",
+    { name: "mcpOnly" },
     Action.make("tool", { description: "Tool", success: Schema.String, http: false }),
   );
 
   const HttpOnly = ActionGroup.make(
-    "httpOnly",
+    { name: "httpOnly" },
     Action.make("route", { description: "Route", success: Schema.String, mcp: false }),
   );
 
@@ -214,13 +220,13 @@ it("acquires only the implementations a transport serves", async () => {
 
 it("reads only the actions a transport serves", async () => {
   const Web = ActionGroup.make(
-    "web",
+    { name: "web" },
     Action.make("ping", { description: "HTTP only", success: Schema.String, mcp: false }),
   );
 
   // Same name on the other transport, with an input that accepts `undefined`.
   const Tools = ActionGroup.make(
-    "tools",
+    { name: "tools" },
     Action.make("ping", {
       description: "MCP only",
       input: Schema.UndefinedOr(Schema.Struct({ value: Schema.optional(Schema.String) })),
@@ -287,20 +293,72 @@ it("scopes router middleware to the layer it is provided to", async () => {
   ).toEqual([403, 403, 403]);
 });
 
+it("adds a group's errors to every action, on both transports", async () => {
+  class Refused extends Schema.TaggedError<Refused>()(
+    "Refused",
+    { reason: Schema.String },
+    { httpApiStatus: 403 },
+  ) {}
+
+  class Missing extends Schema.TaggedError<Missing>()("Missing", {}, { httpApiStatus: 404 }) {}
+
+  const Guarded = ActionGroup.make(
+    { name: "guarded", errors: [Refused] },
+    Action.make("find", { description: "Find", success: Schema.String, errors: [Missing] }),
+    Action.make("list", { description: "List", success: Schema.String }),
+  );
+
+  expect(Guarded.actions.map((action) => action.errors)).toEqual([[Missing, Refused], [Refused]]);
+
+  const app = Guarded.implement({
+    find: () => Effect.fail(new Missing()),
+    list: () => Effect.fail(new Refused({ reason: "closed" })),
+  });
+
+  const bound = ActionHttp.make({ apiPath: "/api" }, Guarded);
+
+  const handler = handlerOf(
+    Layer.mergeAll(
+      bound.layer(app),
+      ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app),
+    ),
+  );
+
+  expect((await handler(post("/api/find"))).status).toBe(404);
+  const refused = await handler(post("/api/list"));
+  expect(refused.status).toBe(403);
+  expect(await refused.json()).toEqual(
+    Schema.encodeSync(Refused)(new Refused({ reason: "closed" })),
+  );
+
+  const tool = await handler(
+    mcpRequest({
+      url: "http://localhost/mcp",
+      method: "tools/call",
+      params: { name: "list", arguments: {} },
+    }),
+  );
+
+  expect(await tool.json()).toMatchObject({
+    result: { isError: true, structuredContent: { reason: "closed" } },
+  });
+  expect(OpenApi.fromApi(bound.api).paths["/api/list"]?.post?.responses).toHaveProperty("403");
+});
+
 it("checks each namespace only where it is served", () => {
   const Other = ActionGroup.make(
-    "other",
+    { name: "other" },
     Action.make("whoAmI", { description: "Collides", success: Schema.String }),
   );
 
   const again = ActionGroup.make(
-    "users",
+    { name: "users" },
     Action.make("other", { description: "", success: Schema.String }),
   );
 
   const aliased = (group: string, action: string) =>
     ActionGroup.make(
-      group,
+      { name: group },
       Action.make(action, { description: "", success: Schema.String, mcp: { name: "same" } }),
     );
 
@@ -321,7 +379,7 @@ it("checks each namespace only where it is served", () => {
       { apiPath: "/api" },
       Users,
       ActionGroup.make(
-        "tools",
+        { name: "tools" },
         Action.make("whoAmI", {
           description: "",
           success: Schema.String,
@@ -339,7 +397,7 @@ it("checks each namespace only where it is served", () => {
       { apiPath: "/api" },
       Users,
       ActionGroup.make(
-        "users",
+        { name: "users" },
         Action.make("tool", { description: "", success: Schema.String, http: false }),
       ),
     ),

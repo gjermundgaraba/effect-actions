@@ -1,6 +1,5 @@
 import { Effect, Layer, Predicate } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import type { Actions } from "./internal/actions.js";
 
@@ -11,11 +10,11 @@ export type Handler = (request: Request) => Promise<Response>;
  * The typed HTTP client, calling `handler` in memory instead of the network.
  * `baseUrl` defaults to `http://localhost`.
  */
-export const httpClient = <G extends Actions, Errors extends ReadonlyArray<Action.Codec>>(
-  http: Pick<ActionHttp.Http<G, Errors>, "client">,
+export const httpClient = <G extends Actions>(
+  http: Pick<ActionHttp.Http<G>, "client">,
   handler: Handler,
   options?: ActionHttp.ClientOptions,
-): Effect.Effect<ActionHttp.Client<G, Errors[number]>> =>
+): Effect.Effect<ActionHttp.Client<G>> =>
   http
     .client({ baseUrl: "http://localhost", ...options })
     .pipe(

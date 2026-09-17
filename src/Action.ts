@@ -11,16 +11,11 @@ export interface SchemaFailure {
   readonly cause: Schema.SchemaError;
 }
 
-/** Pure application-owned mapping, shared by the HTTP and MCP adapters. */
+/** Pure application-owned mapping, set on a group and applied by both adapters. */
 export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
   readonly errors: Errors;
   readonly map: (failure: SchemaFailure) => NoInfer<Errors[number]["Type"]>;
 }
-
-/** Infers the error tuple, so a policy shared by both adapters needs no annotation. */
-export const schemaErrorPolicy = <const Errors extends ReadonlyArray<Codec>>(
-  policy: SchemaErrorPolicy<Errors>,
-): SchemaErrorPolicy<Errors> => policy;
 
 export interface McpOptions {
   readonly name?: string;
@@ -36,7 +31,7 @@ export interface Options<
   Http extends boolean = boolean,
 > {
   readonly description: string;
-  /** Defaults to `NoInput`. */
+  /** Omit for an action without arguments. */
   readonly input?: Input;
   readonly success: Output;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
@@ -76,7 +71,7 @@ export type Handler<A extends Any, R = never> = (
 ) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R>;
 
 /** An empty object schema that also produces the object root MCP requires. */
-export const NoInput = Schema.Record(Schema.String, Schema.Never);
+const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 export function make<
   const Name extends string,

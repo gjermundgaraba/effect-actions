@@ -12,7 +12,13 @@ import {
   OpenApi,
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
-import { type Actions, assertDistinct, type Served, served } from "./internal/actions.js";
+import {
+  type Actions,
+  assertDistinct,
+  type PolicyError,
+  type Served as View,
+  served,
+} from "./internal/actions.js";
 import {
   type AnyImplementation,
   type BuildContext,
@@ -23,9 +29,8 @@ import {
 } from "./internal/implementation.js";
 
 /** Contract-level configuration: servers and clients must agree on it. */
-export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
+export interface Options {
   readonly apiPath: `/${string}`;
-  readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
 }
 
 /** Distribute over the tuple so each name retains its own codecs. */
@@ -46,35 +51,48 @@ type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readon
     : never;
 
 /** One native group per action group; groups without HTTP actions are omitted. */
-type ApiGroup<G extends Actions, E extends Action.Codec> = G extends Actions
-  ? [Endpoint<G["actions"][number], E>] extends [never]
+type ApiGroup<G extends Actions> = G extends Actions
+  ? [Endpoint<G["actions"][number], never>] extends [never]
     ? never
-    : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], E>>
+    : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], PolicyError<G>>>
   : never;
 
-export type Api<G extends Actions, E extends Action.Codec = never> = HttpApi.HttpApi<
-  "actions",
-  ApiGroup<G, E>
->;
+export type Api<G extends Actions> = HttpApi.HttpApi<"actions", ApiGroup<G>>;
 
-/** Direct decoded-input methods, excluding MCP-only actions. */
-export type Client<G extends Actions, E extends Action.Codec = never> = {
-  readonly [Item in G["actions"][number] as Item["http"] extends false ? never : Item["name"]]: (
-    ...args: {} extends Item["input"]["Type"]
-      ? [input?: Item["input"]["Type"]]
-      : [input: Item["input"]["Type"]]
-  ) => HttpApiClient.Client.MethodReturn<Endpoint<Item, E>, never, never, "decoded-only">;
+// Each action paired with its own group's policy errors, so the client stays one flat record.
+type Served<G extends Actions> = G extends Actions
+  ? G["actions"][number] extends infer Item
+    ? Item extends Action.Any
+      ? { readonly action: Item; readonly policyError: PolicyError<G> }
+      : never
+    : never
+  : never;
+
+/** Direct decoded-input methods of every group, excluding MCP-only actions. */
+export type Client<G extends Actions> = {
+  readonly [
+    Pair in Served<G> as Pair["action"]["http"] extends false ? never : Pair["action"]["name"]
+  ]: (
+    ...args: {} extends Pair["action"]["input"]["Type"]
+      ? [input?: Pair["action"]["input"]["Type"]]
+      : [input: Pair["action"]["input"]["Type"]]
+  ) => HttpApiClient.Client.MethodReturn<
+    Endpoint<Pair["action"], Pair["policyError"]>,
+    never,
+    never,
+    "decoded-only"
+  >;
 };
 
 /** Native connection options: `baseUrl`, `transformClient`, `transformResponse`. */
 export type ClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
 
-export interface Http<G extends Actions, Errors extends ReadonlyArray<Action.Codec> = []> {
+export interface Http<G extends Actions> {
   /**
    * The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`.
    * Documents, documentation UIs and native clients are Effect's own, from this value.
    */
-  readonly api: Api<G, Errors[number]>;
+  readonly api: Api<G>;
   /**
    * The routes of one group. Merge one per group; router middleware provided
    * to a layer applies to that group only. Handler requirements are
@@ -97,7 +115,7 @@ export interface Http<G extends Actions, Errors extends ReadonlyArray<Action.Cod
   /** Direct action methods backed by the native HTTP client and its codecs. */
   readonly client: (
     options?: ClientOptions,
-  ) => Effect.Effect<Client<G, Errors[number]>, never, HttpClient.HttpClient>;
+  ) => Effect.Effect<Client<G>, never, HttpClient.HttpClient>;
 }
 
 const endpoint = (apiPath: `/${string}`, action: Action.Any, errors: ReadonlyArray<Action.Codec>) =>
@@ -109,16 +127,11 @@ const endpoint = (apiPath: `/${string}`, action: Action.Any, errors: ReadonlyArr
 
 type ErasedPolicy = Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>>;
 
-type ErasedOptions = Options<ReadonlyArray<Action.Codec>>;
-
-function erasedApi(
-  views: ReadonlyArray<Served>,
-  options: ErasedOptions,
-): Api<Actions, Action.Codec>;
-function erasedApi(views: ReadonlyArray<Served>, options: ErasedOptions): HttpApi.Constraint {
+function erasedApi(views: ReadonlyArray<View>, options: Options): Api<Actions>;
+function erasedApi(views: ReadonlyArray<View>, options: Options): HttpApi.Constraint {
   const [first, ...rest] = views.flatMap(({ group, actions }) => {
     const [head, ...tail] = actions.map((action) =>
-      endpoint(options.apiPath, action, options.schemaError?.errors ?? []),
+      endpoint(options.apiPath, action, group.schemaError?.errors ?? []),
     );
 
     return head === undefined ? [] : [HttpApiGroup.make(group.name).add(head, ...tail)];
@@ -134,9 +147,8 @@ type ErasedImplementation<R, EX, RX> = Implementation<Actions, R, EX, RX>;
 /** Everything `make` fixes once and every route layer shares. */
 interface Binding {
   readonly groups: ReadonlyArray<Actions>;
-  readonly views: ReadonlyArray<Served>;
-  readonly options: ErasedOptions;
-  readonly schemaErrors: ReturnType<typeof schemaErrorMiddleware>;
+  readonly views: ReadonlyArray<View>;
+  readonly options: Options;
 }
 
 const schemaErrorMiddleware = (policy: ErasedPolicy | undefined) => {
@@ -172,7 +184,9 @@ const erasedLayer = <R, EX, RX>(binding: Binding, app: ErasedImplementation<R, E
   // A group without HTTP actions has no routes and is not acquired.
   if (view === undefined) return Layer.empty;
 
-  const httpApi = erasedApi([view], binding.options).middleware(binding.schemaErrors.SchemaErrors);
+  // The policy is the group's own, so groups of one adapter may answer differently.
+  const schemaErrors = schemaErrorMiddleware(view.group.schemaError);
+  const httpApi = erasedApi([view], binding.options).middleware(schemaErrors.SchemaErrors);
 
   return Implementation.register([{ app, actions: view.actions }], (bound) => {
     const handlers = bound.map((implementation) =>
@@ -196,7 +210,7 @@ const erasedLayer = <R, EX, RX>(binding: Binding, app: ErasedImplementation<R, E
     // services cannot become request fallbacks.
     const isolated = Layer.fromBuildMemo((memoMap, scope) =>
       Layer.buildWithMemoMap(
-        Layer.mergeAll(Layer.empty, ...handlers).pipe(Layer.provide(binding.schemaErrors.layer)),
+        Layer.mergeAll(Layer.empty, ...handlers).pipe(Layer.provide(schemaErrors.layer)),
         memoMap,
         scope,
       ).pipe(Effect.setContext(Context.empty())),
@@ -207,8 +221,8 @@ const erasedLayer = <R, EX, RX>(binding: Binding, app: ErasedImplementation<R, E
 };
 
 const erasedClient = (
-  api: Api<Actions, Action.Codec>,
-  views: ReadonlyArray<Served>,
+  api: Api<Actions>,
+  views: ReadonlyArray<View>,
   connection: ClientOptions | undefined,
 ) =>
   Effect.map(HttpApiClient.make(api, connection), (native) => {
@@ -244,14 +258,11 @@ const erasedClient = (
  * Bind the contract-level configuration once. The native API is built here and
  * shared by the routes and clients, so they cannot disagree.
  */
-export function make<
-  const G extends ReadonlyArray<Actions>,
-  const Errors extends ReadonlyArray<Action.Codec> = [],
->(options: Options<Errors>, ...groups: G): Http<G[number], Errors>;
-export function make(
-  options: ErasedOptions,
-  ...groups: ReadonlyArray<Actions>
-): Http<Actions, ReadonlyArray<Action.Codec>> {
+export function make<const G extends ReadonlyArray<Actions>>(
+  options: Options,
+  ...groups: G
+): Http<G[number]>;
+export function make(options: Options, ...groups: ReadonlyArray<Actions>): Http<Actions> {
   const views = served(groups, (action) => action.http);
 
   // A group's name is its identity here: native group identifier and OpenAPI
@@ -271,7 +282,6 @@ export function make(
     groups,
     views,
     options,
-    schemaErrors: schemaErrorMiddleware(options.schemaError),
   };
 
   return {

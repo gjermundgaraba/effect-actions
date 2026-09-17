@@ -16,8 +16,7 @@ import {
   Implementation,
 } from "./internal/implementation.js";
 
-export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
-  readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
+export interface Options {
   readonly name: string;
   readonly version: string;
   readonly path: HttpRouter.PathInput;
@@ -26,8 +25,8 @@ export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   readonly instructions?: string;
 }
 
-/** Protocol revisions served over Streamable HTTP; 2026-07-28 is stateless. */
-export const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
+/** Protocol revisions served over Streamable HTTP by default; 2026-07-28 is stateless. */
+const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
   McpProtocol.v2026_07_28,
   McpProtocol.v2025_11_25,
   McpProtocol.v2025_06_18,
@@ -74,7 +73,7 @@ const inputJsonSchema = (action: Action.Any) => {
 
   if (root.type !== "object") {
     throw new Error(
-      `${action.name}: MCP input must have an object root; use Action.NoInput for no arguments`,
+      `${action.name}: MCP input must have an object root; omit input for no arguments`,
     );
   }
 
@@ -192,7 +191,7 @@ const registrationRouter = (
 
 const erasedLayer = <R, EX, RX>(
   apps: ReadonlyArray<Implementation<Actions, R, EX, RX>>,
-  options: Options<ReadonlyArray<Action.Codec>>,
+  options: Options,
 ) => {
   // Implementations without a tool are not acquired.
   const serving = apps.flatMap((app) =>
@@ -210,14 +209,15 @@ const erasedLayer = <R, EX, RX>(
   return Implementation.register(serving, (bound) => {
     const native = Layer.effectDiscard(
       Effect.gen(function* () {
-        if (bound.length > 0) {
-          for (const error of options.schemaError?.errors ?? [])
-            assertObjectError("Schema-error policy", error);
+        for (const app of bound) {
+          for (const error of app.group.schemaError?.errors ?? [])
+            assertObjectError(`Schema-error policy of group ${app.group.name}`, error);
         }
 
         yield* Effect.forEach(
           bound.flatMap((app) => app.actions.map((action) => [app, action] as const)),
-          ([app, action]) => registerTool(app, action, options.schemaError),
+          // The policy is the group's own, as it is over HTTP.
+          ([app, action]) => registerTool(app, action, app.group.schemaError),
           { discard: true },
         );
       }),
@@ -258,11 +258,8 @@ const erasedLayer = <R, EX, RX>(
  * One Streamable HTTP MCP endpoint serving every MCP-enabled action of `apps`.
  * An endpoint is one route, so middleware provided to this layer covers all of its tools.
  */
-export function layer<
-  const Apps extends ReadonlyArray<AnyImplementation>,
-  const Errors extends ReadonlyArray<Action.Codec> = [],
->(
-  options: Options<Errors>,
+export function layer<const Apps extends ReadonlyArray<AnyImplementation>>(
+  options: Options,
   ...apps: Apps
 ): Layer.Layer<
   never,
@@ -271,9 +268,6 @@ export function layer<
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
 >;
-export function layer(
-  options: Options<ReadonlyArray<Action.Codec>>,
-  ...apps: ReadonlyArray<AnyImplementation>
-) {
+export function layer(options: Options, ...apps: ReadonlyArray<AnyImplementation>) {
   return erasedLayer(apps, options);
 }

@@ -4,10 +4,16 @@ import type * as Action from "../Action.js";
 export interface Actions<
   Name extends string = string,
   A extends ReadonlyArray<Action.Any> = ReadonlyArray<Action.Any>,
+  PolicyErrors extends ReadonlyArray<Action.Codec> = ReadonlyArray<Action.Codec>,
 > {
   readonly name: Name;
   readonly actions: A;
+  /** How both transports answer failed decoding or encoding; their native behavior without one. */
+  readonly schemaError: Action.SchemaErrorPolicy<PolicyErrors> | undefined;
 }
+
+/** The errors a group's policy may answer with, by lookup rather than a conditional type. */
+export type PolicyError<G extends Actions> = NonNullable<G["schemaError"]>["errors"][number];
 
 /** Each namespace is checked by whoever owns it: a group, the routes, or the MCP tools. */
 export const assertDistinct = (what: string, names: ReadonlyArray<string>): void => {

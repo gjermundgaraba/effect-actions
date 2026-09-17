@@ -19,7 +19,13 @@ class Invalid extends Schema.TaggedError<Invalid>()(
 ) {}
 
 const actions = ActionGroup.make(
-  "numbers",
+  {
+    name: "numbers",
+    schemaError: {
+      errors: [Invalid],
+      map: () => new Invalid({ message: "Invalid output" }),
+    },
+  },
   Action.make("double", {
     description: "Transform in both directions",
     input: Schema.Struct({ value: Schema.FiniteFromString }),
@@ -34,16 +40,7 @@ const actions = ActionGroup.make(
   Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
 );
 
-const Http = ActionHttp.make(
-  {
-    apiPath: "/rpc",
-    schemaError: {
-      errors: [Invalid],
-      map: () => new Invalid({ message: "Invalid output" }),
-    },
-  },
-  actions,
-);
+const Http = ActionHttp.make({ apiPath: "/rpc" }, actions);
 
 const app = actions.implement({
   double: ({ value }) => Effect.succeed(value === 0 ? Infinity : value * 2),
@@ -189,7 +186,7 @@ it("propagates interruption to the native fetch signal", async () => {
 
 it("rejects a flattened then method rather than hanging Promise resolution", async () => {
   const group = ActionGroup.make(
-    "promises",
+    { name: "promises" },
     Action.make("then", {
       description: "Valid action, but unsafe as a direct client method",
       success: Schema.String,
@@ -218,7 +215,7 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
   );
 
   const group = ActionGroup.make(
-    "inputs",
+    { name: "inputs" },
     Action.make("nullable", {
       description: "Nullable object",
       input: Schema.NullOr(optional),

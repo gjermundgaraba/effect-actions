@@ -11,7 +11,7 @@ const Greet = Action.make("greet", {
   mcp: { readOnly: true },
 });
 
-export const Actions = ActionGroup.make("greetings", Greet);
+export const Actions = ActionGroup.make({ name: "greetings" }, Greet);
 
 export const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
 

@@ -333,7 +333,7 @@ describe("Authentication.middleware", () => {
         success: Schema.String,
       });
 
-      const app = ActionGroup.make("test", Identify).implement({
+      const app = ActionGroup.make({ name: "test" }, Identify).implement({
         identify: () =>
           Effect.gen(function* () {
             expect(events).toEqual(["acquire"]);

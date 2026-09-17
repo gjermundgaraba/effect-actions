@@ -4,7 +4,7 @@ import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { type Actor, CurrentActor, Unauthenticated } from "./auth.js";
-import { Http, schemaError } from "./contracts.js";
+import { Http } from "./contracts.js";
 import { AuditApp, PublicApp, UserApp } from "./handlers.js";
 import { Users } from "./users.js";
 
@@ -84,7 +84,6 @@ const publicMcp = ActionMcp.layer(
     name: "effect-actions-public",
     version: "0.0.0",
     path: "/mcp/public",
-    schemaError,
     allowedOrigins,
   },
   PublicApp,
@@ -95,7 +94,6 @@ const mcp = ActionMcp.layer(
     name: "effect-actions",
     version: "0.0.0",
     path: "/mcp",
-    schemaError,
     allowedOrigins,
   },
   UserApp,

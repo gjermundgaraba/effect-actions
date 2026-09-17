@@ -29,7 +29,7 @@ const Greet = Action.make("greet", {
   mcp: { readOnly: true },
 });
 
-export const Actions = ActionGroup.make("greetings", Greet);
+export const Actions = ActionGroup.make({ name: "greetings" }, Greet);
 
 export const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
 
@@ -51,9 +51,13 @@ See [examples/server.ts](examples/server.ts) for Node server wiring and the
 
 ### Contracts
 
-- `input` defaults to `Action.NoInput` for actions without arguments.
+- Omit `input` for an action without arguments.
 - `errors` is a list of failure schemas, defaulting to none. Each schema retains
   its own `httpApiStatus` annotation.
+- A group's `errors` are added to every one of its actions, so a shared set, such as
+  authorization failures, is declared once. Its `schemaError` policy decides how both
+  transports answer failed decoding or encoding; see
+  [schema-error policies](docs/behavior.md#schema-error-policies).
 - Actions default to both transports; use `http: false` or `mcp: false` to opt out.
   An action exposed on neither is rejected.
 - MCP input must have an object-root JSON Schema; declared errors must encode to
@@ -79,9 +83,8 @@ export const greeting = Effect.gen(function* () {
 ```
 
 Run `greeting` with `Effect.runPromise`. Methods take decoded inputs and return
-decoded results; MCP-only actions are excluded. `ActionHttp.make` binds what the
-server and its clients must agree on (`apiPath` and the schema-error policy), so
-`client` accepts only connection options. Authentication headers can be added with
+decoded results; MCP-only actions are excluded. `ActionHttp.make` binds the mount path the
+server and its clients must agree on, so `client` accepts only connection options. Authentication headers can be added with
 `transformClient`. See [client details](docs/behavior.md#http-client-details)
 for error types, optional inputs, and native grouped clients.
 
@@ -138,12 +141,13 @@ value gives Effect's grouped client: `HttpApiClient.make(Http.api)`.
 
 ## Adapter options
 
-| API                                 | Options                                                                                 |
-| ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `ActionHttp.make(options, …groups)` | `apiPath`, `schemaError`                                                                |
-| `Http.layer(app)`                   | None                                                                                    |
-| `Http.client(options?)`             | `baseUrl`, `transformClient`, `transformResponse`                                       |
-| `ActionMcp.layer(options, …apps)`   | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions`, `schemaError` |
+| API                                   | Options                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `ActionGroup.make(options, …actions)` | `name`, `errors`, `schemaError`                                          |
+| `ActionHttp.make(options, …groups)`   | `apiPath`                                                                |
+| `Http.layer(app)`                     | None                                                                     |
+| `Http.client(options?)`               | `baseUrl`, `transformClient`, `transformResponse`                        |
+| `ActionMcp.layer(options, …apps)`     | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions` |
 
 `apiPath` and MCP `path` have no defaults. `Http` has three members: `api`, `layer` and
 `client`.

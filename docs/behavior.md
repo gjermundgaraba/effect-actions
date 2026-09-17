@@ -26,15 +26,13 @@ is trustworthy or that a handler performed authorization.
 
 By default, HTTP retains Effect's native empty 400 for decoding/encoding failures;
 MCP retains native invalid-argument handling and treats output-encoding failures
-as defects. Applications can supply the **same policy to both adapters**:
+as defects. A group can set a policy instead. It belongs to the contract, so both
+transports, the clients and the document agree on it by construction:
 
 ```ts
-import { Layer, Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { UserActions } from "./examples/contracts.js";
-import { UserApp } from "./examples/handlers.js";
+import { Schema } from "effect";
+import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
+import { GetUser, RenameUser } from "./examples/contracts.js";
 
 class BadRequest extends Schema.TaggedError<BadRequest>()(
   "BadRequest",
@@ -47,20 +45,25 @@ class InternalServerError extends Schema.TaggedError<InternalServerError>()(
   { httpApiStatus: 500 },
 ) {}
 
-const schemaError = Action.schemaErrorPolicy({
-  errors: [BadRequest, InternalServerError],
-  map: ({ phase }) =>
-    phase === "output"
-      ? new InternalServerError({ error: "Request could not be completed" })
-      : new BadRequest({ error: "Invalid request" }),
-});
-
-const Http = ActionHttp.make({ apiPath: "/api/actions", schemaError }, UserActions);
-const routes = Layer.mergeAll(
-  Http.layer(UserApp),
-  ActionMcp.layer({ name: "my-app", version: "0", path: "/mcp", schemaError }, UserApp),
+const UserActions = ActionGroup.make(
+  {
+    name: "users",
+    schemaError: {
+      errors: [BadRequest, InternalServerError],
+      map: ({ phase }) =>
+        phase === "output"
+          ? new InternalServerError({ error: "Request could not be completed" })
+          : new BadRequest({ error: "Invalid request" }),
+    },
+  },
+  GetUser,
+  RenameUser,
 );
 ```
+
+Written inline, `map` is typed from `errors`. A policy shared by several groups is an
+ordinary constant; annotate its parameter as `Action.SchemaFailure`. Groups served by one
+adapter may have different policies: each action answers with its own group's.
 
 The mapper receives `{ phase: "input" | "output", cause: Schema.SchemaError }`
 and returns a declared policy error without requiring services. Causes may contain
@@ -111,9 +114,8 @@ modes. Use `makeWith` for custom client error and service channels. Actions name
 
 ## MCP transport
 
-`ActionMcp.protocols` lists the revisions enabled by default: 2026-07-28,
-2025-11-25, 2025-06-18, 2025-03-26, and 2024-11-05. Override `protocols` to select
-a subset. All use the native server's single-endpoint Streamable HTTP transport;
+The revisions enabled by default are 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26,
+and 2024-11-05. Pass `protocols`, built from Effect's `McpProtocol`, to select a subset. All use the native server's single-endpoint Streamable HTTP transport;
 this does not implement the historical two-endpoint HTTP+SSE transport.
 
 The 2026-07-28 revision is stateless; older revisions initialize a session.

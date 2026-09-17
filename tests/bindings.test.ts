@@ -25,7 +25,7 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
       async (present) => {
         let executions = 0;
 
-        const app = ActionGroup.make("test", identity).implement({
+        const app = ActionGroup.make({ name: "test" }, identity).implement({
           identity: () =>
             Effect.gen(function* () {
               const actor = yield* Actor;
@@ -92,7 +92,7 @@ it.each(["legacy", "modern"] as const)(
     let acquired = 0;
     let finalized = 0;
 
-    const app = ActionGroup.make("test", identity).implement(
+    const app = ActionGroup.make({ name: "test" }, identity).implement(
       Effect.gen(function* () {
         const greeting = yield* Effect.acquireRelease(
           Effect.gen(function* () {
@@ -150,7 +150,7 @@ it.each(["legacy", "modern"] as const)(
 it.each(["legacy", "modern"] as const)(
   "keeps same-contract implementations apart over MCP: %s",
   async (era) => {
-    const group = ActionGroup.make("test", identity);
+    const group = ActionGroup.make({ name: "test" }, identity);
     const a = group.implement({ identity: () => Effect.succeed("a") });
     const b = group.implement({ identity: () => Effect.succeed("b") });
 
@@ -184,7 +184,7 @@ it("releases scoped handler acquisition when native registration fails", async (
     success: Schema.String,
   });
 
-  const app = ActionGroup.make("test", invalid).implement(
+  const app = ActionGroup.make({ name: "test" }, invalid).implement(
     Effect.acquireRelease(
       Effect.sync(() => {
         acquired++;
@@ -221,7 +221,7 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
       },
     });
 
-    const app = ActionGroup.make("test", identity).implement({
+    const app = ActionGroup.make({ name: "test" }, identity).implement({
       identity: () =>
         Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
     });
@@ -273,7 +273,7 @@ describe.each(["HTTP", "MCP"])(
       success: Schema.String,
     });
 
-    const app = ActionGroup.make("test", Identity).implement({ identity: () => Who });
+    const app = ActionGroup.make({ name: "test" }, Identity).implement({ identity: () => Who });
     const request = Layer.succeed(Who, "request");
     const startup = Layer.succeed(Who, "startup");
 

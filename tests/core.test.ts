@@ -8,8 +8,9 @@ import { makeTestHttp } from "./server.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
 
 describe("contracts", () => {
-  it("defaults input to NoInput and errors to none", () => {
-    expect(WhoAmI.input).toBe(Action.NoInput);
+  it("defaults to no input and errors to none", () => {
+    expect(Schema.is(WhoAmI.input)({})).toBe(true);
+    expect(Schema.is(WhoAmI.input)({ unexpected: 1 })).toBe(false);
     expect(WhoAmI.errors).toEqual([]);
     expect(Double.errors).toEqual([]);
   });
@@ -32,7 +33,7 @@ describe("contracts", () => {
   });
 
   it("rejects duplicate names at definition time", () => {
-    expect(() => ActionGroup.make("users", GetUser, GetUser)).toThrow("Duplicate action");
+    expect(() => ActionGroup.make({ name: "users" }, GetUser, GetUser)).toThrow("Duplicate action");
 
     const Alias = Action.make("alias", {
       description: "Alias collision",
@@ -40,8 +41,10 @@ describe("contracts", () => {
       mcp: { name: "get_user" },
     });
 
-    expect(() => ActionGroup.make("users", GetUser, Alias)).toThrow("Duplicate MCP");
-    expect(() => ActionGroup.make("bad name", GetUser)).toThrow("Invalid action group name");
+    expect(() => ActionGroup.make({ name: "users" }, GetUser, Alias)).toThrow("Duplicate MCP");
+    expect(() => ActionGroup.make({ name: "bad name" }, GetUser)).toThrow(
+      "Invalid action group name",
+    );
   });
 
   it("rejects an action exposed on no transport", () => {
@@ -63,7 +66,7 @@ describe("implementations", () => {
     success: Schema.String,
   });
 
-  const Group = ActionGroup.make("greetings", Hello);
+  const Group = ActionGroup.make({ name: "greetings" }, Hello);
 
   const request = (prefix: string) =>
     new Request(`http://localhost${prefix}/hello`, {
@@ -92,7 +95,7 @@ describe("implementations", () => {
         kind === "same contract"
           ? Group.implement({ hello: () => Effect.succeed("from B") })
           : ActionGroup.make(
-              "numeric",
+              { name: "numeric" },
               Action.make("hello", {
                 description: "Numeric",
                 input: Hello.input,

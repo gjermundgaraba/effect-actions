@@ -69,7 +69,7 @@ describe("projection boundaries", () => {
       http: false,
     });
 
-    const app = ActionGroup.make("test", Hidden).implement({
+    const app = ActionGroup.make({ name: "test" }, Hidden).implement({
       hidden: () => Effect.succeed("hidden"),
     });
 
@@ -93,7 +93,7 @@ describe("projection boundaries", () => {
       http: false,
     });
 
-    const app = ActionGroup.make("test", Echo, Hidden).implement({
+    const app = ActionGroup.make({ name: "test" }, Echo, Hidden).implement({
       echo: Effect.succeed,
       hidden: () => Effect.succeed("hidden"),
     });
@@ -124,7 +124,7 @@ describe("projection boundaries", () => {
         errors: [status === undefined ? Failure : Failure.annotate({ httpApiStatus: status })],
       });
 
-      const app = ActionGroup.make("test", Fail).implement({
+      const app = ActionGroup.make({ name: "test" }, Fail).implement({
         fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
       });
 
@@ -152,7 +152,7 @@ describe("projection boundaries", () => {
       errors: [Missing, Conflict],
     });
 
-    const app = ActionGroup.make("test", Fail).implement({
+    const app = ActionGroup.make({ name: "test" }, Fail).implement({
       fail: ({ which }) =>
         which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
     });
@@ -184,7 +184,7 @@ describe("projection boundaries", () => {
       errors: [Schema.Union([Missing, Conflict])],
     });
 
-    const app = ActionGroup.make("test", Fail).implement({
+    const app = ActionGroup.make({ name: "test" }, Fail).implement({
       fail: () => Effect.fail(Conflict.make({})),
     });
 
@@ -206,7 +206,8 @@ describe("projection boundaries", () => {
     expectReferencesResolve(
       Schema.decodeUnknownSync(Schema.Json)(
         OpenApi.fromApi(
-          ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make("test", Read)).api,
+          ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make({ name: "test" }, Read))
+            .api,
         ),
       ),
       "#/components/schemas/",
@@ -233,7 +234,7 @@ describe("projection boundaries", () => {
       });
 
       const web = makeTestMcp(
-        ActionGroup.make("test", Tree).implement({ tree: Effect.succeed }),
+        ActionGroup.make({ name: "test" }, Tree).implement({ tree: Effect.succeed }),
         Layer.empty,
       );
 
@@ -271,7 +272,7 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      ActionGroup.make("test", Nested).implement({
+      ActionGroup.make({ name: "test" }, Nested).implement({
         nested: ({ item }) => Effect.succeed({ first: item, second: item }),
       }),
       Layer.empty,
@@ -299,7 +300,7 @@ describe("projection boundaries", () => {
         success: Schema.String,
       });
 
-      const app = ActionGroup.make("test", Invalid).implement({
+      const app = ActionGroup.make({ name: "test" }, Invalid).implement({
         invalid: () => Effect.succeed("unused"),
       });
 
@@ -320,7 +321,7 @@ describe("projection boundaries", () => {
       errors: [Schema.String],
     });
 
-    const app = ActionGroup.make("test", Scalar).implement({
+    const app = ActionGroup.make({ name: "test" }, Scalar).implement({
       scalar: () => Effect.fail("failure"),
     });
 
@@ -346,7 +347,7 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      ActionGroup.make("test", Encode).implement({
+      ActionGroup.make({ name: "test" }, Encode).implement({
         encode: ({ value }) => Effect.succeed(value ?? 42),
       }),
       Layer.empty,
@@ -365,7 +366,9 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      ActionGroup.make("test", Echo).implement({ echo: ({ value }) => Effect.succeed(value) }),
+      ActionGroup.make({ name: "test" }, Echo).implement({
+        echo: ({ value }) => Effect.succeed(value),
+      }),
       Layer.empty,
     );
 
@@ -381,7 +384,7 @@ describe("projection boundaries", () => {
     const Broken = Action.make("broken", { description: "Bad output", success: Schema.Finite });
     const Boom = Action.make("boom", { description: "Defect", success: Schema.String });
 
-    const app = ActionGroup.make("test", Broken, Boom).implement({
+    const app = ActionGroup.make({ name: "test" }, Broken, Boom).implement({
       broken: () => Effect.succeed(Infinity),
       boom: () => Effect.die(new Error("secret database password")),
     });
@@ -412,7 +415,7 @@ describe("projection boundaries", () => {
       success: Schema.Struct({ d: Schema.Date }),
     });
 
-    const app = ActionGroup.make("test", Stamp).implement({ stamp: Effect.succeed });
+    const app = ActionGroup.make({ name: "test" }, Stamp).implement({ stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
@@ -436,7 +439,9 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestHttp(
-      ActionGroup.make("test", Echo).implement({ echo: ({ value }) => Effect.succeed(value * 2) }),
+      ActionGroup.make({ name: "test" }, Echo).implement({
+        echo: ({ value }) => Effect.succeed(value * 2),
+      }),
       Layer.empty,
     );
 
@@ -452,7 +457,7 @@ describe("projection boundaries", () => {
     const stopped = Effect.runSync(Deferred.make<void>());
     const Slow = Action.make("slow", { description: "Wait", success: Schema.String });
 
-    const app = ActionGroup.make("test", Slow).implement({
+    const app = ActionGroup.make({ name: "test" }, Slow).implement({
       slow: () =>
         Deferred.succeed(started, undefined).pipe(
           Effect.andThen(Effect.never),

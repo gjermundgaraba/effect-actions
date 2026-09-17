@@ -132,7 +132,7 @@ export const clientTypes = Effect.gen(function* () {
   void wrong;
 
   const mixed = ActionGroup.make(
-    "test",
+    { name: "test" },
     Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
     Action.make("visible", { description: "HTTP", success: Schema.Boolean }),
   );
@@ -148,69 +148,92 @@ export const clientTypes = Effect.gen(function* () {
 });
 
 export const policyTypes = Effect.gen(function* () {
-  class PolicyFailure extends Schema.TaggedError<PolicyFailure>()("PolicyFailure", {}) {}
+  class PolicyFailure extends Schema.TaggedError<PolicyFailure>()("PolicyFailure", {
+    phase: Schema.Literals(["input", "output"]),
+  }) {}
 
-  const options = {
-    apiPath: "/api/actions" as const,
-    schemaError: { errors: [PolicyFailure], map: () => new PolicyFailure() },
-  };
+  class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
 
-  const client = yield* HttpApiClient.make(ActionHttp.make(options, Actions).api);
-  yield* client.users
-    .double({ payload: { value: 1 } })
-    .pipe(Effect.catchTag("PolicyFailure", () => Effect.succeed(0)));
-  ActionHttp.make(
+  const Echo = Action.make("echo", {
+    description: "Echo",
+    input: Schema.Struct({ value: Schema.Finite }),
+    success: Schema.Finite,
+  });
+
+  // Written inline, the policy needs no annotation: `map` is typed from `errors`.
+  const Policed = ActionGroup.make(
     {
-      apiPath: "/api/actions",
+      name: "policed",
+      errors: [Refused],
+      schemaError: { errors: [PolicyFailure], map: ({ phase }) => new PolicyFailure({ phase }) },
+    },
+    Echo,
+  );
+
+  // Group-level errors join each action's own: handlers may fail with them...
+  Policed.implement({ echo: () => Effect.fail(new Refused()) });
+  // @ts-expect-error ...but policy errors belong to the transports, not to handlers.
+  Policed.implement({ echo: () => Effect.fail(new PolicyFailure({ phase: "input" })) });
+
+  // Both reach clients, native and direct.
+  const bound = ActionHttp.make({ apiPath: "/api/actions" }, Policed);
+  const native = yield* HttpApiClient.make(bound.api);
+  yield* native.policed.echo({ payload: { value: 1 } }).pipe(
+    Effect.catchTag("PolicyFailure", () => Effect.succeed(0)),
+    Effect.catchTag("Refused", () => Effect.succeed(0)),
+  );
+  const direct = yield* bound.client();
+  yield* direct.echo({ value: 1 }).pipe(
+    Effect.catchTag("PolicyFailure", () => Effect.succeed(0)),
+    Effect.catchTag("Refused", () => Effect.succeed(0)),
+  );
+
+  ActionGroup.make(
+    {
+      name: "undeclared",
       schemaError: {
         errors: [PolicyFailure],
         // @ts-expect-error The mapper can return only errors declared by this policy.
         map: () => "undeclared",
       },
     },
-    Actions,
+    Echo,
   );
-  ActionHttp.make(
+  ActionGroup.make(
     {
-      apiPath: "/api/actions",
+      name: "effectful",
       schemaError: {
         errors: [PolicyFailure],
         // @ts-expect-error Policy mapping is pure, not a service-requiring Effect.
-        map: () => Effect.as(CurrentActor, new PolicyFailure()),
+        map: () => Effect.as(CurrentActor, new PolicyFailure({ phase: "input" })),
       },
     },
-    Actions,
+    Echo,
   );
+  // @ts-expect-error The policy is the group's; adapters no longer take one.
+  ActionHttp.make({ apiPath: "/api/actions", schemaError: Policed.schemaError }, Policed);
 });
 
 export const configuredClientTypes = () => {
   void Effect.gen(function* () {
-    class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
-      phase: Schema.Literals(["input", "output"]),
-    }) {}
-
-    // The helper infers the error tuple and types `map` without an annotation.
-    const schemaError = Action.schemaErrorPolicy({
-      errors: [Invalid],
-      map: ({ phase }) => new Invalid({ phase }),
-    });
-
-    const Bound = ActionHttp.make({ apiPath: "/rpc", schemaError }, Actions);
+    const Bound = ActionHttp.make({ apiPath: "/rpc" }, Actions);
     const client = yield* Bound.client({ baseUrl: "http://localhost" });
     // @ts-expect-error apiPath is bound by make, not a connection option.
     Bound.client({ apiPath: "/different" });
-    // @ts-expect-error Schema policy is also bound by make.
-    Bound.client({ schemaError });
+    // @ts-expect-error The schema-error policy is the group's, not a connection option.
+    Bound.client({ schemaError: Actions.schemaError });
     // @ts-expect-error OpenAPI route configuration has no client-side meaning.
     Bound.client({ baseUrl: "http://localhost", openapiPath: "/schema" });
-    yield* client.double({ value: 1 }).pipe(Effect.catchTag("Invalid", () => Effect.succeed(0)));
+    yield* client
+      .double({ value: 1 })
+      .pipe(Effect.catchTag("InvalidRequest", () => Effect.succeed(0)));
     const doubled: number = yield* client.double({ value: 21 });
     void doubled;
     const identity: { readonly id: string; readonly tenantId: string } = yield* client.whoAmI();
     void identity;
     yield* client.getUser({ id: "1" }).pipe(
       Effect.catchTag("UserNotFound", () => Effect.succeed(null)),
-      Effect.catchTag("Invalid", () => Effect.succeed(null)),
+      Effect.catchTag("InvalidRequest", () => Effect.succeed(null)),
     );
     // @ts-expect-error No HTTP wrapper objects on direct action calls.
     client.double({ payload: { value: 21 } });
@@ -227,7 +250,7 @@ export const configuredClientTypes = () => {
     client.missing();
 
     const mixed = ActionGroup.make(
-      "test",
+      { name: "test" },
       Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
       Action.make("optional", {
         description: "Optional input",
@@ -236,7 +259,7 @@ export const configuredClientTypes = () => {
       }),
     );
 
-    const selected = yield* ActionHttp.make({ apiPath: "/rpc", schemaError }, mixed).client();
+    const selected = yield* ActionHttp.make({ apiPath: "/rpc" }, mixed).client();
     // @ts-expect-error MCP-only actions have no direct HTTP method.
     selected.hidden();
     yield* selected.optional();
@@ -255,17 +278,13 @@ export const configuredClientTypes = () => {
 
     // @ts-expect-error Configuring the adapter must preserve request requirements.
     void web.handler(new Request("http://localhost"), Context.empty());
-    ActionMcp.layer({ name: "test", version: "0", path: "/mcp", schemaError }, App);
     ActionMcp.layer(
       {
         name: "test",
         version: "0",
         path: "/mcp",
-        schemaError: {
-          errors: [Invalid],
-          // @ts-expect-error MCP shares the declared-error mapper constraint.
-          map: () => "undeclared",
-        },
+        // @ts-expect-error The policy is the group's; adapters no longer take one.
+        schemaError: Actions.schemaError,
       },
       App,
     );
@@ -280,7 +299,7 @@ export const multipleGroupTypes = () => {
   class Tenant extends Context.Service<Tenant, string>()("types/Tenant") {}
 
   const Billing = ActionGroup.make(
-    "billing",
+    { name: "billing" },
     Action.make("invoice", { description: "Invoice", success: Schema.Number }),
   );
 
@@ -301,7 +320,7 @@ export const multipleGroupTypes = () => {
   });
 
   const Foreign = ActionGroup.make(
-    "foreign",
+    { name: "foreign" },
     Action.make("other", { description: "Other", success: Schema.String }),
   ).implement({ other: () => Effect.succeed("") });
 
