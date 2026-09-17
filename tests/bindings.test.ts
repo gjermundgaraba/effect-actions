@@ -1,10 +1,13 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Schema, Tracer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import { mcpRequest } from "../src/Testing.js";
 import { withMcpClient } from "../src/TestingClient.js";
-import { testApiPath, testMcpPath, testMcpUrl, testOpenapiPath } from "./server.js";
+import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
 import { post } from "./requests.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
@@ -34,10 +37,8 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
 
         const routes =
           transport === "HTTP"
-            ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
-                openapiPath: testOpenapiPath,
-              })
-            : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
+            ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+            : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
 
         const web = HttpRouter.toWebHandler(
           routes.pipe(
@@ -107,10 +108,8 @@ it.each(["legacy", "modern"] as const)(
     );
 
     const routes = Layer.mergeAll(
-      ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
-        openapiPath: testOpenapiPath,
-      }),
-      ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }),
+      ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app),
+      ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app),
     ).pipe(Layer.provide(Layer.succeed(Actor, "build")), Layer.provide(HttpServer.layerServices));
 
     // Reuse the same implementation in separate runtimes: memoization must not
@@ -157,8 +156,8 @@ it.each(["legacy", "modern"] as const)(
 
     const web = HttpRouter.toWebHandler(
       Layer.mergeAll(
-        ActionMcp.layer(a, { name: "a", version: "0", path: "/a" }),
-        ActionMcp.layer(b, { name: "b", version: "0", path: "/b" }),
+        ActionMcp.layer({ name: "a", version: "0", path: "/a" }, a),
+        ActionMcp.layer({ name: "b", version: "0", path: "/b" }, b),
       ).pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
@@ -196,7 +195,7 @@ it("releases scoped handler acquisition when native registration fails", async (
     ),
   );
 
-  const layer = ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }).pipe(
+  const layer = ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app).pipe(
     Layer.provide(HttpRouter.layer),
   );
 
@@ -229,10 +228,8 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
-            openapiPath: testOpenapiPath,
-          })
-        : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+        : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
 
     const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
       disableLogger: true,
@@ -282,10 +279,8 @@ describe.each(["HTTP", "MCP"])(
 
     const routes = () =>
       transport === "HTTP"
-        ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
-            openapiPath: testOpenapiPath,
-          })
-        : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+        : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
 
     const call = async (web: { handler: (request: Request) => Promise<Response> }) => {
       const response = await web.handler(

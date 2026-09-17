@@ -7,7 +7,10 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import { HttpApi, OpenApi } from "effect/unstable/httpapi";
-import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import { httpClient, mcpRequest } from "../src/Testing.js";
 
 class Tenant extends Context.Service<Tenant, string>()("groups-test/Tenant") {}
@@ -36,13 +39,15 @@ const BillingApp = Billing.implement({
   audit: () => Effect.succeed("clean"),
 });
 
-const Http = ActionHttp.make([Users, Billing], { apiPath: "/api" });
+const Http = ActionHttp.make({ apiPath: "/api" }, Users, Billing);
 
 const serve = () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Http.layer([UsersApp, BillingApp], { openapiPath: "/openapi.json" }),
-      ActionMcp.layer([UsersApp, BillingApp], { name: "test", version: "0", path: "/mcp" }),
+      Http.layer(UsersApp),
+      Http.layer(BillingApp),
+      Http.layerOpenapi("/openapi.json"),
+      ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, UsersApp, BillingApp),
     ).pipe(Layer.provide(Layer.succeed(Tenant, "acme")), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -76,8 +81,8 @@ it("serves several groups through one flat client and one document", async () =>
 
 it("keeps every group when a host combines separately mounted APIs", () => {
   const combined = HttpApi.make("host")
-    .addHttpApi(ActionHttp.make(Users, { apiPath: "/public" }).api)
-    .addHttpApi(ActionHttp.make(Billing, { apiPath: "/admin" }).api);
+    .addHttpApi(ActionHttp.make({ apiPath: "/public" }, Users).api)
+    .addHttpApi(ActionHttp.make({ apiPath: "/admin" }, Billing).api);
 
   expect(Object.keys(OpenApi.fromApi(combined).paths)).toEqual([
     "/public/whoAmI",
@@ -116,60 +121,58 @@ const post = (path: string) =>
     body: "{}",
   });
 
+const handlerOf = (
+  routes: Layer.Layer<
+    never,
+    never,
+    HttpRouter.HttpRouter | Layer.Success<typeof HttpServer.layerServices>
+  >,
+) => {
+  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+    disableLogger: true,
+  });
+
+  onTestFinished(() => web.dispose());
+
+  return web.handler;
+};
+
 it("never dispatches to a handler its own group did not declare", async () => {
   const B = ActionGroup.make(
     "b",
     Action.make("beta", { description: "Beta", success: Schema.String }),
   );
 
-  const web = HttpRouter.toWebHandler(
-    ActionHttp.make([A, B], { apiPath: "/api" })
-      .layer(
-        [
-          A.implement({ alpha: () => Effect.succeed("right") }),
-          // The constraint on handler records admits extra keys.
-          B.implement({
-            beta: () => Effect.succeed("beta"),
-            alpha: () => Effect.succeed("wrong group"),
-          }),
-        ],
-        { openapiPath: false },
-      )
-      .pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+  const bound = ActionHttp.make({ apiPath: "/api" }, A, B);
+
+  const handler = handlerOf(
+    Layer.mergeAll(
+      bound.layer(A.implement({ alpha: () => Effect.succeed("right") })),
+      // The constraint on handler records admits extra keys.
+      bound.layer(
+        B.implement({
+          beta: () => Effect.succeed("beta"),
+          alpha: () => Effect.succeed("wrong group"),
+        }),
+      ),
+    ),
   );
 
-  onTestFinished(() => web.dispose());
-  expect(await (await web.handler(post("/api/alpha"))).json()).toBe("right");
+  expect(await (await handler(post("/api/alpha"))).json()).toBe("right");
 });
 
-it("pairs implementations with groups by identity, in any order", async () => {
-  const web = HttpRouter.toWebHandler(
-    Http.layer([BillingApp, UsersApp], { openapiPath: false }).pipe(
-      Layer.provide(Layer.succeed(Tenant, "acme")),
-      Layer.provide(HttpServer.layerServices),
-    ),
-    { disableLogger: true },
+it("mounts only implementations of the groups it was made with", () => {
+  const lookAlike = ActionGroup.make("a", Alpha).implement({ alpha: () => Effect.succeed("x") });
+  const other = ActionGroup.make("other", Alpha).implement({ alpha: () => Effect.succeed("x") });
+  const bound = ActionHttp.make({ apiPath: "/api" }, A);
+
+  // Pairing is by identity: the same name and actions do not make it this group.
+  expect(() => bound.layer(lookAlike)).toThrow(
+    'Implementation of group "a" is not served by this adapter',
   );
-
-  onTestFinished(() => web.dispose());
-  expect(await (await web.handler(post("/api/whoAmI"))).json()).toBe("ada@acme");
-
-  const lookAlike = ActionGroup.make("other", Alpha).implement({
-    alpha: () => Effect.succeed("x"),
-  });
-
-  const bound = ActionHttp.make(A, { apiPath: "/api" });
-
   // @ts-expect-error The group is part of an implementation's type, so this does not compile either.
-  expect(() => bound.layer(lookAlike, { openapiPath: false })).toThrow(
+  expect(() => bound.layer(other)).toThrow(
     'Implementation of group "other" is not served by this adapter',
-  );
-  expect(() => Http.layer([UsersApp], { openapiPath: false })).toThrow(
-    'Missing implementation for group "billing"',
-  );
-  expect(() => Http.layer([UsersApp, BillingApp, BillingApp], { openapiPath: false })).toThrow(
-    'Duplicate implementation for group "billing"',
   );
 });
 
@@ -193,17 +196,13 @@ it("acquires only the implementations a transport serves", async () => {
     Action.make("route", { description: "Route", success: Schema.String, mcp: false }),
   );
 
-  const apps = [
-    McpOnly.implement(record("mcpOnly", { tool: () => Effect.succeed("tool") })),
-    HttpOnly.implement(record("httpOnly", { route: () => Effect.succeed("route") })),
-  ] as const;
+  const mcpOnly = McpOnly.implement(record("mcpOnly", { tool: () => Effect.succeed("tool") }));
+  const httpOnly = HttpOnly.implement(record("httpOnly", { route: () => Effect.succeed("route") }));
+  const bound = ActionHttp.make({ apiPath: "/api" }, McpOnly, HttpOnly);
 
   for (const [routes, expected] of [
-    [
-      ActionHttp.make([McpOnly, HttpOnly], { apiPath: "/api" }).layer(apps, { openapiPath: false }),
-      "httpOnly",
-    ],
-    [ActionMcp.layer(apps, { name: "test", version: "0", path: "/mcp" }), "mcpOnly"],
+    [Layer.mergeAll(bound.layer(mcpOnly), bound.layer(httpOnly)), "httpOnly"],
+    [ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, mcpOnly, httpOnly), "mcpOnly"],
   ] as const) {
     built.length = 0;
 
@@ -234,49 +233,18 @@ it("reads only the actions a transport serves", async () => {
     }),
   );
 
-  const bound = ActionHttp.make([Web, Tools], { apiPath: "/api" });
-  const webApp = Web.implement({ ping: () => Effect.succeed("pong") });
+  const bound = ActionHttp.make({ apiPath: "/api" }, Web, Tools);
+  const handler = handlerOf(bound.layer(Web.implement({ ping: () => Effect.succeed("pong") })));
 
-  // The unserved group needs no implementation, and giving one changes nothing.
-  for (const apps of [
-    [webApp],
-    [webApp, Tools.implement({ ping: () => Effect.succeed("tool") })],
-  ]) {
-    const web = HttpRouter.toWebHandler(
-      bound.layer(apps, { openapiPath: false }).pipe(Layer.provide(HttpServer.layerServices)),
-      { disableLogger: true },
-    );
+  const result = await Effect.runPromise(
+    Effect.flatMap(httpClient(bound, handler), (client) => client.ping()),
+  );
 
-    const result = await Effect.runPromise(
-      Effect.flatMap(httpClient(bound, web.handler), (client) => client.ping()),
-    );
-
-    await web.dispose();
-    expect(result).toBe("pong");
-  }
-
+  expect(result).toBe("pong");
   expect(Object.keys(bound.api.groups)).toEqual(["web"]);
 });
 
-it("shares one ordinary array of implementations between the adapters", async () => {
-  const apps = [UsersApp, BillingApp].filter(() => true);
-
-  const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(
-      Http.layer(apps, { openapiPath: false }),
-      ActionMcp.layer(apps, { name: "test", version: "0", path: "/mcp" }),
-    ).pipe(Layer.provide(Layer.succeed(Tenant, "acme")), Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
-
-  onTestFinished(() => web.dispose());
-  expect(await (await web.handler(post("/api/whoAmI"))).json()).toBe("ada@acme");
-  expect(
-    (await web.handler(mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }))).status,
-  ).toBe(200);
-});
-
-it("scopes router middleware to the layer that registers the routes", async () => {
+it("scopes router middleware to the layer it is provided to", async () => {
   // Blocks every request of this test; only the pass-through branch keeps it a middleware.
   const blocked = HttpRouter.middleware((next) =>
     Effect.gen(function* () {
@@ -288,62 +256,39 @@ it("scopes router middleware to the layer that registers the routes", async () =
     }),
   ).layer;
 
-  const groups = Layer.mergeAll(Http.group(UsersApp), Http.group(BillingApp)).pipe(
-    Layer.provide(Layer.succeed(Tenant, "acme")),
-  );
+  const tenant = Layer.provide(Layer.succeed(Tenant, "acme"));
+  const users = Http.layer(UsersApp).pipe(tenant);
+  const billing = Http.layer(BillingApp);
+  const document = Http.layerOpenapi("/openapi.json");
 
-  const serve = (
-    routes: Layer.Layer<
-      never,
-      never,
-      HttpRouter.HttpRouter | Layer.Success<typeof HttpServer.layerServices>
-    >,
-  ) => {
-    const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-      disableLogger: true,
-    });
+  const statuses = async (handler: (request: Request) => Promise<Response>) => [
+    (await handler(new Request("http://localhost/openapi.json"))).status,
+    (await handler(post("/api/whoAmI"))).status,
+    (await handler(post("/api/invoice"))).status,
+  ];
 
-    onTestFinished(() => web.dispose());
-
-    return async () => [
-      (await web.handler(new Request("http://localhost/openapi.json"))).status,
-      (await web.handler(post("/api/whoAmI"))).status,
-    ];
-  };
-
-  const root = Http.groups({ openapiPath: "/openapi.json" });
-
-  // Provided to the root alone, it guards the document; the groups are built outside it.
-  expect(await serve(root.pipe(Layer.provide(blocked), Layer.provide(groups)))()).toEqual([
-    403, 200,
-  ]);
-  // Provided to one group, it guards that group.
+  // Each layer registers its own routes, so a guard covers exactly what it is provided to.
   expect(
-    await serve(
-      root.pipe(
-        Layer.provide(Http.group(UsersApp).pipe(Layer.provide(blocked))),
-        Layer.provide(Http.group(BillingApp)),
-        Layer.provide(Layer.succeed(Tenant, "acme")),
-      ),
-    )(),
-  ).toEqual([200, 403]);
-  // Provided around everything, it guards everything.
-  expect(await serve(root.pipe(Layer.provide(groups), Layer.provide(blocked)))()).toEqual([
-    403, 403,
-  ]);
+    await statuses(
+      handlerOf(Layer.mergeAll(document.pipe(Layer.provide(blocked)), users, billing)),
+    ),
+  ).toEqual([403, 200, 400]);
+  expect(
+    await statuses(
+      handlerOf(Layer.mergeAll(document, users.pipe(Layer.provide(blocked)), billing)),
+    ),
+  ).toEqual([200, 403, 400]);
+  expect(
+    await statuses(
+      handlerOf(Layer.mergeAll(document, users, billing).pipe(Layer.provide(blocked))),
+    ),
+  ).toEqual([403, 403, 403]);
 });
 
 it("serves the bound document from the document route", async () => {
-  const web = HttpRouter.toWebHandler(
-    Http.layer([UsersApp, BillingApp], { openapiPath: "/openapi.json" }).pipe(
-      Layer.provide(Layer.succeed(Tenant, "acme")),
-      Layer.provide(HttpServer.layerServices),
-    ),
-    { disableLogger: true },
-  );
+  const handler = handlerOf(Http.layerOpenapi("/schema.json"));
 
-  onTestFinished(() => web.dispose());
-  expect(await (await web.handler(new Request("http://localhost/openapi.json"))).json()).toEqual(
+  expect(await (await handler(new Request("http://localhost/schema.json"))).json()).toEqual(
     Http.openapi(),
   );
 });
@@ -366,32 +311,30 @@ it("checks each namespace only where it is served", () => {
     );
 
   // Routes and client methods are flat; groups are native group identifiers.
-  expect(() => ActionHttp.make([Users, Other], { apiPath: "/api" })).toThrow(
+  expect(() => ActionHttp.make({ apiPath: "/api" }, Users, Other)).toThrow(
     "Duplicate action: whoAmI",
   );
-  expect(() => ActionHttp.make([Users, again], { apiPath: "/api" })).toThrow(
+  expect(() => ActionHttp.make({ apiPath: "/api" }, Users, again)).toThrow(
     "Duplicate action group: users",
   );
 
   // MCP aliases are not an HTTP concern, nor are the names of MCP-only actions.
   const one = aliased("one", "first");
   const two = aliased("two", "second");
-  expect(() => ActionHttp.make([one, two], { apiPath: "/api" })).not.toThrow();
+  expect(() => ActionHttp.make({ apiPath: "/api" }, one, two)).not.toThrow();
   expect(() =>
     ActionHttp.make(
-      [
-        Users,
-        ActionGroup.make(
-          "tools",
-          Action.make("whoAmI", {
-            description: "",
-            success: Schema.String,
-            http: false,
-            mcp: { name: "who" },
-          }),
-        ),
-      ],
       { apiPath: "/api" },
+      Users,
+      ActionGroup.make(
+        "tools",
+        Action.make("whoAmI", {
+          description: "",
+          success: Schema.String,
+          http: false,
+          mcp: { name: "who" },
+        }),
+      ),
     ),
   ).not.toThrow();
 
@@ -399,14 +342,12 @@ it("checks each namespace only where it is served", () => {
   // MCP-only namesake could stand in for the group whose routes are missing.
   expect(() =>
     ActionHttp.make(
-      [
-        Users,
-        ActionGroup.make(
-          "users",
-          Action.make("tool", { description: "", success: Schema.String, http: false }),
-        ),
-      ],
       { apiPath: "/api" },
+      Users,
+      ActionGroup.make(
+        "users",
+        Action.make("tool", { description: "", success: Schema.String, http: false }),
+      ),
     ),
   ).toThrow("Duplicate action group: users");
 
@@ -415,20 +356,16 @@ it("checks each namespace only where it is served", () => {
 
   expect(() =>
     ActionMcp.layer(
-      [
-        one.implement({ first: () => Effect.succeed("a") }),
-        two.implement({ second: () => Effect.succeed("b") }),
-      ],
       mcp,
+      one.implement({ first: () => Effect.succeed("a") }),
+      two.implement({ second: () => Effect.succeed("b") }),
     ),
   ).toThrow("Duplicate MCP tool: same");
   expect(() =>
     ActionMcp.layer(
-      [
-        Users.implement({ whoAmI: () => Effect.succeed("a") }),
-        again.implement({ other: () => Effect.succeed("b") }),
-      ],
       mcp,
+      Users.implement({ whoAmI: () => Effect.succeed("a") }),
+      again.implement({ other: () => Effect.succeed("b") }),
     ),
   ).not.toThrow();
 });

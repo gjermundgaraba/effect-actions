@@ -2,16 +2,17 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
-import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/auth.js";
 import { UserActions as Actions } from "../examples/contracts.js";
 import { UserApp as App } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
 
-const openapi = { openapiPath: "/openapi.json" } as const;
-
-const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });
+const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
@@ -32,7 +33,7 @@ export const typeAssertions = () => {
   // @ts-expect-error No public handler tag.
   void a.handlers;
   // @ts-expect-error Implementations cannot be fabricated from a group.
-  Http.layer({ name: Actions.name, actions: Actions.actions }, openapi);
+  Http.layer({ name: Actions.name, actions: Actions.actions });
   // @ts-expect-error Every action in the group needs a handler.
   Actions.implement({ ...ok, whoAmI: undefined });
   // @ts-expect-error Handler results must match the success schema.
@@ -50,11 +51,11 @@ export const typeAssertions = () => {
   const services = Layer.provide(HttpServer.layerServices);
   HttpRouter.toWebHandler(
     // @ts-expect-error Build-time handler dependencies are Layer requirements.
-    Http.layer(App, openapi).pipe(services),
+    Http.layer(App).pipe(services),
   );
 
   const http = HttpRouter.toWebHandler(
-    Http.layer(App, openapi).pipe(Layer.provide(Users.layerMemory), services),
+    Http.layer(App).pipe(Layer.provide(Users.layerMemory), services),
   );
 
   // @ts-expect-error Request-scoped handler dependencies must be present per request.
@@ -62,7 +63,7 @@ export const typeAssertions = () => {
   void http.handler(new Request("http://localhost"), Context.make(CurrentActor, actor));
 
   // MCP carries the same request requirement as HTTP; forgetting middleware is a compile error.
-  const mcpLayer = ActionMcp.layer(App, { name: "t", version: "0", path: "/mcp" });
+  const mcpLayer = ActionMcp.layer({ name: "t", version: "0", path: "/mcp" }, App);
   // @ts-expect-error Build-time handler dependencies are Layer requirements.
   HttpRouter.toWebHandler(mcpLayer.pipe(services));
   const mcp = HttpRouter.toWebHandler(mcpLayer.pipe(Layer.provide(Users.layerMemory), services));
@@ -74,11 +75,7 @@ export const typeAssertions = () => {
   const startup = Layer.succeed(CurrentActor, actor);
 
   const withStartup = HttpRouter.toWebHandler(
-    Http.layer(App, openapi).pipe(
-      Layer.provide(Users.layerMemory),
-      Layer.provide(startup),
-      services,
-    ),
+    Http.layer(App).pipe(Layer.provide(Users.layerMemory), Layer.provide(startup), services),
   );
 
   // @ts-expect-error Still required per request.
@@ -110,8 +107,8 @@ export const typeAssertions = () => {
   const fallible = Actions.implement(Effect.fail("build-failed" as const).pipe(Effect.as(ok)));
 
   for (const routes of [
-    Http.layer(fallible, openapi),
-    ActionMcp.layer(fallible, { name: "test", version: "0", path: "/mcp" }),
+    Http.layer(fallible),
+    ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, fallible),
   ]) {
     const build = Layer.build(routes.pipe(Layer.provide(HttpRouter.layer), services)).pipe(
       Effect.scoped,
@@ -141,7 +138,7 @@ export const clientTypes = Effect.gen(function* () {
   );
 
   const selected = yield* HttpApiClient.make(
-    ActionHttp.make(mixed, { apiPath: "/api/actions" }).api,
+    ActionHttp.make({ apiPath: "/api/actions" }, mixed).api,
   );
 
   // @ts-expect-error MCP-only actions are not HTTP client methods.
@@ -158,26 +155,32 @@ export const policyTypes = Effect.gen(function* () {
     schemaError: { errors: [PolicyFailure], map: () => new PolicyFailure() },
   };
 
-  const client = yield* HttpApiClient.make(ActionHttp.make(Actions, options).api);
+  const client = yield* HttpApiClient.make(ActionHttp.make(options, Actions).api);
   yield* client.users
     .double({ payload: { value: 1 } })
     .pipe(Effect.catchTag("PolicyFailure", () => Effect.succeed(0)));
-  ActionHttp.make(Actions, {
-    apiPath: "/api/actions",
-    schemaError: {
-      errors: [PolicyFailure],
-      // @ts-expect-error The mapper can return only errors declared by this policy.
-      map: () => "undeclared",
+  ActionHttp.make(
+    {
+      apiPath: "/api/actions",
+      schemaError: {
+        errors: [PolicyFailure],
+        // @ts-expect-error The mapper can return only errors declared by this policy.
+        map: () => "undeclared",
+      },
     },
-  });
-  ActionHttp.make(Actions, {
-    apiPath: "/api/actions",
-    schemaError: {
-      errors: [PolicyFailure],
-      // @ts-expect-error Policy mapping is pure, not a service-requiring Effect.
-      map: () => Effect.as(CurrentActor, new PolicyFailure()),
+    Actions,
+  );
+  ActionHttp.make(
+    {
+      apiPath: "/api/actions",
+      schemaError: {
+        errors: [PolicyFailure],
+        // @ts-expect-error Policy mapping is pure, not a service-requiring Effect.
+        map: () => Effect.as(CurrentActor, new PolicyFailure()),
+      },
     },
-  });
+    Actions,
+  );
 });
 
 export const configuredClientTypes = () => {
@@ -192,7 +195,7 @@ export const configuredClientTypes = () => {
       map: ({ phase }) => new Invalid({ phase }),
     });
 
-    const Bound = ActionHttp.make(Actions, { apiPath: "/rpc", schemaError });
+    const Bound = ActionHttp.make({ apiPath: "/rpc", schemaError }, Actions);
     const client = yield* Bound.client({ baseUrl: "http://localhost" });
     // @ts-expect-error apiPath is bound by make, not a connection option.
     Bound.client({ apiPath: "/different" });
@@ -233,7 +236,7 @@ export const configuredClientTypes = () => {
       }),
     );
 
-    const selected = yield* ActionHttp.make(mixed, { apiPath: "/rpc", schemaError }).client();
+    const selected = yield* ActionHttp.make({ apiPath: "/rpc", schemaError }, mixed).client();
     // @ts-expect-error MCP-only actions have no direct HTTP method.
     selected.hidden();
     yield* selected.optional();
@@ -244,31 +247,34 @@ export const configuredClientTypes = () => {
 
     const services = Layer.provide(HttpServer.layerServices);
     // @ts-expect-error A policy-bound adapter must preserve acquisition requirements.
-    HttpRouter.toWebHandler(Bound.layer(App, openapi).pipe(services));
+    HttpRouter.toWebHandler(Bound.layer(App).pipe(services));
 
     const web = HttpRouter.toWebHandler(
-      Bound.layer(App, openapi).pipe(Layer.provide(Users.layerMemory), services),
+      Bound.layer(App).pipe(Layer.provide(Users.layerMemory), services),
     );
 
     // @ts-expect-error Configuring the adapter must preserve request requirements.
     void web.handler(new Request("http://localhost"), Context.empty());
-    ActionMcp.layer(App, { name: "test", version: "0", path: "/mcp", schemaError });
-    ActionMcp.layer(App, {
-      name: "test",
-      version: "0",
-      path: "/mcp",
-      schemaError: {
-        errors: [Invalid],
-        // @ts-expect-error MCP shares the declared-error mapper constraint.
-        map: () => "undeclared",
+    ActionMcp.layer({ name: "test", version: "0", path: "/mcp", schemaError }, App);
+    ActionMcp.layer(
+      {
+        name: "test",
+        version: "0",
+        path: "/mcp",
+        schemaError: {
+          errors: [Invalid],
+          // @ts-expect-error MCP shares the declared-error mapper constraint.
+          map: () => "undeclared",
+        },
       },
-    });
+      App,
+    );
     // @ts-expect-error HTTP mount path is required.
-    ActionHttp.make(Actions, {});
-    // @ts-expect-error OpenAPI document route is required on layer.
-    Bound.layer(App);
+    ActionHttp.make({}, Actions);
+    // @ts-expect-error The document route has no default path.
+    Bound.layerOpenapi();
     // @ts-expect-error MCP mount path is required.
-    ActionMcp.layer(App, { name: "test", version: "0" });
+    ActionMcp.layer({ name: "test", version: "0" }, App);
   });
 };
 
@@ -282,7 +288,7 @@ export const multipleGroupTypes = () => {
 
   const BillingApp = Billing.implement({ invoice: () => Effect.as(Tenant, 1) });
 
-  const Both = ActionHttp.make([Actions, Billing], { apiPath: "/api" });
+  const Both = ActionHttp.make({ apiPath: "/api" }, Actions, Billing);
 
   // One native group per action group, keyed by its name.
   void Both.api.groups.users.endpoints.double;
@@ -296,28 +302,31 @@ export const multipleGroupTypes = () => {
     yield* client.whoAmI();
   });
 
-  // Pairing is by group identity, so order is free; completeness is checked at construction.
-  Both.layer([BillingApp, App], openapi);
-
   const Foreign = ActionGroup.make(
     "foreign",
     Action.make("other", { description: "Other", success: Schema.String }),
   ).implement({ other: () => Effect.succeed("") });
 
-  // @ts-expect-error Implementations of other contracts are rejected.
-  Both.layer([App, BillingApp, Foreign], openapi);
+  // @ts-expect-error Route layers exist only for implementations of the bound groups.
+  Both.layer(Foreign);
   // @ts-expect-error A contract is not its implementation.
-  ActionHttp.make(App, { apiPath: "/api" });
+  ActionHttp.make({ apiPath: "/api" }, App);
+  // @ts-expect-error One layer mounts one group; merge one per group.
+  Both.layer(App, BillingApp);
 
   const services = Layer.provide(HttpServer.layerServices);
 
+  // Each layer carries only its own implementation's requirements.
+  const billingOnly = HttpRouter.toWebHandler(Both.layer(BillingApp).pipe(services));
+  void billingOnly.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
+
   for (const routes of [
-    Both.layer([App, BillingApp], openapi),
-    ActionMcp.layer([App, BillingApp], { name: "test", version: "0", path: "/mcp" }),
+    Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)),
+    ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, App, BillingApp),
   ]) {
     const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(Users.layerMemory), services));
 
-    // @ts-expect-error Request requirements are the union over every implementation.
+    // @ts-expect-error Merged, the request requirements are the union over every implementation.
     void web.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
     void web.handler(
       new Request("http://localhost"),
@@ -329,86 +338,22 @@ export const multipleGroupTypes = () => {
 
   // Implementing inline must not let the adapter's parameter type erase requirements.
   const inline = HttpRouter.toWebHandler(
-    ActionHttp.make([Billing], { apiPath: "/api" })
-      .layer([Billing.implement({ invoice: () => Effect.succeed(1) })], openapi)
+    ActionHttp.make({ apiPath: "/api" }, Billing)
+      .layer(Billing.implement({ invoice: () => Effect.succeed(1) }))
       .pipe(services),
   );
 
   void inline.handler(new Request("http://localhost"));
 
-  // Groups under their own middleware: the root requires each served group's route layer.
-  const root = Both.groups(openapi);
-
-  const mounted = root.pipe(
-    Layer.provide(Both.group(App)),
-    Layer.provide(Both.group(BillingApp)),
-    Layer.provide(Users.layerMemory),
-    services,
+  const inlineMcp = HttpRouter.toWebHandler(
+    ActionMcp.layer(
+      { name: "test", version: "0", path: "/mcp" },
+      Billing.implement({ invoice: () => Effect.succeed(1) }),
+    ).pipe(services),
   );
 
-  void HttpRouter.toWebHandler(mounted);
-  // @ts-expect-error A served group that is never mounted is an unsatisfied requirement.
-  void HttpRouter.toWebHandler(root.pipe(Layer.provide(Both.group(App)), services));
-  // @ts-expect-error Merging does not provide: the root still requires its groups.
-  void HttpRouter.toWebHandler(Layer.mergeAll(root, Both.group(App), Both.group(BillingApp)));
-  // @ts-expect-error Route layers exist only for implementations of the bound groups.
-  Both.group(Foreign);
+  void inlineMcp.handler(new Request("http://localhost"));
 
-  // A layer built from a union of implementations cannot say which group it
-  // mounted, so it satisfies neither requirement.
-  const either = Math.random() > 0.5 ? App : BillingApp;
-
-  void HttpRouter.toWebHandler(
-    // @ts-expect-error The union-typed group layer leaves both groups unmounted.
-    root.pipe(
-      Layer.provide(Both.group(either)),
-      Layer.provide(Both.group(BillingApp)),
-      Layer.provide(Users.layerMemory),
-      services,
-    ),
-  );
-
-  // The requirement names the mounted routes, so another adapter's group layer,
-  // even of the same group, does not satisfy it.
-  const Elsewhere = ActionHttp.make([Actions, Billing], { apiPath: "/elsewhere" });
-
-  void HttpRouter.toWebHandler(
-    // @ts-expect-error Mounted<"/elsewhere", …> is not Mounted<"/api", …>.
-    root.pipe(
-      Layer.provide(Elsewhere.group(App)),
-      Layer.provide(Both.group(BillingApp)),
-      Layer.provide(Users.layerMemory),
-      services,
-    ),
-  );
-
-  // Requirements are the union over what is passed; an unserved group's
-  // implementation may be left out, and its requirements with it.
-  const Plain = ActionGroup.make(
-    "plain",
-    Action.make("plain", { description: "Plain", success: Schema.String }),
-  );
-
-  const McpOnly = ActionGroup.make(
-    "mcpOnly",
-    Action.make("tool", { description: "Tool", success: Schema.String, http: false }),
-  );
-
-  const PlainApp = Plain.implement({ plain: () => Effect.succeed("") });
-  const McpOnlyApp = McpOnly.implement({ tool: () => Effect.map(Tenant, (tenant) => tenant) });
-  const Mixed = ActionHttp.make([Plain, McpOnly], { apiPath: "/api" });
-
-  void HttpRouter.toWebHandler(Mixed.layer([PlainApp], openapi).pipe(services)).handler(
-    new Request("http://localhost"),
-  );
-
-  const withUnserved = HttpRouter.toWebHandler(
-    Mixed.layer([PlainApp, McpOnlyApp], openapi).pipe(services),
-  );
-
-  // @ts-expect-error Passing the unserved implementation brings its requirements along.
-  void withUnserved.handler(new Request("http://localhost"));
-
-  // @ts-expect-error Build requirements are the union over every implementation.
-  HttpRouter.toWebHandler(Both.layer([App, BillingApp], openapi).pipe(services));
+  // @ts-expect-error Build requirements are the union over every merged layer.
+  HttpRouter.toWebHandler(Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)).pipe(services));
 };

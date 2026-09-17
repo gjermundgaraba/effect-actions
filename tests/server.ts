@@ -1,6 +1,8 @@
 import { Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { type ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import type * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import { layer } from "../examples/app.js";
 
 /** Test-local mount paths; production callers must pass their own. */
@@ -22,14 +24,18 @@ export const makeTestApp = () =>
 export const makeTestHttp = <Group extends ActionGroup.Any, R, EX>(
   app: ActionGroup.Implementation<Group, R, EX, never>,
   request: Layer.Layer<NoInfer<R>>,
-  options?: Partial<ActionHttp.Options & ActionHttp.LayerOptions>,
-) =>
-  HttpRouter.toWebHandler(
-    ActionHttp.make([app.group], { apiPath: options?.apiPath ?? testApiPath })
-      .layer(app, { openapiPath: options?.openapiPath ?? testOpenapiPath })
-      .pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
+  options?: { readonly apiPath?: `/${string}`; readonly openapiPath?: `/${string}` },
+) => {
+  const http = ActionHttp.make({ apiPath: options?.apiPath ?? testApiPath }, app.group);
+
+  return HttpRouter.toWebHandler(
+    Layer.mergeAll(
+      http.layer(app),
+      http.layerOpenapi(options?.openapiPath ?? testOpenapiPath),
+    ).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
+};
 
 /** Serve an implementation over MCP; `request` supplies its per-request services. */
 export const makeTestMcp = <Group extends ActionGroup.Any, R, EX>(
@@ -37,7 +43,7 @@ export const makeTestMcp = <Group extends ActionGroup.Any, R, EX>(
   request: Layer.Layer<NoInfer<R>>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }).pipe(
+    ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app).pipe(
       HttpRouter.provideRequest(request),
       Layer.provide(HttpServer.layerServices),
     ),

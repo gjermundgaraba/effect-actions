@@ -1,4 +1,3 @@
-import * as ActionsPackage from "@gjermundgaraba/effect-actions";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -9,15 +8,24 @@ import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { type Actions, Http, routes } from "./quickstart.js";
 
-if (
-  ActionsPackage.Action.make !== Action.make ||
-  ActionsPackage.ActionGroup.make !== ActionGroup.make ||
-  ActionsPackage.ActionHttp.make !== ActionHttp.make ||
-  ActionsPackage.ActionMcp.layer !== ActionMcp.layer ||
-  ActionsPackage.Authentication.middleware !== Authentication.middleware
-) {
-  throw new Error("Root and subpath exports disagree");
-}
+const entries = [
+  Action.make,
+  ActionGroup.make,
+  ActionHttp.make,
+  ActionMcp.layer,
+  Authentication.middleware,
+];
+if (!entries.every((entry) => entry instanceof Function))
+  throw new Error("A subpath entry point did not load");
+
+// Subpaths are the only entry points: one module each, so nothing loads the MCP
+// server or the optional client peer by accident.
+const packageRoot: string = "@gjermundgaraba/effect-actions";
+const rootImport = await import(packageRoot).then(
+  () => "resolved",
+  () => "absent",
+);
+if (rootImport !== "absent") throw new Error("The package root must not be an entry point");
 
 const checkTypes = (client: ActionHttp.Client<typeof Actions>) => {
   // @ts-expect-error Published declarations must reject incorrect input.

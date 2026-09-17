@@ -17,7 +17,10 @@ pnpm add @gjermundgaraba/effect-actions \
 
 ```ts
 import { Effect, Layer, Schema } from "effect";
-import { Action, ActionGroup, ActionHttp, ActionMcp } from "@gjermundgaraba/effect-actions";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
 const Greet = Action.make("greet", {
   description: "Greet someone by name.",
@@ -28,15 +31,16 @@ const Greet = Action.make("greet", {
 
 export const Actions = ActionGroup.make("greetings", Greet);
 
-export const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });
+export const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
 
 const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });
 
 export const routes = Layer.mergeAll(
-  Http.layer(app, { openapiPath: "/openapi.json" }),
-  ActionMcp.layer(app, { name: "greetings", version: "1.0.0", path: "/mcp" }),
+  Http.layer(app),
+  Http.layerOpenapi("/openapi.json"),
+  ActionMcp.layer({ name: "greetings", version: "1.0.0", path: "/mcp" }, app),
 );
 ```
 
@@ -84,74 +88,51 @@ for error types, optional inputs, and native grouped clients.
 
 ## Multiple groups
 
-Both adapters accept one group or several, so an application can split its
-contracts and handlers without splitting its endpoints:
+An application can split its contracts and handlers into groups without splitting its
+endpoints. Configuration comes first, then the groups or implementations:
 
 ```ts
-const Http = ActionHttp.make([Users, Billing], { apiPath: "/api/actions" });
+const Http = ActionHttp.make({ apiPath: "/api/actions" }, PublicActions, UserActions);
 
 const routes = Layer.mergeAll(
-  Http.layer([UsersApp, BillingApp], { openapiPath: "/openapi.json" }),
-  ActionMcp.layer([UsersApp, BillingApp], { name: "my-app", version: "1.0.0", path: "/mcp" }),
+  Http.layer(PublicApp),
+  Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layerOpenapi("/openapi.json"),
+  ActionMcp.layer({ name: "my-app", version: "1.0.0", path: "/mcp" }, UserApp, AuditApp),
 );
 ```
 
-Each adapter reads only what it serves: the HTTP-enabled actions for `ActionHttp`, the
-tools for `ActionMcp`. Everything else follows from that view.
-
-- **Pairing.** `Http.layer(apps, options)` needs exactly one implementation for every group
-  with an HTTP action, in any order, matched by identity. An implementation of a group that
-  was not given to `make` does not compile; a missing one throws when the layer is constructed.
-- **Acquisition.** A group the adapter does not serve needs no implementation there, and
-  one that is passed anyway is not built. Requirement types are the union over what is
-  passed, so leaving it out also leaves out its requirements.
+- **One layer per group.** `Http.layer(app)` registers the routes of one group, and router
+  middleware provided to a layer applies to that layer alone: above, only the user group
+  requires authentication. A group that is never mounted has no routes.
+- **The document is its own layer.** `Http.layerOpenapi(path)` serves the document of every
+  group, under whatever middleware it is given; leave it out and no document is served.
+- **Each adapter reads only what it serves.** A group without HTTP actions registers nothing
+  and is not built by `Http.layer`, nor one without tools by `ActionMcp.layer`.
 - **Names.** Routes and client methods are flat (`POST /api/actions/<action>`,
-  `client.<action>()`), so group names and HTTP action names must be unique within
-  one `ActionHttp.make`, and tool names within one `ActionMcp.layer`. Duplicates throw at
+  `client.<action>()`), so group names and HTTP action names must be unique within one
+  `ActionHttp.make`, and tool names within one `ActionMcp.layer`. Duplicates throw at
   construction; neither adapter looks at the other's names.
-- **Lists.** Both adapters accept ordinary arrays, so one `apps` list can be shared or
-  assembled with `map` and `filter`.
+- **MCP middleware is per endpoint.** An MCP endpoint is one route, so middleware provided
+  to `ActionMcp.layer`, authentication included, covers all of its tools. Handlers can still
+  authorize each tool differently. Only tools that need different middleware, such as none
+  at all, need their own endpoint: one `ActionMcp.layer` per `path`.
 
-### Groups under their own middleware
-
-Router middleware applies to the layer that registers the routes. `Http.group(app)` is the
-route layer of one group, so each can have its own. `Http.groups(options)` serves the
-document and requires the `group` layer of every group with an HTTP action:
-
-```ts
-const routes = Http.groups({ openapiPath: "/openapi.json" }).pipe(
-  Layer.provide(Http.group(PublicApp)),
-  Layer.provide(Http.group(UserApp).pipe(Layer.provide(authentication.layer))),
-);
-```
-
-A group that is never mounted leaves `ActionHttp.Mounted<"/api/actions", "users">`
-unsatisfied where the layer is run, which does not compile, as with any missing Layer. The
-requirement names the routes themselves, so a group layer of an adapter mounted elsewhere,
-or one built from a union of implementations, does not satisfy it; one from another adapter
-at the same path fails when the layer is built. Provide the groups rather than merging
-them. Middleware provided to `groups` before the group layers guards only the document;
-provided after them, it guards everything. See [examples/app.ts](examples/app.ts).
-
-An MCP endpoint is one route, so middleware provided to `ActionMcp.layer`, authentication
-included, covers all of its tools. Handlers can still authorize each tool differently on one
-endpoint. Only tools that need different middleware, such as none at all, need their own
-endpoint: one `ActionMcp.layer` per `path`, each with its own registry.
+Each group is its own native `HttpApiGroup`, so a host can also combine separately made
+`Http.api` values with `HttpApi.addHttpApi`. See [examples/app.ts](examples/app.ts).
 
 ## Adapter options
 
-| API                          | Options                                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------------------- |
-| `ActionHttp.make(groups, …)` | `apiPath`, `schemaError`                                                                |
-| `Http.layer(apps, …)`        | `openapiPath`                                                                           |
-| `Http.groups(…)`             | `openapiPath`                                                                           |
-| `Http.group(app)`            | None                                                                                    |
-| `Http.client(…)`             | `baseUrl`, `transformClient`, `transformResponse`                                       |
-| `ActionMcp.layer(apps, …)`   | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions`, `schemaError` |
+| API                                 | Options                                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| `ActionHttp.make(options, …groups)` | `apiPath`, `schemaError`                                                                |
+| `Http.layer(app)`                   | None                                                                                    |
+| `Http.layerOpenapi(path)`           | The route path                                                                          |
+| `Http.client(options?)`             | `baseUrl`, `transformClient`, `transformResponse`                                       |
+| `ActionMcp.layer(options, …apps)`   | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions`, `schemaError` |
 
-`apiPath`, `openapiPath`, and MCP `path` are required: the library has no defaults.
-Set `openapiPath: false` when the host serves a combined document. `Http.api` is the
-native `HttpApi`, built once and shared by the routes, the clients, and `Http.openapi()`.
+`apiPath`, the document path, and MCP `path` have no defaults. `Http.api` is the native
+`HttpApi`, built once and shared by the routes, the clients, and `Http.openapi()`.
 
 See [adapter behavior](docs/behavior.md) for shared schema-error policies,
 dependency lifetimes, wire formats, and MCP protocol support.
@@ -183,9 +164,10 @@ vp run example
 assertions in `tests/types.spec.ts`. Tests cover both transports, official MCP clients,
 context isolation, schema-error policies, and cancellation.
 
-`vp run build` emits ESM and declarations into `dist/`. Public entry points are the
-package root and one subpath per module: `/Action`, `/ActionGroup`, `/ActionHttp`, `/ActionMcp`,
-`/Authentication`, `/Testing`, and `/TestingClient`.
+`vp run build` emits ESM and declarations into `dist/`. The entry points are one subpath per
+module: `/Action`, `/ActionGroup`, `/ActionHttp`, `/ActionMcp`, `/Authentication`, `/Testing`,
+and `/TestingClient`. There is no package root, so a contracts-only or browser bundle never
+loads the MCP server or the optional client peer.
 `vp run test:package` builds and checks a tarball in an isolated consumer using the pinned
 Effect snapshot; it does not establish compatibility with the published peer.
 

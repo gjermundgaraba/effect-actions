@@ -1,5 +1,7 @@
 import { Schema } from "effect";
-import { Action, ActionGroup, ActionHttp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import { Forbidden } from "./auth.js";
 
 export const User = Schema.Struct({
@@ -98,7 +100,12 @@ export const schemaError = Action.schemaErrorPolicy({
 });
 
 // Contract-level: the server and its clients share the mount path and policy errors.
-export const Http = ActionHttp.make([PublicActions, UserActions, AuditActions], {
-  apiPath: "/api/actions",
-  schemaError,
-});
+export const Http = ActionHttp.make(
+  {
+    apiPath: "/api/actions",
+    schemaError,
+  },
+  PublicActions,
+  UserActions,
+  AuditActions,
+);

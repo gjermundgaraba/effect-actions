@@ -2,7 +2,10 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
-import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
 import { mcpRequest } from "../src/Testing.js";
 import { post } from "./requests.js";
@@ -69,11 +72,10 @@ describe("projection boundaries", () => {
       hidden: () => Effect.succeed("hidden"),
     });
 
-    expect(ActionHttp.make(app.group, { apiPath: "/api/actions" }).api.groups).toEqual({});
+    expect(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api.groups).toEqual({});
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
     expect((await web.handler(post("/api/actions/hidden"))).status).toBe(404);
-    expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
   });
 
   it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
@@ -96,7 +98,7 @@ describe("projection boundaries", () => {
     });
 
     const options = { apiPath: "/rpc", openapiPath: "/schema.json" } as const;
-    expect(Object.keys(ActionHttp.make(app.group, options).openapi().paths ?? {})).toEqual([
+    expect(Object.keys(ActionHttp.make(options, app.group).openapi().paths ?? {})).toEqual([
       "/rpc/echo",
     ]);
     const web = makeTestHttp(app, Layer.empty, options);
@@ -127,7 +129,7 @@ describe("projection boundaries", () => {
       });
 
       expect(
-        ActionHttp.make(app.group, { apiPath: "/api/actions" }).openapi().paths?.[
+        ActionHttp.make({ apiPath: "/api/actions" }, app.group).openapi().paths?.[
           "/api/actions/fail"
         ]?.post?.responses,
       ).toHaveProperty(String(status ?? 500));
@@ -155,7 +157,7 @@ describe("projection boundaries", () => {
         which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
     });
 
-    const responses = ActionHttp.make(app.group, { apiPath: "/api/actions" }).openapi().paths?.[
+    const responses = ActionHttp.make({ apiPath: "/api/actions" }, app.group).openapi().paths?.[
       "/api/actions/fail"
     ]?.post?.responses;
 
@@ -204,7 +206,7 @@ describe("projection boundaries", () => {
 
     expectReferencesResolve(
       Schema.decodeUnknownSync(Schema.Json)(
-        ActionHttp.make(ActionGroup.make("test", Read), { apiPath: "/api/actions" }).openapi(),
+        ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make("test", Read)).openapi(),
       ),
       "#/components/schemas/",
     );
@@ -300,7 +302,7 @@ describe("projection boundaries", () => {
         invalid: () => Effect.succeed("unused"),
       });
 
-      const layer = ActionMcp.layer(app, { name: "test", version: "0", path: "/mcp" }).pipe(
+      const layer = ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app).pipe(
         Layer.provide(HttpRouter.layer),
       );
 
@@ -321,7 +323,7 @@ describe("projection boundaries", () => {
       scalar: () => Effect.fail("failure"),
     });
 
-    const layer = ActionMcp.layer(app, { name: "test", version: "0", path: "/mcp" }).pipe(
+    const layer = ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app).pipe(
       Layer.provide(HttpRouter.layer),
     );
 
@@ -474,29 +476,4 @@ describe("projection boundaries", () => {
     expect((await running).status).toBe(499);
     await Effect.runPromise(Deferred.await(stopped));
   });
-});
-
-it("can leave OpenAPI registration to the host without disabling action routes", async () => {
-  const app = ActionGroup.make(
-    "test",
-    Action.make("ping", {
-      description: "Ping",
-      success: Schema.String,
-    }),
-  ).implement({ ping: () => Effect.succeed("pong") });
-
-  const web = makeTestHttp(app, Layer.empty, { openapiPath: false });
-  onTestFinished(() => web.dispose());
-
-  const response = await web.handler(
-    new Request("http://localhost/api/actions/ping", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    }),
-  );
-
-  expect(response.status).toBe(200);
-  expect(await response.json()).toBe("pong");
-  expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(404);
 });

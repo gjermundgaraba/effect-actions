@@ -11,7 +11,7 @@ it.each([
 ])("keeps %s aligned with its type-checked source", (heading, file) => {
   const source = readFileSync(new URL(`../examples/${file}`, import.meta.url), "utf8")
     .trim()
-    .replace("../src/index.js", "@gjermundgaraba/effect-actions");
+    .replace(/"\.\.\/src\/(\w+)\.js"/g, '"@gjermundgaraba/effect-actions/$1"');
 
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const section = readme.split(heading)[1];

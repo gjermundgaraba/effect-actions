@@ -1,6 +1,7 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { ActionMcp, Authentication } from "../src/index.js";
+import * as ActionMcp from "../src/ActionMcp.js";
+import * as Authentication from "../src/Authentication.js";
 import { type Actor, CurrentActor, Unauthenticated } from "./auth.js";
 import { Http, schemaError } from "./contracts.js";
 import { AuditApp, PublicApp, UserApp } from "./handlers.js";
@@ -57,12 +58,12 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
   }),
 );
 
-// The document and the public group need no credentials; the user group does.
-// Each group registers its own routes, so middleware provided to `Http.group`
-// applies to that group alone, and a group left unmounted does not compile.
-const http = Http.groups({ openapiPath: "/openapi.json" }).pipe(
-  Layer.provide(Http.group(PublicApp)),
-  Layer.provide(Http.group(UserApp).pipe(Layer.provide(authentication.layer))),
+// One layer per group: middleware provided to a layer applies to that group
+// alone. The public group and the document need no credentials; the user group does.
+const http = Layer.mergeAll(
+  Http.layer(PublicApp),
+  Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layerOpenapi("/openapi.json"),
 );
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
@@ -71,21 +72,28 @@ const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 // covers all of its tools; handlers still authorize each tool themselves. Tools
 // that need no credentials at all therefore get their own endpoint, which
 // compiles because this implementation requires nothing per request.
-const publicMcp = ActionMcp.layer(PublicApp, {
-  name: "effect-actions-public",
-  version: "0.0.0",
-  path: "/mcp/public",
-  schemaError,
-  allowedOrigins,
-});
+const publicMcp = ActionMcp.layer(
+  {
+    name: "effect-actions-public",
+    version: "0.0.0",
+    path: "/mcp/public",
+    schemaError,
+    allowedOrigins,
+  },
+  PublicApp,
+);
 
-const mcp = ActionMcp.layer([UserApp, AuditApp], {
-  name: "effect-actions",
-  version: "0.0.0",
-  path: "/mcp",
-  schemaError,
-  allowedOrigins,
-}).pipe(Layer.provide(authentication.layer));
+const mcp = ActionMcp.layer(
+  {
+    name: "effect-actions",
+    version: "0.0.0",
+    path: "/mcp",
+    schemaError,
+    allowedOrigins,
+  },
+  UserApp,
+  AuditApp,
+).pipe(Layer.provide(authentication.layer));
 
 export const layer = Layer.mergeAll(http, publicMcp, mcp).pipe(
   Layer.provide(requestPolicy.layer),

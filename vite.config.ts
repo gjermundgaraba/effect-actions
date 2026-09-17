@@ -9,7 +9,6 @@ export default defineConfig({
   },
   pack: {
     entry: {
-      index: "src/index.ts",
       Action: "src/Action.ts",
       ActionGroup: "src/ActionGroup.ts",
       ActionHttp: "src/ActionHttp.ts",

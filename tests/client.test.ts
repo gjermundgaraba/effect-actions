@@ -7,7 +7,9 @@ import {
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
-import { Action, ActionGroup, ActionHttp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 
 class Invalid extends Schema.TaggedError<Invalid>()(
   "Invalid",
@@ -31,13 +33,16 @@ const actions = ActionGroup.make(
   Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
 );
 
-const Http = ActionHttp.make(actions, {
-  apiPath: "/rpc",
-  schemaError: {
-    errors: [Invalid],
-    map: () => new Invalid({ message: "Invalid output" }),
+const Http = ActionHttp.make(
+  {
+    apiPath: "/rpc",
+    schemaError: {
+      errors: [Invalid],
+      map: () => new Invalid({ message: "Invalid output" }),
+    },
   },
-});
+  actions,
+);
 
 const app = actions.implement({
   double: ({ value }) => Effect.succeed(value === 0 ? Infinity : value * 2),
@@ -48,7 +53,9 @@ const app = actions.implement({
 
 it("keeps the client, routes and document on one configuration", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer(app, { openapiPath: "/schema" }).pipe(Layer.provide(HttpServer.layerServices)),
+    Layer.mergeAll(Http.layer(app), Http.layerOpenapi("/schema")).pipe(
+      Layer.provide(HttpServer.layerServices),
+    ),
     {
       disableLogger: true,
     },
@@ -193,7 +200,7 @@ it("rejects a flattened then method rather than hanging Promise resolution", asy
     }),
   );
 
-  const thenable = ActionHttp.make(group, { apiPath: "/rpc" });
+  const thenable = ActionHttp.make({ apiPath: "/rpc" }, group);
 
   await expect(
     Effect.runPromise(thenable.client().pipe(Effect.provide(FetchHttpClient.layer))),
@@ -232,7 +239,7 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
 
   const bodies: unknown[] = [];
   await Effect.gen(function* () {
-    const client = yield* ActionHttp.make(group, { apiPath: "/api/actions" }).client({
+    const client = yield* ActionHttp.make({ apiPath: "/api/actions" }, group).client({
       baseUrl: "http://localhost",
     });
 

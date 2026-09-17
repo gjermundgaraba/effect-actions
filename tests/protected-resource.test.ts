@@ -1,7 +1,7 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Layer } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
-import { Authentication } from "../src/index.js";
+import * as Authentication from "../src/Authentication.js";
 
 it.each([
   ["https://api.example.com", "/.well-known/oauth-protected-resource"],

@@ -1,6 +1,8 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema } from "effect";
-import { Action, ActionGroup, ActionHttp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { makeTestHttp } from "./server.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
@@ -100,8 +102,8 @@ describe("implementations", () => {
 
       const web = HttpRouter.toWebHandler(
         Layer.mergeAll(
-          ActionHttp.make(appA.group, { apiPath: "/a" }).layer(appA, { openapiPath: "/a.json" }),
-          ActionHttp.make(appB.group, { apiPath: "/b" }).layer(appB, { openapiPath: "/b.json" }),
+          ActionHttp.make({ apiPath: "/a" }, appA.group).layer(appA),
+          ActionHttp.make({ apiPath: "/b" }, appB.group).layer(appB),
         ).pipe(Layer.provide(HttpServer.layerServices)),
         { disableLogger: true },
       );

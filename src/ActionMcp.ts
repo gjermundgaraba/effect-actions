@@ -5,13 +5,7 @@ import type * as JsonSchema from "effect/JsonSchema";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import {
-  type Actions,
-  assertDistinct,
-  type Each,
-  type OneOrMore,
-  served,
-} from "./internal/actions.js";
+import { type Actions, assertDistinct, served } from "./internal/actions.js";
 import {
   type AnyImplementation,
   type BuildContext,
@@ -260,23 +254,26 @@ const erasedLayer = <R, EX, RX>(
   });
 };
 
-/** One Streamable HTTP MCP endpoint serving every MCP-enabled action of `apps`. */
+/**
+ * One Streamable HTTP MCP endpoint serving every MCP-enabled action of `apps`.
+ * An endpoint is one route, so middleware provided to this layer covers all of its tools.
+ */
 export function layer<
-  const Apps extends OneOrMore<AnyImplementation>,
+  const Apps extends ReadonlyArray<AnyImplementation>,
   const Errors extends ReadonlyArray<Action.Codec> = [],
 >(
-  apps: Apps,
   options: Options<Errors>,
+  ...apps: Apps
 ): Layer.Layer<
   never,
-  BuildError<Each<Apps>> | Cause.IllegalArgumentError,
-  | BuildContext<Each<Apps>>
+  BuildError<Apps[number]> | Cause.IllegalArgumentError,
+  | BuildContext<Apps[number]>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<Each<Apps>>>
+  | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
 >;
 export function layer(
-  apps: OneOrMore<AnyImplementation>,
   options: Options<ReadonlyArray<Action.Codec>>,
+  ...apps: ReadonlyArray<AnyImplementation>
 ) {
-  return erasedLayer(apps instanceof Implementation ? [apps] : apps, options);
+  return erasedLayer(apps, options);
 }

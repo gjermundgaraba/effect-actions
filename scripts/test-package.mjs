@@ -33,8 +33,8 @@ try {
   writeFileSync(
     join(consumer, "quickstart.ts"),
     readFileSync(join(root, "examples/quickstart.ts"), "utf8").replace(
-      "../src/index.js",
-      manifest.name,
+      /"\.\.\/src\/(\w+)\.js"/g,
+      `"${manifest.name}/$1"`,
     ),
   );
   // Install outside the repository, without its workspace overrides or source imports.

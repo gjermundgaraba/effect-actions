@@ -6,9 +6,13 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { Action, ActionGroup, ActionHttp, ActionMcp, Authentication } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
+import * as Authentication from "../src/Authentication.js";
 import { mcpRequest } from "../src/Testing.js";
-import { testApiPath, testMcpPath, testMcpUrl, testOpenapiPath } from "./server.js";
+import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
@@ -341,10 +345,8 @@ describe("Authentication.middleware", () => {
 
       const routes =
         transport === "http"
-          ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
-              openapiPath: testOpenapiPath,
-            })
-          : ActionMcp.layer(app, { name: "scope-test", version: "0", path: testMcpPath });
+          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+          : ActionMcp.layer({ name: "scope-test", version: "0", path: testMcpPath }, app);
 
       const web = HttpRouter.toWebHandler(
         routes.pipe(Layer.provide(auth.layer), Layer.provide(HttpServer.layerServices)),

@@ -9,11 +9,6 @@ export interface Actions<
   readonly actions: A;
 }
 
-/** Adapters take one group (or implementation) or several. */
-export type OneOrMore<T> = T | ReadonlyArray<T>;
-
-export type Each<T> = T extends ReadonlyArray<infer Item> ? Item : T;
-
 /** Each namespace is checked by whoever owns it: a group, the routes, or the MCP tools. */
 export const assertDistinct = (what: string, names: ReadonlyArray<string>): void => {
   const seen = new Set<string>();

@@ -1,5 +1,8 @@
 import { Effect, Layer, Schema } from "effect";
-import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 
 const Greet = Action.make("greet", {
   description: "Greet someone by name.",
@@ -10,13 +13,14 @@ const Greet = Action.make("greet", {
 
 export const Actions = ActionGroup.make("greetings", Greet);
 
-export const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });
+export const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
 
 const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });
 
 export const routes = Layer.mergeAll(
-  Http.layer(app, { openapiPath: "/openapi.json" }),
-  ActionMcp.layer(app, { name: "greetings", version: "1.0.0", path: "/mcp" }),
+  Http.layer(app),
+  Http.layerOpenapi("/openapi.json"),
+  ActionMcp.layer({ name: "greetings", version: "1.0.0", path: "/mcp" }, app),
 );
