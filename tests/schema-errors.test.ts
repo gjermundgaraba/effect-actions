@@ -2,7 +2,7 @@ import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpSchema } from "effect/unstable/ai";
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -112,7 +112,7 @@ it("maps input and output failures and exposes the same error contract to client
     ),
     Effect.runPromise,
   );
-  const document = Http.openapi();
+  const document = OpenApi.fromApi(Http.api);
   expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("400");
   expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("500");
 });

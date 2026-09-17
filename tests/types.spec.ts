@@ -271,8 +271,6 @@ export const configuredClientTypes = () => {
     );
     // @ts-expect-error HTTP mount path is required.
     ActionHttp.make({}, Actions);
-    // @ts-expect-error The document route has no default path.
-    Bound.layerOpenapi();
     // @ts-expect-error MCP mount path is required.
     ActionMcp.layer({ name: "test", version: "0" }, App);
   });

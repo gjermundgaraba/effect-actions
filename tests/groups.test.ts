@@ -46,7 +46,6 @@ const serve = () => {
     Layer.mergeAll(
       Http.layer(UsersApp),
       Http.layer(BillingApp),
-      Http.layerOpenapi("/openapi.json"),
       ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, UsersApp, BillingApp),
     ).pipe(Layer.provide(Layer.succeed(Tenant, "acme")), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
@@ -70,10 +69,7 @@ it("serves several groups through one flat client and one document", async () =>
 
   expect(result).toEqual(["ada@acme", 42]);
 
-  const document = Http.openapi();
-  expect(await (await web.handler(new Request("http://localhost/openapi.json"))).json()).toEqual(
-    document,
-  );
+  const document = OpenApi.fromApi(Http.api);
   expect(Object.keys(document.paths)).toEqual(["/api/whoAmI", "/api/invoice"]);
   expect(document.paths["/api/whoAmI"]?.post?.operationId).toBe("users.whoAmI");
   expect(document.paths["/api/invoice"]?.post?.tags).toEqual(["billing"]);
@@ -259,7 +255,13 @@ it("scopes router middleware to the layer it is provided to", async () => {
   const tenant = Layer.provide(Layer.succeed(Tenant, "acme"));
   const users = Http.layer(UsersApp).pipe(tenant);
   const billing = Http.layer(BillingApp);
-  const document = Http.layerOpenapi("/openapi.json");
+
+  // The document is an ordinary route over the native API, so it takes middleware like any other.
+  const document = HttpRouter.add(
+    "GET",
+    "/openapi.json",
+    HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)),
+  );
 
   const statuses = async (handler: (request: Request) => Promise<Response>) => [
     (await handler(new Request("http://localhost/openapi.json"))).status,
@@ -283,14 +285,6 @@ it("scopes router middleware to the layer it is provided to", async () => {
       handlerOf(Layer.mergeAll(document, users, billing).pipe(Layer.provide(blocked))),
     ),
   ).toEqual([403, 403, 403]);
-});
-
-it("serves the bound document from the document route", async () => {
-  const handler = handlerOf(Http.layerOpenapi("/schema.json"));
-
-  expect(await (await handler(new Request("http://localhost/schema.json"))).json()).toEqual(
-    Http.openapi(),
-  );
 });
 
 it("checks each namespace only where it is served", () => {

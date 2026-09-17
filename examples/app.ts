@@ -1,5 +1,6 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { type Actor, CurrentActor, Unauthenticated } from "./auth.js";
@@ -59,11 +60,17 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
 );
 
 // One layer per group: middleware provided to a layer applies to that group
-// alone. The public group and the document need no credentials; the user group does.
+// alone. The public group needs no credentials; the user group does.
 const http = Layer.mergeAll(
   Http.layer(PublicApp),
   Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
-  Http.layerOpenapi("/openapi.json"),
+);
+
+// `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
+// JSON as a plain route, and a Swagger UI reading the same contract.
+const documentation = Layer.mergeAll(
+  HttpRouter.add("GET", "/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api))),
+  HttpApiSwagger.layer(Http.api, { path: "/docs" }),
 );
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
@@ -95,7 +102,7 @@ const mcp = ActionMcp.layer(
   AuditApp,
 ).pipe(Layer.provide(authentication.layer));
 
-export const layer = Layer.mergeAll(http, publicMcp, mcp).pipe(
+export const layer = Layer.mergeAll(http, documentation, publicMcp, mcp).pipe(
   Layer.provide(requestPolicy.layer),
   Layer.provide(Users.layerMemory),
 );

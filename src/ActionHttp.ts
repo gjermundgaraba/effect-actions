@@ -1,13 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import {
-  type Etag,
-  type HttpClient,
-  type HttpPlatform,
-  HttpRouter,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import type { Etag, HttpClient, HttpPlatform, HttpRouter } from "effect/unstable/http";
 import {
   HttpApi,
   HttpApiBuilder,
@@ -76,10 +70,11 @@ export type Client<G extends Actions, E extends Action.Codec = never> = {
 export type ClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
 
 export interface Http<G extends Actions, Errors extends ReadonlyArray<Action.Codec> = []> {
-  /** The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`. */
+  /**
+   * The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`.
+   * Documents, documentation UIs and native clients are Effect's own, from this value.
+   */
   readonly api: Api<G, Errors[number]>;
-  /** The OpenAPI 3.1 document Effect derives from `api`. */
-  readonly openapi: () => OpenApi.OpenAPISpec;
   /**
    * The routes of one group. Merge one per group; router middleware provided
    * to a layer applies to that group only. Handler requirements are
@@ -99,8 +94,6 @@ export interface Http<G extends Actions, Errors extends ReadonlyArray<Action.Cod
     | HttpPlatform.HttpPlatform
     | Path
   >;
-  /** A route serving the OpenAPI document of every group, under its own middleware. */
-  readonly layerOpenapi: (path: `/${string}`) => Layer.Layer<never, never, HttpRouter.HttpRouter>;
   /** Direct action methods backed by the native HTTP client and its codecs. */
   readonly client: (
     options?: ClientOptions,
@@ -249,7 +242,7 @@ const erasedClient = (
 
 /**
  * Bind the contract-level configuration once. The native API is built here and
- * shared by the OpenAPI document, routes and clients, so they cannot disagree.
+ * shared by the routes and clients, so they cannot disagree.
  */
 export function make<
   const G extends ReadonlyArray<Actions>,
@@ -281,19 +274,9 @@ export function make(
     schemaErrors: schemaErrorMiddleware(options.schemaError),
   };
 
-  // The contract is fixed here, so its document is serialized once.
-  let document: HttpServerResponse.HttpServerResponse | undefined;
-
   return {
     api,
-    openapi: () => OpenApi.fromApi(api),
     layer: (app: AnyImplementation) => erasedLayer(binding, app),
-    layerOpenapi: (path) =>
-      HttpRouter.add(
-        "GET",
-        path,
-        Effect.sync(() => (document ??= HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api)))),
-      ),
     client: (connection) => erasedClient(api, views, connection),
   };
 }

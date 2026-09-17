@@ -21,6 +21,5 @@ const app = Actions.implement({
 
 export const routes = Layer.mergeAll(
   Http.layer(app),
-  Http.layerOpenapi("/openapi.json"),
   ActionMcp.layer({ name: "greetings", version: "1.0.0", path: "/mcp" }, app),
 );

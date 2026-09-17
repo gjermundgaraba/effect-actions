@@ -23,7 +23,8 @@ The application has three groups, one per access rule:
 
 HTTP groups share one mount path and differ by middleware. An MCP endpoint is a single
 route, so its middleware covers every tool; the public tool therefore has its own endpoint.
-The OpenAPI document is public as well.
+The OpenAPI document (`/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
+are Effect's own tools reading the native `Http.api`.
 
 ```sh
 # The public group needs no token

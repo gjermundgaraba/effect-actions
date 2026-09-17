@@ -7,6 +7,7 @@ import {
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
+import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -53,9 +54,7 @@ const app = actions.implement({
 
 it("keeps the client, routes and document on one configuration", async () => {
   const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(Http.layer(app), Http.layerOpenapi("/schema")).pipe(
-      Layer.provide(HttpServer.layerServices),
-    ),
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
     {
       disableLogger: true,
     },
@@ -63,10 +62,7 @@ it("keeps the client, routes and document on one configuration", async () => {
 
   const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
   onTestFinished(() => web.dispose());
-  const response = await web.handler(new Request("http://localhost/schema"));
-  expect(response.status).toBe(200);
-  const document = Http.openapi();
-  expect(await response.json()).toEqual(document);
+  const document = OpenApi.fromApi(Http.api);
   expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
   expect(document.paths).not.toHaveProperty("/rpc/hidden");
   expect(Http.api.groups.numbers.endpoints.double).toBeDefined();

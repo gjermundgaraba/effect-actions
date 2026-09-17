@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
 import { Effect, Predicate, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import { makeTestApp, testMcpPath } from "./server.js";
 import { Http, InvalidRequest, UserNotFound } from "../examples/contracts.js";
 import { Forbidden } from "../examples/auth.js";
@@ -276,7 +276,7 @@ describe("one implementation, both transports", () => {
       },
     });
 
-    const doubleOperation = Http.openapi().paths?.["/api/actions/double"]?.post;
+    const doubleOperation = OpenApi.fromApi(Http.api).paths?.["/api/actions/double"]?.post;
 
     expect(doubleOperation?.operationId).toBe("users.double");
     expect(doubleOperation?.responses).not.toHaveProperty("404");
@@ -357,7 +357,7 @@ describe("groups under their own middleware", () => {
 
     const document = await app.handler(anonymous("/openapi.json"));
     expect(document.status).toBe(200);
-    expect(await document.json()).toEqual(Http.openapi());
+    expect(await document.json()).toEqual(OpenApi.fromApi(Http.api));
 
     const unauthenticated = await app.handler(anonymous("/api/actions/whoAmI", {}));
     expect(unauthenticated.status).toBe(401);

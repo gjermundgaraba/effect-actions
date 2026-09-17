@@ -58,7 +58,6 @@ const schemaError = Action.schemaErrorPolicy({
 const Http = ActionHttp.make({ apiPath: "/api/actions", schemaError }, UserActions);
 const routes = Layer.mergeAll(
   Http.layer(UserApp),
-  Http.layerOpenapi("/openapi.json"),
   ActionMcp.layer({ name: "my-app", version: "0", path: "/mcp", schemaError }, UserApp),
 );
 ```

@@ -2,6 +2,7 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
+import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -97,10 +98,10 @@ describe("projection boundaries", () => {
       hidden: () => Effect.succeed("hidden"),
     });
 
-    const options = { apiPath: "/rpc", openapiPath: "/schema.json" } as const;
-    expect(Object.keys(ActionHttp.make(options, app.group).openapi().paths ?? {})).toEqual([
-      "/rpc/echo",
-    ]);
+    const options = { apiPath: "/rpc" } as const;
+    expect(
+      Object.keys(OpenApi.fromApi(ActionHttp.make(options, app.group).api).paths ?? {}),
+    ).toEqual(["/rpc/echo"]);
     const web = makeTestHttp(app, Layer.empty, options);
     onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
@@ -108,7 +109,6 @@ describe("projection boundaries", () => {
     const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
-    expect((await web.handler(new Request("http://localhost/schema.json"))).status).toBe(200);
     expect((await web.handler(post("/rpc/hidden"))).status).toBe(404);
     expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["hidden"]);
   });
@@ -129,7 +129,7 @@ describe("projection boundaries", () => {
       });
 
       expect(
-        ActionHttp.make({ apiPath: "/api/actions" }, app.group).openapi().paths?.[
+        OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api).paths?.[
           "/api/actions/fail"
         ]?.post?.responses,
       ).toHaveProperty(String(status ?? 500));
@@ -157,9 +157,8 @@ describe("projection boundaries", () => {
         which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
     });
 
-    const responses = ActionHttp.make({ apiPath: "/api/actions" }, app.group).openapi().paths?.[
-      "/api/actions/fail"
-    ]?.post?.responses;
+    const responses = OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api)
+      .paths?.["/api/actions/fail"]?.post?.responses;
 
     expect(responses).toHaveProperty("404");
     expect(responses).toHaveProperty("409");
@@ -206,7 +205,9 @@ describe("projection boundaries", () => {
 
     expectReferencesResolve(
       Schema.decodeUnknownSync(Schema.Json)(
-        ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make("test", Read)).openapi(),
+        OpenApi.fromApi(
+          ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make("test", Read)).api,
+        ),
       ),
       "#/components/schemas/",
     );

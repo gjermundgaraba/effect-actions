@@ -8,8 +8,6 @@ import { layer } from "../examples/app.js";
 /** Test-local mount paths; production callers must pass their own. */
 export const testApiPath = "/api/actions" as const;
 
-export const testOpenapiPath = "/openapi.json" as const;
-
 export const testMcpPath = "/mcp" as const;
 
 export const testMcpUrl = "http://localhost/mcp";
@@ -24,18 +22,14 @@ export const makeTestApp = () =>
 export const makeTestHttp = <Group extends ActionGroup.Any, R, EX>(
   app: ActionGroup.Implementation<Group, R, EX, never>,
   request: Layer.Layer<NoInfer<R>>,
-  options?: { readonly apiPath?: `/${string}`; readonly openapiPath?: `/${string}` },
-) => {
-  const http = ActionHttp.make({ apiPath: options?.apiPath ?? testApiPath }, app.group);
-
-  return HttpRouter.toWebHandler(
-    Layer.mergeAll(
-      http.layer(app),
-      http.layerOpenapi(options?.openapiPath ?? testOpenapiPath),
-    ).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
+  options?: { readonly apiPath?: `/${string}` },
+) =>
+  HttpRouter.toWebHandler(
+    ActionHttp.make({ apiPath: options?.apiPath ?? testApiPath }, app.group)
+      .layer(app)
+      .pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
-};
 
 /** Serve an implementation over MCP; `request` supplies its per-request services. */
 export const makeTestMcp = <Group extends ActionGroup.Any, R, EX>(

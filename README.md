@@ -39,14 +39,13 @@ const app = Actions.implement({
 
 export const routes = Layer.mergeAll(
   Http.layer(app),
-  Http.layerOpenapi("/openapi.json"),
   ActionMcp.layer({ name: "greetings", version: "1.0.0", path: "/mcp" }, app),
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter`. This creates `POST /api/actions/greet`,
-`GET /openapi.json`, and an MCP endpoint at `/mcp`. The HTTP response is
-`"Hello, Ada!"`; MCP returns `structuredContent: { value: "Hello, Ada!" }`.
+Serve `routes` with Effect's `HttpRouter`. This creates `POST /api/actions/greet` and an
+MCP endpoint at `/mcp`. The HTTP response is `"Hello, Ada!"`; MCP returns
+`structuredContent: { value: "Hello, Ada!" }`.
 See [examples/server.ts](examples/server.ts) for Node server wiring and the
 [authenticated demo](examples/README.md) for a runnable application.
 
@@ -97,7 +96,6 @@ const Http = ActionHttp.make({ apiPath: "/api/actions" }, PublicActions, UserAct
 const routes = Layer.mergeAll(
   Http.layer(PublicApp),
   Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
-  Http.layerOpenapi("/openapi.json"),
   ActionMcp.layer({ name: "my-app", version: "1.0.0", path: "/mcp" }, UserApp, AuditApp),
 );
 ```
@@ -105,8 +103,6 @@ const routes = Layer.mergeAll(
 - **One layer per group.** `Http.layer(app)` registers the routes of one group, and router
   middleware provided to a layer applies to that layer alone: above, only the user group
   requires authentication. A group that is never mounted has no routes.
-- **The document is its own layer.** `Http.layerOpenapi(path)` serves the document of every
-  group, under whatever middleware it is given; leave it out and no document is served.
 - **Each adapter reads only what it serves.** A group without HTTP actions registers nothing
   and is not built by `Http.layer`, nor one without tools by `ActionMcp.layer`.
 - **Names.** Routes and client methods are flat (`POST /api/actions/<action>`,
@@ -121,18 +117,36 @@ const routes = Layer.mergeAll(
 Each group is its own native `HttpApiGroup`, so a host can also combine separately made
 `Http.api` values with `HttpApi.addHttpApi`. See [examples/app.ts](examples/app.ts).
 
+## Serving the document
+
+`Http.api` is a native `HttpApi`, carrying every route, description, declared error and
+policy error. Documents and documentation UIs are therefore Effect's own:
+
+```ts
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiScalar, HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
+
+const documentation = Layer.mergeAll(
+  HttpRouter.add("GET", "/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api))),
+  HttpApiSwagger.layer(Http.api, { path: "/docs" }),
+  HttpApiScalar.layer(Http.api, { path: "/reference" }),
+);
+```
+
+Each is an ordinary route layer, so it takes whatever middleware it is provided. The same
+value gives Effect's grouped client: `HttpApiClient.make(Http.api)`.
+
 ## Adapter options
 
 | API                                 | Options                                                                                 |
 | ----------------------------------- | --------------------------------------------------------------------------------------- |
 | `ActionHttp.make(options, …groups)` | `apiPath`, `schemaError`                                                                |
 | `Http.layer(app)`                   | None                                                                                    |
-| `Http.layerOpenapi(path)`           | The route path                                                                          |
 | `Http.client(options?)`             | `baseUrl`, `transformClient`, `transformResponse`                                       |
 | `ActionMcp.layer(options, …apps)`   | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions`, `schemaError` |
 
-`apiPath`, the document path, and MCP `path` have no defaults. `Http.api` is the native
-`HttpApi`, built once and shared by the routes, the clients, and `Http.openapi()`.
+`apiPath` and MCP `path` have no defaults. `Http` has three members: `api`, `layer` and
+`client`.
 
 See [adapter behavior](docs/behavior.md) for shared schema-error policies,
 dependency lifetimes, wire formats, and MCP protocol support.
