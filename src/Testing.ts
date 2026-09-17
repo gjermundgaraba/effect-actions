@@ -1,4 +1,4 @@
-import { Effect, Layer, Predicate, type Schema } from "effect";
+import { Effect, Layer, Predicate } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
@@ -38,9 +38,22 @@ export interface McpRequestOptions {
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
+/**
+ * What `JSON.stringify` accepts, not only valid JSON: `undefined` fields are
+ * dropped, and tests send malformed arguments on purpose.
+ */
+export type McpRequestValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ReadonlyArray<McpRequestValue>
+  | { readonly [key: string]: McpRequestValue };
+
 export interface McpRequestParams {
-  readonly _meta?: Schema.JsonObject;
-  readonly [key: string]: Schema.Json | undefined;
+  readonly _meta?: { readonly [key: string]: McpRequestValue };
+  readonly [key: string]: McpRequestValue;
 }
 
 export const mcpRequest = ({

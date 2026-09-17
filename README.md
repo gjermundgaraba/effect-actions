@@ -255,6 +255,8 @@ const greeting = Effect.gen(function* () {
 - `httpClient(Http, handler, options?)` is the typed HTTP client calling a web handler in
   memory. `options` are the client's connection options; `baseUrl` defaults to `http://localhost`.
 - `mcpRequest({ url, method, params?, headers? })` builds a stateless 2026-07-28 request.
+  `params` takes whatever `JSON.stringify` accepts, `undefined` fields included, so tests can
+  send malformed arguments.
   Caller `params._meta` fields override the default client capabilities
   and information; application metadata is preserved. The protocol version stays pinned to
   2026-07-28 in both the request header and metadata. Metadata is merged shallowly.

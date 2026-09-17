@@ -40,6 +40,20 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
   expect(metadata["io.modelcontextprotocol/protocolVersion"]).toBe("2025-11-25");
 });
 
+it("accepts what JSON.stringify accepts, dropping undefined fields", async () => {
+  const owner: string | undefined = undefined;
+
+  const request = mcpRequest({
+    url: "http://localhost/mcp",
+    method: "tools/call",
+    params: { name: "inspect", arguments: { owner, nested: [{ owner }] } },
+  });
+
+  expect(await request.json()).toMatchObject({
+    params: { name: "inspect", arguments: { nested: [{}] } },
+  });
+});
+
 it("preserves malformed tool names without inventing a routing header", async () => {
   const request = mcpRequest({
     url: "http://localhost/mcp",
