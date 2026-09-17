@@ -329,7 +329,7 @@ describe("Authentication.middleware", () => {
         success: Schema.String,
       });
 
-      const app = ActionGroup.make(Identify).implement({
+      const app = ActionGroup.make("test", Identify).implement({
         identify: () =>
           Effect.gen(function* () {
             expect(events).toEqual(["acquire"]);
@@ -341,7 +341,9 @@ describe("Authentication.middleware", () => {
 
       const routes =
         transport === "http"
-          ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+          ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
+              openapiPath: testOpenapiPath,
+            })
           : ActionMcp.layer(app, { name: "scope-test", version: "0", path: testMcpPath });
 
       const web = HttpRouter.toWebHandler(
@@ -361,7 +363,11 @@ describe("Authentication.middleware", () => {
               headers: { "content-type": "application/json" },
               body: "{}",
             })
-          : mcpRequest("tools/call", { name: "identify", arguments: {} }, { url: testMcpUrl }),
+          : mcpRequest({
+              url: testMcpUrl,
+              method: "tools/call",
+              params: { name: "identify", arguments: {} },
+            }),
       );
 
       expect(response.status).toBe(200);

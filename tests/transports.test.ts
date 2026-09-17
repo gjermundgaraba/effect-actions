@@ -4,9 +4,7 @@ import { Effect, Predicate, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import { makeTestApp, testMcpPath } from "./server.js";
-import { api } from "../examples/app.js";
-import { ActionHttp } from "../src/index.js";
-import { Actions, UserNotFound } from "../examples/contracts.js";
+import { Http, UserNotFound } from "../examples/contracts.js";
 import { Forbidden } from "../examples/auth.js";
 import { withMcpClient } from "../src/TestingClient.js";
 
@@ -38,7 +36,7 @@ const authenticatedFetch = (token: string) => (request: Request) => {
 };
 
 const withMcp = <A>(run: (client: Client) => Promise<A>, token = "alice") =>
-  withMcpClient(authenticatedFetch(token), run, { path: testMcpPath });
+  withMcpClient({ fetch: authenticatedFetch(token), path: testMcpPath }, run);
 
 const tool = (name: string, args: Schema.JsonObject, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
@@ -245,8 +243,8 @@ describe("one implementation, both transports", () => {
     ]);
     expect(document.paths["/api/actions/getUser"]).toMatchObject({
       post: {
-        operationId: "actions.getUser",
-        tags: ["actions"],
+        operationId: "users.getUser",
+        tags: ["users"],
         requestBody: {
           content: { "application/json": { schema: { properties: { id: { type: "string" } } } } },
         },
@@ -275,11 +273,9 @@ describe("one implementation, both transports", () => {
       },
     });
 
-    const doubleOperation = ActionHttp.openapi(Actions, { apiPath: "/api/actions" }).paths?.[
-      "/api/actions/double"
-    ]?.post;
+    const doubleOperation = Http.openapi().paths?.["/api/actions/double"]?.post;
 
-    expect(doubleOperation?.operationId).toBe("actions.double");
+    expect(doubleOperation?.operationId).toBe("users.double");
     expect(doubleOperation?.responses).not.toHaveProperty("404");
     expect(Object.keys(document.components.schemas)).toContain("UserNotFoundEncoded");
   });
@@ -287,14 +283,14 @@ describe("one implementation, both transports", () => {
   it("serves the generated contract through Effect's native HttpApiClient", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const client = yield* HttpApiClient.make(api, {
+        const client = yield* HttpApiClient.make(Http.api, {
           baseUrl: "http://localhost",
           transformClient: (client) =>
             client.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken("alice"))),
         });
 
         // The typed client encodes decoded 21 to the wire string and decodes the reply.
-        const result: number = yield* client.actions.double({ payload: { value: 21 } });
+        const result: number = yield* client.users.double({ payload: { value: 21 } });
 
         return result;
       }).pipe(
@@ -313,10 +309,14 @@ describe("one implementation, both transports", () => {
     async (era) => {
       const versions = new Set<string | null>();
       await withMcpClient(
-        (request) => {
-          versions.add(request.headers.get("mcp-protocol-version"));
+        {
+          fetch: (request) => {
+            versions.add(request.headers.get("mcp-protocol-version"));
 
-          return authenticatedFetch("alice")(request);
+            return authenticatedFetch("alice")(request);
+          },
+          mode: era,
+          path: testMcpPath,
         },
         async (client) => {
           const tools = await client.listTools();
@@ -330,7 +330,6 @@ describe("one implementation, both transports", () => {
           );
           expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
         },
-        { mode: era, path: testMcpPath },
       );
     },
   );

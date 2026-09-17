@@ -17,6 +17,11 @@ export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
   readonly map: (failure: SchemaFailure) => NoInfer<Errors[number]["Type"]>;
 }
 
+/** Infers the error tuple, so a policy shared by both adapters needs no annotation. */
+export const schemaErrorPolicy = <const Errors extends ReadonlyArray<Codec>>(
+  policy: SchemaErrorPolicy<Errors>,
+): SchemaErrorPolicy<Errors> => policy;
+
 export interface McpOptions {
   readonly name?: string;
   readonly readOnly?: boolean;
@@ -35,7 +40,7 @@ export interface Options<
   readonly input?: Input;
   readonly success: Output;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
-  readonly error?: Errors;
+  readonly errors?: Errors;
   readonly http?: Http;
   readonly mcp?: false | McpOptions;
 }
@@ -86,6 +91,10 @@ export function make<
 export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<Codec>>): Any {
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid action name: ${name}`);
 
+  if (options.http === false && options.mcp === false) {
+    throw new Error(`Action ${name} is exposed on no transport`);
+  }
+
   const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? false);
 
   const mcp =
@@ -106,7 +115,7 @@ export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<
     description: options.description,
     input: options.input ?? NoInput,
     success: options.success,
-    errors: options.error ?? [],
+    errors: options.errors ?? [],
     http: options.http !== false,
     mcp,
   };

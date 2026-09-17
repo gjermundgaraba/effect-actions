@@ -1,11 +1,9 @@
 import { Console, Effect } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ActionHttp } from "../src/index.js";
-import { Actions } from "./contracts.js";
+import { Http } from "./contracts.js";
 
 const lookup = Effect.gen(function* () {
-  const client = yield* ActionHttp.client(Actions, {
-    apiPath: "/api/actions",
+  const client = yield* Http.client({
     baseUrl: "http://127.0.0.1:3000",
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
   });

@@ -1,8 +1,40 @@
-import { Predicate, type Schema } from "effect";
+import { Effect, Layer, Predicate, type Schema } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import type * as Action from "./Action.js";
+import type * as ActionHttp from "./ActionHttp.js";
+import type { Actions } from "./internal/actions.js";
+
+/** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
+export type Handler = (request: Request) => Promise<Response>;
+
+/**
+ * The typed HTTP client, calling `handler` in memory instead of the network.
+ * `baseUrl` defaults to `http://localhost`.
+ */
+export const httpClient = <G extends Actions, Errors extends ReadonlyArray<Action.Codec>>(
+  http: Pick<ActionHttp.Http<G, Errors>, "client">,
+  handler: Handler,
+  options?: ActionHttp.ClientOptions,
+): Effect.Effect<ActionHttp.Client<G, Errors[number]>> =>
+  http
+    .client({ baseUrl: "http://localhost", ...options })
+    .pipe(
+      Effect.provide(
+        FetchHttpClient.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
+              handler(new Request(input, init)),
+            ),
+          ),
+        ),
+      ),
+    );
 
 /** A stateless 2026-07-28 request. */
 export interface McpRequestOptions {
   readonly url: string | URL;
+  readonly method: string;
+  readonly params?: McpRequestParams;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
@@ -11,12 +43,13 @@ export interface McpRequestParams {
   readonly [key: string]: Schema.Json | undefined;
 }
 
-export const mcpRequest = (
-  method: string,
-  params: McpRequestParams = {},
-  options: McpRequestOptions,
-): Request => {
-  const headers = new Headers(options.headers);
+export const mcpRequest = ({
+  url,
+  method,
+  params = {},
+  headers: init,
+}: McpRequestOptions): Request => {
+  const headers = new Headers(init);
   headers.set("content-type", "application/json");
   headers.set("accept", "application/json, text/event-stream");
   headers.set("mcp-protocol-version", "2026-07-28");
@@ -24,7 +57,7 @@ export const mcpRequest = (
 
   if (Predicate.isString(params.name)) headers.set("mcp-name", params.name);
 
-  return new Request(options.url, {
+  return new Request(url, {
     method: "POST",
     headers,
     body: JSON.stringify({

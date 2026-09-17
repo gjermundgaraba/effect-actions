@@ -45,22 +45,17 @@ class InternalServerError extends Schema.TaggedError<InternalServerError>()(
   { httpApiStatus: 500 },
 ) {}
 
-const schemaError = {
+const schemaError = Action.schemaErrorPolicy({
   errors: [BadRequest, InternalServerError],
   map: ({ phase }) =>
     phase === "output"
       ? new InternalServerError({ error: "Request could not be completed" })
       : new BadRequest({ error: "Invalid request" }),
-} satisfies Action.SchemaErrorPolicy<readonly [typeof BadRequest, typeof InternalServerError]>;
-
-const Http = ActionHttp.configure({
-  apiPath: "/api/actions",
-  openapiPath: "/openapi.json",
-  schemaError,
 });
-const api = Http.api(Actions);
+
+const Http = ActionHttp.make(Actions, { apiPath: "/api/actions", schemaError });
 const routes = Layer.mergeAll(
-  Http.layer(App),
+  Http.layer(App, { openapiPath: "/openapi.json" }),
   ActionMcp.layer(App, { name: "my-app", version: "0", path: "/mcp", schemaError }),
 );
 ```
@@ -94,7 +89,7 @@ The table below describes default behavior without a schema-error policy. Transp
 | Invalid JSON / content type | 400 / 415                                                                                                   | —                                                                                                                                      |
 
 Object schemas strip excess fields unless configured to reject them. Effect generates
-OpenAPI component names, references, and operation IDs (`actions.<name>`).
+OpenAPI component names, references, and operation IDs (`<group>.<action>`).
 
 ## HTTP client details
 
@@ -107,8 +102,8 @@ An argument is optional when the input type accepts `{}`. Omitted input and
 explicit `undefined` send `{}` unless the decoded input schema accepts
 `undefined` as a value. `null` passes through unchanged.
 
-Use `HttpApiClient.make(ActionHttp.api(Actions, { apiPath: "/api/actions" }), options)` for grouped methods
-such as `client.actions.double({ payload: { value: 21 } })` and per-call response
+Use `HttpApiClient.make(Http.api, options)` for grouped methods
+such as `client.users.double({ payload: { value: 21 } })` and per-call response
 modes. Use `makeWith` for custom client error and service channels. Actions named
 `then` require this grouped client to avoid JavaScript thenable assimilation.
 

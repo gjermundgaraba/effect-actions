@@ -16,6 +16,7 @@ class Invalid extends Schema.TaggedError<Invalid>()(
 ) {}
 
 const actions = ActionGroup.make(
+  "numbers",
   Action.make("double", {
     description: "Transform in both directions",
     input: Schema.Struct({ value: Schema.FiniteFromString }),
@@ -30,15 +31,12 @@ const actions = ActionGroup.make(
   Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
 );
 
-const schemaError = {
-  errors: [Invalid],
-  map: () => new Invalid({ message: "Invalid output" }),
-};
-
-const Http = ActionHttp.configure({
+const Http = ActionHttp.make(actions, {
   apiPath: "/rpc",
-  openapiPath: "/schema",
-  schemaError,
+  schemaError: {
+    errors: [Invalid],
+    map: () => new Invalid({ message: "Invalid output" }),
+  },
 });
 
 const app = actions.implement({
@@ -48,80 +46,71 @@ const app = actions.implement({
   hidden: () => Effect.succeed("hidden"),
 });
 
-it.each(["configured", "standalone"] as const)(
-  "%s client agrees with the route and document configuration",
-  async (mode) => {
-    const web = HttpRouter.toWebHandler(
-      Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
-      {
-        disableLogger: true,
-      },
+it("keeps the client, routes and document on one configuration", async () => {
+  const web = HttpRouter.toWebHandler(
+    Http.layer(app, { openapiPath: "/schema" }).pipe(Layer.provide(HttpServer.layerServices)),
+    {
+      disableLogger: true,
+    },
+  );
+
+  const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
+  onTestFinished(() => web.dispose());
+  const response = await web.handler(new Request("http://localhost/schema"));
+  expect(response.status).toBe(200);
+  const document = Http.openapi();
+  expect(await response.json()).toEqual(document);
+  expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
+  expect(document.paths).not.toHaveProperty("/rpc/hidden");
+  expect(Http.api.groups.numbers.endpoints.double).toBeDefined();
+  await Effect.gen(function* () {
+    const connection = {
+      baseUrl: "http://localhost",
+      transformClient: (client: HttpClient.HttpClient) =>
+        client.pipe(
+          HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer test")),
+        ),
+    };
+
+    const client = yield* Http.client(connection);
+
+    expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
+    expect(yield* client.double({ value: 21 })).toBe(42);
+    expect(yield* client.ping()).toBe(true);
+    expect(yield* client.ping(undefined)).toBe(true);
+    expect(yield* client.optional()).toBe(7);
+    expect(yield* client.optional(undefined)).toBe(7);
+    expect(yield* client.optional({ value: 3 })).toBe(3);
+    expect(yield* Effect.flip(client.double({ value: 0 }))).toEqual(
+      new Invalid({ message: "Invalid output" }),
     );
+  }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+    Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
+      const request = new Request(input, init);
+      sent.push({
+        url: request.url,
+        body: await request.clone().json(),
+        token: request.headers.get("authorization"),
+      });
 
-    const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
-    onTestFinished(() => web.dispose());
-    const response = await web.handler(new Request("http://localhost/schema"));
-    expect(response.status).toBe(200);
-    const document = Http.openapi(actions);
-    expect(await response.json()).toEqual(document);
-    expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
-    expect(document.paths).not.toHaveProperty("/rpc/hidden");
-    expect(Http.api(actions).groups.actions.endpoints.double).toBeDefined();
-    await Effect.gen(function* () {
-      const connection = {
-        baseUrl: "http://localhost",
-        transformClient: (client: HttpClient.HttpClient) =>
-          client.pipe(
-            HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer test")),
-          ),
-      };
-
-      const client = yield* mode === "configured"
-        ? Http.client(actions, connection)
-        : ActionHttp.client(actions, {
-            ...connection,
-            apiPath: "/rpc",
-            schemaError,
-          });
-
-      expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
-      expect(yield* client.double({ value: 21 })).toBe(42);
-      expect(yield* client.ping()).toBe(true);
-      expect(yield* client.ping(undefined)).toBe(true);
-      expect(yield* client.optional()).toBe(7);
-      expect(yield* client.optional(undefined)).toBe(7);
-      expect(yield* client.optional({ value: 3 })).toBe(3);
-      expect(yield* Effect.flip(client.double({ value: 0 }))).toEqual(
-        new Invalid({ message: "Invalid output" }),
-      );
-    }).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
-        const request = new Request(input, init);
-        sent.push({
-          url: request.url,
-          body: await request.clone().json(),
-          token: request.headers.get("authorization"),
-        });
-
-        return web.handler(request);
-      }),
-      Effect.runPromise,
-    );
-    expect(sent[0]).toEqual({
-      url: "http://localhost/rpc/double",
-      body: { value: "21" },
-      token: "Bearer test",
-    });
-    expect(sent.slice(1, 5).map((request) => request.body)).toEqual([{}, {}, {}, {}]);
-  },
-);
+      return web.handler(request);
+    }),
+    Effect.runPromise,
+  );
+  expect(sent[0]).toEqual({
+    url: "http://localhost/rpc/double",
+    body: { value: "21" },
+    token: "Bearer test",
+  });
+  expect(sent.slice(1, 5).map((request) => request.body)).toEqual([{}, {}, {}, {}]);
+});
 
 it("retains native response validation, transport errors and response transforms", async () => {
   let transformed = 0;
 
   const call = Effect.gen(function* () {
-    const client = yield* Http.client(actions, {
+    const client = yield* Http.client({
       baseUrl: "http://localhost",
       transformResponse: (effect) =>
         Effect.onExit(effect, () =>
@@ -159,7 +148,7 @@ it("propagates interruption to the native fetch signal", async () => {
   let aborted = false;
 
   const call = Effect.gen(function* () {
-    const client = yield* Http.client(actions, { baseUrl: "http://localhost" });
+    const client = yield* Http.client({ baseUrl: "http://localhost" });
 
     return yield* client.ping();
   }).pipe(
@@ -197,16 +186,19 @@ it("propagates interruption to the native fetch signal", async () => {
 
 it("rejects a flattened then method rather than hanging Promise resolution", async () => {
   const group = ActionGroup.make(
+    "promises",
     Action.make("then", {
       description: "Valid action, but unsafe as a direct client method",
       success: Schema.String,
     }),
   );
 
+  const thenable = ActionHttp.make(group, { apiPath: "/rpc" });
+
   await expect(
-    Effect.runPromise(Http.client(group).pipe(Effect.provide(FetchHttpClient.layer))),
+    Effect.runPromise(thenable.client().pipe(Effect.provide(FetchHttpClient.layer))),
   ).rejects.toThrow('Action "then" requires the native grouped HttpApiClient');
-  expect(Http.api(group).groups.actions.endpoints.then).toBeDefined();
+  expect(thenable.api.groups.promises.endpoints.then).toBeDefined();
 });
 
 it("preserves null and explicitly undefined-valued input codecs", async () => {
@@ -223,6 +215,7 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
   );
 
   const group = ActionGroup.make(
+    "inputs",
     Action.make("nullable", {
       description: "Nullable object",
       input: Schema.NullOr(optional),
@@ -239,8 +232,7 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
 
   const bodies: unknown[] = [];
   await Effect.gen(function* () {
-    const client = yield* ActionHttp.client(group, {
-      apiPath: "/api/actions",
+    const client = yield* ActionHttp.make(group, { apiPath: "/api/actions" }).client({
       baseUrl: "http://localhost",
     });
 

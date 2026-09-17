@@ -1,7 +1,7 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Layer } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
-import { ActionMcp } from "../src/index.js";
+import { Authentication } from "../src/index.js";
 
 it.each([
   ["https://api.example.com", "/.well-known/oauth-protected-resource"],
@@ -15,7 +15,7 @@ it.each([
   ["https://api.example.com/api/mcp", "/.well-known/oauth-protected-resource/api/mcp"],
   ["https://api.example.com/api/mcp/", "/.well-known/oauth-protected-resource/api/mcp/"],
 ])("publishes standalone metadata for %s", async (resource, path) => {
-  const discovery = ActionMcp.protectedResource({
+  const discovery = Authentication.protectedResource({
     resource,
     authorizationServers: ["https://auth.example.com"],
     scopesSupported: ["admin:read", "admin:write"],
@@ -51,7 +51,7 @@ it.each([
 });
 
 it("omits empty optional metadata and accepts loopback development URLs", async () => {
-  const discovery = ActionMcp.protectedResource({
+  const discovery = Authentication.protectedResource({
     resource: "http://localhost:3000/mcp",
     authorizationServers: ["http://localhost:3000/api/auth"],
     scopesSupported: [],
@@ -76,20 +76,23 @@ it("rejects unsafe URLs and challenge parameter injection", () => {
     "https://example.com/mcp#fragment",
   ]) {
     expect(() =>
-      ActionMcp.protectedResource({ resource, authorizationServers: ["https://auth.example.com"] }),
+      Authentication.protectedResource({
+        resource,
+        authorizationServers: ["https://auth.example.com"],
+      }),
     ).toThrow();
   }
 
   for (const issuer of ["https://auth.example.com?", "https://auth.example.com?tenant=alice"]) {
     expect(() =>
-      ActionMcp.protectedResource({
+      Authentication.protectedResource({
         resource: "https://example.com/mcp",
         authorizationServers: [issuer],
       }),
     ).toThrow("issuers must not contain a query");
   }
 
-  const discovery = ActionMcp.protectedResource({
+  const discovery = Authentication.protectedResource({
     resource: "https://example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
   });
@@ -100,7 +103,7 @@ it("rejects unsafe URLs and challenge parameter injection", () => {
 });
 
 it("percent-encodes quote characters in the discovery challenge URL", () => {
-  const discovery = ActionMcp.protectedResource({
+  const discovery = Authentication.protectedResource({
     resource: 'https://example.com/mcp"',
     authorizationServers: ["https://auth.example.com"],
   });
@@ -114,7 +117,7 @@ it.each([
   ["a\\b", "a\\\\b"],
   ["alice\\", "alice\\\\"],
 ])("escapes query backslashes in the discovery challenge for %s", async (query, quotedQuery) => {
-  const discovery = ActionMcp.protectedResource({
+  const discovery = Authentication.protectedResource({
     resource: `https://example.com/mcp?tenant=${query}`,
     authorizationServers: ["https://auth.example.com"],
   });
@@ -155,7 +158,7 @@ it("matches literal resource paths exactly and delegates other requests to the h
   ];
 
   const discoveries = paths.map((path) =>
-    ActionMcp.protectedResource({
+    Authentication.protectedResource({
       resource: `https://api.example.com${path}`,
       authorizationServers: ["https://auth.example.com"],
     }),

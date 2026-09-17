@@ -2,7 +2,7 @@ import { expect, it } from "vite-plus/test";
 import { mcpRequest } from "../src/Testing.js";
 
 it("supplies consistent stateless protocol defaults", async () => {
-  const request = mcpRequest("tools/list", {}, { url: "http://localhost/mcp" });
+  const request = mcpRequest({ url: "http://localhost/mcp", method: "tools/list" });
   const body = await request.json();
   expect(body).toMatchObject({
     params: {
@@ -23,11 +23,11 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
     "io.modelcontextprotocol/protocolVersion": "2025-11-25",
   };
 
-  const request = mcpRequest(
-    "tools/call",
-    { name: "inspect", arguments: {}, _meta: metadata },
-    { url: "http://localhost/mcp" },
-  );
+  const request = mcpRequest({
+    url: "http://localhost/mcp",
+    method: "tools/call",
+    params: { name: "inspect", arguments: {}, _meta: metadata },
+  });
 
   expect(await request.json()).toMatchObject({
     params: {
@@ -41,13 +41,11 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
 });
 
 it("preserves malformed tool names without inventing a routing header", async () => {
-  const request = mcpRequest(
-    "tools/call",
-    { name: 123, arguments: {} },
-    {
-      url: "http://localhost/mcp",
-    },
-  );
+  const request = mcpRequest({
+    url: "http://localhost/mcp",
+    method: "tools/call",
+    params: { name: 123, arguments: {} },
+  });
 
   expect(request.headers.has("mcp-name")).toBe(false);
   expect(await request.json()).toMatchObject({ params: { name: 123, arguments: {} } });

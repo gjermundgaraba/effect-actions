@@ -3,12 +3,16 @@ import type { Cause } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import type * as JsonSchema from "effect/JsonSchema";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
+import { assertDistinct, type Each, type OneOrMore, served } from "./internal/actions.js";
 import {
-  handlerFor,
+  type AnyImplementation,
+  type BuildContext,
+  type BuildError,
+  type RequestContext,
   type ErasedValue,
-  type Handlers,
+  type Bound,
   Implementation,
 } from "./internal/implementation.js";
 
@@ -96,9 +100,9 @@ const assertObjectError = (owner: string, error: Action.Codec) => {
   if (!encodesObject(schema)) throw new Error(`${owner}: MCP error must have an object root`);
 };
 
-const registerTool = <R>(
+const registerTool = (
+  app: Bound,
   action: Action.Any,
-  table: Handlers<R>,
   policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined,
 ) =>
   Effect.gen(function* () {
@@ -117,7 +121,7 @@ const registerTool = <R>(
     const input = Schema.toCodecJson(action.input);
     const success = Schema.toCodecJson(action.success);
     const failure = Schema.toCodecJson(Schema.Union(errors));
-    const handle = handlerFor(table, action);
+    const handle = app.handle(action);
 
     const failureResult = (error: ErasedValue) =>
       Schema.encodeUnknownEffect(failure)(error).pipe(
@@ -186,35 +190,35 @@ const registrationRouter = (
     prefixed: (prefix) => registrationRouter(router.prefixed(prefix), context),
   });
 
-/** A Streamable HTTP MCP endpoint serving the group's MCP-enabled actions. */
-export const layer = <
-  Actions extends ReadonlyArray<Action.Any>,
-  R,
-  EX,
-  RX,
-  Errors extends ReadonlyArray<Action.Codec> = [],
->(
-  app: Implementation<Actions, R, EX, RX>,
-  options: Options<Errors>,
-): Layer.Layer<
-  never,
-  EX | Cause.IllegalArgumentError,
-  RX | HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", R>
-> =>
-  Implementation.register(app, (table) => {
+const erasedLayer = <R, EX, RX>(
+  apps: ReadonlyArray<Implementation<ReadonlyArray<Action.Any>, R, EX, RX>>,
+  options: Options<ReadonlyArray<Action.Codec>>,
+) => {
+  // Implementations without a tool are not acquired.
+  const serving = apps.flatMap((app) =>
+    served([app.group], (action) => action.mcp !== false).map(({ actions }) => ({ app, actions })),
+  );
+
+  // Tools are the only namespace this adapter owns.
+  assertDistinct(
+    "MCP tool",
+    serving.flatMap(({ actions }) =>
+      actions.flatMap((action) => (action.mcp === false ? [] : [action.mcp.name])),
+    ),
+  );
+
+  return Implementation.register(serving, (bound) => {
     const native = Layer.effectDiscard(
       Effect.gen(function* () {
-        if (app.actions.some((action) => action.mcp !== false)) {
+        if (bound.length > 0) {
           for (const error of options.schemaError?.errors ?? [])
             assertObjectError("Schema-error policy", error);
         }
 
         yield* Effect.forEach(
-          app.actions,
-          (action) => registerTool(action, table, options.schemaError),
-          {
-            discard: true,
-          },
+          bound.flatMap((app) => app.actions.map((action) => [app, action] as const)),
+          ([app, action]) => registerTool(app, action, options.schemaError),
+          { discard: true },
         );
       }),
     ).pipe(
@@ -248,133 +252,25 @@ export const layer = <
       }),
     );
   });
-
-export interface ProtectedResourceOptions {
-  /** Exact OAuth resource identifier. HTTPS, or HTTP on loopback for development. */
-  readonly resource: string;
-  readonly authorizationServers: NonEmptyReadonlyArray<string>;
-  readonly scopesSupported?: ReadonlyArray<string>;
-  readonly resourceName?: string;
-}
-
-export interface BearerChallengeOptions {
-  readonly error?: "invalid_token" | "insufficient_scope";
-  readonly errorDescription?: string;
-  /** Space-separated scopes needed for this request, not all supported scopes. */
-  readonly scope?: string;
-}
-
-interface ProtectedResourceMetadata {
-  resource: string;
-  authorization_servers: NonEmptyReadonlyArray<string>;
-  bearer_methods_supported: ReadonlyArray<string>;
-  scopes_supported?: ReadonlyArray<string>;
-  resource_name?: string;
-}
-
-const oauthUrl = (value: string): URL => {
-  const url = new URL(value);
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-
-  if (
-    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
-    url.username !== "" ||
-    url.password !== "" ||
-    value.includes("#")
-  ) {
-    throw new Error("OAuth URLs must use HTTPS (or loopback HTTP) without credentials or fragment");
-  }
-
-  return url;
 };
 
-const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
-
-/**
- * Publish RFC 9728 discovery independently from the authenticated MCP route.
- * This supplies metadata and challenges; the host still verifies access tokens.
- */
-export const protectedResource = (options: ProtectedResourceOptions) => {
-  const resource = oauthUrl(options.resource);
-
-  if (options.authorizationServers.length === 0)
-    throw new Error("An authorization server is required");
-
-  for (const issuer of options.authorizationServers) {
-    oauthUrl(issuer);
-
-    if (issuer.includes("?"))
-      throw new Error("Authorization server issuers must not contain a query");
-  }
-
-  for (const scope of options.scopesSupported ?? []) {
-    if (!scopeToken.test(scope)) throw new Error("Invalid OAuth scope token");
-  }
-
-  const path =
-    `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}` as const;
-
-  const discoveryUrl = new URL(resource);
-  discoveryUrl.pathname = path;
-  const metadataUrl = discoveryUrl.href;
-  const target = metadataUrl.slice(discoveryUrl.origin.length);
-
-  const metadata: ProtectedResourceMetadata = {
-    resource: options.resource,
-    authorization_servers: options.authorizationServers,
-    bearer_methods_supported: ["header"],
-  };
-
-  if (options.scopesSupported !== undefined && options.scopesSupported.length > 0) {
-    metadata.scopes_supported = options.scopesSupported;
-  }
-
-  if (options.resourceName !== undefined) metadata.resource_name = options.resourceName;
-
-  const response = HttpServerResponse.jsonUnsafe(metadata);
-
-  return {
-    // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
-    // to the host, including other discovery documents on the same router.
-    layer: HttpRouter.middleware(
-      (next) =>
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const url = new URL(request.url, resource.origin);
-
-          if (
-            (request.method === "GET" || request.method === "HEAD") &&
-            url.href.slice(url.origin.length) === target
-          )
-            return response;
-
-          return yield* next;
-        }),
-      { global: true },
-    ),
-    metadataUrl,
-    challenge: (challenge: BearerChallengeOptions = {}): string => {
-      const parameters = [`resource_metadata="${metadataUrl.replace(/["\\]/g, "\\$&")}"`];
-
-      if (challenge.error !== undefined) parameters.push(`error="${challenge.error}"`);
-
-      if (challenge.errorDescription !== undefined) {
-        if (!/^[\x20-\x21\x23-\x5B\x5D-\x7E]*$/.test(challenge.errorDescription)) {
-          throw new Error("Invalid OAuth error description");
-        }
-
-        parameters.push(`error_description="${challenge.errorDescription}"`);
-      }
-
-      if (challenge.scope !== undefined) {
-        if (!challenge.scope.split(" ").every((scope) => scopeToken.test(scope))) {
-          throw new Error("Invalid OAuth challenge scope");
-        }
-
-        parameters.push(`scope="${challenge.scope}"`);
-      }
-
-      return `Bearer ${parameters.join(", ")}`;
-    },
-  };
-};
+/** One Streamable HTTP MCP endpoint serving every MCP-enabled action of `apps`. */
+export function layer<
+  const Apps extends OneOrMore<AnyImplementation>,
+  const Errors extends ReadonlyArray<Action.Codec> = [],
+>(
+  apps: Apps,
+  options: Options<Errors>,
+): Layer.Layer<
+  never,
+  BuildError<Each<Apps>> | Cause.IllegalArgumentError,
+  | BuildContext<Each<Apps>>
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<"Requires", RequestContext<Each<Apps>>>
+>;
+export function layer(
+  apps: OneOrMore<AnyImplementation>,
+  options: Options<ReadonlyArray<Action.Codec>>,
+) {
+  return erasedLayer(apps instanceof Implementation ? [apps] : apps, options);
+}

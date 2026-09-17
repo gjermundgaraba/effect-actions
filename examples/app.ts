@@ -1,7 +1,8 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { ActionHttp, ActionMcp, Authentication } from "../src/index.js";
+import { ActionMcp, Authentication } from "../src/index.js";
 import { type Actor, CurrentActor, Unauthenticated } from "./auth.js";
+import { Http } from "./contracts.js";
 import { App } from "./handlers.js";
 import { Users } from "./users.js";
 
@@ -56,13 +57,8 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
   }),
 );
 
-export const api = ActionHttp.api(App, { apiPath: "/api/actions" });
-
 export const layer = Layer.mergeAll(
-  ActionHttp.layer(App, {
-    apiPath: "/api/actions",
-    openapiPath: "/openapi.json",
-  }),
+  Http.layer(App, { openapiPath: "/openapi.json" }),
   ActionMcp.layer(App, {
     name: "effect-actions",
     version: "0.0.0",

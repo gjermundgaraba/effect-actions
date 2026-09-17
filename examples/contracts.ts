@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { Action, ActionGroup } from "../src/index.js";
+import { Action, ActionGroup, ActionHttp } from "../src/index.js";
 import { Forbidden } from "./auth.js";
 
 export const User = Schema.Struct({
@@ -17,7 +17,7 @@ export const GetUser = Action.make("getUser", {
   description: "Look up a user in your tenant.",
   input: Schema.Struct({ id: Schema.String }),
   success: User,
-  error: [UserNotFound, Forbidden],
+  errors: [UserNotFound, Forbidden],
   mcp: { name: "get_user", readOnly: true },
 });
 
@@ -28,7 +28,7 @@ export const RenameUser = Action.make("renameUser", {
     name: Schema.String.check(Schema.isMinLength(1)),
   }),
   success: User,
-  error: [UserNotFound, Forbidden],
+  errors: [UserNotFound, Forbidden],
   mcp: { name: "rename_user", destructive: false },
 });
 
@@ -47,4 +47,7 @@ export const WhoAmI = Action.make("whoAmI", {
   mcp: { readOnly: true },
 });
 
-export const Actions = ActionGroup.make(GetUser, RenameUser, Double, WhoAmI);
+export const Actions = ActionGroup.make("users", GetUser, RenameUser, Double, WhoAmI);
+
+// Contract-level: the server and its clients share the mount path.
+export const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });

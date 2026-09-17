@@ -30,7 +30,7 @@ describe("contracts", () => {
   });
 
   it("rejects duplicate names at definition time", () => {
-    expect(() => ActionGroup.make(GetUser, GetUser)).toThrow("Duplicate action");
+    expect(() => ActionGroup.make("users", GetUser, GetUser)).toThrow("Duplicate action");
 
     const Alias = Action.make("alias", {
       description: "Alias collision",
@@ -38,7 +38,19 @@ describe("contracts", () => {
       mcp: { name: "get_user" },
     });
 
-    expect(() => ActionGroup.make(GetUser, Alias)).toThrow("Duplicate MCP");
+    expect(() => ActionGroup.make("users", GetUser, Alias)).toThrow("Duplicate MCP");
+    expect(() => ActionGroup.make("bad name", GetUser)).toThrow("Invalid action group name");
+  });
+
+  it("rejects an action exposed on no transport", () => {
+    expect(() =>
+      Action.make("nowhere", {
+        description: "",
+        success: Schema.String,
+        http: false,
+        mcp: false,
+      }),
+    ).toThrow("exposed on no transport");
   });
 });
 
@@ -49,7 +61,7 @@ describe("implementations", () => {
     success: Schema.String,
   });
 
-  const Group = ActionGroup.make(Hello);
+  const Group = ActionGroup.make("greetings", Hello);
 
   const request = (prefix: string) =>
     new Request(`http://localhost${prefix}/hello`, {
@@ -60,7 +72,8 @@ describe("implementations", () => {
 
   it("binds a plain handler record without exposing service bindings", async () => {
     const app = Group.implement({ hello: ({ name }) => Effect.succeed(`hi ${name}`) });
-    expect(Object.keys(app)).toEqual(["actions"]);
+    expect(Object.keys(app)).toEqual(["group"]);
+    expect(app.group).toBe(Group);
     expect(app).not.toHaveProperty("handlers");
     expect(app).not.toHaveProperty("layer");
     const web = makeTestHttp(app, Layer.empty);
@@ -81,6 +94,7 @@ describe("implementations", () => {
       > = kind === "same contract"
         ? Group.implement({ hello: () => Effect.succeed("from B") })
         : ActionGroup.make(
+            "numeric",
             Action.make("hello", {
               description: "Numeric",
               input: Hello.input,
@@ -90,8 +104,8 @@ describe("implementations", () => {
 
       const web = HttpRouter.toWebHandler(
         Layer.mergeAll(
-          ActionHttp.layer(appA, { apiPath: "/a", openapiPath: "/a.json" }),
-          ActionHttp.layer(appB, { apiPath: "/b", openapiPath: "/b.json" }),
+          ActionHttp.make(appA.group, { apiPath: "/a" }).layer(appA, { openapiPath: "/a.json" }),
+          ActionHttp.make(appB.group, { apiPath: "/b" }).layer(appB, { openapiPath: "/b.json" }),
         ).pipe(Layer.provide(HttpServer.layerServices)),
         { disableLogger: true },
       );

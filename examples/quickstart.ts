@@ -8,16 +8,15 @@ const Greet = Action.make("greet", {
   mcp: { readOnly: true },
 });
 
-export const Actions = ActionGroup.make(Greet);
+export const Actions = ActionGroup.make("greetings", Greet);
+
+export const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });
 
 const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });
 
 export const routes = Layer.mergeAll(
-  ActionHttp.layer(app, {
-    apiPath: "/api/actions",
-    openapiPath: "/openapi.json",
-  }),
+  Http.layer(app, { openapiPath: "/openapi.json" }),
   ActionMcp.layer(app, { name: "greetings", version: "1.0.0", path: "/mcp" }),
 );

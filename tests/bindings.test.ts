@@ -22,7 +22,7 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
       async (present) => {
         let executions = 0;
 
-        const app = ActionGroup.make(identity).implement({
+        const app = ActionGroup.make("test", identity).implement({
           identity: () =>
             Effect.gen(function* () {
               const actor = yield* Actor;
@@ -34,7 +34,9 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
 
         const routes =
           transport === "HTTP"
-            ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+            ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
+                openapiPath: testOpenapiPath,
+              })
             : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
 
         const web = HttpRouter.toWebHandler(
@@ -60,7 +62,11 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
           expect(await response.text()).toBe(present ? '"request-reader"' : "");
         } else {
           await withMcpClient(
-            fetch,
+            {
+              fetch: fetch,
+              mode: transport === "modern MCP" ? "modern" : "legacy",
+              path: testMcpPath,
+            },
             async (client) => {
               const call = client.callTool({ name: "identity", arguments: {} });
 
@@ -70,7 +76,6 @@ describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
                 await expect(call).rejects.toThrow("Internal error");
               }
             },
-            { mode: transport === "modern MCP" ? "modern" : "legacy", path: testMcpPath },
           );
         }
 
@@ -86,7 +91,7 @@ it.each(["legacy", "modern"] as const)(
     let acquired = 0;
     let finalized = 0;
 
-    const app = ActionGroup.make(identity).implement(
+    const app = ActionGroup.make("test", identity).implement(
       Effect.gen(function* () {
         const greeting = yield* Effect.acquireRelease(
           Effect.gen(function* () {
@@ -102,7 +107,9 @@ it.each(["legacy", "modern"] as const)(
     );
 
     const routes = Layer.mergeAll(
-      ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath }),
+      ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
+        openapiPath: testOpenapiPath,
+      }),
       ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath }),
     ).pipe(Layer.provide(Layer.succeed(Actor, "build")), Layer.provide(HttpServer.layerServices));
 
@@ -119,13 +126,16 @@ it.each(["legacy", "modern"] as const)(
 
         expect(await response.json()).toBe("build/http");
         await withMcpClient(
-          (request) => web.handler(request, Context.make(Actor, "mcp")),
+          {
+            fetch: (request) => web.handler(request, Context.make(Actor, "mcp")),
+            mode: era,
+            path: testMcpPath,
+          },
           async (client) => {
             expect(
               (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
             ).toEqual({ value: "build/mcp" });
           },
-          { mode: era, path: testMcpPath },
         );
         expect(acquired).toBe(runtime);
         expect(finalized).toBe(runtime - 1);
@@ -141,7 +151,7 @@ it.each(["legacy", "modern"] as const)(
 it.each(["legacy", "modern"] as const)(
   "keeps same-contract implementations apart over MCP: %s",
   async (era) => {
-    const group = ActionGroup.make(identity);
+    const group = ActionGroup.make("test", identity);
     const a = group.implement({ identity: () => Effect.succeed("a") });
     const b = group.implement({ identity: () => Effect.succeed("b") });
 
@@ -156,15 +166,11 @@ it.each(["legacy", "modern"] as const)(
     onTestFinished(() => web.dispose());
 
     for (const name of ["a", "b", "a"]) {
-      await withMcpClient(
-        web.handler,
-        async (client) => {
-          expect(
-            (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-          ).toEqual({ value: name });
-        },
-        { mode: era, path: `/${name}` },
-      );
+      await withMcpClient({ fetch: web.handler, mode: era, path: `/${name}` }, async (client) => {
+        expect(
+          (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
+        ).toEqual({ value: name });
+      });
     }
   },
 );
@@ -179,7 +185,7 @@ it("releases scoped handler acquisition when native registration fails", async (
     success: Schema.String,
   });
 
-  const app = ActionGroup.make(invalid).implement(
+  const app = ActionGroup.make("test", invalid).implement(
     Effect.acquireRelease(
       Effect.sync(() => {
         acquired++;
@@ -216,14 +222,16 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
       },
     });
 
-    const app = ActionGroup.make(identity).implement({
+    const app = ActionGroup.make("test", identity).implement({
       identity: () =>
         Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
     });
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+        ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
+            openapiPath: testOpenapiPath,
+          })
         : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
 
     const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
@@ -240,13 +248,16 @@ it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
       expect(await (await web.handler(post("/api/actions/identity"), context)).json()).toBe("ok");
     } else {
       await withMcpClient(
-        (request) => web.handler(request, context),
+        {
+          fetch: (request) => web.handler(request, context),
+          mode: transport === "modern MCP" ? "modern" : "legacy",
+          path: testMcpPath,
+        },
         async (client) => {
           expect(
             (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
           ).toEqual({ value: "ok" });
         },
-        { mode: transport === "modern MCP" ? "modern" : "legacy", path: testMcpPath },
       );
     }
 
@@ -265,20 +276,26 @@ describe.each(["HTTP", "MCP"])(
       success: Schema.String,
     });
 
-    const app = ActionGroup.make(Identity).implement({ identity: () => Who });
+    const app = ActionGroup.make("test", Identity).implement({ identity: () => Who });
     const request = Layer.succeed(Who, "request");
     const startup = Layer.succeed(Who, "startup");
 
     const routes = () =>
       transport === "HTTP"
-        ? ActionHttp.layer(app, { apiPath: testApiPath, openapiPath: testOpenapiPath })
+        ? ActionHttp.make(app.group, { apiPath: testApiPath }).layer(app, {
+            openapiPath: testOpenapiPath,
+          })
         : ActionMcp.layer(app, { name: "test", version: "0", path: testMcpPath });
 
     const call = async (web: { handler: (request: Request) => Promise<Response> }) => {
       const response = await web.handler(
         transport === "HTTP"
           ? post("/api/actions/identity")
-          : mcpRequest("tools/call", { name: "identity", arguments: {} }, { url: testMcpUrl }),
+          : mcpRequest({
+              method: "tools/call",
+              params: { name: "identity", arguments: {} },
+              url: testMcpUrl,
+            }),
       );
 
       expect(response.status).toBe(200);

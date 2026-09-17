@@ -12,11 +12,6 @@ export const testMcpPath = "/mcp" as const;
 
 export const testMcpUrl = "http://localhost/mcp";
 
-const defaultHttpOptions = {
-  apiPath: testApiPath,
-  openapiPath: testOpenapiPath,
-} as const satisfies ActionHttp.LayerOptions;
-
 // Each call builds fresh example state.
 export const makeTestApp = () =>
   HttpRouter.toWebHandler(layer.pipe(Layer.provide(HttpServer.layerServices)), {
@@ -27,13 +22,12 @@ export const makeTestApp = () =>
 export const makeTestHttp = <Actions extends ReadonlyArray<Action.Any>, R, EX>(
   app: ActionGroup.Implementation<Actions, R, EX, never>,
   request: Layer.Layer<NoInfer<R>>,
-  options?: Partial<ActionHttp.LayerOptions>,
+  options?: Partial<ActionHttp.Options & ActionHttp.LayerOptions>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionHttp.layer(app, { ...defaultHttpOptions, ...options }).pipe(
-      HttpRouter.provideRequest(request),
-      Layer.provide(HttpServer.layerServices),
-    ),
+    ActionHttp.make(app.group, { apiPath: options?.apiPath ?? testApiPath })
+      .layer(app, { openapiPath: options?.openapiPath ?? testOpenapiPath })
+      .pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 

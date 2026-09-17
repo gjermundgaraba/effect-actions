@@ -12,24 +12,32 @@ import {
   OpenApi,
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
-import { handlerFor, type ErasedValue, Implementation } from "./internal/implementation.js";
+import {
+  type Actions,
+  assertDistinct,
+  type Each,
+  type OneOrMore,
+  type Served,
+  served,
+} from "./internal/actions.js";
+import {
+  type AnyImplementation,
+  type BuildContext,
+  type BuildError,
+  type ErasedValue,
+  Implementation,
+  type RequestContext,
+} from "./internal/implementation.js";
 
+/** Contract-level configuration: servers and clients must agree on it. */
 export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   readonly apiPath: `/${string}`;
   readonly schemaError?: Action.SchemaErrorPolicy<Errors>;
 }
 
-/** Layer/configure options: mount path plus OpenAPI document route. */
-export interface LayerOptions<
-  Errors extends ReadonlyArray<Action.Codec> = [],
-> extends Options<Errors> {
-  /** Set false when the host serves a combined document for multiple groups. */
+export interface LayerOptions {
+  /** Set false when the host serves a combined document. */
   readonly openapiPath: `/${string}` | false;
-}
-
-/** A group or its implementation. */
-export interface Actions<A extends ReadonlyArray<Action.Any> = ReadonlyArray<Action.Any>> {
-  readonly actions: A;
 }
 
 /** Distribute over the tuple so each name retains its own codecs. */
@@ -49,6 +57,61 @@ type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readon
       >
     : never;
 
+/** One native group per action group; groups without HTTP actions are omitted. */
+type ApiGroup<G extends Actions, E extends Action.Codec> = G extends Actions
+  ? [Endpoint<G["actions"][number], E>] extends [never]
+    ? never
+    : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], E>>
+  : never;
+
+export type Api<G extends Actions, E extends Action.Codec = never> = HttpApi.HttpApi<
+  "actions",
+  ApiGroup<G, E>
+>;
+
+/** Direct decoded-input methods, excluding MCP-only actions. */
+export type Client<G extends Actions, E extends Action.Codec = never> = {
+  readonly [Item in G["actions"][number] as Item["http"] extends false ? never : Item["name"]]: (
+    ...args: {} extends Item["input"]["Type"]
+      ? [input?: Item["input"]["Type"]]
+      : [input: Item["input"]["Type"]]
+  ) => HttpApiClient.Client.MethodReturn<Endpoint<Item, E>, never, never, "decoded-only">;
+};
+
+/** Native connection options: `baseUrl`, `transformClient`, `transformResponse`. */
+export type ClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
+
+export interface Http<G extends Actions, Errors extends ReadonlyArray<Action.Codec> = []> {
+  /** The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`. */
+  readonly api: Api<G, Errors[number]>;
+  /** The OpenAPI 3.1 document Effect derives from `api`. */
+  readonly openapi: () => OpenApi.OpenAPISpec;
+  /**
+   * Register the endpoints and optional OpenAPI document route on the router.
+   * Handler requirements are request-level requirements, exactly as native
+   * `HttpApiBuilder` handlers' are. Pass one implementation per group with an
+   * HTTP action, in any order; others of these groups are accepted but not acquired.
+   */
+  readonly layer: <const A extends OneOrMore<AnyImplementation<G["actions"]>>>(
+    apps: A,
+    options: LayerOptions,
+  ) => Layer.Layer<
+    never,
+    BuildError<Each<A>>,
+    | BuildContext<Each<A>>
+    | HttpRouter.HttpRouter
+    | HttpRouter.Request.From<"Requires", RequestContext<Each<A>>>
+    | Etag.Generator
+    | FileSystem
+    | HttpPlatform.HttpPlatform
+    | Path
+  >;
+  /** Direct action methods backed by the native HTTP client and its codecs. */
+  readonly client: (
+    options?: ClientOptions,
+  ) => Effect.Effect<Client<G, Errors[number]>, never, HttpClient.HttpClient>;
+}
+
 const endpoint = (apiPath: `/${string}`, action: Action.Any, errors: ReadonlyArray<Action.Codec>) =>
   HttpApiEndpoint.post(action.name, `${apiPath}/${action.name}`, {
     payload: action.input,
@@ -56,67 +119,66 @@ const endpoint = (apiPath: `/${string}`, action: Action.Any, errors: ReadonlyArr
     error: [...action.errors, ...errors],
   }).annotate(OpenApi.Description, action.description);
 
-/** The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`. */
-export function api<
-  A extends ReadonlyArray<Action.Any>,
-  Errors extends ReadonlyArray<Action.Codec> = [],
->(
-  group: Actions<A>,
-  options: Options<Errors>,
-): HttpApi.HttpApi<
-  "actions",
-  HttpApiGroup.HttpApiGroup<"actions", Endpoint<A[number], Errors[number]>>
->;
-export function api(
-  group: Actions,
-  options: Options<ReadonlyArray<Action.Codec>>,
-): HttpApi.Constraint {
-  const [first, ...rest] = group.actions
-    .filter((action) => action.http)
-    .map((action) => endpoint(options.apiPath, action, options.schemaError?.errors ?? []));
+type ErasedPolicy = Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>>;
 
-  if (first === undefined) throw new Error("No HTTP-enabled actions");
+type ErasedOptions = Options<ReadonlyArray<Action.Codec>>;
 
-  return HttpApi.make("actions").add(HttpApiGroup.make("actions").add(first, ...rest));
+function erasedApi(
+  views: ReadonlyArray<Served>,
+  options: ErasedOptions,
+): Api<Actions, Action.Codec>;
+function erasedApi(views: ReadonlyArray<Served>, options: ErasedOptions): HttpApi.Constraint {
+  const [first, ...rest] = views.flatMap(({ group, actions }) => {
+    const [head, ...tail] = actions.map((action) =>
+      endpoint(options.apiPath, action, options.schemaError?.errors ?? []),
+    );
+
+    return head === undefined ? [] : [HttpApiGroup.make(group.name).add(head, ...tail)];
+  });
+
+  const empty = HttpApi.make("actions");
+
+  return first === undefined ? empty : empty.add(first, ...rest);
 }
 
-/** The OpenAPI 3.1 document Effect derives from `api`. */
-export const openapi = <Errors extends ReadonlyArray<Action.Codec> = []>(
-  group: Actions,
-  options: Options<Errors>,
-) => OpenApi.fromApi(api(group, options));
+type ErasedImplementation<R, EX, RX> = Implementation<ReadonlyArray<Action.Any>, R, EX, RX>;
 
 /**
- * Register the endpoints and optional OpenAPI document route on the router.
- * Handler requirements are request-level requirements, exactly as native
- * `HttpApiBuilder` handlers' are. Groups with no HTTP action register nothing.
+ * Pairing is by group identity, so order is free and a look-alike group is
+ * rejected. Only served groups need an implementation; one given for a bound
+ * group without HTTP actions is neither required nor acquired.
  */
-export const layer = <
-  Actions extends ReadonlyArray<Action.Any>,
-  R,
-  EX,
-  RX,
-  Errors extends ReadonlyArray<Action.Codec> = [],
->(
-  app: Implementation<Actions, R, EX, RX>,
-  options: LayerOptions<Errors>,
-): Layer.Layer<
-  never,
-  EX,
-  | RX
-  | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", R>
-  | Etag.Generator
-  | FileSystem
-  | HttpPlatform.HttpPlatform
-  | Path
-> => {
-  const exposed = app.actions.filter((action) => action.http);
+const paired = <R, EX, RX>(
+  groups: ReadonlyArray<Actions>,
+  views: ReadonlyArray<Served>,
+  apps: ReadonlyArray<ErasedImplementation<R, EX, RX>>,
+) => {
+  for (const app of apps) {
+    if (!groups.includes(app.group)) {
+      throw new Error(`Implementation of group "${app.group.name}" is not served by this adapter`);
+    }
+  }
 
-  if (exposed.length === 0) return Layer.empty;
+  return views.map(({ group, actions }) => {
+    const [app, ...duplicates] = apps.filter((candidate) => candidate.group === group);
 
-  const policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined =
-    options.schemaError;
+    if (app === undefined) throw new Error(`Missing implementation for group "${group.name}"`);
+
+    if (duplicates.length > 0) {
+      throw new Error(`Duplicate implementation for group "${group.name}"`);
+    }
+
+    return { app, actions };
+  });
+};
+
+const erasedLayer = <R, EX, RX>(
+  api: Api<Actions, Action.Codec>,
+  serving: ReturnType<typeof paired<R, EX, RX>>,
+  policy: ErasedPolicy | undefined,
+  openapiPath: LayerOptions["openapiPath"],
+) => {
+  if (serving.length === 0) return Layer.empty;
 
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
     "effect-actions/http/SchemaErrors",
@@ -135,110 +197,116 @@ export const layer = <
     ),
   );
 
-  const httpApi = api<ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>>(
-    app,
-    options,
-  ).middleware(SchemaErrors);
+  const httpApi = api.middleware(SchemaErrors);
 
-  return Implementation.register(app, (table) => {
-    const group = HttpApiBuilder.group(httpApi, "actions", (handlers) =>
-      handlers.handleAll(
-        Object.fromEntries(
-          exposed.map((action) => {
-            const handle = handlerFor(table, action);
+  return Implementation.register(serving, (bound) => {
+    const [first, ...rest] = bound.map((app) =>
+      HttpApiBuilder.group(httpApi, app.group.name, (handlers) =>
+        handlers.handleAll(
+          Object.fromEntries(
+            app.actions.map((action) => {
+              const handle = app.handle(action);
 
-            return [
-              action.name,
-              (request: { readonly payload: ErasedValue }) => handle(request.payload),
-            ];
-          }),
+              return [
+                action.name,
+                (request: { readonly payload: ErasedValue }) => handle(request.payload),
+              ];
+            }),
+          ),
         ),
       ),
     );
 
-    // Build the native group with an empty context so build-time application
+    if (first === undefined) return Layer.empty;
+
+    // Build the native groups with an empty context so build-time application
     // services cannot become request fallbacks.
     const isolated = Layer.fromBuildMemo((memoMap, scope) =>
-      Layer.buildWithMemoMap(group.pipe(Layer.provide(schemaErrors)), memoMap, scope).pipe(
-        Effect.setContext(Context.empty()),
-      ),
+      Layer.buildWithMemoMap(
+        Layer.mergeAll(first, ...rest).pipe(Layer.provide(schemaErrors)),
+        memoMap,
+        scope,
+      ).pipe(Effect.setContext(Context.empty())),
     );
 
     return HttpApiBuilder.layer(httpApi, {
-      openapiPath: options.openapiPath === false ? undefined : options.openapiPath,
+      openapiPath: openapiPath === false ? undefined : openapiPath,
     }).pipe(Layer.provide(isolated));
   });
 };
 
-type NativeClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
-
-/** Connection options plus the transport configuration used by HTTP clients. */
-export type ClientOptions<Errors extends ReadonlyArray<Action.Codec> = []> = NativeClientOptions &
-  Options<Errors>;
-
-/** Direct decoded-input methods, excluding MCP-only actions. */
-export type Client<A extends ReadonlyArray<Action.Any>, E extends Action.Codec = never> = {
-  readonly [Item in A[number] as Item["http"] extends false ? never : Item["name"]]: (
-    ...args: {} extends Item["input"]["Type"]
-      ? [input?: Item["input"]["Type"]]
-      : [input: Item["input"]["Type"]]
-  ) => HttpApiClient.Client.MethodReturn<Endpoint<Item, E>, never, never, "decoded-only">;
-};
-
-/** Bind transport configuration once for contracts, routes, documents and clients. */
-export const configure = <Errors extends ReadonlyArray<Action.Codec> = []>(
-  options: LayerOptions<Errors>,
-) => ({
-  api: <A extends ReadonlyArray<Action.Any>>(group: Actions<A>) => api(group, options),
-  openapi: (group: Actions) => openapi(group, options),
-  layer: <A extends ReadonlyArray<Action.Any>, R, EX, RX>(app: Implementation<A, R, EX, RX>) =>
-    layer(app, options),
-  client: <A extends ReadonlyArray<Action.Any>>(
-    group: Actions<A>,
-    { baseUrl, transformClient, transformResponse }: NativeClientOptions = {},
-  ) => client(group, { ...options, baseUrl, transformClient, transformResponse }),
-});
-
-/** Direct action methods backed by the native HTTP client and its codecs. */
-export function client<
-  A extends ReadonlyArray<Action.Any>,
-  Errors extends ReadonlyArray<Action.Codec> = [],
->(
-  group: Actions<A>,
-  options: ClientOptions<Errors>,
-): Effect.Effect<Client<A, Errors[number]>, never, HttpClient.HttpClient>;
-export function client(
-  group: Actions,
-  options: ClientOptions<ReadonlyArray<Action.Codec>>,
-): Effect.Effect<
-  Readonly<Record<string, (input?: ErasedValue) => Effect.Effect<unknown, unknown>>>,
-  never,
-  HttpClient.HttpClient
-> {
-  return Effect.map(HttpApiClient.make(api(group, options), options), (native) => {
+const erasedClient = (
+  api: Api<Actions, Action.Codec>,
+  views: ReadonlyArray<Served>,
+  connection: ClientOptions | undefined,
+) =>
+  Effect.map(HttpApiClient.make(api, connection), (native) => {
     // Decide once from decoded input schemas: undefined is omitted input for
     // structs, but remains a value for codecs that explicitly accept it.
     const acceptsUndefined = new Set(
-      group.actions
-        .filter((action) => Schema.is(action.input)(undefined))
-        .map((action) => action.name),
+      views.flatMap(({ actions }) =>
+        actions.flatMap((action) => (Schema.is(action.input)(undefined) ? [action.name] : [])),
+      ),
     );
 
     return Object.fromEntries(
-      Object.entries(native.actions).map(([name, method]) => {
-        // Callable "then" would make Promise resolution assimilate this client.
-        if (name === "then")
-          throw new Error('Action "then" requires the native grouped HttpApiClient');
+      Object.values(native).flatMap((methods) =>
+        Object.entries(methods).map(([name, method]) => {
+          // Callable "then" would make Promise resolution assimilate this client.
+          if (name === "then")
+            throw new Error('Action "then" requires the native grouped HttpApiClient');
 
-        return [
-          name,
-          (input?: ErasedValue) =>
-            method({
-              payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
-              responseMode: "decoded-only",
-            }),
-        ];
-      }),
+          return [
+            name,
+            (input?: ErasedValue) =>
+              method({
+                payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
+                responseMode: "decoded-only",
+              }),
+          ];
+        }),
+      ),
     );
   });
+
+/**
+ * Bind the contract-level configuration once. The native API is built here and
+ * shared by the OpenAPI document, routes and clients, so they cannot disagree.
+ */
+export function make<
+  const G extends OneOrMore<Actions>,
+  const Errors extends ReadonlyArray<Action.Codec> = [],
+>(groups: G, options: Options<Errors>): Http<Each<G>, Errors>;
+export function make(
+  groups: OneOrMore<Actions>,
+  options: ErasedOptions,
+): Http<Actions, ReadonlyArray<Action.Codec>> {
+  const all = "actions" in groups ? [groups] : groups;
+
+  const views = served(all, (action) => action.http);
+
+  // Served groups become native group identifiers; their actions, routes and client methods.
+  assertDistinct(
+    "action group",
+    views.map(({ group }) => group.name),
+  );
+  assertDistinct(
+    "action",
+    views.flatMap(({ actions }) => actions.map((action) => action.name)),
+  );
+
+  const api = erasedApi(views, options);
+
+  return {
+    api,
+    openapi: () => OpenApi.fromApi(api),
+    layer: (apps: OneOrMore<AnyImplementation>, layerOptions: LayerOptions) =>
+      erasedLayer(
+        api,
+        paired(all, views, apps instanceof Implementation ? [apps] : apps),
+        options.schemaError,
+        layerOptions.openapiPath,
+      ),
+    client: (connection) => erasedClient(api, views, connection),
+  };
 }

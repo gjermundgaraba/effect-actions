@@ -1,6 +1,8 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 export interface McpClientOptions {
+  /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
+  readonly fetch: (request: Request) => Promise<Response>;
   readonly path: string;
   readonly mode?: "legacy" | "modern";
   readonly baseUrl?: string | URL;
@@ -9,9 +11,8 @@ export interface McpClientOptions {
 
 /** Connect an official client and always close its transport after the callback. */
 export const withMcpClient = async <A>(
-  fetch: (request: Request) => Promise<Response>,
+  { fetch, mode = "modern", path, baseUrl = "http://localhost", headers }: McpClientOptions,
   run: (client: Client) => Promise<A>,
-  { mode = "modern", path, baseUrl = "http://localhost", headers }: McpClientOptions,
 ): Promise<A> => {
   const client = new Client(
     { name: "test", version: "0" },
