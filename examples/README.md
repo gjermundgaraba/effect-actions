@@ -3,6 +3,10 @@
 Run `vp run example` from the repository root after `vp install`.
 In another terminal, run `node --import tsx examples/client.ts` for typed HTTP calls.
 
+The repository pins `effect` and `@effect/platform-node` to snapshot `9ad9891`.
+When copying this example into another project, use the matching snapshot installs
+in the [package README](../README.md); published `effect@4.0.0-rc.115` is not compatible.
+
 The example listens on **127.0.0.1:3000**. It uses an in-memory repository and deliberately fake bearer tokens:
 
 | Token    | Actor / tenant | Permissions             |

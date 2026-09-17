@@ -2,15 +2,25 @@
 
 Define an Effect action once, implement it once, expose it over **HTTP and MCP**.
 
-**Experimental release candidate.** The repository currently uses Effect snapshot
-[`4e4a3a6`](https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6). The MCP adapter
-requires APIs missing from published `4.0.0-rc.115`, despite that being the current
-peer declaration. Until these versions are aligned, use the pinned snapshot;
-the declared peer version alone is not sufficient.
+**Snapshot-dependent preview.** This release requires Effect snapshot
+[`9ad9891`](https://pkg.pr.new/Effect-TS/effect/effect@9ad9891). The published npm
+version `effect@4.0.0-rc.115` is not compatible: it lacks APIs required by the MCP
+adapter. Install both packages explicitly:
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions \
-  effect@https://pkg.pr.new/Effect-TS/effect/effect@4e4a3a6
+pnpm add @gjermundgaraba/effect-actions@rc \
+  'effect@https://pkg.pr.new/Effect-TS/effect/effect@9ad9891'
+```
+
+The snapshot reports version `4.0.0-rc.115`, so the package retains that nominal
+peer declaration. A semver peer cannot distinguish the snapshot from the npm
+build; satisfying the peer declaration alone does **not** ensure compatibility.
+Installation requires access to `pkg.pr.new`, not just the npm registry.
+
+For Node server wiring, use the matching platform snapshot too:
+
+```sh
+pnpm add '@effect/platform-node@https://pkg.pr.new/Effect-TS/effect/@effect/platform-node@9ad9891'
 ```
 
 ## Quickstart
