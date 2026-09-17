@@ -1,6 +1,11 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import { HttpApi, OpenApi } from "effect/unstable/httpapi";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
 import { httpClient, mcpRequest } from "../src/Testing.js";
@@ -156,6 +161,7 @@ it("pairs implementations with groups by identity, in any order", async () => {
 
   const bound = ActionHttp.make(A, { apiPath: "/api" });
 
+  // @ts-expect-error The group is part of an implementation's type, so this does not compile either.
   expect(() => bound.layer(lookAlike, { openapiPath: false })).toThrow(
     'Implementation of group "other" is not served by this adapter',
   );
@@ -270,6 +276,78 @@ it("shares one ordinary array of implementations between the adapters", async ()
   ).toBe(200);
 });
 
+it("scopes router middleware to the layer that registers the routes", async () => {
+  // Blocks every request of this test; only the pass-through branch keeps it a middleware.
+  const blocked = HttpRouter.middleware((next) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+
+      if (request.headers["x-allow"] === "yes") return yield* next;
+
+      return HttpServerResponse.text("blocked", { status: 403 });
+    }),
+  ).layer;
+
+  const groups = Layer.mergeAll(Http.group(UsersApp), Http.group(BillingApp)).pipe(
+    Layer.provide(Layer.succeed(Tenant, "acme")),
+  );
+
+  const serve = (
+    routes: Layer.Layer<
+      never,
+      never,
+      HttpRouter.HttpRouter | Layer.Success<typeof HttpServer.layerServices>
+    >,
+  ) => {
+    const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+      disableLogger: true,
+    });
+
+    onTestFinished(() => web.dispose());
+
+    return async () => [
+      (await web.handler(new Request("http://localhost/openapi.json"))).status,
+      (await web.handler(post("/api/whoAmI"))).status,
+    ];
+  };
+
+  const root = Http.groups({ openapiPath: "/openapi.json" });
+
+  // Provided to the root alone, it guards the document; the groups are built outside it.
+  expect(await serve(root.pipe(Layer.provide(blocked), Layer.provide(groups)))()).toEqual([
+    403, 200,
+  ]);
+  // Provided to one group, it guards that group.
+  expect(
+    await serve(
+      root.pipe(
+        Layer.provide(Http.group(UsersApp).pipe(Layer.provide(blocked))),
+        Layer.provide(Http.group(BillingApp)),
+        Layer.provide(Layer.succeed(Tenant, "acme")),
+      ),
+    )(),
+  ).toEqual([200, 403]);
+  // Provided around everything, it guards everything.
+  expect(await serve(root.pipe(Layer.provide(groups), Layer.provide(blocked)))()).toEqual([
+    403, 403,
+  ]);
+});
+
+it("serves the bound document from the document route", async () => {
+  const web = HttpRouter.toWebHandler(
+    Http.layer([UsersApp, BillingApp], { openapiPath: "/openapi.json" }).pipe(
+      Layer.provide(Layer.succeed(Tenant, "acme")),
+      Layer.provide(HttpServer.layerServices),
+    ),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+  expect(await (await web.handler(new Request("http://localhost/openapi.json"))).json()).toEqual(
+    Http.openapi(),
+  );
+});
+
 it("checks each namespace only where it is served", () => {
   const Other = ActionGroup.make(
     "other",
@@ -316,6 +394,21 @@ it("checks each namespace only where it is served", () => {
       { apiPath: "/api" },
     ),
   ).not.toThrow();
+
+  // A group's name is its identity to this adapter, served or not: otherwise an
+  // MCP-only namesake could stand in for the group whose routes are missing.
+  expect(() =>
+    ActionHttp.make(
+      [
+        Users,
+        ActionGroup.make(
+          "users",
+          Action.make("tool", { description: "", success: Schema.String, http: false }),
+        ),
+      ],
+      { apiPath: "/api" },
+    ),
+  ).toThrow("Duplicate action group: users");
 
   // Tools are the MCP namespace; group and action names are not.
   const mcp = { name: "test", version: "0", path: "/mcp" } as const;

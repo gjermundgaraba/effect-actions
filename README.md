@@ -99,21 +99,44 @@ const routes = Layer.mergeAll(
 Each adapter reads only what it serves: the HTTP-enabled actions for `ActionHttp`, the
 tools for `ActionMcp`. Everything else follows from that view.
 
-- **Pairing.** `Http.layer` needs exactly one implementation for every group with an HTTP
-  action, in any order, matched by identity. An implementation of a group that was not
-  given to `make` is rejected; a missing one throws when the layer is constructed.
+- **Pairing.** `Http.layer(apps, options)` needs exactly one implementation for every group
+  with an HTTP action, in any order, matched by identity. An implementation of a group that
+  was not given to `make` does not compile; a missing one throws when the layer is constructed.
 - **Acquisition.** A group the adapter does not serve needs no implementation there, and
   one that is passed anyway is not built. Requirement types are the union over what is
   passed, so leaving it out also leaves out its requirements.
 - **Names.** Routes and client methods are flat (`POST /api/actions/<action>`,
-  `client.<action>()`), so served group names and HTTP action names must be unique within
+  `client.<action>()`), so group names and HTTP action names must be unique within
   one `ActionHttp.make`, and tool names within one `ActionMcp.layer`. Duplicates throw at
   construction; neither adapter looks at the other's names.
 - **Lists.** Both adapters accept ordinary arrays, so one `apps` list can be shared or
   assembled with `map` and `filter`.
 
-Each group is its own native `HttpApiGroup`, so a host can also combine separately mounted
-`Http.api` values with `HttpApi.addHttpApi`.
+### Groups under their own middleware
+
+Router middleware applies to the layer that registers the routes. `Http.group(app)` is the
+route layer of one group, so each can have its own. `Http.groups(options)` serves the
+document and requires the `group` layer of every group with an HTTP action:
+
+```ts
+const routes = Http.groups({ openapiPath: "/openapi.json" }).pipe(
+  Layer.provide(Http.group(PublicApp)),
+  Layer.provide(Http.group(UserApp).pipe(Layer.provide(authentication.layer))),
+);
+```
+
+A group that is never mounted leaves `ActionHttp.Mounted<"/api/actions", "users">`
+unsatisfied where the layer is run, which does not compile, as with any missing Layer. The
+requirement names the routes themselves, so a group layer of an adapter mounted elsewhere,
+or one built from a union of implementations, does not satisfy it; one from another adapter
+at the same path fails when the layer is built. Provide the groups rather than merging
+them. Middleware provided to `groups` before the group layers guards only the document;
+provided after them, it guards everything. See [examples/app.ts](examples/app.ts).
+
+An MCP endpoint is one route, so middleware provided to `ActionMcp.layer`, authentication
+included, covers all of its tools. Handlers can still authorize each tool differently on one
+endpoint. Only tools that need different middleware, such as none at all, need their own
+endpoint: one `ActionMcp.layer` per `path`, each with its own registry.
 
 ## Adapter options
 
@@ -121,6 +144,8 @@ Each group is its own native `HttpApiGroup`, so a host can also combine separate
 | ---------------------------- | --------------------------------------------------------------------------------------- |
 | `ActionHttp.make(groups, …)` | `apiPath`, `schemaError`                                                                |
 | `Http.layer(apps, …)`        | `openapiPath`                                                                           |
+| `Http.groups(…)`             | `openapiPath`                                                                           |
+| `Http.group(app)`            | None                                                                                    |
 | `Http.client(…)`             | `baseUrl`, `transformClient`, `transformResponse`                                       |
 | `ActionMcp.layer(apps, …)`   | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions`, `schemaError` |
 

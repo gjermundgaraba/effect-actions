@@ -5,11 +5,13 @@ import { HttpApiClient } from "effect/unstable/httpapi";
 import { Action, ActionGroup, ActionHttp, ActionMcp } from "../src/index.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/auth.js";
-import { Actions, Http } from "../examples/contracts.js";
-import { App } from "../examples/handlers.js";
+import { UserActions as Actions } from "../examples/contracts.js";
+import { UserApp as App } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
 
 const openapi = { openapiPath: "/openapi.json" } as const;
+
+const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
@@ -333,6 +335,52 @@ export const multipleGroupTypes = () => {
   );
 
   void inline.handler(new Request("http://localhost"));
+
+  // Groups under their own middleware: the root requires each served group's route layer.
+  const root = Both.groups(openapi);
+
+  const mounted = root.pipe(
+    Layer.provide(Both.group(App)),
+    Layer.provide(Both.group(BillingApp)),
+    Layer.provide(Users.layerMemory),
+    services,
+  );
+
+  void HttpRouter.toWebHandler(mounted);
+  // @ts-expect-error A served group that is never mounted is an unsatisfied requirement.
+  void HttpRouter.toWebHandler(root.pipe(Layer.provide(Both.group(App)), services));
+  // @ts-expect-error Merging does not provide: the root still requires its groups.
+  void HttpRouter.toWebHandler(Layer.mergeAll(root, Both.group(App), Both.group(BillingApp)));
+  // @ts-expect-error Route layers exist only for implementations of the bound groups.
+  Both.group(Foreign);
+
+  // A layer built from a union of implementations cannot say which group it
+  // mounted, so it satisfies neither requirement.
+  const either = Math.random() > 0.5 ? App : BillingApp;
+
+  void HttpRouter.toWebHandler(
+    // @ts-expect-error The union-typed group layer leaves both groups unmounted.
+    root.pipe(
+      Layer.provide(Both.group(either)),
+      Layer.provide(Both.group(BillingApp)),
+      Layer.provide(Users.layerMemory),
+      services,
+    ),
+  );
+
+  // The requirement names the mounted routes, so another adapter's group layer,
+  // even of the same group, does not satisfy it.
+  const Elsewhere = ActionHttp.make([Actions, Billing], { apiPath: "/elsewhere" });
+
+  void HttpRouter.toWebHandler(
+    // @ts-expect-error Mounted<"/elsewhere", …> is not Mounted<"/api", …>.
+    root.pipe(
+      Layer.provide(Elsewhere.group(App)),
+      Layer.provide(Both.group(BillingApp)),
+      Layer.provide(Users.layerMemory),
+      services,
+    ),
+  );
 
   // Requirements are the union over what is passed; an unserved group's
   // implementation may be left out, and its requirements with it.

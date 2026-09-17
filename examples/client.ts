@@ -8,10 +8,11 @@ const lookup = Effect.gen(function* () {
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
   });
 
+  const status = yield* client.status();
   const user = yield* client.getUser({ id: "1" });
   const identity = yield* client.whoAmI();
 
-  return { user, identity };
+  return { status, user, identity };
 });
 
 await Effect.runPromise(

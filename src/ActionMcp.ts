@@ -5,7 +5,13 @@ import type * as JsonSchema from "effect/JsonSchema";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import { assertDistinct, type Each, type OneOrMore, served } from "./internal/actions.js";
+import {
+  type Actions,
+  assertDistinct,
+  type Each,
+  type OneOrMore,
+  served,
+} from "./internal/actions.js";
 import {
   type AnyImplementation,
   type BuildContext,
@@ -191,7 +197,7 @@ const registrationRouter = (
   });
 
 const erasedLayer = <R, EX, RX>(
-  apps: ReadonlyArray<Implementation<ReadonlyArray<Action.Any>, R, EX, RX>>,
+  apps: ReadonlyArray<Implementation<Actions, R, EX, RX>>,
   options: Options<ReadonlyArray<Action.Codec>>,
 ) => {
   // Implementations without a tool are not acquired.

@@ -86,21 +86,17 @@ describe("implementations", () => {
     async (kind) => {
       const appA = Group.implement({ hello: () => Effect.succeed("from A") });
 
-      const appB: ActionGroup.Implementation<
-        ReadonlyArray<Action.Any>,
-        never,
-        never,
-        never
-      > = kind === "same contract"
-        ? Group.implement({ hello: () => Effect.succeed("from B") })
-        : ActionGroup.make(
-            "numeric",
-            Action.make("hello", {
-              description: "Numeric",
-              input: Hello.input,
-              success: Schema.Number,
-            }),
-          ).implement({ hello: () => Effect.succeed(42) });
+      const appB: ActionGroup.Implementation<ActionGroup.Any, never, never, never> =
+        kind === "same contract"
+          ? Group.implement({ hello: () => Effect.succeed("from B") })
+          : ActionGroup.make(
+              "numeric",
+              Action.make("hello", {
+                description: "Numeric",
+                input: Hello.input,
+                success: Schema.Number,
+              }),
+            ).implement({ hello: () => Effect.succeed(42) });
 
       const web = HttpRouter.toWebHandler(
         Layer.mergeAll(

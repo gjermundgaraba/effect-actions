@@ -34,14 +34,14 @@ let implementations = 0;
  * request, `EX`/`RX` describe handler acquisition at Layer build. Layer
  * memoization lets both adapters share one handler build per runtime.
  */
-export class Implementation<A extends ReadonlyArray<Action.Any>, R, EX, RX> {
+export class Implementation<G extends Actions, R, EX, RX> {
   // Held as an Effect rather than its invariant Service so `R` stays covariant.
   readonly #handlers: Effect.Effect<Handlers<R>, never, HandlersId>;
   readonly #layer: Layer.Layer<HandlersId, EX, RX>;
 
   private constructor(
     /** Adapters pair an implementation with its contract by this identity. */
-    readonly group: Actions<string, A>,
+    readonly group: G,
     handlers: Effect.Effect<Handlers<R>, never, HandlersId>,
     layer: Layer.Layer<HandlersId, EX, RX>,
   ) {
@@ -49,10 +49,10 @@ export class Implementation<A extends ReadonlyArray<Action.Any>, R, EX, RX> {
     this.#layer = layer;
   }
 
-  static make<A extends ReadonlyArray<Action.Any>, R, EX, RX>(
-    group: Actions<string, A>,
+  static make<G extends Actions, R, EX, RX>(
+    group: G,
     build: Effect.Effect<Handlers<R>, EX, RX>,
-  ): Implementation<A, R, EX, Exclude<RX, Scope.Scope>> {
+  ): Implementation<G, R, EX, Exclude<RX, Scope.Scope>> {
     const handlers = Context.Service<HandlersId, Handlers<R>>(
       `effect-actions/Handlers#${++implementations}`,
     );
@@ -66,7 +66,7 @@ export class Implementation<A extends ReadonlyArray<Action.Any>, R, EX, RX> {
    */
   static register<R, EX, RX, Out, E, In>(
     serving: ReadonlyArray<{
-      readonly app: Implementation<ReadonlyArray<Action.Any>, R, EX, RX>;
+      readonly app: Implementation<Actions, R, EX, RX>;
       readonly actions: ReadonlyArray<Action.Any>;
     }>,
     make: (apps: ReadonlyArray<Bound>) => Layer.Layer<Out, E, In>,
@@ -98,8 +98,7 @@ export class Implementation<A extends ReadonlyArray<Action.Any>, R, EX, RX> {
   }
 }
 
-export type AnyImplementation<A extends ReadonlyArray<Action.Any> = ReadonlyArray<Action.Any>> =
-  Implementation<A, any, any, any>;
+export type AnyImplementation<G extends Actions = Actions> = Implementation<G, any, any, any>;
 
 /** Per-request requirements of one implementation, or of a union of them. */
 export type RequestContext<App> = App extends Implementation<any, infer R, any, any> ? R : never;

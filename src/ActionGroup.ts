@@ -30,7 +30,12 @@ export interface Group<
     build: H | Effect.Effect<H, EX, RX>,
     // NoInfer: called inline as an adapter argument, that parameter's `any`
     // must not flow back into `EX`/`RX`.
-  ) => Implementation<Actions, HandlersContext<H>, NoInfer<EX>, NoInfer<Exclude<RX, Scope.Scope>>>;
+  ) => Implementation<
+    Group<Name, Actions>,
+    HandlersContext<H>,
+    NoInfer<EX>,
+    NoInfer<Exclude<RX, Scope.Scope>>
+  >;
 }
 
 export type Any = Group<string, ReadonlyArray<Action.Any>>;
@@ -61,7 +66,7 @@ export const make = <const Name extends string, const Actions extends ReadonlyAr
         ? build
         : Effect.succeed(build);
 
-      return Implementation.make<Actions, HandlersContext<H>, EX, RX>(group, built);
+      return Implementation.make<Group<Name, Actions>, HandlersContext<H>, EX, RX>(group, built);
     },
   };
 

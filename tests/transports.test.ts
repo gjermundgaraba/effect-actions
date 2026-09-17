@@ -4,8 +4,9 @@ import { Effect, Predicate, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import { makeTestApp, testMcpPath } from "./server.js";
-import { Http, UserNotFound } from "../examples/contracts.js";
+import { Http, InvalidRequest, UserNotFound } from "../examples/contracts.js";
 import { Forbidden } from "../examples/auth.js";
+import { httpClient, mcpRequest } from "../src/Testing.js";
 import { withMcpClient } from "../src/TestingClient.js";
 
 let app: ReturnType<typeof makeTestApp>;
@@ -55,6 +56,7 @@ describe("one implementation, both transports", () => {
       "rename_user",
       "double",
       "whoAmI",
+      "list_changes",
     ]);
     const double = reply.tools.find((tool) => tool.name === "double");
     expect(double?.inputSchema.properties).toEqual({ value: { type: "string" } });
@@ -236,6 +238,7 @@ describe("one implementation, both transports", () => {
 
     expect(document.openapi).toBe("3.1.0");
     expect(Object.keys(document.paths)).toEqual([
+      "/api/actions/status",
       "/api/actions/getUser",
       "/api/actions/renameUser",
       "/api/actions/double",
@@ -333,4 +336,105 @@ describe("one implementation, both transports", () => {
       );
     },
   );
+});
+
+describe("groups under their own middleware", () => {
+  const anonymous = (path: string, body?: Schema.Json) => {
+    const init: RequestInit = { headers: { "content-type": "application/json" } };
+
+    if (body !== undefined) {
+      init.method = "POST";
+      init.body = JSON.stringify(body);
+    }
+
+    return new Request(`http://localhost${path}`, init);
+  };
+
+  it("serves the public group and the document without credentials, the user group only with them", async () => {
+    const status = await app.handler(anonymous("/api/actions/status", {}));
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({ service: "effect-actions", users: 2 });
+
+    const document = await app.handler(anonymous("/openapi.json"));
+    expect(document.status).toBe(200);
+    expect(await document.json()).toEqual(Http.openapi());
+
+    const unauthenticated = await app.handler(anonymous("/api/actions/whoAmI", {}));
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("www-authenticate")).toBe("Bearer");
+    expect((await app.handler(request("/api/actions/whoAmI", "alice", {}))).status).toBe(200);
+  });
+
+  it("keeps the host policy in front of every group", async () => {
+    const foreign = new Request("http://attacker.example/api/actions/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect((await app.handler(foreign)).status).toBe(403);
+  });
+
+  it("calls every group through one flat client, with the shared policy errors", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* httpClient(Http, app.handler, {
+          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
+        });
+
+        return { status: yield* client.status(), identity: yield* client.whoAmI() };
+      }),
+    );
+
+    expect(result.status.users).toBe(2);
+    expect(result.identity).toEqual({ id: "alice", tenantId: "acme" });
+
+    // The typed client validates locally, so the server's policy needs a raw request.
+    const rejected = await app.handler(
+      request("/api/actions/renameUser", "alice", { id: "1", name: "" }),
+    );
+
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual(
+      Schema.encodeSync(InvalidRequest)(
+        new InvalidRequest({ message: "The request does not match the action's input." }),
+      ),
+    );
+  });
+
+  it("splits MCP access by endpoint, since middleware covers every tool of one", async () => {
+    const tools = await withMcpClient({ fetch: app.handler, path: "/mcp/public" }, (client) =>
+      client.listTools(),
+    );
+
+    expect(tools.tools.map((item) => item.name)).toEqual(["status"]);
+
+    const status = await withMcpClient({ fetch: app.handler, path: "/mcp/public" }, (client) =>
+      client.callTool({ name: "status", arguments: {} }),
+    );
+
+    expect(status.structuredContent).toEqual({ value: { service: "effect-actions", users: 2 } });
+
+    const anonymous = await app.handler(
+      mcpRequest({ url: `http://localhost${testMcpPath}`, method: "tools/list" }),
+    );
+
+    expect(anonymous.status).toBe(401);
+    expect(
+      (await withMcp((client) => client.listTools())).tools.map((item) => item.name),
+    ).not.toContain("status");
+  });
+
+  it("serves an MCP-only group as tools, sharing state with the HTTP groups", async () => {
+    expect((await app.handler(request("/api/actions/listChanges", "alice", {}))).status).toBe(404);
+    await app.handler(request("/api/actions/renameUser", "alice", { id: "1", name: "Augusta" }));
+
+    const changes = await tool("list_changes", {});
+    expect(changes.structuredContent).toEqual({
+      value: { changes: [{ actorId: "alice", userId: "1", name: "Augusta" }] },
+    });
+    expect((await tool("list_changes", {}, "bob")).structuredContent).toEqual({
+      value: { changes: [] },
+    });
+  });
 });

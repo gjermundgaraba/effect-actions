@@ -1,14 +1,18 @@
 import { Context, Effect, Layer } from "effect";
-import { UserNotFound, type User } from "./contracts.js";
+import { type Change, UserNotFound, type User } from "./contracts.js";
 
 interface UsersService {
   readonly get: (tenantId: string, id: string) => Effect.Effect<typeof User.Type, UserNotFound>;
 
   readonly rename: (
-    tenantId: string,
+    actor: { readonly id: string; readonly tenantId: string },
     id: string,
     name: string,
   ) => Effect.Effect<typeof User.Type, UserNotFound>;
+
+  readonly count: Effect.Effect<number>;
+
+  readonly changes: (tenantId: string) => Effect.Effect<ReadonlyArray<typeof Change.Type>>;
 }
 
 /** Domain service: tenant isolation lives here, not in HTTP or MCP handlers. */
@@ -30,18 +34,29 @@ export class Users extends Context.Service<Users, UsersService>()("example/Users
       return user;
     });
 
+    const changes = new Map<string, Array<typeof Change.Type>>();
+
     const rename = Effect.fn("Users.rename")(function* (
-      tenantId: string,
+      actor: { readonly id: string; readonly tenantId: string },
       id: string,
       name: string,
     ) {
-      yield* get(tenantId, id);
+      yield* get(actor.tenantId, id);
       const user = { id, name };
-      users.set(`${tenantId}/${id}`, user);
+      users.set(`${actor.tenantId}/${id}`, user);
+      changes.set(actor.tenantId, [
+        ...(changes.get(actor.tenantId) ?? []),
+        { actorId: actor.id, userId: id, name },
+      ]);
 
       return user;
     });
 
-    return Users.of({ get, rename });
+    return Users.of({
+      get,
+      rename,
+      count: Effect.sync(() => users.size),
+      changes: (tenantId) => Effect.sync(() => changes.get(tenantId) ?? []),
+    });
   });
 }

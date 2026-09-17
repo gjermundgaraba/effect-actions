@@ -13,6 +13,25 @@ export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
   { httpApiStatus: 404 },
 ) {}
 
+export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
+  "InvalidRequest",
+  { message: Schema.String },
+  { httpApiStatus: 400 },
+) {}
+
+export class InternalError extends Schema.TaggedError<InternalError>()(
+  "InternalError",
+  { message: Schema.String },
+  { httpApiStatus: 500 },
+) {}
+
+// Reachable without credentials: it must work before anyone has signed in.
+export const Status = Action.make("status", {
+  description: "Report whether the service is up.",
+  success: Schema.Struct({ service: Schema.String, users: Schema.Finite }),
+  mcp: { readOnly: true },
+});
+
 export const GetUser = Action.make("getUser", {
   description: "Look up a user in your tenant.",
   input: Schema.Struct({ id: Schema.String }),
@@ -47,7 +66,39 @@ export const WhoAmI = Action.make("whoAmI", {
   mcp: { readOnly: true },
 });
 
-export const Actions = ActionGroup.make("users", GetUser, RenameUser, Double, WhoAmI);
+export const Change = Schema.Struct({
+  actorId: Schema.String,
+  userId: Schema.String,
+  name: Schema.String,
+});
 
-// Contract-level: the server and its clients share the mount path.
-export const Http = ActionHttp.make(Actions, { apiPath: "/api/actions" });
+// A tool for agents reviewing what happened, not part of the HTTP API.
+export const ListChanges = Action.make("listChanges", {
+  description: "List the renames made in your tenant, oldest first.",
+  success: Schema.Struct({ changes: Schema.Array(Change) }),
+  errors: [Forbidden],
+  http: false,
+  mcp: { name: "list_changes", readOnly: true },
+});
+
+// One group per access rule: the host mounts each under its own middleware.
+export const PublicActions = ActionGroup.make("public", Status);
+
+export const UserActions = ActionGroup.make("users", GetUser, RenameUser, Double, WhoAmI);
+
+export const AuditActions = ActionGroup.make("audit", ListChanges);
+
+// Malformed requests and unencodable results get the same answer on both transports.
+export const schemaError = Action.schemaErrorPolicy({
+  errors: [InvalidRequest, InternalError],
+  map: ({ phase }) =>
+    phase === "input"
+      ? new InvalidRequest({ message: "The request does not match the action's input." })
+      : new InternalError({ message: "The request could not be completed." }),
+});
+
+// Contract-level: the server and its clients share the mount path and policy errors.
+export const Http = ActionHttp.make([PublicActions, UserActions, AuditActions], {
+  apiPath: "/api/actions",
+  schemaError,
+});

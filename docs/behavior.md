@@ -31,8 +31,8 @@ as defects. Applications can supply the **same policy to both adapters**:
 ```ts
 import { Layer, Schema } from "effect";
 import { Action, ActionHttp, ActionMcp } from "@gjermundgaraba/effect-actions";
-import { Actions } from "./examples/contracts.js";
-import { App } from "./examples/handlers.js";
+import { UserActions } from "./examples/contracts.js";
+import { UserApp } from "./examples/handlers.js";
 
 class BadRequest extends Schema.TaggedError<BadRequest>()(
   "BadRequest",
@@ -53,10 +53,10 @@ const schemaError = Action.schemaErrorPolicy({
       : new BadRequest({ error: "Invalid request" }),
 });
 
-const Http = ActionHttp.make(Actions, { apiPath: "/api/actions", schemaError });
+const Http = ActionHttp.make(UserActions, { apiPath: "/api/actions", schemaError });
 const routes = Layer.mergeAll(
-  Http.layer(App, { openapiPath: "/openapi.json" }),
-  ActionMcp.layer(App, { name: "my-app", version: "0", path: "/mcp", schemaError }),
+  Http.layer(UserApp, { openapiPath: "/openapi.json" }),
+  ActionMcp.layer(UserApp, { name: "my-app", version: "0", path: "/mcp", schemaError }),
 );
 ```
 
