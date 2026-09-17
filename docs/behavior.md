@@ -96,6 +96,9 @@ The table below describes default behavior without a schema-error policy. Transp
 Object schemas strip excess fields unless configured to reject them. Effect generates
 OpenAPI component names, references, and operation IDs (`<group>.<action>`).
 
+Each handler runs in a span named by that operation ID, a child of the transport's request
+span, so a trace names the action on both transports. Decoding and encoding happen outside it.
+
 ## HTTP client details
 
 Methods take decoded inputs and return decoded results. They retain declared

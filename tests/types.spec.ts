@@ -337,21 +337,32 @@ export const multipleGroupTypes = () => {
   const billingOnly = HttpRouter.toWebHandler(Both.layer(BillingApp).pipe(services));
   void billingOnly.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
 
-  for (const routes of [
-    Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)),
-    ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, App, BillingApp),
-  ]) {
-    const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(Users.layerMemory), services));
+  const both = Context.make(Tenant, "acme").pipe(
+    Context.add(CurrentActor, { id: "alice", tenantId: "acme", permissions: [] }),
+  );
 
-    // @ts-expect-error Merged, the request requirements are the union over every implementation.
-    void web.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
-    void web.handler(
-      new Request("http://localhost"),
-      Context.make(Tenant, "acme").pipe(
-        Context.add(CurrentActor, { id: "alice", tenantId: "acme", permissions: [] }),
-      ),
-    );
-  }
+  // Checked per adapter: over a union of both, one's requirements would hide the other's absence.
+  const mergedHttp = HttpRouter.toWebHandler(
+    Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)).pipe(
+      Layer.provide(Users.layerMemory),
+      services,
+    ),
+  );
+
+  // @ts-expect-error Merged, the request requirements are the union over every implementation.
+  void mergedHttp.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
+  void mergedHttp.handler(new Request("http://localhost"), both);
+
+  const mergedMcp = HttpRouter.toWebHandler(
+    ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, App, BillingApp).pipe(
+      Layer.provide(Users.layerMemory),
+      services,
+    ),
+  );
+
+  // @ts-expect-error One endpoint requires the union over every implementation it serves.
+  void mergedMcp.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
+  void mergedMcp.handler(new Request("http://localhost"), both);
 
   // Implementing inline must not let the adapter's parameter type erase requirements.
   const inline = HttpRouter.toWebHandler(

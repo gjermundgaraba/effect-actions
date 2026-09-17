@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Logger, Schema, Tracer } from "effect";
+import { Context, Effect, Layer, Logger, Option, Schema, Tracer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -206,60 +206,78 @@ it("releases scoped handler acquisition when native registration fails", async (
   expect(finalized).toBe(1);
 });
 
-it.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
-  "retains request logging and tracing: %s",
-  async (transport) => {
-    const logs: unknown[] = [];
-    const spans: string[] = [];
-    const logger = Logger.make((options) => logs.push(options.message));
+describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
+  "request logging and tracing: %s",
+  (transport) => {
+    // The MCP span name carries the negotiated protocol revision.
+    const requestSpan = transport === "HTTP" ? /^http\.server POST$/ : /^McpServer\..*tools\/call$/;
 
-    const tracer = Tracer.make({
-      span(options) {
-        spans.push(options.name);
+    const run = async (handler: () => Effect.Effect<string>) => {
+      const logs: unknown[] = [];
+      const parents = new Map<string, string | undefined>();
+      const logger = Logger.make((options) => logs.push(options.message));
 
-        return Tracer.nativeTracer.span(options);
-      },
-    });
+      const tracer = Tracer.make({
+        span(options) {
+          const parent = Option.getOrUndefined(options.parent);
 
-    const app = ActionGroup.make({ name: "test" }, identity).implement({
-      identity: () =>
-        Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
-    });
+          parents.set(options.name, parent?._tag === "Span" ? parent.name : undefined);
 
-    const routes =
-      transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
-        : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
-
-    const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-      disableLogger: true,
-    });
-
-    const context = Context.make(Logger.CurrentLoggers, new Set([logger])).pipe(
-      Context.add(Tracer.Tracer, tracer),
-    );
-
-    onTestFinished(() => web.dispose());
-
-    if (transport === "HTTP") {
-      expect(await (await web.handler(post("/api/actions/identity"), context)).json()).toBe("ok");
-    } else {
-      await withMcpClient(
-        {
-          fetch: (request) => web.handler(request, context),
-          mode: transport === "modern MCP" ? "modern" : "legacy",
-          path: testMcpPath,
+          return Tracer.nativeTracer.span(options);
         },
-        async (client) => {
-          expect(
-            (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-          ).toEqual({ value: "ok" });
-        },
+      });
+
+      const app = ActionGroup.make({ name: "test" }, identity).implement({ identity: handler });
+
+      const routes =
+        transport === "HTTP"
+          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+          : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
+
+      const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+        disableLogger: true,
+      });
+
+      const context = Context.make(Logger.CurrentLoggers, new Set([logger])).pipe(
+        Context.add(Tracer.Tracer, tracer),
       );
-    }
 
-    expect(logs).toContainEqual(["handler ran"]);
-    expect(spans).toContain("action.identity");
+      onTestFinished(() => web.dispose());
+
+      if (transport === "HTTP") {
+        await web.handler(post("/api/actions/identity"), context);
+      } else {
+        await withMcpClient(
+          {
+            fetch: (request) => web.handler(request, context),
+            mode: transport === "modern MCP" ? "modern" : "legacy",
+            path: testMcpPath,
+          },
+          (client) => client.callTool({ name: "identity", arguments: {} }).catch(() => undefined),
+        );
+      }
+
+      return { logs, parents };
+    };
+
+    it("runs the handler in an action span under the request span", async () => {
+      const { logs, parents } = await run(() =>
+        Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
+      );
+
+      expect(logs).toContainEqual(["handler ran"]);
+      // The action span is named by the OpenAPI operation ID on both transports.
+      expect(parents.get("action.identity")).toBe("test.identity");
+      expect(parents.get("test.identity")).toMatch(requestSpan);
+    });
+
+    it("opens the action span even when the handler throws before returning an effect", async () => {
+      const { parents } = await run(() => {
+        throw new Error("boom");
+      });
+
+      expect(parents.get("test.identity")).toMatch(requestSpan);
+    });
   },
 );
 

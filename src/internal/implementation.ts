@@ -14,8 +14,7 @@ type Erased<R> = {
 
 export type Handlers<R> = Readonly<Record<string, Erased<R>>>;
 
-// `R` is erased here because the adapter Layers declare it as a per-request
-// requirement through `HttpRouter.Request.From<"Requires", R>`.
+// Without `R`; see the cast in `register`.
 type Dispatch = (input: ErasedValue) => Effect.Effect<ErasedValue, ErasedValue>;
 
 /** One acquired implementation and the actions its adapter serves. */
@@ -85,8 +84,19 @@ export class Implementation<G extends Actions, R, EX, RX> {
 
             if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
 
-            // SAFETY: handlers are stored erased; each adapter supplies the matching action's decoded input.
-            return handle as Dispatch;
+            // SAFETY: drops only `R`. Each adapter's public `layer` signature restores it as
+            // `HttpRouter.Request.From<"Requires", R>`, so these services are present per request.
+            const dispatch = handle as Dispatch;
+            // The OpenAPI operation ID, so both transports label a call alike.
+            const name = `${app.group.name}.${action.name}`;
+
+            // Suspended so a handler that throws while building its effect fails inside the span.
+            return (input) =>
+              Effect.withSpan(
+                Effect.suspend(() => dispatch(input)),
+                name,
+                { captureStackTrace: false },
+              );
           },
         })),
       ),
