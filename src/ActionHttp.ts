@@ -57,6 +57,7 @@ type ApiGroup<G extends Actions> = G extends Actions
     : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], PolicyError<G>>>
   : never;
 
+/** The native `HttpApi` of every HTTP-enabled action of `G`, one `HttpApiGroup` per group. */
 export type Api<G extends Actions> = HttpApi.HttpApi<"actions", ApiGroup<G>>;
 
 // Each action paired with its own group's policy errors, so the client stays one flat record.
@@ -87,6 +88,7 @@ export type Client<G extends Actions> = {
 /** Native connection options: `baseUrl`, `transformClient`, `transformResponse`. */
 export type ClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
 
+/** One HTTP binding of some groups: the shared native API, one route layer per group, and clients. */
 export interface Http<G extends Actions> {
   /**
    * The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`.
@@ -206,8 +208,9 @@ const erasedLayer = <R, EX, RX>(binding: Binding, app: ErasedImplementation<R, E
       ),
     );
 
-    // Build the native group with an empty context so build-time application
-    // services cannot become request fallbacks.
+    // HttpApiBuilder provides the context its group was built with to every
+    // handler, over the request context. Built with an empty context instead,
+    // a startup copy of a request service cannot shadow the request's own.
     const isolated = Layer.fromBuildMemo((memoMap, scope) =>
       Layer.buildWithMemoMap(
         Layer.mergeAll(Layer.empty, ...handlers).pipe(Layer.provide(schemaErrors.layer)),
@@ -236,27 +239,22 @@ const erasedClient = (
 
     return Object.fromEntries(
       Object.values(native).flatMap((methods) =>
-        Object.entries(methods).map(([name, method]) => {
-          // Callable "then" would make Promise resolution assimilate this client.
-          if (name === "then")
-            throw new Error('Action "then" requires the native grouped HttpApiClient');
-
-          return [
-            name,
-            (input?: ErasedValue) =>
-              method({
-                payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
-                responseMode: "decoded-only",
-              }),
-          ];
-        }),
+        Object.entries(methods).map(([name, method]) => [
+          name,
+          (input?: ErasedValue) =>
+            method({
+              payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
+              responseMode: "decoded-only",
+            }),
+        ]),
       ),
     );
   });
 
 /**
  * Bind the contract-level configuration once. The native API is built here and
- * shared by the routes and clients, so they cannot disagree.
+ * shared by the routes and clients, so they cannot disagree. Duplicate group
+ * names or HTTP action names across `groups` fail here.
  */
 export function make<const G extends ReadonlyArray<Actions>>(
   options: Options,

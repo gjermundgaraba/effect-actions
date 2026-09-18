@@ -24,9 +24,13 @@ describe("contracts", () => {
   });
 
   it("rejects invalid names at definition time", () => {
-    expect(() => Action.make("bad name", { description: "", success: Schema.String })).toThrow(
-      "Invalid action name",
-    );
+    for (const name of ["bad name", "1st", "_private", "then"]) {
+      expect(() => Action.make(name, { description: "", success: Schema.String })).toThrow(
+        "Invalid action name",
+      );
+    }
+
+    expect(() => ActionGroup.make({ name: "then" })).toThrow("Invalid action group name");
     expect(() =>
       Action.make("ok", { description: "", success: Schema.String, mcp: { name: "bad name" } }),
     ).toThrow("Invalid MCP name");

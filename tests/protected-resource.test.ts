@@ -50,11 +50,10 @@ it.each([
   );
 });
 
-it("omits empty optional metadata and accepts loopback development URLs", async () => {
+it("omits absent optional metadata and serves loopback development URLs", async () => {
   const discovery = Authentication.protectedResource({
     resource: "http://localhost:3000/mcp",
     authorizationServers: ["http://localhost:3000/api/auth"],
-    scopesSupported: [],
   });
 
   const web = HttpRouter.toWebHandler(
@@ -63,43 +62,48 @@ it("omits empty optional metadata and accepts loopback development URLs", async 
   );
 
   onTestFinished(() => web.dispose());
-  expect(await (await web.handler(new Request(discovery.metadataUrl))).json()).not.toHaveProperty(
-    "scopes_supported",
-  );
+  const metadata = await (await web.handler(new Request(discovery.metadataUrl))).json();
+  expect(metadata).not.toHaveProperty("scopes_supported");
+  expect(metadata).not.toHaveProperty("resource_name");
 });
 
-it("rejects unsafe URLs and challenge parameter injection", () => {
-  for (const resource of [
-    "http://example.com/mcp",
-    "https://example.com/mcp#",
-    "https://user:password@example.com/mcp",
-    "https://example.com/mcp#fragment",
-  ]) {
-    expect(() =>
-      Authentication.protectedResource({
-        resource,
-        authorizationServers: ["https://auth.example.com"],
-      }),
-    ).toThrow();
-  }
+// Every quoted-string value round-trips through RFC 7230 quoted-string parsing.
+const quotedStrings = (header: string) =>
+  Object.fromEntries(
+    Array.from(header.matchAll(/(\w+)="((?:[^"\\]|\\.)*)"/g), ([, name, value]) => [
+      name,
+      value?.replace(/\\(.)/g, "$1"),
+    ]),
+  );
 
-  for (const issuer of ["https://auth.example.com?", "https://auth.example.com?tenant=alice"]) {
-    expect(() =>
-      Authentication.protectedResource({
-        resource: "https://example.com/mcp",
-        authorizationServers: [issuer],
-      }),
-    ).toThrow("issuers must not contain a query");
-  }
-
+it.each([
+  'bad"header',
+  "back\\slash",
+  'both\\"mixed"\\',
+  "read  write",
+  "",
+  "ünïcödé, and commas",
+  '"',
+  "\\",
+])("quotes and escapes challenge parameter %j instead of rejecting it", (value) => {
   const discovery = Authentication.protectedResource({
     resource: "https://example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
   });
 
-  expect(() => discovery.challenge({ errorDescription: 'bad"\r\nheader' })).toThrow();
-  expect(() => discovery.challenge({ scope: 'read"' })).toThrow();
-  expect(() => discovery.challenge({ scope: "read  write" })).toThrow();
+  const header = discovery.challenge({
+    error: "insufficient_scope",
+    errorDescription: value,
+    scope: value,
+  });
+
+  expect(header.startsWith("Bearer ")).toBe(true);
+  expect(quotedStrings(header)).toEqual({
+    resource_metadata: discovery.metadataUrl,
+    error: "insufficient_scope",
+    error_description: value,
+    scope: value,
+  });
 });
 
 it("percent-encodes quote characters in the discovery challenge URL", () => {

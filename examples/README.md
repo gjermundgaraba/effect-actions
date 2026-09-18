@@ -99,8 +99,8 @@ HTTP getUser / MCP get_user
   → adapter encodes the user or declared error
 ```
 
-`UserNotFound` uses HTTP 404 and `Forbidden` uses 403. MCP returns the same
-encoded errors in an `isError` tool result. Tool discovery is not filtered by actor.
+`UserNotFound` uses HTTP 404 and `Forbidden` uses 403. MCP returns an `isError` tool
+result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
 
 A write through `renameUser` is visible through both transports, and through the MCP-only
 `list_changes` tool. `double`

@@ -1,7 +1,8 @@
 import { Schema } from "effect";
 import type { Effect } from "effect";
+import { assertName } from "./internal/actions.js";
 
-// Schemas must be service-free. Handler dependencies are unrestricted.
+/** Any service-free schema. Only handlers may require services. */
 export type Codec = Schema.Codec<unknown, unknown, never, never>;
 
 /** Failed request decoding or successful-result encoding, independent of transport terminology. */
@@ -11,19 +12,23 @@ export interface SchemaFailure {
   readonly cause: Schema.SchemaError;
 }
 
-/** Pure application-owned mapping, set on a group and applied by both adapters. */
+/** Pure application-owned mapping, set on a group and applied by the HTTP adapter. */
 export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
   readonly errors: Errors;
   readonly map: (failure: SchemaFailure) => NoInfer<Errors[number]["Type"]>;
 }
 
+/** MCP tool metadata; every field has a default derived from the action. */
 export interface McpOptions {
+  /** Tool name; defaults to the action name. Must match `^[A-Za-z0-9_-]{1,128}$`. */
   readonly name?: string;
+  /** `readOnlyHint`; defaults to `false`. */
   readonly readOnly?: boolean;
-  /** Defaults to `!readOnly`; the MCP spec only defines it for non-read-only tools. */
+  /** `destructiveHint`; defaults to `!readOnly`, as the MCP spec only defines it for writes. */
   readonly destructive?: boolean;
 }
 
+/** What `make` needs to define an action. */
 export interface Options<
   Input extends Codec,
   Output extends Codec,
@@ -36,7 +41,9 @@ export interface Options<
   readonly success: Output;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
   readonly errors?: Errors;
+  /** `false` hides the action from HTTP routes and clients. */
   readonly http?: Http;
+  /** `false` hides the action from MCP; otherwise tool metadata. */
   readonly mcp?: false | McpOptions;
 }
 
@@ -63,6 +70,7 @@ export interface Action<
       };
 }
 
+/** Any action, with its schemas erased. */
 export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
 
 /** Receives decoded input; may fail only with the declared errors. */
@@ -73,6 +81,10 @@ export type Handler<A extends Any, R = never> = (
 /** An empty object schema that also produces the object root MCP requires. */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
+/**
+ * Define an action contract. Names are `[A-Za-z][A-Za-z0-9_-]*`, other than `then`.
+ * An action exposed on neither transport is rejected here, at definition time.
+ */
 export function make<
   const Name extends string,
   Input extends Codec = typeof NoInput,
@@ -84,7 +96,7 @@ export function make<
   options: Options<Input, Output, Errors, Http>,
 ): Action<Name, Input, Output, Errors, Http>;
 export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<Codec>>): Any {
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid action name: ${name}`);
+  assertName("action name", name);
 
   if (options.http === false && options.mcp === false) {
     throw new Error(`Action ${name} is exposed on no transport`);

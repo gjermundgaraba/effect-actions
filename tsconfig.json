@@ -15,7 +15,9 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src/**/*.ts", "examples/**/*.ts", "tests/**/*.ts", "vite.config.ts"],
   "exclude": ["dist"]

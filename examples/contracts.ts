@@ -82,7 +82,7 @@ export const ListChanges = Action.make("listChanges", {
   mcp: { name: "list_changes", readOnly: true },
 });
 
-// Malformed requests and unencodable results get the same answer on both transports.
+// Malformed requests and unencodable results get one typed answer over HTTP.
 const schemaError = {
   errors: [InvalidRequest, InternalError],
   map: ({ phase }: Action.SchemaFailure) =>

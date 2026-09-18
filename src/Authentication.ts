@@ -1,52 +1,27 @@
-import { type Context, Effect, Schema, SchemaAST } from "effect";
+import { type Context, Effect } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
-  type Headers,
   HttpEffect,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import type * as Action from "./Action.js";
-
-export interface Options<A, Errors extends ReadonlyArray<Action.Codec>, R> {
-  readonly authenticate: Effect.Effect<A, Errors[number]["Type"], R>;
-  readonly errors: Errors;
-  readonly headers?: (error: Errors[number]["Type"]) => Headers.Input;
-}
 
 /**
  * Authenticate each request and provide its identity to the downstream handler.
- * Only authentication failures are encoded, using each schema's httpApiStatus.
- * Dependencies remain native router request requirements. Acquired resources live
- * until the request scope closes, including while the handler is running.
+ * `authenticate` fails with the response to send instead, so the host owns its
+ * status, body and challenge headers. Dependencies remain native router request
+ * requirements. Acquired resources live until the request scope closes, including
+ * while the handler is running. Every response is marked `Cache-Control: no-store`.
  */
-export const middleware = <I, A, const Errors extends ReadonlyArray<Action.Codec>, R>(
+export const middleware = <I, A, R>(
   service: Context.Key<I, A>,
-  options: Options<NoInfer<A>, Errors, R>,
-) => {
-  const errors = options.errors.map((schema) => ({
-    matches: Schema.is(schema),
-    encode: HttpServerResponse.schemaJson(schema),
-    status: SchemaAST.resolveAt<number>("httpApiStatus")(schema.ast) ?? 500,
-  }));
-
-  return HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
-    options.authenticate.pipe(
+  authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse, R>,
+) =>
+  HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
+    authenticate.pipe(
       Effect.matchEffect({
-        onFailure: (error) => {
-          const selected = errors.find((candidate) => candidate.matches(error));
-
-          if (selected === undefined)
-            return Effect.die(new Error("Undeclared authentication error"));
-
-          return selected
-            .encode(error, {
-              status: selected.status,
-              headers: options.headers?.(error),
-            })
-            .pipe(Effect.orDie);
-        },
+        onFailure: Effect.succeed,
         onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
       }),
       HttpEffect.withPreResponseHandler((_request, response) =>
@@ -54,16 +29,17 @@ export const middleware = <I, A, const Errors extends ReadonlyArray<Action.Codec
       ),
     ),
   );
-};
 
+/** RFC 9728 metadata to publish; the host is responsible for these being valid OAuth URLs. */
 export interface ProtectedResourceOptions {
-  /** Exact OAuth resource identifier. HTTPS, or HTTP on loopback for development. */
+  /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
   readonly authorizationServers: NonEmptyReadonlyArray<string>;
   readonly scopesSupported?: ReadonlyArray<string>;
   readonly resourceName?: string;
 }
 
+/** Parameters of one `WWW-Authenticate: Bearer` challenge, RFC 6750 §3. */
 export interface BearerChallengeOptions {
   readonly error?: "invalid_token" | "insufficient_scope";
   readonly errorDescription?: string;
@@ -71,52 +47,14 @@ export interface BearerChallengeOptions {
   readonly scope?: string;
 }
 
-interface ProtectedResourceMetadata {
-  resource: string;
-  authorization_servers: NonEmptyReadonlyArray<string>;
-  bearer_methods_supported: ReadonlyArray<string>;
-  scopes_supported?: ReadonlyArray<string>;
-  resource_name?: string;
-}
-
-const oauthUrl = (value: string): URL => {
-  const url = new URL(value);
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-
-  if (
-    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
-    url.username !== "" ||
-    url.password !== "" ||
-    value.includes("#")
-  ) {
-    throw new Error("OAuth URLs must use HTTPS (or loopback HTTP) without credentials or fragment");
-  }
-
-  return url;
-};
-
-const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+const quoted = (value: string) => `"${value.replace(/["\\]/g, "\\$&")}"`;
 
 /**
  * Publish RFC 9728 discovery independently from the authenticated routes.
  * This supplies metadata and challenges; the host still verifies access tokens.
  */
 export const protectedResource = (options: ProtectedResourceOptions) => {
-  const resource = oauthUrl(options.resource);
-
-  if (options.authorizationServers.length === 0)
-    throw new Error("An authorization server is required");
-
-  for (const issuer of options.authorizationServers) {
-    oauthUrl(issuer);
-
-    if (issuer.includes("?"))
-      throw new Error("Authorization server issuers must not contain a query");
-  }
-
-  for (const scope of options.scopesSupported ?? []) {
-    if (!scopeToken.test(scope)) throw new Error("Invalid OAuth scope token");
-  }
+  const resource = new URL(options.resource);
 
   const path =
     `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}` as const;
@@ -126,19 +64,14 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
   const metadataUrl = discoveryUrl.href;
   const target = metadataUrl.slice(discoveryUrl.origin.length);
 
-  const metadata: ProtectedResourceMetadata = {
+  // `undefined` fields are dropped by JSON serialization.
+  const response = HttpServerResponse.jsonUnsafe({
     resource: options.resource,
     authorization_servers: options.authorizationServers,
     bearer_methods_supported: ["header"],
-  };
-
-  if (options.scopesSupported !== undefined && options.scopesSupported.length > 0) {
-    metadata.scopes_supported = options.scopesSupported;
-  }
-
-  if (options.resourceName !== undefined) metadata.resource_name = options.resourceName;
-
-  const response = HttpServerResponse.jsonUnsafe(metadata);
+    scopes_supported: options.scopesSupported,
+    resource_name: options.resourceName,
+  });
 
   return {
     // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
@@ -160,28 +93,18 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
       { global: true },
     ),
     metadataUrl,
+    /** The `WWW-Authenticate` value; parameter values are quoted and escaped. */
     challenge: (challenge: BearerChallengeOptions = {}): string => {
-      const parameters = [`resource_metadata="${metadataUrl.replace(/["\\]/g, "\\$&")}"`];
+      const parameters = [
+        ["resource_metadata", metadataUrl],
+        ["error", challenge.error],
+        ["error_description", challenge.errorDescription],
+        ["scope", challenge.scope],
+      ] as const;
 
-      if (challenge.error !== undefined) parameters.push(`error="${challenge.error}"`);
-
-      if (challenge.errorDescription !== undefined) {
-        if (!/^[\x20-\x21\x23-\x5B\x5D-\x7E]*$/.test(challenge.errorDescription)) {
-          throw new Error("Invalid OAuth error description");
-        }
-
-        parameters.push(`error_description="${challenge.errorDescription}"`);
-      }
-
-      if (challenge.scope !== undefined) {
-        if (!challenge.scope.split(" ").every((scope) => scopeToken.test(scope))) {
-          throw new Error("Invalid OAuth challenge scope");
-        }
-
-        parameters.push(`scope="${challenge.scope}"`);
-      }
-
-      return `Bearer ${parameters.join(", ")}`;
+      return `Bearer ${parameters
+        .flatMap(([name, value]) => (value === undefined ? [] : [`${name}=${quoted(value)}`]))
+        .join(", ")}`;
     },
   };
 };

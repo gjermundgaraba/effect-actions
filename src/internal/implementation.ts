@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import type { Actions, Served } from "./actions.js";
@@ -12,6 +12,7 @@ type Erased<R> = {
   handle(input: ErasedValue): Effect.Effect<ErasedValue, ErasedValue, R>;
 }["handle"];
 
+/** The erased handler record an adapter dispatches over. */
 export type Handlers<R> = Readonly<Record<string, Erased<R>>>;
 
 // Without `R`; see the cast in `register`.
@@ -22,46 +23,38 @@ export interface Bound extends Served {
   readonly handle: (action: Action.Any) => Dispatch;
 }
 
-interface HandlersId {
-  readonly _tag: "effect-actions/Handlers";
-}
-
-let implementations = 0;
-
 /**
  * Opaque implementation value; only its type is public. `R` is required per
- * request, `EX`/`RX` describe handler acquisition at Layer build. Layer
- * memoization lets both adapters share one handler build per runtime.
+ * request, `EX`/`RX` describe handler acquisition at Layer build. The build may
+ * also use `Scope`: the adapter layer supplies it.
  */
 export class Implementation<G extends Actions, R, EX, RX> {
-  // Held as an Effect rather than its invariant Service so `R` stays covariant.
-  readonly #handlers: Effect.Effect<Handlers<R>, never, HandlersId>;
-  readonly #layer: Layer.Layer<HandlersId, EX, RX>;
+  readonly #build: Effect.Effect<Handlers<R>, EX, RX | Scope.Scope>;
 
   private constructor(
     /** Adapters pair an implementation with its contract by this identity. */
     readonly group: G,
-    handlers: Effect.Effect<Handlers<R>, never, HandlersId>,
-    layer: Layer.Layer<HandlersId, EX, RX>,
+    build: Effect.Effect<Handlers<R>, EX, RX | Scope.Scope>,
   ) {
-    this.#handlers = handlers;
-    this.#layer = layer;
+    this.#build = build;
   }
 
   static make<G extends Actions, R, EX, RX>(
     group: G,
     build: Effect.Effect<Handlers<R>, EX, RX>,
   ): Implementation<G, R, EX, Exclude<RX, Scope.Scope>> {
-    const handlers = Context.Service<HandlersId, Handlers<R>>(
-      `effect-actions/Handlers#${++implementations}`,
-    );
+    // SAFETY: `register` runs the build under `Layer.unwrap`, in the adapter layer's
+    // scope, so `Scope` is always supplied. TypeScript cannot relate a type parameter
+    // to its own `Exclude`; this is the same assertion `Layer.effect` makes.
+    const scoped = build as Effect.Effect<Handlers<R>, EX, Exclude<RX, Scope.Scope> | Scope.Scope>;
 
-    return new Implementation(group, handlers, Layer.effect(handlers, build));
+    return new Implementation(group, scoped);
   }
 
   /**
-   * Acquire exactly the implementations an adapter serves. Each resolves its
-   * own handlers, so records are never merged across implementations.
+   * Acquire exactly the implementations an adapter serves, in the adapter
+   * layer's scope. Each resolves its own handlers, so records are never merged
+   * across implementations.
    */
   static register<R, EX, RX, Out, E, In>(
     serving: ReadonlyArray<{
@@ -70,49 +63,45 @@ export class Implementation<G extends Actions, R, EX, RX> {
     }>,
     make: (apps: ReadonlyArray<Bound>) => Layer.Layer<Out, E, In>,
   ): Layer.Layer<Out, E | EX, In | RX> {
-    const [first, ...rest] = serving;
+    const bound = Effect.forEach(serving, ({ app, actions }) =>
+      Effect.map(app.#build, (handlers): Bound => ({
+        group: app.group,
+        actions,
+        handle: (action) => {
+          const handle = handlers[action.name];
 
-    if (first === undefined) return make([]);
+          if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
 
-    const bound = Effect.all(
-      serving.map(({ app, actions }) =>
-        Effect.map(app.#handlers, (handlers): Bound => ({
-          group: app.group,
-          actions,
-          handle: (action) => {
-            const handle = handlers[action.name];
+          // SAFETY: drops only `R`. Each adapter's public `layer` signature restores it as
+          // `HttpRouter.Request.From<"Requires", R>`, so these services are present per request.
+          const dispatch = handle as Dispatch;
+          // The OpenAPI operation ID, so both transports label a call alike.
+          const name = `${app.group.name}.${action.name}`;
 
-            if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
-
-            // SAFETY: drops only `R`. Each adapter's public `layer` signature restores it as
-            // `HttpRouter.Request.From<"Requires", R>`, so these services are present per request.
-            const dispatch = handle as Dispatch;
-            // The OpenAPI operation ID, so both transports label a call alike.
-            const name = `${app.group.name}.${action.name}`;
-
-            // Suspended so a handler that throws while building its effect fails inside the span.
-            return (input) =>
-              Effect.withSpan(
-                Effect.suspend(() => dispatch(input)),
-                name,
-                { captureStackTrace: false },
-              );
-          },
-        })),
-      ),
+          // Suspended so a handler that throws while building its effect fails inside the span.
+          return (input) =>
+            Effect.withSpan(
+              Effect.suspend(() => dispatch(input)),
+              name,
+              { captureStackTrace: false },
+            );
+        },
+      })),
     );
 
-    return Layer.unwrap(Effect.map(bound, make)).pipe(
-      Layer.provide(Layer.mergeAll(first.app.#layer, ...rest.map(({ app }) => app.#layer))),
-    );
+    return Layer.unwrap(Effect.map(bound, make));
   }
 }
 
+// `any` is a wildcard in these inference positions; `unknown` would fail to match.
+/** Any implementation of `G`, with its channels erased. */
 export type AnyImplementation<G extends Actions = Actions> = Implementation<G, any, any, any>;
 
 /** Per-request requirements of one implementation, or of a union of them. */
 export type RequestContext<App> = App extends Implementation<any, infer R, any, any> ? R : never;
 
+/** Handler-acquisition failures of one implementation, or of a union of them. */
 export type BuildError<App> = App extends Implementation<any, any, infer EX, any> ? EX : never;
 
+/** Handler-acquisition requirements of one implementation, or of a union of them. */
 export type BuildContext<App> = App extends Implementation<any, any, any, infer RX> ? RX : never;

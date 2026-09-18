@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect";
+import { Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpSchema } from "effect/unstable/ai";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
@@ -122,28 +122,6 @@ it("maps input and output failures and exposes the same error contract to client
   expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("500");
 });
 
-it("policy middleware does not turn startup services into request fallbacks", async () => {
-  class Value extends Context.Service<Value, number>()("policy-test/Value") {}
-
-  const app = actions.implement({ echo: () => Effect.map(Value, (value) => value) });
-
-  const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(
-      Layer.provide(Layer.succeed(Value, 42)),
-      Layer.provide(HttpServer.layerServices),
-    ),
-    { disableLogger: true },
-  );
-
-  onTestFinished(() => web.dispose());
-  // @ts-expect-error Deliberately omit the required request service at runtime.
-  const absent = await web.handler(request(1), Context.empty());
-  expect(absent.status).toBe(500);
-  expect(await absent.text()).toBe("");
-  const present = await web.handler(request(1), Context.make(Value, 7));
-  expect(await present.json()).toBe(7);
-});
-
 it("answers with each group's own policy inside one adapter", async () => {
   const second = ActionGroup.make(
     {
@@ -198,7 +176,7 @@ const mcpRequest = (value: Schema.Json) =>
     params: { name: "echo", arguments: { value } },
   });
 
-it("shares input/output policy with MCP without converting domain errors or defects", async () => {
+it("applies the policy over HTTP only; MCP keeps its native argument and result handling", async () => {
   const failures: Action.SchemaFailure[] = [];
   let calls = 0;
 
@@ -244,51 +222,34 @@ it("shares input/output policy with MCP without converting domain errors or defe
 
   onTestFinished(() => web.dispose());
 
-  for (const [value, tag] of [
-    ["secret input", "InvalidRequest"],
-    [0, "InvalidResponse"],
-    [-1, "Rejected"],
+  // Over HTTP the policy answers; over MCP, invalid arguments and results are the
+  // native tool errors, and a declared error is rendered like any other.
+  for (const [value, tag, message, mcpText] of [
+    ["secret input", "InvalidRequest", "Invalid request", "Invalid parameters for tool 'echo'"],
+    [0, "InvalidResponse", "Invalid response", "internal server error"],
+    [-1, "Rejected", "Negative value", '{"_tag":"Rejected","error":"Negative value"}'],
   ] as const) {
     const http = await web.handler(request(value));
+    expect(await http.json()).toMatchObject({ _tag: tag, error: message });
     const mcp = await web.handler(mcpRequest(value));
     expect(mcp.status).toBe(200);
     const { result } = decodeMcp(await mcp.json());
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toEqual(await http.json());
-    expect(result.structuredContent).toMatchObject({ _tag: tag });
+    expect(result.structuredContent).toBeUndefined();
+    const [content] = result.content;
+    expect(content?.type).toBe("text");
+
+    if (content?.type === "text") expect(content.text).toContain(mcpText);
   }
 
   expect(calls).toBe(4); // Neither transport invokes the handler for invalid input.
-  expect(failures.map((failure) => failure.phase)).toEqual(["input", "input", "output", "output"]);
+  expect(failures.map((failure) => failure.phase)).toEqual(["input", "output"]);
   expect(failures.every((failure) => Schema.isSchemaError(failure.cause))).toBe(true);
   const success = await web.handler(mcpRequest(7));
   expect(decodeMcp(await success.json()).result.structuredContent).toEqual({ value: 7 });
   const defect = await web.handler(mcpRequest(-2));
   expect(await defect.text()).not.toContain("private defect");
-  expect(failures).toHaveLength(4);
-});
-
-it("rejects non-object policy errors at MCP construction", async () => {
-  const app = echoGroup("scalar", { errors: [Schema.String], map: () => "invalid" }).implement({
-    echo: ({ value }) => Effect.succeed(value),
-  });
-
-  const routes = ActionMcp.layer(
-    {
-      name: "test",
-      version: "0",
-      path: "/mcp",
-    },
-    app,
-  );
-
-  await expect(
-    Effect.runPromise(
-      Layer.build(
-        routes.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
-      ).pipe(Effect.scoped),
-    ),
-  ).rejects.toThrow("Schema-error policy of group scalar: MCP error must have an object root");
+  expect(failures).toHaveLength(2);
 });
 
 it("executes each input/output transformation once with a policy enabled", async () => {
@@ -348,7 +309,7 @@ it("executes each input/output transformation once with a policy enabled", async
   expect(encodes).toBe(2);
 });
 
-it("does not recursively map a broken policy error", async () => {
+it("does not recursively map a broken policy error; MCP never maps", async () => {
   let mappings = 0;
 
   const Broken = Schema.TaggedStruct("Broken", { value: Schema.Finite });
@@ -385,15 +346,10 @@ it("does not recursively map a broken policy error", async () => {
   const http = await web.handler(request("private"));
   expect(http.status).toBe(500);
   expect(await http.text()).toBe("");
-  const mcp = await web.handler(mcpRequest("private"));
-  expect(await mcp.json()).toEqual({
-    jsonrpc: "2.0",
-    id: 1,
-    error: Schema.encodeSync(McpSchema.InternalError)(
-      new McpSchema.InternalError({ message: "Internal error" }),
-    ),
-  });
-  expect(mappings).toBe(2);
+  const mcp = await (await web.handler(mcpRequest("private"))).text();
+  expect(decodeMcp(JSON.parse(mcp)).result).toMatchObject({ isError: true });
+  expect(mcp).not.toContain("private");
+  expect(mappings).toBe(1);
 });
 
 it("keeps invalid declared-error encoding a defect on both transports", async () => {
@@ -446,38 +402,9 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
   expect(http.status).toBe(500);
   expect(await http.text()).toBe("");
   const mcp = await web.handler(mcpRequest(1));
-  expect(await mcp.json()).toEqual({
-    jsonrpc: "2.0",
-    id: 1,
-    error: Schema.encodeSync(McpSchema.InternalError)(
-      new McpSchema.InternalError({ message: "Internal error" }),
-    ),
+  expect(decodeMcp(await mcp.json()).result).toMatchObject({
+    isError: true,
+    content: [{ type: "text", text: "Tool execution failed due to an internal server error." }],
   });
   expect(mappings).toBe(0);
-});
-
-it("ignores unused policy errors when no MCP tools are exposed", async () => {
-  const group = ActionGroup.make(
-    { name: "test", schemaError: { errors: [Schema.String], map: () => "not an MCP error" } },
-    Action.make("httpOnly", {
-      description: "HTTP only",
-      success: Schema.Boolean,
-      mcp: false,
-    }),
-  );
-
-  const routes = ActionMcp.layer(
-    {
-      name: "test",
-      version: "0",
-      path: "/mcp",
-    },
-    group.implement({ httpOnly: () => Effect.succeed(true) }),
-  );
-
-  await Effect.runPromise(
-    Layer.build(
-      routes.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
-    ).pipe(Effect.scoped),
-  );
 });

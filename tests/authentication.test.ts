@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Deferred, Effect, Layer, Schema, SchemaTransformation } from "effect";
+import { Context, Deferred, Effect, Layer, Schema } from "effect";
 import {
   HttpRouter,
   HttpServer,
@@ -40,23 +40,32 @@ const request = (token?: string) =>
     headers: token === undefined ? {} : { authorization: token },
   });
 
+/** The host renders its own failures: any response, with the status and headers it chooses. */
+const refuse = <E extends Unauthorized | Forbidden>(error: E, status: number) =>
+  HttpServerResponse.schemaJson(Schema.Union([Unauthorized, Forbidden]))(error, {
+    status,
+    headers: { "www-authenticate": `Bearer error="${error._tag}"` },
+  }).pipe(Effect.orDie, Effect.flip);
+
 describe("Authentication.middleware", () => {
-  it("encodes declared acquisition errors with each schema's status and challenge headers", async () => {
+  it("sends the host's failure response, with its status and challenge headers", async () => {
     let calls = 0;
 
-    const auth = Authentication.middleware(Identity, {
-      errors: [Unauthorized, Forbidden],
-      authenticate: Effect.gen(function* () {
+    const auth = Authentication.middleware(
+      Identity,
+      Effect.gen(function* () {
         const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
 
-        if (token === undefined) return yield* new Unauthorized({ message: "Missing token" });
+        if (token === undefined) {
+          return yield* refuse(new Unauthorized({ message: "Missing token" }), 401);
+        }
 
-        if (token === "denied") return yield* new Forbidden({ message: "Denied token" });
+        if (token === "denied")
+          return yield* refuse(new Forbidden({ message: "Denied token" }), 403);
 
         return { id: token };
       }),
-      headers: (error) => ({ "www-authenticate": `Bearer error="${error._tag}"` }),
-    });
+    );
 
     const web = serve(
       HttpRouter.add(
@@ -89,117 +98,12 @@ describe("Authentication.middleware", () => {
     expect(calls).toBe(2);
   });
 
-  it.each([
-    ["", 500],
-    ["first-wire", 401],
-  ] as const)(
-    "uses only the first matching error codec when it encodes to %j",
-    async (firstWire, expectedStatus) => {
-      const encodes: string[] = [];
-
-      const first = Schema.String.check(Schema.isMinLength(1)).pipe(
-        Schema.decodeTo(
-          Schema.String,
-          SchemaTransformation.transform({
-            decode: (value: string) => value,
-            encode: (): string => {
-              encodes.push("first");
-
-              return firstWire;
-            },
-          }),
-        ),
-        Schema.annotate({ httpApiStatus: 401 }),
-      );
-
-      const second = Schema.String.pipe(
-        Schema.decodeTo(
-          Schema.String,
-          SchemaTransformation.transform({
-            decode: (value: string) => value,
-            encode: (): string => {
-              encodes.push("second");
-
-              return "second-wire";
-            },
-          }),
-        ),
-        Schema.annotate({ httpApiStatus: 403 }),
-      );
-
-      const auth = Authentication.middleware(Identity, {
-        errors: [first, second],
-        authenticate: Effect.fail("authentication failed"),
-      });
-
-      const web = serve(
-        HttpRouter.add("GET", "/identity", HttpServerResponse.empty()).pipe(
-          Layer.provide(auth.layer),
-        ),
-      );
-
-      onTestFinished(() => web.dispose());
-      const response = await web.handler(request());
-      expect(response.status).toBe(expectedStatus);
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(encodes).toEqual(["first"]);
-
-      if (firstWire !== "") expect(await response.json()).toBe(firstWire);
-    },
-  );
-
-  it("rejects an undeclared refined error before encoding or computing response headers", async () => {
-    let headers = 0;
-
-    const auth = Authentication.middleware(Identity, {
-      errors: [Schema.String.check(Schema.isMinLength(1)).annotate({ httpApiStatus: 401 })],
-      authenticate: Effect.fail(""),
-      headers: () => {
-        headers++;
-
-        return { "www-authenticate": "Bearer" };
-      },
-    });
-
-    const web = serve(
-      HttpRouter.add("GET", "/identity", HttpServerResponse.empty()).pipe(
-        Layer.provide(auth.layer),
-      ),
-    );
-
-    onTestFinished(() => web.dispose());
-    const response = await web.handler(request());
-    expect(response.status).toBe(500);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(headers).toBe(0);
-    expect(response.headers.get("www-authenticate")).toBeNull();
-  });
-
-  it("defaults an unannotated declared error to HTTP 500", async () => {
-    const auth = Authentication.middleware(Identity, {
-      errors: [Schema.String],
-      authenticate: Effect.fail("authentication failed"),
-    });
-
-    const web = serve(
-      HttpRouter.add("GET", "/identity", HttpServerResponse.empty()).pipe(
-        Layer.provide(auth.layer),
-      ),
-    );
-
-    onTestFinished(() => web.dispose());
-    const response = await web.handler(request());
-    expect(response.status).toBe(500);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toBe("authentication failed");
-  });
-
   it("keeps resources acquired by authentication alive for the handler and releases on handler failure", async () => {
     const events: string[] = [];
 
-    const auth = Authentication.middleware(Identity, {
-      errors: [Unauthorized],
-      authenticate: Effect.acquireRelease(
+    const auth = Authentication.middleware(
+      Identity,
+      Effect.acquireRelease(
         Effect.sync(() => {
           events.push("acquire");
 
@@ -210,7 +114,7 @@ describe("Authentication.middleware", () => {
             events.push("release");
           }),
       ),
-    });
+    );
 
     const web = serve(
       HttpRouter.add(
@@ -234,10 +138,7 @@ describe("Authentication.middleware", () => {
   });
 
   it("protects private errors serialized by enclosing middleware", async () => {
-    const auth = Authentication.middleware(Identity, {
-      errors: [Unauthorized],
-      authenticate: Effect.succeed({ id: "alice" }),
-    });
+    const auth = Authentication.middleware(Identity, Effect.succeed({ id: "alice" }));
 
     const outer = HttpRouter.middleware<{ handles: Unauthorized }>()((effect) =>
       Effect.catch(effect, (error) =>
@@ -272,15 +173,15 @@ describe("Authentication.middleware", () => {
   });
 
   it("tracks and resolves authentication dependencies using native middleware composition", async () => {
-    const auth = Authentication.middleware(Identity, {
-      errors: [Unauthorized],
-      authenticate: Effect.gen(function* () {
+    const auth = Authentication.middleware(
+      Identity,
+      Effect.gen(function* () {
         const tokens = yield* Tokens;
         const incoming = yield* HttpServerRequest.HttpServerRequest;
 
         return { id: `${tokens.prefix}${incoming.headers.authorization}` };
       }),
-    });
+    );
 
     // Native middleware requires composition before its layer becomes available.
     const missing: string = auth.layer;
@@ -310,9 +211,9 @@ describe("Authentication.middleware", () => {
       const allowRelease = Effect.runSync(Deferred.make<void>());
       const released = Effect.runSync(Deferred.make<void>());
 
-      const auth = Authentication.middleware(Identity, {
-        errors: [Unauthorized],
-        authenticate: Effect.acquireRelease(
+      const auth = Authentication.middleware(
+        Identity,
+        Effect.acquireRelease(
           Effect.sync(() => {
             events.push("acquire");
 
@@ -326,7 +227,7 @@ describe("Authentication.middleware", () => {
               yield* Deferred.succeed(released, undefined);
             }),
         ),
-      });
+      );
 
       const Identify = Action.make("identify", {
         description: "Read the identity while its authentication resource is alive",

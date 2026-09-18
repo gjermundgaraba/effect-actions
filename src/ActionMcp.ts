@@ -1,9 +1,8 @@
-import { Context, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import type { Cause } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
-import type * as JsonSchema from "effect/JsonSchema";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
-import { HttpRouter } from "effect/unstable/http";
+import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
+import type { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import { type Actions, assertDistinct, served } from "./internal/actions.js";
 import {
@@ -12,15 +11,18 @@ import {
   type BuildError,
   type RequestContext,
   type ErasedValue,
-  type Bound,
   Implementation,
 } from "./internal/implementation.js";
 
+/** One MCP endpoint; `name`, `version`, `instructions` are the server's `serverInfo`. */
 export interface Options {
   readonly name: string;
   readonly version: string;
+  /** Route of the Streamable HTTP endpoint; no default. */
   readonly path: HttpRouter.PathInput;
+  /** Protocol revisions to serve; defaults to every revision this snapshot supports. */
   readonly protocols?: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>;
+  /** Browser origins accepted by the native server; passed through to `McpServer.layerHttp`. */
   readonly allowedOrigins?: ReadonlyArray<string>;
   readonly instructions?: string;
 }
@@ -34,160 +36,22 @@ const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
   McpProtocol.v2024_11_05,
 ];
 
-const toolResult = (structuredContent: Schema.Json, isError: boolean) =>
-  new McpSchema.CallToolResult({
-    isError,
-    structuredContent,
-    content: [{ type: "text", text: JSON.stringify(structuredContent) }],
-  });
+type McpTool = Exclude<Action.Any["mcp"], false>;
 
-// Only the generated root reference is resolved; recursive references still
-// need the complete definitions pool, including the inlined root's definition.
-const resolveReference = (
-  name: string,
-  what: string,
-  schema: JsonSchema.JsonSchema,
-  definitions: JsonSchema.Definitions,
-): JsonSchema.JsonSchema => {
-  if (!Predicate.isString(schema.$ref)) return schema;
-  const reference = schema.$ref;
-  const path = JsonPointer.parseUriFragment(reference);
-  const key = path?.[1];
-
-  if (path?.length !== 2 || path[0] !== "$defs" || key === undefined) {
-    throw new Error(`${name}: unsupported MCP ${what} reference ${reference}`);
-  }
-
-  const definition = Object.hasOwn(definitions, key) ? definitions[key] : undefined;
-
-  if (definition === undefined)
-    throw new Error(`${name}: missing MCP ${what} reference ${reference}`);
-
-  return definition;
-};
-
-/** MCP `inputSchema` requires a literal object root. */
-const inputJsonSchema = (action: Action.Any) => {
-  const { schema, definitions } = Schema.toJsonSchemaDocument(action.input);
-  const root = resolveReference(action.name, "input", schema, definitions);
-
-  if (root.type !== "object") {
-    throw new Error(
-      `${action.name}: MCP input must have an object root; omit input for no arguments`,
-    );
-  }
-
-  return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
-};
-
-/** Declared errors are published as-is in `structuredContent`, so each must encode to an object. */
-const assertObjectError = (owner: string, error: Action.Codec) => {
-  const { schema, definitions } = Schema.toJsonSchemaDocument(error);
-  const visited = new Set<JsonSchema.JsonSchema>();
-
-  // A union qualifies when every member does; a revisited node is already being checked.
-  const encodesObject = (candidate: JsonSchema.JsonSchema): boolean => {
-    const root = resolveReference(owner, "error", candidate, definitions);
-
-    if (root.type === "object" || visited.has(root)) return true;
-    visited.add(root);
-    const members = root.anyOf ?? root.oneOf;
-
-    return Array.isArray(members) && members.length > 0 && members.every(encodesObject);
-  };
-
-  if (!encodesObject(schema)) throw new Error(`${owner}: MCP error must have an object root`);
-};
-
-const registerTool = (
-  app: Bound,
-  action: Action.Any,
-  policy: Action.SchemaErrorPolicy<ReadonlyArray<Action.Codec>> | undefined,
-) =>
-  Effect.gen(function* () {
-    if (action.mcp === false) return;
-    const server = yield* McpServer.McpServer;
-
-    const inputSchema = yield* Schema.decodeUnknownEffect(McpSchema.ToolJson)(
-      inputJsonSchema(action),
-    ).pipe(Effect.orDie);
-
-    // Successes are wrapped as { value }; declared errors are not.
-    const errors = [...action.errors, ...(policy?.errors ?? [])];
-
-    for (const error of action.errors) assertObjectError(action.name, error);
-    // The same JSON lowering HttpApiEndpoint applies, so both transports agree on the wire shape.
-    const input = Schema.toCodecJson(action.input);
-    const success = Schema.toCodecJson(action.success);
-    const failure = Schema.toCodecJson(Schema.Union(errors));
-    const handle = app.handle(action);
-
-    const failureResult = (error: ErasedValue) =>
-      Schema.encodeUnknownEffect(failure)(error).pipe(
-        Effect.orDie,
-        Effect.map((json) => toolResult(json, true)),
-      );
-
-    const schemaFailure = (phase: Action.SchemaFailure["phase"], cause: Schema.SchemaError) => {
-      if (policy !== undefined) {
-        return failureResult(policy.map({ phase, cause }));
-      }
-
-      if (phase === "input")
-        return Effect.fail(new McpSchema.InvalidParams({ message: cause.message }));
-
-      return Effect.die(cause);
-    };
-
-    const successResult = (value: ErasedValue) =>
-      Schema.encodeUnknownEffect(success)(value).pipe(
-        Effect.matchEffect({
-          onFailure: (cause) => schemaFailure("output", cause),
-          onSuccess: (json) => Effect.succeed(toolResult({ value: json }, false)),
-        }),
-      );
-
-    yield* server.addTool({
-      tool: new McpSchema.Tool({
-        name: action.mcp.name,
-        description: action.description,
-        inputSchema,
-        outputSchema: Tool.getJsonSchemaFromSchema(Schema.Struct({ value: action.success })),
-        annotations: {
-          readOnlyHint: action.mcp.readOnly,
-          destructiveHint: action.mcp.destructive,
-        },
-      }),
-      annotations: Context.empty(),
-      handle: (payload: Schema.Json) =>
-        Schema.decodeUnknownEffect(input)(payload).pipe(
-          Effect.matchEffect({
-            onFailure: (cause) => schemaFailure("input", cause),
-            onSuccess: (decoded) =>
-              handle(decoded).pipe(
-                Effect.matchEffect({
-                  onSuccess: successResult,
-                  onFailure: failureResult,
-                }),
-              ),
-          }),
-        ),
-    });
-  });
-
-// Native route registration must still see the host's route middleware. Only
-// the registration effects run in that context; the MCP runtime does not.
-const registrationRouter = (
-  router: HttpRouter.HttpRouter,
-  context: Context.Context<never>,
-): HttpRouter.HttpRouter =>
-  HttpRouter.HttpRouter.of({
-    ...router,
-    add: (method, path, handler, options) =>
-      router.add(method, path, handler, options).pipe(Effect.provideContext(context)),
-    addAll: (routes) => router.addAll(routes).pipe(Effect.provideContext(context)),
-    prefixed: (prefix) => registrationRouter(router.prefixed(prefix), context),
-  });
+// The same JSON lowering HttpApiEndpoint applies, so both transports agree on the wire
+// shape. Declared errors are returned, not raised: the native server then reports them
+// as `isError` text carrying their encoding, unencodable ones as its generic failure.
+const tool = (action: Action.Any, mcp: McpTool) =>
+  Tool.make(mcp.name, {
+    description: action.description,
+    parameters: Schema.toCodecJson(action.input),
+    // `structuredContent` must be an object, so successes are wrapped as { value }.
+    success: Schema.toCodecJson(Schema.Struct({ value: action.success })),
+    failure: Schema.toCodecJson(Schema.Union(action.errors)),
+    failureMode: "return",
+  })
+    .annotate(Tool.Readonly, mcp.readOnly)
+    .annotate(Tool.Destructive, mcp.destructive);
 
 const erasedLayer = <R, EX, RX>(
   apps: ReadonlyArray<Implementation<Actions, R, EX, RX>>,
@@ -198,27 +62,60 @@ const erasedLayer = <R, EX, RX>(
     served([app.group], (action) => action.mcp !== false).map(({ actions }) => ({ app, actions })),
   );
 
+  const tools = serving.flatMap(({ app, actions }) =>
+    actions.flatMap((action) => {
+      if (action.mcp === false) return [];
+      const made = tool(action, action.mcp);
+      const root = Tool.getJsonSchemaFromSchema(made.parametersSchema);
+
+      // The native check rejects the same schemas, but without naming the action.
+      // A `$ref` root (recursive or identified schemas) is left to it.
+      if (root.$ref === undefined && root.type !== "object") {
+        throw new Error(
+          `${action.name}: MCP input must have an object root; omit input for no arguments`,
+        );
+      }
+
+      return [{ app, action, tool: made }];
+    }),
+  );
+
   // Tools are the only namespace this adapter owns.
   assertDistinct(
     "MCP tool",
-    serving.flatMap(({ actions }) =>
-      actions.flatMap((action) => (action.mcp === false ? [] : [action.mcp.name])),
-    ),
+    tools.map(({ tool }) => tool.name),
   );
 
-  return Implementation.register(serving, (bound) => {
-    const native = Layer.effectDiscard(
-      Effect.gen(function* () {
-        for (const app of bound) {
-          for (const error of app.group.schemaError?.errors ?? [])
-            assertObjectError(`Schema-error policy of group ${app.group.name}`, error);
-        }
+  const toolkit = Toolkit.make(...tools.map(({ tool }) => tool));
 
-        yield* Effect.forEach(
-          bound.flatMap((app) => app.actions.map((action) => [app, action] as const)),
-          // The policy is the group's own, as it is over HTTP.
-          ([app, action]) => registerTool(app, action, app.group.schemaError),
-          { discard: true },
+  return Implementation.register(serving, (bound) => {
+    const handlers = Object.fromEntries(
+      tools.map(({ app, action, tool }) => {
+        const implementation = bound.find((candidate) => candidate.group === app.group);
+
+        if (implementation === undefined)
+          throw new Error(`Missing implementation: ${app.group.name}`);
+        const handle = implementation.handle(action);
+
+        return [
+          tool.name,
+          (input: ErasedValue) => Effect.map(handle(input), (value) => ({ value })),
+        ];
+      }),
+    );
+
+    return Layer.effectDiscard(
+      Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+
+        // registerToolkit hands its build context to every handler, over the
+        // request context. Registered with only the server present, a startup
+        // copy of a request service cannot shadow the request's own. A service
+        // the request omits entirely is still found in the route layer's context;
+        // the types require the request to provide it.
+        yield* McpServer.registerToolkit(toolkit).pipe(
+          Effect.provide(toolkit.toLayer(handlers)),
+          Effect.setContext(Context.make(McpServer.McpServer, server)),
         );
       }),
     ).pipe(
@@ -232,24 +129,8 @@ const erasedLayer = <R, EX, RX>(
           allowedOrigins: options.allowedOrigins,
         }),
       ),
-      // Each endpoint owns its native tool registry and sessions; the handler
-      // build is acquired outside this subgraph and stays shared.
+      // Each endpoint owns its native tool registry and sessions.
       Layer.fresh,
-    );
-
-    // Build the native server with only the router so build-time application
-    // services cannot become request fallbacks.
-    return Layer.fromBuildMemo((memoMap, scope) =>
-      Effect.gen(function* () {
-        const router = registrationRouter(
-          yield* HttpRouter.HttpRouter,
-          yield* Effect.context<never>(),
-        );
-
-        return yield* Layer.buildWithMemoMap(native, memoMap, scope).pipe(
-          Effect.setContext(Context.make(HttpRouter.HttpRouter, router)),
-        );
-      }),
     );
   });
 };
@@ -257,6 +138,7 @@ const erasedLayer = <R, EX, RX>(
 /**
  * One Streamable HTTP MCP endpoint serving every MCP-enabled action of `apps`.
  * An endpoint is one route, so middleware provided to this layer covers all of its tools.
+ * Duplicate tool names and non-object input roots across `apps` fail here.
  */
 export function layer<const Apps extends ReadonlyArray<AnyImplementation>>(
   options: Options,

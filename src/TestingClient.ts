@@ -1,10 +1,13 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
+/** How `withMcpClient` connects the official client. */
 export interface McpClientOptions {
   /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
   readonly fetch: (request: Request) => Promise<Response>;
   readonly path: string;
+  /** `"modern"` (default) pins 2026-07-28; `"legacy"` negotiates a session. */
   readonly mode?: "legacy" | "modern";
+  /** Defaults to `http://localhost`. */
   readonly baseUrl?: string | URL;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }

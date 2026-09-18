@@ -3,8 +3,11 @@
     "target": "es2023",
     "module": "nodenext",
     "strict": true,
-    "skipLibCheck": true,
-    "types": []
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": false,
+    "types": [],
+    "lib": ["es2023", "esnext.disposable", "dom", "dom.iterable"]
   },
   "include": ["*.ts"]
 }

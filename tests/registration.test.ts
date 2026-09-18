@@ -1,7 +1,6 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
-import { HttpRouter } from "effect/unstable/http";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -170,11 +169,36 @@ describe("projection boundaries", () => {
     expect((await web.handler(post("/api/actions/fail", { which: "missing" }))).status).toBe(404);
     expect((await web.handler(post("/api/actions/fail", { which: "conflict" }))).status).toBe(409);
     expect(await (await mcp.handler(mcpCall("fail", { which: "conflict" }))).json()).toMatchObject({
-      result: { isError: true, structuredContent: Conflict.make({}) },
+      result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
   });
 
-  it("accepts a union of object errors for MCP", async () => {
+  it("reports a declared error as its encoding over MCP, message field included", async () => {
+    class Denied extends Schema.TaggedError<Denied>()("Denied", { message: Schema.String }) {}
+
+    const Fail = Action.make("fail", {
+      description: "Error with a message",
+      success: Schema.String,
+      errors: [Denied],
+    });
+
+    const mcp = makeTestMcp(
+      ActionGroup.make({ name: "test" }, Fail).implement({
+        fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
+      }),
+      Layer.empty,
+    );
+
+    onTestFinished(() => mcp.dispose());
+    expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: '{"_tag":"Denied","message":"Owner access required"}' }],
+      },
+    });
+  });
+
+  it("accepts a union of errors for MCP", async () => {
     const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
     const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
 
@@ -191,7 +215,7 @@ describe("projection boundaries", () => {
     const mcp = makeTestMcp(app, Layer.empty);
     onTestFinished(() => mcp.dispose());
     expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
-      result: { isError: true, structuredContent: Conflict.make({}) },
+      result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
   });
 
@@ -292,8 +316,8 @@ describe("projection boundaries", () => {
   });
 
   it.each([Schema.String, Schema.Struct({})])(
-    "rejects non-object MCP input during Layer construction, not action definition",
-    async (input) => {
+    "rejects non-object MCP input at ActionMcp.layer, not action definition",
+    (input) => {
       const Invalid = Action.make("invalid", {
         description: "Unusable MCP input",
         input,
@@ -304,17 +328,13 @@ describe("projection boundaries", () => {
         invalid: () => Effect.succeed("unused"),
       });
 
-      const layer = ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app).pipe(
-        Layer.provide(HttpRouter.layer),
-      );
-
-      await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(
+      expect(() => ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app)).toThrow(
         "invalid: MCP input must have an object root",
       );
     },
   );
 
-  it("rejects declared errors that do not encode to objects for MCP; HTTP still serves them", async () => {
+  it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
     const Scalar = Action.make("scalar", {
       description: "Scalar error",
       success: Schema.String,
@@ -325,18 +345,16 @@ describe("projection boundaries", () => {
       scalar: () => Effect.fail("failure"),
     });
 
-    const layer = ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app).pipe(
-      Layer.provide(HttpRouter.layer),
-    );
-
-    await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(
-      "scalar: MCP error must have an object root",
-    );
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
+    const mcp = makeTestMcp(app, Layer.empty);
+    onTestFinished(() => mcp.dispose());
     const response = await web.handler(post("/api/actions/scalar"));
     expect(response.status).toBe(500);
     expect(await response.json()).toBe("failure");
+    expect(await (await mcp.handler(mcpCall("scalar"))).json()).toMatchObject({
+      result: { isError: true, content: [{ type: "text", text: '"failure"' }] },
+    });
   });
 
   it("encodes output and optional input correctly through native MCP", async () => {
@@ -394,7 +412,8 @@ describe("projection boundaries", () => {
     const mcp = makeTestMcp(app, Layer.empty);
     onTestFinished(() => mcp.dispose());
 
-    // HttpApi renders a response-encoding failure as an empty 400 and a defect as an empty 500.
+    // HttpApi renders a response-encoding failure as an empty 400 and a defect as an
+    // empty 500; the native McpServer reports both as a generic isError tool result.
     for (const [name, status] of [
       ["broken", 400],
       ["boom", 500],
@@ -403,7 +422,8 @@ describe("projection boundaries", () => {
       expect(http.status).toBe(status);
       expect(await http.text()).toBe("");
       const reply = await (await mcp.handler(mcpCall(name))).text();
-      expect(reply).toContain('"code":-32603');
+      expect(reply).toContain('"isError":true');
+      expect(reply).toContain("internal server error");
       expect(reply).not.toContain("secret");
     }
   });

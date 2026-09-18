@@ -55,7 +55,8 @@ export const routes = Layer.mergeAll(
 
 Serve `routes` with Effect's `HttpRouter`. This creates `POST /api/actions/greet` and an
 MCP endpoint at `/mcp`. The HTTP response is `"Hello, Ada!"`; MCP returns
-`structuredContent: { value: "Hello, Ada!" }`.
+`structuredContent: { value: "Hello, Ada!" }`; a declared error is an `isError` result
+whose text is the same JSON encoding HTTP sends as the body.
 See [examples/server.ts](examples/server.ts) for Node server wiring and the
 [authenticated demo](examples/README.md) for a runnable application.
 
@@ -65,13 +66,16 @@ See [examples/server.ts](examples/server.ts) for Node server wiring and the
 - `errors` is a list of failure schemas, defaulting to none. Each schema retains
   its own `httpApiStatus` annotation.
 - A group's `errors` are added to every one of its actions, so a shared set, such as
-  authorization failures, is declared once. Its `schemaError` policy decides how both
-  transports answer failed decoding or encoding; see
+  authorization failures, is declared once. Its `schemaError` policy decides how HTTP
+  answers failed decoding or encoding; MCP keeps the native toolkit's answers. See
   [schema-error policies](docs/behavior.md#schema-error-policies).
 - Actions default to both transports; use `http: false` or `mcp: false` to opt out.
   An action exposed on neither is rejected.
-- MCP input must have an object-root JSON Schema; declared errors must encode to
-  objects. The MCP adapter checks this at Layer construction. HTTP allows scalars.
+- Action and group names match `[A-Za-z][A-Za-z0-9_-]*` and are not `then`, which
+  would make a client thenable.
+- MCP input must have an object-root JSON Schema; the MCP adapter checks this at Layer
+  construction. HTTP allows scalar input. Results and errors may be any shape: MCP wraps
+  results as `{ value }` and reports errors as text, the protocol's own error channel.
 - `mcp.name` overrides the tool name. `destructive` defaults to `!readOnly`.
 - Schemas must be service-free. Handlers may require services.
 - The group name is the OpenAPI tag and operation-ID prefix (`greetings.greet`).
@@ -168,7 +172,8 @@ dependency lifetimes, wire formats, and MCP protocol support.
 ## Scope
 
 HTTP means JSON POST endpoints, not Effect's RPC wire protocol. Both adapters use
-Effect's servers; there is no MCP SDK runtime dependency. Actions are unary:
+Effect's servers: `HttpApi` and one `McpServer` `Tool` per action; there is no MCP SDK
+runtime dependency. Actions are unary:
 no streaming, uploads, prompts, resources, or retries.
 
 Authentication and authorization belong to the application. Tool discovery is
@@ -190,25 +195,25 @@ vp run example
 
 `vp run dev` watches the library build. `vp check` also verifies the compile-time
 assertions in `tests/types.spec.ts`. Tests cover both transports, official MCP clients,
-context isolation, schema-error policies, and cancellation.
+request-context handling, schema-error policies, and cancellation.
 
-`vp run build` emits ESM and declarations into `dist/`. The entry points are one subpath per
-module: `/Action`, `/ActionGroup`, `/ActionHttp`, `/ActionMcp`, `/Authentication`, `/Testing`,
+`vp run build` emits module-preserving ESM and declarations into `dist/`. The entry points
+are one subpath per module: `/Action`, `/ActionGroup`, `/ActionHttp`, `/ActionMcp`, `/Authentication`, `/Testing`,
 and `/TestingClient`. There is no package root, so a contracts-only or browser bundle never
 loads the MCP server or the optional client peer.
-`vp run test:package` builds and checks a tarball in an isolated consumer using the pinned
-Effect snapshot; it does not establish compatibility with the published peer.
+`vp run test:package` builds and checks a tarball in an isolated consumer with
+`skipLibCheck: false`, using the pinned Effect snapshot; it does not establish compatibility
+with the published peer.
 
 ## Authentication and OAuth discovery
 
-`Authentication.middleware(CurrentActor, { authenticate, errors, headers })` provides
-an application-defined context service for each request. `authenticate` is an Effect;
-`errors` lists its error schemas in precedence order. The first matching schema owns
-both serialization and `httpApiStatus` (500 when unannotated). If its encoder fails,
-the request fails as a server error; another schema is not tried. `headers(error)`
-can add a Bearer challenge.
-Responses use `Cache-Control: no-store`, including failures handled by enclosing middleware. Provide the returned middleware's `.layer` to
-HTTP and MCP route layers. See [examples/app.ts](examples/app.ts).
+`Authentication.middleware(CurrentActor, authenticate)` provides an application-defined
+context service for each request. `authenticate` is an Effect that succeeds with the
+identity or fails with the `HttpServerResponse` to send instead, so the host owns the
+status, body and any Bearer challenge: `HttpServerResponse.schemaJson(Unauthenticated)(error,
+{ status: 401, headers })`. Responses use `Cache-Control: no-store`, including failures handled
+by enclosing middleware. Provide the returned middleware's `.layer` to HTTP and MCP route
+layers. See [examples/app.ts](examples/app.ts).
 
 Authentication dependencies are request requirements, as with native `HttpRouter.middleware`.
 Use `.combine(...)` with middleware that provides them. Acquired resources stay alive
@@ -222,11 +227,11 @@ at `/.well-known/oauth-protected-resource` followed by the resource path and que
 matches that literal path and query for GET and HEAD; other requests reach the host router.
 Caching policy belongs to the host. `challenge()`
 returns the `WWW-Authenticate` value; pass `{ error: "invalid_token" }` or
-`{ error: "insufficient_scope", scope: "admin" }` where appropriate. Supported scopes
-are advertised in metadata; the challenge names only scopes needed for that request.
-The helper supports HTTPS URLs and loopback HTTP for development, with no credentials
-or fragment. Resource identifiers may include a query; authorization-server issuers may not.
-Your application owns login, consent, and token verification.
+`{ error: "insufficient_scope", scope: "admin" }` where appropriate. Parameter values are
+quoted and escaped, never rejected. Supported scopes are advertised in metadata; the
+challenge names only scopes needed for that request. The helper publishes what it is given:
+your deployment is responsible for these being valid OAuth URLs (HTTPS, or loopback HTTP in
+development), and your application owns login, consent, and token verification.
 
 ```ts
 const discovery = Authentication.protectedResource({
@@ -234,11 +239,20 @@ const discovery = Authentication.protectedResource({
   authorizationServers: ["https://auth.example.com"],
 });
 
-const authentication = Authentication.middleware(CurrentActor, {
-  authenticate,
-  errors: [Unauthenticated],
-  headers: () => ({ "www-authenticate": discovery.challenge({ error: "invalid_token" }) }),
-});
+// The response sent when authentication fails; the host owns status, body and challenge.
+const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated)(
+  new Unauthenticated({ message: "A bearer token is required." }),
+  { status: 401, headers: { "www-authenticate": discovery.challenge({ error: "invalid_token" }) } },
+).pipe(Effect.orDie);
+
+const authentication = Authentication.middleware(
+  CurrentActor,
+  Effect.gen(function* () {
+    const actor = yield* verifyToken; // Effect<Option<Actor>, never, HttpServerRequest>
+
+    return Option.isNone(actor) ? yield* Effect.flip(unauthenticated) : actor.value;
+  }),
+);
 
 const routes = Layer.mergeAll(
   discovery.layer,

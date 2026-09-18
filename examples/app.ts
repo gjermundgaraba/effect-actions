@@ -24,21 +24,22 @@ const authenticate = (request: HttpServerRequest.HttpServerRequest) => {
   return isActorToken(token) ? Option.some(actors[token]) : Option.none();
 };
 
-// Authentication owns error serialization and CurrentActor provision. The host
-// keeps its concrete Host/Origin policy at the HTTP boundary.
-const authentication = Authentication.middleware(CurrentActor, {
-  authenticate: Effect.gen(function* () {
+// The host renders its own 401; Authentication provides CurrentActor per request.
+const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated)(
+  new Unauthenticated({ message: "A demo bearer token is required." }),
+  { status: 401, headers: { "www-authenticate": "Bearer" } },
+).pipe(Effect.orDie);
+
+const authentication = Authentication.middleware(
+  CurrentActor,
+  Effect.gen(function* () {
     const actor = authenticate(yield* HttpServerRequest.HttpServerRequest);
 
-    if (Option.isNone(actor)) {
-      return yield* new Unauthenticated({ message: "A demo bearer token is required." });
-    }
+    if (Option.isNone(actor)) return yield* Effect.flip(unauthenticated);
 
     return actor.value;
   }),
-  errors: [Unauthenticated],
-  headers: () => ({ "www-authenticate": "Bearer" }),
-});
+);
 
 const requestPolicy = HttpRouter.middleware((httpEffect) =>
   Effect.gen(function* () {

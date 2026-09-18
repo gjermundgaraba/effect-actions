@@ -8,12 +8,22 @@ export interface Actions<
 > {
   readonly name: Name;
   readonly actions: A;
-  /** How both transports answer failed decoding or encoding; their native behavior without one. */
+  /** How HTTP answers failed decoding or encoding; native behavior without one. MCP is unaffected. */
   readonly schemaError: Action.SchemaErrorPolicy<PolicyErrors> | undefined;
 }
 
 /** The errors a group's policy may answer with, by lookup rather than a conditional type. */
 export type PolicyError<G extends Actions> = NonNullable<G["schemaError"]>["errors"][number];
+
+const validName = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/**
+ * Action and group names become path segments, OpenAPI identifiers and client
+ * method keys. `then` is refused because it would make a client thenable.
+ */
+export const assertName = (what: string, name: string): void => {
+  if (!validName.test(name) || name === "then") throw new Error(`Invalid ${what}: ${name}`);
+};
 
 /** Each namespace is checked by whoever owns it: a group, the routes, or the MCP tools. */
 export const assertDistinct = (what: string, names: ReadonlyArray<string>): void => {
@@ -35,6 +45,7 @@ export interface Served {
   readonly actions: ReadonlyArray<Action.Any>;
 }
 
+/** Project each group onto the actions `serves` accepts, dropping groups left empty. */
 export const served = (
   groups: ReadonlyArray<Actions>,
   serves: (action: Action.Any) => boolean,

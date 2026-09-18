@@ -17,77 +17,67 @@ const identity = Action.make("identity", {
   success: Schema.String,
 });
 
-describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
-  "context isolation: %s",
-  (transport) => {
-    it.each([false, true])(
-      "with a build-only actor; request actor present: %s",
-      async (present) => {
-        let executions = 0;
+// Both native builders hand their build context to handlers; each adapter registers
+// without it, so a startup copy never shadows the request's own service. Only HTTP
+// also refuses to fall back to it when the request omits the service: the MCP route
+// keeps its layer context, and the types require the request to provide the service.
+describe.each([
+  ["HTTP", [false, true]],
+  ["MCP", [true]],
+] as const)("%s never lets a build-only copy of a request service win", (transport, cases) => {
+  it.each(cases)("request actor present: %s", async (present) => {
+    let executions = 0;
 
-        const app = ActionGroup.make({ name: "test" }, identity).implement({
-          identity: () =>
-            Effect.gen(function* () {
-              const actor = yield* Actor;
-              yield* Effect.sync(() => executions++);
+    const app = ActionGroup.make({ name: "test" }, identity).implement({
+      identity: () => Effect.tap(Actor, () => Effect.sync(() => executions++)),
+    });
 
-              return actor;
-            }),
-        });
+    const routes =
+      transport === "HTTP"
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+        : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
 
-        const routes =
-          transport === "HTTP"
-            ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
-            : ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app);
-
-        const web = HttpRouter.toWebHandler(
-          routes.pipe(
-            Layer.provide(Layer.succeed(Actor, "startup-admin")),
-            Layer.provide(HttpServer.layerServices),
-          ),
-          { disableLogger: true },
-        );
-
-        const fetch = (request: Request) => {
-          if (present) return web.handler(request, Context.make(Actor, "request-reader"));
-
-          // @ts-expect-error Deliberately misconfigured host: runtime must not inherit the build-only actor.
-          return web.handler(request, Context.empty());
-        };
-
-        onTestFinished(() => web.dispose());
-
-        if (transport === "HTTP") {
-          const response = await fetch(post("/api/actions/identity"));
-          expect(response.status).toBe(present ? 200 : 500);
-          expect(await response.text()).toBe(present ? '"request-reader"' : "");
-        } else {
-          await withMcpClient(
-            {
-              fetch: fetch,
-              mode: transport === "modern MCP" ? "modern" : "legacy",
-              path: testMcpPath,
-            },
-            async (client) => {
-              const call = client.callTool({ name: "identity", arguments: {} });
-
-              if (present) {
-                expect((await call).structuredContent).toEqual({ value: "request-reader" });
-              } else {
-                await expect(call).rejects.toThrow("Internal error");
-              }
-            },
-          );
-        }
-
-        expect(executions).toBe(present ? 1 : 0);
-      },
+    const web = HttpRouter.toWebHandler(
+      routes.pipe(
+        Layer.provide(Layer.succeed(Actor, "startup-admin")),
+        Layer.provide(HttpServer.layerServices),
+      ),
+      { disableLogger: true },
     );
-  },
-);
+
+    onTestFinished(() => web.dispose());
+
+    const request =
+      transport === "HTTP"
+        ? post("/api/actions/identity")
+        : mcpRequest({
+            url: testMcpUrl,
+            method: "tools/call",
+            params: { name: "identity", arguments: {} },
+          });
+
+    const response = present
+      ? await web.handler(request, Context.make(Actor, "request-reader"))
+      : // @ts-expect-error Deliberately misconfigured host: the request service is absent at runtime.
+        await web.handler(request, Context.empty());
+
+    const body = await response.text();
+
+    if (transport === "HTTP") {
+      expect(response.status).toBe(present ? 200 : 500);
+      expect(body).toBe(present ? '"request-reader"' : "");
+    } else {
+      expect(response.status).toBe(200);
+      expect(body).toContain(present ? '"value":"request-reader"' : '"isError":true');
+    }
+
+    expect(body).not.toContain("startup-admin");
+    expect(executions).toBe(present ? 1 : 0);
+  });
+});
 
 it.each(["legacy", "modern"] as const)(
-  "shares one scoped handler build across transports: %s",
+  "each adapter layer acquires and releases its own handler build: %s",
   async (era) => {
     let acquired = 0;
     let finalized = 0;
@@ -112,8 +102,8 @@ it.each(["legacy", "modern"] as const)(
       ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app),
     ).pipe(Layer.provide(Layer.succeed(Actor, "build")), Layer.provide(HttpServer.layerServices));
 
-    // Reuse the same implementation in separate runtimes: memoization must not
-    // become process-global, and each acquisition must have its own finalizer.
+    // Two adapters serve the implementation, so each runtime acquires twice.
+    // Reusing the implementation across runtimes must not share state either.
     for (let runtime = 1; runtime <= 2; runtime++) {
       const web = HttpRouter.toWebHandler(routes, { disableLogger: true });
 
@@ -136,13 +126,13 @@ it.each(["legacy", "modern"] as const)(
             ).toEqual({ value: "build/mcp" });
           },
         );
-        expect(acquired).toBe(runtime);
-        expect(finalized).toBe(runtime - 1);
+        expect(acquired).toBe(2 * runtime);
+        expect(finalized).toBe(2 * (runtime - 1));
       } finally {
         await web.dispose();
       }
 
-      expect(finalized).toBe(runtime);
+      expect(finalized).toBe(2 * runtime);
     }
   },
 );
@@ -173,38 +163,6 @@ it.each(["legacy", "modern"] as const)(
     }
   },
 );
-
-it("releases scoped handler acquisition when native registration fails", async () => {
-  let acquired = 0;
-  let finalized = 0;
-
-  const invalid = Action.make("invalid", {
-    description: "Non-object MCP input",
-    input: Schema.String,
-    success: Schema.String,
-  });
-
-  const app = ActionGroup.make({ name: "test" }, invalid).implement(
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        acquired++;
-
-        return { invalid: Effect.succeed };
-      }),
-      () => Effect.sync(() => finalized++),
-    ),
-  );
-
-  const layer = ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app).pipe(
-    Layer.provide(HttpRouter.layer),
-  );
-
-  await expect(Effect.runPromise(Layer.build(layer).pipe(Effect.scoped))).rejects.toThrow(
-    "MCP input must have an object root",
-  );
-  expect(acquired).toBe(1);
-  expect(finalized).toBe(1);
-});
 
 describe.each(["HTTP", "legacy MCP", "modern MCP"] as const)(
   "request logging and tracing: %s",

@@ -184,23 +184,6 @@ it("propagates interruption to the native fetch signal", async () => {
   expect(aborted).toBe(true);
 });
 
-it("rejects a flattened then method rather than hanging Promise resolution", async () => {
-  const group = ActionGroup.make(
-    { name: "promises" },
-    Action.make("then", {
-      description: "Valid action, but unsafe as a direct client method",
-      success: Schema.String,
-    }),
-  );
-
-  const thenable = ActionHttp.make({ apiPath: "/rpc" }, group);
-
-  await expect(
-    Effect.runPromise(thenable.client().pipe(Effect.provide(FetchHttpClient.layer))),
-  ).rejects.toThrow('Action "then" requires the native grouped HttpApiClient');
-  expect(thenable.api.groups.promises.endpoints.then).toBeDefined();
-});
-
 it("preserves null and explicitly undefined-valued input codecs", async () => {
   const optional = Schema.Struct({ value: Schema.optional(Schema.Number) });
 

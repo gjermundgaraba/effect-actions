@@ -50,11 +50,13 @@ export type McpRequestValue =
   | ReadonlyArray<McpRequestValue>
   | { readonly [key: string]: McpRequestValue };
 
+/** JSON-RPC `params`; `_meta` is merged shallowly over the defaults `mcpRequest` supplies. */
 export interface McpRequestParams {
   readonly _meta?: { readonly [key: string]: McpRequestValue };
   readonly [key: string]: McpRequestValue;
 }
 
+/** Build one stateless 2026-07-28 JSON-RPC request, with client metadata defaulted. */
 export const mcpRequest = ({
   url,
   method,

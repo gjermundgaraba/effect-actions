@@ -339,9 +339,15 @@ it("adds a group's errors to every action, on both transports", async () => {
     }),
   );
 
-  expect(await tool.json()).toMatchObject({
-    result: { isError: true, structuredContent: { reason: "closed" } },
+  // A TaggedError without a message is shown as its encoding.
+  const reply: unknown = await tool.json();
+  expect(reply).toMatchObject({
+    result: {
+      isError: true,
+      content: [{ type: "text", text: '{"_tag":"Refused","reason":"closed"}' }],
+    },
   });
+  expect(reply).not.toHaveProperty("result.structuredContent");
   expect(OpenApi.fromApi(bound.api).paths["/api/list"]?.post?.responses).toHaveProperty("403");
 });
 

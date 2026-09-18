@@ -1,10 +1,13 @@
 import { Effect, type Scope } from "effect";
-import { type Actions as Contract, assertDistinct } from "./internal/actions.js";
+import { type Actions as Contract, assertDistinct, assertName } from "./internal/actions.js";
 import { Implementation } from "./internal/implementation.js";
 import type * as Action from "./Action.js";
 
+/** The bound handlers of one group; opaque, see `Group.implement`. */
 export type { Implementation } from "./internal/implementation.js";
 
+// `any` is a wildcard here: each handler's own requirements are collected by
+// `HandlersContext`; `unknown` would reject every handler that requires a service.
 type HandlersFrom<Actions extends ReadonlyArray<Action.Any>> = {
   readonly [A in Actions[number] as A["name"]]: Action.Handler<A, any>;
 };
@@ -31,6 +34,7 @@ type WithErrors<
     : never;
 };
 
+/** What `make` needs to define a group. */
 export interface Options<
   Name extends string,
   Errors extends ReadonlyArray<Action.Codec>,
@@ -40,10 +44,11 @@ export interface Options<
   readonly name: Name;
   /** Failures every action of the group may have, added to each action's own. */
   readonly errors?: Errors;
-  /** How both transports answer failed decoding or encoding of these actions. */
+  /** How HTTP answers failed decoding or encoding of these actions; MCP keeps its native answers. */
   readonly schemaError?: Action.SchemaErrorPolicy<PolicyErrors>;
 }
 
+/** A named set of action contracts: what adapters serve and what `implement` binds. */
 export interface Group<
   Name extends string,
   Actions extends ReadonlyArray<Action.Any>,
@@ -51,8 +56,9 @@ export interface Group<
 > extends Contract<Name, Actions, PolicyErrors> {
   /**
    * Bind every handler at once. Pass an Effect to resolve build-time services
-   * once (`const users = yield* Users`); services yielded inside a handler are
-   * request-scoped instead. Scoped acquisition lasts for the adapter runtime.
+   * (`const users = yield* Users`); services yielded inside a handler are
+   * request-scoped instead. The Effect runs once per adapter layer that serves
+   * this implementation, and scoped acquisition lasts as long as that layer.
    */
   readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
     build: H | Effect.Effect<H, EX, RX>,
@@ -66,9 +72,10 @@ export interface Group<
   >;
 }
 
+/** Any group, with its actions erased. */
 export type Any = Group<string, ReadonlyArray<Action.Any>>;
 
-/** Duplicate action and MCP names fail at definition time. */
+/** Define a group. Invalid or duplicate action and MCP names fail here, at definition time. */
 export function make<
   const Name extends string,
   const Actions extends ReadonlyArray<Action.Any>,
@@ -84,7 +91,7 @@ export function make(
 ): Any {
   const { name } = options;
 
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid action group name: ${name}`);
+  assertName("action group name", name);
 
   const actions = declared.map((action) => ({
     ...action,

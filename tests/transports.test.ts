@@ -87,14 +87,16 @@ describe("one implementation, both transports", () => {
     });
   });
 
-  it("preserves structured domain errors, with transport-specific status", async () => {
+  it("serves domain errors structured over HTTP and as text over MCP", async () => {
     const http = await app.handler(request("/api/actions/getUser", "alice", { id: "missing" }));
     expect(http.status).toBe(404);
     const body = await http.json();
     expect(body).toEqual(Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" })));
     const reply = await tool("get_user", { id: "missing" });
     expect(reply.isError).toBe(true);
-    expect(reply.structuredContent).toEqual(body);
+    expect(reply.structuredContent).toBeUndefined();
+    // UserNotFound has no message field, so the text is its encoding.
+    expect(reply.content).toEqual([{ type: "text", text: JSON.stringify(body) }]);
   });
 
   it("rejects malformed input with each protocol's native error", async () => {
@@ -114,16 +116,19 @@ describe("one implementation, both transports", () => {
     expect(reply.tools.map((tool) => tool.name)).toContain("rename_user");
     const denied = await tool("rename_user", { id: "1", name: "unauthorized" }, "reader");
     expect(denied.isError).toBe(true);
-    expect(denied.structuredContent).toEqual(
-      Schema.encodeSync(Forbidden)(new Forbidden({ permission: "users:write" })),
+
+    const forbiddenBody = Schema.encodeSync(Forbidden)(
+      new Forbidden({ permission: "users:write" }),
     );
+
+    expect(denied.content).toEqual([{ type: "text", text: JSON.stringify(forbiddenBody) }]);
 
     const forbidden = await app.handler(
       request("/api/actions/renameUser", "reader", { id: "1", name: "unauthorized" }),
     );
 
     expect(forbidden.status).toBe(403);
-    expect(await forbidden.json()).toEqual(denied.structuredContent);
+    expect(await forbidden.json()).toEqual(forbiddenBody);
     expect(
       await (await app.handler(request("/api/actions/getUser", "alice", { id: "1" }))).json(),
     ).toEqual({
@@ -328,9 +333,9 @@ describe("one implementation, both transports", () => {
           expect(result.structuredContent).toEqual({ value: 14 });
           const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
           expect(failure.isError).toBe(true);
-          expect(failure.structuredContent).toEqual(
-            Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" })),
-          );
+          expect(failure.content).toEqual([
+            { type: "text", text: '{"_tag":"UserNotFound","id":"missing"}' },
+          ]);
           expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
         },
       );

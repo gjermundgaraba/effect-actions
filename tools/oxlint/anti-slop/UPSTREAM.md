@@ -7,6 +7,13 @@
   - generic plugin: `tools/oxlint/anti-slop/index.ts`
   - Effect plugin: `tools/oxlint/anti-slop/effect/index.ts`
 
+## Verification
+
+These files are excluded from this repository's own lint and format runs and have no
+local tests. The evidence that the rules work is upstream's test suite at the pinned
+commit; a bump of `Source commit` should re-run it there. Locally, `vp check` exercising
+the rules against `src/` and `tests/` is the only smoke test.
+
 ## Intentional deviations
 
 - Plugin authoring imports use `vite-plus/lint/plugins` instead of `@oxlint/plugins`.

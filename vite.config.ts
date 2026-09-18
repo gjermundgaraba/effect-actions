@@ -17,6 +17,9 @@ export default defineConfig({
       Testing: "src/Testing.ts",
       TestingClient: "src/TestingClient.ts",
     },
+    // Preserve module boundaries for JS and declarations. Bundled declarations
+    // currently emit a dangling __exportAll export with this toolchain.
+    unbundle: true,
     deps: { resolveDepSubpath: true },
     dts: {
       generator: "tsgo",

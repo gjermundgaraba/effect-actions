@@ -50,9 +50,12 @@ try {
     "add",
     "--ignore-scripts",
     `@modelcontextprotocol/client@${manifest.devDependencies["@modelcontextprotocol/client"]}`,
+    `@types/node@${manifest.devDependencies["@types/node"]}`,
   ]);
   cpSync(join(root, "scripts/package-testing-consumer.ts"), join(consumer, "testing.ts"));
-  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
+  // The optional official client exposes Buffer in its declarations. Keep Node
+  // types out of the core/browser consumer above, and enable them only here.
+  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc"), "--types", "node"]);
   run(process.execPath, ["testing.js"]);
 } finally {
   rmSync(consumer, { recursive: true, force: true });
