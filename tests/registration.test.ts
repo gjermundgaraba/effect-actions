@@ -17,7 +17,7 @@ const mcpCall = (name: string, args: Schema.Json = {}) =>
 
 it("forwards the configured MCP protocols", async () => {
   const web = HttpRouter.toWebHandler(
-    ActionMcp.layer({
+    ActionMcp.layerHttp({
       name: "configured",
       version: "0",
       path: "/mcp",
@@ -98,7 +98,7 @@ describe("projection boundaries", () => {
     expect(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api.groups).toEqual({});
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
-    expect((await web.handler(post("/api/actions/hidden"))).status).toBe(404);
+    expect((await web.handler(post("/api/actions/test/hidden"))).status).toBe(404);
   });
 
   it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
@@ -123,15 +123,15 @@ describe("projection boundaries", () => {
     const options = { apiPath: "/rpc" } as const;
     expect(
       Object.keys(OpenApi.fromApi(ActionHttp.make(options, app.group).api).paths ?? {}),
-    ).toEqual(["/rpc/echo"]);
+    ).toEqual(["/rpc/test/echo"]);
     const web = makeTestHttp(app, Layer.empty, options);
     onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    const response = await web.handler(post("/rpc/echo", "hello"));
+    const response = await web.handler(post("/rpc/test/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
-    expect((await web.handler(post("/rpc/hidden"))).status).toBe(404);
+    expect((await web.handler(post("/rpc/test/hidden"))).status).toBe(404);
     expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["hidden"]);
   });
 
@@ -152,12 +152,12 @@ describe("projection boundaries", () => {
 
       expect(
         OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api).paths?.[
-          "/api/actions/fail"
+          "/api/actions/test/fail"
         ]?.post?.responses,
       ).toHaveProperty(String(status ?? 500));
       const web = makeTestHttp(app, Layer.empty);
       onTestFinished(() => web.dispose());
-      const response = await web.handler(post("/api/actions/fail"));
+      const response = await web.handler(post("/api/actions/test/fail"));
       expect(response.status).toBe(status ?? 500);
       expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
     },
@@ -180,7 +180,7 @@ describe("projection boundaries", () => {
     });
 
     const responses = OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api)
-      .paths?.["/api/actions/fail"]?.post?.responses;
+      .paths?.["/api/actions/test/fail"]?.post?.responses;
 
     expect(responses).toHaveProperty("404");
     expect(responses).toHaveProperty("409");
@@ -189,8 +189,12 @@ describe("projection boundaries", () => {
     onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    expect((await web.handler(post("/api/actions/fail", { which: "missing" }))).status).toBe(404);
-    expect((await web.handler(post("/api/actions/fail", { which: "conflict" }))).status).toBe(409);
+    expect((await web.handler(post("/api/actions/test/fail", { which: "missing" }))).status).toBe(
+      404,
+    );
+    expect((await web.handler(post("/api/actions/test/fail", { which: "conflict" }))).status).toBe(
+      409,
+    );
     expect(await (await mcp.handler(mcpCall("fail", { which: "conflict" }))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
@@ -339,7 +343,7 @@ describe("projection boundaries", () => {
   });
 
   it.each([Schema.String, Schema.Struct({})])(
-    "rejects non-object MCP input at ActionMcp.layer, not action definition",
+    "rejects non-object MCP input at ActionMcp.layerHttp, not action definition",
     (input) => {
       const Invalid = Action.make("invalid", {
         description: "Unusable MCP input",
@@ -352,7 +356,7 @@ describe("projection boundaries", () => {
       });
 
       expect(() =>
-        ActionMcp.layer(
+        ActionMcp.layerHttp(
           { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
           app,
         ),
@@ -375,7 +379,7 @@ describe("projection boundaries", () => {
     onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    const response = await web.handler(post("/api/actions/scalar"));
+    const response = await web.handler(post("/api/actions/test/scalar"));
     expect(response.status).toBe(500);
     expect(await response.json()).toBe("failure");
     expect(await (await mcp.handler(mcpCall("scalar"))).json()).toMatchObject({
@@ -444,7 +448,7 @@ describe("projection boundaries", () => {
       ["broken", 400],
       ["boom", 500],
     ] as const) {
-      const http = await web.handler(post(`/api/actions/${name}`));
+      const http = await web.handler(post(`/api/actions/test/${name}`));
       expect(http.status).toBe(status);
       expect(await http.text()).toBe("");
       const reply = await (await mcp.handler(mcpCall(name))).text();
@@ -469,7 +473,7 @@ describe("projection boundaries", () => {
     onTestFinished(() => mcp.dispose());
     const tools = await listTools(mcp.handler);
     expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
-    const http = await web.handler(post("/api/actions/stamp", { d: iso }));
+    const http = await web.handler(post("/api/actions/test/stamp", { d: iso }));
     expect(http.status).toBe(200);
     expect(await http.json()).toEqual({ d: iso });
     expect(await (await mcp.handler(mcpCall("stamp", { d: iso }))).json()).toMatchObject({
@@ -492,10 +496,10 @@ describe("projection boundaries", () => {
     );
 
     onTestFinished(() => web.dispose());
-    const response = await web.handler(post("/api/actions/echo", { value: "21" }));
+    const response = await web.handler(post("/api/actions/test/echo", { value: "21" }));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("42");
-    expect((await web.handler(post("/api/actions/echo", { value: "nope" }))).status).toBe(400);
+    expect((await web.handler(post("/api/actions/test/echo", { value: "nope" }))).status).toBe(400);
   });
 
   it("passes HTTP cancellation to the running Effect and finalizes it", async () => {
@@ -515,7 +519,7 @@ describe("projection boundaries", () => {
     onTestFinished(() => web.dispose());
     const abort = new AbortController();
 
-    const request = new Request("http://localhost/api/actions/slow", {
+    const request = new Request("http://localhost/api/actions/test/slow", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",

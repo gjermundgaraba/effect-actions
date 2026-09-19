@@ -31,7 +31,7 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
   const routes =
     transport === "HTTP"
       ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
-      : ActionMcp.layer(
+      : ActionMcp.layerHttp(
           { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
           app,
         );
@@ -44,7 +44,7 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
 
   const request =
     transport === "HTTP"
-      ? post("/api/actions/identity")
+      ? post("/api/actions/test/identity")
       : mcpRequest({
           url: testMcpUrl,
           method: "tools/call",
@@ -85,7 +85,7 @@ it("each adapter layer acquires and releases its own handler build", async () =>
 
   const routes = Layer.mergeAll(
     ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app),
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
       app,
     ),
@@ -98,7 +98,7 @@ it("each adapter layer acquires and releases its own handler build", async () =>
 
     try {
       const response = await web.handler(
-        post("/api/actions/identity"),
+        post("/api/actions/test/identity"),
         Context.make(Actor, "http"),
       );
 
@@ -132,11 +132,11 @@ it("keeps same-contract implementations apart over MCP", async () => {
 
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "a", version: "0", path: "/a" },
         a,
       ),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "b", version: "0", path: "/b" },
         b,
       ),
@@ -182,7 +182,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     const routes =
       transport === "HTTP"
         ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
-        : ActionMcp.layer(
+        : ActionMcp.layerHttp(
             { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
             app,
           );
@@ -198,7 +198,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     onTestFinished(() => web.dispose());
 
     if (transport === "HTTP") {
-      await web.handler(post("/api/actions/identity"), context);
+      await web.handler(post("/api/actions/test/identity"), context);
     } else {
       await withMcpClient(
         {
@@ -241,7 +241,7 @@ it.each(["HTTP", "MCP"])(
     const routes =
       transport === "HTTP"
         ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
-        : ActionMcp.layer(
+        : ActionMcp.layerHttp(
             { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
             app,
           );
@@ -258,7 +258,7 @@ it.each(["HTTP", "MCP"])(
 
     const response = await web.handler(
       transport === "HTTP"
-        ? post("/api/actions/identity")
+        ? post("/api/actions/test/identity")
         : mcpRequest({
             method: "tools/call",
             params: { name: "identity", arguments: {} },

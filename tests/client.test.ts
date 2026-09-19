@@ -60,8 +60,8 @@ it("keeps the client, routes and document on one configuration", async () => {
   const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
   onTestFinished(() => web.dispose());
   const document = OpenApi.fromApi(Http.api);
-  expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
-  expect(document.paths).not.toHaveProperty("/rpc/hidden");
+  expect(document.paths?.["/rpc/numbers/double"]?.post?.responses).toHaveProperty("500");
+  expect(document.paths).not.toHaveProperty("/rpc/numbers/hidden");
   expect(Http.api.groups.numbers.endpoints.double).toBeDefined();
   await Effect.gen(function* () {
     const connection = {
@@ -105,7 +105,7 @@ it("keeps the client, routes and document on one configuration", async () => {
     Effect.runPromise,
   );
   expect(sent[0]).toEqual({
-    url: "http://localhost/rpc/double",
+    url: "http://localhost/rpc/numbers/double",
     body: { value: "21" },
     token: "Bearer test",
   });

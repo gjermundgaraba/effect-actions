@@ -248,7 +248,7 @@ describe("Authentication.middleware", () => {
       const routes =
         transport === "http"
           ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
-          : ActionMcp.layer(
+          : ActionMcp.layerHttp(
               {
                 protocols: [McpProtocol.v2026_07_28],
                 name: "scope-test",
@@ -270,7 +270,7 @@ describe("Authentication.middleware", () => {
 
       const response = await web.handler(
         transport === "http"
-          ? new Request("http://localhost/api/actions/identify", {
+          ? new Request("http://localhost/api/actions/test/identify", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: "{}",

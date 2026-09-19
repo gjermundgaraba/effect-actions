@@ -1,7 +1,7 @@
 {
   "name": "@gjermundgaraba/effect-actions",
   "version": "0.1.0-rc.1",
-  "description": "Define Effect action contracts once and expose them over HTTP and MCP.",
+  "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, catalogs, and CLIs.",
   "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
   "bugs": {
     "url": "https://github.com/gjermundgaraba/effect-actions/issues"
@@ -17,9 +17,13 @@
   "type": "module",
   "exports": {
     "./Action": "./dist/Action.mjs",
+    "./ActionCatalog": "./dist/ActionCatalog.mjs",
+    "./ActionCli": "./dist/ActionCli.mjs",
+    "./ActionCliClient": "./dist/ActionCliClient.mjs",
     "./ActionGroup": "./dist/ActionGroup.mjs",
     "./ActionHttp": "./dist/ActionHttp.mjs",
     "./ActionMcp": "./dist/ActionMcp.mjs",
+    "./ActionToolkit": "./dist/ActionToolkit.mjs",
     "./Authentication": "./dist/Authentication.mjs",
     "./Testing": "./dist/Testing.mjs",
     "./TestingClient": "./dist/TestingClient.mjs",

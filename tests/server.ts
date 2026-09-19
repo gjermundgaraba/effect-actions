@@ -4,6 +4,7 @@ import { HttpRouter, HttpServer } from "effect/unstable/http";
 import type * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import type { HandlersContext } from "../src/internal/implementation.js";
 import { layer } from "../examples/app.js";
 
 /** Test-local mount paths; production callers must pass their own. */
@@ -20,9 +21,9 @@ export const makeTestApp = () =>
   });
 
 /** Serve an implementation over HTTP; `request` supplies its per-request services. */
-export const makeTestHttp = <Group extends ActionGroup.Any, R, EX>(
-  app: ActionGroup.Implementation<Group, R, EX, never>,
-  request: Layer.Layer<NoInfer<R>>,
+export const makeTestHttp = <Group extends ActionGroup.Any, H, EX>(
+  app: ActionGroup.Implementation<Group, H, EX, never>,
+  request: Layer.Layer<NoInfer<HandlersContext<H>>>,
   options?: { readonly apiPath?: `/${string}` },
 ) =>
   HttpRouter.toWebHandler(
@@ -33,12 +34,12 @@ export const makeTestHttp = <Group extends ActionGroup.Any, R, EX>(
   );
 
 /** Serve an implementation over MCP; `request` supplies its per-request services. */
-export const makeTestMcp = <Group extends ActionGroup.Any, R, EX>(
-  app: ActionGroup.Implementation<Group, R, EX, never>,
-  request: Layer.Layer<NoInfer<R>>,
+export const makeTestMcp = <Group extends ActionGroup.Any, H, EX>(
+  app: ActionGroup.Implementation<Group, H, EX, never>,
+  request: Layer.Layer<NoInfer<HandlersContext<H>>>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
       app,
     ).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),

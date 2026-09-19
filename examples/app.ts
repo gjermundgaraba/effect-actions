@@ -81,7 +81,7 @@ const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 // covers all of its tools; handlers still authorize each tool themselves. Tools
 // that need no credentials at all therefore get their own endpoint, which
 // compiles because this implementation requires nothing per request.
-const publicMcp = ActionMcp.layer(
+const publicMcp = ActionMcp.layerHttp(
   {
     protocols: [McpProtocol.v2026_07_28],
     name: "effect-actions-public",
@@ -92,7 +92,7 @@ const publicMcp = ActionMcp.layer(
   PublicApp,
 );
 
-const mcp = ActionMcp.layer(
+const mcp = ActionMcp.layerHttp(
   {
     protocols: [McpProtocol.v2026_07_28],
     name: "effect-actions",

@@ -1,0 +1,302 @@
+import { expect, it, onTestFinished } from "vite-plus/test";
+import {
+  Cause,
+  Console,
+  Context,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Path,
+  Schema,
+  Stdio,
+  Terminal,
+} from "effect";
+import { Argument, Command } from "effect/unstable/cli";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+} from "effect/unstable/http";
+import type { HttpApiError } from "effect/unstable/httpapi";
+import * as Action from "../src/Action.js";
+import * as ActionCliClient from "../src/ActionCliClient.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+
+class Domain extends Schema.TaggedError<Domain>()(
+  "Domain",
+  { message: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
+class Policy extends Schema.TaggedError<Policy>()(
+  "Policy",
+  { kind: Schema.String },
+  { httpApiStatus: 500 },
+) {}
+
+const Remote = Action.make("remote", {
+  description: "Doubles an encoded finite number",
+  input: Schema.Struct({ value: Schema.FiniteFromString }),
+  success: Schema.FiniteFromString,
+  errors: [Domain],
+});
+
+const Hidden = Action.make("hidden", {
+  description: "Not HTTP",
+  success: Schema.String,
+  http: false,
+});
+
+const RemoteGroup = ActionGroup.make(
+  {
+    name: "remote",
+    schemaError: {
+      errors: [Policy],
+      map: (failure: HttpApiError.HttpApiSchemaError) => new Policy({ kind: failure.kind }),
+    },
+  },
+  Remote,
+  Hidden,
+);
+
+const Http = ActionHttp.make({ apiPath: "/api" }, RemoteGroup);
+
+const decodedInputs: number[] = [];
+
+const app = RemoteGroup.implement({
+  remote: ({ value }) =>
+    Effect.andThen(
+      Effect.sync(() => decodedInputs.push(value)),
+      () =>
+        value === 0
+          ? Effect.fail(new Domain({ message: "zero" }))
+          : Effect.succeed(value === 13 ? Infinity : value * 2),
+    ),
+  hidden: () => Effect.succeed("not mounted"),
+});
+
+const cliServices = Layer.mergeAll(
+  FileSystem.layerNoop({}),
+  Path.layer,
+  Stdio.layerTest({}),
+  Layer.succeed(
+    Terminal.Terminal,
+    Terminal.make({
+      columns: Effect.succeed(80),
+      rows: Effect.succeed(24),
+      readInput: Effect.die("unused"),
+      readLine: Effect.die("unused"),
+      display: () => Effect.void,
+    }),
+  ),
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => Effect.die("unused")),
+  ),
+);
+
+it("projects grouped commands through the native HTTP client without a local fallback", async () => {
+  const web = HttpRouter.toWebHandler(
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
+  const output: string[] = [];
+  decodedInputs.length = 0;
+
+  const command = ActionCliClient.group(Http, "remote", {
+    connection: {
+      baseUrl: "http://localhost",
+      transformClient: (client) =>
+        client.pipe(
+          HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer host")),
+        ),
+    },
+  });
+
+  const fetchLayer = FetchHttpClient.layer.pipe(
+    Layer.provide(
+      Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
+        const request = new Request(input, init);
+        requests.push({
+          url: request.url,
+          authorization: request.headers.get("authorization"),
+          body: await request.clone().json(),
+        });
+
+        return web.handler(request, Context.empty());
+      }),
+    ),
+  );
+
+  const capturedConsole = {
+    assert: console.assert.bind(console),
+    clear: console.clear.bind(console),
+    count: console.count.bind(console),
+    countReset: console.countReset.bind(console),
+    debug: console.debug.bind(console),
+    dir: console.dir.bind(console),
+    dirxml: console.dirxml.bind(console),
+    error: console.error.bind(console),
+    group: console.group.bind(console),
+    groupCollapsed: console.groupCollapsed.bind(console),
+    groupEnd: console.groupEnd.bind(console),
+    info: console.info.bind(console),
+    log: (message: string) => output.push(message),
+    table: console.table.bind(console),
+    time: console.time.bind(console),
+    timeEnd: console.timeEnd.bind(console),
+    timeLog: console.timeLog.bind(console),
+    trace: console.trace.bind(console),
+    warn: console.warn.bind(console),
+  } satisfies Console.Console;
+
+  await Command.runWith(command, { version: "0" })(["remote", "--input", '{"value":"21"}']).pipe(
+    Effect.provide(fetchLayer),
+    Effect.provide(cliServices),
+    Effect.provideService(Console.Console, capturedConsole),
+    Effect.runPromise,
+  );
+
+  expect(requests).toEqual([
+    {
+      url: "http://localhost/api/remote/remote",
+      authorization: "Bearer host",
+      body: { value: "21" },
+    },
+  ]);
+  // The handler sees the decoded number exactly once; CLI and HTTP emit canonical JSON.
+  expect(decodedInputs).toEqual([21]);
+  expect(output).toEqual(['"42"']);
+
+  // A direct HTTP request proves the HTTP-disabled action was never mounted.
+  expect(
+    (
+      await web.handler(
+        new Request("http://localhost/api/remote/hidden", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+        Context.empty(),
+      )
+    ).status,
+  ).toBe(404);
+
+  // Runtime selectors are guarded even when values come from untyped callers.
+  // SAFETY: runtime guards must reject selector strings supplied outside TypeScript.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Intentional untyped selector simulation.
+  const unknownGroup = "missing" as "remote";
+  // SAFETY: runtime guards must reject selector strings supplied outside TypeScript.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Intentional untyped selector simulation.
+  const unknownAction = "missing" as "remote";
+
+  expect(() => ActionCliClient.command(Http, unknownGroup, "remote")).toThrow(
+    'Unknown HTTP group "missing"',
+  );
+  expect(() => ActionCliClient.command(Http, "remote", unknownAction)).toThrow(
+    'Unknown HTTP action "remote.missing"',
+  );
+});
+
+it("propagates domain and native schema-policy failures through Command.runWith", async () => {
+  const web = HttpRouter.toWebHandler(
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const fetchLayer = FetchHttpClient.layer.pipe(
+    Layer.provide(
+      Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
+        web.handler(
+          new Request(
+            `http://localhost${new URL(input instanceof Request ? input.url : input).pathname}`,
+            init,
+          ),
+          Context.empty(),
+        ),
+      ),
+    ),
+  );
+
+  const command = ActionCliClient.command(Http, "remote", "remote", {
+    parameters: { value: Argument.String("value") },
+    input: ({ value }) => ({ value }),
+    connection: { baseUrl: "http://localhost" },
+  });
+
+  const run = (value: string) =>
+    Command.runWith(command, { version: "0" })([value]).pipe(
+      Effect.provide(fetchLayer),
+      Effect.provide(cliServices),
+      Effect.exit,
+      Effect.runPromise,
+    );
+
+  const domain = await run("0");
+  expect(Exit.isFailure(domain)).toBe(true);
+
+  if (Exit.isFailure(domain)) {
+    const reason = domain.cause.reasons.at(0);
+
+    if (reason === undefined) throw new Error("Expected a domain failure reason");
+    expect(Cause.isFailReason(reason)).toBe(true);
+
+    if (Cause.isFailReason(reason)) expect(reason.error).toEqual(new Domain({ message: "zero" }));
+  }
+
+  const policy = await run("13");
+  expect(Exit.isFailure(policy)).toBe(true);
+
+  if (Exit.isFailure(policy)) {
+    const reason = policy.cause.reasons.at(0);
+
+    if (reason === undefined) throw new Error("Expected a policy failure reason");
+    expect(Cause.isFailReason(reason)).toBe(true);
+
+    if (Cause.isFailReason(reason)) expect(reason.error).toEqual(new Policy({ kind: "Body" }));
+  }
+
+  let transportAttempts = 0;
+
+  const unavailableLayer = FetchHttpClient.layer.pipe(
+    Layer.provide(
+      Layer.succeed(FetchHttpClient.Fetch, async () => {
+        transportAttempts++;
+        throw new Error("offline");
+      }),
+    ),
+  );
+
+  const unavailable = await Command.runWith(command, { version: "0" })(["21"]).pipe(
+    Effect.provide(unavailableLayer),
+    Effect.provide(cliServices),
+    Effect.exit,
+    Effect.runPromise,
+  );
+
+  expect(Exit.isFailure(unavailable)).toBe(true);
+
+  if (Exit.isFailure(unavailable)) {
+    const reason = unavailable.cause.reasons.at(0);
+
+    if (reason === undefined) throw new Error("Expected a client transport failure");
+    expect(Cause.isFailReason(reason)).toBe(true);
+
+    if (Cause.isFailReason(reason))
+      expect(HttpClientError.isHttpClientError(reason.error)).toBe(true);
+  }
+
+  expect(transportAttempts).toBe(1);
+});

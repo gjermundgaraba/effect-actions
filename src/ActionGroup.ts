@@ -1,22 +1,22 @@
 import { Effect, type Scope } from "effect";
-import { type Actions as Contract, assertDistinct, assertName } from "./internal/actions.js";
+import {
+  type Actions as Contract,
+  assertDistinct,
+  assertName,
+  type SchemaErrorPolicy,
+} from "./internal/actions.js";
 import { Implementation } from "./internal/implementation.js";
 import type * as Action from "./Action.js";
 
 /** The bound handlers of one group; opaque, see `Group.implement`. */
 export type { Implementation } from "./internal/implementation.js";
 
-// `any` is a wildcard here: each handler's own requirements are collected by
-// `HandlersContext`; `unknown` would reject every handler that requires a service.
+/** Native HTTP schema-error policy, owned by a group rather than an action. */
+export type { SchemaErrorPolicy } from "./internal/actions.js";
+
 type HandlersFrom<Actions extends ReadonlyArray<Action.Any>> = {
   readonly [A in Actions[number] as A["name"]]: Action.Handler<A, any>;
 };
-
-type HandlersContext<H> = {
-  [K in keyof H]: H[K] extends (input: never) => Effect.Effect<infer _A, infer _E, infer R>
-    ? R
-    : never;
-}[keyof H];
 
 /** Group-level errors join each action's own, so a shared set is declared once. */
 type WithErrors<
@@ -28,9 +28,10 @@ type WithErrors<
     infer Input,
     infer Output,
     infer Own,
-    infer Http
+    infer Http,
+    infer Mcp
   >
-    ? Action.Action<Name, Input, Output, readonly [...Own, ...Errors], Http>
+    ? Action.Action<Name, Input, Output, readonly [...Own, ...Errors], Http, Mcp>
     : never;
 };
 
@@ -45,7 +46,7 @@ export interface Options<
   /** Failures every action of the group may have, added to each action's own. */
   readonly errors?: Errors;
   /** How HTTP answers failed decoding or encoding of these actions; MCP keeps its native answers. */
-  readonly schemaError?: Action.SchemaErrorPolicy<PolicyErrors>;
+  readonly schemaError?: SchemaErrorPolicy<PolicyErrors>;
 }
 
 /** A named set of action contracts: what adapters serve and what `implement` binds. */
@@ -54,25 +55,14 @@ export interface Group<
   Actions extends ReadonlyArray<Action.Any>,
   PolicyErrors extends ReadonlyArray<Action.Codec> = ReadonlyArray<Action.Codec>,
 > extends Contract<Name, Actions, PolicyErrors> {
-  /**
-   * Bind every handler at once. Pass an Effect to resolve build-time services
-   * (`const users = yield* Users`); services yielded inside a handler are
-   * request-scoped instead. Use distinct tags for these lifetimes; never provide
-   * request identity tags at startup. Adapters retain native context semantics.
-   * The Effect runs once per adapter layer that serves
-   * this implementation, and scoped acquisition lasts as long as that layer.
-   */
+  /** Bind every handler at once, resolving build-time services once per adapter layer. */
   readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
-    // `Scope` is named beside `RX`, so a scoped build infers `RX` without it: the
-    // adapter layer's scope hosts the build, and is not a requirement of its own.
-    build: H | Effect.Effect<H, EX, RX | Scope.Scope>,
-    // NoInfer: called inline as an adapter argument, that parameter's `any`
-    // must not flow back into `EX`/`RX`.
+    build: H | Effect.Effect<H, EX, RX>,
   ) => Implementation<
     Group<Name, Actions, PolicyErrors>,
-    HandlersContext<H>,
+    H,
     NoInfer<EX>,
-    NoInfer<RX>
+    NoInfer<Exclude<RX, Scope.Scope>>
   >;
 }
 
@@ -94,7 +84,6 @@ export function make(
   ...declared: ReadonlyArray<Action.Any>
 ): Any {
   const { name } = options;
-
   assertName("action group name", name);
 
   const actions = declared.map((action) => ({
@@ -116,13 +105,19 @@ export function make(
     actions,
     schemaError: options.schemaError,
     implement: <H extends HandlersFrom<ReadonlyArray<Action.Any>>, EX = never, RX = never>(
-      build: H | Effect.Effect<H, EX, RX | Scope.Scope>,
+      build: H | Effect.Effect<H, EX, RX>,
     ) => {
-      const built: Effect.Effect<H, EX, RX | Scope.Scope> = Effect.isEffect(build)
+      const built: Effect.Effect<H, EX, RX> = Effect.isEffect(build)
         ? build
         : Effect.succeed(build);
 
-      return Implementation.make<Any, HandlersContext<H>, EX, RX>(group, built);
+      return Implementation.make<Any, H, EX, Exclude<RX, Scope.Scope>>(
+        group,
+        // SAFETY: an adapter always acquires `build` within its own scope, so Scope is
+        // internal to that acquisition and not an external BuildContext requirement.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Removes only the adapter-owned Scope from the public environment.
+        built as Effect.Effect<H, EX, Exclude<RX, Scope.Scope> | Scope.Scope>,
+      );
     },
   };
 

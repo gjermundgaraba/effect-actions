@@ -47,7 +47,7 @@ const serve = () => {
     Layer.mergeAll(
       Http.layer(UsersApp),
       Http.layer(BillingApp),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         UsersApp,
         BillingApp,
@@ -78,9 +78,9 @@ it("serves several groups through one native grouped client and one document", a
   expect(result).toEqual(["ada@acme", 42]);
 
   const document = OpenApi.fromApi(Http.api);
-  expect(Object.keys(document.paths)).toEqual(["/api/whoAmI", "/api/invoice"]);
-  expect(document.paths["/api/whoAmI"]?.post?.operationId).toBe("users.whoAmI");
-  expect(document.paths["/api/invoice"]?.post?.tags).toEqual(["billing"]);
+  expect(Object.keys(document.paths)).toEqual(["/api/users/whoAmI", "/api/billing/invoice"]);
+  expect(document.paths["/api/users/whoAmI"]?.post?.operationId).toBe("users.whoAmI");
+  expect(document.paths["/api/billing/invoice"]?.post?.tags).toEqual(["billing"]);
 });
 
 it("keeps every group when a host combines separately mounted APIs", () => {
@@ -89,8 +89,8 @@ it("keeps every group when a host combines separately mounted APIs", () => {
     .addHttpApi(ActionHttp.make({ apiPath: "/admin" }, Billing).api);
 
   expect(Object.keys(OpenApi.fromApi(combined).paths)).toEqual([
-    "/public/whoAmI",
-    "/admin/invoice",
+    "/public/users/whoAmI",
+    "/admin/billing/invoice",
   ]);
 });
 
@@ -162,7 +162,31 @@ it("never dispatches to a handler its own group did not declare", async () => {
     ),
   );
 
-  expect(await (await handler(post("/api/alpha"))).json()).toBe("right");
+  expect(await (await handler(post("/api/a/alpha"))).json()).toBe("right");
+});
+
+it("namespaces equal HTTP action names by group", async () => {
+  const left = ActionGroup.make(
+    { name: "left" },
+    Action.make("echo", { description: "Left", success: Schema.String }),
+  );
+
+  const right = ActionGroup.make(
+    { name: "right" },
+    Action.make("echo", { description: "Right", success: Schema.String }),
+  );
+
+  const http = ActionHttp.make({ apiPath: "/api" }, left, right);
+
+  const handler = handlerOf(
+    http.layer(
+      left.implement({ echo: () => Effect.succeed("left") }),
+      right.implement({ echo: () => Effect.succeed("right") }),
+    ),
+  );
+
+  expect(await (await handler(post("/api/left/echo"))).json()).toBe("left");
+  expect(await (await handler(post("/api/right/echo"))).json()).toBe("right");
 });
 
 it("mounts only implementations of the groups it was made with", () => {
@@ -213,7 +237,7 @@ it("acquires only the implementations a transport serves", async () => {
   for (const [routes, expected] of [
     [Layer.mergeAll(bound.layer(mcpOnly), bound.layer(httpOnly)), "httpOnly"],
     [
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         mcpOnly,
         httpOnly,
@@ -227,7 +251,7 @@ it("acquires only the implementations a transport serves", async () => {
       disableLogger: true,
     });
 
-    await web.handler(post("/api/route"));
+    await web.handler(post("/api/httpOnly/route"));
     await web.dispose();
     expect(built).toEqual([expected]);
   }
@@ -286,8 +310,8 @@ it("scopes router middleware to the layer it is provided to", async () => {
 
   const statuses = async (handler: (request: Request) => Promise<Response>) => [
     (await handler(new Request("http://localhost/openapi.json"))).status,
-    (await handler(post("/api/whoAmI"))).status,
-    (await handler(post("/api/invoice"))).status,
+    (await handler(post("/api/users/whoAmI"))).status,
+    (await handler(post("/api/billing/invoice"))).status,
   ];
 
   // Each layer registers its own routes, so a guard covers exactly what it is provided to.
@@ -335,15 +359,15 @@ it("adds a group's errors to every action, on both transports", async () => {
   const handler = handlerOf(
     Layer.mergeAll(
       bound.layer(app),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
     ),
   );
 
-  expect((await handler(post("/api/find"))).status).toBe(404);
-  const refused = await handler(post("/api/list"));
+  expect((await handler(post("/api/guarded/find"))).status).toBe(404);
+  const refused = await handler(post("/api/guarded/list"));
   expect(refused.status).toBe(403);
   expect(await refused.json()).toEqual(
     Schema.encodeSync(Refused)(new Refused({ reason: "closed" })),
@@ -366,7 +390,9 @@ it("adds a group's errors to every action, on both transports", async () => {
     },
   });
   expect(reply).not.toHaveProperty("result.structuredContent");
-  expect(OpenApi.fromApi(bound.api).paths["/api/list"]?.post?.responses).toHaveProperty("403");
+  expect(OpenApi.fromApi(bound.api).paths["/api/guarded/list"]?.post?.responses).toHaveProperty(
+    "403",
+  );
 });
 
 it("checks each namespace only where it is served", () => {
@@ -386,10 +412,8 @@ it("checks each namespace only where it is served", () => {
       Action.make(action, { description: "", success: Schema.String, mcp: { name: "same" } }),
     );
 
-  // Routes are flat; native clients retain group namespaces.
-  expect(() => ActionHttp.make({ apiPath: "/api" }, Users, Other)).toThrow(
-    "Duplicate action: whoAmI",
-  );
+  // Group namespaces make same action names unambiguous.
+  expect(() => ActionHttp.make({ apiPath: "/api" }, Users, Other)).not.toThrow();
   expect(() => ActionHttp.make({ apiPath: "/api" }, Users, again)).toThrow(
     "Duplicate action group: users",
   );
@@ -436,14 +460,14 @@ it("checks each namespace only where it is served", () => {
   } as const;
 
   expect(() =>
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       mcp,
       one.implement({ first: () => Effect.succeed("a") }),
       two.implement({ second: () => Effect.succeed("b") }),
     ),
   ).toThrow("Duplicate MCP tool: same");
   expect(() =>
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       mcp,
       Users.implement({ whoAmI: () => Effect.succeed("a") }),
       again.implement({ other: () => Effect.succeed("b") }),

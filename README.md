@@ -1,6 +1,6 @@
 # @gjermundgaraba/effect-actions
 
-Define an Effect action once, implement it once, expose it over **HTTP and MCP**.
+Define an Effect action once, implement it once, and expose it through **HTTP, MCP, native Effect Toolkits, and CLIs**. Export an offline JSON catalog from the same contracts.
 
 **Snapshot-dependent preview.** This release requires Effect snapshot
 [`9ad9891`](https://pkg.pr.new/Effect-TS/effect/effect@9ad9891). The published npm
@@ -50,14 +50,14 @@ const app = Actions.implement({
 
 export const routes = Layer.mergeAll(
   Http.layer(app),
-  ActionMcp.layer(
+  ActionMcp.layerHttp(
     { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
     app,
   ),
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter`. This creates `POST /api/actions/greet` and an
+Serve `routes` with Effect's `HttpRouter`. This creates `POST /api/actions/greetings/greet` and an
 MCP endpoint at `/mcp`. The HTTP response is `"Hello, Ada!"`; MCP returns
 `structuredContent: { value: "Hello, Ada!" }`; a declared error is an `isError` result
 whose text is the same JSON encoding HTTP sends as the body.
@@ -74,13 +74,15 @@ See [examples/server.ts](examples/server.ts) for Node server wiring and the
   answers failed decoding or encoding; MCP keeps the native toolkit's answers. See
   [schema-error policies](docs/behavior.md#schema-error-policies).
 - Actions default to both transports; use `http: false` or `mcp: false` to opt out.
-  An action exposed on neither is rejected.
-- Action and group names match `[A-Za-z][A-Za-z0-9_-]*` and are not `then`, which
+  Actions disabled on both remain available for explicitly mounted local CLI commands.
+- Action and group names match `[A-Za-z0-9_-]+` and are not `then`, which
   would make a client thenable.
 - MCP input must have an object-root JSON Schema; the MCP adapter checks this at Layer
   construction. HTTP allows scalar input. Results and errors may be any shape: MCP wraps
   results as `{ value }` and reports errors as text, the protocol's own error channel.
-- `mcp.name` overrides the tool name. `destructive` defaults to `!readOnly`.
+- `mcp.name` overrides the tool name (at most 128 characters). Tool hints default to
+  `readOnly: false`, `destructive: !readOnly`, `idempotent: false`, and `openWorld: true`.
+  Hints do not enforce authorization, approval, or retries.
 - Schemas must be service-free. Handlers may require services.
 - The group name is the OpenAPI tag and operation-ID prefix (`greetings.greet`).
 
@@ -104,7 +106,7 @@ export const greeting = Effect.gen(function* () {
 Run `greeting` with `Effect.runPromise`. Use Effect's native `HttpApiClient.make(Http.api,
 options)`: methods are grouped by action group and take explicit `{ payload: ... }`
 arguments, including `{ payload: {} }` for no-input actions. Inputs and results are
-decoded values; MCP-only actions are excluded. HTTP paths remain flat.
+decoded values; MCP-only actions are excluded. HTTP paths include the group: `<apiPath>/<group>/<action>`.
 Authentication headers can be added with `transformClient`. See
 [client details](docs/behavior.md#http-client-details) for error types and response modes.
 
@@ -121,7 +123,7 @@ const Http = ActionHttp.make({ apiPath: "/api/actions" }, PublicActions, UserAct
 const routes = Layer.mergeAll(
   Http.layer(PublicApp),
   Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
-  ActionMcp.layer(
+  ActionMcp.layerHttp(
     { protocols: [McpProtocol.v2026_07_28], name: "my-app", version: "1.0.0", path: "/mcp" },
     UserApp,
     AuditApp,
@@ -129,20 +131,20 @@ const routes = Layer.mergeAll(
 );
 ```
 
-- **One layer per group.** `Http.layer(app)` registers the routes of one group, and router
+- **Explicit mounting.** `Http.layer(...apps)` registers the routes of the supplied groups, and router
   middleware provided to a layer applies to that layer alone: above, only the user group
-  requires authentication. A group that is never mounted has no routes.
+  requires authentication. Use separate calls when groups need different middleware. A group that is never mounted has no routes.
 - **Each adapter reads only what it serves.** A group without HTTP actions registers nothing
-  and is not built by `Http.layer`, nor one without tools by `ActionMcp.layer`.
-- **Names.** Routes are flat (`POST /api/actions/<action>`), while native client methods
-  are grouped (`client.<group>.<action>({ payload: ... })`). Group names and HTTP
-  action names must be unique within one
-  `ActionHttp.make`, and tool names within one `ActionMcp.layer`. Duplicates throw at
-  construction; neither adapter looks at the other's names.
+  and is not built by `Http.layer`, nor one without tools by `ActionMcp.layerHttp`.
+- **Names.** Routes are `POST /api/actions/<group>/<action>`, and native client methods
+  are `client.<group>.<action>({ payload: ... })`. Group names must be unique within
+  `ActionHttp.make`; action names need only be unique within their group. Tool names
+  must be unique within each Toolkit or MCP projection. Adapters validate the
+  namespaces they serve, not another transport's names.
 - **MCP middleware is per endpoint.** An MCP endpoint is one route, so middleware provided
-  to `ActionMcp.layer`, authentication included, covers all of its tools. Handlers can still
+  to `ActionMcp.layerHttp`, authentication included, covers all of its tools. Handlers can still
   authorize each tool differently. Only tools that need different middleware, such as none
-  at all, need their own endpoint: one `ActionMcp.layer` per `path`.
+  at all, need their own endpoint: one `ActionMcp.layerHttp` per `path`.
 
 Each group is its own native `HttpApiGroup`, so a host can also combine separately made
 `Http.api` values with `HttpApi.addHttpApi`. See [examples/app.ts](examples/app.ts).
@@ -166,14 +168,58 @@ const documentation = Layer.mergeAll(
 Each is an ordinary route layer, so it takes whatever middleware it is provided. The same
 value gives Effect's grouped client: `HttpApiClient.make(Http.api)`.
 
+## More projections
+
+The same implementation can be used without an HTTP server:
+
+```ts
+import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
+import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
+import { Argument } from "effect/unstable/cli";
+
+// Using Actions, Http, and app from the quickstart:
+const tools = ActionToolkit.make(app); // { toolkit, layer }, native Effect Toolkit
+const catalog = ActionCatalog.make(Actions); // JSON-serializable; no handlers acquired
+const command = ActionCli.group(app); // greetings greet --input '{"name":"Ada"}'
+const local = ActionCli.command(app, "greet", {
+  parameters: { name: Argument.String("name") },
+  input: ({ name }) => ({ name }),
+}); // greet Ada
+const remote = ActionCliClient.command(Http, "greetings", "greet"); // host supplies HttpClient
+```
+
+- **Toolkit:** MCP-enabled actions become native tools with their declared names and
+  hints. Calls retain invocation-service requirements and return native results, not
+  MCP envelopes. See [examples/toolkit.ts](examples/toolkit.ts).
+- **MCP stdio:** `ActionMcp.layerStdio({ name, version, protocols }, ...apps)` runs a
+  subprocess server using a host-provided `Stdio` service and trusted process principal.
+  See [examples/mcp-stdio.ts](examples/mcp-stdio.ts). Stdout is protocol-only.
+- **Catalog:** standalone input/output/error JSON schemas with local `$defs`, plus
+  metadata and group-qualified identities. See [examples/catalog.ts](examples/catalog.ts).
+- **Local CLI:** `.command(app, "actionName", options?)` selects one action; `.group(app,
+options?)` selects a group, including local-only actions. The host supplies services.
+- **Remote CLI:** `ActionCliClient` projects HTTP contracts into commands using native
+  `HttpApiClient`; it never executes local handlers or manages credentials. See
+  [examples/cli.ts](examples/cli.ts) and [examples/cli-client.ts](examples/cli-client.ts).
+
+Generated CLI commands accept whole-input `--input '<json>'`. For a human-oriented
+command, supply native Effect flags/arguments through `parameters` and map them to
+encoded action input with `input`. Explicitly configured commands do not also accept
+`--input`; their syntax is independent of schema changes. Commands print validated
+JSON by default; an optional renderer enables human output with `--json` available.
+See [CLI boundaries](docs/behavior.md#cli-boundaries) for codecs and configuration.
+
 ## Adapter options
 
-| API                                   | Options                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------ |
-| `ActionGroup.make(options, …actions)` | `name`, `errors`, `schemaError`                                          |
-| `ActionHttp.make(options, …groups)`   | `apiPath`                                                                |
-| `Http.layer(app)`                     | None                                                                     |
-| `ActionMcp.layer(options, …apps)`     | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions` |
+| API                                    | Options                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `ActionGroup.make(options, …actions)`  | `name`, `errors`, `schemaError`                                          |
+| `ActionHttp.make(options, …groups)`    | `apiPath`                                                                |
+| `Http.layer(...apps)`                  | None                                                                     |
+| `ActionMcp.layerHttp(options, …apps)`  | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions` |
+| `ActionMcp.layerStdio(options, …apps)` | `name`, `version`, `protocols`, `instructions`                           |
 
 `apiPath` and MCP `path` have no defaults. `Http` has two members: `api` and `layer`. MCP `protocols` is required and takes Effect’s native `McpProtocol` adapters.
 Effect owns protocol negotiation and sessions.
@@ -183,10 +229,10 @@ dependency lifetimes, wire formats, and MCP protocol support.
 
 ## Scope
 
-HTTP means JSON POST endpoints, not Effect's RPC wire protocol. Both adapters use
+HTTP means JSON POST endpoints, not Effect's RPC wire protocol. HTTP and MCP use
 Effect's servers: `HttpApi` and one `McpServer` `Tool` per action; there is no MCP SDK
 runtime dependency. Actions are unary:
-no streaming, uploads, prompts, resources, or retries.
+no streaming, uploads, prompts, resources, retries, or code-execution sandbox.
 
 Authentication and authorization belong to the application. Tool discovery is
 not filtered by actor. The example's bearer tokens are **demo-only**; production
@@ -210,8 +256,9 @@ assertions in `tests/types.spec.ts`. Tests cover both transports, official MCP c
 request-context handling, schema-error policies, and cancellation.
 
 `vp run build` emits module-preserving ESM and declarations into `dist/`. The entry points
-are one subpath per module: `/Action`, `/ActionGroup`, `/ActionHttp`, `/ActionMcp`, `/Authentication`, `/Testing`,
-and `/TestingClient`. There is no package root, so a contracts-only or browser bundle never
+are one subpath per module: `/Action`, `/ActionGroup`, `/ActionHttp`, `/ActionMcp`,
+`/ActionToolkit`, `/ActionCatalog`, `/ActionCli`, `/ActionCliClient`, `/Authentication`,
+`/Testing`, and `/TestingClient`. There is no package root, so a contracts-only or browser bundle never
 loads the MCP server or the optional client peer.
 `vp run test:package` builds and checks a tarball in an isolated consumer with
 `skipLibCheck: false`, using the pinned Effect snapshot; it does not establish compatibility

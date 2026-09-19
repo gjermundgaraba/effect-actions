@@ -3,6 +3,7 @@ import { Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpProtocol, McpSchema } from "effect/unstable/ai";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
+import type { HttpApiError } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -29,8 +30,8 @@ class Rejected extends Schema.TaggedError<Rejected>()(
 
 const schemaError = {
   errors: [InvalidRequest, InvalidResponse],
-  map: (failure: Action.SchemaFailure) =>
-    failure.phase === "output"
+  map: (failure: HttpApiError.HttpApiSchemaError) =>
+    failure.kind === "Body" || failure.kind === "ResponseHeaders"
       ? new InvalidResponse({ error: "Invalid response" })
       : new InvalidRequest({ error: "Invalid request" }),
 };
@@ -45,15 +46,15 @@ const Echo = Action.make("echo", {
 // The policy belongs to the group, so a test with its own policy makes its own group.
 const echoGroup = <const Name extends string, const Errors extends ReadonlyArray<Action.Codec>>(
   name: Name,
-  policy: Action.SchemaErrorPolicy<Errors>,
+  policy: ActionGroup.SchemaErrorPolicy<Errors>,
 ) => ActionGroup.make({ name, schemaError: policy }, Echo);
 
 const actions = echoGroup("test", schemaError);
 
 const Http = ActionHttp.make({ apiPath: "/api/actions" }, actions);
 
-const request = (value: Schema.Json) =>
-  new Request("http://localhost/api/actions/echo", {
+const request = (value: Schema.Json, group = "test") =>
+  new Request(`http://localhost/api/actions/${group}/echo`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ value }),
@@ -80,7 +81,7 @@ it("maps input and output failures and exposes the same error contract to client
   );
 
   const invalidJson = await web.handler(
-    new Request("http://localhost/api/actions/echo", {
+    new Request("http://localhost/api/actions/test/echo", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{secret",
@@ -118,8 +119,8 @@ it("maps input and output failures and exposes the same error contract to client
     Effect.runPromise,
   );
   const document = OpenApi.fromApi(Http.api);
-  expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("400");
-  expect(document.paths?.["/api/actions/echo"]?.post?.responses).toHaveProperty("500");
+  expect(document.paths?.["/api/actions/test/echo"]?.post?.responses).toHaveProperty("400");
+  expect(document.paths?.["/api/actions/test/echo"]?.post?.responses).toHaveProperty("500");
 });
 
 it("answers with each group's own policy inside one adapter", async () => {
@@ -151,8 +152,8 @@ it("answers with each group's own policy inside one adapter", async () => {
   onTestFinished(() => web.dispose());
 
   for (const [path, status, message] of [
-    ["echo", 400, "Invalid request"],
-    ["other", 500, "Second policy"],
+    ["test/echo", 400, "Invalid request"],
+    ["second/other", 500, "Second policy"],
   ] as const) {
     const response = await web.handler(
       new Request(`http://localhost/api/${path}`, {
@@ -177,12 +178,12 @@ const mcpRequest = (value: Schema.Json) =>
   });
 
 it("applies the policy over HTTP only; MCP keeps its native argument and result handling", async () => {
-  const failures: Action.SchemaFailure[] = [];
+  const failures: HttpApiError.HttpApiSchemaError[] = [];
   let calls = 0;
 
   const policy = {
     errors: schemaError.errors,
-    map: (failure: Action.SchemaFailure) => {
+    map: (failure: HttpApiError.HttpApiSchemaError) => {
       failures.push(failure);
 
       return schemaError.map(failure);
@@ -208,7 +209,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
       recording.layer(app),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
@@ -225,7 +226,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
     [0, "InvalidResponse", "Invalid response", "internal server error"],
     [-1, "Rejected", "Negative value", '{"_tag":"Rejected","error":"Negative value"}'],
   ] as const) {
-    const http = await web.handler(request(value));
+    const http = await web.handler(request(value, "recorded"));
     expect(await http.json()).toMatchObject({ _tag: tag, error: message });
     const mcp = await web.handler(mcpRequest(value));
     expect(mcp.status).toBe(200);
@@ -239,7 +240,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
   }
 
   expect(calls).toBe(4); // Neither transport invokes the handler for invalid input.
-  expect(failures.map((failure) => failure.phase)).toEqual(["input", "output"]);
+  expect(failures.map((failure) => failure.kind)).toEqual(["Payload", "Body"]);
   expect(failures.every((failure) => Schema.isSchemaError(failure.cause))).toBe(true);
   const success = await web.handler(mcpRequest(7));
   expect(decodeMcp(await success.json()).result.structuredContent).toEqual({ value: 7 });
@@ -284,7 +285,7 @@ it("executes each input/output transformation once with a policy enabled", async
   const web = HttpRouter.toWebHandler(
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, group).layer(app),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
@@ -322,7 +323,7 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
   const web = HttpRouter.toWebHandler(
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer(app),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
@@ -331,7 +332,7 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
   );
 
   onTestFinished(() => web.dispose());
-  const http = await web.handler(request("private"));
+  const http = await web.handler(request("private", "broken"));
   expect(http.status).toBe(500);
   expect(await http.text()).toBe("");
   const mcp = await (await web.handler(mcpRequest("private"))).text();
@@ -345,7 +346,7 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
 
   const policy = {
     errors: schemaError.errors,
-    map: (failure: Action.SchemaFailure) => {
+    map: (failure: HttpApiError.HttpApiSchemaError) => {
       mappings++;
 
       return schemaError.map(failure);
@@ -373,7 +374,7 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
   const web = HttpRouter.toWebHandler(
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer(app),
-      ActionMcp.layer(
+      ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),

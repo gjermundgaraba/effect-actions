@@ -16,15 +16,33 @@ describe("contracts", () => {
   });
 
   it("derives MCP hints: destructive follows readOnly unless stated", () => {
-    expect(GetUser.mcp).toEqual({ name: "get_user", readOnly: true, destructive: false });
-    expect(RenameUser.mcp).toEqual({ name: "rename_user", readOnly: false, destructive: false });
+    expect(GetUser.mcp).toEqual({
+      name: "get_user",
+      readOnly: true,
+      destructive: false,
+      idempotent: false,
+      openWorld: true,
+    });
+    expect(RenameUser.mcp).toEqual({
+      name: "rename_user",
+      readOnly: false,
+      destructive: false,
+      idempotent: false,
+      openWorld: true,
+    });
     const Write = Action.make("write", { description: "Default hints", success: Schema.String });
-    expect(Write.mcp).toEqual({ name: "write", readOnly: false, destructive: true });
+    expect(Write.mcp).toEqual({
+      name: "write",
+      readOnly: false,
+      destructive: true,
+      idempotent: false,
+      openWorld: true,
+    });
     expect(Write.http).toBe(true);
   });
 
   it("rejects invalid names at definition time", () => {
-    for (const name of ["bad name", "1st", "_private", "then"]) {
+    for (const name of ["bad name", "then"]) {
       expect(() => Action.make(name, { description: "", success: Schema.String })).toThrow(
         "Invalid action name",
       );
@@ -34,6 +52,29 @@ describe("contracts", () => {
     expect(() =>
       Action.make("ok", { description: "", success: Schema.String, mcp: { name: "bad name" } }),
     ).toThrow("Invalid MCP name");
+    expect(() =>
+      Action.make("ok", { description: "", success: Schema.String, mcp: { name: "then" } }),
+    ).toThrow("Invalid MCP name");
+  });
+
+  it("accepts relaxed HTTP segment names and keeps MCP validation independent", () => {
+    expect(Action.make("1st", { description: "", success: Schema.String }).name).toBe("1st");
+    expect(Action.make("_private", { description: "", success: Schema.String }).name).toBe(
+      "_private",
+    );
+    expect(
+      ActionGroup.make(
+        { name: "9_group" },
+        Action.make("_action", { description: "", success: Schema.String }),
+      ).name,
+    ).toBe("9_group");
+    expect(
+      Action.make("x".repeat(129), {
+        description: "Long HTTP-only action",
+        success: Schema.String,
+        mcp: false,
+      }).mcp,
+    ).toBe(false);
   });
 
   it("rejects duplicate names at definition time", () => {
@@ -51,15 +92,15 @@ describe("contracts", () => {
     );
   });
 
-  it("rejects an action exposed on no transport", () => {
-    expect(() =>
+  it("permits an action exposed only locally", () => {
+    expect(
       Action.make("nowhere", {
         description: "",
         success: Schema.String,
         http: false,
         mcp: false,
       }),
-    ).toThrow("exposed on no transport");
+    ).toMatchObject({ http: false, mcp: false });
   });
 });
 
@@ -72,8 +113,8 @@ describe("implementations", () => {
 
   const Group = ActionGroup.make({ name: "greetings" }, Hello);
 
-  const request = (prefix: string) =>
-    new Request(`http://localhost${prefix}/hello`, {
+  const request = (prefix: string, group = "greetings") =>
+    new Request(`http://localhost${prefix}/${group}/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Ada" }),
@@ -95,7 +136,7 @@ describe("implementations", () => {
     async (kind) => {
       const appA = Group.implement({ hello: () => Effect.succeed("from A") });
 
-      const appB: ActionGroup.Implementation<ActionGroup.Any, never, never, never> =
+      const appB =
         kind === "same contract"
           ? Group.implement({ hello: () => Effect.succeed("from B") })
           : ActionGroup.make(
@@ -117,9 +158,39 @@ describe("implementations", () => {
 
       onTestFinished(() => web.dispose());
       expect(await (await web.handler(request("/a"))).json()).toBe("from A");
-      expect(await (await web.handler(request("/b"))).json()).toBe(
-        kind === "same contract" ? "from B" : 42,
-      );
+      expect(
+        await (
+          await web.handler(request("/b", kind === "same contract" ? "greetings" : "numeric"))
+        ).json(),
+      ).toBe(kind === "same contract" ? "from B" : 42);
     },
   );
+
+  it("routes prototype-sensitive action names through native HTTP", async () => {
+    const Proto = ActionGroup.make(
+      { name: "safe" },
+      Action.make("__proto__", { description: "Prototype-safe", success: Schema.String }),
+    );
+
+    const app = Proto.implement({ ["__proto__"]: () => Effect.succeed("safe") });
+
+    const web = HttpRouter.toWebHandler(
+      ActionHttp.make({ apiPath: "/api" }, Proto)
+        .layer(app)
+        .pipe(Layer.provide(HttpServer.layerServices)),
+      { disableLogger: true },
+    );
+
+    onTestFinished(() => web.dispose());
+
+    const response = await web.handler(
+      new Request("http://localhost/api/safe/__proto__", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+
+    expect(await response.json()).toBe("safe");
+  });
 });

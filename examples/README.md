@@ -32,19 +32,19 @@ are Effect's own tools reading the native `Http.api`.
 
 ```sh
 # The public group needs no token
-curl -s http://127.0.0.1:3000/api/actions/status \
+curl -s http://127.0.0.1:3000/api/actions/public/status \
   -H 'Content-Type: application/json' -d '{}'
 # {"service":"effect-actions","users":2}
 
 # A generated HTTP RPC endpoint over the getUser action
-curl -s http://127.0.0.1:3000/api/actions/getUser \
+curl -s http://127.0.0.1:3000/api/actions/users/getUser \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
   -d '{"id":"1"}'
 # {"id":"1","name":"Ada"}
 
 # A generated HTTP route; the schema transforms "21" to numeric 21
-curl -s http://127.0.0.1:3000/api/actions/double \
+curl -s http://127.0.0.1:3000/api/actions/users/double \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
   -d '{"value":"21"}'
@@ -112,3 +112,26 @@ handlers share `Users` while resolving `CurrentActor` on each request.
 Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
 Never provide `CurrentActor` at startup: adapters retain native Effect context semantics,
 not an extra identity-isolation boundary. Authentication establishes it on each request.
+
+## Other projections
+
+These examples use the same action contracts without changing their handlers:
+
+```sh
+# Local execution with explicit native CLI flags
+node --import tsx examples/cli.ts --value 21
+
+# Public status action over HTTP; start `vp run example` first
+node --import tsx examples/cli-client.ts
+
+# Native Effect Toolkit result, without an MCP envelope
+node --import tsx examples/toolkit.ts
+
+# Offline JSON catalog; no implementation or server startup
+node --import tsx examples/catalog.ts
+```
+
+[cli.ts](cli.ts) and [cli-client.ts](cli-client.ts) return native Effect CLI commands;
+use `--help` for their options. [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
+server to launch from an MCP client, not an interactive shell command. It reserves
+stdout for JSON-RPC and routes Effect logs to stderr.

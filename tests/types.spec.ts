@@ -15,8 +15,27 @@ import { Users } from "../examples/users.js";
 
 const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
 
+interface OptionalAlias {
+  readonly name?: "alias";
+}
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+    ? true
+    : false;
+
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
+  const optionalAlias: OptionalAlias = {};
+
+  const optionallyAliased = Action.make("fallback", {
+    description: "Optional alias",
+    success: Schema.String,
+    mcp: optionalAlias,
+  });
+
+  const optionalName: "alias" | "fallback" = optionallyAliased.mcp.name;
+  void optionalName;
 
   const ok = {
     getUser: ({ id }: { id: string }) => Effect.succeed({ id, name: "Ada" }),
@@ -36,6 +55,9 @@ export const typeAssertions = () => {
   void a.handlers;
   // @ts-expect-error Implementations cannot be fabricated from a group.
   Http.layer({ name: Actions.name, actions: Actions.actions });
+  // @ts-expect-error Spreading a nominal implementation cannot manufacture its private build state.
+  // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication compile-failure fixture.
+  Http.layer({ ...a, build: Effect.succeed(ok) });
   // @ts-expect-error Every action in the group needs a handler.
   Actions.implement({ ...ok, whoAmI: undefined });
   // @ts-expect-error Handler results must match the success schema.
@@ -66,7 +88,7 @@ export const typeAssertions = () => {
   void http.handler(new Request("http://localhost"), Context.make(CurrentActor, actor));
 
   // MCP carries the same request requirement as HTTP; forgetting middleware is a compile error.
-  const mcpLayer = ActionMcp.layer(
+  const mcpLayer = ActionMcp.layerHttp(
     { protocols: [McpProtocol.v2026_07_28], name: "t", version: "0", path: "/mcp" },
     App,
   );
@@ -100,7 +122,7 @@ export const typeAssertions = () => {
 
   for (const routes of [
     Http.layer(fallible),
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
       fallible,
     ),
@@ -153,7 +175,7 @@ export const clientTypes = Effect.gen(function* () {
 
 export const policyTypes = Effect.gen(function* () {
   class PolicyFailure extends Schema.TaggedError<PolicyFailure>()("PolicyFailure", {
-    phase: Schema.Literals(["input", "output"]),
+    kind: Schema.String,
   }) {}
 
   class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
@@ -169,7 +191,7 @@ export const policyTypes = Effect.gen(function* () {
     {
       name: "policed",
       errors: [Refused],
-      schemaError: { errors: [PolicyFailure], map: ({ phase }) => new PolicyFailure({ phase }) },
+      schemaError: { errors: [PolicyFailure], map: ({ kind }) => new PolicyFailure({ kind }) },
     },
     Echo,
   );
@@ -177,7 +199,7 @@ export const policyTypes = Effect.gen(function* () {
   // Group-level errors join each action's own: handlers may fail with them...
   Policed.implement({ echo: () => Effect.fail(new Refused()) });
   // @ts-expect-error ...but policy errors belong to the transports, not to handlers.
-  Policed.implement({ echo: () => Effect.fail(new PolicyFailure({ phase: "input" })) });
+  Policed.implement({ echo: () => Effect.fail(new PolicyFailure({ kind: "Body" })) });
 
   // Both domain and policy errors reach the native client.
   const bound = ActionHttp.make({ apiPath: "/api/actions" }, Policed);
@@ -204,7 +226,7 @@ export const policyTypes = Effect.gen(function* () {
       schemaError: {
         errors: [PolicyFailure],
         // @ts-expect-error Policy mapping is pure, not a service-requiring Effect.
-        map: () => Effect.as(CurrentActor, new PolicyFailure({ phase: "input" })),
+        map: () => Effect.as(CurrentActor, new PolicyFailure({ kind: "Body" })),
       },
     },
     Echo,
@@ -225,7 +247,7 @@ export const configuredAdapterTypes = () => {
 
   // @ts-expect-error Configuring the adapter must preserve request requirements.
   void web.handler(new Request("http://localhost"), Context.empty());
-  ActionMcp.layer(
+  ActionMcp.layerHttp(
     {
       protocols: [McpProtocol.v2026_07_28],
       name: "test",
@@ -239,15 +261,19 @@ export const configuredAdapterTypes = () => {
   // @ts-expect-error HTTP mount path is required.
   ActionHttp.make({}, Actions);
   // @ts-expect-error Protocol selection is required.
-  ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, App);
+  ActionMcp.layerHttp({ name: "test", version: "0", path: "/mcp" }, App);
   // @ts-expect-error At least one native protocol adapter is required.
-  ActionMcp.layer({ name: "test", version: "0", path: "/mcp", protocols: [] }, App);
+  ActionMcp.layerHttp({ name: "test", version: "0", path: "/mcp", protocols: [] }, App);
   // @ts-expect-error MCP mount path is required.
-  ActionMcp.layer({ protocols: [McpProtocol.v2026_07_28], name: "test", version: "0" }, App);
+  ActionMcp.layerHttp({ protocols: [McpProtocol.v2026_07_28], name: "test", version: "0" }, App);
 };
 
 export const multipleGroupTypes = () => {
   class Tenant extends Context.Service<Tenant, string>()("types/Tenant") {}
+
+  class BuildA extends Context.Service<BuildA, string>()("types/BuildA") {}
+
+  class BuildB extends Context.Service<BuildB, string>()("types/BuildB") {}
 
   const Billing = ActionGroup.make(
     { name: "billing" },
@@ -279,10 +305,46 @@ export const multipleGroupTypes = () => {
   Both.layer(Foreign);
   // @ts-expect-error A contract is not its implementation.
   ActionHttp.make({ apiPath: "/api" }, App);
-  // @ts-expect-error One layer mounts one group; merge one per group.
   Both.layer(App, BillingApp);
 
   const services = Layer.provide(HttpServer.layerServices);
+
+  const failsAfterBuildA = Billing.implement(
+    Effect.fail("build-a" as const).pipe(
+      Effect.tap(() => BuildA),
+      Effect.as({ invoice: () => Effect.succeed(1) }),
+    ),
+  );
+
+  const failsAfterBuildB = Actions.implement(
+    Effect.fail("build-b" as const).pipe(
+      Effect.tap(() => BuildB),
+      Effect.as({
+        getUser: ({ id }: { id: string }) => Effect.succeed({ id, name: "" }),
+        renameUser: ({ id, name }: { id: string; name: string }) => Effect.succeed({ id, name }),
+        double: ({ value }: { value: number }) => Effect.succeed(value),
+        whoAmI: () => Effect.succeed({ id: "", tenantId: "" }),
+      }),
+    ),
+  );
+
+  const variadic = Both.layer(failsAfterBuildA, failsAfterBuildB);
+  // @ts-expect-error Variadic mounting preserves both disjoint build-service requirements.
+  HttpRouter.toWebHandler(variadic.pipe(services));
+
+  const errorsAreExact: Equal<Layer.Error<typeof variadic>, "build-a" | "build-b"> = true;
+  const hasBuildA: BuildA extends Layer.Services<typeof variadic> ? true : false = true;
+  const hasBuildB: BuildB extends Layer.Services<typeof variadic> ? true : false = true;
+  void errorsAreExact;
+  void hasBuildA;
+  void hasBuildB;
+  HttpRouter.toWebHandler(
+    variadic.pipe(
+      Layer.provide(Layer.succeed(BuildA, "a")),
+      Layer.provide(Layer.succeed(BuildB, "b")),
+      services,
+    ),
+  );
 
   // Each layer carries only its own implementation's requirements.
   const billingOnly = HttpRouter.toWebHandler(Both.layer(BillingApp).pipe(services));
@@ -305,7 +367,7 @@ export const multipleGroupTypes = () => {
   void mergedHttp.handler(new Request("http://localhost"), both);
 
   const mergedMcp = HttpRouter.toWebHandler(
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
       App,
       BillingApp,
@@ -326,7 +388,7 @@ export const multipleGroupTypes = () => {
   void inline.handler(new Request("http://localhost"));
 
   const inlineMcp = HttpRouter.toWebHandler(
-    ActionMcp.layer(
+    ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
       Billing.implement({ invoice: () => Effect.succeed(1) }),
     ).pipe(services),

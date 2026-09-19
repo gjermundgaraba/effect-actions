@@ -12,7 +12,8 @@ import {
  * `authenticate` fails with the response to send instead, so the host owns its
  * status, body and challenge headers. Dependencies remain native router request
  * requirements. Acquired resources live until the request scope closes, including
- * while the handler is running. Every response is marked `Cache-Control: no-store`.
+ * while the handler is running. Every response is marked `Cache-Control: no-store`,
+ * including private failures serialized by enclosing middleware.
  */
 export const middleware = <I, A, R>(
   service: Context.Key<I, A>,

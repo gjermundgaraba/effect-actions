@@ -51,7 +51,7 @@ const tool = (name: string, args: Schema.JsonObject, token = "alice") =>
 
 describe("one implementation, both transports", () => {
   it("serves generated POST endpoints with the natural encoding", async () => {
-    const response = await app.handler(request("/api/actions/getUser", "alice", { id: "1" }));
+    const response = await app.handler(request("/api/actions/users/getUser", "alice", { id: "1" }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: "1", name: "Ada" });
   });
@@ -71,7 +71,7 @@ describe("one implementation, both transports", () => {
   });
 
   it("decodes input transforms on both transports; MCP wraps results as { value }", async () => {
-    const http = await app.handler(request("/api/actions/double", "alice", { value: "21" }));
+    const http = await app.handler(request("/api/actions/users/double", "alice", { value: "21" }));
     expect(await http.json()).toBe(42);
     const reply = await tool("double", { value: "21" });
     expect(reply.isError).toBe(false);
@@ -81,21 +81,26 @@ describe("one implementation, both transports", () => {
   it("a write through MCP is immediately visible through HTTP", async () => {
     const reply = await tool("rename_user", { id: "1", name: "Lovelace" });
     expect(reply.isError).toBe(false);
-    const response = await app.handler(request("/api/actions/getUser", "alice", { id: "1" }));
+    const response = await app.handler(request("/api/actions/users/getUser", "alice", { id: "1" }));
     expect(await response.json()).toEqual({ id: "1", name: "Lovelace" });
-    const other = await app.handler(request("/api/actions/getUser", "bob", { id: "1" }));
+    const other = await app.handler(request("/api/actions/users/getUser", "bob", { id: "1" }));
     expect(await other.json()).toEqual({ id: "1", name: "Grace" });
   });
 
   it("a write through HTTP is immediately visible through MCP", async () => {
-    await app.handler(request("/api/actions/renameUser", "alice", { id: "1", name: "Byron" }));
+    await app.handler(
+      request("/api/actions/users/renameUser", "alice", { id: "1", name: "Byron" }),
+    );
     expect((await tool("get_user", { id: "1" })).structuredContent).toEqual({
       value: { id: "1", name: "Byron" },
     });
   });
 
   it("serves domain errors structured over HTTP and as text over MCP", async () => {
-    const http = await app.handler(request("/api/actions/getUser", "alice", { id: "missing" }));
+    const http = await app.handler(
+      request("/api/actions/users/getUser", "alice", { id: "missing" }),
+    );
+
     expect(http.status).toBe(404);
     const body = await http.json();
     expect(body).toEqual(Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" })));
@@ -108,11 +113,11 @@ describe("one implementation, both transports", () => {
 
   it("rejects malformed input with each protocol's native error", async () => {
     expect(
-      (await app.handler(request("/api/actions/double", "alice", { value: "nope" }))).status,
+      (await app.handler(request("/api/actions/users/double", "alice", { value: "nope" }))).status,
     ).toBe(400);
     expect(await tool("double", { value: "nope" })).toMatchObject({ isError: true });
     expect(
-      (await app.handler(request("/api/actions/renameUser", "alice", { id: "1", name: "" })))
+      (await app.handler(request("/api/actions/users/renameUser", "alice", { id: "1", name: "" })))
         .status,
     ).toBe(400);
   });
@@ -131,13 +136,13 @@ describe("one implementation, both transports", () => {
     expect(denied.content).toEqual([{ type: "text", text: JSON.stringify(forbiddenBody) }]);
 
     const forbidden = await app.handler(
-      request("/api/actions/renameUser", "reader", { id: "1", name: "unauthorized" }),
+      request("/api/actions/users/renameUser", "reader", { id: "1", name: "unauthorized" }),
     );
 
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual(forbiddenBody);
     expect(
-      await (await app.handler(request("/api/actions/getUser", "alice", { id: "1" }))).json(),
+      await (await app.handler(request("/api/actions/users/getUser", "alice", { id: "1" }))).json(),
     ).toEqual({
       id: "1",
       name: "Ada",
@@ -178,7 +183,7 @@ describe("one implementation, both transports", () => {
 
     const responses = await Promise.all(
       tokens.map(async (token) =>
-        (await app.handler(request("/api/actions/whoAmI", token, {}))).json(),
+        (await app.handler(request("/api/actions/users/whoAmI", token, {}))).json(),
       ),
     );
 
@@ -188,7 +193,7 @@ describe("one implementation, both transports", () => {
   });
 
   it("authenticates both transports before execution", async () => {
-    for (const path of ["/api/actions/getUser", "/mcp"]) {
+    for (const path of ["/api/actions/users/getUser", "/mcp"]) {
       const response = await app.handler(
         new Request(`http://localhost${path}`, { method: "POST" }),
       );
@@ -199,40 +204,44 @@ describe("one implementation, both transports", () => {
     }
 
     expect(
-      (await app.handler(request("/api/actions/getUser", "toString", { id: "1" }))).status,
+      (await app.handler(request("/api/actions/users/getUser", "toString", { id: "1" }))).status,
     ).toBe(401);
   });
 
   it("marks authenticated responses as uncacheable", async () => {
-    const response = await app.handler(request("/api/actions/getUser", "alice", { id: "1" }));
+    const response = await app.handler(request("/api/actions/users/getUser", "alice", { id: "1" }));
     expect(response.headers.get("cache-control")).toBe("no-store");
-    const failure = await app.handler(request("/api/actions/getUser", "alice", { id: "missing" }));
+
+    const failure = await app.handler(
+      request("/api/actions/users/getUser", "alice", { id: "missing" }),
+    );
+
     expect(failure.headers.get("cache-control")).toBe("no-store");
   });
 
   it("rejects untrusted hosts and browser origins in the example host", async () => {
-    const foreign = new Request("http://evil.example/api/actions/getUser", {
+    const foreign = new Request("http://evil.example/api/actions/users/getUser", {
       method: "POST",
       headers: { authorization: "Bearer alice" },
     });
 
     expect((await app.handler(foreign)).status).toBe(403);
-    const crossOrigin = request("/api/actions/getUser", "alice", { id: "1" });
+    const crossOrigin = request("/api/actions/users/getUser", "alice", { id: "1" });
     crossOrigin.headers.set("origin", "https://evil.example");
     expect((await app.handler(crossOrigin)).status).toBe(403);
   });
 
   it("uses native Effect HTTP request semantics", async () => {
     expect((await app.handler(request("/does-not-exist"))).status).toBe(404);
-    expect((await app.handler(request("/api/actions/getUser"))).status).toBe(404);
+    expect((await app.handler(request("/api/actions/users/getUser"))).status).toBe(404);
 
-    const malformed = new Request(request("/api/actions/double", "alice", {}), {
+    const malformed = new Request(request("/api/actions/users/double", "alice", {}), {
       method: "POST",
       body: "{",
     });
 
     expect((await app.handler(malformed)).status).toBe(400);
-    const wrongType = request("/api/actions/double", "alice", {});
+    const wrongType = request("/api/actions/users/double", "alice", {});
     wrongType.headers.set("content-type", "text/plain");
     expect((await app.handler(wrongType)).status).toBe(415);
   });
@@ -250,13 +259,13 @@ describe("one implementation, both transports", () => {
 
     expect(document.openapi).toBe("3.1.0");
     expect(Object.keys(document.paths)).toEqual([
-      "/api/actions/status",
-      "/api/actions/getUser",
-      "/api/actions/renameUser",
-      "/api/actions/double",
-      "/api/actions/whoAmI",
+      "/api/actions/public/status",
+      "/api/actions/users/getUser",
+      "/api/actions/users/renameUser",
+      "/api/actions/users/double",
+      "/api/actions/users/whoAmI",
     ]);
-    expect(document.paths["/api/actions/getUser"]).toMatchObject({
+    expect(document.paths["/api/actions/users/getUser"]).toMatchObject({
       post: {
         operationId: "users.getUser",
         tags: ["users"],
@@ -278,7 +287,7 @@ describe("one implementation, both transports", () => {
         },
       },
     });
-    expect(document.paths["/api/actions/double"]).toMatchObject({
+    expect(document.paths["/api/actions/users/double"]).toMatchObject({
       post: {
         requestBody: {
           content: {
@@ -288,7 +297,7 @@ describe("one implementation, both transports", () => {
       },
     });
 
-    const doubleOperation = OpenApi.fromApi(Http.api).paths?.["/api/actions/double"]?.post;
+    const doubleOperation = OpenApi.fromApi(Http.api).paths?.["/api/actions/users/double"]?.post;
 
     expect(doubleOperation?.operationId).toBe("users.double");
     expect(doubleOperation?.responses).not.toHaveProperty("404");
@@ -354,7 +363,7 @@ describe("groups under their own middleware", () => {
   };
 
   it("serves the public group and the document without credentials, the user group only with them", async () => {
-    const status = await app.handler(anonymous("/api/actions/status", {}));
+    const status = await app.handler(anonymous("/api/actions/public/status", {}));
     expect(status.status).toBe(200);
     expect(await status.json()).toEqual({ service: "effect-actions", users: 2 });
 
@@ -362,14 +371,14 @@ describe("groups under their own middleware", () => {
     expect(document.status).toBe(200);
     expect(await document.json()).toEqual(OpenApi.fromApi(Http.api));
 
-    const unauthenticated = await app.handler(anonymous("/api/actions/whoAmI", {}));
+    const unauthenticated = await app.handler(anonymous("/api/actions/users/whoAmI", {}));
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.headers.get("www-authenticate")).toBe("Bearer");
-    expect((await app.handler(request("/api/actions/whoAmI", "alice", {}))).status).toBe(200);
+    expect((await app.handler(request("/api/actions/users/whoAmI", "alice", {}))).status).toBe(200);
   });
 
   it("keeps the host policy in front of every group", async () => {
-    const foreign = new Request("http://attacker.example/api/actions/status", {
+    const foreign = new Request("http://attacker.example/api/actions/public/status", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -397,7 +406,7 @@ describe("groups under their own middleware", () => {
 
     // The typed client validates locally, so the server's policy needs a raw request.
     const rejected = await app.handler(
-      request("/api/actions/renameUser", "alice", { id: "1", name: "" }),
+      request("/api/actions/users/renameUser", "alice", { id: "1", name: "" }),
     );
 
     expect(rejected.status).toBe(400);
@@ -442,8 +451,12 @@ describe("groups under their own middleware", () => {
   });
 
   it("serves an MCP-only group as tools, sharing state with the HTTP groups", async () => {
-    expect((await app.handler(request("/api/actions/listChanges", "alice", {}))).status).toBe(404);
-    await app.handler(request("/api/actions/renameUser", "alice", { id: "1", name: "Augusta" }));
+    expect((await app.handler(request("/api/actions/audit/listChanges", "alice", {}))).status).toBe(
+      404,
+    );
+    await app.handler(
+      request("/api/actions/users/renameUser", "alice", { id: "1", name: "Augusta" }),
+    );
 
     const changes = await tool("list_changes", {});
     expect(changes.structuredContent).toEqual({

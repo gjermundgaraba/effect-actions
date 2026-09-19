@@ -5,19 +5,6 @@ import { assertName } from "./internal/actions.js";
 /** Any service-free schema. Only handlers may require services. */
 export type Codec = Schema.Codec<unknown, unknown, never, never>;
 
-/** Failed request decoding or successful-result encoding, independent of transport terminology. */
-export interface SchemaFailure {
-  readonly phase: "input" | "output";
-  /** May contain sensitive values. Do not reflect it in public error messages. */
-  readonly cause: Schema.SchemaError;
-}
-
-/** Pure application-owned mapping, set on a group and applied by the HTTP adapter. */
-export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
-  readonly errors: Errors;
-  readonly map: (failure: SchemaFailure) => NoInfer<Errors[number]["Type"]>;
-}
-
 /** MCP tool metadata; every field has a default derived from the action. */
 export interface McpOptions {
   /** Tool name; defaults to the action name. Must match `^[A-Za-z0-9_-]{1,128}$`. */
@@ -26,7 +13,33 @@ export interface McpOptions {
   readonly readOnly?: boolean;
   /** `destructiveHint`; defaults to `!readOnly`, as the MCP spec only defines it for writes. */
   readonly destructive?: boolean;
+  /** `idempotentHint`; defaults to `false`. */
+  readonly idempotent?: boolean;
+  /** `openWorldHint`; defaults to `true`. */
+  readonly openWorld?: boolean;
 }
+
+type ResolvedMcp<
+  Name extends string,
+  Mcp extends false | McpOptions | undefined,
+> = Mcp extends false
+  ? false
+  : {
+      readonly name: Mcp extends McpOptions
+        ? "name" extends keyof Mcp
+          ? Extract<Mcp["name"], string> extends never
+            ? Name
+            : Extract<Mcp["name"], string> | (undefined extends Mcp["name"] ? Name : never)
+          : Name
+        : Name;
+      // Names and the `false` exclusion are contract-level type information.
+      // Hints are runtime metadata with defaults, so broad option variables
+      // must not claim a literal value that their runtime value may not have.
+      readonly readOnly: boolean;
+      readonly destructive: boolean;
+      readonly idempotent: boolean;
+      readonly openWorld: boolean;
+    };
 
 /** What `make` needs to define an action. */
 export interface Options<
@@ -34,6 +47,7 @@ export interface Options<
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Http extends boolean = boolean,
+  Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly description: string;
   /** Omit for an action without arguments. */
@@ -44,7 +58,7 @@ export interface Options<
   /** `false` hides the action from HTTP routes and clients. */
   readonly http?: Http;
   /** `false` hides the action from MCP; otherwise tool metadata. */
-  readonly mcp?: false | McpOptions;
+  readonly mcp?: Mcp;
 }
 
 /** A pure contract: schemas and transport metadata. Implementations are bound by `ActionGroup.implement`. */
@@ -54,6 +68,7 @@ export interface Action<
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Http extends boolean = boolean,
+  Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly name: Name;
   readonly description: string;
@@ -61,17 +76,14 @@ export interface Action<
   readonly success: Output;
   readonly errors: Errors;
   readonly http: Http;
-  readonly mcp:
-    | false
-    | {
-        readonly name: string;
-        readonly readOnly: boolean;
-        readonly destructive: boolean;
-      };
+  readonly mcp: ResolvedMcp<Name, Mcp>;
 }
 
 /** Any action, with its schemas erased. */
-export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
+export type Any =
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, boolean, false>
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, boolean, McpOptions>
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, boolean, undefined>;
 
 /** Receives decoded input; may fail only with the declared errors. */
 export type Handler<A extends Any, R = never> = (
@@ -82,8 +94,8 @@ export type Handler<A extends Any, R = never> = (
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 /**
- * Define an action contract. Names are `[A-Za-z][A-Za-z0-9_-]*`, other than `then`.
- * An action exposed on neither transport is rejected here, at definition time.
+ * Define an action contract. Names are `[A-Za-z0-9_-]+`, other than `then`.
+ * Actions can be local-only by setting both transports to `false`.
  */
 export function make<
   const Name extends string,
@@ -91,16 +103,16 @@ export function make<
   Output extends Codec = never,
   const Errors extends ReadonlyArray<Codec> = [],
   const Http extends boolean = true,
+  const Mcp extends false | McpOptions | undefined = undefined,
 >(
   name: Name,
-  options: Options<Input, Output, Errors, Http>,
-): Action<Name, Input, Output, Errors, Http>;
-export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<Codec>>): Any {
+  options: Options<Input, Output, Errors, Http, Mcp>,
+): Action<Name, Input, Output, Errors, Http, Mcp>;
+export function make(
+  name: string,
+  options: Options<Codec, Codec, ReadonlyArray<Codec>, boolean, false | McpOptions | undefined>,
+): Any {
   assertName("action name", name);
-
-  if (options.http === false && options.mcp === false) {
-    throw new Error(`Action ${name} is exposed on no transport`);
-  }
 
   const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? false);
 
@@ -111,11 +123,15 @@ export function make(name: string, options: Options<Codec, Codec, ReadonlyArray<
           name: options.mcp?.name ?? name,
           readOnly,
           destructive: options.mcp?.destructive ?? !readOnly,
+          idempotent: options.mcp?.idempotent ?? false,
+          openWorld: options.mcp?.openWorld ?? true,
         };
 
-  if (mcp !== false && !/^[A-Za-z0-9_-]{1,128}$/.test(mcp.name)) {
+  if (mcp !== false && mcp.name.length > 128) {
     throw new Error(`Invalid MCP name: ${mcp.name}`);
   }
+
+  if (mcp !== false) assertName("MCP name", mcp.name);
 
   return {
     name,
