@@ -15,9 +15,18 @@ Layers to the adapters instead.
 
 Services yielded inside a handler are request requirements, represented by
 `HttpRouter.Request.From<"Requires", R>`. Supply them through router middleware,
-`HttpRouter.provideRequest`, or the request context. A startup Layer providing the
-same service does not satisfy a request requirement, either in types or at runtime.
-See the [authenticated example](../examples/README.md) for this separation.
+`HttpRouter.provideRequest`, or the request context.
+
+**Use distinct tags for build-time capabilities and request-scoped identity.**
+For example, acquire `Users` at startup and provide `CurrentActor` only per request.
+Never provide identity/tenant tags in startup layers or the application's root context.
+The adapters use native Effect context capture and merging: they do not isolate arbitrary
+request services from build context. A startup value under the same tag can shadow a
+request value or satisfy a missing runtime value. Types still track request requirements;
+they do not enforce this separation of tags or validate identity provenance.
+
+Authentication must establish identity on every protected request. See the
+[authenticated example](../examples/README.md) for this separation.
 
 The application remains responsible for establishing identity and checking
 permissions. Types verify that a required service is present, not that its value
@@ -102,25 +111,34 @@ span, so a trace names the action on both transports. Decoding and encoding happ
 
 ## HTTP client details
 
-Methods take decoded inputs and return decoded results. They retain declared
-errors, schema-policy errors, `SchemaError`, and native `HttpClientError`.
-Local client codec failures remain `SchemaError`; the schema-error policy runs
-only on the server.
+Use `HttpApiClient.make(Http.api, options)` for Effect's native grouped client.
+Methods take explicit payloads containing decoded inputs and return decoded results:
 
-An argument is optional when the input type accepts `{}`. Omitted input and
-explicit `undefined` send `{}` unless the decoded input schema accepts
-`undefined` as a value. `null` passes through unchanged.
+```ts
+const calls = Effect.gen(function* () {
+  const client = yield* HttpApiClient.make(Http.api, { baseUrl: "http://localhost:3000" });
+  yield* client.users.double({ payload: { value: 21 } });
+  return yield* client.public.status({ payload: {} });
+});
+```
 
-Use `HttpApiClient.make(Http.api, options)` for grouped methods
-such as `client.users.double({ payload: { value: 21 } })` and per-call response
-modes. Use `makeWith` for custom client error and service channels.
+There is no flat client or omitted-input normalization. Pass `{ payload: {} }` for
+no-input and empty optional-object input; pass `null` or `undefined` explicitly only
+when the codec accepts that value. Native per-call response modes are available.
+
+Client effects retain declared errors, schema-policy errors, `SchemaError`, and native
+`HttpClientError`. Local codec failures remain `SchemaError`; the schema-error policy
+runs only on the server. Use `HttpApiClient.makeWith` for custom client error and
+service channels.
 
 ## MCP transport
 
-The revisions enabled by default are 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26,
-and 2024-11-05. Pass `protocols`, built from Effect's `McpProtocol`, to select a subset. All use the native server's single-endpoint Streamable HTTP transport;
-this does not implement the historical two-endpoint HTTP+SSE transport.
+Supply `protocols` using Effect’s native `McpProtocol` adapters. Effect owns
+negotiation, revision rejection, and session lifecycle; the adapter forwards the
+selection unchanged. Choose `[McpProtocol.v2026_07_28]` for a stateless endpoint.
 
-The 2026-07-28 revision is stateless; older revisions initialize a session.
+The transport is the native server’s single-endpoint Streamable HTTP transport,
+not historical two-endpoint HTTP+SSE, even when an older revision is selected.
+
 MCP cancellation uses Effect's native RPC interruption. Remote cancellation and
 disconnect behavior need broader client and deployment testing.

@@ -1,12 +1,11 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import { Effect, Layer, type Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import type { Etag, HttpClient, HttpPlatform, HttpRouter } from "effect/unstable/http";
+import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
 import {
   HttpApi,
   HttpApiBuilder,
   HttpApiEndpoint,
-  HttpApiClient,
   HttpApiMiddleware,
   HttpApiGroup,
   OpenApi,
@@ -60,35 +59,7 @@ type ApiGroup<G extends Actions> = G extends Actions
 /** The native `HttpApi` of every HTTP-enabled action of `G`, one `HttpApiGroup` per group. */
 export type Api<G extends Actions> = HttpApi.HttpApi<"actions", ApiGroup<G>>;
 
-// Each action paired with its own group's policy errors, so the client stays one flat record.
-type Served<G extends Actions> = G extends Actions
-  ? G["actions"][number] extends infer Item
-    ? Item extends Action.Any
-      ? { readonly action: Item; readonly policyError: PolicyError<G> }
-      : never
-    : never
-  : never;
-
-/** Direct decoded-input methods of every group, excluding MCP-only actions. */
-export type Client<G extends Actions> = {
-  readonly [
-    Pair in Served<G> as Pair["action"]["http"] extends false ? never : Pair["action"]["name"]
-  ]: (
-    ...args: {} extends Pair["action"]["input"]["Type"]
-      ? [input?: Pair["action"]["input"]["Type"]]
-      : [input: Pair["action"]["input"]["Type"]]
-  ) => HttpApiClient.Client.MethodReturn<
-    Endpoint<Pair["action"], Pair["policyError"]>,
-    never,
-    never,
-    "decoded-only"
-  >;
-};
-
-/** Native connection options: `baseUrl`, `transformClient`, `transformResponse`. */
-export type ClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
-
-/** One HTTP binding of some groups: the shared native API, one route layer per group, and clients. */
+/** One HTTP binding: a native API and one route layer per group. */
 export interface Http<G extends Actions> {
   /**
    * The native `HttpApi` for every HTTP-enabled action: `POST <apiPath>/<name>`.
@@ -100,6 +71,7 @@ export interface Http<G extends Actions> {
    * to a layer applies to that group only. Handler requirements are
    * request-level requirements, exactly as native `HttpApiBuilder` handlers'
    * are. A group without HTTP actions registers nothing and is not acquired.
+   * Native context capture applies: never provide request-identity tags at startup.
    */
   readonly layer: <App extends AnyImplementation<G>>(
     app: App,
@@ -114,10 +86,6 @@ export interface Http<G extends Actions> {
     | HttpPlatform.HttpPlatform
     | Path
   >;
-  /** Direct action methods backed by the native HTTP client and its codecs. */
-  readonly client: (
-    options?: ClientOptions,
-  ) => Effect.Effect<Client<G>, never, HttpClient.HttpClient>;
 }
 
 const endpoint = (apiPath: `/${string}`, action: Action.Any, errors: ReadonlyArray<Action.Codec>) =>
@@ -208,48 +176,13 @@ const erasedLayer = <R, EX, RX>(binding: Binding, app: ErasedImplementation<R, E
       ),
     );
 
-    // HttpApiBuilder provides the context its group was built with to every
-    // handler, over the request context. Built with an empty context instead,
-    // a startup copy of a request service cannot shadow the request's own.
-    const isolated = Layer.fromBuildMemo((memoMap, scope) =>
-      Layer.buildWithMemoMap(
+    return HttpApiBuilder.layer(httpApi).pipe(
+      Layer.provide(
         Layer.mergeAll(Layer.empty, ...handlers).pipe(Layer.provide(schemaErrors.layer)),
-        memoMap,
-        scope,
-      ).pipe(Effect.setContext(Context.empty())),
+      ),
     );
-
-    return HttpApiBuilder.layer(httpApi).pipe(Layer.provide(isolated));
   });
 };
-
-const erasedClient = (
-  api: Api<Actions>,
-  views: ReadonlyArray<View>,
-  connection: ClientOptions | undefined,
-) =>
-  Effect.map(HttpApiClient.make(api, connection), (native) => {
-    // Decide once from decoded input schemas: undefined is omitted input for
-    // structs, but remains a value for codecs that explicitly accept it.
-    const acceptsUndefined = new Set(
-      views.flatMap(({ actions }) =>
-        actions.flatMap((action) => (Schema.is(action.input)(undefined) ? [action.name] : [])),
-      ),
-    );
-
-    return Object.fromEntries(
-      Object.values(native).flatMap((methods) =>
-        Object.entries(methods).map(([name, method]) => [
-          name,
-          (input?: ErasedValue) =>
-            method({
-              payload: input === undefined && !acceptsUndefined.has(name) ? {} : input,
-              responseMode: "decoded-only",
-            }),
-        ]),
-      ),
-    );
-  });
 
 /**
  * Bind the contract-level configuration once. The native API is built here and
@@ -285,6 +218,5 @@ export function make(options: Options, ...groups: ReadonlyArray<Actions>): Http<
   return {
     api,
     layer: (app: AnyImplementation) => erasedLayer(binding, app),
-    client: (connection) => erasedClient(api, views, connection),
   };
 }

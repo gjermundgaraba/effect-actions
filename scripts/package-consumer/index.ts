@@ -1,3 +1,4 @@
+import type { HttpApiClient } from "effect/unstable/httpapi";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -6,7 +7,7 @@ import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { httpClient, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { type Actions, Http, routes } from "./quickstart.js";
+import { Http, routes } from "./quickstart.js";
 
 const entries = [
   Action.make,
@@ -30,11 +31,14 @@ const rootImport = await import(packageRoot).then(
 
 if (rootImport !== "absent") throw new Error("The package root must not be an entry point");
 
-const checkTypes = (client: ActionHttp.Client<typeof Actions>) => {
+const checkTypes = (client: HttpApiClient.ForApi<typeof Http.api>) => {
   // @ts-expect-error Published declarations must reject incorrect input.
-  client.greet({ name: 123 });
+  client.greetings.greet({ payload: { name: 123 } });
+
   // @ts-expect-error Published declarations must retain the result type.
-  const wrong: Effect.Effect<number, unknown, unknown> = client.greet({ name: "Ada" });
+  const wrong: Effect.Effect<number, unknown, unknown> = client.greetings.greet({
+    payload: { name: "Ada" },
+  });
 
   return wrong;
 };
@@ -54,9 +58,9 @@ try {
     throw new Error("Stateless MCP request failed without the optional client peer");
 
   const greeting = await Effect.gen(function* () {
-    const client = yield* httpClient(Http, web.handler);
+    const client = yield* httpClient(Http.api, web.handler);
 
-    return yield* client.greet({ name: "Ada" });
+    return yield* client.greetings.greet({ payload: { name: "Ada" } });
   }).pipe(Effect.runPromise);
 
   if (greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${greeting}`);

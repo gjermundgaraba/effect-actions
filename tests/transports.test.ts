@@ -37,7 +37,14 @@ const authenticatedFetch = (token: string) => (request: Request) => {
 };
 
 const withMcp = <A>(run: (client: Client) => Promise<A>, token = "alice") =>
-  withMcpClient({ fetch: authenticatedFetch(token), path: testMcpPath }, run);
+  withMcpClient(
+    {
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+      fetch: authenticatedFetch(token),
+      path: testMcpPath,
+    },
+    run,
+  );
 
 const tool = (name: string, args: Schema.JsonObject, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
@@ -312,35 +319,26 @@ describe("one implementation, both transports", () => {
     expect(result).toBe(42);
   });
 
-  it.each(["legacy", "modern"] as const)(
-    "supports the official v2 MCP client in %s mode",
-    async (era) => {
-      const versions = new Set<string | null>();
-      await withMcpClient(
-        {
-          fetch: (request) => {
-            versions.add(request.headers.get("mcp-protocol-version"));
-
-            return authenticatedFetch("alice")(request);
-          },
-          mode: era,
-          path: testMcpPath,
-        },
-        async (client) => {
-          const tools = await client.listTools();
-          expect(tools.tools.map((tool) => tool.name)).toContain("double");
-          const result = await client.callTool({ name: "double", arguments: { value: "7" } });
-          expect(result.structuredContent).toEqual({ value: 14 });
-          const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
-          expect(failure.isError).toBe(true);
-          expect(failure.content).toEqual([
-            { type: "text", text: '{"_tag":"UserNotFound","id":"missing"}' },
-          ]);
-          expect(versions).toContain(era === "modern" ? "2026-07-28" : "2025-11-25");
-        },
-      );
-    },
-  );
+  it("supports the official v2 MCP client with the stateless revision", async () => {
+    await withMcpClient(
+      {
+        versionNegotiation: { mode: { pin: "2026-07-28" } },
+        fetch: authenticatedFetch("alice"),
+        path: testMcpPath,
+      },
+      async (client) => {
+        const tools = await client.listTools();
+        expect(tools.tools.map((tool) => tool.name)).toContain("double");
+        const result = await client.callTool({ name: "double", arguments: { value: "7" } });
+        expect(result.structuredContent).toEqual({ value: 14 });
+        const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
+        expect(failure.isError).toBe(true);
+        expect(failure.content).toEqual([
+          { type: "text", text: '{"_tag":"UserNotFound","id":"missing"}' },
+        ]);
+      },
+    );
+  });
 });
 
 describe("groups under their own middleware", () => {
@@ -380,14 +378,17 @@ describe("groups under their own middleware", () => {
     expect((await app.handler(foreign)).status).toBe(403);
   });
 
-  it("calls every group through one flat client, with the shared policy errors", async () => {
+  it("calls every group through one native grouped client, with the shared policy errors", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const client = yield* httpClient(Http, app.handler, {
+        const client = yield* httpClient(Http.api, app.handler, {
           transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
         });
 
-        return { status: yield* client.status(), identity: yield* client.whoAmI() };
+        return {
+          status: yield* client.public.status({ payload: {} }),
+          identity: yield* client.users.whoAmI({ payload: {} }),
+        };
       }),
     );
 
@@ -408,14 +409,24 @@ describe("groups under their own middleware", () => {
   });
 
   it("splits MCP access by endpoint, since middleware covers every tool of one", async () => {
-    const tools = await withMcpClient({ fetch: app.handler, path: "/mcp/public" }, (client) =>
-      client.listTools(),
+    const tools = await withMcpClient(
+      {
+        versionNegotiation: { mode: { pin: "2026-07-28" } },
+        fetch: app.handler,
+        path: "/mcp/public",
+      },
+      (client) => client.listTools(),
     );
 
     expect(tools.tools.map((item) => item.name)).toEqual(["status"]);
 
-    const status = await withMcpClient({ fetch: app.handler, path: "/mcp/public" }, (client) =>
-      client.callTool({ name: "status", arguments: {} }),
+    const status = await withMcpClient(
+      {
+        versionNegotiation: { mode: { pin: "2026-07-28" } },
+        fetch: app.handler,
+        path: "/mcp/public",
+      },
+      (client) => client.callTool({ name: "status", arguments: {} }),
     );
 
     expect(status.structuredContent).toEqual({ value: { service: "effect-actions", users: 2 } });

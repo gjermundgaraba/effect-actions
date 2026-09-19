@@ -8,15 +8,18 @@ const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerSe
 });
 
 try {
-  await withMcpClient({ fetch: web.handler, path: "/mcp" }, async (client) => {
-    const reply = await client.callTool({ name: "greet", arguments: { name: "Ada" } });
+  await withMcpClient(
+    { versionNegotiation: { mode: { pin: "2026-07-28" } }, fetch: web.handler, path: "/mcp" },
+    async (client) => {
+      const reply = await client.callTool({ name: "greet", arguments: { name: "Ada" } });
 
-    if (
-      Schema.decodeUnknownSync(Schema.Struct({ value: Schema.String }))(reply.structuredContent)
-        .value !== "Hello, Ada!"
-    )
-      throw new Error("Official MCP client failed");
-  });
+      if (
+        Schema.decodeUnknownSync(Schema.Struct({ value: Schema.String }))(reply.structuredContent)
+          .value !== "Hello, Ada!"
+      )
+        throw new Error("Official MCP client failed");
+    },
+  );
 } finally {
   await web.dispose();
 }

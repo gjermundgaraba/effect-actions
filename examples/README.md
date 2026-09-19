@@ -51,8 +51,7 @@ curl -s http://127.0.0.1:3000/api/actions/double \
 # 42
 
 # The same action over MCP. The 2026-07-28 revision is stateless, so a single
-# request needs no initialize handshake. Older revisions negotiate a session
-# first; see the official-client tests.
+# request needs no initialize handshake. These examples select only this revision.
 curl -s http://127.0.0.1:3000/mcp \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
@@ -109,3 +108,7 @@ identity from request context, not action arguments.
 
 See [dependency lifetimes](../docs/behavior.md#dependency-lifetimes) for how the
 handlers share `Users` while resolving `CurrentActor` on each request.
+
+Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
+Never provide `CurrentActor` at startup: adapters retain native Effect context semantics,
+not an extra identity-isolation boundary. Authentication establishes it on each request.

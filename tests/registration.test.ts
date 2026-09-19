@@ -1,6 +1,8 @@
+import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { withMcpClient } from "../src/TestingClient.js";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
-import { McpSchema } from "effect/unstable/ai";
+import { McpProtocol, McpSchema } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -12,6 +14,27 @@ import { post } from "./requests.js";
 
 const mcpCall = (name: string, args: Schema.Json = {}) =>
   mcpRequest({ url: testMcpUrl, method: "tools/call", params: { name, arguments: args } });
+
+it("forwards the configured MCP protocols", async () => {
+  const web = HttpRouter.toWebHandler(
+    ActionMcp.layer({
+      name: "configured",
+      version: "0",
+      path: "/mcp",
+      protocols: [McpProtocol.v2025_11_25],
+    }).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  await withMcpClient(
+    { fetch: web.handler, path: "/mcp", versionNegotiation: { mode: "legacy" } },
+    async (client) => {
+      expect((await client.listTools()).tools).toEqual([]);
+    },
+  );
+});
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
   const response = await handler(mcpRequest({ url: testMcpUrl, method: "tools/list" }));
@@ -328,9 +351,12 @@ describe("projection boundaries", () => {
         invalid: () => Effect.succeed("unused"),
       });
 
-      expect(() => ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app)).toThrow(
-        "invalid: MCP input must have an object root",
-      );
+      expect(() =>
+        ActionMcp.layer(
+          { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
+          app,
+        ),
+      ).toThrow("invalid: MCP input must have an object root");
     },
   );
 

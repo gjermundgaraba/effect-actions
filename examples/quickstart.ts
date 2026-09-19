@@ -1,3 +1,4 @@
+import { McpProtocol } from "effect/unstable/ai";
 import { Effect, Layer, Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -21,5 +22,8 @@ const app = Actions.implement({
 
 export const routes = Layer.mergeAll(
   Http.layer(app),
-  ActionMcp.layer({ name: "greetings", version: "1.0.0", path: "/mcp" }, app),
+  ActionMcp.layer(
+    { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
+    app,
+  ),
 );

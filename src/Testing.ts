@@ -1,33 +1,28 @@
 import { Effect, Layer, Predicate } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import type * as ActionHttp from "./ActionHttp.js";
-import type { Actions } from "./internal/actions.js";
+import { type HttpApi, HttpApiClient, type HttpApiGroup } from "effect/unstable/httpapi";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
 export type Handler = (request: Request) => Promise<Response>;
 
 /**
- * The typed HTTP client, calling `handler` in memory instead of the network.
+ * The native grouped HTTP client, calling `handler` in memory instead of the network.
  * `baseUrl` defaults to `http://localhost`.
  */
-export const httpClient = <G extends Actions>(
-  http: Pick<ActionHttp.Http<G>, "client">,
+export const httpClient = <Id extends string, Groups extends HttpApiGroup.Constraint>(
+  api: HttpApi.HttpApi<Id, Groups>,
   handler: Handler,
-  options?: ActionHttp.ClientOptions,
-): Effect.Effect<ActionHttp.Client<G>> =>
-  http
-    .client({ baseUrl: "http://localhost", ...options })
-    .pipe(
-      Effect.provide(
-        FetchHttpClient.layer.pipe(
-          Layer.provide(
-            Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
-              handler(new Request(input, init)),
-            ),
-          ),
+  options?: NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
+) =>
+  HttpApiClient.make(api, { baseUrl: "http://localhost", ...options }).pipe(
+    Effect.provide(
+      FetchHttpClient.layer.pipe(
+        Layer.provide(
+          Layer.succeed(FetchHttpClient.Fetch, (input, init) => handler(new Request(input, init))),
         ),
       ),
-    );
+    ),
+  );
 
 /** A stateless 2026-07-28 request. */
 export interface McpRequestOptions {

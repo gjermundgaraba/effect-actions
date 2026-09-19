@@ -26,6 +26,7 @@ pnpm add '@effect/platform-node@https://pkg.pr.new/Effect-TS/effect/@effect/plat
 ## Quickstart
 
 ```ts
+import { McpProtocol } from "effect/unstable/ai";
 import { Effect, Layer, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
@@ -49,7 +50,10 @@ const app = Actions.implement({
 
 export const routes = Layer.mergeAll(
   Http.layer(app),
-  ActionMcp.layer({ name: "greetings", version: "1.0.0", path: "/mcp" }, app),
+  ActionMcp.layer(
+    { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
+    app,
+  ),
 );
 ```
 
@@ -85,22 +89,24 @@ See [examples/server.ts](examples/server.ts) for Node server wiring and the
 Save the quickstart above as `quickstart.ts`. Once its routes are served:
 
 ```ts
+import { HttpApiClient } from "effect/unstable/httpapi";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Http } from "./quickstart.js";
 
 export const greeting = Effect.gen(function* () {
-  const client = yield* Http.client({ baseUrl: "http://127.0.0.1:3000" });
+  const client = yield* HttpApiClient.make(Http.api, { baseUrl: "http://127.0.0.1:3000" });
 
-  return yield* client.greet({ name: "Ada" });
+  return yield* client.greetings.greet({ payload: { name: "Ada" } });
 }).pipe(Effect.provide(FetchHttpClient.layer));
 ```
 
-Run `greeting` with `Effect.runPromise`. Methods take decoded inputs and return
-decoded results; MCP-only actions are excluded. `ActionHttp.make` binds the mount path the
-server and its clients must agree on, so `client` accepts only connection options. Authentication headers can be added with
-`transformClient`. See [client details](docs/behavior.md#http-client-details)
-for error types, optional inputs, and native grouped clients.
+Run `greeting` with `Effect.runPromise`. Use Effect's native `HttpApiClient.make(Http.api,
+options)`: methods are grouped by action group and take explicit `{ payload: ... }`
+arguments, including `{ payload: {} }` for no-input actions. Inputs and results are
+decoded values; MCP-only actions are excluded. HTTP paths remain flat.
+Authentication headers can be added with `transformClient`. See
+[client details](docs/behavior.md#http-client-details) for error types and response modes.
 
 ## Multiple groups
 
@@ -108,12 +114,18 @@ An application can split its contracts and handlers into groups without splittin
 endpoints. Configuration comes first, then the groups or implementations:
 
 ```ts
+import { McpProtocol } from "effect/unstable/ai";
+
 const Http = ActionHttp.make({ apiPath: "/api/actions" }, PublicActions, UserActions);
 
 const routes = Layer.mergeAll(
   Http.layer(PublicApp),
   Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
-  ActionMcp.layer({ name: "my-app", version: "1.0.0", path: "/mcp" }, UserApp, AuditApp),
+  ActionMcp.layer(
+    { protocols: [McpProtocol.v2026_07_28], name: "my-app", version: "1.0.0", path: "/mcp" },
+    UserApp,
+    AuditApp,
+  ),
 );
 ```
 
@@ -122,8 +134,9 @@ const routes = Layer.mergeAll(
   requires authentication. A group that is never mounted has no routes.
 - **Each adapter reads only what it serves.** A group without HTTP actions registers nothing
   and is not built by `Http.layer`, nor one without tools by `ActionMcp.layer`.
-- **Names.** Routes and client methods are flat (`POST /api/actions/<action>`,
-  `client.<action>()`), so group names and HTTP action names must be unique within one
+- **Names.** Routes are flat (`POST /api/actions/<action>`), while native client methods
+  are grouped (`client.<group>.<action>({ payload: ... })`). Group names and HTTP
+  action names must be unique within one
   `ActionHttp.make`, and tool names within one `ActionMcp.layer`. Duplicates throw at
   construction; neither adapter looks at the other's names.
 - **MCP middleware is per endpoint.** An MCP endpoint is one route, so middleware provided
@@ -160,11 +173,10 @@ value gives Effect's grouped client: `HttpApiClient.make(Http.api)`.
 | `ActionGroup.make(options, …actions)` | `name`, `errors`, `schemaError`                                          |
 | `ActionHttp.make(options, …groups)`   | `apiPath`                                                                |
 | `Http.layer(app)`                     | None                                                                     |
-| `Http.client(options?)`               | `baseUrl`, `transformClient`, `transformResponse`                        |
 | `ActionMcp.layer(options, …apps)`     | `name`, `version`, `path`, `protocols`, `allowedOrigins`, `instructions` |
 
-`apiPath` and MCP `path` have no defaults. `Http` has three members: `api`, `layer` and
-`client`.
+`apiPath` and MCP `path` have no defaults. `Http` has two members: `api` and `layer`. MCP `protocols` is required and takes Effect’s native `McpProtocol` adapters.
+Effect owns protocol negotiation and sessions.
 
 See [adapter behavior](docs/behavior.md) for shared schema-error policies,
 dependency lifetimes, wire formats, and MCP protocol support.
@@ -214,6 +226,11 @@ status, body and any Bearer challenge: `HttpServerResponse.schemaJson(Unauthenti
 { status: 401, headers })`. Responses use `Cache-Control: no-store`, including failures handled
 by enclosing middleware. Provide the returned middleware's `.layer` to HTTP and MCP route
 layers. See [examples/app.ts](examples/app.ts).
+
+Use distinct service tags for startup capabilities and request identities. Never supply
+`CurrentActor` or other request-identity tags through startup layers or root context:
+native Effect context capture can shadow request values or supply missing runtime values.
+The adapters do not provide an additional context-isolation boundary.
 
 Authentication dependencies are request requirements, as with native `HttpRouter.middleware`.
 Use `.combine(...)` with middleware that provides them. Acquired resources stay alive
@@ -270,13 +287,13 @@ peer `@modelcontextprotocol/client@^2.0.0`. Only that entry point loads the peer
 const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)));
 
 const greeting = Effect.gen(function* () {
-  const client = yield* httpClient(Http, web.handler);
+  const client = yield* httpClient(Http.api, web.handler);
 
-  return yield* client.greet({ name: "Ada" });
+  return yield* client.greetings.greet({ payload: { name: "Ada" } });
 });
 ```
 
-- `httpClient(Http, handler, options?)` is the typed HTTP client calling a web handler in
+- `httpClient(Http.api, handler, options?)` is the native grouped HTTP client calling a web handler in
   memory. `options` are the client's connection options; `baseUrl` defaults to `http://localhost`.
 - `mcpRequest({ url, method, params?, headers? })` builds a stateless 2026-07-28 request.
   `params` takes whatever `JSON.stringify` accepts, `undefined` fields included, so tests can
@@ -284,6 +301,7 @@ const greeting = Effect.gen(function* () {
   Caller `params._meta` fields override the default client capabilities
   and information; application metadata is preserved. The protocol version stays pinned to
   2026-07-28 in both the request header and metadata. Metadata is merged shallowly.
-- `withMcpClient({ fetch, path, mode?, baseUrl?, headers? }, async client => ...)`
+- `withMcpClient({ fetch, path, versionNegotiation?, baseUrl?, headers? }, async client => ...)`
   connects the official client and closes it in a `finally` block.
-  `mode` defaults to `"modern"` (2026-07-28); use `"legacy"` to exercise session negotiation.
+  `versionNegotiation` is passed directly to the official client (whose default is legacy).
+  For a stateless endpoint, pass `versionNegotiation: { mode: { pin: "2026-07-28" } }`.

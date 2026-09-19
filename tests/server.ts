@@ -1,3 +1,4 @@
+import { McpProtocol } from "effect/unstable/ai";
 import { Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import type * as ActionGroup from "../src/ActionGroup.js";
@@ -37,9 +38,9 @@ export const makeTestMcp = <Group extends ActionGroup.Any, R, EX>(
   request: Layer.Layer<NoInfer<R>>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionMcp.layer({ name: "test", version: "0", path: testMcpPath }, app).pipe(
-      HttpRouter.provideRequest(request),
-      Layer.provide(HttpServer.layerServices),
-    ),
+    ActionMcp.layer(
+      { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
+      app,
+    ).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );

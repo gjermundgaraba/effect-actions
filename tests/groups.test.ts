@@ -1,3 +1,4 @@
+import { McpProtocol } from "effect/unstable/ai";
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
 import {
@@ -46,7 +47,11 @@ const serve = () => {
     Layer.mergeAll(
       Http.layer(UsersApp),
       Http.layer(BillingApp),
-      ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, UsersApp, BillingApp),
+      ActionMcp.layer(
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
+        UsersApp,
+        BillingApp,
+      ),
     ).pipe(Layer.provide(Layer.succeed(Tenant, "acme")), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -56,14 +61,17 @@ const serve = () => {
   return web;
 };
 
-it("serves several groups through one flat client and one document", async () => {
+it("serves several groups through one native grouped client and one document", async () => {
   const web = serve();
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
-      const client = yield* httpClient(Http, web.handler);
+      const client = yield* httpClient(Http.api, web.handler);
 
-      return [yield* client.whoAmI(), yield* client.invoice({ amount: 21 })];
+      return [
+        yield* client.users.whoAmI({ payload: {} }),
+        yield* client.billing.invoice({ payload: { amount: 21 } }),
+      ];
     }),
   );
 
@@ -204,7 +212,14 @@ it("acquires only the implementations a transport serves", async () => {
 
   for (const [routes, expected] of [
     [Layer.mergeAll(bound.layer(mcpOnly), bound.layer(httpOnly)), "httpOnly"],
-    [ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, mcpOnly, httpOnly), "mcpOnly"],
+    [
+      ActionMcp.layer(
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
+        mcpOnly,
+        httpOnly,
+      ),
+      "mcpOnly",
+    ],
   ] as const) {
     built.length = 0;
 
@@ -239,7 +254,7 @@ it("reads only the actions a transport serves", async () => {
   const handler = handlerOf(bound.layer(Web.implement({ ping: () => Effect.succeed("pong") })));
 
   const result = await Effect.runPromise(
-    Effect.flatMap(httpClient(bound, handler), (client) => client.ping()),
+    Effect.flatMap(httpClient(bound.api, handler), (client) => client.web.ping({ payload: {} })),
   );
 
   expect(result).toBe("pong");
@@ -320,7 +335,10 @@ it("adds a group's errors to every action, on both transports", async () => {
   const handler = handlerOf(
     Layer.mergeAll(
       bound.layer(app),
-      ActionMcp.layer({ name: "test", version: "0", path: "/mcp" }, app),
+      ActionMcp.layer(
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
+        app,
+      ),
     ),
   );
 
@@ -368,7 +386,7 @@ it("checks each namespace only where it is served", () => {
       Action.make(action, { description: "", success: Schema.String, mcp: { name: "same" } }),
     );
 
-  // Routes and client methods are flat; groups are native group identifiers.
+  // Routes are flat; native clients retain group namespaces.
   expect(() => ActionHttp.make({ apiPath: "/api" }, Users, Other)).toThrow(
     "Duplicate action: whoAmI",
   );
@@ -410,7 +428,12 @@ it("checks each namespace only where it is served", () => {
   ).toThrow("Duplicate action group: users");
 
   // Tools are the MCP namespace; group and action names are not.
-  const mcp = { name: "test", version: "0", path: "/mcp" } as const;
+  const mcp = {
+    protocols: [McpProtocol.v2026_07_28],
+    name: "test",
+    version: "0",
+    path: "/mcp",
+  } as const;
 
   expect(() =>
     ActionMcp.layer(

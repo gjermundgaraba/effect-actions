@@ -57,7 +57,9 @@ export interface Group<
   /**
    * Bind every handler at once. Pass an Effect to resolve build-time services
    * (`const users = yield* Users`); services yielded inside a handler are
-   * request-scoped instead. The Effect runs once per adapter layer that serves
+   * request-scoped instead. Use distinct tags for these lifetimes; never provide
+   * request identity tags at startup. Adapters retain native context semantics.
+   * The Effect runs once per adapter layer that serves
    * this implementation, and scoped acquisition lasts as long as that layer.
    */
   readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(

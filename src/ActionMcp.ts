@@ -1,7 +1,6 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import type { Cause } from "effect";
-import type { NonEmptyReadonlyArray } from "effect/Array";
-import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
+import { McpServer, Tool, Toolkit } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import { type Actions, assertDistinct, served } from "./internal/actions.js";
@@ -18,23 +17,14 @@ import {
 export interface Options {
   readonly name: string;
   readonly version: string;
+  /** Native protocol adapters to serve; negotiation and sessions are owned by Effect. */
+  readonly protocols: Parameters<typeof McpServer.layerHttp>[0]["protocols"];
   /** Route of the Streamable HTTP endpoint; no default. */
   readonly path: HttpRouter.PathInput;
-  /** Protocol revisions to serve; defaults to every revision this snapshot supports. */
-  readonly protocols?: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>;
   /** Browser origins accepted by the native server; passed through to `McpServer.layerHttp`. */
   readonly allowedOrigins?: ReadonlyArray<string>;
   readonly instructions?: string;
 }
-
-/** Protocol revisions served over Streamable HTTP by default; 2026-07-28 is stateless. */
-const protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter> = [
-  McpProtocol.v2026_07_28,
-  McpProtocol.v2025_11_25,
-  McpProtocol.v2025_06_18,
-  McpProtocol.v2025_03_26,
-  McpProtocol.v2024_11_05,
-];
 
 type McpTool = Exclude<Action.Any["mcp"], false>;
 
@@ -105,19 +95,7 @@ const erasedLayer = <R, EX, RX>(
     );
 
     return Layer.effectDiscard(
-      Effect.gen(function* () {
-        const server = yield* McpServer.McpServer;
-
-        // registerToolkit hands its build context to every handler, over the
-        // request context. Registered with only the server present, a startup
-        // copy of a request service cannot shadow the request's own. A service
-        // the request omits entirely is still found in the route layer's context;
-        // the types require the request to provide it.
-        yield* McpServer.registerToolkit(toolkit).pipe(
-          Effect.provide(toolkit.toLayer(handlers)),
-          Effect.setContext(Context.make(McpServer.McpServer, server)),
-        );
-      }),
+      McpServer.registerToolkit(toolkit).pipe(Effect.provide(toolkit.toLayer(handlers))),
     ).pipe(
       Layer.provide(
         McpServer.layerHttp({
@@ -125,19 +103,20 @@ const erasedLayer = <R, EX, RX>(
           version: options.version,
           instructions: options.instructions,
           path: options.path,
-          protocols: options.protocols ?? protocols,
+          protocols: options.protocols,
           allowedOrigins: options.allowedOrigins,
         }),
       ),
-      // Each endpoint owns its native tool registry and sessions.
+      // Each endpoint owns its native tool registry.
       Layer.fresh,
     );
   });
 };
 
 /**
- * One Streamable HTTP MCP endpoint serving every MCP-enabled action of `apps`.
+ * One Streamable HTTP MCP endpoint serving the tools of `apps`.
  * An endpoint is one route, so middleware provided to this layer covers all of its tools.
+ * Native context capture applies: never provide request-identity tags at startup.
  * Duplicate tool names and non-object input roots across `apps` fail here.
  */
 export function layer<const Apps extends ReadonlyArray<AnyImplementation>>(

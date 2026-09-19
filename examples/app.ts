@@ -1,3 +1,4 @@
+import { McpProtocol } from "effect/unstable/ai";
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
@@ -82,6 +83,7 @@ const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 // compiles because this implementation requires nothing per request.
 const publicMcp = ActionMcp.layer(
   {
+    protocols: [McpProtocol.v2026_07_28],
     name: "effect-actions-public",
     version: "0.0.0",
     path: "/mcp/public",
@@ -92,6 +94,7 @@ const publicMcp = ActionMcp.layer(
 
 const mcp = ActionMcp.layer(
   {
+    protocols: [McpProtocol.v2026_07_28],
     name: "effect-actions",
     version: "0.0.0",
     path: "/mcp",

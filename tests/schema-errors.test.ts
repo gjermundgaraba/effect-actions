@@ -1,7 +1,7 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
-import { McpSchema } from "effect/unstable/ai";
+import { McpProtocol, McpSchema } from "effect/unstable/ai";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -209,11 +209,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
     Layer.merge(
       recording.layer(app),
       ActionMcp.layer(
-        {
-          name: "test",
-          version: "0",
-          path: "/mcp",
-        },
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
     ).pipe(Layer.provide(HttpServer.layerServices)),
@@ -289,11 +285,7 @@ it("executes each input/output transformation once with a policy enabled", async
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, group).layer(app),
       ActionMcp.layer(
-        {
-          name: "test",
-          version: "0",
-          path: "/mcp",
-        },
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
     ).pipe(Layer.provide(HttpServer.layerServices)),
@@ -331,11 +323,7 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer(app),
       ActionMcp.layer(
-        {
-          name: "test",
-          version: "0",
-          path: "/mcp",
-        },
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
     ).pipe(Layer.provide(HttpServer.layerServices)),
@@ -386,11 +374,7 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer(app),
       ActionMcp.layer(
-        {
-          name: "test",
-          version: "0",
-          path: "/mcp",
-        },
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
       ),
     ).pipe(Layer.provide(HttpServer.layerServices)),
