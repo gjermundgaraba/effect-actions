@@ -39,16 +39,15 @@ export class Implementation<G extends Actions, R, EX, RX> {
     this.#build = build;
   }
 
+  /**
+   * `RX` is what the build needs beyond `Scope`: `register` runs it under
+   * `Layer.unwrap`, in the adapter layer's scope, so `Scope` is always supplied.
+   */
   static make<G extends Actions, R, EX, RX>(
     group: G,
-    build: Effect.Effect<Handlers<R>, EX, RX>,
-  ): Implementation<G, R, EX, Exclude<RX, Scope.Scope>> {
-    // SAFETY: `register` runs the build under `Layer.unwrap`, in the adapter layer's
-    // scope, so `Scope` is always supplied. TypeScript cannot relate a type parameter
-    // to its own `Exclude`; this is the same assertion `Layer.effect` makes.
-    const scoped = build as Effect.Effect<Handlers<R>, EX, Exclude<RX, Scope.Scope> | Scope.Scope>;
-
-    return new Implementation(group, scoped);
+    build: Effect.Effect<Handlers<R>, EX, RX | Scope.Scope>,
+  ): Implementation<G, R, EX, RX> {
+    return new Implementation(group, build);
   }
 
   /**
@@ -74,6 +73,7 @@ export class Implementation<G extends Actions, R, EX, RX> {
 
           // SAFETY: drops only `R`. Each adapter's public `layer` signature restores it as
           // `HttpRouter.Request.From<"Requires", R>`, so these services are present per request.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erasure boundary: adapters dispatch handlers of every implementation through one record, so `R` cannot stay in the value type. The request context that supplies `R` at runtime is native Effect behavior, covered by tests/bindings.test.ts.
           const dispatch = handle as Dispatch;
           // The OpenAPI operation ID, so both transports label a call alike.
           const name = `${app.group.name}.${action.name}`;

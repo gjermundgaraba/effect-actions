@@ -61,14 +61,16 @@ export interface Group<
    * this implementation, and scoped acquisition lasts as long as that layer.
    */
   readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
-    build: H | Effect.Effect<H, EX, RX>,
+    // `Scope` is named beside `RX`, so a scoped build infers `RX` without it: the
+    // adapter layer's scope hosts the build, and is not a requirement of its own.
+    build: H | Effect.Effect<H, EX, RX | Scope.Scope>,
     // NoInfer: called inline as an adapter argument, that parameter's `any`
     // must not flow back into `EX`/`RX`.
   ) => Implementation<
     Group<Name, Actions, PolicyErrors>,
     HandlersContext<H>,
     NoInfer<EX>,
-    NoInfer<Exclude<RX, Scope.Scope>>
+    NoInfer<RX>
   >;
 }
 
@@ -112,9 +114,9 @@ export function make(
     actions,
     schemaError: options.schemaError,
     implement: <H extends HandlersFrom<ReadonlyArray<Action.Any>>, EX = never, RX = never>(
-      build: H | Effect.Effect<H, EX, RX>,
+      build: H | Effect.Effect<H, EX, RX | Scope.Scope>,
     ) => {
-      const built: Effect.Effect<H, EX, RX> = Effect.isEffect(build)
+      const built: Effect.Effect<H, EX, RX | Scope.Scope> = Effect.isEffect(build)
         ? build
         : Effect.succeed(build);
 

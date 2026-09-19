@@ -15,10 +15,25 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "allowJs": true,
+    "checkJs": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    // The package-consumer fixture imports the published name; in the repository it
+    // resolves to the same source the examples use, not to a build in `dist`.
+    "paths": { "@gjermundgaraba/effect-actions/*": ["./src/*.ts"] },
     "noUnusedParameters": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts", "tests/**/*.ts", "vite.config.ts"],
+  "include": [
+    "src/**/*.ts",
+    "examples/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.ts",
+    "scripts/**/*.mjs",
+    "tools/oxlint/tests/**/*.ts",
+    "vite.config.ts"
+  ],
   "exclude": ["dist"]
 }

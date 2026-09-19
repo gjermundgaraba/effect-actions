@@ -5,7 +5,7 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
   },
   pack: {
     entry: {
@@ -43,10 +43,10 @@ export default defineConfig({
     ],
   },
   lint: {
+    // Lint policy: docs/lint-policy.md. Only build output, agent caches and the
+    // vendored plugin are excluded; every owned source, test and script is checked.
     ignorePatterns: [
       "dist/**",
-      "scripts/package-consumer/**",
-      "scripts/package-testing-consumer.ts",
       ".agent/**",
       ".agents/**",
       ".claude/**",
@@ -70,20 +70,29 @@ export default defineConfig({
     options: {
       typeAware: true,
       typeCheck: true,
+      denyWarnings: true,
+      // An exception that no longer suppresses anything is a defect, not a leftover.
+      reportUnusedDisableDirectives: "deny",
     },
     rules: {
       "oxc/no-accumulating-spread": "error",
-      "anti-slop/no-array-filter-map": "error",
+      // Off: both forms are linear; rewrites change callback order and sparse-array
+      // semantics without establishing a performance gain.
+      "anti-slop/no-array-filter-map": "off",
       "anti-slop/no-reduce-accumulator-copy": "error",
       "anti-slop/no-chained-type-assertions": "error",
-      "anti-slop/no-conditional-empty-object-spread": "error",
+      // Off: conditional spread preserves omission semantics without mutable builders.
+      "anti-slop/no-conditional-empty-object-spread": "off",
       "anti-slop/no-known-value-widening": "error",
       "anti-slop/no-module-mocking": "error",
       "anti-slop/no-object-parameters": "error",
       "anti-slop/no-reflect-apply": "error",
       "anti-slop/no-reflect-get": "error",
-      "anti-slop/no-runtime-typeof": "error",
-      "anti-slop/no-shape-in-symbol-names": "error",
+      // Genuine type predicates decode a value; discrimination of an already typed union
+      // takes a narrow explained exception instead.
+      "anti-slop/no-runtime-typeof": ["error", { allowInTypeGuards: true }],
+      // Off: a substring cannot establish domain ownership; naming is reviewed by people.
+      "anti-slop/no-shape-in-symbol-names": "off",
       "anti-slop/no-unknown-parameters": "error",
       "anti-slop/no-unknown-returns": "error",
       "anti-slop/no-unknown-type-aliases": "error",
@@ -91,6 +100,14 @@ export default defineConfig({
       "anti-slop/no-widen-then-assert": "error",
       "anti-slop/require-readable-spacing": "error",
       "anti-slop/require-safety-comment-for-type-assertion": "error",
+      // `any` escape routes the syntactic rules cannot see: untyped JSON, SDK generics,
+      // callback registries. Independent of safety comments.
+      "typescript/no-unsafe-argument": "error",
+      "typescript/no-unsafe-assignment": "error",
+      "typescript/no-unsafe-call": "error",
+      "typescript/no-unsafe-member-access": "error",
+      "typescript/no-unsafe-return": "error",
+      "typescript/no-unsafe-type-assertion": "error",
       "anti-slop-effect/no-manual-effect-error-tag": "error",
       "anti-slop-effect/no-manual-tag-comparison": "error",
       "anti-slop-effect/no-manual-tagged-construction": "error",

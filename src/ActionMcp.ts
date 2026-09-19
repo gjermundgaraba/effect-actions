@@ -150,6 +150,10 @@ export function layer<const Apps extends ReadonlyArray<AnyImplementation>>(
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
 >;
-export function layer(options: Options, ...apps: ReadonlyArray<AnyImplementation>) {
+// The overload above restores each implementation's own `R` as a request requirement.
+export function layer<R, EX, RX>(
+  options: Options,
+  ...apps: ReadonlyArray<Implementation<Actions, R, EX, RX>>
+) {
   return erasedLayer(apps, options);
 }

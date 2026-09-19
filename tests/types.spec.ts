@@ -27,6 +27,7 @@ export const typeAssertions = () => {
   const a = Actions.implement(ok);
   const b = Actions.implement(ok);
   // @ts-expect-error Implementation bindings cannot be extracted or cross-wired.
+  // oxlint-disable-next-line typescript/no-unsafe-member-access, typescript/no-unsafe-call, typescript/no-unsafe-argument -- Compile-failure fixture: the rejected access yields an error type; nothing runs.
   void Effect.runPromise(a.handlers.pipe(Effect.provide(b.layer)));
   // @ts-expect-error No public implementation Layer.
   void a.layer;
@@ -46,6 +47,7 @@ export const typeAssertions = () => {
     double: ({ value }: { value: string }) => Effect.succeed(Number(value)),
   });
   // @ts-expect-error Input fields come from the schema.
+  // oxlint-disable-next-line typescript/no-unsafe-assignment -- Compile-failure fixture: the rejected field yields an error type; nothing runs.
   Actions.implement({ ...ok, getUser: ({ userId }) => Effect.succeed({ id: userId, name: "" }) });
 
   const services = Layer.provide(HttpServer.layerServices);
@@ -124,6 +126,7 @@ export const clientTypes = Effect.gen(function* () {
   const doubled: number = yield* client.users.double({ payload: { value: 21 } });
   void doubled;
   // @ts-expect-error Action names are exact.
+  // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
   client.users.missing({ payload: {} });
   // @ts-expect-error Clients take decoded, not wire, inputs.
   client.users.double({ payload: { value: "21" } });
@@ -142,6 +145,7 @@ export const clientTypes = Effect.gen(function* () {
   );
 
   // @ts-expect-error MCP-only actions are not HTTP client methods.
+  // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
   selected.test.hidden({ payload: {} });
   const visible: boolean = yield* selected.test.visible({ payload: {} });
   void visible;
@@ -247,6 +251,7 @@ export const configuredClientTypes = () => {
     // @ts-expect-error No-input actions do not accept invented input fields.
     client.whoAmI({ actor: "alice" });
     // @ts-expect-error Names remain exact.
+    // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
     client.missing();
 
     const mixed = ActionGroup.make(
@@ -261,6 +266,7 @@ export const configuredClientTypes = () => {
 
     const selected = yield* ActionHttp.make({ apiPath: "/rpc" }, mixed).client();
     // @ts-expect-error MCP-only actions have no direct HTTP method.
+    // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
     selected.hidden();
     yield* selected.optional();
     yield* selected.optional(undefined);

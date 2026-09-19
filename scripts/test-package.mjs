@@ -3,13 +3,17 @@ import { existsSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import manifest from "../package.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-
 const consumer = mkdtempSync(join(tmpdir(), "effect-actions-consumer-"));
 
+/**
+ * @param {string} command
+ * @param {ReadonlyArray<string>} args
+ * @param {string} [cwd]
+ */
 const run = (command, args, cwd = consumer) =>
   execFileSync(command, args, { cwd, stdio: "inherit" });
 
@@ -29,7 +33,31 @@ try {
       },
     }),
   );
-  cpSync(join(root, "scripts/package-consumer"), consumer, { recursive: true });
+  // A typical strict consumer, compiling the published declarations themselves
+  // (`skipLibCheck: false`) without Node types, so the core stays browser-safe.
+  writeFileSync(
+    join(consumer, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "es2023",
+        module: "nodenext",
+        strict: true,
+        exactOptionalPropertyTypes: true,
+        noUncheckedIndexedAccess: true,
+        noImplicitOverride: true,
+        noFallthroughCasesInSwitch: true,
+        skipLibCheck: false,
+        types: [],
+        lib: ["es2023", "esnext.disposable", "dom", "dom.iterable"],
+      },
+      include: ["*.ts"],
+    }),
+  );
+  // The testing consumer needs the optional client peer; it joins in the second phase.
+  cpSync(join(root, "scripts/package-consumer"), consumer, {
+    recursive: true,
+    filter: (source) => !source.endsWith("testing.ts"),
+  });
   writeFileSync(
     join(consumer, "quickstart.ts"),
     readFileSync(join(root, "examples/quickstart.ts"), "utf8").replace(
@@ -52,7 +80,7 @@ try {
     `@modelcontextprotocol/client@${manifest.devDependencies["@modelcontextprotocol/client"]}`,
     `@types/node@${manifest.devDependencies["@types/node"]}`,
   ]);
-  cpSync(join(root, "scripts/package-testing-consumer.ts"), join(consumer, "testing.ts"));
+  cpSync(join(root, "scripts/package-consumer/testing.ts"), join(consumer, "testing.ts"));
   // The optional official client exposes Buffer in its declarations. Keep Node
   // types out of the core/browser consumer above, and enable them only here.
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc"), "--types", "node"]);

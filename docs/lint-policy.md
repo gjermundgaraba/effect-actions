@@ -1,0 +1,104 @@
+# Lint policy
+
+`vite.config.ts` is the source of truth for rule severities; this document explains the
+decisions behind it. The vendored plugin's provenance and local corrections are in
+[`tools/oxlint/anti-slop/UPSTREAM.md`](../tools/oxlint/anti-slop/UPSTREAM.md).
+
+Strict rules are the goal, and lint passes because the code is correct, not because it was
+rewritten to satisfy a pattern matcher. A passing lint run is not evidence of type safety by
+itself: type safety comes from the compiler flags below and the type-aware `typescript/no-unsafe-*`
+rules.
+
+## What is checked
+
+Every owned file: `src`, `tests`, `examples`, `scripts` (including the package-consumer fixture
+and `scripts/test-package.mjs`, checked as JavaScript with `allowJs`/`checkJs` and owner-derived
+JSDoc types), the plugin regression tests in `tools/oxlint/tests`, and `vite.config.ts`. Lint runs
+type-aware with type checking, so `vp check` is one command for format, lint, and compiler
+diagnostics.
+
+Excluded: build output (`dist`), agent caches (`.claude`, `.codex`, …), and the vendored plugin
+sources under `tools/oxlint/anti-slop`, which follow upstream's own style and are covered by the
+regression tests beside them. Nothing owned is excluded to hide findings.
+
+Compiler flags required by policy and set in `tsconfig.json`: `strict`,
+`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. The assembled package consumer
+(`scripts/test-package.mjs`) compiles with the same three flags, so a child configuration does
+not weaken them.
+
+## Refactor before making an exception
+
+For each finding:
+
+1. Identify the invariant and who owns it. Does the diagnostic expose a missing boundary, erased
+   type information, duplicate validation, or an unnecessary abstraction?
+2. Prefer the refactor that removes the cause, even across owned APIs. Update callers and tests
+   directly; do not add compatibility wrappers to keep an old shape.
+3. Preserve concrete safety: third-party contracts, malformed external input, and runtime
+   compatibility survive API changes.
+4. Distinguish a rule defect from a legitimate exception. A defect is corrected in the vendored
+   rule with a regression test and an `UPSTREAM.md` entry. A legitimate case intentionally caught
+   by a broad rule gets the smallest justified exception.
+5. Exceptions are line-level (`oxlint-disable-next-line <rule> -- <reason>`) or a tightly bounded
+   disable/enable pair. The reason names the boundary and what the operation still guarantees.
+   An unused directive is an error (`reportUnusedDisableDirectives: "deny"`).
+
+Never launder a finding: renaming a parameter, dropping an annotation so inference yields `any`,
+casting, moving a `typeof` into a one-use helper, or moving code to an unchecked file leaves the
+code exactly as unsafe.
+
+## Rule families
+
+- **Unknown and broad inputs** (`no-unknown-parameters`, `no-unknown-returns`,
+  `no-unknown-type-aliases`, `no-object-parameters`, `no-unsafe-dictionary-type`): decode at the
+  I/O boundary and pass owner contracts inward. There is no name-based exemption; a parameter named
+  `cause` is as unknown as any other, and thrown-value boundaries use an explained directive.
+- **Evidence loss** (`no-known-value-widening`, `no-widen-then-assert`,
+  `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
+  `typescript/no-unsafe-type-assertion`): keep inference or validate with `satisfies`. A SAFETY
+  comment is necessary, not sufficient; the type-aware assertion rule needs its own explained
+  directive when an assertion is a genuine erasure boundary.
+- **`any` escape routes** (`typescript/no-unsafe-assignment`, `-argument`, `-call`,
+  `-member-access`, `-return`): untyped JSON, SDK generics, callback registries. Type the value at
+  its source, for example by importing `package.json` as a typed JSON module instead of parsing it.
+- **Runtime probing** (`no-runtime-typeof` with `allowInTypeGuards`): a genuine type predicate may
+  probe its subject; discriminating an already typed union takes a narrow explained exception.
+- **Quadratic copies** (`no-reduce-accumulator-copy`, `oxc/no-accumulating-spread`): growing copies
+  in a loop; fixed-size snapshots may justify an exception.
+- **Reflection** (`no-reflect-apply`, `no-reflect-get`): prefer typed access; keep a concrete
+  exception only where receiver or getter semantics matter.
+- **Module mocking** (`no-module-mocking`): replace dependencies through real seams. The rule
+  recognizes `vi` from `vite-plus/test`, this repository's test import, as well as `vitest`.
+- **Compile-failure fixtures** (`tests/types.spec.ts`): an expression under `@ts-expect-error`
+  yields an error type, which the `no-unsafe-*` rules see as `any`. Those lines carry a directive
+  stating that nothing runs; the fixture's purpose is the compile failure itself.
+
+Off, with reasons recorded beside the setting in `vite.config.ts`:
+
+- `anti-slop/no-array-filter-map`: both forms are linear; rewrites change callback order and
+  sparse-array semantics without establishing a performance gain.
+- `anti-slop/no-conditional-empty-object-spread`: conditional spread preserves omission semantics
+  without mutable builders.
+- `anti-slop/no-shape-in-symbol-names`: a substring cannot establish domain ownership; naming is
+  reviewed by people.
+
+## Verification
+
+- `tools/oxlint/tests/rules.test.ts` runs the corrected rules through Oxlint's `RuleTester`,
+  with an accepted and a still-rejected case for each correction, and a justified directive
+  paired with its unused counterpart for each corrected rule.
+- `tools/oxlint/tests/configuration.test.ts` runs `vp lint` on fixtures inside the repository, so
+  the probes go through the registered plugin and the effective configuration: unknown parameters
+  named `cause`, module mocking via `vite-plus/test`, `typeof` inside and outside predicates, a
+  justified directive and its unused counterpart, maintained JavaScript, and the three disabled
+  rules.
+
+## History
+
+Historical measurement, not a backlog: when the baseline was adopted (2026-09-19) the repository
+had zero findings under the previous configuration. Enabling the `typescript/no-unsafe-*` rules and
+widening coverage to the scripts surfaced 60 findings, all resolved by refactor or by the
+explained directives listed above. Two rule-behavior gaps (`cause` exemption, unrecognized
+`vite-plus/test` import) and two false positives in `no-known-value-widening` (destructured
+bindings inheriting the initializer's evidence, finite mapped keys classified as open
+dictionaries) were corrected in the vendored rules.

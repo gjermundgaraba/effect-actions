@@ -70,10 +70,14 @@ it("omits absent optional metadata and serves loopback development URLs", async 
 // Every quoted-string value round-trips through RFC 7230 quoted-string parsing.
 const quotedStrings = (header: string) =>
   Object.fromEntries(
-    Array.from(header.matchAll(/(\w+)="((?:[^"\\]|\\.)*)"/g), ([, name, value]) => [
-      name,
-      value?.replace(/\\(.)/g, "$1"),
-    ]),
+    Array.from(
+      header.matchAll(/(\w+)="((?:[^"\\]|\\.)*)"/g),
+      ([, name, value]): [string, string] => [
+        // SAFETY: neither group is optional, so both participate in every match of this pattern.
+        name!,
+        value!.replace(/\\(.)/g, "$1"),
+      ],
+    ),
   );
 
 it.each([

@@ -9,10 +9,37 @@
 
 ## Verification
 
-These files are excluded from this repository's own lint and format runs and have no
-local tests. The evidence that the rules work is upstream's test suite at the pinned
-commit; a bump of `Source commit` should re-run it there. Locally, `vp check` exercising
-the rules against `src/` and `tests/` is the only smoke test.
+These files are excluded from this repository's own lint and format runs so they keep
+upstream's style. They are type-checked through the regression tests that import them.
+Upstream's test suite at the pinned commit is the evidence for unchanged rules; the local
+corrections below are covered by `tools/oxlint/tests/rules.test.ts` (rule level, via
+`RuleTester`) and `tools/oxlint/tests/configuration.test.ts` (through `vp lint` and the
+registered configuration). A bump of `Source commit` must preserve the corrections below
+and re-run both.
+
+Policy: [`docs/lint-policy.md`](../../../docs/lint-policy.md).
+
+## Local rule corrections
+
+Preserve these when updating from upstream.
+
+- `rules/no-unknown-parameters.ts`: removed the name-based exemption for parameters named
+  `cause`. A name grants no evidence; thrown-value boundaries use an explained directive.
+- `rules/no-module-mocking.ts`: `vi` imported from `vite-plus/test` (this repository's test
+  import, Vite+'s re-export of Vitest) is recognized alongside `vitest`. Without this the
+  rule was enabled but never matched a real test file here.
+- `rules/no-known-value-widening.ts`: a destructured `const` binding now resolves to the
+  property or element it selects from a literal initializer (`selectFromPattern`), instead of
+  inheriting the whole initializer object's evidence. A spread that could supply or override
+  the position, a computed key, a rest binding, or a non-literal initializer yields no
+  evidence. A computed key that is not a literal is treated like a spread. Previously
+  `const { user } = { user: load() }` counted as a known literal.
+- `shared/dictionary-types.ts`, `classifyWideningTarget`: an inline mapped type is an open
+  dictionary only when its key constraint is broad (`isBroadMappedKey`), matching the alias
+  path below it. Previously `{ readonly [K in "a" | "b"]: number }` was reported as widening,
+  which the baseline forbids for finite mapped keys.
+- `shared/dictionary-types.ts`: `unsafeMembers[0] ?? null` so the file type-checks under
+  `noUncheckedIndexedAccess`, which the regression tests' program requires.
 
 ## Intentional deviations
 

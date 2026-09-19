@@ -198,7 +198,7 @@ function unsafeDirectValue(
 		);
 		if (unsafeMembers.includes("any")) return "any";
 		return unsafeMembers.length > 0 && unsafeMembers.every((member) => member !== null)
-			? unsafeMembers[0]
+			? (unsafeMembers[0] ?? null)
 			: null;
 	}
 	if (unwrapped.type !== "TSTypeReference") return null;
@@ -331,7 +331,12 @@ export function classifyWideningTarget(
 				? { kind: "anonymous object" }
 				: null;
 	}
-	if (unwrapped.type === "TSMappedType") return { kind: "open dictionary" };
+	if (unwrapped.type === "TSMappedType") {
+		// A finite key set is a precise shape, as in the alias path below; only broad keys widen.
+		return isBroadMappedKey(unwrapped.constraint, environment, new Map())
+			? { kind: "open dictionary" }
+			: null;
+	}
 	if (unwrapped.type !== "TSTypeReference") return null;
 	const name = typeReferenceName(unwrapped);
 	if (name === null) return null;

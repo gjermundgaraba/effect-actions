@@ -41,6 +41,76 @@ function variableDeclarator(variable: Variable): ESTree.VariableDeclarator | nul
 		: null;
 }
 
+function staticKeyName(key: ESTree.PropertyKey, computed: boolean): string | null {
+	if (computed) return key.type === "Literal" ? String(key.value) : null;
+	if (key.type === "Identifier") return key.name;
+	return key.type === "Literal" ? String(key.value) : null;
+}
+
+/**
+ * The part of a literal initializer that one binding of a pattern selects, or null when
+ * the pattern cannot be matched to a literal position: a non-literal initializer, a
+ * computed key, a rest binding, or a spread that could supply or override the position.
+ */
+function selectFromPattern(
+	pattern: ESTree.BindingPattern,
+	initializer: ESTree.Expression,
+	variableName: string,
+): ESTree.Expression | null {
+	if (pattern.type === "Identifier") {
+		return pattern.name === variableName ? initializer : null;
+	}
+	if (pattern.type === "AssignmentPattern") {
+		return selectFromPattern(pattern.left, initializer, variableName);
+	}
+	const literal = unwrapExpression(initializer);
+	if (pattern.type === "ObjectPattern") {
+		if (literal.type !== "ObjectExpression") return null;
+		for (const property of pattern.properties) {
+			if (property.type === "RestElement") continue;
+			const key = staticKeyName(property.key, property.computed);
+			if (key === null) continue;
+			let selected: ESTree.Expression | null = null;
+			for (const candidate of literal.properties) {
+				if (candidate.type === "SpreadElement") {
+					selected = null;
+					continue;
+				}
+				const candidateKey = staticKeyName(candidate.key, candidate.computed);
+				// A dynamic key may be this one; like a spread, it may override what came before.
+				if (candidateKey === null) selected = null;
+				else if (candidateKey === key) selected = candidate.value;
+			}
+			if (selected === null) continue;
+			const found = selectFromPattern(property.value, selected, variableName);
+			if (found !== null) return found;
+		}
+		return null;
+	}
+	if (literal.type !== "ArrayExpression") return null;
+	for (const [index, element] of pattern.elements.entries()) {
+		if (element === null || element.type === "RestElement") continue;
+		if (literal.elements.slice(0, index + 1).some((item) => item?.type === "SpreadElement")) {
+			return null;
+		}
+		const source = literal.elements[index];
+		if (source === null || source === undefined) continue;
+		const found = selectFromPattern(element, source, variableName);
+		if (found !== null) return found;
+	}
+	return null;
+}
+
+/** The initializer expression a const binding takes: the whole for a plain binding, its own position for a destructured one. */
+function selectedInitializer(
+	declarator: ESTree.VariableDeclarator,
+	variableName: string,
+): ESTree.Expression | null {
+	return declarator.init === null
+		? null
+		: selectFromPattern(declarator.id, declarator.init, variableName);
+}
+
 function isStableConstVariable(variable: Variable, declarator: ESTree.VariableDeclarator): boolean {
 	return (
 		declarator.parent.type === "VariableDeclaration" &&
@@ -60,15 +130,11 @@ function hasKnownEvidence(
 	const variable = resolveVariable(sourceCode, unwrapped);
 	if (variable === null || visitedVariables.has(variable)) return false;
 	const declarator = variableDeclarator(variable);
-	if (
-		declarator === null ||
-		declarator.init === null ||
-		!isStableConstVariable(variable, declarator)
-	) {
-		return false;
-	}
+	if (declarator === null || !isStableConstVariable(variable, declarator)) return false;
+	const selected = selectedInitializer(declarator, variable.name);
+	if (selected === null) return false;
 	visitedVariables.add(variable);
-	return hasKnownEvidence(sourceCode, declarator.init, visitedVariables);
+	return hasKnownEvidence(sourceCode, selected, visitedVariables);
 }
 
 function isFunctionExpression(node: ESTree.Node): node is FunctionExpression {
@@ -173,20 +239,11 @@ function hasKnownCallArgumentEvidence(
 		return hasInformativeType(annotation.typeAnnotation, environment);
 	}
 	const declarator = variableDeclarator(variable);
-	if (
-		declarator === null ||
-		declarator.init === null ||
-		!isStableConstVariable(variable, declarator)
-	) {
-		return false;
-	}
+	if (declarator === null || !isStableConstVariable(variable, declarator)) return false;
+	const selected = selectedInitializer(declarator, variable.name);
+	if (selected === null) return false;
 	visitedVariables.add(variable);
-	return hasKnownCallArgumentEvidence(
-		sourceCode,
-		declarator.init,
-		environment,
-		visitedVariables,
-	);
+	return hasKnownCallArgumentEvidence(sourceCode, selected, environment, visitedVariables);
 }
 
 function typePredicateSubjectIndex(
