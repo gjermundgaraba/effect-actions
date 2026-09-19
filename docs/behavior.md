@@ -97,15 +97,15 @@ recursively remapped.
 
 The table below describes default behavior without a schema-error policy. Transport status and protocol error handling use Effect's native behaviour: HTTP is an `HttpApi`, MCP is a native `McpServer` toolkit with one `Tool` per action. The MCP adapter wraps successful values in `{ value }`, since `structuredContent` must be an object. Declared errors follow MCP's own convention: an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body. The library defines no application error types.
 
-|                             | HTTP (`HttpApi`)                                                                                            | MCP (`McpServer`)                                                                                                                      |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Input                       | Decoded with the schema's JSON codec; failure is an empty **400**                                           | Decoded with the schema's JSON codec; failure is `InvalidParams`, which this snapshot presents as an `isError` result with the message |
-| Success                     | The success codec's encoding as the body: `{"id":"1","name":"Ada"}`, `42`                                   | `structuredContent: { value: <encoded> }`                                                                                              |
-| Declared error              | Encoded by its schema with its `httpApiStatus` (unannotated: 500): `{"_tag":"UserNotFound","id":"missing"}` | `isError: true`; text content `{"_tag":"UserNotFound","id":"missing"}`; no `structuredContent`                                         |
-| Invalid output encoding     | Empty **400** (`HttpApiSchemaError`)                                                                        | `isError: true`, text `Tool execution failed due to an internal server error.`; the cause is logged, not sent                          |
-| Defect                      | Empty **500**                                                                                               | Same generic `isError` result; the cause is logged, not sent                                                                           |
-| Unknown path / method       | 404                                                                                                         | —                                                                                                                                      |
-| Invalid JSON / content type | 400 / 415                                                                                                   | —                                                                                                                                      |
+|                             | HTTP (`HttpApi`)                                                                                            | MCP (`McpServer`)                                                                                                                  |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Input                       | Decoded with the schema's JSON codec; failure is an empty **400**                                           | Decoded with the schema's JSON codec; failure is `InvalidParams`, which McpServer presents as an `isError` result with the message |
+| Success                     | The success codec's encoding as the body: `{"id":"1","name":"Ada"}`, `42`                                   | `structuredContent: { value: <encoded> }`                                                                                          |
+| Declared error              | Encoded by its schema with its `httpApiStatus` (unannotated: 500): `{"_tag":"UserNotFound","id":"missing"}` | `isError: true`; text content `{"_tag":"UserNotFound","id":"missing"}`; no `structuredContent`                                     |
+| Invalid output encoding     | Empty **400** (`HttpApiSchemaError`)                                                                        | `isError: true`, text `Tool execution failed due to an internal server error.`; the cause is logged, not sent                      |
+| Defect                      | Empty **500**                                                                                               | Same generic `isError` result; the cause is logged, not sent                                                                       |
+| Unknown path / method       | 404                                                                                                         | —                                                                                                                                  |
+| Invalid JSON / content type | 400 / 415                                                                                                   | —                                                                                                                                  |
 
 HTTP routes are `POST <apiPath>/<group>/<action>`; equal action names in distinct
 groups do not collide. `Http.layer(...apps)` mounts selected implementations; separate
@@ -165,7 +165,7 @@ its own handler's invocation requirements, not those of sibling or disabled tool
 Build-time requirements still belong to the whole selected implementation. Supply identity at that
 invocation, not when building the binding; native context capture is not a security
 boundary. Provide call services around the entire `tools.handle(...).pipe(Effect.flatMap(Stream.runCollect))`
-effect, not just the returned stream: the pinned native Toolkit starts the handler
+effect, not just the returned stream: the native Toolkit starts the handler
 while constructing that stream. Groups with no selected tools are not built.
 
 `ActionMcp.layerStdio(options, ...apps)` uses the same MCP wire schemas and result

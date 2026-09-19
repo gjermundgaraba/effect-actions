@@ -421,7 +421,7 @@ describe("projection boundaries", () => {
     );
 
     onTestFinished(() => web.dispose());
-    // This McpServer snapshot presents InvalidParams from a tool as an isError result carrying the message.
+    // McpServer presents InvalidParams from a tool as an isError result carrying the message.
     const reply = await (await web.handler(mcpCall("echo", { value: "nope" }))).json();
     expect(reply).toMatchObject({ result: { isError: true } });
     expect(reply).not.toHaveProperty("result.structuredContent");

@@ -44,10 +44,10 @@
     "test:package": "vp run build && node scripts/test-package.mjs"
   },
   "devDependencies": {
-    "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect/@effect/platform-node@9ad9891",
+    "@effect/platform-node": "4.0.0-rc.116",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.5.1",
-    "effect": "https://pkg.pr.new/Effect-TS/effect/effect@9ad9891",
+    "effect": "4.0.0-rc.116",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vite": "catalog:",
@@ -55,7 +55,7 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
-    "effect": "4.0.0-rc.115"
+    "effect": "4.0.0-rc.116"
   },
   "peerDependenciesMeta": {
     "@modelcontextprotocol/client": {

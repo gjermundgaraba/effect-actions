@@ -8,12 +8,7 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
-    # These packages and effect are pinned to the same pkg.pr.new commit.
-    "@effect/platform-node>effect": "*"
-    "@effect/platform-node-shared>effect": "*"
 
-# The pinned Effect snapshot depends on @effect/platform-node-shared via pkg.pr.new.
-blockExoticSubdeps: false
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
@@ -27,3 +22,6 @@ minimumReleaseAgeExclude:
   - "@voidzero-dev/vite-plus-win32-arm64-msvc@0.3.2"
   - "@voidzero-dev/vite-plus-win32-x64-msvc@0.3.2"
   - vite-plus@0.3.2
+  - "@effect/platform-node-shared@4.0.0-rc.116"
+  - "@effect/platform-node@4.0.0-rc.116"
+  - effect@4.0.0-rc.116
