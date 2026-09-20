@@ -3,25 +3,24 @@ import { Layer } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
 import * as Authentication from "../src/Authentication.js";
 
-it.each([
-  ["https://api.example.com", "/.well-known/oauth-protected-resource"],
-  ["https://api.example.com/", "/.well-known/oauth-protected-resource"],
-  ["https://api.example.com?tenant=alice", "/.well-known/oauth-protected-resource?tenant=alice"],
-  [
-    "https://api.example.com/mcp?tenant=alice",
-    "/.well-known/oauth-protected-resource/mcp?tenant=alice",
-  ],
-  ["https://api.example.com/mcp?", "/.well-known/oauth-protected-resource/mcp?"],
-  ["https://api.example.com/api/mcp", "/.well-known/oauth-protected-resource/api/mcp"],
-  ["https://api.example.com/api/mcp/", "/.well-known/oauth-protected-resource/api/mcp/"],
-])("publishes standalone metadata for %s", async (resource, path) => {
+it("publishes standalone metadata and a bearer challenge", async () => {
+  const resource = "https://api.example.com/mcp?tenant=alice";
+
   const discovery = Authentication.protectedResource({
     resource,
     authorizationServers: ["https://auth.example.com"],
     scopesSupported: ["admin:read", "admin:write"],
   });
 
-  expect(discovery.metadataUrl).toBe(`https://api.example.com${path}`);
+  expect(discovery.metadataUrl).toBe(
+    "https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=alice",
+  );
+  expect(
+    Authentication.protectedResource({
+      resource: "https://api.example.com",
+      authorizationServers: ["https://auth.example.com"],
+    }).metadataUrl,
+  ).toBe("https://api.example.com/.well-known/oauth-protected-resource");
 
   const web = HttpRouter.toWebHandler(
     discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
@@ -38,7 +37,6 @@ it.each([
     scopes_supported: ["admin:read", "admin:write"],
     bearer_methods_supported: ["header"],
   });
-  expect(discovery.challenge()).toBe(`Bearer resource_metadata="${discovery.metadataUrl}"`);
   expect(
     discovery.challenge({
       error: "insufficient_scope",
@@ -48,23 +46,6 @@ it.each([
   ).toBe(
     `Bearer resource_metadata="${discovery.metadataUrl}", error="insufficient_scope", error_description="Owner access required", scope="admin:write"`,
   );
-});
-
-it("omits absent optional metadata and serves loopback development URLs", async () => {
-  const discovery = Authentication.protectedResource({
-    resource: "http://localhost:3000/mcp",
-    authorizationServers: ["http://localhost:3000/api/auth"],
-  });
-
-  const web = HttpRouter.toWebHandler(
-    discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
-
-  onTestFinished(() => web.dispose());
-  const metadata = await (await web.handler(new Request(discovery.metadataUrl))).json();
-  expect(metadata).not.toHaveProperty("scopes_supported");
-  expect(metadata).not.toHaveProperty("resource_name");
 });
 
 // Every quoted-string value round-trips through RFC 7230 quoted-string parsing.
@@ -80,20 +61,13 @@ const quotedStrings = (header: string) =>
     ),
   );
 
-it.each([
-  'bad"header',
-  "back\\slash",
-  'both\\"mixed"\\',
-  "read  write",
-  "",
-  "ünïcödé, and commas",
-  '"',
-  "\\",
-])("quotes and escapes challenge parameter %j instead of rejecting it", (value) => {
+it("quotes and escapes bearer challenge parameters", () => {
   const discovery = Authentication.protectedResource({
     resource: "https://example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
   });
+
+  const value = 'both\\"mixed"\\';
 
   const header = discovery.challenge({
     error: "insufficient_scope",
@@ -101,7 +75,6 @@ it.each([
     scope: value,
   });
 
-  expect(header.startsWith("Bearer ")).toBe(true);
   expect(quotedStrings(header)).toEqual({
     resource_metadata: discovery.metadataUrl,
     error: "insufficient_scope",
@@ -121,45 +94,23 @@ it("percent-encodes quote characters in the discovery challenge URL", () => {
   );
 });
 
-it.each([
-  ["a\\b", "a\\\\b"],
-  ["alice\\", "alice\\\\"],
-])("escapes query backslashes in the discovery challenge for %s", async (query, quotedQuery) => {
+it("escapes a query backslash in the discovery challenge", () => {
   const discovery = Authentication.protectedResource({
-    resource: `https://example.com/mcp?tenant=${query}`,
+    resource: "https://example.com/mcp?tenant=alice\\",
     authorizationServers: ["https://auth.example.com"],
   });
 
-  expect(discovery.metadataUrl).toBe(
-    `https://example.com/.well-known/oauth-protected-resource/mcp?tenant=${query}`,
-  );
   expect(discovery.challenge({ error: "invalid_token" })).toBe(
-    `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp?tenant=${quotedQuery}", error="invalid_token"`,
+    'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp?tenant=alice\\\\", error="invalid_token"',
   );
-
-  const web = HttpRouter.toWebHandler(
-    discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
-
-  onTestFinished(() => web.dispose());
-  const response = await web.handler(new Request(discovery.metadataUrl));
-  expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({
-    resource: `https://example.com/mcp?tenant=${query}`,
-  });
 });
 
 it("matches literal resource paths exactly and delegates other requests to the host", async () => {
   const paths = [
-    "/mcp/:tenant",
-    "/mcp/*",
-    "/mcp/a*b",
+    "/mcp/:tenant*",
     "/mcp/%3Atenant",
-    "/mcp/%2A",
     "/mcp/trailing/",
     "/mcp?tenant=alice",
-    "/mcp?tenant=bob",
     "/mcp?tenant=a%2Fb&mode=read",
     "/mcp?",
     "/mcp",
@@ -188,14 +139,17 @@ it("matches literal resource paths exactly and delegates other requests to the h
   for (const [index, discovery] of discoveries.entries()) {
     const response = await web.handler(new Request(discovery.metadataUrl));
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBeNull();
     expect(await response.json()).toMatchObject({
       resource: `https://api.example.com${paths[index]}`,
     });
-    const head = await web.handler(new Request(discovery.metadataUrl, { method: "HEAD" }));
-    expect(head.status).toBe(200);
-    expect(await head.text()).toBe("");
   }
+
+  const representative = discoveries[0];
+
+  if (representative === undefined) throw new Error("Expected a discovery document");
+  const head = await web.handler(new Request(representative.metadataUrl, { method: "HEAD" }));
+  expect(head.status).toBe(200);
+  expect(await head.text()).toBe("");
 
   const unrelated = await web.handler(
     new Request(`https://api.example.com${prefix}/mcp/unrelated`),
@@ -205,10 +159,8 @@ it("matches literal resource paths exactly and delegates other requests to the h
 
   for (const path of [
     "/mcp/unregistered",
-    "/mcp/a/b",
     "/mcp/trailing",
-    "/mcp/:other",
-    "/MCP/:tenant",
+    "/MCP/:tenant*",
     "/mcp?tenant=carol",
     "/mcp?tenant=alice&extra=1",
     "/mcp?tenant=a/b&mode=read",

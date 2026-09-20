@@ -1,19 +1,6 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import {
-  Cause,
-  Console,
-  Context,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  Schema,
-  Stdio,
-  Terminal,
-} from "effect";
+import { Cause, Console, Context, Effect, Exit, Layer, Schema } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   FetchHttpClient,
   HttpClient,
@@ -27,6 +14,7 @@ import * as Action from "../src/Action.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import { capturingConsole, cliServices } from "./cli-services.js";
 
 class Domain extends Schema.TaggedError<Domain>()(
   "Domain",
@@ -81,26 +69,6 @@ const app = RemoteGroup.implement({
   hidden: () => Effect.succeed("not mounted"),
 });
 
-const cliServices = Layer.mergeAll(
-  FileSystem.layerNoop({}),
-  Path.layer,
-  Stdio.layerTest({}),
-  Layer.succeed(
-    Terminal.Terminal,
-    Terminal.make({
-      columns: Effect.succeed(80),
-      rows: Effect.succeed(24),
-      readInput: Effect.die("unused"),
-      readLine: Effect.die("unused"),
-      display: () => Effect.void,
-    }),
-  ),
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() => Effect.die("unused")),
-  ),
-);
-
 it("projects grouped commands through the native HTTP client without a local fallback", async () => {
   const web = HttpRouter.toWebHandler(
     Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
@@ -138,27 +106,7 @@ it("projects grouped commands through the native HTTP client without a local fal
     ),
   );
 
-  const capturedConsole = {
-    assert: console.assert.bind(console),
-    clear: console.clear.bind(console),
-    count: console.count.bind(console),
-    countReset: console.countReset.bind(console),
-    debug: console.debug.bind(console),
-    dir: console.dir.bind(console),
-    dirxml: console.dirxml.bind(console),
-    error: console.error.bind(console),
-    group: console.group.bind(console),
-    groupCollapsed: console.groupCollapsed.bind(console),
-    groupEnd: console.groupEnd.bind(console),
-    info: console.info.bind(console),
-    log: (message: string) => output.push(message),
-    table: console.table.bind(console),
-    time: console.time.bind(console),
-    timeEnd: console.timeEnd.bind(console),
-    timeLog: console.timeLog.bind(console),
-    trace: console.trace.bind(console),
-    warn: console.warn.bind(console),
-  } satisfies Console.Console;
+  const capturedConsole = capturingConsole(output);
 
   await Command.runWith(command, { version: "0" })(["remote", "--input", '{"value":"21"}']).pipe(
     Effect.provide(fetchLayer),

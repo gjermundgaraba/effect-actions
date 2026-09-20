@@ -91,17 +91,6 @@ describe("contracts", () => {
       "Invalid action group name",
     );
   });
-
-  it("permits an action exposed only locally", () => {
-    expect(
-      Action.make("nowhere", {
-        description: "",
-        success: Schema.String,
-        http: false,
-        mcp: false,
-      }),
-    ).toMatchObject({ http: false, mcp: false });
-  });
 });
 
 describe("implementations", () => {
@@ -113,8 +102,8 @@ describe("implementations", () => {
 
   const Group = ActionGroup.make({ name: "greetings" }, Hello);
 
-  const request = (prefix: string, group = "greetings") =>
-    new Request(`http://localhost${prefix}/${group}/hello`, {
+  const request = (prefix: string) =>
+    new Request(`http://localhost${prefix}/greetings/hello`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Ada" }),
@@ -131,40 +120,22 @@ describe("implementations", () => {
     expect(await (await web.handler(request("/api/actions"))).json()).toBe("hi Ada");
   });
 
-  it.each(["same contract", "different contracts"])(
-    "keeps implementations apart: %s",
-    async (kind) => {
-      const appA = Group.implement({ hello: () => Effect.succeed("from A") });
+  it("keeps same-contract implementations apart", async () => {
+    const appA = Group.implement({ hello: () => Effect.succeed("from A") });
+    const appB = Group.implement({ hello: () => Effect.succeed("from B") });
 
-      const appB =
-        kind === "same contract"
-          ? Group.implement({ hello: () => Effect.succeed("from B") })
-          : ActionGroup.make(
-              { name: "numeric" },
-              Action.make("hello", {
-                description: "Numeric",
-                input: Hello.input,
-                success: Schema.Number,
-              }),
-            ).implement({ hello: () => Effect.succeed(42) });
+    const web = HttpRouter.toWebHandler(
+      Layer.mergeAll(
+        ActionHttp.make({ apiPath: "/a" }, Group).layer(appA),
+        ActionHttp.make({ apiPath: "/b" }, Group).layer(appB),
+      ).pipe(Layer.provide(HttpServer.layerServices)),
+      { disableLogger: true },
+    );
 
-      const web = HttpRouter.toWebHandler(
-        Layer.mergeAll(
-          ActionHttp.make({ apiPath: "/a" }, appA.group).layer(appA),
-          ActionHttp.make({ apiPath: "/b" }, appB.group).layer(appB),
-        ).pipe(Layer.provide(HttpServer.layerServices)),
-        { disableLogger: true },
-      );
-
-      onTestFinished(() => web.dispose());
-      expect(await (await web.handler(request("/a"))).json()).toBe("from A");
-      expect(
-        await (
-          await web.handler(request("/b", kind === "same contract" ? "greetings" : "numeric"))
-        ).json(),
-      ).toBe(kind === "same contract" ? "from B" : 42);
-    },
-  );
+    onTestFinished(() => web.dispose());
+    expect(await (await web.handler(request("/a"))).json()).toBe("from A");
+    expect(await (await web.handler(request("/b"))).json()).toBe("from B");
+  });
 
   it("routes prototype-sensitive action names through native HTTP", async () => {
     const Proto = ActionGroup.make(

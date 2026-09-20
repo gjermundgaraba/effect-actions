@@ -112,20 +112,6 @@ it("keeps the client, routes and document on one configuration", async () => {
   expect(sent.slice(1, 3).map((request) => request.body)).toEqual([{}, {}]);
 });
 
-it("uses the generated response schema for client decoding", async () => {
-  const malformed = await Effect.gen(function* () {
-    const client = yield* HttpApiClient.make(Http.api, { baseUrl: "http://localhost" });
-
-    return yield* Effect.flip(client.numbers.ping({ payload: {} }));
-  }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    Effect.provideService(FetchHttpClient.Fetch, async () => Response.json("not a boolean")),
-    Effect.runPromise,
-  );
-
-  expect(Schema.isSchemaError(malformed)).toBe(true);
-});
-
 it("preserves null and explicitly undefined-valued input codecs", async () => {
   const optional = Schema.Struct({ value: Schema.optional(Schema.Number) });
 

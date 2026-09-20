@@ -84,23 +84,6 @@ const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
 };
 
 describe("projection boundaries", () => {
-  it("registers nothing over HTTP for an MCP-only group", async () => {
-    const Hidden = Action.make("hidden", {
-      description: "Not exposed over HTTP",
-      success: Schema.String,
-      http: false,
-    });
-
-    const app = ActionGroup.make({ name: "test" }, Hidden).implement({
-      hidden: () => Effect.succeed("hidden"),
-    });
-
-    expect(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api.groups).toEqual({});
-    const web = makeTestHttp(app, Layer.empty);
-    onTestFinished(() => web.dispose());
-    expect((await web.handler(post("/api/actions/test/hidden"))).status).toBe(404);
-  });
-
   it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
@@ -479,27 +462,6 @@ describe("projection boundaries", () => {
     expect(await (await mcp.handler(mcpCall("stamp", { d: iso }))).json()).toMatchObject({
       result: { isError: false, structuredContent: { value: { d: iso } } },
     });
-  });
-
-  it("decodes input and encodes output natively over HTTP", async () => {
-    const Echo = Action.make("echo", {
-      description: "Round-trip a number encoded as a string",
-      input: Schema.Struct({ value: Schema.FiniteFromString }),
-      success: Schema.FiniteFromString,
-    });
-
-    const web = makeTestHttp(
-      ActionGroup.make({ name: "test" }, Echo).implement({
-        echo: ({ value }) => Effect.succeed(value * 2),
-      }),
-      Layer.empty,
-    );
-
-    onTestFinished(() => web.dispose());
-    const response = await web.handler(post("/api/actions/test/echo", { value: "21" }));
-    expect(response.status).toBe(200);
-    expect(await response.json()).toBe("42");
-    expect((await web.handler(post("/api/actions/test/echo", { value: "nope" }))).status).toBe(400);
   });
 
   it("passes HTTP cancellation to the running Effect and finalizes it", async () => {

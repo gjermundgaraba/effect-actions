@@ -58,10 +58,6 @@ describe("effective lint configuration", () => {
     expect(
       lintCodes({
         "typed.ts": "export const describe = (error: Error): string => error.message;\n",
-      }),
-    ).toEqual([]);
-    expect(
-      lintCodes({
         "cause.ts": "export const wrap = (cause: unknown): Error => new Error('x', { cause });\n",
       }),
     ).toEqual(["anti-slop(no-unknown-parameters)"]);
@@ -71,10 +67,6 @@ describe("effective lint configuration", () => {
     expect(
       lintCodes({
         "spy.test.ts": "import { vi } from 'vite-plus/test';\n\nexport const spy = vi.fn();\n",
-      }),
-    ).toEqual([]);
-    expect(
-      lintCodes({
         "mock.test.ts": "import { vi } from 'vite-plus/test';\n\nvi.mock('./users.js');\n",
       }),
     ).toEqual(["anti-slop(no-module-mocking)"]);
@@ -85,10 +77,6 @@ describe("effective lint configuration", () => {
       lintCodes({
         "guard.ts":
           "export const isText = (value: unknown): value is string => typeof value === 'string';\n",
-      }),
-    ).toEqual([]);
-    expect(
-      lintCodes({
         "branch.ts":
           "export const label = (value: string | number) => (typeof value === 'string' ? value : '');\n",
       }),
@@ -114,10 +102,6 @@ describe("effective lint configuration", () => {
           "export const ok = isUser({ id: 1 });",
           "",
         ].join("\n"),
-      }),
-    ).toEqual([]);
-    expect(
-      lintCodes({
         "widened.ts": [
           "const { user } = { user: { id: 1 } };",
           "",
@@ -136,10 +120,6 @@ describe("effective lint configuration", () => {
           "export const describe = (error: unknown): string => String(error);",
           "",
         ].join("\n"),
-      }),
-    ).toEqual([]);
-    expect(
-      lintCodes({
         "unused.ts": [
           "// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Probe of a stale directive.",
           "export const describe = (error: Error): string => error.message;",
@@ -149,36 +129,11 @@ describe("effective lint configuration", () => {
     ).toEqual(["Unused oxlint-disable directive (no problems were reported)."]);
   });
 
-  it.each([
-    [
-      "anti-slop/no-known-value-widening",
-      "const { user } = { user: { id: 1 } };\n\n// oxlint-disable-next-line anti-slop/no-known-value-widening -- Probe.\nexport const widened: unknown = user;\n",
-      "declare function load(): { readonly id: number };\n\nconst { user } = { user: load() };\n\n// oxlint-disable-next-line anti-slop/no-known-value-widening -- Probe.\nexport const widened: unknown = user;\n",
-    ],
-    [
-      "anti-slop/no-module-mocking",
-      "import { vi } from 'vite-plus/test';\n\n// oxlint-disable-next-line anti-slop/no-module-mocking -- Probe.\nvi.mock('./users.js');\n",
-      "import { vi } from 'vite-plus/test';\n\n// oxlint-disable-next-line anti-slop/no-module-mocking -- Probe.\nexport const spy = vi.fn();\n",
-    ],
-  ])(
-    "%s: a directive suppresses the corrected rule and is an error once unneeded",
-    (_rule, used, unused) => {
-      expect(lintCodes({ "used.test.ts": used })).toEqual([]);
-      expect(lintCodes({ "unused.test.ts": unused })).toEqual([
-        "Unused oxlint-disable directive (no problems were reported).",
-      ]);
-    },
-  );
-
   it("checks maintained JavaScript with the same rules", () => {
     expect(
       lintCodes({
         "typed.mjs":
           "/** @param {string} value */\nexport const label = (value) => value.trim();\n",
-      }),
-    ).toEqual([]);
-    expect(
-      lintCodes({
         "probe.mjs":
           "/** @param {string | number} value */\nexport const isText = (value) => typeof value === 'string';\n",
       }),

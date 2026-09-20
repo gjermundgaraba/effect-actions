@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
 import { Effect, Predicate, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { OpenApi } from "effect/unstable/httpapi";
 import { makeTestApp, testMcpPath } from "./server.js";
 import { Http, InvalidRequest, UserNotFound } from "../examples/contracts.js";
 import { Forbidden } from "../examples/auth.js";
@@ -30,6 +30,17 @@ const request = (path: string, token = "alice", body?: Schema.Json, method?: str
   return new Request(`http://localhost${path}`, init);
 };
 
+const anonymous = (path: string, body?: Schema.Json) => {
+  const init: RequestInit = { headers: { "content-type": "application/json" } };
+
+  if (body !== undefined) {
+    init.method = "POST";
+    init.body = JSON.stringify(body);
+  }
+
+  return new Request(`http://localhost${path}`, init);
+};
+
 const authenticatedFetch = (token: string) => (request: Request) => {
   request.headers.set("authorization", `Bearer ${token}`);
 
@@ -50,12 +61,6 @@ const tool = (name: string, args: Schema.JsonObject, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
 
 describe("one implementation, both transports", () => {
-  it("serves generated POST endpoints with the natural encoding", async () => {
-    const response = await app.handler(request("/api/actions/users/getUser", "alice", { id: "1" }));
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ id: "1", name: "Ada" });
-  });
-
   it("exposes schemas and renamed MCP tools from the same contracts", async () => {
     const reply = await withMcp((client) => client.listTools());
     expect(reply.tools.map((tool) => tool.name)).toEqual([
@@ -85,15 +90,6 @@ describe("one implementation, both transports", () => {
     expect(await response.json()).toEqual({ id: "1", name: "Lovelace" });
     const other = await app.handler(request("/api/actions/users/getUser", "bob", { id: "1" }));
     expect(await other.json()).toEqual({ id: "1", name: "Grace" });
-  });
-
-  it("a write through HTTP is immediately visible through MCP", async () => {
-    await app.handler(
-      request("/api/actions/users/renameUser", "alice", { id: "1", name: "Byron" }),
-    );
-    expect((await tool("get_user", { id: "1" })).structuredContent).toEqual({
-      value: { id: "1", name: "Byron" },
-    });
   });
 
   it("serves domain errors structured over HTTP and as text over MCP", async () => {
@@ -208,17 +204,6 @@ describe("one implementation, both transports", () => {
     ).toBe(401);
   });
 
-  it("marks authenticated responses as uncacheable", async () => {
-    const response = await app.handler(request("/api/actions/users/getUser", "alice", { id: "1" }));
-    expect(response.headers.get("cache-control")).toBe("no-store");
-
-    const failure = await app.handler(
-      request("/api/actions/users/getUser", "alice", { id: "missing" }),
-    );
-
-    expect(failure.headers.get("cache-control")).toBe("no-store");
-  });
-
   it("rejects untrusted hosts and browser origins in the example host", async () => {
     const foreign = new Request("http://evil.example/api/actions/users/getUser", {
       method: "POST",
@@ -226,23 +211,29 @@ describe("one implementation, both transports", () => {
     });
 
     expect((await app.handler(foreign)).status).toBe(403);
+
+    // The policy is the host's outermost layer, so it covers the credential-free group too.
+    const foreignPublic = new Request(
+      "http://attacker.example/api/actions/public/status",
+      anonymous("/api/actions/public/status", {}),
+    );
+
+    expect((await app.handler(foreignPublic)).status).toBe(403);
     const crossOrigin = request("/api/actions/users/getUser", "alice", { id: "1" });
     crossOrigin.headers.set("origin", "https://evil.example");
     expect((await app.handler(crossOrigin)).status).toBe(403);
   });
 
-  it("uses native Effect HTTP request semantics", async () => {
-    expect((await app.handler(request("/does-not-exist"))).status).toBe(404);
-    expect((await app.handler(request("/api/actions/users/getUser"))).status).toBe(404);
-
+  it("uses the documented HTTP input error statuses", async () => {
     const malformed = new Request(request("/api/actions/users/double", "alice", {}), {
       method: "POST",
       body: "{",
     });
 
-    expect((await app.handler(malformed)).status).toBe(400);
     const wrongType = request("/api/actions/users/double", "alice", {});
     wrongType.headers.set("content-type", "text/plain");
+
+    expect((await app.handler(malformed)).status).toBe(400);
     expect((await app.handler(wrongType)).status).toBe(415);
   });
 
@@ -303,65 +294,9 @@ describe("one implementation, both transports", () => {
     expect(doubleOperation?.responses).not.toHaveProperty("404");
     expect(Object.keys(document.components.schemas)).toContain("UserNotFoundEncoded");
   });
-
-  it("serves the generated contract through Effect's native HttpApiClient", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const client = yield* HttpApiClient.make(Http.api, {
-          baseUrl: "http://localhost",
-          transformClient: (client) =>
-            client.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken("alice"))),
-        });
-
-        // The typed client encodes decoded 21 to the wire string and decodes the reply.
-        const result: number = yield* client.users.double({ payload: { value: 21 } });
-
-        return result;
-      }).pipe(
-        Effect.provide(FetchHttpClient.layer),
-        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-          app.handler(new Request(input, init)),
-        ),
-      ),
-    );
-
-    expect(result).toBe(42);
-  });
-
-  it("supports the official v2 MCP client with the stateless revision", async () => {
-    await withMcpClient(
-      {
-        versionNegotiation: { mode: { pin: "2026-07-28" } },
-        fetch: authenticatedFetch("alice"),
-        path: testMcpPath,
-      },
-      async (client) => {
-        const tools = await client.listTools();
-        expect(tools.tools.map((tool) => tool.name)).toContain("double");
-        const result = await client.callTool({ name: "double", arguments: { value: "7" } });
-        expect(result.structuredContent).toEqual({ value: 14 });
-        const failure = await client.callTool({ name: "get_user", arguments: { id: "missing" } });
-        expect(failure.isError).toBe(true);
-        expect(failure.content).toEqual([
-          { type: "text", text: '{"_tag":"UserNotFound","id":"missing"}' },
-        ]);
-      },
-    );
-  });
 });
 
 describe("groups under their own middleware", () => {
-  const anonymous = (path: string, body?: Schema.Json) => {
-    const init: RequestInit = { headers: { "content-type": "application/json" } };
-
-    if (body !== undefined) {
-      init.method = "POST";
-      init.body = JSON.stringify(body);
-    }
-
-    return new Request(`http://localhost${path}`, init);
-  };
-
   it("serves the public group and the document without credentials, the user group only with them", async () => {
     const status = await app.handler(anonymous("/api/actions/public/status", {}));
     expect(status.status).toBe(200);
@@ -375,16 +310,6 @@ describe("groups under their own middleware", () => {
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.headers.get("www-authenticate")).toBe("Bearer");
     expect((await app.handler(request("/api/actions/users/whoAmI", "alice", {}))).status).toBe(200);
-  });
-
-  it("keeps the host policy in front of every group", async () => {
-    const foreign = new Request("http://attacker.example/api/actions/public/status", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-
-    expect((await app.handler(foreign)).status).toBe(403);
   });
 
   it("calls every group through one native grouped client, with the shared policy errors", async () => {

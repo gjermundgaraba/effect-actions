@@ -83,7 +83,7 @@ it("serves several groups through one native grouped client and one document", a
   expect(document.paths["/api/billing/invoice"]?.post?.tags).toEqual(["billing"]);
 });
 
-it("keeps every group when a host combines separately mounted APIs", () => {
+it("preserves action APIs composed into a native host API", () => {
   const combined = HttpApi.make("host")
     .addHttpApi(ActionHttp.make({ apiPath: "/public" }, Users).api)
     .addHttpApi(ActionHttp.make({ apiPath: "/admin" }, Billing).api);

@@ -40,7 +40,7 @@ it("preserves caller metadata and capabilities while pinning the wire protocol",
   expect(metadata["io.modelcontextprotocol/protocolVersion"]).toBe("2025-11-25");
 });
 
-it("accepts what JSON.stringify accepts, dropping undefined fields", async () => {
+it("accepts undefined parameter fields and drops them from the request body", async () => {
   const owner: string | undefined = undefined;
 
   const request = mcpRequest({
