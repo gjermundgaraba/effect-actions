@@ -12,7 +12,8 @@
     "url": "git+https://github.com/gjermundgaraba/effect-actions.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "type": "module",
   "exports": {
@@ -41,7 +42,8 @@
     "prepublishOnly": "vp run build",
     "prepare": "vp config",
     "example": "node --import tsx examples/server.ts",
-    "test:package": "vp run build && node scripts/test-package.mjs"
+    "test:package": "vp run build && node scripts/test-package.mjs",
+    "docs:sync": "node --import tsx scripts/sync-skill.ts"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0-rc.116",

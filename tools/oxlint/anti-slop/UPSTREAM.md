@@ -17,7 +17,7 @@ corrections below are covered by `tools/oxlint/tests/rules.test.ts` (rule level,
 registered configuration). A bump of `Source commit` must preserve the corrections below
 and re-run both.
 
-Policy: [`docs/lint-policy.md`](../../../docs/lint-policy.md).
+Policy: [`CONTRIBUTING.md`](../../../CONTRIBUTING.md#lint-policy).
 
 ## Local rule corrections
 

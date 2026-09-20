@@ -47,7 +47,7 @@ export default defineConfig({
     ],
   },
   lint: {
-    // Lint policy: docs/lint-policy.md. Only build output, agent caches and the
+    // Lint policy: CONTRIBUTING.md. Only build output, agent caches and the
     // vendored plugin are excluded; every owned source, test and script is checked.
     ignorePatterns: [
       "dist/**",

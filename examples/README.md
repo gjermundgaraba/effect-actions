@@ -102,7 +102,7 @@ A write through `renameUser` is visible through both transports, and through the
 demonstrates string-to-number input decoding. `whoAmI` reads the authenticated
 identity from request context, not action arguments.
 
-See [dependency lifetimes](../docs/behavior.md#dependency-lifetimes) for how the
+See [dependency lifetimes](../docs/guarantees.md#dependency-lifetimes) for how the
 handlers share `Users` while resolving `CurrentActor` on each request.
 
 Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
