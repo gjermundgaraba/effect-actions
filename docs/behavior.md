@@ -20,9 +20,9 @@ For HTTP-hosted adapters, services yielded inside a handler are request requirem
 `HttpRouter.Request.From<"Requires", R>`. Supply them through router middleware,
 `HttpRouter.provideRequest`, or the request context.
 
-**Use distinct tags for build-time capabilities and request-scoped identity.**
+Use distinct tags for build-time capabilities and request-scoped identity.
 For example, acquire `Users` at startup and provide `CurrentActor` only per request.
-Never provide identity/tenant tags in startup layers or the application's root context.
+Never provide identity or tenant tags in startup layers or the application's root context.
 The adapters use native Effect context capture and merging: they do not isolate arbitrary
 request services from build context. A startup value under the same tag can shadow a
 request value or satisfy a missing runtime value. Types still track request requirements;
@@ -93,9 +93,9 @@ Domain errors, defects, interruptions, and protocol errors remain unchanged.
 An unencodable declared error is a defect; broken policy errors are not
 recursively remapped.
 
-## Wire behaviour
+## Wire behavior
 
-The table below describes default behavior without a schema-error policy. Transport status and protocol error handling use Effect's native behaviour: HTTP is an `HttpApi`, MCP is a native `McpServer` toolkit with one `Tool` per action. The MCP adapter wraps successful values in `{ value }`, since `structuredContent` must be an object. Declared errors follow MCP's own convention: an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body. The library defines no application error types.
+The table below describes default behavior without a schema-error policy. Transport status and protocol error handling use Effect's native behavior: HTTP is an `HttpApi`, MCP is a native `McpServer` toolkit with one `Tool` per action. The MCP adapter wraps successful values in `{ value }`, since `structuredContent` must be an object. Declared errors follow MCP's own convention: an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body. The library defines no application error types.
 
 |                             | HTTP (`HttpApi`)                                                                                            | MCP (`McpServer`)                                                                                                                  |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -104,8 +104,8 @@ The table below describes default behavior without a schema-error policy. Transp
 | Declared error              | Encoded by its schema with its `httpApiStatus` (unannotated: 500): `{"_tag":"UserNotFound","id":"missing"}` | `isError: true`; text content `{"_tag":"UserNotFound","id":"missing"}`; no `structuredContent`                                     |
 | Invalid output encoding     | Empty **400** (`HttpApiSchemaError`)                                                                        | `isError: true`, text `Tool execution failed due to an internal server error.`; the cause is logged, not sent                      |
 | Defect                      | Empty **500**                                                                                               | Same generic `isError` result; the cause is logged, not sent                                                                       |
-| Unknown path / method       | 404                                                                                                         | —                                                                                                                                  |
-| Invalid JSON / content type | 400 / 415                                                                                                   | —                                                                                                                                  |
+| Unknown path / method       | 404                                                                                                         | n/a                                                                                                                                |
+| Invalid JSON / content type | 400 / 415                                                                                                   | n/a                                                                                                                                |
 
 HTTP routes are `POST <apiPath>/<group>/<action>`; equal action names in distinct
 groups do not collide. `Http.layer(...apps)` mounts selected implementations; separate
@@ -141,11 +141,11 @@ service channels.
 
 ## MCP transport
 
-Supply `protocols` using Effect’s native `McpProtocol` adapters. Effect owns
+Supply `protocols` using Effect's native `McpProtocol` adapters. Effect owns
 negotiation, revision rejection, and session lifecycle; the adapter forwards the
 selection unchanged. Choose `[McpProtocol.v2026_07_28]` for a stateless endpoint.
 
-`ActionMcp.layerHttp` uses the native server’s single-endpoint Streamable HTTP transport,
+`ActionMcp.layerHttp` uses the native server's single-endpoint Streamable HTTP transport,
 not historical two-endpoint HTTP+SSE, even when an older revision is selected.
 
 MCP cancellation uses Effect's native RPC interruption. Remote cancellation and
@@ -188,11 +188,11 @@ there is no implicit HTTP fallback.
 `.group(http, "groupName", options)` select contracts retained by the HTTP binding.
 There is no separately supplied group to compare or reconcile. They use Effect's
 native `HttpApiClient`, expose only HTTP-enabled actions, and require the host's
-`HttpClient` configuration. Its optional `connection` configures the native endpoint
+`HttpClient` configuration. The optional `connection` option configures the native endpoint
 client (`baseUrl`, `transformClient`, `transformResponse`).
 Authentication, endpoint selection, and credential storage are not inferred from action arguments or managed by this library.
 
-CLI input represents **encoded JSON input**. Generated commands accept
+CLI input is encoded JSON input. Generated commands accept
 `--input '<json>'` for the entire input, including nested objects, dictionaries,
 arrays, and scalar schemas. Omitting it supplies `{}`, which still must satisfy the
 action's input schema.

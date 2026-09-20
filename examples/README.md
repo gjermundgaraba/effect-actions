@@ -3,7 +3,7 @@
 Run `vp run example` from the repository root after `vp install`.
 In another terminal, run `node --import tsx examples/client.ts` for typed HTTP calls.
 
-The example listens on **127.0.0.1:3000**. It uses an in-memory repository and deliberately fake bearer tokens:
+The example listens on 127.0.0.1:3000. It uses an in-memory repository and deliberately fake bearer tokens:
 
 | Token    | Actor / tenant | Permissions             |
 | -------- | -------------- | ----------------------- |
@@ -11,7 +11,7 @@ The example listens on **127.0.0.1:3000**. It uses an in-memory repository and d
 | `reader` | reader / acme  | users:read              |
 | `bob`    | bob / other    | users:read, users:write |
 
-**Do not deploy these credentials or this authentication implementation.** State resets when the process restarts.
+Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
 The application has three groups, one per access rule:
 
@@ -22,7 +22,7 @@ The application has three groups, one per access rule:
 | `audit`  | `listChanges`                               | not served     | `/mcp`, bearer token          |
 
 HTTP groups share one mount path and differ by middleware. An MCP endpoint is a single
-route, so its middleware covers every tool; the public tool therefore has its own endpoint.
+route, so its middleware covers every tool. That is why the public tool has its own endpoint.
 The OpenAPI document (`/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`.
 
@@ -71,7 +71,7 @@ curl -s http://127.0.0.1:3000/mcp/public \
 curl -s http://127.0.0.1:3000/openapi.json
 ```
 
-For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list; a tool call the application's authorization rejects returns an `isError` result. The HTTP endpoint runs the same handler and therefore the same check.
+For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The HTTP endpoint runs the same handler and so the same check.
 
 ## Application structure
 
