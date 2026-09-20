@@ -1,4 +1,4 @@
-import { Effect, Layer, type Schema, type SchemaAST } from "effect";
+import { Effect, Layer, type Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
 import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
@@ -30,9 +30,7 @@ export interface Options {
   readonly apiPath: `/${string}`;
 }
 
-type Endpoint<A extends Action.Any, E extends Action.Codec, Middleware = never> = A extends {
-  readonly http: false;
-}
+type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readonly http: false }
   ? never
   : A extends Action.Any
     ? HttpApiEndpoint.HttpApiEndpoint<
@@ -45,17 +43,14 @@ type Endpoint<A extends Action.Any, E extends Action.Codec, Middleware = never> 
         never,
         Schema.toCodecJson<A["success"]>,
         Schema.toCodecJson<A["errors"][number] | E>,
-        Middleware
+        never
       >
     : never;
 
-type ApiGroup<G extends Actions, Middleware = never> = G extends Actions
+type ApiGroup<G extends Actions> = G extends Actions
   ? [Endpoint<G["actions"][number], never>] extends [never]
     ? never
-    : HttpApiGroup.HttpApiGroup<
-        G["name"],
-        Endpoint<G["actions"][number], PolicyError<G>, Middleware>
-      >
+    : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], PolicyError<G>>>
   : never;
 
 /** The native `HttpApi` of every HTTP-enabled action of `G`, one group per action group. */
@@ -91,40 +86,15 @@ const endpoint = (apiPath: `/${string}`, group: Actions, action: Action.Any) =>
   HttpApiEndpoint.post(action.name, `${apiPath}/${group.name}/${action.name}`, {
     payload: action.input,
     success: action.success,
-    error: [...action.errors, ...(group.schemaError?.errors ?? [])],
+    error: action.errors,
   }).annotate(OpenApi.Description, action.description);
-
-/** A policy maps issues, so it receives every issue and the input each one rejected. */
-const policyParseOptions: SchemaAST.ParseOptions = { errors: "all", reportInput: true };
-
-function erasedApi(groups: ReadonlyArray<Actions>, options: Options): Api<Actions>;
-function erasedApi(groups: ReadonlyArray<Actions>, options: Options): HttpApi.Constraint {
-  const made = groups.flatMap((group) => {
-    const [first, ...rest] = httpActions(group).map((action) =>
-      endpoint(options.apiPath, group, action),
-    );
-
-    if (first === undefined) return [];
-    const httpGroup = HttpApiGroup.make(group.name).add(first, ...rest);
-
-    return [
-      group.schemaError === undefined
-        ? httpGroup
-        : httpGroup.annotate(HttpApi.ParseOptions, policyParseOptions),
-    ];
-  });
-
-  const [first, ...rest] = made;
-  const empty = HttpApi.make("actions");
-
-  return first === undefined ? empty : empty.add(first, ...rest);
-}
 
 type ErasedPolicy = SchemaErrorPolicy<ReadonlyArray<Action.Codec>>;
 
-const schemaErrorMiddleware = (policy: ErasedPolicy) => {
+/** The native middleware declares the policy's errors on every endpoint it wraps. */
+const schemaErrorMiddleware = (name: string, policy: ErasedPolicy) => {
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
-    "effect-actions/http/SchemaErrors",
+    `effect-actions/http/SchemaErrors/${name}`,
     { error: policy.errors },
   ) {}
 
@@ -135,6 +105,39 @@ const schemaErrorMiddleware = (policy: ErasedPolicy) => {
     ),
   };
 };
+
+/** A group's native projection, shared by the published API and every served one. */
+interface Bound {
+  readonly native: ApiGroup<Actions>;
+  readonly policy: Layer.Layer<never>;
+}
+
+/** Groups without HTTP actions have no native projection. */
+function bind(options: Options, group: Actions): Bound | undefined;
+function bind(
+  options: Options,
+  group: Actions,
+): { readonly native: HttpApiGroup.Constraint; readonly policy: Layer.Layer<never> } | undefined {
+  const [first, ...rest] = httpActions(group).map((action) =>
+    endpoint(options.apiPath, group, action),
+  );
+
+  if (first === undefined) return undefined;
+  const native = HttpApiGroup.make(group.name).add(first, ...rest);
+
+  if (group.schemaError === undefined) return { native, policy: Layer.empty };
+  const policy = schemaErrorMiddleware(group.name, group.schemaError);
+
+  return { native: native.middleware(policy.SchemaErrors), policy: policy.layer };
+}
+
+function apiOf(groups: ReadonlyArray<ApiGroup<Actions>>): Api<Actions>;
+function apiOf(groups: ReadonlyArray<ApiGroup<Actions>>): HttpApi.Constraint {
+  const [first, ...rest] = groups;
+  const empty = HttpApi.make("actions").annotate(HttpApi.ParseOptions, { errors: "all" });
+
+  return first === undefined ? empty : empty.add(first, ...rest);
+}
 
 /**
  * `HttpApiBuilder.handleAll` registers a dynamically assembled record. The
@@ -149,49 +152,28 @@ const erasedHandlers = <H>(handlers: H): Handlers<HandlersContext<H>> => {
   return handlers as Handlers<HandlersContext<H>>;
 };
 
-/** Build routes for one group. Handler erasure is limited to native dynamic endpoint registration. */
-const groupLayer = <G extends Actions, H, EX, RX>(
-  options: Options,
+/** Register one group's handlers. Handler erasure is limited to native dynamic endpoint registration. */
+const groupHandlers = <G extends Actions, H, EX, RX>(
+  api: Api<Actions>,
   app: Implementation<G, H, EX, RX>,
+  policy: Layer.Layer<never>,
 ) => {
-  const actions = httpActions(app.group);
-
-  if (actions.length === 0) return Layer.empty;
-
   const entries = (record: Handlers<HandlersContext<H>>) =>
     Object.fromEntries(
-      actions.map((action) => [
+      httpActions(app.group).map((action) => [
         action.name,
         (request: { readonly payload: ErasedValue }) =>
           dispatch(app.group, action, record)(request.payload),
       ]),
     );
 
-  /** Register every action on `api` once handlers are built; the policy widens endpoint middleware. */
-  const serve = <Middleware>(
-    api: HttpApi.HttpApi<"actions", ApiGroup<Actions, Middleware>>,
-    policy: Layer.Layer<never> = Layer.empty,
-  ) =>
-    Layer.unwrap(
-      Effect.map(app.build, (record) =>
-        HttpApiBuilder.layer(api).pipe(
-          Layer.provide(
-            HttpApiBuilder.group(api, app.group.name, (builder) =>
-              builder.handleAll(entries(erasedHandlers(record))),
-            ),
-          ),
-          Layer.provide(policy),
-        ),
+  return Layer.unwrap(
+    Effect.map(app.build, (record) =>
+      HttpApiBuilder.group(api, app.group.name, (builder) =>
+        builder.handleAll(entries(erasedHandlers(record))),
       ),
-    );
-
-  const api = erasedApi([app.group], options);
-
-  if (app.group.schemaError === undefined) return serve(api);
-
-  const schemaErrors = schemaErrorMiddleware(app.group.schemaError);
-
-  return serve(api.middleware(schemaErrors.SchemaErrors), schemaErrors.layer);
+    ),
+  ).pipe(Layer.provide(policy));
 };
 
 /**
@@ -209,6 +191,14 @@ export function make(
   assertDistinct(
     "action group",
     groups.map((group) => group.name),
+  );
+
+  const bound = new Map(
+    groups.flatMap((group): Array<[Actions, Bound]> => {
+      const binding = bind(options, group);
+
+      return binding === undefined ? [] : [[group, binding]];
+    }),
   );
 
   const layer = <const Apps extends ReadonlyArray<AnyImplementation>>(
@@ -237,13 +227,22 @@ export function make(
       }
     }
 
-    const merged = apps
-      .map((app) => groupLayer(options, app))
-      .reduce<Layer.Layer<never, any, any>>((all, app) => Layer.merge(all, app), Layer.empty);
+    const served = apps.flatMap((app) => {
+      const binding = bound.get(app.group);
 
-    // SAFETY: every `groupLayer` is built from exactly one app's `build`; its
+      return binding === undefined ? [] : [{ app, ...binding }];
+    });
+
+    const api = apiOf(served.map(({ native }) => native));
+
+    const merged = served.reduce<Layer.Layer<never, any, any>>(
+      (layer, { app, policy }) => layer.pipe(Layer.provide(groupHandlers(api, app, policy))),
+      HttpApiBuilder.layer(api),
+    );
+
+    // SAFETY: every `groupHandlers` is built from exactly one app's `build`; its
     // runtime services and failures are therefore the union of this tuple.
-    // The adapter's router/platform services are added by `groupLayer`.
+    // The adapter's router/platform services are added by `HttpApiBuilder.layer`.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic tuple reduction cannot express the same union as the public variadic signature.
     return merged as Layer.Layer<
       never,
@@ -258,5 +257,5 @@ export function make(
     >;
   };
 
-  return { groups, api: erasedApi(groups, options), layer };
+  return { groups, api: apiOf([...bound.values()].map(({ native }) => native)), layer };
 }

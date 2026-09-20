@@ -163,9 +163,8 @@ describe("one implementation, both transports", () => {
 
   it("never derives authority from action arguments or MCP metadata", async () => {
     const args = { id: "1", actor: { id: "bob", tenantId: "other" }, tenantId: "other" };
-    // Effect's default object behavior strips excess fields on both paths.
-    const reply = await tool("get_user", args);
-    expect(reply.structuredContent).toEqual({ value: { id: "1", name: "Ada" } });
+    // MCP tools are strict: undeclared arguments are refused rather than stripped.
+    expect((await tool("get_user", args)).isError).toBe(true);
 
     const spoof = await withMcp((client) =>
       client.callTool({
@@ -430,11 +429,15 @@ it("supplies the native request context to handlers without a router requirement
         mcpRequest({
           url: "http://localhost/mcp",
           method: "tools/call",
-          params: { name: "client", arguments: {} },
+          params: {
+            name: "client",
+            arguments: {},
+            _meta: { "io.modelcontextprotocol/clientInfo": { name: "probe", version: "0" } },
+          },
         }),
       )
     ).json(),
   );
 
-  expect(result.result.structuredContent).toEqual({ value: "test" });
+  expect(result.result.structuredContent).toEqual({ value: "probe" });
 });

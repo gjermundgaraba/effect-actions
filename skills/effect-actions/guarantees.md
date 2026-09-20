@@ -27,7 +27,7 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 
 - A group `schemaError` policy replaces the empty 400s on HTTP with a declared error and status. It never affects MCP. Details in [ActionGroup.md](ActionGroup.md).
 - Routes are `POST <apiPath>/<group>/<action>`. Operation IDs are `<group>.<action>`. Effect generates OpenAPI component names and references.
-- Object schemas strip excess fields unless configured to reject them.
+- HTTP strips undeclared input fields. MCP tools are strict (`Tool.Strict`): undeclared arguments are an invalid-arguments result and input schemas publish `additionalProperties: false`. HTTP cannot be strict natively: `HttpApi.ParseOptions` also governs error encoding, where `onExcessProperty: "error"` rejects an error's own `stack`.
 
 ## Namespaces
 

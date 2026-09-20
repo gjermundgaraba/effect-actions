@@ -107,7 +107,7 @@ export const Double = Action.make("double", {
 - Hint defaults: `readOnly: false`, `destructive: !readOnly`, `idempotent: false`, `openWorld: true`. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
 - Schemas must be service-free. Put service access in the handler.
 - The group name, not the action, is the OpenAPI tag and operation-ID prefix: `<group>.<action>`.
-- Object schemas strip excess fields on decode unless the schema is configured to reject them.
+- HTTP strips undeclared input fields. MCP tools are strict (`Tool.Strict`): undeclared arguments are an invalid-arguments result and input schemas publish `additionalProperties: false`. HTTP cannot be strict natively: `HttpApi.ParseOptions` also governs error encoding, where `onExcessProperty: "error"` rejects an error's own `stack`.
 
 ## Failure modes
 

@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Layer, Match, Schema, type SchemaIssue, SchemaTransformation } from "effect";
+import { Effect, Layer, Schema, SchemaIssue, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpProtocol, McpSchema } from "effect/unstable/ai";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
@@ -168,7 +168,7 @@ it("answers with each group's own policy inside one adapter", async () => {
   }
 });
 
-it("gives the policy every issue and the input each one rejected", async () => {
+it("gives the policy every issue", async () => {
   const seen: Array<SchemaIssue.Issue> = [];
 
   const group = ActionGroup.make(
@@ -209,26 +209,11 @@ it("gives the policy every issue and the input each one rejected", async () => {
 
   expect(response.status).toBe(400);
 
-  // Every rejected leaf with the input it rejected, in field order.
-  type Leaf = readonly [ReadonlyArray<PropertyKey>, unknown];
-
-  const leaves = (issue: SchemaIssue.Issue, path: ReadonlyArray<PropertyKey> = []): Array<Leaf> =>
-    Match.value(issue).pipe(
-      Match.tags({
-        AnyOf: (issue) => issue.issues.flatMap((child) => leaves(child, path)),
-        Composite: (issue) => issue.issues.flatMap((child) => leaves(child, path)),
-        Pointer: (issue) => leaves(issue.issue, [...path, ...issue.path]),
-        InvalidType: (issue): Array<Leaf> => [[path, issue.input]],
-      }),
-      Match.orElse((issue): Array<Leaf> => [[path, issue._tag]]),
-    );
-
-  expect(seen.map((issue) => leaves(issue))).toEqual([
-    [
-      [["left"], "one"],
-      [["right"], 2],
-    ],
-  ]);
+  expect(
+    seen.map((issue) =>
+      SchemaIssue.makeFormatterStandardSchemaV1()(issue).issues.map(({ path }) => path),
+    ),
+  ).toEqual([[["left"], ["right"]]]);
 });
 
 const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }));

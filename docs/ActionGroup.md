@@ -124,11 +124,11 @@ export const MathApp = MathActions.implement({ double: ({ value }) => Effect.suc
 
 - Without a policy, HTTP answers decoding and encoding failures with Effect's native empty 400.
 - With a policy, `map` receives the native `HttpApiSchemaError` (`kind`, `cause`) and returns one of `errors`. HTTP uses that error's `httpApiStatus`, and the error appears in `Http.api`, in clients, and in OpenAPI.
-- `kind` values: `Payload` (input decoding), `Body` (success encoding), plus `Parameters`, `RequestHeaders`, `Query`, `ResponseHeaders`.
+- `kind` values: `Payload` (input decoding) and `Body` (success encoding). Actions declare no parameters, query, or headers, so no other kind occurs.
 - MCP is unaffected. The native `McpServer` answers invalid arguments and unencodable results itself.
 - Policy errors extend the transport contract, not the handler contract. A handler cannot return them.
 - The policy runs only on the server. Client-side codec failures stay `SchemaError`.
-- A policied group decodes with `errors: "all"` and `reportInput: true`, so `cause` carries every issue and the input each one rejected. Never reflect input values into the response.
+- HTTP decodes with `errors: "all"`, so `cause` carries every issue. Issues never retain the rejected values.
 - Groups served by one adapter may have different policies; each action answers with its own group's.
 - Domain errors, defects, interruptions, and protocol errors are not remapped. An unencodable declared error is a defect. A broken policy error is not recursively remapped.
 

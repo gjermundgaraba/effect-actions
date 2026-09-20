@@ -110,9 +110,11 @@ type Projection = "native" | "mcp";
 const project = (projection: Projection, entry: ToolEntry): Tool.Any => {
   const tool = projection === "native" ? nativeTool(entry.action) : mcpTool(entry.action);
 
-  if (projection === "mcp") assertMcpObjectInput(entry.action, tool);
+  if (projection === "native") return tool;
+  assertMcpObjectInput(entry.action, tool);
 
-  return tool;
+  // The native server then refuses undeclared arguments and publishes closed input schemas.
+  return tool.annotate(Tool.Strict, true);
 };
 
 const handler = (

@@ -1,6 +1,6 @@
-import { McpProtocol } from "effect/unstable/ai";
+import { McpProtocol, McpSchema } from "effect/unstable/ai";
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, type Stdio } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
@@ -99,6 +99,22 @@ export const typeAssertions = () => {
   // @ts-expect-error Request-scoped handler dependencies must be present per request.
   void mcp.handler(new Request("http://localhost/mcp"), Context.empty());
   void mcp.handler(new Request("http://localhost/mcp"), Context.make(CurrentActor, actor));
+
+  // The native server supplies its own request context, so the stdio host owes only `Stdio`.
+  const contextual = ActionGroup.make(
+    { name: "contextual" },
+    Action.make("client", { description: "Client", success: Schema.String, mcp: {} }),
+  ).implement({
+    client: () =>
+      Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? ""),
+  });
+
+  const stdio: Layer.Layer<never, unknown, Stdio.Stdio> = ActionMcp.layerStdio(
+    { protocols: [McpProtocol.v2026_07_28], name: "t", version: "0" },
+    contextual,
+  );
+
+  void stdio;
 
   const requestActor = Layer.succeed(CurrentActor, actor);
 
