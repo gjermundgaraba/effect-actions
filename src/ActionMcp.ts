@@ -1,7 +1,7 @@
 import { Layer } from "effect";
 import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
-import { McpServer } from "effect/unstable/ai";
+import { McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
 import { bindTools } from "./internal/tools.js";
 import {
@@ -32,6 +32,9 @@ export interface StdioOptions {
   readonly protocols: Parameters<typeof McpServer.layerStdio>[0]["protocols"];
   readonly instructions?: string;
 }
+
+/** The native server supplies its own request context to every tool call. */
+type ToolRequestContext<App> = Exclude<RequestContext<App>, McpSchema.McpRequestContext>;
 
 const registration = (apps: ReadonlyArray<AnyImplementation>) => {
   const binding = bindTools(apps, "mcp");
@@ -65,7 +68,7 @@ export function layerHttp<const Apps extends ReadonlyArray<AnyImplementation>>(
   BuildError<Apps[number]> | Cause.IllegalArgumentError,
   | BuildContext<Apps[number]>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
+  | HttpRouter.Request.From<"Requires", ToolRequestContext<Apps[number]>>
 >;
 export function layerHttp(options: Options, ...apps: ReadonlyArray<AnyImplementation>) {
   return server(
@@ -93,7 +96,7 @@ export function layerStdio<const Apps extends ReadonlyArray<AnyImplementation>>(
 ): Layer.Layer<
   never,
   BuildError<Apps[number]> | Cause.IllegalArgumentError,
-  BuildContext<Apps[number]> | StdioService | RequestContext<Apps[number]>
+  BuildContext<Apps[number]> | StdioService | ToolRequestContext<Apps[number]>
 >;
 export function layerStdio(options: StdioOptions, ...apps: ReadonlyArray<AnyImplementation>) {
   return server(apps, McpServer.layerStdio(options));

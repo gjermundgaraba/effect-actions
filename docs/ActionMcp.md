@@ -118,6 +118,7 @@ Layer.launch(layer).pipe(
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
 - Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in the handler.
 - Cancellation is Effect's native RPC interruption.
+- Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. There is no authentication middleware. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 

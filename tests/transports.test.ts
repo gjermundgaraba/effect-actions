@@ -1,8 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
-import { Effect, Predicate, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { Effect, Layer, Predicate, Schema } from "effect";
+import { McpProtocol, McpSchema } from "effect/unstable/ai";
+import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http";
 import { OpenApi } from "effect/unstable/httpapi";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestApp, testMcpPath } from "./server.js";
 import { Http, InvalidRequest, UserNotFound } from "../examples/contracts.js";
 import { Forbidden } from "../examples/auth.js";
@@ -391,4 +395,46 @@ describe("groups under their own middleware", () => {
       value: { changes: [] },
     });
   });
+});
+
+it("supplies the native request context to handlers without a router requirement", async () => {
+  const group = ActionGroup.make(
+    { name: "context" },
+    Action.make("client", {
+      description: "The connected client's declared name",
+      success: Schema.String,
+      mcp: { readOnly: true },
+    }),
+  );
+
+  const app = group.implement({
+    client: () =>
+      Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? "anonymous"),
+  });
+
+  const web = HttpRouter.toWebHandler(
+    ActionMcp.layerHttp(
+      { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
+      app,
+    ).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const result = Schema.decodeUnknownSync(
+    Schema.Struct({ result: Schema.Struct({ structuredContent: Schema.Json }) }),
+  )(
+    await (
+      await web.handler(
+        mcpRequest({
+          url: "http://localhost/mcp",
+          method: "tools/call",
+          params: { name: "client", arguments: {} },
+        }),
+      )
+    ).json(),
+  );
+
+  expect(result.result.structuredContent).toEqual({ value: "test" });
 });
