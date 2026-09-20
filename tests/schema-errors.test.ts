@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Layer, Schema, SchemaTransformation } from "effect";
+import { Effect, Layer, Match, Schema, type SchemaIssue, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { McpProtocol, McpSchema } from "effect/unstable/ai";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
@@ -166,6 +166,69 @@ it("answers with each group's own policy inside one adapter", async () => {
     expect(response.status).toBe(status);
     expect(await response.json()).toMatchObject({ error: message });
   }
+});
+
+it("gives the policy every issue and the input each one rejected", async () => {
+  const seen: Array<SchemaIssue.Issue> = [];
+
+  const group = ActionGroup.make(
+    {
+      name: "pair",
+      schemaError: {
+        errors: [InvalidRequest],
+        map: (failure: HttpApiError.HttpApiSchemaError) => {
+          seen.push(failure.cause.issue);
+
+          return new InvalidRequest({ error: "Invalid request" });
+        },
+      },
+    },
+    Action.make("pair", {
+      description: "Pair",
+      input: Schema.Struct({ left: Schema.Finite, right: Schema.String }),
+      success: Schema.Finite,
+    }),
+  );
+
+  const web = HttpRouter.toWebHandler(
+    ActionHttp.make({ apiPath: "/api" }, group)
+      .layer(group.implement({ pair: ({ left }) => Effect.succeed(left) }))
+      .pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const response = await web.handler(
+    new Request("http://localhost/api/pair/pair", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ left: "one", right: 2 }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+
+  // Every rejected leaf with the input it rejected, in field order.
+  type Leaf = readonly [ReadonlyArray<PropertyKey>, unknown];
+
+  const leaves = (issue: SchemaIssue.Issue, path: ReadonlyArray<PropertyKey> = []): Array<Leaf> =>
+    Match.value(issue).pipe(
+      Match.tags({
+        AnyOf: (issue) => issue.issues.flatMap((child) => leaves(child, path)),
+        Composite: (issue) => issue.issues.flatMap((child) => leaves(child, path)),
+        Pointer: (issue) => leaves(issue.issue, [...path, ...issue.path]),
+        InvalidType: (issue): Array<Leaf> => [[path, issue.input]],
+      }),
+      Match.orElse((issue): Array<Leaf> => [[path, issue._tag]]),
+    );
+
+  expect(seen.map((issue) => leaves(issue))).toEqual([
+    [
+      [["left"], "one"],
+      [["right"], 2],
+    ],
+  ]);
 });
 
 const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }));

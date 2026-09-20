@@ -128,7 +128,7 @@ export const MathApp = MathActions.implement({ double: ({ value }) => Effect.suc
 - MCP is unaffected. The native `McpServer` answers invalid arguments and unencodable results itself.
 - Policy errors extend the transport contract, not the handler contract. A handler cannot return them.
 - The policy runs only on the server. Client-side codec failures stay `SchemaError`.
-- `cause` may contain input values. Never reflect it into the response.
+- A policied group decodes with `errors: "all"` and `reportInput: true`, so `cause` carries every issue and the input each one rejected. Never reflect input values into the response.
 - Groups served by one adapter may have different policies; each action answers with its own group's.
 - Domain errors, defects, interruptions, and protocol errors are not remapped. An unencodable declared error is a defect. A broken policy error is not recursively remapped.
 

@@ -1,4 +1,4 @@
-import { Effect, Layer, type Schema } from "effect";
+import { Effect, Layer, type Schema, type SchemaAST } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
 import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
@@ -30,7 +30,9 @@ export interface Options {
   readonly apiPath: `/${string}`;
 }
 
-type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readonly http: false }
+type Endpoint<A extends Action.Any, E extends Action.Codec, Middleware = never> = A extends {
+  readonly http: false;
+}
   ? never
   : A extends Action.Any
     ? HttpApiEndpoint.HttpApiEndpoint<
@@ -43,14 +45,17 @@ type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readon
         never,
         Schema.toCodecJson<A["success"]>,
         Schema.toCodecJson<A["errors"][number] | E>,
-        never
+        Middleware
       >
     : never;
 
-type ApiGroup<G extends Actions> = G extends Actions
+type ApiGroup<G extends Actions, Middleware = never> = G extends Actions
   ? [Endpoint<G["actions"][number], never>] extends [never]
     ? never
-    : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], PolicyError<G>>>
+    : HttpApiGroup.HttpApiGroup<
+        G["name"],
+        Endpoint<G["actions"][number], PolicyError<G>, Middleware>
+      >
   : never;
 
 /** The native `HttpApi` of every HTTP-enabled action of `G`, one group per action group. */
@@ -89,6 +94,9 @@ const endpoint = (apiPath: `/${string}`, group: Actions, action: Action.Any) =>
     error: [...action.errors, ...(group.schemaError?.errors ?? [])],
   }).annotate(OpenApi.Description, action.description);
 
+/** A policy maps issues, so it receives every issue and the input each one rejected. */
+const policyParseOptions: SchemaAST.ParseOptions = { errors: "all", reportInput: true };
+
 function erasedApi(groups: ReadonlyArray<Actions>, options: Options): Api<Actions>;
 function erasedApi(groups: ReadonlyArray<Actions>, options: Options): HttpApi.Constraint {
   const made = groups.flatMap((group) => {
@@ -96,7 +104,14 @@ function erasedApi(groups: ReadonlyArray<Actions>, options: Options): HttpApi.Co
       endpoint(options.apiPath, group, action),
     );
 
-    return first === undefined ? [] : [HttpApiGroup.make(group.name).add(first, ...rest)];
+    if (first === undefined) return [];
+    const httpGroup = HttpApiGroup.make(group.name).add(first, ...rest);
+
+    return [
+      group.schemaError === undefined
+        ? httpGroup
+        : httpGroup.annotate(HttpApi.ParseOptions, policyParseOptions),
+    ];
   });
 
   const [first, ...rest] = made;
@@ -143,8 +158,6 @@ const groupLayer = <G extends Actions, H, EX, RX>(
 
   if (actions.length === 0) return Layer.empty;
 
-  const api = erasedApi([app.group], options);
-
   const entries = (record: Handlers<HandlersContext<H>>) =>
     Object.fromEntries(
       actions.map((action) => [
@@ -154,38 +167,31 @@ const groupLayer = <G extends Actions, H, EX, RX>(
       ]),
     );
 
-  const handlers = (record: Handlers<HandlersContext<H>>) =>
-    HttpApiBuilder.group(api, app.group.name, (builder) => builder.handleAll(entries(record)));
-
-  if (app.group.schemaError === undefined) {
-    return Layer.unwrap(
+  /** Register every action on `api` once handlers are built; the policy widens endpoint middleware. */
+  const serve = <Middleware>(
+    api: HttpApi.HttpApi<"actions", ApiGroup<Actions, Middleware>>,
+    policy: Layer.Layer<never> = Layer.empty,
+  ) =>
+    Layer.unwrap(
       Effect.map(app.build, (record) =>
-        HttpApiBuilder.layer(api).pipe(Layer.provide(handlers(erasedHandlers(record)))),
+        HttpApiBuilder.layer(api).pipe(
+          Layer.provide(
+            HttpApiBuilder.group(api, app.group.name, (builder) =>
+              builder.handleAll(entries(erasedHandlers(record))),
+            ),
+          ),
+          Layer.provide(policy),
+        ),
       ),
     );
-  }
+
+  const api = erasedApi([app.group], options);
+
+  if (app.group.schemaError === undefined) return serve(api);
 
   const schemaErrors = schemaErrorMiddleware(app.group.schemaError);
-  const policyApi = api.middleware(schemaErrors.SchemaErrors);
 
-  const policyHandlers = (record: Handlers<HandlersContext<H>>) =>
-    HttpApiBuilder.group(policyApi, app.group.name, (builder) => {
-      // SAFETY: every entry is selected from this group's endpoint list. The
-      // native API has widened endpoint middleware, so its dynamic record
-      // cannot retain the action-name mapping that `entries` checked above.
-      const dynamicEntries = entries(record) as Parameters<typeof builder.handleAll>[0];
-
-      return builder.handleAll(dynamicEntries);
-    });
-
-  return Layer.unwrap(
-    Effect.map(app.build, (record) =>
-      HttpApiBuilder.layer(policyApi).pipe(
-        Layer.provide(policyHandlers(erasedHandlers(record))),
-        Layer.provide(schemaErrors.layer),
-      ),
-    ),
-  );
+  return serve(api.middleware(schemaErrors.SchemaErrors), schemaErrors.layer);
 };
 
 /**
