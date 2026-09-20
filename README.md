@@ -101,6 +101,10 @@ The `effect` peer is pinned to an exact Effect 4 release candidate and moves wit
 release of this package for each Effect release candidate it adopts. Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
 Authentication and authorization belong to the application. See [docs/setup.md](docs/setup.md).
 
+## Acknowledgements
+
+A few idea (like the native Toolkit, CLI, and catalog projections) are inspired by the excellent [rat-stack](https://github.com/joelhooks/rat-stack) by Joel Hooks.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
