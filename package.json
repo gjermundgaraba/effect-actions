@@ -48,9 +48,9 @@
   "devDependencies": {
     "@effect/platform-node": "4.0.0-rc.116",
     "@modelcontextprotocol/client": "2.0.0",
-    "@types/node": "26.5.1",
+    "@types/node": "26.6.2",
     "effect": "4.0.0-rc.116",
-    "tsx": "4.23.13",
+    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:"
