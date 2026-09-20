@@ -49,7 +49,10 @@ release candidate; bump it together with `devDependencies` and re-run the full c
 release a new version so consumers on the new Effect pin have a matching package.
 
 To release: set `version` in `package.json`, commit as `Prepare <version>`, tag `v<version>`,
-push the commit and tag, then `vp pm publish`.
+and push the commit and tag. The tag runs `.github/workflows/npm.yml`, which checks that the tag
+matches `version`, repeats the CI checks, and publishes. It authenticates as the package's npm
+trusted publisher (this repository and that workflow file, set under the package's npm
+settings), so there is no registry token, and npm attaches provenance.
 `prepublishOnly` builds; `files` ships `dist` and `docs`. The skill is not in the tarball:
 `npx skills add` reads it from GitHub, and agents reading node_modules get `docs/` directly.
 

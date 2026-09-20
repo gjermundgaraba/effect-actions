@@ -1,0 +1,33 @@
+name: Publish npm package
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@v1.20.0
+        with:
+          node-version: 26
+          cache: true
+          run-install: false
+      - name: Check that the tag matches the package version
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+      - run: vp install --frozen-lockfile
+      - run: vp check
+      - run: vp test
+      - run: vp run test:package
+      # The package lists this repository and workflow as its npm trusted publisher, so
+      # publishing authenticates with the job's OIDC token and attaches provenance.
+      # A tag checkout is a detached HEAD, which the branch check would refuse.
+      - run: vp pm publish --no-git-checks
