@@ -69,7 +69,7 @@ const greeting = Effect.gen(function* () {
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions@rc effect@4.0.0-rc.116
+pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.116
 ```
 
 Add `@effect/platform-node@4.0.0-rc.116` to serve from Node. Every module is a subpath import
@@ -97,8 +97,8 @@ in `node_modules/@gjermundgaraba/effect-actions/docs`) gives the same content.
 
 ## Status
 
-Release candidate. The `effect` peer is pinned to an exact Effect 4 release candidate and moves
-with it. Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
+The `effect` peer is pinned to an exact Effect 4 release candidate and moves with it; expect a
+release of this package for each Effect release candidate it adopts. Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
 Authentication and authorization belong to the application. See [docs/setup.md](docs/setup.md).
 
 ## Contributing

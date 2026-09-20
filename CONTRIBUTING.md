@@ -44,8 +44,12 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 
 ## Release
 
-The package publishes under the `rc` tag while Effect 4 is in release candidates. The `effect`
-peer is an exact pin; bump it together with `devDependencies` and re-run the full check.
+The package publishes to the `latest` tag. The `effect` peer is an exact pin on an Effect 4
+release candidate; bump it together with `devDependencies` and re-run the full check, then
+release a new version so consumers on the new Effect pin have a matching package.
+
+To release: set `version` in `package.json`, commit as `Prepare <version>`, tag `v<version>`,
+push the commit and tag, then `vp pm publish`.
 `prepublishOnly` builds; `files` ships `dist` and `docs`. The skill is not in the tarball:
 `npx skills add` reads it from GitHub, and agents reading node_modules get `docs/` directly.
 

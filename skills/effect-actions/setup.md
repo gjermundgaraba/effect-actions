@@ -5,7 +5,7 @@ Install, version pins, entry points, and the boundaries of the package.
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions@rc effect@4.0.0-rc.116
+pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.116
 ```
 
 | Need                           | Add                                                   |

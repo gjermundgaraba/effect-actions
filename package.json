@@ -1,6 +1,6 @@
 {
   "name": "@gjermundgaraba/effect-actions",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, catalogs, and CLIs.",
   "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
   "bugs": {
@@ -31,8 +31,7 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "access": "public",
-    "tag": "rc"
+    "access": "public"
   },
   "scripts": {
     "build": "vp pack",
