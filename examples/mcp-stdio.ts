@@ -8,7 +8,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 const Status = Action.make("status", {
   description: "Report whether the subprocess is ready.",
   success: Schema.Struct({ ready: Schema.Boolean }),
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 const app = ActionGroup.make({ name: "stdio" }, Status).implement({

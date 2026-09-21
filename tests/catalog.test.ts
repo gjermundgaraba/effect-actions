@@ -10,6 +10,7 @@ describe("offline action catalog", () => {
       { name: "numbers" },
       Action.make("double", {
         description: "Double a number encoded as a string",
+        access: "write",
         input: Schema.Struct({ n: Schema.FiniteFromString }),
         success: Schema.FiniteFromString,
         mcp: { name: "double_number", idempotent: true, openWorld: false },
@@ -40,11 +41,11 @@ describe("offline action catalog", () => {
     const catalog = ActionCatalog.make(
       ActionGroup.make(
         { name: "text" },
-        Action.make("read", { description: "Text", success: Text }),
+        Action.make("read", { description: "Text", access: "write", success: Text }),
       ),
       ActionGroup.make(
         { name: "number" },
-        Action.make("read", { description: "Number", success: Number }),
+        Action.make("read", { description: "Number", access: "write", success: Number }),
       ),
     );
 
@@ -71,7 +72,12 @@ describe("offline action catalog", () => {
     const catalog = ActionCatalog.make(
       ActionGroup.make(
         { name: "trees" },
-        Action.make("read", { description: "Recursive tree", input: Node, success: Node }),
+        Action.make("read", {
+          description: "Recursive tree",
+          access: "write",
+          input: Node,
+          success: Node,
+        }),
       ),
     );
 
@@ -92,9 +98,15 @@ describe("offline action catalog", () => {
 
     const Group = ActionGroup.make(
       { name: "errors", errors: [Shared], schemaError: { errors: [Policy], map: () => "invalid" } },
-      Action.make("read", { description: "Read", success: Schema.String, errors: [Own] }),
+      Action.make("read", {
+        description: "Read",
+        access: "write",
+        success: Schema.String,
+        errors: [Own],
+      }),
       Action.make("local", {
         description: "Local only",
+        access: "write",
         success: Schema.String,
         http: false,
         mcp: false,
@@ -115,6 +127,7 @@ describe("offline action catalog", () => {
         { name: "dictionaries" },
         Action.make("read", {
           description: "Read values by arbitrary key",
+          access: "write",
           input: Schema.Record(Schema.String, Schema.FiniteFromString),
           success: Schema.Record(Schema.String, Schema.Finite),
         }),
@@ -132,7 +145,12 @@ describe("offline action catalog", () => {
   });
 
   it("owns only its group/action namespace, not a server's tool registry", () => {
-    const Read = Action.make("read", { description: "Read", success: Schema.String });
+    const Read = Action.make("read", {
+      description: "Read",
+      access: "write",
+      success: Schema.String,
+    });
+
     const First = ActionGroup.make({ name: "first" }, Read);
     const Second = ActionGroup.make({ name: "second" }, Read);
 

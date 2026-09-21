@@ -30,6 +30,7 @@ export const typeAssertions = () => {
 
   const optionallyAliased = Action.make("fallback", {
     description: "Optional alias",
+    access: "write",
     success: Schema.String,
     mcp: optionalAlias,
   });
@@ -54,10 +55,10 @@ export const typeAssertions = () => {
   // @ts-expect-error No public handler tag.
   void a.handlers;
   // @ts-expect-error Implementations cannot be fabricated from a group.
-  Http.layer({ name: Actions.name, actions: Actions.actions });
+  Http.layer({}, { name: Actions.name, actions: Actions.actions });
   // @ts-expect-error Spreading a nominal implementation cannot manufacture its private build state.
   // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication compile-failure fixture.
-  Http.layer({ ...a, build: Effect.succeed(ok) });
+  Http.layer({}, { ...a, build: Effect.succeed(ok) });
   // @ts-expect-error Every action in the group needs a handler.
   Actions.implement({ ...ok, whoAmI: undefined });
   // @ts-expect-error Handler results must match the success schema.
@@ -76,11 +77,11 @@ export const typeAssertions = () => {
   const services = Layer.provide(HttpServer.layerServices);
   HttpRouter.toWebHandler(
     // @ts-expect-error Build-time handler dependencies are Layer requirements.
-    Http.layer(App).pipe(services),
+    Http.layer({}, App).pipe(services),
   );
 
   const http = HttpRouter.toWebHandler(
-    Http.layer(App).pipe(Layer.provide(Users.layerMemory), services),
+    Http.layer({}, App).pipe(Layer.provide(Users.layerMemory), services),
   );
 
   // @ts-expect-error Request-scoped handler dependencies must be present per request.
@@ -103,7 +104,12 @@ export const typeAssertions = () => {
   // The native server supplies its own request context, so the stdio host owes only `Stdio`.
   const contextual = ActionGroup.make(
     { name: "contextual" },
-    Action.make("client", { description: "Client", success: Schema.String, mcp: {} }),
+    Action.make("client", {
+      description: "Client",
+      access: "write",
+      success: Schema.String,
+      mcp: {},
+    }),
   ).implement({
     client: () =>
       Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? ""),
@@ -137,7 +143,7 @@ export const typeAssertions = () => {
   const fallible = Actions.implement(Effect.fail("build-failed" as const).pipe(Effect.as(ok)));
 
   for (const routes of [
-    Http.layer(fallible),
+    Http.layer({}, fallible),
     ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
       fallible,
@@ -174,8 +180,13 @@ export const clientTypes = Effect.gen(function* () {
 
   const mixed = ActionGroup.make(
     { name: "test" },
-    Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
-    Action.make("visible", { description: "HTTP", success: Schema.Boolean }),
+    Action.make("hidden", {
+      description: "MCP only",
+      access: "write",
+      success: Schema.String,
+      http: false,
+    }),
+    Action.make("visible", { description: "HTTP", access: "write", success: Schema.Boolean }),
   );
 
   const selected = yield* HttpApiClient.make(
@@ -198,6 +209,7 @@ export const policyTypes = Effect.gen(function* () {
 
   const Echo = Action.make("echo", {
     description: "Echo",
+    access: "write",
     input: Schema.Struct({ value: Schema.Finite }),
     success: Schema.Finite,
   });
@@ -255,10 +267,10 @@ export const configuredAdapterTypes = () => {
   const Bound = ActionHttp.make({ apiPath: "/rpc" }, Actions);
   const services = Layer.provide(HttpServer.layerServices);
   // @ts-expect-error A policy-bound adapter must preserve acquisition requirements.
-  HttpRouter.toWebHandler(Bound.layer(App).pipe(services));
+  HttpRouter.toWebHandler(Bound.layer({}, App).pipe(services));
 
   const web = HttpRouter.toWebHandler(
-    Bound.layer(App).pipe(Layer.provide(Users.layerMemory), services),
+    Bound.layer({}, App).pipe(Layer.provide(Users.layerMemory), services),
   );
 
   // @ts-expect-error Configuring the adapter must preserve request requirements.
@@ -293,7 +305,7 @@ export const multipleGroupTypes = () => {
 
   const Billing = ActionGroup.make(
     { name: "billing" },
-    Action.make("invoice", { description: "Invoice", success: Schema.Number }),
+    Action.make("invoice", { description: "Invoice", access: "write", success: Schema.Number }),
   );
 
   const BillingApp = Billing.implement({ invoice: () => Effect.as(Tenant, 1) });
@@ -314,14 +326,14 @@ export const multipleGroupTypes = () => {
 
   const Foreign = ActionGroup.make(
     { name: "foreign" },
-    Action.make("other", { description: "Other", success: Schema.String }),
+    Action.make("other", { description: "Other", access: "write", success: Schema.String }),
   ).implement({ other: () => Effect.succeed("") });
 
   // @ts-expect-error Route layers exist only for implementations of the bound groups.
-  Both.layer(Foreign);
+  Both.layer({}, Foreign);
   // @ts-expect-error A contract is not its implementation.
   ActionHttp.make({ apiPath: "/api" }, App);
-  Both.layer(App, BillingApp);
+  Both.layer({}, App, BillingApp);
 
   const services = Layer.provide(HttpServer.layerServices);
 
@@ -344,7 +356,7 @@ export const multipleGroupTypes = () => {
     ),
   );
 
-  const variadic = Both.layer(failsAfterBuildA, failsAfterBuildB);
+  const variadic = Both.layer({}, failsAfterBuildA, failsAfterBuildB);
   // @ts-expect-error Variadic mounting preserves both disjoint build-service requirements.
   HttpRouter.toWebHandler(variadic.pipe(services));
 
@@ -363,7 +375,7 @@ export const multipleGroupTypes = () => {
   );
 
   // Each layer carries only its own implementation's requirements.
-  const billingOnly = HttpRouter.toWebHandler(Both.layer(BillingApp).pipe(services));
+  const billingOnly = HttpRouter.toWebHandler(Both.layer({}, BillingApp).pipe(services));
   void billingOnly.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
 
   const both = Context.make(Tenant, "acme").pipe(
@@ -372,7 +384,7 @@ export const multipleGroupTypes = () => {
 
   // Checked per adapter: over a union of both, one's requirements would hide the other's absence.
   const mergedHttp = HttpRouter.toWebHandler(
-    Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)).pipe(
+    Layer.mergeAll(Both.layer({}, App), Both.layer({}, BillingApp)).pipe(
       Layer.provide(Users.layerMemory),
       services,
     ),
@@ -397,7 +409,7 @@ export const multipleGroupTypes = () => {
   // Implementing inline must not let the adapter's parameter type erase requirements.
   const inline = HttpRouter.toWebHandler(
     ActionHttp.make({ apiPath: "/api" }, Billing)
-      .layer(Billing.implement({ invoice: () => Effect.succeed(1) }))
+      .layer({}, Billing.implement({ invoice: () => Effect.succeed(1) }))
       .pipe(services),
   );
 
@@ -412,12 +424,14 @@ export const multipleGroupTypes = () => {
 
   void inlineMcp.handler(new Request("http://localhost"));
 
-  // @ts-expect-error Build requirements are the union over every merged layer.
-  HttpRouter.toWebHandler(Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)).pipe(services));
+  HttpRouter.toWebHandler(
+    // @ts-expect-error Build requirements are the union over every merged layer.
+    Layer.mergeAll(Both.layer({}, App), Both.layer({}, BillingApp)).pipe(services),
+  );
 };
 
 export const beforeTypes = () => {
-  class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
+  class Denied extends Schema.TaggedError<Denied>()("Denied", {}, { httpApiStatus: 403 }) {}
 
   class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
 
@@ -429,38 +443,65 @@ export const beforeTypes = () => {
     success: Schema.String,
   });
 
-  const Guarded = ActionGroup.make({ name: "guarded", errors: [Denied] }, Read);
+  const Guarded = ActionGroup.make({ name: "guarded" }, Read);
 
-  const handlers = { read: () => Effect.succeed("ok") };
+  const app = Guarded.implement({ read: () => Effect.succeed("ok") });
 
-  // The hook may fail with the group's own errors, which every action declares.
-  const guarded = Guarded.implement(handlers, { before: () => Effect.fail(new Denied()) });
+  const binding = ActionHttp.make({ apiPath: "/api", errors: [Denied] }, Guarded);
 
-  // @ts-expect-error A hook may not fail with an error the group does not declare.
-  Guarded.implement(handlers, { before: () => Effect.fail(new Unrelated()) });
+  // The hook may fail with the surface errors the binding declares on every endpoint.
+  binding.layer({ before: () => Effect.fail(new Denied()) }, app);
 
-  const Plain = ActionGroup.make({ name: "plain" }, Read);
-  // @ts-expect-error A group without declared errors has no failure for a hook to use.
-  Plain.implement(handlers, { before: () => Effect.fail(new Denied()) });
+  // @ts-expect-error A hook may not fail with an error the surface does not declare.
+  binding.layer({ before: () => Effect.fail(new Unrelated()) }, app);
 
-  // Hook services are request-time requirements, exactly like a handler's.
-  const timed = Guarded.implement(handlers, {
-    before: () => Effect.asVoid(Clock),
-  });
-
-  makeTestHttp(timed, Layer.succeed(Clock, 0));
-  // @ts-expect-error The hook's services must be supplied per request, not erased.
-  makeTestHttp(timed, Layer.empty);
-  makeTestMcp(timed, Layer.succeed(Clock, 0));
-  // @ts-expect-error The hook's services must be supplied per request, not erased.
-  makeTestMcp(timed, Layer.empty);
+  const bare = ActionHttp.make({ apiPath: "/api" }, Guarded);
+  // @ts-expect-error A binding without declared errors has no failure for a hook to use.
+  bare.layer({ before: () => Effect.fail(new Denied()) }, app);
 
   // The hook reads the contract it is about to run, including its access.
-  Guarded.implement(handlers, {
-    before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
-  });
+  binding.layer(
+    { before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())) },
+    app,
+  );
 
-  void guarded;
+  // Hook services are request-time requirements, exactly like a handler's.
+  const timed = HttpRouter.toWebHandler(
+    binding
+      .layer({ before: () => Effect.asVoid(Clock) }, app)
+      .pipe(Layer.provide(HttpServer.layerServices)),
+  );
+
+  // @ts-expect-error The hook's services must be supplied per request, not erased.
+  void timed.handler(new Request("http://localhost"), Context.empty());
+  void timed.handler(new Request("http://localhost"), Context.make(Clock, 0));
+
+  // MCP types its hook the same way, from the errors that endpoint declares.
+  const stdio = ActionMcp.layerStdio(
+    {
+      protocols: [McpProtocol.v2026_07_28],
+      name: "t",
+      version: "0",
+      errors: [Denied],
+      before: () => Effect.asVoid(Clock),
+    },
+    app,
+  );
+
+  // The hook's services join what the stdio host owes, since nothing else supplies them.
+  stdio satisfies Layer.Layer<never, unknown, Stdio.Stdio | Clock>;
+
+  ActionMcp.layerStdio(
+    {
+      protocols: [McpProtocol.v2026_07_28],
+      name: "t",
+      version: "0",
+      errors: [Denied],
+      // @ts-expect-error An MCP hook may not fail with an error the endpoint does not declare.
+      before: () => Effect.fail(new Unrelated()),
+    },
+    app,
+  );
 };
 
 export const surfaceErrorTypes = Effect.gen(function* () {

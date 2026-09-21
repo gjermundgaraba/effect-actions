@@ -17,8 +17,8 @@ type ErasedHandler<R> = {
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
 /**
- * An adapter's erased view of the pre-handler hook. It sees the selected action
- * contract, so a group-wide policy reads `access` rather than the action name.
+ * An adapter's erased view of the pre-handler hook one surface binds. It sees the
+ * selected action contract, so a policy reads `access` rather than the action name.
  */
 export type Before<R> = (action: Action.Any) => Effect.Effect<void, ErasedValue, R>;
 
@@ -35,23 +35,20 @@ export type HandlersContext<H> = {
 }[keyof H];
 
 /**
- * An acquired handler record for a group, with the hook that runs before each of them.
+ * An acquired handler record for a group.
  *
  * The private field makes this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
  */
-export class Implementation<G extends Actions, H, EX, RX, RB> {
+export class Implementation<G extends Actions, H, EX, RX> {
   readonly #build: Effect.Effect<H, EX, RX | Scope.Scope>;
-  readonly #before: Before<RB> | undefined;
 
   private constructor(
     /** The group whose exact handler record was built. */
     readonly group: G,
     build: Effect.Effect<H, EX, RX | Scope.Scope>,
-    before: Before<RB> | undefined,
   ) {
     this.#build = build;
-    this.#before = before;
   }
 
   /** Acquire the exact handler record in the adapter layer's scope. */
@@ -59,32 +56,26 @@ export class Implementation<G extends Actions, H, EX, RX, RB> {
     return this.#build;
   }
 
-  /** Runs once per invocation, before the selected handler, on every surface. */
-  get before(): Before<RB> | undefined {
-    return this.#before;
-  }
-
-  static make<G extends Actions, H, EX, RX, RB>(
+  static make<G extends Actions, H, EX, RX>(
     group: G,
     build: Effect.Effect<H, EX, RX | Scope.Scope>,
-    before: Before<RB> | undefined,
-  ): Implementation<G, H, EX, RX, RB> {
-    return new Implementation(group, build, before);
+  ): Implementation<G, H, EX, RX> {
+    return new Implementation(group, build);
   }
 }
 
 /**
  * Select and invoke a handler after an adapter has selected a concrete action.
- * The pre-handler hook runs first, inside the action's span, so every surface
- * applies it exactly once and its failures are declared errors of the action.
+ * The surface's pre-handler hook runs first, outside the action's span, so a
+ * refusal is attributed to the surface rather than to a handler that never ran.
  * `R` remains in the returned effect so transport layers cannot erase required
  * per-request services while assembling routes.
  */
-export const dispatch = <A extends Action.Any, R>(
+export const dispatch = <A extends Action.Any, EB, R>(
   group: Actions,
   action: A,
   handlers: Handlers<R>,
-  before?: Before<R>,
+  before: Before<R> | undefined,
 ) => {
   const handle = handlers[action.name];
 
@@ -92,36 +83,32 @@ export const dispatch = <A extends Action.Any, R>(
 
   return (
     input: A["input"]["Type"],
-  ): Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R> => {
-    const run = () =>
-      before === undefined ? handle(input) : Effect.flatMap(before(action), () => handle(input));
+  ): Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R> => {
+    const handled = Effect.withSpan(
+      Effect.suspend(() => handle(input)),
+      `${group.name}.${action.name}`,
+      { captureStackTrace: false },
+    );
 
-    const invoked = Effect.withSpan(Effect.suspend(run), `${group.name}.${action.name}`, {
-      captureStackTrace: false,
-    });
+    const invoked = before === undefined ? handled : Effect.flatMap(before(action), () => handled);
 
     // SAFETY: the selected action identifies the only handler invoked, whose
     // ActionGroup contract fixes this input, success and failure schema. The
-    // hook may fail only with errors the group declares on every action.
-    return invoked as Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R>;
+    // hook fails only with the surface errors the adapter declares on `EB`.
+    return invoked as Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R>;
   };
 };
 
 // `any` is a wildcard in these inference positions; `unknown` would fail to match.
 /** Any nominal implementation of `G`, with its record and channels erased. */
-export type AnyImplementation<G extends Actions = Actions> = Implementation<G, any, any, any, any>;
-
-/** Pre-handler requirements of one implementation, or of a union of them. */
-export type BeforeContext<App> =
-  App extends Implementation<any, any, any, any, infer RB> ? RB : never;
+export type AnyImplementation<G extends Actions = Actions> = Implementation<G, any, any, any>;
 
 /** Per-request requirements of one implementation, or of a union of them. */
 export type RequestContext<App> =
-  App extends Implementation<any, infer H, any, any, infer RB> ? HandlersContext<H> | RB : never;
+  App extends Implementation<any, infer H, any, any> ? HandlersContext<H> : never;
 
 /** Handler-acquisition failures of one implementation, or of a union of them. */
-export type BuildError<App> = App extends Implementation<any, any, infer EX, any, any> ? EX : never;
+export type BuildError<App> = App extends Implementation<any, any, infer EX, any> ? EX : never;
 
 /** Handler-acquisition requirements of one implementation, or of a union of them. */
-export type BuildContext<App> =
-  App extends Implementation<any, any, any, infer RX, any> ? RX : never;
+export type BuildContext<App> = App extends Implementation<any, any, any, infer RX> ? RX : never;

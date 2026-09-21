@@ -87,6 +87,7 @@ describe("projection boundaries", () => {
   it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
+      access: "write",
       input: Schema.String,
       success: Schema.String,
       mcp: false,
@@ -94,6 +95,7 @@ describe("projection boundaries", () => {
 
     const Hidden = Action.make("hidden", {
       description: "Not exposed over HTTP",
+      access: "write",
       success: Schema.String,
       http: false,
     });
@@ -125,6 +127,7 @@ describe("projection boundaries", () => {
 
       const Fail = Action.make("fail", {
         description: "Declared failure",
+        access: "write",
         success: Schema.String,
         errors: [status === undefined ? Failure : Failure.annotate({ httpApiStatus: status })],
       });
@@ -152,6 +155,7 @@ describe("projection boundaries", () => {
 
     const Fail = Action.make("fail", {
       description: "Two failures",
+      access: "write",
       input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
       success: Schema.String,
       errors: [Missing, Conflict],
@@ -188,6 +192,7 @@ describe("projection boundaries", () => {
 
     const Fail = Action.make("fail", {
       description: "Error with a message",
+      access: "write",
       success: Schema.String,
       errors: [Denied],
     });
@@ -214,6 +219,7 @@ describe("projection boundaries", () => {
 
     const Fail = Action.make("fail", {
       description: "Union failure",
+      access: "write",
       success: Schema.String,
       errors: [Schema.Union([Missing, Conflict])],
     });
@@ -234,6 +240,7 @@ describe("projection boundaries", () => {
 
     const Read = Action.make("read", {
       description: "Referenced schema",
+      access: "write",
       success: Schema.Struct({ first: Item, second: Item }),
     });
 
@@ -263,6 +270,7 @@ describe("projection boundaries", () => {
 
       const Tree = Action.make("tree", {
         description: "Recursive object",
+        access: "write",
         input: Node,
         success: Node,
       });
@@ -301,6 +309,7 @@ describe("projection boundaries", () => {
 
     const Nested = Action.make("nested", {
       description: "Nested references",
+      access: "write",
       input: Schema.Struct({ item: Item }),
       success: Schema.Struct({ first: Item, second: Item }),
     });
@@ -330,6 +339,7 @@ describe("projection boundaries", () => {
     (input) => {
       const Invalid = Action.make("invalid", {
         description: "Unusable MCP input",
+        access: "write",
         input,
         success: Schema.String,
       });
@@ -350,6 +360,7 @@ describe("projection boundaries", () => {
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
     const Scalar = Action.make("scalar", {
       description: "Scalar error",
+      access: "write",
       success: Schema.String,
       errors: [Schema.String],
     });
@@ -373,6 +384,7 @@ describe("projection boundaries", () => {
   it("encodes output and optional input correctly through native MCP", async () => {
     const Encode = Action.make("encode", {
       description: "Output transform",
+      access: "write",
       input: Schema.Struct({ value: Schema.optionalKey(Schema.FiniteFromString) }),
       success: Schema.FiniteFromString,
     });
@@ -392,6 +404,7 @@ describe("projection boundaries", () => {
   it("reports invalid MCP arguments through the native InvalidParams path, never as a declared failure", async () => {
     const Echo = Action.make("echo", {
       description: "Number",
+      access: "write",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Finite,
     });
@@ -412,8 +425,17 @@ describe("projection boundaries", () => {
   });
 
   it("turns invalid output and defects into sanitized native failures on both transports", async () => {
-    const Broken = Action.make("broken", { description: "Bad output", success: Schema.Finite });
-    const Boom = Action.make("boom", { description: "Defect", success: Schema.String });
+    const Broken = Action.make("broken", {
+      description: "Bad output",
+      access: "write",
+      success: Schema.Finite,
+    });
+
+    const Boom = Action.make("boom", {
+      description: "Defect",
+      access: "write",
+      success: Schema.String,
+    });
 
     const app = ActionGroup.make({ name: "test" }, Broken, Boom).implement({
       broken: () => Effect.succeed(Infinity),
@@ -444,6 +466,7 @@ describe("projection boundaries", () => {
   it("lowers declaration schemas to JSON identically on both transports", async () => {
     const Stamp = Action.make("stamp", {
       description: "Date round trip",
+      access: "write",
       input: Schema.Struct({ d: Schema.Date }),
       success: Schema.Struct({ d: Schema.Date }),
     });
@@ -467,7 +490,12 @@ describe("projection boundaries", () => {
   it("passes HTTP cancellation to the running Effect and finalizes it", async () => {
     const started = Effect.runSync(Deferred.make<void>());
     const stopped = Effect.runSync(Deferred.make<void>());
-    const Slow = Action.make("slow", { description: "Wait", success: Schema.String });
+
+    const Slow = Action.make("slow", {
+      description: "Wait",
+      access: "write",
+      success: Schema.String,
+    });
 
     const app = ActionGroup.make({ name: "test" }, Slow).implement({
       slow: () =>

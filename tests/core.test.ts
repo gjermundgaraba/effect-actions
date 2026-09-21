@@ -30,7 +30,13 @@ describe("contracts", () => {
       idempotent: false,
       openWorld: true,
     });
-    const Write = Action.make("write", { description: "Default hints", success: Schema.String });
+
+    const Write = Action.make("write", {
+      description: "Default hints",
+      access: "write",
+      success: Schema.String,
+    });
+
     expect(Write.mcp).toEqual({
       name: "write",
       readOnly: false,
@@ -43,34 +49,47 @@ describe("contracts", () => {
 
   it("rejects invalid names at definition time", () => {
     for (const name of ["bad name", "then"]) {
-      expect(() => Action.make(name, { description: "", success: Schema.String })).toThrow(
-        "Invalid action name",
-      );
+      expect(() =>
+        Action.make(name, { description: "", access: "write", success: Schema.String }),
+      ).toThrow("Invalid action name");
     }
 
     expect(() => ActionGroup.make({ name: "then" })).toThrow("Invalid action group name");
     expect(() =>
-      Action.make("ok", { description: "", success: Schema.String, mcp: { name: "bad name" } }),
+      Action.make("ok", {
+        description: "",
+        access: "write",
+        success: Schema.String,
+        mcp: { name: "bad name" },
+      }),
     ).toThrow("Invalid MCP name");
     expect(() =>
-      Action.make("ok", { description: "", success: Schema.String, mcp: { name: "then" } }),
+      Action.make("ok", {
+        description: "",
+        access: "write",
+        success: Schema.String,
+        mcp: { name: "then" },
+      }),
     ).toThrow("Invalid MCP name");
   });
 
   it("accepts relaxed HTTP segment names and keeps MCP validation independent", () => {
-    expect(Action.make("1st", { description: "", success: Schema.String }).name).toBe("1st");
-    expect(Action.make("_private", { description: "", success: Schema.String }).name).toBe(
-      "_private",
-    );
+    expect(
+      Action.make("1st", { description: "", access: "write", success: Schema.String }).name,
+    ).toBe("1st");
+    expect(
+      Action.make("_private", { description: "", access: "write", success: Schema.String }).name,
+    ).toBe("_private");
     expect(
       ActionGroup.make(
         { name: "9_group" },
-        Action.make("_action", { description: "", success: Schema.String }),
+        Action.make("_action", { description: "", access: "write", success: Schema.String }),
       ).name,
     ).toBe("9_group");
     expect(
       Action.make("x".repeat(129), {
         description: "Long HTTP-only action",
+        access: "write",
         success: Schema.String,
         mcp: false,
       }).mcp,
@@ -82,6 +101,7 @@ describe("contracts", () => {
 
     const Alias = Action.make("alias", {
       description: "Alias collision",
+      access: "write",
       success: Schema.String,
       mcp: { name: "get_user" },
     });
@@ -96,6 +116,7 @@ describe("contracts", () => {
 describe("implementations", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
+    access: "write",
     input: Schema.Struct({ name: Schema.String }),
     success: Schema.String,
   });
@@ -126,8 +147,8 @@ describe("implementations", () => {
 
     const web = HttpRouter.toWebHandler(
       Layer.mergeAll(
-        ActionHttp.make({ apiPath: "/a" }, Group).layer(appA),
-        ActionHttp.make({ apiPath: "/b" }, Group).layer(appB),
+        ActionHttp.make({ apiPath: "/a" }, Group).layer({}, appA),
+        ActionHttp.make({ apiPath: "/b" }, Group).layer({}, appB),
       ).pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
@@ -140,14 +161,18 @@ describe("implementations", () => {
   it("routes prototype-sensitive action names through native HTTP", async () => {
     const Proto = ActionGroup.make(
       { name: "safe" },
-      Action.make("__proto__", { description: "Prototype-safe", success: Schema.String }),
+      Action.make("__proto__", {
+        description: "Prototype-safe",
+        access: "write",
+        success: Schema.String,
+      }),
     );
 
     const app = Proto.implement({ ["__proto__"]: () => Effect.succeed("safe") });
 
     const web = HttpRouter.toWebHandler(
       ActionHttp.make({ apiPath: "/api" }, Proto)
-        .layer(app)
+        .layer({}, app)
         .pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );

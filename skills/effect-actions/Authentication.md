@@ -104,7 +104,7 @@ export const routes = Layer.mergeAll(
 - `protectedResource` publishes what it is given. The deployment must ensure `resource` and `authorizationServers` are valid OAuth URLs (HTTPS, or loopback HTTP in development).
 - Discovery is served at `/.well-known/oauth-protected-resource` followed by the resource's path and query, for `GET` and `HEAD`, matching that literal path and query. Other requests fall through to the host router. Mount `discovery.layer` outside the authenticated layers. Caching policy is the host's.
 - `challenge()` quotes and escapes parameter values; it never rejects them. Name only the scopes needed for the request in `scope`; `scopesSupported` advertises the full set in metadata.
-- Tool discovery is never filtered by actor. Authorization belongs in the group's `before` hook, which runs on every surface with the action contract in hand; write the rule against `action.access` rather than repeating a check in each handler.
+- Tool discovery is never filtered by actor. Authorization belongs in each surface's `before` hook, which runs with the action contract in hand; write the rule against `action.access` rather than repeating a check in each handler.
 - A response this middleware renders is not part of any endpoint's contract. Declare its schema in `ActionHttp.make`'s `errors` so typed clients decode the 401 instead of reporting a decode error ([ActionHttp.md](ActionHttp.md)).
 
 ## Failure modes

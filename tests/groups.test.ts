@@ -18,17 +18,23 @@ class Tenant extends Context.Service<Tenant, string>()("groups-test/Tenant") {}
 
 const Users = ActionGroup.make(
   { name: "users" },
-  Action.make("whoAmI", { description: "Current user", success: Schema.String }),
+  Action.make("whoAmI", { description: "Current user", access: "write", success: Schema.String }),
 );
 
 const Billing = ActionGroup.make(
   { name: "billing" },
   Action.make("invoice", {
     description: "Invoice total",
+    access: "write",
     input: Schema.Struct({ amount: Schema.FiniteFromString }),
     success: Schema.Finite,
   }),
-  Action.make("audit", { description: "MCP only", success: Schema.String, http: false }),
+  Action.make("audit", {
+    description: "MCP only",
+    access: "write",
+    success: Schema.String,
+    http: false,
+  }),
 );
 
 const UsersApp = Users.implement(
@@ -45,8 +51,8 @@ const Http = ActionHttp.make({ apiPath: "/api" }, Users, Billing);
 const serve = () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Http.layer(UsersApp),
-      Http.layer(BillingApp),
+      Http.layer({}, UsersApp),
+      Http.layer({}, BillingApp),
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         UsersApp,
@@ -114,7 +120,11 @@ it("serves several groups as the tools of one MCP endpoint", async () => {
   ]);
 });
 
-const Alpha = Action.make("alpha", { description: "Alpha", success: Schema.String });
+const Alpha = Action.make("alpha", {
+  description: "Alpha",
+  access: "write",
+  success: Schema.String,
+});
 
 const A = ActionGroup.make({ name: "a" }, Alpha);
 
@@ -144,16 +154,17 @@ const handlerOf = <E>(
 it("never dispatches to a handler its own group did not declare", async () => {
   const B = ActionGroup.make(
     { name: "b" },
-    Action.make("beta", { description: "Beta", success: Schema.String }),
+    Action.make("beta", { description: "Beta", access: "write", success: Schema.String }),
   );
 
   const bound = ActionHttp.make({ apiPath: "/api" }, A, B);
 
   const handler = handlerOf(
     Layer.mergeAll(
-      bound.layer(A.implement({ alpha: () => Effect.succeed("right") })),
+      bound.layer({}, A.implement({ alpha: () => Effect.succeed("right") })),
       // The constraint on handler records admits extra keys.
       bound.layer(
+        {},
         B.implement({
           beta: () => Effect.succeed("beta"),
           alpha: () => Effect.succeed("wrong group"),
@@ -168,18 +179,19 @@ it("never dispatches to a handler its own group did not declare", async () => {
 it("namespaces equal HTTP action names by group", async () => {
   const left = ActionGroup.make(
     { name: "left" },
-    Action.make("echo", { description: "Left", success: Schema.String }),
+    Action.make("echo", { description: "Left", access: "write", success: Schema.String }),
   );
 
   const right = ActionGroup.make(
     { name: "right" },
-    Action.make("echo", { description: "Right", success: Schema.String }),
+    Action.make("echo", { description: "Right", access: "write", success: Schema.String }),
   );
 
   const http = ActionHttp.make({ apiPath: "/api" }, left, right);
 
   const handler = handlerOf(
     http.layer(
+      {},
       left.implement({ echo: () => Effect.succeed("left") }),
       right.implement({ echo: () => Effect.succeed("right") }),
     ),
@@ -201,11 +213,11 @@ it("mounts only implementations of the groups it was made with", () => {
   const bound = ActionHttp.make({ apiPath: "/api" }, A);
 
   // Pairing is by identity: the same name and actions do not make it this group.
-  expect(() => bound.layer(lookAlike)).toThrow(
+  expect(() => bound.layer({}, lookAlike)).toThrow(
     'Implementation of group "a" is not served by this adapter',
   );
   // @ts-expect-error The group is part of an implementation's type, so this does not compile either.
-  expect(() => bound.layer(other)).toThrow(
+  expect(() => bound.layer({}, other)).toThrow(
     'Implementation of group "other" is not served by this adapter',
   );
 });
@@ -222,12 +234,22 @@ it("acquires only the implementations a transport serves", async () => {
 
   const McpOnly = ActionGroup.make(
     { name: "mcpOnly" },
-    Action.make("tool", { description: "Tool", success: Schema.String, http: false }),
+    Action.make("tool", {
+      description: "Tool",
+      access: "write",
+      success: Schema.String,
+      http: false,
+    }),
   );
 
   const HttpOnly = ActionGroup.make(
     { name: "httpOnly" },
-    Action.make("route", { description: "Route", success: Schema.String, mcp: false }),
+    Action.make("route", {
+      description: "Route",
+      access: "write",
+      success: Schema.String,
+      mcp: false,
+    }),
   );
 
   const mcpOnly = McpOnly.implement(record("mcpOnly", { tool: () => Effect.succeed("tool") }));
@@ -235,7 +257,7 @@ it("acquires only the implementations a transport serves", async () => {
   const bound = ActionHttp.make({ apiPath: "/api" }, McpOnly, HttpOnly);
 
   for (const [routes, expected] of [
-    [Layer.mergeAll(bound.layer(mcpOnly), bound.layer(httpOnly)), "httpOnly"],
+    [Layer.mergeAll(bound.layer({}, mcpOnly), bound.layer({}, httpOnly)), "httpOnly"],
     [
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
@@ -260,7 +282,12 @@ it("acquires only the implementations a transport serves", async () => {
 it("reads only the actions a transport serves", async () => {
   const Web = ActionGroup.make(
     { name: "web" },
-    Action.make("ping", { description: "HTTP only", success: Schema.String, mcp: false }),
+    Action.make("ping", {
+      description: "HTTP only",
+      access: "write",
+      success: Schema.String,
+      mcp: false,
+    }),
   );
 
   // Same name on the other transport, with an input that accepts `undefined`.
@@ -268,6 +295,7 @@ it("reads only the actions a transport serves", async () => {
     { name: "tools" },
     Action.make("ping", {
       description: "MCP only",
+      access: "write",
       input: Schema.UndefinedOr(Schema.Struct({ value: Schema.optional(Schema.String) })),
       success: Schema.String,
       http: false,
@@ -275,7 +303,7 @@ it("reads only the actions a transport serves", async () => {
   );
 
   const bound = ActionHttp.make({ apiPath: "/api" }, Web, Tools);
-  const handler = handlerOf(bound.layer(Web.implement({ ping: () => Effect.succeed("pong") })));
+  const handler = handlerOf(bound.layer({}, Web.implement({ ping: () => Effect.succeed("pong") })));
 
   const result = await Effect.runPromise(
     Effect.flatMap(httpClient(bound.api, handler), (client) => client.web.ping({ payload: {} })),
@@ -298,8 +326,8 @@ it("scopes router middleware to the layer it is provided to", async () => {
   ).layer;
 
   const tenant = Layer.provide(Layer.succeed(Tenant, "acme"));
-  const users = Http.layer(UsersApp).pipe(tenant);
-  const billing = Http.layer(BillingApp);
+  const users = Http.layer({}, UsersApp).pipe(tenant);
+  const billing = Http.layer({}, BillingApp);
 
   // The document is an ordinary route over the native API, so it takes middleware like any other.
   const document = HttpRouter.add(
@@ -343,8 +371,13 @@ it("adds a group's errors to every action, on both transports", async () => {
 
   const Guarded = ActionGroup.make(
     { name: "guarded", errors: [Refused] },
-    Action.make("find", { description: "Find", success: Schema.String, errors: [Missing] }),
-    Action.make("list", { description: "List", success: Schema.String }),
+    Action.make("find", {
+      description: "Find",
+      access: "write",
+      success: Schema.String,
+      errors: [Missing],
+    }),
+    Action.make("list", { description: "List", access: "write", success: Schema.String }),
   );
 
   expect(Guarded.actions.map((action) => action.errors)).toEqual([[Missing, Refused], [Refused]]);
@@ -358,7 +391,7 @@ it("adds a group's errors to every action, on both transports", async () => {
 
   const handler = handlerOf(
     Layer.mergeAll(
-      bound.layer(app),
+      bound.layer({}, app),
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
@@ -398,18 +431,23 @@ it("adds a group's errors to every action, on both transports", async () => {
 it("checks each namespace only where it is served", () => {
   const Other = ActionGroup.make(
     { name: "other" },
-    Action.make("whoAmI", { description: "Collides", success: Schema.String }),
+    Action.make("whoAmI", { description: "Collides", access: "write", success: Schema.String }),
   );
 
   const again = ActionGroup.make(
     { name: "users" },
-    Action.make("other", { description: "", success: Schema.String }),
+    Action.make("other", { description: "", access: "write", success: Schema.String }),
   );
 
   const aliased = (group: string, action: string) =>
     ActionGroup.make(
       { name: group },
-      Action.make(action, { description: "", success: Schema.String, mcp: { name: "same" } }),
+      Action.make(action, {
+        description: "",
+        access: "write",
+        success: Schema.String,
+        mcp: { name: "same" },
+      }),
     );
 
   // Group namespaces make same action names unambiguous.
@@ -430,6 +468,7 @@ it("checks each namespace only where it is served", () => {
         { name: "tools" },
         Action.make("whoAmI", {
           description: "",
+          access: "write",
           success: Schema.String,
           http: false,
           mcp: { name: "who" },
@@ -446,7 +485,12 @@ it("checks each namespace only where it is served", () => {
       Users,
       ActionGroup.make(
         { name: "users" },
-        Action.make("tool", { description: "", success: Schema.String, http: false }),
+        Action.make("tool", {
+          description: "",
+          access: "write",
+          success: Schema.String,
+          http: false,
+        }),
       ),
     ),
   ).toThrow("Duplicate action group: users");
@@ -473,4 +517,22 @@ it("checks each namespace only where it is served", () => {
       again.implement({ other: () => Effect.succeed("b") }),
     ),
   ).not.toThrow();
+});
+
+it("projects every group's contracts into one map keyed by group and action", () => {
+  const contracts = ActionGroup.contracts(Users, Billing);
+
+  expect(Object.keys(contracts)).toEqual(["users.whoAmI", "billing.invoice", "billing.audit"]);
+
+  // Each entry keeps its own contract, so a caller reads the exact action.
+  const audit: "audit" = contracts["billing.audit"].name;
+  const access: "write" = contracts["users.whoAmI"].access;
+
+  expect([audit, access]).toEqual(["audit", "write"]);
+  expect(contracts["billing.invoice"]).toBe(Billing.actions[0]);
+
+  // @ts-expect-error The key set is derived from the groups, so a typo cannot compile.
+  void contracts["users.missing"];
+
+  expect(() => ActionGroup.contracts(Users, Users)).toThrow("Duplicate contract group: users");
 });

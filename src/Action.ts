@@ -52,6 +52,7 @@ export interface Options<
   Input extends Codec,
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
+  Acc extends Access = Access,
   Http extends boolean = boolean,
   Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
@@ -62,11 +63,11 @@ export interface Options<
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
   readonly errors?: Errors;
   /**
-   * What the action does to its resource. Defaults to `"write"`, so an action
-   * nobody classified is treated as the more dangerous one. Read by a group's
-   * `before` hook; the library itself authorizes nothing.
+   * What the action does to its resource. Required: an action nobody classified
+   * is the one a reviewer must check. Read by a surface's `before` hook; the
+   * library itself authorizes nothing.
    */
-  readonly access?: Access;
+  readonly access: Acc;
   /** `false` hides the action from HTTP routes and clients. */
   readonly http?: Http;
   /** `false` hides the action from MCP; otherwise tool metadata. */
@@ -79,6 +80,7 @@ export interface Action<
   Input extends Codec,
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
+  Acc extends Access = Access,
   Http extends boolean = boolean,
   Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
@@ -87,18 +89,18 @@ export interface Action<
   readonly input: Input;
   readonly success: Output;
   readonly errors: Errors;
-  // Resolved from a default, so it is the runtime union rather than a literal,
-  // for the same reason the MCP hints are.
-  readonly access: Access;
+  // Declared, never defaulted, so a rule that switches on it reads a literal
+  // rather than the runtime union the MCP hints are.
+  readonly access: Acc;
   readonly http: Http;
   readonly mcp: ResolvedMcp<Name, Mcp>;
 }
 
 /** Any action, with its schemas erased. */
 export type Any =
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, boolean, false>
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, boolean, McpOptions>
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, boolean, undefined>;
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, boolean, false>
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, boolean, McpOptions>
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, boolean, undefined>;
 
 /** Receives decoded input; may fail only with the declared errors. */
 export type Handler<A extends Any, R = never> = (
@@ -117,19 +119,27 @@ export function make<
   Input extends Codec = typeof NoInput,
   Output extends Codec = never,
   const Errors extends ReadonlyArray<Codec> = [],
+  const Acc extends Access = Access,
   const Http extends boolean = true,
   const Mcp extends false | McpOptions | undefined = undefined,
 >(
   name: Name,
-  options: Options<Input, Output, Errors, Http, Mcp>,
-): Action<Name, Input, Output, Errors, Http, Mcp>;
+  options: Options<Input, Output, Errors, Acc, Http, Mcp>,
+): Action<Name, Input, Output, Errors, Acc, Http, Mcp>;
 export function make(
   name: string,
-  options: Options<Codec, Codec, ReadonlyArray<Codec>, boolean, false | McpOptions | undefined>,
+  options: Options<
+    Codec,
+    Codec,
+    ReadonlyArray<Codec>,
+    Access,
+    boolean,
+    false | McpOptions | undefined
+  >,
 ): Any {
   assertName("action name", name);
 
-  const access = options.access ?? "write";
+  const { access } = options;
 
   // One contract states the fact once: a read action is a read-only tool unless
   // the contract says otherwise.

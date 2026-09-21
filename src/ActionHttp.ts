@@ -1,7 +1,13 @@
 import { Effect, Layer, type Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
+import {
+  type Etag,
+  HttpEffect,
+  type HttpPlatform,
+  HttpRouter,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import {
   HttpApi,
   HttpApiBuilder,
@@ -12,9 +18,15 @@ import {
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
 import type { SchemaErrorPolicy } from "./ActionGroup.js";
-import { type Actions, assertDistinct, type PolicyError } from "./internal/actions.js";
+import {
+  type Actions,
+  assertDistinct,
+  type PolicyError,
+  projectedErrors,
+} from "./internal/actions.js";
 import {
   type AnyImplementation,
+  type Before,
   type BuildContext,
   type BuildError,
   dispatch,
@@ -33,9 +45,21 @@ export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
    * handler: authentication, authorization, rate limits. Declared on every
    * endpoint, so `HttpApiClient` and `ActionCliClient` decode them as typed
    * failures rather than reporting a decode error. Each schema keeps its own
-   * `httpApiStatus`, and no two of them may share a status with an action error.
+   * `httpApiStatus`, and their `_tag`s must be distinct.
    */
   readonly errors?: Errors;
+}
+
+/** What `Http.layer` binds around the implementations it serves. */
+export interface LayerOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
+  /**
+   * Runs once per request, before the request payload is decoded, with the action
+   * contract it is about to run. It fails with the binding's own `errors`, so an
+   * unauthorized caller learns nothing about the action's input, and the refusal
+   * is encoded exactly like a declared error. Its services are request-time
+   * requirements, like a handler's.
+   */
+  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
 }
 
 type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readonly http: false }
@@ -76,17 +100,19 @@ export interface Http<
   readonly groups: Groups;
   readonly api: Api<Groups[number], Errors[number]>;
   /**
-   * Serve any number of implementations in one layer. Build failures, build
-   * services and request services are unions over precisely those apps.
+   * Serve any number of implementations in one layer, with one pre-handler hook
+   * around every request they answer. Build failures, build services and request
+   * services are unions over precisely those apps and that hook.
    */
-  readonly layer: <const Apps extends ReadonlyArray<AnyImplementation<Groups[number]>>>(
+  readonly layer: <const Apps extends ReadonlyArray<AnyImplementation<Groups[number]>>, RB = never>(
+    options: LayerOptions<Errors, RB>,
     ...apps: Apps
   ) => Layer.Layer<
     never,
     BuildError<Apps[number]>,
     | BuildContext<Apps[number]>
     | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
+    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
     | Etag.Generator
     | FileSystem
     | HttpPlatform.HttpPlatform
@@ -98,17 +124,11 @@ type ErasedOptions = Options<ReadonlyArray<Action.Codec>>;
 
 const httpActions = (group: Actions) => group.actions.filter((action) => action.http);
 
-/** Surface errors join an action's own, without repeating a schema it already declares. */
-const errorsOf = (options: ErasedOptions, action: Action.Any) => [
-  ...action.errors,
-  ...(options.errors ?? []).filter((error) => !action.errors.includes(error)),
-];
-
 const endpoint = (options: ErasedOptions, group: Actions, action: Action.Any) =>
   HttpApiEndpoint.post(action.name, `${options.apiPath}/${group.name}/${action.name}`, {
     payload: action.input,
     success: action.success,
-    error: errorsOf(options, action),
+    error: projectedErrors(action, options.errors),
   }).annotate(OpenApi.Description, action.description);
 
 type ErasedPolicy = SchemaErrorPolicy<ReadonlyArray<Action.Codec>>;
@@ -128,10 +148,47 @@ const schemaErrorMiddleware = (name: string, policy: ErasedPolicy) => {
   };
 };
 
+/**
+ * The native middleware wrapper: it sees the whole endpoint effect, so it runs
+ * before the request payload is decoded.
+ */
+type Hook = HttpApiMiddleware.HttpApiMiddleware<never, never, never>;
+
+/** The hook of one group, applied to every one of its endpoints. */
+const hookMiddleware = (name: string) => {
+  class Admission extends HttpApiMiddleware.Service<Admission>()(
+    `effect-actions/http/Admission/${name}`,
+  ) {}
+
+  const implementation = (group: Actions, before: Before<unknown> | undefined): Hook => {
+    if (before === undefined) return (httpEffect) => httpEffect;
+    const actions = new Map(httpActions(group).map((action) => [action.name, action]));
+
+    return (httpEffect, { endpoint }) => {
+      const action = actions.get(endpoint.identifier);
+
+      if (action === undefined) throw new Error(`Missing action: ${endpoint.identifier}`);
+
+      // SAFETY: the hook fails only with the binding's `errors`, which every endpoint
+      // declares, so the native encoder has their schema and status. Its request-time
+      // services are restored by `layer`'s public signature.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native middleware boundary: declared errors and request services are erased here.
+      return Effect.flatMap(before(action), () => httpEffect) as ReturnType<Hook>;
+    };
+  };
+
+  return {
+    Admission,
+    layer: (group: Actions, before: Before<unknown> | undefined) =>
+      Layer.succeed(Admission, implementation(group, before)),
+  };
+};
+
 /** A group's native projection, shared by the published API and every served one. */
 interface Bound {
   readonly native: ApiGroup<Actions, Action.Codec>;
-  readonly policy: Layer.Layer<never>;
+  /** The schema-error policy, plus the hook implementation this `layer` call binds. */
+  readonly middleware: (before: Before<unknown> | undefined) => Layer.Layer<never>;
 }
 
 /** Groups without HTTP actions have no native projection. */
@@ -139,16 +196,28 @@ function bind(options: ErasedOptions, group: Actions): Bound | undefined;
 function bind(
   options: ErasedOptions,
   group: Actions,
-): { readonly native: HttpApiGroup.Constraint; readonly policy: Layer.Layer<never> } | undefined {
+):
+  | { readonly native: HttpApiGroup.Constraint; readonly middleware: Bound["middleware"] }
+  | undefined {
   const [first, ...rest] = httpActions(group).map((action) => endpoint(options, group, action));
 
   if (first === undefined) return undefined;
-  const native = HttpApiGroup.make(group.name).add(first, ...rest);
+  const bound = HttpApiGroup.make(group.name).add(first, ...rest);
+  const hook = hookMiddleware(group.name);
 
-  if (group.schemaError === undefined) return { native, policy: Layer.empty };
+  if (group.schemaError === undefined) {
+    return {
+      native: bound.middleware(hook.Admission),
+      middleware: (before) => hook.layer(group, before),
+    };
+  }
+
   const policy = schemaErrorMiddleware(group.name, group.schemaError);
 
-  return { native: native.middleware(policy.SchemaErrors), policy: policy.layer };
+  return {
+    native: bound.middleware(policy.SchemaErrors).middleware(hook.Admission),
+    middleware: (before) => Layer.merge(policy.layer, hook.layer(group, before)),
+  };
 }
 
 function apiOf(groups: ReadonlyArray<ApiGroup<Actions, Action.Codec>>): Api<Actions, Action.Codec>;
@@ -173,21 +242,23 @@ const erasedHandlers = <H>(handlers: H): Handlers<HandlersContext<H>> => {
 };
 
 /** Register one group's handlers. Handler erasure is limited to native dynamic endpoint registration. */
-const groupHandlers = <G extends Actions, H, EX, RX, RB>(
+const groupHandlers = <G extends Actions, H, EX, RX>(
   api: Api<Actions, Action.Codec>,
-  app: Implementation<G, H, EX, RX, RB>,
-  policy: Layer.Layer<never>,
+  app: Implementation<G, H, EX, RX>,
+  middleware: Layer.Layer<never>,
 ) => {
   const entries = (record: Handlers<HandlersContext<H>>) =>
     Object.fromEntries(
       httpActions(app.group).map((action) => [
         action.name,
         (request: { readonly payload: ErasedValue }) =>
-          dispatch<Action.Any, HandlersContext<H> | RB>(
+          // The hook is the group's native middleware here, so it has already run
+          // and refused before this payload was decoded.
+          dispatch<Action.Any, never, HandlersContext<H>>(
             app.group,
             action,
             record,
-            app.before,
+            undefined,
           )(request.payload),
       ]),
     );
@@ -198,8 +269,22 @@ const groupHandlers = <G extends Actions, H, EX, RX, RB>(
         builder.handleAll(entries(erasedHandlers(record))),
       ),
     ),
-  ).pipe(Layer.provide(policy));
+  ).pipe(Layer.provide(middleware));
 };
+
+/**
+ * A refused or failed request is never stored by a shared cache. Successful
+ * responses keep whatever the host sets, since only the host knows what is public.
+ */
+const noStore = HttpRouter.middleware((httpEffect) =>
+  HttpEffect.withPreResponseHandler(httpEffect, (_request, response) =>
+    Effect.succeed(
+      response.status < 400
+        ? response
+        : HttpServerResponse.setHeader(response, "cache-control", "no-store"),
+    ),
+  ),
+);
 
 /**
  * Bind the contract-level configuration once. Every route is `POST
@@ -226,14 +311,15 @@ export function make(
     }),
   );
 
-  const layer = <const Apps extends ReadonlyArray<AnyImplementation>>(
+  const layer = <const Apps extends ReadonlyArray<AnyImplementation>, RB = never>(
+    layerOptions: LayerOptions<ReadonlyArray<Action.Codec>, RB>,
     ...apps: Apps
   ): Layer.Layer<
     never,
     BuildError<Apps[number]>,
     | BuildContext<Apps[number]>
     | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
+    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
     | Etag.Generator
     | FileSystem
     | HttpPlatform.HttpPlatform
@@ -259,22 +345,27 @@ export function make(
     });
 
     const api = apiOf(served.map(({ native }) => native));
+    const before: Before<unknown> | undefined = layerOptions.before;
 
-    const merged = served.reduce<Layer.Layer<never, any, any>>(
-      (layer, { app, policy }) => layer.pipe(Layer.provide(groupHandlers(api, app, policy))),
-      HttpApiBuilder.layer(api),
-    );
+    const merged = served
+      .reduce<Layer.Layer<never, any, any>>(
+        (layer, { app, middleware }) =>
+          layer.pipe(Layer.provide(groupHandlers(api, app, middleware(before)))),
+        HttpApiBuilder.layer(api),
+      )
+      .pipe(Layer.provide(noStore.layer));
 
     // SAFETY: every `groupHandlers` is built from exactly one app's `build`; its
-    // runtime services and failures are therefore the union of this tuple.
-    // The adapter's router/platform services are added by `HttpApiBuilder.layer`.
+    // runtime services and failures are therefore the union of this tuple, joined
+    // by the hook's own request services. The adapter's router/platform services
+    // are added by `HttpApiBuilder.layer`.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic tuple reduction cannot express the same union as the public variadic signature.
     return merged as Layer.Layer<
       never,
       BuildError<Apps[number]>,
       | BuildContext<Apps[number]>
       | HttpRouter.HttpRouter
-      | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
+      | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
       | Etag.Generator
       | FileSystem
       | HttpPlatform.HttpPlatform

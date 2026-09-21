@@ -401,6 +401,7 @@ it("supplies the native request context to handlers without a router requirement
     { name: "context" },
     Action.make("client", {
       description: "The connected client's declared name",
+      access: "write",
       success: Schema.String,
       mcp: { readOnly: true },
     }),

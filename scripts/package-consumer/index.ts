@@ -77,7 +77,7 @@ const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });
 
-const binding = ActionToolkit.make(app);
+const binding = ActionToolkit.make({}, app);
 
 const checkToolkitTypes = () => {
   // @ts-expect-error Published Toolkit names must remain literal.
@@ -136,7 +136,7 @@ class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
 ) {}
 
 const Guarded = ActionGroup.make(
-  { name: "guarded", errors: [Denied] },
+  { name: "guarded" },
   Action.make("read", { description: "Read", access: "read", success: Schema.String }),
   Action.make("write", { description: "Write", access: "write", success: Schema.String }),
 );
@@ -144,15 +144,26 @@ const Guarded = ActionGroup.make(
 if (Guarded.actions[0]?.access !== "read" || Guarded.actions[1]?.access !== "write")
   throw new Error("Published access metadata failed");
 
-const guarded = Guarded.implement(
-  { read: () => Effect.succeed("read"), write: () => Effect.succeed("write") },
-  { before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())) },
+const contracts = ActionGroup.contracts(Actions, Guarded);
+
+if (contracts["guarded.write"].access !== "write" || contracts["greetings.greet"].name !== "greet")
+  throw new Error("Published contract map failed");
+
+const guarded = Guarded.implement({
+  read: () => Effect.succeed("read"),
+  write: () => Effect.succeed("write"),
+});
+
+const GuardedHttp = ActionHttp.make(
+  { apiPath: "/api", errors: [Unauthenticated, Denied] },
+  Guarded,
 );
 
-const GuardedHttp = ActionHttp.make({ apiPath: "/api", errors: [Unauthenticated] }, Guarded);
-
 const guardedWeb = HttpRouter.toWebHandler(
-  GuardedHttp.layer(guarded).pipe(Layer.provide(HttpServer.layerServices)),
+  GuardedHttp.layer(
+    { before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())) },
+    guarded,
+  ).pipe(Layer.provide(HttpServer.layerServices)),
   { disableLogger: true },
 );
 

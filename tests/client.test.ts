@@ -28,16 +28,23 @@ const actions = ActionGroup.make(
   },
   Action.make("double", {
     description: "Transform in both directions",
+    access: "write",
     input: Schema.Struct({ value: Schema.FiniteFromString }),
     success: Schema.FiniteFromString,
   }),
-  Action.make("ping", { description: "No input", success: Schema.Boolean }),
+  Action.make("ping", { description: "No input", access: "write", success: Schema.Boolean }),
   Action.make("optional", {
     description: "Optional input",
+    access: "write",
     input: Schema.Struct({ value: Schema.optional(Schema.Number) }),
     success: Schema.Number,
   }),
-  Action.make("hidden", { description: "MCP only", success: Schema.String, http: false }),
+  Action.make("hidden", {
+    description: "MCP only",
+    access: "write",
+    success: Schema.String,
+    http: false,
+  }),
 );
 
 const Http = ActionHttp.make({ apiPath: "/rpc" }, actions);
@@ -51,7 +58,7 @@ const app = actions.implement({
 
 it("keeps the client, routes and document on one configuration", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
     {
       disableLogger: true,
     },
@@ -129,12 +136,14 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
     { name: "inputs" },
     Action.make("nullable", {
       description: "Nullable object",
+      access: "write",
       input: Schema.NullOr(optional),
       success: Schema.Boolean,
       mcp: false,
     }),
     Action.make("undefinedValue", {
       description: "Undefined is real decoded data",
+      access: "write",
       input: undefinedFromString,
       success: Schema.Boolean,
       mcp: false,

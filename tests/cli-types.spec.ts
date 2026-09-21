@@ -33,12 +33,14 @@ class TwoRequest extends Context.Service<TwoRequest, number>()("cli-types/TwoReq
 
 const One = Action.make("one", {
   description: "One",
+  access: "write",
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
 });
 
 const Two = Action.make("two", {
   description: "Two",
+  access: "write",
   input: Schema.Struct({ value: Schema.Finite }),
   success: Schema.Finite,
 });
@@ -100,7 +102,7 @@ void localGroupErrorIsKnown;
 
 const noService = ActionGroup.make(
   { name: "plain" },
-  Action.make("plain", { description: "Plain", success: Schema.String }),
+  Action.make("plain", { description: "Plain", access: "write", success: Schema.String }),
 ).implement({ plain: () => Effect.succeed("plain") });
 
 const plainCommand = ActionCli.command(noService, "plain");
@@ -123,7 +125,7 @@ void plainGroupNoUnknown;
 
 const scoped = ActionGroup.make(
   { name: "scoped" },
-  Action.make("scoped", { description: "Scoped", success: Schema.String }),
+  Action.make("scoped", { description: "Scoped", access: "write", success: Schema.String }),
 ).implement(
   Effect.acquireRelease(
     Effect.succeed({ scoped: () => Effect.succeed("scoped") }),
@@ -145,7 +147,11 @@ void scopedGroupHasNoScope;
 
 const scopedHandler = ActionGroup.make(
   { name: "scoped-handler" },
-  Action.make("scopedHandler", { description: "Scoped handler", success: Schema.String }),
+  Action.make("scopedHandler", {
+    description: "Scoped handler",
+    access: "write",
+    success: Schema.String,
+  }),
 ).implement({
   scopedHandler: () => Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
 });
@@ -180,6 +186,7 @@ class Policy extends Schema.TaggedError<Policy>()("Policy", {}) {}
 
 const RemoteAction = Action.make("remote", {
   description: "Remote",
+  access: "write",
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
   errors: [Domain],
@@ -187,12 +194,14 @@ const RemoteAction = Action.make("remote", {
 
 const HttpOnly = Action.make("httpOnly", {
   description: "HTTP only",
+  access: "write",
   success: Schema.Finite,
   mcp: false,
 });
 
 const Hidden = Action.make("hidden", {
   description: "Hidden",
+  access: "write",
   success: Schema.String,
   http: false,
 });
@@ -206,19 +215,19 @@ const RemoteGroup = ActionGroup.make(
 
 const OtherGroup = ActionGroup.make(
   { name: "other" },
-  Action.make("other", { description: "Other", success: Schema.String }),
+  Action.make("other", { description: "Other", access: "write", success: Schema.String }),
 );
 
 const http = ActionHttp.make({ apiPath: "/api" }, RemoteGroup, OtherGroup);
 
 const StringShared = ActionGroup.make(
   { name: "string-shared" },
-  Action.make("shared", { description: "String shared", success: Schema.String }),
+  Action.make("shared", { description: "String shared", access: "write", success: Schema.String }),
 );
 
 const NumberShared = ActionGroup.make(
   { name: "number-shared" },
-  Action.make("shared", { description: "Number shared", success: Schema.Finite }),
+  Action.make("shared", { description: "Number shared", access: "write", success: Schema.Finite }),
 );
 
 const sharedHttp = ActionHttp.make({ apiPath: "/shared" }, StringShared, NumberShared);

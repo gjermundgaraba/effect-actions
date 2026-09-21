@@ -32,9 +32,9 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
 ) {}
 
 /**
- * One authorization rule for a whole group, derived from each contract's own
- * `access`. Bound with `implement({ before })`, it runs on every surface before
- * every handler, so no handler contains authorization code.
+ * One authorization rule for every guarded surface, derived from each contract's
+ * own `access`. Each adapter binds it as its `before` hook, so it runs before
+ * every handler and no handler contains authorization code.
  */
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const permission: Permission = action.access === "read" ? "users:read" : "users:write";

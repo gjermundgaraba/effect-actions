@@ -51,12 +51,13 @@ describe("MCP stdio example", () => {
 
     const Hidden = Action.make("hidden", {
       description: "Hidden",
+      access: "write",
       success: Schema.String,
       mcp: false,
     });
 
-    const One = Action.make("one", { description: "One", success: Schema.Number });
-    const Two = Action.make("two", { description: "Two", success: Schema.Number });
+    const One = Action.make("one", { description: "One", access: "write", success: Schema.Number });
+    const Two = Action.make("two", { description: "Two", access: "write", success: Schema.Number });
 
     const empty = ActionGroup.make({ name: "empty" }, Hidden).implement(
       Effect.sync(() => {
@@ -87,7 +88,12 @@ describe("MCP stdio example", () => {
 
     const duplicate = ActionGroup.make(
       { name: "duplicate" },
-      Action.make("other", { description: "Other", success: Schema.Number, mcp: { name: "one" } }),
+      Action.make("other", {
+        description: "Other",
+        access: "write",
+        success: Schema.Number,
+        mcp: { name: "one" },
+      }),
     ).implement({ other: () => Effect.succeed(1) });
 
     expect(() =>

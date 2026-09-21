@@ -98,25 +98,22 @@ const schemaError = {
 // One group per access rule: the host mounts each under its own middleware.
 export const PublicActions = ActionGroup.make({ name: "public", schemaError }, Status);
 
-// Every authorized action can be refused, so the group declares that once.
 export const UserActions = ActionGroup.make(
-  { name: "users", errors: [Forbidden], schemaError },
+  { name: "users", schemaError },
   GetUser,
   RenameUser,
   Double,
   WhoAmI,
 );
 
-export const AuditActions = ActionGroup.make(
-  { name: "audit", errors: [Forbidden], schemaError },
-  ListChanges,
-);
+export const AuditActions = ActionGroup.make({ name: "audit", schemaError }, ListChanges);
 
 // Contract-level: the server and its clients share the mount path, and the
-// failures the surface itself answers with, so a typed client decodes a 401
-// from authentication middleware instead of reporting a decode error.
+// failures the surface itself answers with, so a typed client decodes the 401
+// from authentication middleware and the 403 from the authorization hook
+// instead of reporting a decode error. No handler can return either.
 export const Http = ActionHttp.make(
-  { apiPath: "/api/actions", errors: [Unauthenticated] },
+  { apiPath: "/api/actions", errors: [Unauthenticated, Forbidden] },
   PublicActions,
   UserActions,
   AuditActions,

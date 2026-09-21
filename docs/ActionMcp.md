@@ -9,27 +9,33 @@ JSON-RPC on standard I/O for a subprocess.
 ```ts
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
-function layerHttp<const Apps extends ReadonlyArray<AnyImplementation>>(
-  options: Options,
+function layerHttp<const Apps extends ReadonlyArray<AnyImplementation>, Errors = [], RB = never>(
+  options: Options<Errors, RB>,
   ...apps: Apps
 ): Layer.Layer<
   never,
   BuildError<Apps[number]> | Cause.IllegalArgumentError,
   | BuildContext<Apps[number]>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]>>
+  | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
 >;
 
-function layerStdio<const Apps extends ReadonlyArray<AnyImplementation>>(
-  options: StdioOptions,
+function layerStdio<const Apps extends ReadonlyArray<AnyImplementation>, Errors = [], RB = never>(
+  options: StdioOptions<Errors, RB>,
   ...apps: Apps
 ): Layer.Layer<
   never,
   BuildError<Apps[number]> | Cause.IllegalArgumentError,
-  BuildContext<Apps[number]> | Stdio | RequestContext<Apps[number]>
+  BuildContext<Apps[number]> | Stdio | RequestContext<Apps[number]> | RB
 >;
 
-interface Options {
+/** Both transports share these. */
+interface SurfaceOptions<Errors, RB> {
+  readonly errors?: Errors; // declared on every tool of this transport
+  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], RB>;
+}
+
+interface Options<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
   readonly name: string; // server info
   readonly version: string;
   readonly protocols: ReadonlyArray<McpProtocol>; // required, e.g. [McpProtocol.v2026_07_28]
@@ -38,7 +44,7 @@ interface Options {
   readonly instructions?: string;
 }
 
-interface StdioOptions {
+interface StdioOptions<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
   readonly name: string;
   readonly version: string;
   readonly protocols: ReadonlyArray<McpProtocol>;
@@ -53,7 +59,7 @@ import { Layer } from "effect";
 import { McpProtocol } from "effect/unstable/ai";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { AuditApp, PublicApp, UserApp } from "./handlers.js";
-import { authentication } from "./auth.js";
+import { authentication, authorize, Forbidden } from "./auth.js";
 
 const allowedOrigins = ["http://localhost:3000"];
 
@@ -77,6 +83,10 @@ const mcp = ActionMcp.layerHttp(
     version: "1.0.0",
     path: "/mcp",
     allowedOrigins,
+    // The same rule the HTTP binding runs, declared here so a refusal is an
+    // ordinary tool failure rather than a transport error.
+    errors: [Forbidden],
+    before: authorize,
   },
   UserApp,
   AuditApp,
@@ -116,13 +126,13 @@ Layer.launch(layer).pipe(
 - Success is `structuredContent: { value: <encoded success> }`. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
 - Invalid arguments and unencodable results are answered by the native `McpServer`: an `isError` result with a message for the model. Group `schemaError` policies do not apply.
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
-- Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in the handler.
+- Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in `before`.
 - Cancellation is Effect's native RPC interruption.
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. There is no authentication middleware. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
-
-- The group's pre-handler hook runs before every tool call. A refusal is the tool's declared failure: an `isError` result whose text is the error's JSON encoding, exactly as for a handler failure.
+- `errors` are the failures this transport answers with rather than a handler. They join every tool's declared failures, so a refusal is returned exactly like an action's own error and no caller sees a protocol-level error instead. A schema an action already declares is not repeated.
+- `before` runs once per tool call, with the selected action contract, before the handler. The native server decodes the tool arguments first, so unlike HTTP the hook runs after input decoding; it still runs on every call and the handler never runs when it fails. Its services are request-time requirements, joined with the handlers'.
 
 ## Failure modes
 
@@ -132,3 +142,4 @@ Layer.launch(layer).pipe(
 - Public tool requires a token: it shares an endpoint with protected tools. Give it its own path.
 - Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.
 - Older MCP client cannot connect: the client expects a revision not listed in `protocols`. Add the adapter for that revision.
+- A refusal arrives as a generic internal-error result: the hook failed with an error this transport does not declare, which is a defect. Add its schema to `errors`.

@@ -232,6 +232,7 @@ describe("Authentication.middleware", () => {
 
       const Identify = Action.make("identify", {
         description: "Read the identity while its authentication resource is alive",
+        access: "write",
         success: Schema.String,
       });
 
@@ -247,7 +248,7 @@ describe("Authentication.middleware", () => {
 
       const routes =
         transport === "http"
-          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
           : ActionMcp.layerHttp(
               {
                 protocols: [McpProtocol.v2026_07_28],

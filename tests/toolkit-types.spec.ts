@@ -9,18 +9,21 @@ class Principal extends Context.Service<Principal, string>()("toolkit-types/Prin
 
 const Aliased = Action.make("original", {
   description: "An aliased tool.",
+  access: "write",
   success: Schema.String,
   mcp: { name: "alias", readOnly: true },
 });
 
 const Hidden = Action.make("hidden", {
   description: "Not exposed to tools.",
+  access: "write",
   success: Schema.String,
   mcp: false,
 });
 
 const ServiceFree = Action.make("service_free", {
   description: "Does not need a principal.",
+  access: "write",
   success: Schema.String,
 });
 
@@ -30,7 +33,7 @@ const app = ActionGroup.make({ name: "types" }, Aliased, ServiceFree, Hidden).im
   hidden: () => Effect.map(Principal, (principal) => principal),
 });
 
-const binding = ActionToolkit.make(app);
+const binding = ActionToolkit.make({}, app);
 
 const exactAliasSuccess: Tool.Success<typeof binding.toolkit.tools.alias> = "principal";
 
@@ -67,9 +70,13 @@ serviceFreeToolkitCall satisfies Effect.Effect<unknown, unknown, never>;
 
 class LeftBuild extends Context.Service<LeftBuild, string>()("toolkit-types/LeftBuild") {}
 
-const Left = Action.make("left", { description: "Left", success: Schema.String });
+const Left = Action.make("left", { description: "Left", access: "write", success: Schema.String });
 
-const Right = Action.make("right", { description: "Right", success: Schema.Number });
+const Right = Action.make("right", {
+  description: "Right",
+  access: "write",
+  success: Schema.Number,
+});
 
 const left = ActionGroup.make({ name: "left" }, Left).implement(
   Effect.map(LeftBuild, (value) => ({ left: () => Effect.succeed(value) })),
@@ -79,7 +86,7 @@ const right = ActionGroup.make({ name: "right" }, Right).implement(
   Effect.fail("right-build" as const).pipe(Effect.as({ right: () => Effect.succeed(1) })),
 );
 
-const mixed = ActionToolkit.make(left, right);
+const mixed = ActionToolkit.make({}, left, right);
 
 const mixedBuild = Effect.scoped(Layer.build(mixed.layer));
 

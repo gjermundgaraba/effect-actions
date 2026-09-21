@@ -27,8 +27,8 @@ Package facts that apply everywhere:
 | ---------------------------------------- | -------------------------------------------------------------------------------------- |
 | [setup.md](setup.md)                     | install, pin versions, pick entry points, know what the package does not do            |
 | [Action.md](Action.md)                   | define one contract: input, success, errors, read/write access, HTTP and MCP flags     |
-| [ActionGroup.md](ActionGroup.md)         | group contracts, declare shared errors, run one check before every handler, bind them  |
-| [ActionHttp.md](ActionHttp.md)           | serve JSON POST routes, declare the surface's own errors, publish OpenAPI, call it     |
+| [ActionGroup.md](ActionGroup.md)         | group contracts, declare shared errors, bind handlers, map every contract by name      |
+| [ActionHttp.md](ActionHttp.md)           | serve JSON POST routes, declare surface errors and one hook, publish OpenAPI, call it  |
 | [ActionMcp.md](ActionMcp.md)             | serve MCP tools over Streamable HTTP or stdio                                          |
 | [ActionToolkit.md](ActionToolkit.md)     | use actions as a native Effect AI `Toolkit` without a server                           |
 | [ActionCli.md](ActionCli.md)             | run handlers in-process from a terminal command                                        |
@@ -75,7 +75,7 @@ const app = Actions.implement({
 });
 
 export const routes = Layer.mergeAll(
-  Http.layer(app),
+  Http.layer({}, app),
   ActionMcp.layerHttp(
     { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
     app,

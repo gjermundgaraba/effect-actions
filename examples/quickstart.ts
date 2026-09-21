@@ -21,7 +21,7 @@ const app = Actions.implement({
 });
 
 export const routes = Layer.mergeAll(
-  Http.layer(app),
+  Http.layer({}, app),
   ActionMcp.layerHttp(
     { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
     app,

@@ -1,12 +1,20 @@
 import { Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
+import { projectedErrors } from "./actions.js";
 import {
+  type Before,
   dispatch,
   type AnyImplementation,
   type ErasedValue,
   type Handlers,
 } from "./implementation.js";
+
+/** What a tool surface binds around the implementations it projects, erased. */
+export interface ToolOptions {
+  readonly errors: ReadonlyArray<Action.Codec> | undefined;
+  readonly before: Before<unknown> | undefined;
+}
 
 /** An implementation/action pair exposed to a tool transport. */
 interface ToolEntry {
@@ -65,13 +73,13 @@ const annotate = (tool: Tool.Any, mcp: Exclude<Action.Any["mcp"], false>) =>
  * A native Effect AI tool. Its schemas retain action transforms and its result
  * is the action result itself, rather than an MCP response envelope.
  */
-const nativeTool = (action: ToolEntry["action"]): Tool.Any =>
+const nativeTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec>): Tool.Any =>
   annotate(
     Tool.make(action.mcp.name, {
       description: action.description,
       parameters: action.input,
       success: action.success,
-      failure: Schema.Union(action.errors),
+      failure: Schema.Union(errors),
       failureMode: "return",
     }),
     action.mcp,
@@ -81,13 +89,13 @@ const nativeTool = (action: ToolEntry["action"]): Tool.Any =>
  * MCP has a JSON-only wire contract. Success uses its documented `{ value }`
  * structured-content envelope; declared failures are returned as JSON text.
  */
-const mcpTool = (action: ToolEntry["action"]): Tool.Any =>
+const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec>): Tool.Any =>
   annotate(
     Tool.make(action.mcp.name, {
       description: action.description,
       parameters: Schema.toCodecJson(action.input),
       success: Schema.toCodecJson(Schema.Struct({ value: action.success })),
-      failure: Schema.toCodecJson(Schema.Union(action.errors)),
+      failure: Schema.toCodecJson(Schema.Union(errors)),
       failureMode: "return",
     }),
     action.mcp,
@@ -107,8 +115,13 @@ const assertMcpObjectInput = (action: ToolEntry["action"], tool: Tool.Any): void
 /** The two concrete wire projections that share handler binding and lifetime ownership. */
 type Projection = "native" | "mcp";
 
-const project = (projection: Projection, entry: ToolEntry): Tool.Any => {
-  const tool = projection === "native" ? nativeTool(entry.action) : mcpTool(entry.action);
+const project = (projection: Projection, entry: ToolEntry, options: ToolOptions): Tool.Any => {
+  // A hook refusal is the surface's failure, so every tool declares it alongside
+  // the action's own errors and returns it exactly as a handler failure.
+  const errors = projectedErrors(entry.action, options.errors);
+
+  const tool =
+    projection === "native" ? nativeTool(entry.action, errors) : mcpTool(entry.action, errors);
 
   if (projection === "native") return tool;
   assertMcpObjectInput(entry.action, tool);
@@ -122,9 +135,10 @@ const handler = (
   app: AnyImplementation,
   action: ToolAction,
   handlers: Handlers<unknown>,
+  before: Before<unknown> | undefined,
 ) => {
   const run = (input: ErasedValue) =>
-    dispatch<ToolAction, unknown>(app.group, action, handlers, app.before)(input);
+    dispatch<ToolAction, ErasedValue, unknown>(app.group, action, handlers, before)(input);
 
   return projection === "native"
     ? run
@@ -139,11 +153,12 @@ const handler = (
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
   projection: Projection,
+  options: ToolOptions,
 ): BoundTools => {
   const served = toolApps(apps);
   const selected = entries(served);
   assertDistinctToolNames(selected);
-  const toolkit = Toolkit.make(...selected.map((entry) => project(projection, entry)));
+  const toolkit = Toolkit.make(...selected.map((entry) => project(projection, entry, options)));
 
   const layer = toolkit.toLayer(
     Effect.map(
@@ -155,7 +170,8 @@ export const bindTools = (
           const record = handlers as Handlers<unknown>;
 
           return actions.map(
-            (action) => [action.mcp.name, handler(projection, app, action, record)] as const,
+            (action) =>
+              [action.mcp.name, handler(projection, app, action, record, options.before)] as const,
           );
         }),
       ),

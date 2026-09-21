@@ -5,7 +5,7 @@ import {
   assertName,
   type SchemaErrorPolicy,
 } from "./internal/actions.js";
-import { type Before, Implementation } from "./internal/implementation.js";
+import { Implementation } from "./internal/implementation.js";
 import type * as Action from "./Action.js";
 
 /** The bound handlers of one group; opaque, see `Group.implement`. */
@@ -28,10 +28,11 @@ type WithErrors<
     infer Input,
     infer Output,
     infer Own,
+    infer Access,
     infer Http,
     infer Mcp
   >
-    ? Action.Action<Name, Input, Output, readonly [...Own, ...Errors], Http, Mcp>
+    ? Action.Action<Name, Input, Output, readonly [...Own, ...Errors], Access, Http, Mcp>
     : never;
 };
 
@@ -49,41 +50,25 @@ export interface Options<
   readonly schemaError?: SchemaErrorPolicy<PolicyErrors>;
 }
 
-/** What `implement` accepts besides the handlers themselves. */
-export interface ImplementOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
-  /**
-   * Runs once per invocation before the selected handler, on every surface, with
-   * the action contract it is about to run. It may fail only with the group's own
-   * `errors`, because those are the failures every action of the group declares.
-   * Its services are request-time requirements, like a handler's.
-   */
-  readonly before: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
-}
-
 /** A named set of action contracts: what adapters serve and what `implement` binds. */
 export interface Group<
   Name extends string,
   Actions extends ReadonlyArray<Action.Any>,
   PolicyErrors extends ReadonlyArray<Action.Codec> = ReadonlyArray<Action.Codec>,
-  Errors extends ReadonlyArray<Action.Codec> = ReadonlyArray<Action.Codec>,
 > extends Contract<Name, Actions, PolicyErrors> {
   /** Bind every handler at once, resolving build-time services once per adapter layer. */
-  readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never, RB = never>(
+  readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
     build: H | Effect.Effect<H, EX, RX>,
-    options?: ImplementOptions<Errors, RB>,
   ) => Implementation<
-    Group<Name, Actions, PolicyErrors, Errors>,
+    Group<Name, Actions, PolicyErrors>,
     H,
     NoInfer<EX>,
-    NoInfer<Exclude<RX, Scope.Scope>>,
-    NoInfer<RB>
+    NoInfer<Exclude<RX, Scope.Scope>>
   >;
 }
 
-// `any` is a wildcard in this inference position: a group's own error schemas
-// appear in `implement`'s options, which `unknown` would make unassignable.
 /** Any group, with its actions and error schemas erased. */
-export type Any = Group<string, ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>, any>;
+export type Any = Group<string, ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>>;
 
 /** Define a group. Invalid or duplicate action and MCP names fail here, at definition time. */
 export function make<
@@ -94,7 +79,7 @@ export function make<
 >(
   options: Options<Name, Errors, PolicyErrors>,
   ...actions: Actions
-): Group<Name, WithErrors<Actions, Errors>, PolicyErrors, Errors>;
+): Group<Name, WithErrors<Actions, Errors>, PolicyErrors>;
 export function make(
   options: Options<string, ReadonlyArray<Action.Codec>, ReadonlyArray<Action.Codec>>,
   ...declared: ReadonlyArray<Action.Any>
@@ -120,31 +105,58 @@ export function make(
     name,
     actions,
     schemaError: options.schemaError,
-    implement: <
-      H extends HandlersFrom<ReadonlyArray<Action.Any>>,
-      EX = never,
-      RX = never,
-      RB = never,
-    >(
+    implement: <H extends HandlersFrom<ReadonlyArray<Action.Any>>, EX = never, RX = never>(
       build: H | Effect.Effect<H, EX, RX>,
-      options?: ImplementOptions<ReadonlyArray<Action.Codec>, RB>,
     ) => {
       const built: Effect.Effect<H, EX, RX> = Effect.isEffect(build)
         ? build
         : Effect.succeed(build);
 
-      const before: Before<RB> | undefined = options?.before;
-
-      return Implementation.make<Any, H, EX, Exclude<RX, Scope.Scope>, RB>(
+      return Implementation.make<Any, H, EX, Exclude<RX, Scope.Scope>>(
         group,
         // SAFETY: an adapter always acquires `build` within its own scope, so Scope is
         // internal to that acquisition and not an external BuildContext requirement.
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Removes only the adapter-owned Scope from the public environment.
         built as Effect.Effect<H, EX, Exclude<RX, Scope.Scope> | Scope.Scope>,
-        before,
       );
     },
   };
 
   return group;
+}
+
+/** `G extends unknown` distributes, so each group maps only its own actions. */
+type PerGroup<G extends Contract> = G extends unknown
+  ? { readonly [A in G["actions"][number] as `${G["name"]}.${A["name"]}`]: A }
+  : never;
+
+/** Merges those per-group maps into one, rather than leaving a union of them. */
+type Merged<Maps> = (Maps extends unknown ? (map: Maps) => void : never) extends (
+  map: infer Merged,
+) => void
+  ? Merged
+  : never;
+
+/** Every action of `Groups`, keyed `<group>.<action>`. */
+export type Contracts<Groups extends ReadonlyArray<Contract>> = Merged<PerGroup<Groups[number]>>;
+
+/**
+ * Project groups into one map of their action contracts, keyed `<group>.<action>`:
+ * the identity routes, tools and commands share. Deriving it from the groups
+ * themselves means an added action cannot be missed.
+ */
+export function contracts<const Groups extends ReadonlyArray<Contract>>(
+  ...groups: Groups
+): Contracts<Groups>;
+export function contracts(...groups: ReadonlyArray<Contract>): Record<string, Action.Any> {
+  assertDistinct(
+    "contract group",
+    groups.map((group) => group.name),
+  );
+
+  return Object.fromEntries(
+    groups.flatMap((group) =>
+      group.actions.map((action) => [`${group.name}.${action.name}`, action] as const),
+    ),
+  );
 }

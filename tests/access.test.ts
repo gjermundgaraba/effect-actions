@@ -1,14 +1,17 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Console, Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
+import { McpProtocol } from "effect/unstable/ai";
 import { Command } from "effect/unstable/cli";
+import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
-import * as ActionCatalog from "../src/ActionCatalog.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { mcpRequest } from "../src/Testing.js";
 import { capturingConsole, cliServices } from "./cli-services.js";
-import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
+import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
 import { post } from "./requests.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
@@ -28,15 +31,22 @@ const Read = Action.make("read", {
 const Write = Action.make("write", {
   description: "Change the resource",
   access: "write",
+  input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
 });
 
-const Group = ActionGroup.make({ name: "resource", errors: [InsufficientScope] }, Read, Write);
+// The hook answers instead of a handler, so its failure is a surface error of
+// each binding rather than an error the actions of the group declare.
+const Group = ActionGroup.make({ name: "resource" }, Read, Write);
 
 const mcpCall = (name: string) =>
-  mcpRequest({ url: testMcpUrl, method: "tools/call", params: { name, arguments: {} } });
+  mcpRequest({
+    url: testMcpUrl,
+    method: "tools/call",
+    params: { name, arguments: name === "write" ? { value: "x" } : {} },
+  });
 
-/** One rule for a whole group, read from the contract rather than from a name list. */
+/** One rule for a whole surface, read from the contract rather than from a name list. */
 const authorize =
   (seen: Array<string>) =>
   (action: Action.Any): Effect.Effect<void, InsufficientScope, Scopes> =>
@@ -58,24 +68,29 @@ const make = () => {
   return {
     hooks,
     handlers,
-    app: Group.implement(
-      { read: () => record("read"), write: () => record("write") },
-      { before: authorize(hooks) },
-    ),
+    app: Group.implement({ read: () => record("read"), write: () => record("write") }),
   };
 };
 
 const readOnly = Layer.succeed(Scopes, ["read"]);
 
-describe("action access", () => {
-  it("defaults to write and derives the MCP read-only hint from it", () => {
-    const unclassified = Action.make("unclassified", {
-      description: "Nobody classified this one",
-      success: Schema.String,
-    });
+type App = ReturnType<typeof make>["app"];
 
-    expect(unclassified.access).toBe("write");
-    expect(unclassified.mcp).toMatchObject({ readOnly: false, destructive: true });
+/** Serve the group over HTTP with the hook bound to that surface. */
+const serveHttp = (app: App, before: ReturnType<typeof authorize>, granted: Layer.Layer<Scopes>) =>
+  HttpRouter.toWebHandler(
+    ActionHttp.make({ apiPath: testApiPath, errors: [InsufficientScope] }, Group)
+      .layer({ before }, app)
+      .pipe(HttpRouter.provideRequest(granted), Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+describe("action access", () => {
+  it("is declared by every action and derives the MCP read-only hint from it", () => {
+    const read: "read" = Read.access;
+    const write: "write" = Write.access;
+
+    expect([read, write]).toEqual(["read", "write"]);
     expect(Read.mcp).toMatchObject({ readOnly: true, destructive: false });
     expect(Write.mcp).toMatchObject({ readOnly: false, destructive: true });
   });
@@ -100,26 +115,19 @@ describe("action access", () => {
     expect(local.access).toBe("read");
     expect(local.mcp).toBe(false);
   });
-
-  it("carries access into the offline catalog", () => {
-    expect(ActionCatalog.make(Group).actions.map(({ name, access }) => [name, access])).toEqual([
-      ["read", "read"],
-      ["write", "write"],
-    ]);
-  });
 });
 
 describe("the pre-handler hook", () => {
   it("runs once before each handler over HTTP and answers as a declared error", async () => {
     const { app, hooks, handlers } = make();
-    const web = makeTestHttp(app, readOnly);
+    const web = serveHttp(app, authorize(hooks), readOnly);
     onTestFinished(() => web.dispose());
 
     const allowed = await web.handler(post("/api/actions/resource/read"));
     expect(allowed.status).toBe(200);
     expect(await allowed.json()).toBe("read ok");
 
-    const refused = await web.handler(post("/api/actions/resource/write"));
+    const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
     expect(refused.status).toBe(403);
     // The body is the hook's error, encoded by its own schema like a handler's.
     expect(Schema.decodeUnknownSync(InsufficientScope)(await refused.json()).required).toBe(
@@ -130,9 +138,57 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
+  it("refuses before HTTP decodes the payload, so a refusal tells nothing about input", async () => {
+    const { app, hooks, handlers } = make();
+    const web = serveHttp(app, authorize(hooks), readOnly);
+    onTestFinished(() => web.dispose());
+
+    // This payload does not satisfy the input schema, and the answer is still 403.
+    const refused = await web.handler(post("/api/actions/resource/write", { value: 42 }));
+    expect(refused.status).toBe(403);
+    expect(hooks).toEqual(["write"]);
+    expect(handlers).toEqual([]);
+
+    const granted = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, ["read", "write"]));
+    onTestFinished(() => granted.dispose());
+
+    // Admitted, the same payload reaches decoding and is refused there instead.
+    expect((await granted.handler(post("/api/actions/resource/write", { value: 42 }))).status).toBe(
+      400,
+    );
+    expect(handlers).toEqual([]);
+  });
+
+  it("marks every error answer uncacheable", async () => {
+    const { app, hooks } = make();
+    const web = serveHttp(app, authorize(hooks), readOnly);
+    onTestFinished(() => web.dispose());
+
+    const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
+    expect(refused.headers.get("cache-control")).toBe("no-store");
+
+    const allowed = await web.handler(post("/api/actions/resource/read"));
+    expect(allowed.headers.get("cache-control")).toBe(null);
+  });
+
   it("runs over MCP, where a refusal is the tool's declared failure", async () => {
     const { app, hooks, handlers } = make();
-    const mcp = makeTestMcp(app, readOnly);
+
+    const mcp = HttpRouter.toWebHandler(
+      ActionMcp.layerHttp(
+        {
+          protocols: [McpProtocol.v2026_07_28],
+          name: "test",
+          version: "0",
+          path: testMcpPath,
+          errors: [InsufficientScope],
+          before: authorize(hooks),
+        },
+        app,
+      ).pipe(HttpRouter.provideRequest(readOnly), Layer.provide(HttpServer.layerServices)),
+      { disableLogger: true },
+    );
+
     onTestFinished(() => mcp.dispose());
 
     expect(await (await mcp.handler(mcpCall("read"))).json()).toMatchObject({
@@ -151,7 +207,11 @@ describe("the pre-handler hook", () => {
 
   it("runs over the native Toolkit", async () => {
     const { app, hooks, handlers } = make();
-    const binding = ActionToolkit.make(app);
+
+    const binding = ActionToolkit.make(
+      { errors: [InsufficientScope], before: authorize(hooks) },
+      app,
+    );
 
     const call = (name: "read" | "write") =>
       Effect.runPromise(
@@ -159,7 +219,9 @@ describe("the pre-handler hook", () => {
           Effect.gen(function* () {
             const tools = yield* binding.toolkit;
 
-            return yield* Stream.runCollect(yield* tools.handle(name, {}));
+            return yield* Stream.runCollect(
+              yield* tools.handle(name, name === "write" ? { value: "x" } : {}),
+            );
           }).pipe(Effect.provide(binding.layer), Effect.provide(readOnly)),
         ),
       );
@@ -177,13 +239,15 @@ describe("the pre-handler hook", () => {
   it("runs over the CLI, so a local caller supplies its services too", async () => {
     const { app, hooks, handlers } = make();
     const output: string[] = [];
+    const before = authorize(hooks);
 
-    const run = <Name extends string, Input, Context, E>(
-      command: Command.Command<Name, Input, Context, E, Scope.Scope | Scopes>,
+    const run = <Name extends string, Input, Services, E>(
+      command: Command.Command<Name, Input, Services, E, Scope.Scope | Scopes>,
+      argv: ReadonlyArray<string>,
     ) =>
       Effect.runPromise(
         Effect.scoped(
-          Command.runWith(command, { version: "0" })([]).pipe(
+          Command.runWith(command, { version: "0" })([...argv]).pipe(
             Effect.provide(cliServices),
             Effect.provide(readOnly),
             Effect.provideService(Console.Console, capturingConsole(output)),
@@ -192,20 +256,28 @@ describe("the pre-handler hook", () => {
         ),
       );
 
-    expect((await run(ActionCli.command(app, "read")))._tag).toBe("Success");
+    expect((await run(ActionCli.command(app, "read", { before }), []))._tag).toBe("Success");
     expect(output).toEqual(['"read ok"']);
-    expect((await run(ActionCli.command(app, "write")))._tag).toBe("Failure");
+
+    const refused = await run(ActionCli.command(app, "write", { before }), [
+      "--input",
+      '{"value":"x"}',
+    ]);
+
+    expect(refused._tag).toBe("Failure");
 
     expect(hooks).toEqual(["read", "write"]);
     expect(handlers).toEqual(["read"]);
   });
 
-  it("is skipped by no surface: every action of the group is checked", async () => {
+  it("is skipped by no action of the surface it is bound to", async () => {
     const { app, hooks } = make();
-    const web = makeTestHttp(app, Layer.succeed(Scopes, ["read", "write"]));
+    const web = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, ["read", "write"]));
     onTestFinished(() => web.dispose());
 
-    expect((await web.handler(post("/api/actions/resource/write"))).status).toBe(200);
+    expect((await web.handler(post("/api/actions/resource/write", { value: "x" }))).status).toBe(
+      200,
+    );
     expect(hooks).toEqual(["write"]);
   });
 });

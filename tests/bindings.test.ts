@@ -15,6 +15,7 @@ class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
 const identity = Action.make("identity", {
   description: "Request identity",
+  access: "write",
   success: Schema.String,
 });
 
@@ -30,7 +31,7 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
 
   const routes =
     transport === "HTTP"
-      ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+      ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
       : ActionMcp.layerHttp(
           { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
           app,
@@ -84,7 +85,7 @@ it("each adapter layer acquires and releases its own handler build", async () =>
   );
 
   const routes = Layer.mergeAll(
-    ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app),
+    ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app),
     ActionMcp.layerHttp(
       { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
       app,
@@ -181,7 +182,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
         : ActionMcp.layerHttp(
             { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
             app,
@@ -240,7 +241,7 @@ it.each(["HTTP", "MCP"])(
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer(app)
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
         : ActionMcp.layerHttp(
             { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
             app,

@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Console, Context, Effect, Exit, Layer, Schema } from "effect";
+import { Console, Context, Effect, Layer, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -59,25 +59,28 @@ const authentication = Authentication.middleware(
   }),
 );
 
-const serve = (http: typeof Guarded | typeof Bare) => {
-  const web = HttpRouter.toWebHandler(
-    http
-      .layer(app)
-      .pipe(Layer.provide(authentication.layer), Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
+/** Each binding is served on its own: their layers differ in the errors they declare. */
+const middleware = <A, E, R>(routes: Layer.Layer<A, E, R>) =>
+  routes.pipe(Layer.provide(authentication.layer), Layer.provide(HttpServer.layerServices));
 
+const dispose = <Web extends { readonly dispose: () => Promise<void> }>(web: Web) => {
   onTestFinished(() => web.dispose());
 
   return web;
 };
+
+const guarded = () =>
+  dispose(HttpRouter.toWebHandler(middleware(Guarded.layer({}, app)), { disableLogger: true }));
+
+const bare = () =>
+  dispose(HttpRouter.toWebHandler(middleware(Bare.layer({}, app)), { disableLogger: true }));
 
 const bearer = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
 });
 
 it("declares surface errors on every endpoint so a typed client decodes them", async () => {
-  const web = serve(Guarded);
+  const web = guarded();
 
   const accepted = await Effect.runPromise(
     Effect.flatMap(httpClient(Guarded.api, web.handler, bearer("ada")), (client) =>
@@ -99,7 +102,7 @@ it("declares surface errors on every endpoint so a typed client decodes them", a
 });
 
 it("leaves an undeclared surface error as a decoding failure", async () => {
-  const web = serve(Bare);
+  const web = bare();
 
   const refused = await Effect.runPromise(
     Effect.flip(
@@ -140,7 +143,7 @@ it("does not repeat a schema an action already declares", () => {
 });
 
 it("decodes a surface error through ActionCliClient", async () => {
-  const web = serve(Guarded);
+  const web = guarded();
   const output: string[] = [];
 
   const fetchLayer = FetchHttpClient.layer.pipe(
@@ -155,14 +158,73 @@ it("decodes a surface error through ActionCliClient", async () => {
     connection: { baseUrl: "http://localhost" },
   });
 
-  const exit = await Command.runWith(command, { version: "0" })([]).pipe(
+  const failure = await Command.runWith(command, { version: "0" })([]).pipe(
     Effect.provide(fetchLayer),
     Effect.provide(cliServices),
     Effect.provideService(Console.Console, capturingConsole(output)),
-    Effect.exit,
+    // The surface error is a typed failure of the command, not a decode error.
+    Effect.flip,
     Effect.runPromise,
   );
 
-  expect(Exit.isFailure(exit)).toBe(true);
+  expect(failure).toBeInstanceOf(Unauthenticated);
+  expect(failure).toHaveProperty("message", "A bearer token is required.");
   expect(output).toEqual([]);
+});
+
+it("decodes two errors that share a status by their tag", async () => {
+  class Throttled extends Schema.TaggedError<Throttled>()(
+    "Throttled",
+    { retryAfter: Schema.Finite },
+    { httpApiStatus: 403 },
+  ) {}
+
+  class Rejected extends Schema.TaggedError<Rejected>()(
+    "Rejected",
+    { reason: Schema.String },
+    { httpApiStatus: 403 },
+  ) {}
+
+  // The action declares one 403; the surface declares another, and the hook raises it.
+  const Refuse = Action.make("refuse", {
+    description: "Refuse in two different ways",
+    access: "write",
+    input: Schema.Struct({ byHandler: Schema.Boolean }),
+    success: Schema.String,
+    errors: [Rejected],
+  });
+
+  const Refusals = ActionGroup.make({ name: "refusals" }, Refuse);
+
+  const binding = ActionHttp.make({ apiPath: "/api", errors: [Throttled] }, Refusals);
+
+  const web = HttpRouter.toWebHandler(
+    binding
+      .layer(
+        {
+          before: (action) =>
+            action.access === "read" ? Effect.void : Effect.fail(new Throttled({ retryAfter: 30 })),
+        },
+        Refusals.implement({ refuse: () => Effect.fail(new Rejected({ reason: "closed" })) }),
+      )
+      .pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const refused = await Effect.runPromise(
+    Effect.flip(
+      Effect.flatMap(httpClient(binding.api, web.handler), (client) =>
+        client.refusals.refuse({ payload: { byHandler: true } }),
+      ),
+    ),
+  );
+
+  // Both are reachable from this endpoint under 403; the tag selects the decoder.
+  expect(refused).toBeInstanceOf(Throttled);
+  expect(refused).toHaveProperty("retryAfter", 30);
+
+  const responses = OpenApi.fromApi(binding.api).paths?.["/api/refusals/refuse"]?.post?.responses;
+  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "403"]);
 });

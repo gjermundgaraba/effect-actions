@@ -11,20 +11,20 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 /** Any service-free schema. */
 type Codec = Schema.Codec<unknown, unknown, never, never>;
 
-function make<Name, Input = NoInput, Output, Errors = [], Http = true, Mcp = undefined>(
+function make<Name, Input = NoInput, Output, Errors = [], Acc extends Access, Http = true, Mcp = undefined>(
   name: Name,
-  options: Options<Input, Output, Errors, Http, Mcp>,
-): Action<Name, Input, Output, Errors, Http, Mcp>;
+  options: Options<Input, Output, Errors, Acc, Http, Mcp>,
+): Action<Name, Input, Output, Errors, Acc, Http, Mcp>;
 
 /** What the action does to its resource. Authorization metadata, not an MCP hint. */
 type Access = "read" | "write";
 
-interface Options<Input, Output, Errors, Http, Mcp> {
+interface Options<Input, Output, Errors, Acc, Http, Mcp> {
   readonly description: string;
   readonly input?: Input; // omit for an action without arguments
   readonly success: Output;
   readonly errors?: Errors; // ReadonlyArray<Codec>; defaults to []
-  readonly access?: Access; // defaults to "write"
+  readonly access: Acc; // required, no default
   readonly http?: Http; // false hides the action from HTTP routes and clients
   readonly mcp?: Mcp; // false hides the action from MCP; otherwise McpOptions
 }
@@ -37,13 +37,13 @@ interface McpOptions {
   readonly openWorld?: boolean; // openWorldHint, default true
 }
 
-interface Action<Name, Input, Output, Errors, Http, Mcp> {
+interface Action<Name, Input, Output, Errors, Acc, Http, Mcp> {
   readonly name: Name;
   readonly description: string;
   readonly input: Input;
   readonly success: Output;
   readonly errors: Errors;
-  readonly access: Access; // resolved
+  readonly access: Acc; // the literal it was declared with
   readonly http: Http;
   readonly mcp: false | { name; readOnly; destructive; idempotent; openWorld }; // resolved
 }
@@ -68,7 +68,7 @@ export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
   { httpApiStatus: 404 },
 ) {}
 
-// `access: "read"` states the fact once: it is what the group's `before` hook
+// `access: "read"` states the fact once: it is what a surface's `before` hook
 // authorizes on, and it is where `mcp.readOnly` comes from.
 export const GetUser = Action.make("getUser", {
   description: "Look up a user in your tenant.",
@@ -79,8 +79,7 @@ export const GetUser = Action.make("getUser", {
   mcp: { name: "get_user" },
 });
 
-// A write. `access` defaults to "write", but say it: the default is a fallback,
-// not a statement, and an unclassified action is the one a reviewer must check.
+// A write. Every action says which it is; there is no default to fall back on.
 export const RenameUser = Action.make("renameUser", {
   description: "Rename a user in your tenant.",
   input: Schema.Struct({ id: Schema.String, name: Schema.String }),
@@ -121,7 +120,7 @@ export const Double = Action.make("double", {
 - Omit `input` for a no-argument action. The default is an empty object schema, which satisfies MCP's object-root requirement. Clients still pass `{ payload: {} }`.
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation; an unannotated error is served as HTTP 500. Group-level `errors` are appended to every action of the group (see [ActionGroup.md](ActionGroup.md)).
 - A handler may fail only with the declared errors. Anything else is a defect.
-- `access` is `"read"` or `"write"` and defaults to `"write"`, so an action nobody classified is treated as the dangerous one. It is authorization metadata for a group's `before` hook (see [ActionGroup.md](ActionGroup.md)); the library itself authorizes nothing and no adapter reads it.
+- `access` is `"read"` or `"write"` and is required. It stays a literal on the action, so a rule may switch on it at the type level. It is authorization metadata for a surface's `before` hook (see [guarantees.md](guarantees.md)); the library itself authorizes nothing and no adapter reads it.
 - `access` is independent of `mcp`. A local-only action (`mcp: false`) still has one, and an action may set `access: "write"` with `mcp: { readOnly: true }` if the tool hint should say something else. Derive authorization from `access`, never from a tool hint.
 - Both transports are on by default. `http: false` removes the route and the client method. `mcp: false` removes the tool. Both `false` makes a local-only action, reachable through `ActionCli` only.
 - MCP input must have an object-root JSON Schema. Scalar or array input is fine for HTTP, but `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, and `ActionToolkit.make` throw when called with such an action. Success and error schemas may be any shape.
@@ -137,5 +136,5 @@ export const Double = Action.make("double", {
 - Type error `Effect<..., X, ...> is not assignable` in `implement`: the handler fails with an undeclared error `X`. Add it to `errors` or handle it.
 - `<action>: MCP input must have an object root` thrown by `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, or `ActionToolkit.make`: an MCP-enabled action has non-object input. Wrap it in `Schema.Struct` or set `mcp: false`.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
-- A read action is refused by an authorization hook that reads `access`: `access` was omitted, so it defaulted to `"write"`. Declare it.
+- `Property 'access' is missing` at `make`: every action declares `"read"` or `"write"`. There is no default.
 - A tool shows `readOnlyHint: false` for a read: the action sets `mcp: { readOnly: false }` explicitly, which wins over `access`.

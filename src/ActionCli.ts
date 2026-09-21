@@ -1,9 +1,10 @@
 import { Effect, type Scope } from "effect";
 import { Command } from "effect/unstable/cli";
 import type * as Action from "./Action.js";
-import { command as makeCommand, type Options } from "./internal/cli.js";
+import { command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
 import type { Actions } from "./internal/actions.js";
 import {
+  type Before,
   dispatch,
   type HandlerContext,
   type Handlers,
@@ -11,10 +12,25 @@ import {
   Implementation,
 } from "./internal/implementation.js";
 
-export type { Options } from "./internal/cli.js";
+/**
+ * The hook a local command runs before the selected handler. A CLI encodes
+ * nothing, so its refusal is a typed failure of the command effect rather than a
+ * declared surface error; the native parser has already decoded the input.
+ */
+interface BeforeOptions<E, R> {
+  readonly before?: (action: Action.Any) => Effect.Effect<void, E, R>;
+}
+
+/** Parsing, rendering and the pre-handler hook of one local command. */
+export type Options<
+  Output,
+  E = never,
+  R = never,
+  Parameters extends Command.Command.Config = never,
+> = CommandOptions<Output, Parameters> & BeforeOptions<E, R>;
 
 /** Configuration for an aggregate group command. */
-export interface GroupOptions {
+export interface GroupOptions<E = never, R = never> extends BeforeOptions<E, R> {
   /** Override the group command name. */
   readonly name?: string;
 }
@@ -47,23 +63,25 @@ const local = <
   H extends BoundHandler<Name, Selected<G, Name>, HandlerContext<H, Name>>,
   EX,
   RX,
+  EB,
   RB,
 >(
-  app: Implementation<G, H, EX, RX, RB>,
+  app: Implementation<G, H, EX, RX>,
   action: Selected<G, Name>,
+  before: Before<RB> | undefined,
   input: Selected<G, Name>["input"]["Type"],
 ): Effect.Effect<
   Selected<G, Name>["success"]["Type"],
-  Selected<G, Name>["errors"][number]["Type"] | EX,
+  Selected<G, Name>["errors"][number]["Type"] | EX | EB,
   Exclude<HandlerContext<H, Name> | RX | RB, Scope.Scope>
 > =>
   Effect.scoped(
     Effect.flatMap(app.build, (handlers) =>
-      dispatch<Selected<G, Name>, HandlerContext<H, Name> | RB>(
+      dispatch<Selected<G, Name>, EB, HandlerContext<H, Name> | RB>(
         app.group,
         action,
         handlers,
-        app.before,
+        before,
       )(input),
     ),
   );
@@ -78,32 +96,42 @@ export const command = <
   H extends BoundHandler<Name, Selected<G, Name>, HandlerContext<H, Name>>,
   EX,
   RX,
-  RB,
+  EB = never,
+  RB = never,
   Parameters extends Command.Command.Config = never,
 >(
-  app: Implementation<G, H, EX, RX, RB>,
+  app: Implementation<G, H, EX, RX>,
   name: Name,
-  options?: Options<Selected<G, Name>["success"]["Type"], Parameters>,
+  options?: Options<Selected<G, Name>["success"]["Type"], EB, RB, Parameters>,
 ) => {
   const action = select(app.group, name);
 
-  return makeCommand(action, (input) => local(app, action, input), options);
+  return makeCommand(action, (input) => local(app, action, options?.before, input), options);
 };
 
 /** Project every local action below its group namespace with default CLI options. */
-export const group = <G extends Actions, H extends Handlers<HandlersContext<H>>, EX, RX, RB>(
-  app: Implementation<G, H, EX, RX, RB>,
-  options?: GroupOptions,
+export const group = <
+  G extends Actions,
+  H extends Handlers<HandlersContext<H>>,
+  EX,
+  RX,
+  EB = never,
+  RB = never,
+>(
+  app: Implementation<G, H, EX, RX>,
+  options?: GroupOptions<EB, RB>,
 ) => {
+  const before: Before<RB> | undefined = options?.before;
+
   const commands = app.group.actions.map((action: G["actions"][number]) =>
     makeCommand(action, (input) =>
       Effect.scoped(
         Effect.flatMap(app.build, (handlers) =>
-          dispatch<typeof action, HandlersContext<H> | RB>(
+          dispatch<typeof action, EB, HandlersContext<H> | RB>(
             app.group,
             action,
             handlers,
-            app.before,
+            before,
           )(input),
         ),
       ),

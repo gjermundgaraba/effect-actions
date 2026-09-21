@@ -22,6 +22,19 @@ export interface Actions<
 /** The errors a group's policy may answer with, by lookup rather than a conditional type. */
 export type PolicyError<G extends Actions> = NonNullable<G["schemaError"]>["errors"][number];
 
+/**
+ * An action's own failures plus the ones its surface answers with, which is what
+ * a projection of that action declares. A schema the action already declares is
+ * not repeated.
+ */
+export const projectedErrors = (
+  action: Action.Any,
+  surface: ReadonlyArray<Action.Codec> | undefined,
+): ReadonlyArray<Action.Codec> => [
+  ...action.errors,
+  ...(surface ?? []).filter((error) => !action.errors.includes(error)),
+];
+
 const validName = /^[A-Za-z0-9_-]+$/;
 
 /** Names become path segments, OpenAPI identifiers and client method keys. */

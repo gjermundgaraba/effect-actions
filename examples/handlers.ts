@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { authorize, CurrentActor } from "./auth.js";
+import { CurrentActor } from "./auth.js";
 import { AuditActions, PublicActions, UserActions } from "./contracts.js";
 import { Users } from "./users.js";
 
@@ -15,8 +15,9 @@ export const PublicApp = PublicActions.implement(
   }),
 );
 
-// Capture Users at startup; resolve CurrentActor per request. The `before` hook
-// has already refused an actor without the permission the action's access needs.
+// Capture Users at startup; resolve CurrentActor per request. Each surface binds
+// the `before` hook, which has already refused an actor without the permission
+// the action's access needs.
 export const UserApp = UserActions.implement(
   Effect.gen(function* () {
     const users = yield* Users;
@@ -29,7 +30,6 @@ export const UserApp = UserActions.implement(
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
     };
   }),
-  { before: authorize },
 );
 
 export const AuditApp = AuditActions.implement(
@@ -45,5 +45,4 @@ export const AuditApp = AuditActions.implement(
         }),
     };
   }),
-  { before: authorize },
 );

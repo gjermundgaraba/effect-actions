@@ -34,11 +34,16 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
 
   const NumberAction = Action.make("number", {
     description: "Accept an encoded finite number",
+    access: "write",
     input: Schema.Struct({ value: Schema.FiniteFromString }),
     success: Schema.FiniteFromString,
   });
 
-  const Empty = Action.make("empty", { description: "No input", success: Schema.String });
+  const Empty = Action.make("empty", {
+    description: "No input",
+    access: "write",
+    success: Schema.String,
+  });
 
   const app = ActionGroup.make({ name: "local" }, NumberAction, Empty).implement({
     number: ({ value }) =>
@@ -60,6 +65,7 @@ it("maps explicit native parameters to canonical JSON without an implicit --inpu
 
   const NumberAction = Action.make("number", {
     description: "Accept a finite number",
+    access: "write",
     input: Schema.Struct({ value: Schema.FiniteFromString }),
     success: Schema.Number,
   });
@@ -87,6 +93,7 @@ it("maps canonical JSON strings to codecs whose original encoding is not JSON", 
 
   const Dated = Action.make("dated", {
     description: "Receives a decoded date",
+    access: "write",
     input: Schema.Struct({ at: Schema.Date }),
     success: Schema.String,
   });
@@ -114,6 +121,7 @@ it("rejects invalid mapped input before acquiring or invoking the handler", asyn
 
   const NumberAction = Action.make("number", {
     description: "A finite number",
+    access: "write",
     input: Schema.Struct({ value: Schema.FiniteFromString }),
     success: Schema.Number,
   });
@@ -147,18 +155,21 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
 
   const Scalar = Action.make("scalar", {
     description: "Scalar input",
+    access: "write",
     input: Schema.String,
     success: Schema.String,
   });
 
   const Nested = Action.make("nested", {
     description: "Nested input",
+    access: "write",
     input: Schema.Struct({ nested: Schema.Struct({ value: Schema.Number }) }),
     success: Schema.String,
   });
 
   const Required = Action.make("required", {
     description: "Required input",
+    access: "write",
     input: Schema.Struct({ value: Schema.String }),
     success: Schema.String,
   });
@@ -193,7 +204,12 @@ it("keeps custom renderer JSON output and validates success before rendering", a
   const capturedConsole = capturingConsole(output);
 
   let rendered = 0;
-  const Rendered = Action.make("rendered", { description: "Renders", success: Schema.String });
+
+  const Rendered = Action.make("rendered", {
+    description: "Renders",
+    access: "write",
+    success: Schema.String,
+  });
 
   const app = ActionGroup.make({ name: "rendered" }, Rendered).implement({
     rendered: () => Effect.succeed("value"),
@@ -215,7 +231,12 @@ it("keeps custom renderer JSON output and validates success before rendering", a
   expect(output).toEqual(['"value"']);
 
   const invalidRenderer = vi.fn((value: number) => String(value));
-  const Invalid = Action.make("invalid", { description: "Invalid", success: Schema.Finite });
+
+  const Invalid = Action.make("invalid", {
+    description: "Invalid",
+    access: "write",
+    success: Schema.Finite,
+  });
 
   const invalid = ActionGroup.make({ name: "invalid" }, Invalid).implement({
     invalid: () => Effect.succeed(Infinity),
@@ -234,6 +255,7 @@ it("keeps native parameter property names separate from renderer flag names", as
 
   const Configured = Action.make("configured", {
     description: "A config property named json uses a distinct native flag",
+    access: "write",
     input: Schema.Struct({ value: Schema.String }),
     success: Schema.String,
   });
@@ -263,13 +285,19 @@ it("runs local-only actions, scopes every invocation, and exposes group subcomma
 
   const Local = Action.make("local", {
     description: "Never projected to HTTP or MCP",
+    access: "write",
     input: Schema.Struct({ value: Schema.String }),
     success: Schema.String,
     http: false,
     mcp: false,
   });
 
-  const Other = Action.make("other", { description: "Another action", success: Schema.String });
+  const Other = Action.make("other", {
+    description: "Another action",
+    access: "write",
+    success: Schema.String,
+  });
+
   const group = ActionGroup.make({ name: "locals" }, Local, Other);
 
   const app = group.implement(

@@ -15,7 +15,7 @@ const app = ActionGroup.make({ name: "math" }, Double).implement({
   double: ({ value }) => Effect.succeed(value * 2),
 });
 
-const binding = ActionToolkit.make(app);
+const binding = ActionToolkit.make({}, app);
 
 const program = Effect.gen(function* () {
   const tools = yield* binding.toolkit;

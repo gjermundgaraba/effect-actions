@@ -10,6 +10,7 @@ describe("ActionToolkit", () => {
   it("uses native action schemas/results, aliases MCP names, and excludes disabled tools", async () => {
     const Double = Action.make("double", {
       description: "Double a number.",
+      access: "write",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Finite,
       mcp: { name: "double_value", readOnly: true },
@@ -17,6 +18,7 @@ describe("ActionToolkit", () => {
 
     const Hidden = Action.make("hidden", {
       description: "Not a tool.",
+      access: "write",
       success: Schema.String,
       mcp: false,
     });
@@ -26,7 +28,7 @@ describe("ActionToolkit", () => {
       hidden: () => Effect.succeed("hidden"),
     });
 
-    const binding = ActionToolkit.make(app);
+    const binding = ActionToolkit.make({}, app);
 
     expect(Object.keys(binding.toolkit.tools)).toEqual(["double_value"]);
 
@@ -47,8 +49,8 @@ describe("ActionToolkit", () => {
   it("acquires a multi-tool implementation once and releases it with the layer", async () => {
     let acquired = 0;
     let released = 0;
-    const One = Action.make("one", { description: "One", success: Schema.Number });
-    const Two = Action.make("two", { description: "Two", success: Schema.Number });
+    const One = Action.make("one", { description: "One", access: "write", success: Schema.Number });
+    const Two = Action.make("two", { description: "Two", access: "write", success: Schema.Number });
 
     const app = ActionGroup.make({ name: "count" }, One, Two).implement(
       Effect.acquireRelease(
@@ -61,7 +63,7 @@ describe("ActionToolkit", () => {
       ),
     );
 
-    const binding = ActionToolkit.make(app);
+    const binding = ActionToolkit.make({}, app);
 
     await Effect.runPromise(
       Effect.scoped(
@@ -78,7 +80,12 @@ describe("ActionToolkit", () => {
   });
 
   it("resolves a native tool's principal per invocation from one shared handler layer", async () => {
-    const Who = Action.make("who", { description: "Current principal", success: Schema.String });
+    const Who = Action.make("who", {
+      description: "Current principal",
+      access: "write",
+      success: Schema.String,
+    });
+
     let acquired = 0;
 
     const app = ActionGroup.make({ name: "principal" }, Who).implement(
@@ -89,7 +96,7 @@ describe("ActionToolkit", () => {
       }),
     );
 
-    const binding = ActionToolkit.make(app);
+    const binding = ActionToolkit.make({}, app);
 
     const result = await Effect.runPromise(
       // @ts-expect-error Deliberately omit Principal to verify it cannot leak from another invocation.

@@ -30,6 +30,7 @@ class Policy extends Schema.TaggedError<Policy>()(
 
 const Remote = Action.make("remote", {
   description: "Doubles an encoded finite number",
+  access: "write",
   input: Schema.Struct({ value: Schema.FiniteFromString }),
   success: Schema.FiniteFromString,
   errors: [Domain],
@@ -37,6 +38,7 @@ const Remote = Action.make("remote", {
 
 const Hidden = Action.make("hidden", {
   description: "Not HTTP",
+  access: "write",
   success: Schema.String,
   http: false,
 });
@@ -71,7 +73,7 @@ const app = RemoteGroup.implement({
 
 it("projects grouped commands through the native HTTP client without a local fallback", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -158,7 +160,7 @@ it("projects grouped commands through the native HTTP client without a local fal
 
 it("propagates domain and native schema-policy failures through Command.runWith", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 

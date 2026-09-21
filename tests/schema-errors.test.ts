@@ -38,6 +38,7 @@ const schemaError = {
 
 const Echo = Action.make("echo", {
   description: "Echo",
+  access: "write",
   input: Schema.Struct({ value: Schema.Finite }),
   success: Schema.Finite,
   errors: [Rejected],
@@ -69,7 +70,7 @@ it("maps input and output failures and exposes the same error contract to client
   });
 
   const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -134,6 +135,7 @@ it("answers with each group's own policy inside one adapter", async () => {
     },
     Action.make("other", {
       description: "Other",
+      access: "write",
       input: Schema.Struct({ value: Schema.Finite }),
       success: Schema.Finite,
     }),
@@ -143,8 +145,8 @@ it("answers with each group's own policy inside one adapter", async () => {
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      both.layer(actions.implement({ echo: ({ value }) => Effect.succeed(value) })),
-      both.layer(second.implement({ other: ({ value }) => Effect.succeed(value) })),
+      both.layer({}, actions.implement({ echo: ({ value }) => Effect.succeed(value) })),
+      both.layer({}, second.implement({ other: ({ value }) => Effect.succeed(value) })),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -185,6 +187,7 @@ it("gives the policy every issue", async () => {
     },
     Action.make("pair", {
       description: "Pair",
+      access: "write",
       input: Schema.Struct({ left: Schema.Finite, right: Schema.String }),
       success: Schema.Finite,
     }),
@@ -192,7 +195,7 @@ it("gives the policy every issue", async () => {
 
   const web = HttpRouter.toWebHandler(
     ActionHttp.make({ apiPath: "/api" }, group)
-      .layer(group.implement({ pair: ({ left }) => Effect.succeed(left) }))
+      .layer({}, group.implement({ pair: ({ left }) => Effect.succeed(left) }))
       .pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -256,7 +259,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      recording.layer(app),
+      recording.layer({}, app),
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
@@ -323,6 +326,7 @@ it("executes each input/output transformation once with a policy enabled", async
     { name: "test", schemaError },
     Action.make("echo", {
       description: "Count codec operations",
+      access: "write",
       input: Schema.Struct({ value: number }),
       success: number,
     }),
@@ -332,7 +336,7 @@ it("executes each input/output transformation once with a policy enabled", async
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.make({ apiPath: "/api/actions" }, group).layer(app),
+      ActionHttp.make({ apiPath: "/api/actions" }, group).layer({}, app),
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
@@ -370,7 +374,7 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer(app),
+      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer({}, app),
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,
@@ -409,6 +413,7 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     { name: "test", schemaError: policy },
     Action.make("echo", {
       description: "Broken domain error",
+      access: "write",
       input: Schema.Struct({ value: Schema.Number }),
       success: Schema.Number,
       errors: [Domain],
@@ -421,7 +426,7 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer(app),
+      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer({}, app),
       ActionMcp.layerHttp(
         { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
         app,

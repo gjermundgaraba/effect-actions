@@ -1,8 +1,8 @@
 # ActionGroup
 
 A named set of actions. The group is what adapters serve, what clients are grouped by, and
-what `implement` binds handlers to. Shared errors, the pre-handler hook, and the HTTP
-schema-error policy live here.
+what `implement` binds handlers to. Shared errors and the HTTP schema-error policy live here.
+The pre-handler hook does not: each surface binds its own (see [guarantees.md](guarantees.md)).
 
 ## API
 
@@ -12,7 +12,7 @@ import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 function make<Name, Actions, Errors = [], PolicyErrors = []>(
   options: Options<Name, Errors, PolicyErrors>,
   ...actions: Actions
-): Group<Name, WithErrors<Actions, Errors>, PolicyErrors, Errors>;
+): Group<Name, WithErrors<Actions, Errors>, PolicyErrors>;
 
 interface Options<Name, Errors, PolicyErrors> {
   readonly name: Name; // HttpApiGroup identifier, OpenAPI tag, operation-ID prefix
@@ -25,34 +25,28 @@ interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
   readonly map: (failure: HttpApiError.HttpApiSchemaError) => Errors[number]["Type"];
 }
 
-interface ImplementOptions<Errors, RB> {
-  /** Runs before every handler, on every surface. May fail only with the group's `errors`. */
-  readonly before: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], RB>;
-}
-
-interface Group<Name, Actions, PolicyErrors, Errors> {
+interface Group<Name, Actions, PolicyErrors> {
   readonly name: Name;
   readonly actions: Actions;
   readonly schemaError: SchemaErrorPolicy<PolicyErrors> | undefined;
   /** Bind every handler at once; build-time services resolve once per adapter layer. */
-  readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never, RB = never>(
+  readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
     build: H | Effect.Effect<H, EX, RX>,
-    options?: ImplementOptions<Errors, RB>,
-  ) => Implementation<
-    Group<Name, Actions, PolicyErrors, Errors>,
-    H,
-    EX,
-    Exclude<RX, Scope.Scope>,
-    RB
-  >;
+  ) => Implementation<Group<Name, Actions, PolicyErrors>, H, EX, Exclude<RX, Scope.Scope>>;
 }
 
 /** Nominal. `group` is the bound contract; `build` acquires the handler record in a scope. */
-class Implementation<G, H, EX, RX, RB> {
+class Implementation<G, H, EX, RX> {
   readonly group: G;
   get build(): Effect.Effect<H, EX, RX | Scope.Scope>;
-  get before(): ((action: Action.Any) => Effect.Effect<void, unknown, RB>) | undefined;
 }
+
+/** Every action of the supplied groups, keyed `<group>.<action>`. */
+function contracts<const Groups extends ReadonlyArray<Group>>(
+  ...groups: Groups
+): Contracts<Groups>;
+
+type Contracts<Groups>; // { "users.getUser": typeof GetUser, "users.renameUser": ... }
 ```
 
 `HandlersFrom<Actions>` is `{ [action name]: Handler<Action, R> }`, one key per action,
@@ -64,8 +58,7 @@ all required.
 import { Effect, Schema } from "effect";
 import type { HttpApiError } from "effect/unstable/httpapi";
 import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
-import type * as Action from "@gjermundgaraba/effect-actions/Action";
-import { Forbidden, CurrentActor } from "./auth.js";
+import { CurrentActor } from "./auth.js";
 import { GetUser, RenameUser, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
@@ -89,25 +82,16 @@ const schemaError = {
       : new InvalidRequest({ message: "The request does not match the action's input." }),
 };
 
-// `Forbidden` is declared once and joins every action's errors.
 export const UserActions = ActionGroup.make(
-  { name: "users", errors: [Forbidden], schemaError },
+  { name: "users", schemaError },
   GetUser,
   RenameUser,
   WhoAmI,
 );
 
-// One rule for the whole group, read from each contract's own `access`. It runs
-// on HTTP, MCP, Toolkit and CLI alike, so no handler contains authorization code.
-const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
-  const permission = action.access === "read" ? "users:read" : "users:write";
-  const actor = yield* CurrentActor;
-
-  if (!actor.permissions.includes(permission)) return yield* new Forbidden({ permission });
-});
-
 // Build-time services (Users) are yielded in the builder, once per adapter layer.
-// Request-time services (CurrentActor) are yielded inside handlers and in `before`.
+// Request-time services (CurrentActor) are yielded inside handlers. Authorization
+// is not here: each adapter binds one `before` hook for every group it serves.
 export const UserApp = UserActions.implement(
   Effect.gen(function* () {
     const users = yield* Users;
@@ -119,31 +103,26 @@ export const UserApp = UserActions.implement(
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
     };
   }),
-  { before: authorize },
 );
 
 // No build-time services: pass the record directly.
 export const MathApp = MathActions.implement({ double: ({ value }) => Effect.succeed(value * 2) });
+
+// One typed map of every contract, keyed "<group>.<action>".
+export const contracts = ActionGroup.contracts(UserActions, MathActions);
+const renames: "renameUser" = contracts["users.renameUser"].name;
 ```
 
 ## Rules
 
 - `name` matches `[A-Za-z0-9_-]+` and must be unique within one `ActionHttp.make`. Action names must be unique within the group. MCP tool names must be unique within the group and within each Toolkit or MCP projection that serves it. Duplicates fail at `make`.
-- Group `errors` are appended to each action's own `errors`, so every handler of the group may fail with them.
-- `implement` takes a complete record or an Effect producing one. The record must have exactly one handler per action; a missing key is a compile error.
+- Group `errors` are appended to each action's own `errors`, so every handler of the group may fail with them. A failure that only the surface produces belongs on the adapter instead (`ActionHttp.make`'s `errors`, `ActionMcp`'s and `ActionToolkit`'s `errors`), not here.
+- `implement` takes a complete record or an Effect producing one. The record must have exactly one handler per action; a missing key is a compile error. It takes nothing else.
 - The builder Effect runs once per adapter layer that serves the implementation, in that layer's scope. An implementation served by HTTP and MCP is built twice. Acquire shared state in a Layer you provide to the adapters, not in the builder.
 - Services yielded in the builder are build-time requirements (`RX`). Services yielded in a handler are request-time requirements (`R` of the handler). Adapters keep these separate in their types. Use distinct tags for each kind; never provide a request-identity tag at startup (see [guarantees.md](guarantees.md)).
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Each `implement` call is a separate binding.
-- `build` exists for direct handler tests under `Effect.scoped`. It bypasses transport validation and is not a substitute for adapter tests. There is no public handler service or Layer.
-
-### Pre-handler hook
-
-- `implement(handlers, { before })` binds one hook to the whole implementation. It runs once per invocation, immediately before the selected handler, on **every** surface: `ActionHttp`, `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, `ActionToolkit`, and `ActionCli`. There is no surface that skips it and no per-action opt-out.
-- It receives the selected action contract (`Action.Any`), so a policy reads `action.access`, `action.name` or `action.mcp` instead of a hand-maintained list. Write authorization against `access`.
-- It may fail only with the group's own `errors`, because those are the failures every action of the group declares. A hook that fails with anything else is a compile error; a group with no `errors` has no failure a hook could use. Its failure is encoded exactly like a handler's: the error's `httpApiStatus` on HTTP, an `isError` tool result on MCP.
-- Services it yields are request-time requirements, like a handler's, and they join the adapter's request context. A local caller (`ActionCli`, `ActionToolkit`, stdio) supplies them itself.
-- It runs inside the `<group>.<action>` span, before the handler. When it fails, the handler never runs.
-- It is not authentication. Establish identity in middleware, then let the hook authorize what that identity may do.
+- `build` exists for direct handler tests under `Effect.scoped`. It bypasses transport validation and the hook, and is not a substitute for adapter tests. There is no public handler service or Layer.
+- `contracts(...groups)` returns one record keyed `<group>.<action>`, with each action's exact contract type. Duplicate group names throw. Use it where routes, tools, jobs or commands must name an action: the key set is derived, so an added action cannot be missed.
 
 ### Schema-error policy
 
@@ -155,6 +134,7 @@ export const MathApp = MathActions.implement({ double: ({ value }) => Effect.suc
 - The policy runs only on the server. Client-side codec failures stay `SchemaError`.
 - HTTP decodes with `errors: "all"`, so `cause` carries every issue. Issues never retain the rejected values.
 - Groups served by one adapter may have different policies; each action answers with its own group's.
+- A `before` hook refuses before decoding, so a refused request never reaches the policy.
 - Domain errors, defects, interruptions, and protocol errors are not remapped. An unencodable declared error is a defect. A broken policy error is not recursively remapped.
 
 ## Failure modes
@@ -162,8 +142,7 @@ export const MathApp = MathActions.implement({ double: ({ value }) => Effect.suc
 - Throws at `make`: duplicate action name, duplicate MCP tool name, invalid group name.
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - Handler compiles but returns an error not in `errors`: type error on the handler's error channel. Declare it on the action or the group.
+- `Expected 1 arguments, but got 2` at `implement`: the second options object is gone. Move `before` to the adapter that serves the group.
 - `map` is not typed from `errors` when declared as a standalone constant: annotate its parameter as `HttpApiError.HttpApiSchemaError` (type import from `effect/unstable/httpapi`).
 - A service is resolved once and shared across requests when it should be per request: it was yielded in the builder. Move the `yield*` into the handler.
-- Type error on `before`'s error channel: the hook fails with an error the group does not declare. Add it to the group's `errors` so every action declares it.
-- `Type 'X' is not assignable to type 'never'` on `before` in a group without `errors`: the group declares no shared failure. Declare one.
-- The hook does not run for an action: it cannot happen through an adapter. A handler invoked directly through `build` is not dispatched and is not hooked; use an adapter, or `ActionCli`, in tests that must exercise the policy.
+- `Duplicate contract group` thrown by `contracts`: two groups share a name, so their keys would collide. Rename one.

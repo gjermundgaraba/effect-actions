@@ -88,4 +88,4 @@ const result = await TestingClient.withMcpClient(
 - `@modelcontextprotocol/client` not found: only `TestingClient` needs it. Install the peer in devDependencies, or use `Testing.mcpRequest` instead.
 - Official client fails negotiation against a stateless endpoint: set `versionNegotiation: { mode: { pin: "2026-07-28" } }`.
 - Handler leaks between tests: `web.dispose()` was not called. Register it with the test runner's cleanup hook.
-- 404 from `httpClient`: `routes` did not include `Http.layer(app)`, or `HttpServer.layerServices` was not provided to `toWebHandler`.
+- 404 from `httpClient`: `routes` did not include `Http.layer({}, app)`, or `HttpServer.layerServices` was not provided to `toWebHandler`.

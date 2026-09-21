@@ -4,7 +4,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
-import { actors, CurrentActor, Unauthenticated } from "./auth.js";
+import { actors, authorize, CurrentActor, Forbidden, Unauthenticated } from "./auth.js";
 import { Http } from "./contracts.js";
 import { AuditApp, PublicApp, UserApp } from "./handlers.js";
 import { Users } from "./users.js";
@@ -55,10 +55,11 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
 );
 
 // One layer per group: middleware provided to a layer applies to that group
-// alone. The public group needs no credentials; the user group does.
+// alone. The public group needs no credentials, so it binds no hook; the user
+// group authorizes every request before its payload is even decoded.
 const http = Layer.mergeAll(
-  Http.layer(PublicApp),
-  Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layer({}, PublicApp),
+  Http.layer({ before: authorize }, UserApp).pipe(Layer.provide(authentication.layer)),
 );
 
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
@@ -92,6 +93,9 @@ const mcp = ActionMcp.layerHttp(
     version: "0.0.0",
     path: "/mcp",
     allowedOrigins,
+    // The same rule as HTTP, declared here so a refusal is an ordinary tool error.
+    errors: [Forbidden],
+    before: authorize,
   },
   UserApp,
   AuditApp,
