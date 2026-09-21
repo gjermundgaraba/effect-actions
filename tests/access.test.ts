@@ -115,6 +115,17 @@ describe("action access", () => {
     expect(local.access).toBe("read");
     expect(local.mcp).toBe(false);
   });
+
+  it("refuses a value the contract does not define, so plain JavaScript cannot skip a rule", () => {
+    expect(() =>
+      Action.make("unclassified", {
+        description: "Classified by nobody",
+        // @ts-expect-error The check exists for callers the compiler never sees.
+        access: "admin",
+        success: Schema.String,
+      }),
+    ).toThrow("Invalid access: admin");
+  });
 });
 
 describe("the pre-handler hook", () => {

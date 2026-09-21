@@ -31,6 +31,8 @@ class OneRequest extends Context.Service<OneRequest, string>()("cli-types/OneReq
 
 class TwoRequest extends Context.Service<TwoRequest, number>()("cli-types/TwoRequest") {}
 
+class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
+
 const One = Action.make("one", {
   description: "One",
   access: "write",
@@ -84,6 +86,23 @@ const localGroupErrorIsKnown: Equal<
   false
 > = true;
 
+// A selected command is typed like the aggregate one: its failures are the
+// action's, the surface hook's and the CLI's own encoding error, never `unknown`.
+const localOneErrorIsKnown: Equal<
+  unknown extends CommandError<typeof localOne> ? true : false,
+  false
+> = true;
+
+const guarded = ActionCli.command(local, "one", {
+  before: () => Effect.fail(new Refused()),
+});
+
+const guardedRefusal: Includes<CommandError<typeof guarded>, Refused> = true;
+
+const guardedGroup = ActionCli.group(local, { before: () => Effect.fail(new Refused()) });
+
+const guardedGroupRefusal: Includes<CommandError<typeof guardedGroup>, Refused> = true;
+
 void localOneBuild;
 
 void localOneRequest;
@@ -99,6 +118,12 @@ void localGroupOne;
 void localGroupTwo;
 
 void localGroupErrorIsKnown;
+
+void localOneErrorIsKnown;
+
+void guardedRefusal;
+
+void guardedGroupRefusal;
 
 const noService = ActionGroup.make(
   { name: "plain" },

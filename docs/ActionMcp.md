@@ -120,6 +120,7 @@ Layer.launch(layer).pipe(
 
 - `protocols` is required and takes Effect's native `McpProtocol` adapters. Effect owns negotiation, revision rejection, and sessions. `[McpProtocol.v2026_07_28]` gives a stateless endpoint that needs no initialize handshake.
 - `path` has no default. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form, whatever revision is negotiated.
+- The native server answers any request carrying an `Origin` header with **403** unless that exact origin is listed in `allowedOrigins`, before authentication; an endpoint without the option therefore serves Origin-less non-browser clients only, and listing the origin is how a browser-hosted client is admitted.
 - An endpoint is one route. Middleware provided to `layerHttp` covers all of its tools. To serve tools under different middleware, mount them on different paths with separate `layerHttp` calls.
 - Only MCP-enabled actions become tools, under `mcp.name` with the resolved hints. A group with no tools is not built.
 - Every MCP-enabled action must have object-root input. Checked synchronously when `layerHttp` or `layerStdio` is called, before any handler is acquired; a violation throws. The `IllegalArgumentError` in the layer's error channel comes from the native transport, not from this check.
@@ -142,4 +143,5 @@ Layer.launch(layer).pipe(
 - Public tool requires a token: it shares an endpoint with protected tools. Give it its own path.
 - Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.
 - Older MCP client cannot connect: the client expects a revision not listed in `protocols`. Add the adapter for that revision.
+- A browser-hosted client gets an empty 403 from every call: its `Origin` is not in `allowedOrigins`. Add the exact origin, or keep the endpoint for non-browser clients.
 - A refusal arrives as a generic internal-error result: the hook failed with an error this transport does not declare, which is a defect. Add its schema to `errors`.

@@ -120,7 +120,7 @@ export const Double = Action.make("double", {
 - Omit `input` for a no-argument action. The default is an empty object schema, which satisfies MCP's object-root requirement. Clients still pass `{ payload: {} }`.
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation; an unannotated error is served as HTTP 500. Group-level `errors` are appended to every action of the group (see [ActionGroup.md](ActionGroup.md)).
 - A handler may fail only with the declared errors. Anything else is a defect.
-- `access` is `"read"` or `"write"` and is required. It stays a literal on the action, so a rule may switch on it at the type level. It is authorization metadata for a surface's `before` hook (see [guarantees.md](guarantees.md)); the library itself authorizes nothing and no adapter reads it.
+- `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level. It is authorization metadata for a surface's `before` hook (see [guarantees.md](guarantees.md)); the library itself authorizes nothing and no adapter reads it.
 - `access` is independent of `mcp`. A local-only action (`mcp: false`) still has one, and an action may set `access: "write"` with `mcp: { readOnly: true }` if the tool hint should say something else. Derive authorization from `access`, never from a tool hint.
 - Both transports are on by default. `http: false` removes the route and the client method. `mcp: false` removes the tool. Both `false` makes a local-only action, reachable through `ActionCli` only.
 - MCP input must have an object-root JSON Schema. Scalar or array input is fine for HTTP, but `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, and `ActionToolkit.make` throw when called with such an action. Success and error schemas may be any shape.
@@ -132,7 +132,7 @@ export const Double = Action.make("double", {
 
 ## Failure modes
 
-- Throws at `make`: invalid name, name `then`, `mcp.name` longer than 128 characters or not matching the pattern.
+- Throws at `make`: invalid name, name `then`, an `access` that is neither `"read"` nor `"write"`, `mcp.name` longer than 128 characters or not matching the pattern.
 - Type error `Effect<..., X, ...> is not assignable` in `implement`: the handler fails with an undeclared error `X`. Add it to `errors` or handle it.
 - `<action>: MCP input must have an object root` thrown by `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, or `ActionToolkit.make`: an MCP-enabled action has non-object input. Wrap it in `Schema.Struct` or set `mcp: false`.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.

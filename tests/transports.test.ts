@@ -396,6 +396,57 @@ describe("groups under their own middleware", () => {
   });
 });
 
+it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", async () => {
+  const group = ActionGroup.make(
+    { name: "origin" },
+    Action.make("ping", {
+      description: "Answer the caller",
+      access: "read",
+      success: Schema.String,
+    }),
+  );
+
+  const app = group.implement({ ping: () => Effect.succeed("pong") });
+
+  const serve = (allowedOrigins?: ReadonlyArray<string>) => {
+    const web = HttpRouter.toWebHandler(
+      ActionMcp.layerHttp(
+        {
+          protocols: [McpProtocol.v2026_07_28],
+          name: "test",
+          version: "0",
+          path: testMcpPath,
+          ...(allowedOrigins === undefined ? {} : { allowedOrigins }),
+        },
+        app,
+      ).pipe(Layer.provide(HttpServer.layerServices)),
+      { disableLogger: true },
+    );
+
+    onTestFinished(() => web.dispose());
+
+    return web.handler;
+  };
+
+  const list = (origin?: string) =>
+    mcpRequest({
+      url: `http://localhost${testMcpPath}`,
+      method: "tools/list",
+      headers: origin === undefined ? undefined : { origin },
+    });
+
+  // Without `allowedOrigins` the native server admits Origin-less non-browser
+  // clients and answers any browser origin with 403, before authentication.
+  const closed = serve();
+  expect((await closed(list())).status).toBe(200);
+  expect((await closed(list("http://localhost:3000"))).status).toBe(403);
+
+  // Listing the exact origin is how a browser-hosted client is admitted.
+  const open = serve(["http://localhost:3000"]);
+  expect((await open(list("http://localhost:3000"))).status).toBe(200);
+  expect((await open(list("http://localhost:4000"))).status).toBe(403);
+});
+
 it("supplies the native request context to handlers without a router requirement", async () => {
   const group = ActionGroup.make(
     { name: "context" },

@@ -68,7 +68,9 @@ const local = <
 >(
   app: Implementation<G, H, EX, RX>,
   action: Selected<G, Name>,
-  before: Before<RB> | undefined,
+  // Typed as the option itself, not as the erased `Before`, so the hook's failure
+  // type reaches this effect instead of being inferred as `unknown`.
+  before: BeforeOptions<EB, RB>["before"],
   input: Selected<G, Name>["input"]["Type"],
 ): Effect.Effect<
   Selected<G, Name>["success"]["Type"],

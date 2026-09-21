@@ -141,6 +141,10 @@ export function make(
 
   const { access } = options;
 
+  // The type is the only thing stopping a third value, and a plain-JavaScript
+  // caller has none: an unclassified action must not reach a hook that reads it.
+  if (access !== "read" && access !== "write") throw new Error(`Invalid access: ${String(access)}`);
+
   // One contract states the fact once: a read action is a read-only tool unless
   // the contract says otherwise.
   const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? access === "read");
