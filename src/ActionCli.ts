@@ -47,18 +47,24 @@ const local = <
   H extends BoundHandler<Name, Selected<G, Name>, HandlerContext<H, Name>>,
   EX,
   RX,
+  RB,
 >(
-  app: Implementation<G, H, EX, RX>,
+  app: Implementation<G, H, EX, RX, RB>,
   action: Selected<G, Name>,
   input: Selected<G, Name>["input"]["Type"],
 ): Effect.Effect<
   Selected<G, Name>["success"]["Type"],
   Selected<G, Name>["errors"][number]["Type"] | EX,
-  Exclude<HandlerContext<H, Name> | RX, Scope.Scope>
+  Exclude<HandlerContext<H, Name> | RX | RB, Scope.Scope>
 > =>
   Effect.scoped(
     Effect.flatMap(app.build, (handlers) =>
-      dispatch<Selected<G, Name>, HandlerContext<H, Name>>(app.group, action, handlers)(input),
+      dispatch<Selected<G, Name>, HandlerContext<H, Name> | RB>(
+        app.group,
+        action,
+        handlers,
+        app.before,
+      )(input),
     ),
   );
 
@@ -72,9 +78,10 @@ export const command = <
   H extends BoundHandler<Name, Selected<G, Name>, HandlerContext<H, Name>>,
   EX,
   RX,
+  RB,
   Parameters extends Command.Command.Config = never,
 >(
-  app: Implementation<G, H, EX, RX>,
+  app: Implementation<G, H, EX, RX, RB>,
   name: Name,
   options?: Options<Selected<G, Name>["success"]["Type"], Parameters>,
 ) => {
@@ -84,15 +91,20 @@ export const command = <
 };
 
 /** Project every local action below its group namespace with default CLI options. */
-export const group = <G extends Actions, H extends Handlers<HandlersContext<H>>, EX, RX>(
-  app: Implementation<G, H, EX, RX>,
+export const group = <G extends Actions, H extends Handlers<HandlersContext<H>>, EX, RX, RB>(
+  app: Implementation<G, H, EX, RX, RB>,
   options?: GroupOptions,
 ) => {
   const commands = app.group.actions.map((action: G["actions"][number]) =>
     makeCommand(action, (input) =>
       Effect.scoped(
         Effect.flatMap(app.build, (handlers) =>
-          dispatch<typeof action, HandlersContext<H>>(app.group, action, handlers)(input),
+          dispatch<typeof action, HandlersContext<H> | RB>(
+            app.group,
+            action,
+            handlers,
+            app.before,
+          )(input),
         ),
       ),
     ),

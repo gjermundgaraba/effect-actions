@@ -8,13 +8,17 @@ of groups into a contract value shared by the server, every client, and the Open
 ```ts
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 
-function make<const G extends ReadonlyArray<Actions>>(options: Options, ...groups: G): Http<G>;
+function make<const G extends ReadonlyArray<Actions>, const E extends ReadonlyArray<Codec> = []>(
+  options: Options<E>,
+  ...groups: G
+): Http<G, E>;
 
-interface Options {
+interface Options<Errors = []> {
   readonly apiPath: `/${string}`; // no default
+  readonly errors?: Errors; // failures the surface answers with, declared on every endpoint
 }
 
-interface Http<Groups> {
+interface Http<Groups, Errors = []> {
   readonly groups: Groups; // the exact contracts bound, in declaration order
   readonly api: HttpApi.HttpApi<"actions", ...>; // native HttpApi, one HttpApiGroup per group
   /** Serve implementations. Errors and requirements are unions over exactly these apps. */
@@ -42,10 +46,16 @@ import { HttpApiScalar, HttpApiSwagger, OpenApi } from "effect/unstable/httpapi"
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { PublicActions, UserActions } from "./contracts.js";
 import { PublicApp, UserApp } from "./handlers.js";
-import { authentication } from "./auth.js";
+import { authentication, Unauthenticated } from "./auth.js";
 
-// Contract: shared by server and clients.
-export const Http = ActionHttp.make({ apiPath: "/api/actions" }, PublicActions, UserActions);
+// Contract: shared by server and clients. `errors` are the failures the surface
+// itself renders — here the 401 from `authentication` — so a typed client decodes
+// them instead of reporting a decode error on an unexpected status.
+export const Http = ActionHttp.make(
+  { apiPath: "/api/actions", errors: [Unauthenticated] },
+  PublicActions,
+  UserActions,
+);
 
 // One layer per middleware set. Middleware provided to a layer applies to that layer only.
 const routes = Layer.mergeAll(
@@ -85,12 +95,15 @@ export const greeting = Effect.gen(function* () {
 ## Rules
 
 - `apiPath` has no default. Group names must be unique within one `make`. Action names need only be unique within their group; equal action names in different groups do not collide.
+- `errors` declares the failures the surface around these endpoints answers with rather than a handler: authentication, authorization, rate limiting, upstream unavailability. They are added to every endpoint's error schemas, so `HttpApiClient`, `ActionCliClient` and the in-memory `Testing.httpClient` decode them as typed failures, and they appear in OpenAPI on every operation. A schema an action already declares is not repeated.
+- No two schemas reachable from one endpoint may share an `httpApiStatus`: the client selects the decoder by status. Keep surface statuses (401, 403, 429, 503) apart from action statuses.
+- `errors` changes only what is declared. Nothing produces them: the middleware that renders those responses must encode a body that matches the schema, or the client sees a decode error again. Handlers cannot fail with them.
 - `Http.layer(...apps)` mounts only the supplied implementations. A group that is never passed to `layer` has no routes. A group with no HTTP-enabled actions is not built at all.
 - Middleware is per layer call. Groups that need different middleware go in separate `Http.layer` calls, merged with `Layer.mergeAll`.
 - Request-time handler services are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`Authentication.middleware`, `HttpRouter.middleware`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
 - `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.
 - Client calls always take `{ payload }`. No-input actions take `{ payload: {} }`. Pass `null` or `undefined` only when the codec accepts it. There is no flat client.
-- Client effects fail with the declared errors, the group's policy errors, `SchemaError` for local codec failures, and native `HttpClientError`. MCP-only actions are absent from the client.
+- Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures, and native `HttpClientError`. MCP-only actions are absent from the client.
 - Add authentication headers with the native `transformClient` option. Use `HttpApiClient.makeWith` for custom error or service channels. Native per-call response modes are available.
 - Wire format without a policy: input failure is an empty 400, success is the encoded body, a declared error is its JSON encoding with its `httpApiStatus`, an encoding failure is an empty 400, a defect is an empty 500. Full table in [guarantees.md](guarantees.md).
 - Each handler runs in a span named `<group>.<action>`, a child of the request span. Decoding and encoding are outside it.
@@ -104,3 +117,5 @@ export const greeting = Effect.gen(function* () {
 - Client method missing for an action: the action is `http: false`.
 - Empty 400 on a valid-looking request: input did not decode. Set a `schemaError` policy on the group to get a typed body, and check `Content-Type: application/json`.
 - 415: wrong or missing content type.
+- `HttpClientError: Decode error (401 POST ...)` from a typed client: the surface answered with a status no endpoint declares. Add that error schema to `ActionHttp.make`'s `errors`.
+- A surface error decodes as the wrong type: two schemas share an `httpApiStatus` on the same endpoint. Give them distinct statuses.

@@ -3,7 +3,7 @@ import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { HttpApiError } from "effect/unstable/httpapi";
-import { Forbidden } from "./auth.js";
+import { Forbidden, Unauthenticated } from "./auth.js";
 
 export const User = Schema.Struct({
   id: Schema.String,
@@ -32,7 +32,7 @@ export class InternalError extends Schema.TaggedError<InternalError>()(
 export const Status = Action.make("status", {
   description: "Report whether the service is up.",
   success: Schema.Struct({ service: Schema.String, users: Schema.Finite }),
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 export const GetUser = Action.make("getUser", {
@@ -40,7 +40,8 @@ export const GetUser = Action.make("getUser", {
   input: Schema.Struct({ id: Schema.String }),
   success: User,
   errors: [UserNotFound],
-  mcp: { name: "get_user", readOnly: true },
+  access: "read",
+  mcp: { name: "get_user" },
 });
 
 export const RenameUser = Action.make("renameUser", {
@@ -51,6 +52,7 @@ export const RenameUser = Action.make("renameUser", {
   }),
   success: User,
   errors: [UserNotFound],
+  access: "write",
   mcp: { name: "rename_user", destructive: false },
 });
 
@@ -59,14 +61,14 @@ export const Double = Action.make("double", {
   description: "Double a finite number supplied as a string.",
   input: Schema.Struct({ value: Schema.FiniteFromString }),
   success: Schema.Finite,
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 // Identity comes from the host's authenticated request context, not action input.
 export const WhoAmI = Action.make("whoAmI", {
   description: "Inspect the authenticated actor.",
   success: Schema.Struct({ id: Schema.String, tenantId: Schema.String }),
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 export const Change = Schema.Struct({
@@ -79,8 +81,9 @@ export const Change = Schema.Struct({
 export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
   success: Schema.Struct({ changes: Schema.Array(Change) }),
+  access: "read",
   http: false,
-  mcp: { name: "list_changes", readOnly: true },
+  mcp: { name: "list_changes" },
 });
 
 // Malformed requests and unencodable results get one typed answer over HTTP.
@@ -109,9 +112,11 @@ export const AuditActions = ActionGroup.make(
   ListChanges,
 );
 
-// Contract-level: the server and its clients share the mount path.
+// Contract-level: the server and its clients share the mount path, and the
+// failures the surface itself answers with, so a typed client decodes a 401
+// from authentication middleware instead of reporting a decode error.
 export const Http = ActionHttp.make(
-  { apiPath: "/api/actions" },
+  { apiPath: "/api/actions", errors: [Unauthenticated] },
   PublicActions,
   UserActions,
   AuditActions,

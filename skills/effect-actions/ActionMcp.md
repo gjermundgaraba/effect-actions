@@ -122,6 +122,8 @@ Layer.launch(layer).pipe(
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. There is no authentication middleware. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 
+- The group's pre-handler hook runs before every tool call. A refusal is the tool's declared failure: an `isError` result whose text is the error's JSON encoding, exactly as for a handler failure.
+
 ## Failure modes
 
 - `<action>: MCP input must have an object root; omit input for no arguments` thrown at the `layerHttp` or `layerStdio` call: the action has scalar or array input. Wrap it in a struct or set `mcp: false`.

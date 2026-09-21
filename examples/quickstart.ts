@@ -9,7 +9,7 @@ const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: Schema.Struct({ name: Schema.String }),
   success: Schema.String,
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 export const Actions = ActionGroup.make({ name: "greetings" }, Greet);

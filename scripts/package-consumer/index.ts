@@ -1,11 +1,14 @@
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
+import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import type { HttpApiClient } from "effect/unstable/httpapi";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { httpClient, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 import { Argument } from "effect/unstable/cli";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { Actions, Http, routes } from "./quickstart.js";
@@ -123,3 +126,57 @@ const checkCliTypes = () => {
 };
 
 void checkCliTypes;
+
+class Denied extends Schema.TaggedError<Denied>()("Denied", {}, { httpApiStatus: 403 }) {}
+
+class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
+  "Unauthenticated",
+  {},
+  { httpApiStatus: 401 },
+) {}
+
+const Guarded = ActionGroup.make(
+  { name: "guarded", errors: [Denied] },
+  Action.make("read", { description: "Read", access: "read", success: Schema.String }),
+  Action.make("write", { description: "Write", access: "write", success: Schema.String }),
+);
+
+if (Guarded.actions[0]?.access !== "read" || Guarded.actions[1]?.access !== "write")
+  throw new Error("Published access metadata failed");
+
+const guarded = Guarded.implement(
+  { read: () => Effect.succeed("read"), write: () => Effect.succeed("write") },
+  { before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())) },
+);
+
+const GuardedHttp = ActionHttp.make({ apiPath: "/api", errors: [Unauthenticated] }, Guarded);
+
+const guardedWeb = HttpRouter.toWebHandler(
+  GuardedHttp.layer(guarded).pipe(Layer.provide(HttpServer.layerServices)),
+  { disableLogger: true },
+);
+
+const call = (action: string) =>
+  guardedWeb.handler(
+    new Request(`http://localhost/api/guarded/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+
+try {
+  if ((await call("read")).status !== 200) throw new Error("Published hook refused a read");
+
+  if ((await call("write")).status !== 403) throw new Error("Published hook allowed a write");
+} finally {
+  await guardedWeb.dispose();
+}
+
+const checkSurfaceTypes = (client: HttpApiClient.ForApi<typeof GuardedHttp.api>) =>
+  client.guarded.read({ payload: {} }).pipe(
+    Effect.catchTag("Unauthenticated", () => Effect.succeed("")),
+    Effect.catchTag("Denied", () => Effect.succeed("")),
+  );
+
+void checkSurfaceTypes;

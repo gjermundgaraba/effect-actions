@@ -8,7 +8,7 @@ const Double = Action.make("double", {
   description: "Double a finite number.",
   input: Schema.Struct({ value: Schema.FiniteFromString }),
   success: Schema.Finite,
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 const app = ActionGroup.make({ name: "math" }, Double).implement({

@@ -2,7 +2,8 @@
 
 Two helpers for hosts that own identity: router middleware that provides a request-scoped
 identity service, and RFC 9728 protected-resource discovery with bearer challenges. Token
-verification, login, and consent stay in the application.
+verification, login, and consent stay in the application. Authorization is a group's
+pre-handler hook ([ActionGroup.md](ActionGroup.md)), not part of this module.
 
 ## API
 
@@ -103,7 +104,8 @@ export const routes = Layer.mergeAll(
 - `protectedResource` publishes what it is given. The deployment must ensure `resource` and `authorizationServers` are valid OAuth URLs (HTTPS, or loopback HTTP in development).
 - Discovery is served at `/.well-known/oauth-protected-resource` followed by the resource's path and query, for `GET` and `HEAD`, matching that literal path and query. Other requests fall through to the host router. Mount `discovery.layer` outside the authenticated layers. Caching policy is the host's.
 - `challenge()` quotes and escapes parameter values; it never rejects them. Name only the scopes needed for the request in `scope`; `scopesSupported` advertises the full set in metadata.
-- Tool discovery is never filtered by actor. Authorization is a handler concern (`yield* CurrentActor`, then check).
+- Tool discovery is never filtered by actor. Authorization belongs in the group's `before` hook, which runs on every surface with the action contract in hand; write the rule against `action.access` rather than repeating a check in each handler.
+- A response this middleware renders is not part of any endpoint's contract. Declare its schema in `ActionHttp.make`'s `errors` so typed clients decode the 401 instead of reporting a decode error ([ActionHttp.md](ActionHttp.md)).
 
 ## Failure modes
 
@@ -112,3 +114,4 @@ export const routes = Layer.mergeAll(
 - Discovery returns 404: the request path does not match `resource`'s path and query exactly, or `discovery.layer` is not merged into the served layer.
 - Discovery requires a token: `discovery.layer` was placed under the authentication middleware. Mount it separately.
 - 401 response lacks `WWW-Authenticate`: the host's failure response did not set it. Use `discovery.challenge(...)` in its headers.
+- A typed client reports `Decode error (401 ...)` instead of the failure schema: the response this middleware renders is not declared. Add it to `ActionHttp.make`'s `errors`.

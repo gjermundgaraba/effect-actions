@@ -64,6 +64,8 @@ With a model: pass `binding.toolkit` as `toolkit` to `LanguageModel.generateText
 - Supply identity at invocation, never when building the layer. Native context capture is not a security boundary.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
 
+- The group's pre-handler hook runs before every tool call, and its services join each tool's requirements. The caller supplies them, as it does a handler's.
+
 ## Failure modes
 
 - Tool missing from the toolkit: the action has `mcp: false`. The Toolkit selects by MCP enablement.

@@ -20,6 +20,7 @@ interface Entry {
   readonly group: string;
   readonly name: string;
   readonly description: string;
+  readonly access: "read" | "write"; // resolved; "write" unless the contract says otherwise
   readonly http: boolean;
   readonly mcp: false | { name; readOnly; destructive; idempotent; openWorld };
   readonly input: JsonSchema.JsonSchema;
@@ -47,6 +48,7 @@ process.stdout.write(JSON.stringify(catalog, null, 2));
 - Schemas describe encoded action values: the JSON on the wire, not MCP's `{ value }` envelope and not deployment URLs.
 - Each schema owns its `$defs`. Equal schema identifiers in different entries never replace each other. Recursive references stay local to their schema.
 - `errors` includes group-level errors. HTTP schema-policy errors are listed separately in `httpSchemaErrors`.
+- `access` is the action's resolved authorization metadata, not a permission. A reader may use it to tell reads from writes; it grants nothing and names no scope.
 - Local-only actions (`http: false`, `mcp: false`) are included. Presence in a catalog is descriptive. It is not authorization, tool publication, or proof that a route is mounted. The host decides what to publish.
 - The package adds no search, no catalog HTTP endpoint, and no TypeScript code generation.
 

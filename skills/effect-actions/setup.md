@@ -54,7 +54,7 @@ What the package does, and nothing else:
 - HTTP means JSON `POST` endpoints built on Effect's `HttpApi`. It is not Effect RPC.
 - MCP means one native `McpServer` `Tool` per action. There is no MCP SDK runtime dependency.
 - Actions are unary: one decoded input, one decoded success or one declared error. No streaming, uploads, prompts, resources, retries, or code-execution sandbox.
-- Authentication and authorization are the application's. The library provides a middleware shape and discovery metadata, not a token verifier. Tool discovery is never filtered by actor.
+- Authentication and authorization are the application's. The library provides the seams — `Authentication.middleware` for identity, `implement({ before })` for one authorization rule per group, `access` for what that rule reads, `ActionHttp.make`'s `errors` for what a client can decode — and no token verifier, error types or scopes of its own. Tool discovery is never filtered by actor.
 
 ## Failure modes
 

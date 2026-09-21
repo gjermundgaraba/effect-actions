@@ -4,6 +4,7 @@ import type * as Action from "./Action.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type AnyImplementation,
+  type BeforeContext,
   type BuildContext,
   type BuildError,
   type HandlerContext,
@@ -27,12 +28,17 @@ type NativeTool<A extends Action.Any, R> = A extends {
   : never;
 
 type HandlersOf<App extends AnyImplementation> =
-  App extends Implementation<any, infer H, any, any> ? H : never;
+  App extends Implementation<any, infer H, any, any, any> ? H : never;
 
+/** A tool needs what its handler needs, plus what the group's `before` hook needs. */
 type ToolForAction<App extends AnyImplementation, A extends Action.Any> = A extends {
   readonly mcp: object;
 }
-  ? NativeTool<A, HandlerContext<HandlersOf<App>, Extract<A["name"], keyof HandlersOf<App>>>>
+  ? NativeTool<
+      A,
+      | HandlerContext<HandlersOf<App>, Extract<A["name"], keyof HandlersOf<App>>>
+      | BeforeContext<App>
+    >
   : never;
 
 type ToolsFor<App extends AnyImplementation> = App extends AnyImplementation

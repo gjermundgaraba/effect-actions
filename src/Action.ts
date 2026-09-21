@@ -5,11 +5,17 @@ import { assertName } from "./internal/actions.js";
 /** Any service-free schema. Only handlers may require services. */
 export type Codec = Schema.Codec<unknown, unknown, never, never>;
 
+/**
+ * What an action does to the resource it serves: `"read"` observes, `"write"`
+ * may change it. Authorization metadata, not an MCP hint.
+ */
+export type Access = "read" | "write";
+
 /** MCP tool metadata; every field has a default derived from the action. */
 export interface McpOptions {
   /** Tool name; defaults to the action name. Must match `^[A-Za-z0-9_-]{1,128}$`. */
   readonly name?: string;
-  /** `readOnlyHint`; defaults to `false`. */
+  /** `readOnlyHint`; defaults to `access === "read"`. */
   readonly readOnly?: boolean;
   /** `destructiveHint`; defaults to `!readOnly`, as the MCP spec only defines it for writes. */
   readonly destructive?: boolean;
@@ -55,6 +61,12 @@ export interface Options<
   readonly success: Output;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
   readonly errors?: Errors;
+  /**
+   * What the action does to its resource. Defaults to `"write"`, so an action
+   * nobody classified is treated as the more dangerous one. Read by a group's
+   * `before` hook; the library itself authorizes nothing.
+   */
+  readonly access?: Access;
   /** `false` hides the action from HTTP routes and clients. */
   readonly http?: Http;
   /** `false` hides the action from MCP; otherwise tool metadata. */
@@ -75,6 +87,9 @@ export interface Action<
   readonly input: Input;
   readonly success: Output;
   readonly errors: Errors;
+  // Resolved from a default, so it is the runtime union rather than a literal,
+  // for the same reason the MCP hints are.
+  readonly access: Access;
   readonly http: Http;
   readonly mcp: ResolvedMcp<Name, Mcp>;
 }
@@ -114,7 +129,11 @@ export function make(
 ): Any {
   assertName("action name", name);
 
-  const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? false);
+  const access = options.access ?? "write";
+
+  // One contract states the fact once: a read action is a read-only tool unless
+  // the contract says otherwise.
+  const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? access === "read");
 
   const mcp =
     options.mcp === false
@@ -139,6 +158,7 @@ export function make(
     input: options.input ?? NoInput,
     success: options.success,
     errors: options.errors ?? [],
+    access,
     http: options.http !== false,
     mcp,
   };

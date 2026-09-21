@@ -415,3 +415,78 @@ export const multipleGroupTypes = () => {
   // @ts-expect-error Build requirements are the union over every merged layer.
   HttpRouter.toWebHandler(Layer.mergeAll(Both.layer(App), Both.layer(BillingApp)).pipe(services));
 };
+
+export const beforeTypes = () => {
+  class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
+
+  class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
+
+  class Clock extends Context.Service<Clock, number>()("types-spec/Clock") {}
+
+  const Read = Action.make("read", {
+    description: "Read",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Guarded = ActionGroup.make({ name: "guarded", errors: [Denied] }, Read);
+
+  const handlers = { read: () => Effect.succeed("ok") };
+
+  // The hook may fail with the group's own errors, which every action declares.
+  const guarded = Guarded.implement(handlers, { before: () => Effect.fail(new Denied()) });
+
+  // @ts-expect-error A hook may not fail with an error the group does not declare.
+  Guarded.implement(handlers, { before: () => Effect.fail(new Unrelated()) });
+
+  const Plain = ActionGroup.make({ name: "plain" }, Read);
+  // @ts-expect-error A group without declared errors has no failure for a hook to use.
+  Plain.implement(handlers, { before: () => Effect.fail(new Denied()) });
+
+  // Hook services are request-time requirements, exactly like a handler's.
+  const timed = Guarded.implement(handlers, {
+    before: () => Effect.asVoid(Clock),
+  });
+
+  makeTestHttp(timed, Layer.succeed(Clock, 0));
+  // @ts-expect-error The hook's services must be supplied per request, not erased.
+  makeTestHttp(timed, Layer.empty);
+  makeTestMcp(timed, Layer.succeed(Clock, 0));
+  // @ts-expect-error The hook's services must be supplied per request, not erased.
+  makeTestMcp(timed, Layer.empty);
+
+  // The hook reads the contract it is about to run, including its access.
+  Guarded.implement(handlers, {
+    before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
+  });
+
+  void guarded;
+};
+
+export const surfaceErrorTypes = Effect.gen(function* () {
+  class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
+    "Unauthenticated",
+    {},
+    { httpApiStatus: 401 },
+  ) {}
+
+  const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
+
+  const Surface = ActionGroup.make({ name: "surface" }, Read);
+
+  const guarded = yield* HttpApiClient.make(
+    ActionHttp.make({ apiPath: "/api", errors: [Unauthenticated] }, Surface).api,
+  );
+
+  // A failure the surface renders around every endpoint is a typed client failure.
+  yield* guarded.surface
+    .read({ payload: {} })
+    .pipe(Effect.catchTag("Unauthenticated", () => Effect.succeed("")));
+
+  const bare = yield* HttpApiClient.make(ActionHttp.make({ apiPath: "/api" }, Surface).api);
+
+  yield* bare.surface
+    .read({ payload: {} })
+    // @ts-expect-error Undeclared, so the client has no such failure to catch.
+    .pipe(Effect.catchTag("Unauthenticated", () => Effect.succeed("")));
+});

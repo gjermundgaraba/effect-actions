@@ -4,17 +4,10 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
-import { type Actor, CurrentActor, Unauthenticated } from "./auth.js";
+import { actors, CurrentActor, Unauthenticated } from "./auth.js";
 import { Http } from "./contracts.js";
 import { AuditApp, PublicApp, UserApp } from "./handlers.js";
 import { Users } from "./users.js";
-
-/** DEMO ONLY: fixed credentials, not OAuth or a production token verifier. */
-export const actors = {
-  alice: { id: "alice", tenantId: "acme", permissions: ["users:read", "users:write"] },
-  reader: { id: "reader", tenantId: "acme", permissions: ["users:read"] },
-  bob: { id: "bob", tenantId: "other", permissions: ["users:read", "users:write"] },
-} as const satisfies Readonly<Record<string, Actor>>;
 
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 

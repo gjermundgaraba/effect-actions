@@ -18,7 +18,7 @@ const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: Schema.Struct({ name: Schema.String }),
   success: Schema.String,
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 export const Actions = ActionGroup.make({ name: "greetings" }, Greet);
@@ -61,8 +61,9 @@ const greeting = Effect.gen(function* () {
 ## Why
 
 - Input, success, and errors are declared once. Routes, tools, commands, clients, OpenAPI, and the catalog are derived from that declaration, so they cannot disagree.
-- A handler may fail only with the errors its action declares. Shared failures such as `Forbidden` are declared once on the group.
+- A handler may fail only with the errors its action declares. Shared failures such as `Forbidden` are declared once on the group, and one `before` hook runs on every surface before every handler, so a policy such as scope enforcement is written once and cannot be forgotten.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so `OpenApi.fromApi`, Swagger, Scalar, and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, one `Tool` per action, with no SDK runtime dependency.
+- Every action states its `access` (`"read"` or `"write"`, defaulting to `"write"`), so authorization reads the contract instead of a hand-maintained list of mutation names.
 - Build-time services and per-request services are tracked separately in the types. Middleware is per group, so a public group and an authenticated group can share one mount path.
 - Tests run in memory. Call the routes through a web handler with the same typed client, or drive the official MCP client, without opening a port.
 

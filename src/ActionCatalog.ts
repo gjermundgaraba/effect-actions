@@ -9,6 +9,8 @@ export interface Entry {
   readonly group: string;
   readonly name: string;
   readonly description: string;
+  /** Authorization metadata, resolved: `"write"` unless the contract says `"read"`. */
+  readonly access: Action.Access;
   readonly http: boolean;
   readonly mcp: Action.Any["mcp"];
   readonly input: JsonSchema.JsonSchema;
@@ -56,6 +58,7 @@ export const make = (...groups: ReadonlyArray<ActionGroup.Any>): Catalog => {
         group: group.name,
         name: action.name,
         description: action.description,
+        access: action.access,
         http: action.http,
         mcp: action.mcp,
         input: jsonSchema(action.input),

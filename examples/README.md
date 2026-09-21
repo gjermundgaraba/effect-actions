@@ -13,6 +13,10 @@ The example listens on 127.0.0.1:3000. It uses an in-memory repository and delib
 
 Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
+Every action declares `access: "read"` or `access: "write"`. The `users` and `audit` groups bind
+one `before` hook that maps that to `users:read` / `users:write` and refuses with `Forbidden`,
+so no handler contains authorization code and the same rule applies over HTTP, MCP and the CLI.
+
 The application has three groups, one per access rule:
 
 | Group    | Actions                                     | HTTP           | MCP                           |
@@ -75,10 +79,10 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 
 ## Application structure
 
-- [contracts.ts](contracts.ts): schemas, the three action groups, the shared schema-error policy, and the bound `Http` contract.
-- [auth.ts](auth.ts): identity, permissions, and authorization errors.
+- [contracts.ts](contracts.ts): schemas, per-action `access`, the three action groups, the shared schema-error policy, and the bound `Http` contract, including the surface errors its clients decode.
+- [auth.ts](auth.ts): demo actors, identity, permissions, authorization errors, and the `before` hook every guarded group binds.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
-- [handlers.ts](handlers.ts): one implementation per group, with startup and request dependencies.
+- [handlers.ts](handlers.ts): one implementation per group, with startup and request dependencies, and the `before` hook bound to the two guarded ones.
 - [app.ts](app.ts): `Authentication.middleware` on the `users` group only, the Host/Origin policy around everything, and adapter registration.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
@@ -89,12 +93,15 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 HTTP getUser / MCP get_user
   → authentication middleware provides CurrentActor
   → adapter decodes input
-  → handler checks users:read
-  → Users.get(actor.tenantId, id)
+  → before hook reads access: "read" and checks users:read
+  → handler calls Users.get(actor.tenantId, id)
   → adapter encodes the user or declared error
 ```
 
-`UserNotFound` uses HTTP 404 and `Forbidden` uses 403. MCP returns an `isError` tool
+`UserNotFound` uses HTTP 404 and `Forbidden` uses 403, whether the handler or the hook
+produced it. `Unauthenticated` uses 401 and is declared on the `Http` binding rather than on an
+action, because the authentication middleware renders it; declaring it is what lets
+[client.ts](client.ts) decode a refusal as a typed failure. MCP returns an `isError` tool
 result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
 
 A write through `renameUser` is visible through both transports, and through the MCP-only

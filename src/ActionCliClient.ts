@@ -3,6 +3,7 @@ import { Command } from "effect/unstable/cli";
 import { HttpClient } from "effect/unstable/http";
 import { HttpApi, HttpApiClient } from "effect/unstable/httpapi";
 import type { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import { command as makeCommand, type Options as CliOptions } from "./internal/cli.js";
 import type { Actions } from "./internal/actions.js";
@@ -36,56 +37,63 @@ type Selected<G extends Actions, Name extends G["actions"][number]["name"]> = Ex
 
 type HttpNames<G extends Actions> = Extract<G["actions"][number], { readonly http: true }>["name"];
 
-type ApiGroups<Groups extends ReadonlyArray<Actions>> =
-  ActionHttp.Api<Groups[number]> extends HttpApi.HttpApi<"actions", infer ApiGroups>
+type ApiGroups<Groups extends ReadonlyArray<Actions>, Errors extends ReadonlyArray<Action.Codec>> =
+  ActionHttp.Api<Groups[number], Errors[number]> extends HttpApi.HttpApi<"actions", infer ApiGroups>
     ? ApiGroups
     : never;
 
 type Endpoint<
   Groups extends ReadonlyArray<Actions>,
+  Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
   ActionName extends HttpNames<Group<Groups, GroupName>>,
 > = Extract<
   HttpApiGroup.EndpointsWithIdentifier<
-    ApiGroups<Groups>,
-    Extract<GroupName, HttpApiGroup.Identifier<ApiGroups<Groups>>>
+    ApiGroups<Groups, Errors>,
+    Extract<GroupName, HttpApiGroup.Identifier<ApiGroups<Groups, Errors>>>
   >,
   { readonly identifier: ActionName }
 >;
 
 type NativeMethod<
   Groups extends ReadonlyArray<Actions>,
+  Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
   ActionName extends HttpNames<Group<Groups, GroupName>>,
 > = HttpApiClient.Client.Method<
-  Extract<Endpoint<Groups, GroupName, ActionName>, HttpApiEndpoint.ConstraintRequest>,
+  Extract<Endpoint<Groups, Errors, GroupName, ActionName>, HttpApiEndpoint.ConstraintRequest>,
   never,
   never
 >;
 
 type RemoteCommand<
   Groups extends ReadonlyArray<Actions>,
+  Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
   ActionName extends HttpNames<Group<Groups, GroupName>>,
 > = Command.Command<
   string,
   never,
   {},
-  Effect.Error<ReturnType<NativeMethod<Groups, GroupName, ActionName>>>,
-  HttpClient.HttpClient | Effect.Services<ReturnType<NativeMethod<Groups, GroupName, ActionName>>>
+  Effect.Error<ReturnType<NativeMethod<Groups, Errors, GroupName, ActionName>>>,
+  | HttpClient.HttpClient
+  | Effect.Services<ReturnType<NativeMethod<Groups, Errors, GroupName, ActionName>>>
 >;
 
 type RemoteGroupCommand<
   Groups extends ReadonlyArray<Actions>,
+  Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
 > = Command.Command<
   string,
   {},
   {},
-  Effect.Error<ReturnType<NativeMethod<Groups, GroupName, HttpNames<Group<Groups, GroupName>>>>>,
+  Effect.Error<
+    ReturnType<NativeMethod<Groups, Errors, GroupName, HttpNames<Group<Groups, GroupName>>>>
+  >,
   | HttpClient.HttpClient
   | Effect.Services<
-      ReturnType<NativeMethod<Groups, GroupName, HttpNames<Group<Groups, GroupName>>>>
+      ReturnType<NativeMethod<Groups, Errors, GroupName, HttpNames<Group<Groups, GroupName>>>>
     >
 >;
 
@@ -135,18 +143,19 @@ const selectAction = <G extends Actions, Name extends G["actions"][number]["name
  */
 export const command = <
   const Groups extends ReadonlyArray<Actions>,
+  const Errors extends ReadonlyArray<Action.Codec>,
   const GroupName extends Groups[number]["name"],
   const ActionName extends HttpNames<Group<Groups, GroupName>>,
   ParsedParameters extends Command.Command.Config = never,
 >(
-  http: ActionHttp.Http<Groups>,
+  http: ActionHttp.Http<Groups, Errors>,
   groupName: GroupName,
   actionName: ActionName,
   options?: Options<
     Selected<Group<Groups, GroupName>, ActionName>["success"]["Type"],
     ParsedParameters
   >,
-): RemoteCommand<Groups, GroupName, ActionName> => {
+): RemoteCommand<Groups, Errors, GroupName, ActionName> => {
   const group = selectGroup(http.groups, groupName);
   const action = selectAction(group, actionName);
 
@@ -165,7 +174,7 @@ export const command = <
         // The erased native endpoint builder cannot preserve their conditional map.
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint selector boundary.
         const endpoint = native as Effect.Effect<
-          NativeMethod<Groups, GroupName, ActionName>,
+          NativeMethod<Groups, Errors, GroupName, ActionName>,
           never,
           never
         >;
@@ -185,12 +194,13 @@ export const command = <
 /** Project all HTTP-enabled actions retained by one group below its group namespace. */
 export const group = <
   const Groups extends ReadonlyArray<Actions>,
+  const Errors extends ReadonlyArray<Action.Codec>,
   const GroupName extends Groups[number]["name"],
 >(
-  http: ActionHttp.Http<Groups>,
+  http: ActionHttp.Http<Groups, Errors>,
   groupName: GroupName,
   options?: GroupOptions,
-): RemoteGroupCommand<Groups, GroupName> => {
+): RemoteGroupCommand<Groups, Errors, GroupName> => {
   const actions = selectGroup(http.groups, groupName);
 
   const commands = actions.actions.flatMap((action) =>

@@ -26,9 +26,9 @@ Package facts that apply everywhere:
 | Read                                     | When you need to                                                                       |
 | ---------------------------------------- | -------------------------------------------------------------------------------------- |
 | [setup.md](setup.md)                     | install, pin versions, pick entry points, know what the package does not do            |
-| [Action.md](Action.md)                   | define one contract: input, success, errors, HTTP and MCP flags, tool hints            |
-| [ActionGroup.md](ActionGroup.md)         | group contracts, declare shared errors, set a schema-error policy, bind handlers       |
-| [ActionHttp.md](ActionHttp.md)           | serve JSON POST routes, publish OpenAPI, call the API with `HttpApiClient`             |
+| [Action.md](Action.md)                   | define one contract: input, success, errors, read/write access, HTTP and MCP flags     |
+| [ActionGroup.md](ActionGroup.md)         | group contracts, declare shared errors, run one check before every handler, bind them  |
+| [ActionHttp.md](ActionHttp.md)           | serve JSON POST routes, declare the surface's own errors, publish OpenAPI, call it     |
 | [ActionMcp.md](ActionMcp.md)             | serve MCP tools over Streamable HTTP or stdio                                          |
 | [ActionToolkit.md](ActionToolkit.md)     | use actions as a native Effect AI `Toolkit` without a server                           |
 | [ActionCli.md](ActionCli.md)             | run handlers in-process from a terminal command                                        |
@@ -63,7 +63,7 @@ const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: Schema.Struct({ name: Schema.String }),
   success: Schema.String,
-  mcp: { readOnly: true },
+  access: "read",
 });
 
 export const Actions = ActionGroup.make({ name: "greetings" }, Greet);
