@@ -112,15 +112,16 @@ code exactly as unsafe.
   `no-unknown-type-aliases`, `no-object-parameters`, `no-unsafe-dictionary-type`): decode at the
   I/O boundary and pass owner contracts inward. There is no name-based exemption; a parameter named
   `cause` is as unknown as any other, and thrown-value boundaries use an explained directive.
-- **Evidence loss** (`no-widen-then-assert`,
+- **Evidence loss** (`no-known-value-widening`, `no-widen-then-assert`,
   `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
-  `typescript/no-unsafe-type-assertion`): allow ordinary compiler-checked widening, but do not widen merely to conceal an unsafe assertion. A SAFETY
+  `typescript/no-unsafe-type-assertion`): keep inference or validate with `satisfies`. A SAFETY
   comment is necessary, not sufficient; the type-aware assertion rule needs its own explained
   directive when an assertion is a genuine erasure boundary.
 - **`any` escape routes** (`typescript/no-unsafe-assignment`, `-argument`, `-call`,
   `-member-access`, `-return`): untyped JSON, SDK generics, callback registries. Type the value at
   its source, for example by importing `package.json` as a typed JSON module instead of parsing it.
-- **Runtime narrowing**: ordinary `typeof` checks and native predicates are allowed at unknown-value boundaries and on typed unions. Use schemas for structured external payloads, not to satisfy a syntactic ban on scalar checks.
+- **Runtime probing** (`no-runtime-typeof` with `allowInTypeGuards`): a genuine type predicate may
+  probe its subject; discriminating an already typed union takes a narrow explained exception.
 - **Quadratic copies** (`no-reduce-accumulator-copy`, `oxc/no-accumulating-spread`): growing copies
   in a loop; fixed-size snapshots may justify an exception.
 - **Reflection** (`no-reflect-apply`, `no-reflect-get`): prefer typed access; keep a concrete
@@ -133,8 +134,6 @@ code exactly as unsafe.
 
 Off, with reasons recorded beside the setting in `vite.config.ts`:
 
-- `anti-slop/no-runtime-typeof`: ordinary scalar narrowing does not need a schema decoder or one-use guard.
-- `anti-slop/no-known-value-widening`: intentional adapter-boundary widening is checked by TypeScript and the unsafe-operation rules.
 - `anti-slop/no-array-filter-map`: both forms are linear; rewrites change callback order and
   sparse-array semantics without establishing a performance gain.
 - `anti-slop/no-conditional-empty-object-spread`: conditional spread preserves omission semantics
@@ -149,8 +148,8 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
   paired with its unused counterpart for each corrected rule.
 - `tools/oxlint/tests/configuration.test.ts` runs `vp lint` on fixtures inside the repository, so
   the probes go through the registered plugin and the effective configuration: unknown parameters
-  named `cause`, module mocking via `vite-plus/test`, permitted `typeof` narrowing and widening, a
-  justified directive and its unused counterpart, maintained JavaScript, and deliberately disabled
+  named `cause`, module mocking via `vite-plus/test`, `typeof` inside and outside predicates, a
+  justified directive and its unused counterpart, maintained JavaScript, and the three disabled
   rules.
 
 ### History

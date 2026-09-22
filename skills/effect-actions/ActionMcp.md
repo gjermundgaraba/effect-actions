@@ -151,7 +151,7 @@ Layer.launch(layer).pipe(
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
 - An endpoint is one route. Middleware provided to `layerHttp` covers all of its tools. To serve tools under different middleware, mount them on different paths with separate `layerHttp` calls.
 - Only MCP-enabled actions become tools, under `mcp.name` with the resolved hints. A group with no tools is not built.
-- Every MCP-enabled action must have object-root input. Checked synchronously when `layerHttp` or `layerStdio` is called, before any handler is acquired; a violation throws. The `IllegalArgumentError` in the layer's error channel comes from the native transport, not from this check.
+- Every MCP-enabled action must have object-root input; the native server refuses anything else when the layer is built. Omit `input` for a tool with no arguments.
 - Success is `structuredContent: { value: <encoded success> }`. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
 - Invalid arguments and unencodable results are answered by the native `McpServer`: an `isError` result with a message for the model. Group `schemaError` policies do not apply.
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
@@ -165,7 +165,7 @@ Layer.launch(layer).pipe(
 
 ## Failure modes
 
-- `<action>: MCP input must have an object root; omit input for no arguments` thrown at the `layerHttp` or `layerStdio` call: the action has scalar or array input. Wrap it in a struct or set `mcp: false`.
+- Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: an MCP-enabled action has scalar, array, or empty-struct input, which the native server refuses. It is not in the layer's error channel, so it cannot be caught by tag. Wrap the input in a struct with at least one field, omit `input` for no arguments, or set `mcp: false`.
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `layerStdio` call: two apps on one endpoint expose the same tool name. Rename with `mcp.name` or split the endpoint.
 - Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler yields a request service and the endpoint has no middleware providing it. Provide it with `Layer.provide(middleware.layer)` on that `layerHttp`.
 - Public tool requires a token: it shares an endpoint with protected tools. Give it its own path.

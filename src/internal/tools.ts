@@ -1,4 +1,4 @@
-import { Effect, JsonPointer, Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
@@ -10,11 +10,25 @@ import {
   type Handlers,
 } from "./implementation.js";
 
-/** What a tool surface binds around the implementations it projects, erased. */
-export interface ToolOptions {
-  readonly errors: ReadonlyArray<Action.Codec> | undefined;
-  readonly before: Before<unknown> | undefined;
+/** What a tool surface binds around the implementations it projects. */
+export interface SurfaceOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
+  /**
+   * Failures the surface answers with instead of a handler: authorization, rate
+   * limits. Declared on every tool, so a refusal is returned exactly like an
+   * action's own error.
+   */
+  readonly errors?: Errors;
+  /**
+   * Runs once per tool call, after the arguments are decoded and before the
+   * selected handler, with the action contract it is about to run. It fails with
+   * this surface's `errors`. Its services are request-time requirements, like a
+   * handler's.
+   */
+  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
 }
+
+/** The erased view every tool projection binds. */
+export type ToolOptions = SurfaceOptions<ReadonlyArray<Action.Codec>, unknown>;
 
 /** An implementation/action pair exposed to a tool transport. */
 interface ToolEntry {
@@ -101,32 +115,6 @@ const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec
     action.mcp,
   );
 
-/**
- * MCP's input schema must describe a JSON object, including no-argument tools.
- * The compiled document hides an identified or recursive root behind a `$ref`,
- * which is followed into its definitions with Effect's own pointer parsing.
- */
-const assertMcpObjectInput = (action: ToolEntry["action"]): void => {
-  const { schema, definitions } = Schema.toJsonSchemaDocument(Schema.toCodecJson(action.input));
-  const $ref = schema.$ref;
-
-  if ($ref !== undefined && typeof $ref !== "string") {
-    throw new Error(`${action.name}: MCP input schema $ref must be a string`);
-  }
-
-  const [scope, key, ...rest] =
-    $ref === undefined ? [] : (JsonPointer.parseUriFragment($ref) ?? []);
-
-  const root =
-    scope === "$defs" && key !== undefined && rest.length === 0 ? definitions[key] : schema;
-
-  if (root?.type !== "object") {
-    throw new Error(
-      `${action.name}: MCP input must have an object root; omit input for no arguments`,
-    );
-  }
-};
-
 /** The two concrete wire projections that share handler binding and lifetime ownership. */
 type Projection = "native" | "mcp";
 
@@ -139,9 +127,9 @@ const project = (projection: Projection, entry: ToolEntry, options: ToolOptions)
     projection === "native" ? nativeTool(entry.action, errors) : mcpTool(entry.action, errors);
 
   if (projection === "native") return tool;
-  assertMcpObjectInput(entry.action);
 
-  // The native server then refuses undeclared arguments and publishes closed input schemas.
+  // The native server refuses undeclared arguments, publishes closed input schemas,
+  // and rejects any input whose JSON Schema root is not an object.
   return tool.annotate(Tool.Strict, true);
 };
 

@@ -26,7 +26,7 @@ use these words with these meanings.
 - **Tool**: the MCP or Toolkit projection of an MCP-enabled action, named by `mcp.name` and carrying its hints.
 - **Endpoint**: one `ActionMcp.layerHttp` mount. One route, one middleware set, one tool registry.
 - **Document**: the OpenAPI output of `Http.api`, produced by Effect (`OpenApi.fromApi`).
-- **Catalog**: the offline JSON description of groups produced by `ActionCatalog.make`, with standalone JSON Schemas for encoded values. Descriptive only; no native schema persistence.
+- **Catalog**: the offline JSON description of groups produced by `ActionCatalog.make`, with standalone JSON Schemas for encoded values. Descriptive only.
 - **Identity**: the per-request principal, provided by `Authentication.middleware` under an application-owned tag. Never provided at startup.
 
 ## Seams

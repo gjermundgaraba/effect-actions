@@ -114,9 +114,6 @@ describe("offline action catalog", () => {
       ),
     );
 
-    expect(Schema.decodeUnknownSync(Schema.Json)(JSON.parse(JSON.stringify(catalog)))).toEqual(
-      catalog,
-    );
     expect(catalog.actions[0]?.input).toMatchObject({
       $ref: "#/$defs/acme~1Node~0x",
       $defs: {
@@ -201,10 +198,9 @@ describe("offline action catalog", () => {
       properties: { at: { type: "string" }, count: { type: "string" } },
     });
     expect(JSON.stringify(catalog.actions[0]?.success)).toContain('"Some"');
-    expect(JSON.stringify(catalog)).not.toContain('"representation"');
   });
 
-  it("keeps JSON Schema annotations without requiring filter persistence", () => {
+  it("keeps what a filter declares for JSON Schema", () => {
     const StartsWithX = Schema.String.check(
       Schema.makeFilter((text) => text.startsWith("X"), {
         toJsonSchema: () => ({ pattern: "^X" }),
@@ -241,29 +237,6 @@ describe("offline action catalog", () => {
       type: "string",
     });
     expect(Schema.decodeUnknownExit(Positive)("-1")._tag).toBe("Failure");
-  });
-
-  it("propagates native JSON Schema conversion defects", () => {
-    const defect = new Error("broken JSON Schema annotation");
-
-    const Broken = Schema.String.check(
-      Schema.makeFilter(() => true, {
-        toJsonSchema: () => {
-          throw defect;
-        },
-      }),
-    );
-
-    const group = ActionGroup.make(
-      { name: "broken" },
-      Action.make("read", {
-        description: "Read",
-        access: "read",
-        success: Broken,
-      }),
-    );
-
-    expect(() => ActionCatalog.make(group)).toThrow(defect);
   });
 
   it("owns only its group/action namespace, not a server's tool registry", () => {

@@ -337,9 +337,9 @@ describe("projection boundaries", () => {
   it.each([
     Schema.String,
     Schema.Struct({}),
-    // Compiles to a `$ref` root, which is still a scalar.
+    // Compiles to a `$ref` root, which the native server inlines and still rejects.
     Schema.String.annotate({ identifier: "Named" }),
-  ])("rejects non-object MCP input at ActionMcp.layerHttp, not action definition", (input) => {
+  ])("the native server rejects non-object MCP input at layer build", async (input) => {
     const Invalid = Action.make("invalid", {
       description: "Unusable MCP input",
       access: "write",
@@ -351,14 +351,16 @@ describe("projection boundaries", () => {
       invalid: () => Effect.succeed("unused"),
     });
 
-    expect(() =>
-      ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
-        name: "test",
-        version: "0",
-        path: "/mcp",
-      }),
-    ).toThrow("invalid: MCP input must have an object root");
+    const layer = ActionMcp.layerHttp([app], {
+      protocols: [McpProtocol.v2026_07_28],
+      name: "test",
+      version: "0",
+      path: "/mcp",
+    }).pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices));
+
+    await expect(Effect.runPromise(Effect.scoped(Layer.build(layer)))).rejects.toThrow(
+      /Expected "object"|Missing key/,
+    );
   });
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {

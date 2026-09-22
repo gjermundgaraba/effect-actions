@@ -27,7 +27,7 @@ export interface Catalog {
 
 /** Describe the JSON wire form; decoding on the server remains authoritative. */
 const describe = (codec: Action.Codec): JsonSchema.JsonSchema => {
-  const { schema, definitions } = Schema.toJsonSchemaDocument(Schema.toCodecJson(codec));
+  const { schema, definitions } = Schema.toJsonSchemaDocument(codec);
 
   // Each root owns its definitions, so equal identifiers never overwrite another schema.
   return {

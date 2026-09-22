@@ -1,7 +1,7 @@
-import { type Effect, Layer, Schema } from "effect";
+import { Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "./Action.js";
-import { bindTools } from "./internal/tools.js";
+import { bindTools, type SurfaceOptions } from "./internal/tools.js";
 import {
   type AnyImplementation,
   type BuildContext,
@@ -10,21 +10,11 @@ import {
   Implementation,
 } from "./internal/implementation.js";
 
-/** What `make` binds around the implementations it projects. */
-export interface Options<Errors extends ReadonlyArray<Action.Codec> = [], R = never> {
-  /**
-   * Failures the caller answers with instead of a handler: authorization, rate
-   * limits. Declared on every tool, so a refusal is returned as a tool failure
-   * exactly like an action's own error.
-   */
-  readonly errors?: Errors;
-  /**
-   * Runs once per tool call, before the selected handler, with the action contract
-   * it is about to run. It fails with this binding's `errors`. Its services join
-   * each tool's request requirements, like a handler's.
-   */
-  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
-}
+/** What the in-process caller binds around the implementations it projects. */
+export type Options<Errors extends ReadonlyArray<Action.Codec> = [], R = never> = SurfaceOptions<
+  Errors,
+  R
+>;
 
 /** A native tool corresponding to an MCP-enabled action. */
 type NativeTool<A extends Action.Any, E extends Action.Codec, R> = A extends {
@@ -106,5 +96,5 @@ export function make(
   readonly toolkit: object;
   readonly layer: object;
 } {
-  return bindTools(apps, "native", { errors: options.errors, before: options.before });
+  return bindTools(apps, "native", options);
 }

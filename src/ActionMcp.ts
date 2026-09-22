@@ -1,33 +1,16 @@
 import { Layer } from "effect";
-import type { Cause, Effect } from "effect";
+import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
 import { McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import { bindTools, type ToolOptions } from "./internal/tools.js";
+import { bindTools, type SurfaceOptions, type ToolOptions } from "./internal/tools.js";
 import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
   type RequestContext,
 } from "./internal/implementation.js";
-
-/** What every MCP transport binds around the tools it serves. */
-interface SurfaceOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
-  /**
-   * Failures the surface answers with instead of a handler: authorization, rate
-   * limits. Declared on every tool of this transport, so a refusal is returned
-   * as an `isError` result exactly like an action's own error.
-   */
-  readonly errors?: Errors;
-  /**
-   * Runs once per tool call, after the native server has decoded the arguments
-   * and before the selected handler, with the action contract it is about to run.
-   * It fails with this transport's `errors`. Its services are request-time
-   * requirements, like a handler's.
-   */
-  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
-}
 
 /** One Streamable HTTP MCP endpoint; its fields become the native server info. */
 export interface Options<
@@ -108,7 +91,7 @@ export function layerHttp(
 ) {
   return server(
     apps,
-    { errors: options.errors, before: options.before },
+    options,
     McpServer.layerHttp({
       name: options.name,
       version: options.version,
@@ -142,9 +125,5 @@ export function layerStdio(
   apps: ReadonlyArray<AnyImplementation>,
   options: StdioOptions<ReadonlyArray<Action.Codec>, unknown>,
 ) {
-  return server(
-    apps,
-    { errors: options.errors, before: options.before },
-    McpServer.layerStdio(options),
-  );
+  return server(apps, options, McpServer.layerStdio(options));
 }

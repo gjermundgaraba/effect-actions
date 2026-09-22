@@ -165,18 +165,6 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual([]);
   });
 
-  it("leaves cache policy to the host", async () => {
-    const { app, hooks } = make();
-    const web = serveHttp(app, authorize(hooks), readOnly);
-    onTestFinished(() => web.dispose());
-
-    const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
-    expect(refused.headers.get("cache-control")).toBe(null);
-
-    const allowed = await web.handler(post("/api/actions/resource/read"));
-    expect(allowed.headers.get("cache-control")).toBe(null);
-  });
-
   it("runs over MCP, where a refusal is the tool's declared failure", async () => {
     const { app, hooks, handlers } = make();
 

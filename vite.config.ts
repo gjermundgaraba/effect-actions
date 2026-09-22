@@ -87,14 +87,14 @@ export default defineConfig({
       "anti-slop/no-chained-type-assertions": "error",
       // Off: conditional spread preserves omission semantics without mutable builders.
       "anti-slop/no-conditional-empty-object-spread": "off",
-      // Off: intentional widening at adapter boundaries is checked by TypeScript.
-      "anti-slop/no-known-value-widening": "off",
+      "anti-slop/no-known-value-widening": "error",
       "anti-slop/no-module-mocking": "error",
       "anti-slop/no-object-parameters": "error",
       "anti-slop/no-reflect-apply": "error",
       "anti-slop/no-reflect-get": "error",
-      // Off: ordinary typeof narrowing is valid at unknown-value boundaries.
-      "anti-slop/no-runtime-typeof": "off",
+      // Genuine type predicates decode a value; discrimination of an already typed union
+      // takes a narrow explained exception instead.
+      "anti-slop/no-runtime-typeof": ["error", { allowInTypeGuards: true }],
       // Off: a substring cannot establish domain ownership; naming is reviewed by people.
       "anti-slop/no-shape-in-symbol-names": "off",
       "anti-slop/no-unknown-parameters": "error",

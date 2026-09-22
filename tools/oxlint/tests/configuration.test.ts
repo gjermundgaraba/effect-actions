@@ -6,8 +6,8 @@ import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 // Probes of the effective configuration in vite.config.ts, through `vp lint` itself.
-// Active-rule cases pair accepted and rejected fixtures; disabled-rule cases assert
-// ordinary language features remain accepted through the effective configuration.
+// Each case pairs an accepted fixture with one the toolchain must still reject, so a
+// passing run proves a rule is registered and active, not merely named.
 
 // Rule findings carry a `code`; toolchain diagnostics such as an unused directive carry only a message.
 const Report = Schema.Struct({
@@ -72,7 +72,7 @@ describe("effective lint configuration", () => {
     ).toEqual(["anti-slop(no-module-mocking)"]);
   });
 
-  it("allows ordinary typeof narrowing as well as type predicates", () => {
+  it("allows typeof only inside type predicates", () => {
     expect(
       lintCodes({
         "guard.ts":
@@ -80,10 +80,10 @@ describe("effective lint configuration", () => {
         "branch.ts":
           "export const label = (value: string | number) => (typeof value === 'string' ? value : '');\n",
       }),
-    ).toEqual([]);
+    ).toEqual(["anti-slop(no-runtime-typeof)"]);
   });
 
-  it("allows intentional compiler-checked widening", () => {
+  it("keeps literal evidence precise without rejecting precise shapes", () => {
     expect(
       lintCodes({
         "precise.ts": [
@@ -109,7 +109,7 @@ describe("effective lint configuration", () => {
           "",
         ].join("\n"),
       }),
-    ).toEqual([]);
+    ).toEqual(["anti-slop(no-known-value-widening)"]);
   });
 
   it("reports an unused disable directive as an error", () => {
@@ -134,12 +134,13 @@ describe("effective lint configuration", () => {
       lintCodes({
         "typed.mjs":
           "/** @param {string} value */\nexport const label = (value) => value.trim();\n",
-        "probe.mjs": "export const copy = [1, 2].reduce((acc, value) => [...acc, value], []);\n",
+        "probe.mjs":
+          "/** @param {string | number} value */\nexport const isText = (value) => typeof value === 'string';\n",
       }),
-    ).toEqual(["oxc(no-accumulating-spread)"]);
+    ).toEqual(["anti-slop(no-runtime-typeof)"]);
   });
 
-  it("keeps the expression-style rules deliberately disabled", () => {
+  it("keeps the three deliberately disabled rules off", () => {
     expect(
       lintCodes({
         "off.ts": [

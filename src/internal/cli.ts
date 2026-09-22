@@ -118,8 +118,8 @@ const defaultCommand = <A extends Action.Any, E, R>(
   const codec = Schema.toCodecJson(action.input);
 
   return make(action, execute, options, inputFlags(codec), (parsed) =>
-    // A file takes precedence over inline input. Neither decodes `{}` afresh
-    // each run, including any codec defaults or transformations.
+    // A file takes precedence over inline input. With neither, `{}` is decoded
+    // afresh each run so invocations never share an input value.
     Option.match(
       Option.orElse(parsed.inputFile, () => parsed.input),
       {

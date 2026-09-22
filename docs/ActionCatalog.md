@@ -17,8 +17,7 @@ Import `@gjermundgaraba/effect-actions/ActionCatalog`.
 | `errors`                             | JSON Schema objects for own and inherited group errors.                      |
 | `httpSchemaErrors`                   | JSON Schema objects for HTTP policy errors; empty for HTTP-disabled actions. |
 
-Version 3 removes the version-2 `jsonSchema`/`representation` wrappers. There is no
-`Described` type or persisted Effect representation. Exported types are `Catalog` and `Entry`.
+Exported types are `Catalog` and `Entry`.
 
 ## Canonical
 
@@ -39,7 +38,7 @@ Console.log(
 - Takes groups, not implementations. Nothing is acquired or started.
 - Group names must be unique. Entries preserve group declaration order, then action declaration order.
 - `id` is the stable `<group>.<action>` identity, equal to the HTTP operation ID.
-- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument(Schema.toCodecJson(codec))`. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are action values, not MCP's `{ value }` envelope or deployment URLs.
+- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument`, which lowers to the JSON codec first. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are action values, not MCP's `{ value }` envelope or deployment URLs.
 - JSON Schema does not preserve arbitrary Effect transformations or filters. Checks on the decoded side of a transformation, such as `FiniteFromString.check(isGreaterThan(0))`, are not described. The server's decode remains authoritative.
 - Each schema root includes its own `$schema` and, where needed, `$defs`. Equal identifiers across entries or fields cannot replace each other; recursive references resolve locally.
 - The catalog contains JSON Schema only. Use Effect's `SchemaRepresentation` directly when native schema persistence or revival is needed.
@@ -51,6 +50,5 @@ Console.log(
 
 - `Duplicate catalog group: <name>`: two supplied groups share a name, including a group passed twice.
 - Type error passing an implementation: pass `app.group` or the group value itself.
-- Native JSON Schema conversion throws: the codec or its annotations cannot be converted. Errors propagate; there is no persistence fallback.
+- Native JSON Schema conversion throws: the codec or its annotations cannot be converted.
 - JSON Schema accepts a value the server rejects: custom validation or a decoded-side check is not expressible in the wire schema. Server validation remains authoritative.
-- Consumers expect `entry.input.jsonSchema` or `representation`: version 3 stores the JSON Schema directly in `entry.input`, `entry.success` and each error entry.
