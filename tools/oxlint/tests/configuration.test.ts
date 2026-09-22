@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,18 +32,12 @@ const lintCodes = (files: Readonly<Record<string, string>>): ReadonlyArray<strin
     writeFileSync(join(probe, name), source);
   }
 
-  let stdout: string;
-
-  try {
-    stdout = execFileSync("vp", ["lint", "--format", "json", probe], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch (failure) {
-    const withOutput = Schema.decodeUnknownSync(Schema.Struct({ stdout: Schema.String }))(failure);
-    stdout = withOutput.stdout;
-  }
+  // A finding is a non-zero exit; the report is on stdout either way.
+  const { stdout } = spawnSync("vp", ["lint", "--format", "json", probe], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
 
   return decodeReport(stdout.slice(stdout.indexOf("{"))).diagnostics.map(
     (diagnostic) => diagnostic.code ?? diagnostic.message,

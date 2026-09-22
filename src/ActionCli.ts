@@ -2,7 +2,7 @@ import { Effect, type Scope } from "effect";
 import { Command } from "effect/unstable/cli";
 import type * as Action from "./Action.js";
 import { command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
-import type { Actions } from "./internal/actions.js";
+import { type Actions, selectNamed } from "./internal/actions.js";
 import {
   dispatch,
   type HandlerContext,
@@ -42,19 +42,6 @@ type Selected<G extends Actions, Name extends G["actions"][number]["name"]> = Ex
 type BoundHandler<Name extends string, A extends Action.Any, R> = Readonly<
   Record<Name, Action.Handler<A, R>>
 >;
-
-const select = <G extends Actions, Name extends G["actions"][number]["name"]>(
-  group: G,
-  name: Name,
-): Selected<G, Name> => {
-  const action = group.actions.find(
-    (candidate): candidate is Selected<G, Name> => candidate.name === name,
-  );
-
-  if (action === undefined) throw new Error(`Unknown action "${group.name}.${name}"`);
-
-  return action;
-};
 
 const local = <
   G extends Actions,
@@ -105,7 +92,11 @@ export const command = <
   name: Name,
   options?: Options<Selected<G, Name>["success"]["Type"], EB, RB, Parameters>,
 ) => {
-  const action = select(app.group, name);
+  const action: Selected<G, Name> = selectNamed(
+    app.group.actions,
+    name,
+    `action "${app.group.name}.${name}"`,
+  );
 
   return makeCommand(action, (input) => local(app, action, options?.before, input), options);
 };

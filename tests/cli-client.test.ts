@@ -213,8 +213,7 @@ it("propagates domain and native schema-policy failures through Command.runWith"
     Command.runWith(command, { version: "0" })([value]).pipe(
       Effect.provide(fetchLayer),
       Effect.provide(cliServices),
-      Effect.exit,
-      Effect.runPromise,
+      Effect.runPromiseExit,
     );
 
   const domain = await run("0");
@@ -255,8 +254,7 @@ it("propagates domain and native schema-policy failures through Command.runWith"
   const unavailable = await Command.runWith(command, { version: "0" })(["21"]).pipe(
     Effect.provide(unavailableLayer),
     Effect.provide(cliServices),
-    Effect.exit,
-    Effect.runPromise,
+    Effect.runPromiseExit,
   );
 
   expect(Exit.isFailure(unavailable)).toBe(true);

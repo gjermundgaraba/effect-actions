@@ -39,6 +39,24 @@ export const assertName = (what: string, name: string): void => {
   if (!validName.test(name) || name === "then") throw new Error(`Invalid ${what}: ${name}`);
 };
 
+/**
+ * The one item of `items` named `name`, narrowed to that contract. A caller passes
+ * a literal name, so a miss is a programming error reported as `Unknown <what>`.
+ */
+export const selectNamed = <T extends { readonly name: string }, Name extends T["name"]>(
+  items: ReadonlyArray<T>,
+  name: Name,
+  what: string,
+): Extract<T, { readonly name: Name }> => {
+  const item = items.find(
+    (candidate): candidate is Extract<T, { readonly name: Name }> => candidate.name === name,
+  );
+
+  if (item === undefined) throw new Error(`Unknown ${what}`);
+
+  return item;
+};
+
 /** Each namespace is checked by whoever owns it: a group, the routes, or the MCP tools. */
 export const assertDistinct = (what: string, names: ReadonlyArray<string>): void => {
   const seen = new Set<string>();

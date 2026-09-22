@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
-import { projectedErrors } from "./actions.js";
+import { assertDistinct, projectedErrors } from "./actions.js";
 import {
   type Before,
   dispatch,
@@ -63,18 +63,6 @@ const toolApps = (apps: ReadonlyArray<AnyImplementation>): ReadonlyArray<ToolApp
 /** Flatten the projected contracts only after deciding which groups are served. */
 const entries = (apps: ReadonlyArray<ToolApp>): ReadonlyArray<ToolEntry> =>
   apps.flatMap(({ app, actions }) => actions.map((action) => ({ app, action })));
-
-/** Fail before acquiring handlers when two exposed tools share a name. */
-const assertDistinctToolNames = (tools: ReadonlyArray<ToolEntry>): void => {
-  const names = new Set<string>();
-
-  for (const { action } of tools) {
-    const name = action.mcp.name;
-
-    if (names.has(name)) throw new Error(`Duplicate MCP tool: ${name}`);
-    names.add(name);
-  }
-};
 
 const annotate = (tool: Tool.Any, mcp: Exclude<Action.Any["mcp"], false>) =>
   tool
@@ -160,7 +148,11 @@ export const bindTools = (
 ): BoundTools => {
   const served = toolApps(apps);
   const selected = entries(served);
-  assertDistinctToolNames(selected);
+  // Fail before acquiring handlers when two exposed tools share a name.
+  assertDistinct(
+    "MCP tool",
+    selected.map(({ action }) => action.mcp.name),
+  );
   const toolkit = Toolkit.make(...selected.map((entry) => project(projection, entry, options)));
 
   const layer = toolkit.toLayer(

@@ -287,11 +287,14 @@ export function make(
 
     const api = apiOf(served.map(({ native }) => native));
 
-    const merged = served.reduce<Layer.Layer<never, any, any>>(
-      (layer, { app, middleware }) =>
-        layer.pipe(Layer.provide(groupHandlers(api, app, middleware, layerOptions.before))),
-      HttpApiBuilder.layer(api),
+    const [first, ...rest] = served.map(({ app, middleware }) =>
+      groupHandlers(api, app, middleware, layerOptions.before),
     );
+
+    const merged =
+      first === undefined
+        ? HttpApiBuilder.layer(api)
+        : HttpApiBuilder.layer(api).pipe(Layer.provide([first, ...rest]));
 
     // SAFETY: every `groupHandlers` is built from exactly one app's `build`; its
     // runtime services and failures are therefore the union of this tuple, joined

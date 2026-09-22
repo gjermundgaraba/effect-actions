@@ -6,7 +6,7 @@ import type { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import { command as makeCommand, type Options as CliOptions } from "./internal/cli.js";
-import type { Actions } from "./internal/actions.js";
+import { type Actions, selectNamed } from "./internal/actions.js";
 import type { ServedNames } from "./internal/implementation.js";
 
 /**
@@ -114,30 +114,15 @@ const erasedApi = (api: HttpApi.Constraint): HttpApi.Top => {
   return api as HttpApi.Top;
 };
 
-const selectGroup = <Groups extends ReadonlyArray<Actions>, Name extends Groups[number]["name"]>(
-  groups: Groups,
-  name: Name,
-): Group<Groups, Name> => {
-  const group = groups.find(
-    (candidate): candidate is Group<Groups, Name> => candidate.name === name,
-  );
-
-  if (group === undefined) throw new Error(`Unknown HTTP group "${name}"`);
-
-  return group;
-};
-
+/** An action hidden from HTTP is unknown to this binding, exactly like a missing one. */
 const selectAction = <G extends Actions, Name extends G["actions"][number]["name"]>(
   group: G,
   name: Name,
 ): Selected<G, Name> => {
-  const action = group.actions.find(
-    (candidate): candidate is Selected<G, Name> => candidate.name === name,
-  );
+  const what = `HTTP action "${group.name}.${name}"`;
+  const action = selectNamed(group.actions, name, what);
 
-  if (action === undefined || !action.http) {
-    throw new Error(`Unknown HTTP action "${group.name}.${name}"`);
-  }
+  if (!action.http) throw new Error(`Unknown ${what}`);
 
   return action;
 };
@@ -162,7 +147,7 @@ export const command = <
     ParsedParameters
   >,
 ): RemoteCommand<Groups, Errors, GroupName, ActionName> => {
-  const group = selectGroup(http.groups, groupName);
+  const group = selectNamed(http.groups, groupName, `HTTP group "${groupName}"`);
   const action = selectAction(group, actionName);
 
   return makeCommand(
@@ -208,7 +193,7 @@ export const group = <
   groupName: GroupName,
   options?: GroupOptions,
 ): RemoteGroupCommand<Groups, Errors, GroupName> => {
-  const actions = selectGroup(http.groups, groupName);
+  const actions = selectNamed(http.groups, groupName, `HTTP group "${groupName}"`);
 
   const commands = actions.actions.flatMap((action) =>
     action.http

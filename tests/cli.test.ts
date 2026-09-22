@@ -24,12 +24,9 @@ const runExit = <Name extends string, Input, Context, E>(
   command: Command.Command<Name, Input, Context, E, Scope.Scope>,
   args: ReadonlyArray<string>,
 ) =>
-  Effect.runPromise(
+  Effect.runPromiseExit(
     Effect.scoped(
-      Command.runWith(command, { version: "0" })(args).pipe(
-        Effect.provide(cliServices),
-        Effect.exit,
-      ),
+      Command.runWith(command, { version: "0" })(args).pipe(Effect.provide(cliServices)),
     ),
   );
 
@@ -382,12 +379,11 @@ it("reads the whole canonical input from --input-file, which takes precedence ov
   const command = ActionCli.command(app, "number");
 
   const exit = (args: ReadonlyArray<string>) =>
-    Effect.runPromise(
+    Effect.runPromiseExit(
       Effect.scoped(
         Command.runWith(command, { version: "0" })(args).pipe(
           Effect.provide(NodeFileSystem.layer),
           Effect.provide(cliServices),
-          Effect.exit,
         ),
       ),
     );
