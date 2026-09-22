@@ -7,14 +7,20 @@ import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import { command as makeCommand, type Options as CliOptions } from "./internal/cli.js";
 import type { Actions } from "./internal/actions.js";
+import type { ServedNames } from "./internal/implementation.js";
+
+/**
+ * What the host configures on Effect's native client: `baseUrl`, `transformClient`,
+ * `transformResponse`. The selectors and the client are the command's own.
+ */
+export type Connection = NonNullable<globalThis.Parameters<typeof HttpApiClient.make>[1]>;
 
 /** Parsing, rendering and native HTTP-endpoint configuration for one remote action. */
 export type Options<Output, ParsedParameters extends Command.Command.Config = never> = CliOptions<
   Output,
   ParsedParameters
 > & {
-  /** Passed directly to Effect's native `HttpApiClient.endpoint`. */
-  readonly connection?: NonNullable<globalThis.Parameters<typeof HttpApiClient.make>[1]>;
+  readonly connection?: Connection;
 };
 
 /** Configuration for a remote aggregate group command. */
@@ -22,7 +28,7 @@ export interface GroupOptions {
   /** Override the group command name. */
   readonly name?: string;
   /** Shared native HTTP-endpoint configuration for every remote action. */
-  readonly connection?: NonNullable<globalThis.Parameters<typeof HttpApiClient.make>[1]>;
+  readonly connection?: Connection;
 }
 
 type Group<Groups extends ReadonlyArray<Actions>, Name extends Groups[number]["name"]> = Extract<
@@ -35,7 +41,7 @@ type Selected<G extends Actions, Name extends G["actions"][number]["name"]> = Ex
   { readonly name: Name }
 >;
 
-type HttpNames<G extends Actions> = Extract<G["actions"][number], { readonly http: true }>["name"];
+type HttpNames<G extends Actions> = ServedNames<G, "http">;
 
 type ApiGroups<Groups extends ReadonlyArray<Actions>, Errors extends ReadonlyArray<Action.Codec>> =
   ActionHttp.Api<Groups[number], Errors[number]> extends HttpApi.HttpApi<"actions", infer ApiGroups>
@@ -163,14 +169,15 @@ export const command = <
     action,
     (input) =>
       Effect.flatMap(HttpClient.HttpClient, (httpClient) => {
+        // The selectors follow the connection, so a host's configuration cannot redirect the command.
         const native = HttpApiClient.endpoint(erasedApi(http.api), {
+          ...options?.connection,
           group: groupName,
           endpoint: actionName,
           httpClient,
-          ...options?.connection,
         });
 
-        // SAFETY: selectors are checked against `http.groups` immediately above.
+        // SAFETY: selectors are checked against `http.groups` above and set last.
         // The erased native endpoint builder cannot preserve their conditional map.
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint selector boundary.
         const endpoint = native as Effect.Effect<

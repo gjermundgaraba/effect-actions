@@ -59,7 +59,10 @@ export interface StdioOptions<
 }
 
 /** The native server supplies its own request context to every tool call. */
-type ToolRequestContext<App, RB> = Exclude<RequestContext<App> | RB, McpSchema.McpRequestContext>;
+type ToolRequestContext<App, RB> = Exclude<
+  RequestContext<App, "mcp"> | RB,
+  McpSchema.McpRequestContext
+>;
 
 const registration = (apps: ReadonlyArray<AnyImplementation>, options: ToolOptions) => {
   const binding = bindTools(apps, "mcp", options);
@@ -104,8 +107,8 @@ export function layerHttp<
   ...apps: Apps
 ): Layer.Layer<
   never,
-  BuildError<Apps[number]> | Cause.IllegalArgumentError,
-  | BuildContext<Apps[number]>
+  BuildError<Apps[number], "mcp"> | Cause.IllegalArgumentError,
+  | BuildContext<Apps[number], "mcp">
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", ToolRequestContext<Apps[number], RB>>
 >;
@@ -142,8 +145,8 @@ export function layerStdio<
   ...apps: Apps
 ): Layer.Layer<
   never,
-  BuildError<Apps[number]> | Cause.IllegalArgumentError,
-  BuildContext<Apps[number]> | StdioService | ToolRequestContext<Apps[number], RB>
+  BuildError<Apps[number], "mcp"> | Cause.IllegalArgumentError,
+  BuildContext<Apps[number], "mcp"> | StdioService | ToolRequestContext<Apps[number], RB>
 >;
 export function layerStdio(
   options: StdioOptions<ReadonlyArray<Action.Codec>, unknown>,

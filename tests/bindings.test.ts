@@ -1,6 +1,6 @@
 import { McpProtocol } from "effect/unstable/ai";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Logger, Option, Schema, Tracer } from "effect";
+import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -165,16 +165,26 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
   const run = async (handler: () => Effect.Effect<string>) => {
     const logs: unknown[] = [];
+    const annotations: Array<ReadonlyMap<string, unknown>> = [];
     const parents = new Map<string, string | undefined>();
-    const logger = Logger.make((options) => logs.push(options.message));
+    const spans = new Map<string, Tracer.Span>();
+
+    const logger = Logger.make((options) => {
+      logs.push(options.message);
+      annotations.push(
+        new Map(Object.entries(options.fiber.getRef(References.CurrentLogAnnotations))),
+      );
+    });
 
     const tracer = Tracer.make({
       span(options) {
         const parent = Option.getOrUndefined(options.parent);
 
         parents.set(options.name, parent?._tag === "Span" ? parent.name : undefined);
+        const span = Tracer.nativeTracer.span(options);
+        spans.set(options.name, span);
 
-        return Tracer.nativeTracer.span(options);
+        return span;
       },
     });
 
@@ -211,11 +221,11 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       );
     }
 
-    return { logs, parents };
+    return { logs, annotations, parents, spans };
   };
 
   it("runs the handler in an action span under the request span", async () => {
-    const { logs, parents } = await run(() =>
+    const { logs, annotations, parents, spans } = await run(() =>
       Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
     );
 
@@ -223,6 +233,16 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     // The action span is named by the OpenAPI operation ID on both transports.
     expect(parents.get("action.identity")).toBe("test.identity");
     expect(parents.get("test.identity")).toMatch(requestSpan);
+
+    // The contract's identity is on the span and on every handler log line.
+    const identity = new Map([
+      ["action.group", "test"],
+      ["action.name", "identity"],
+      ["action.access", "write"],
+    ]);
+
+    expect(spans.get("test.identity")?.attributes).toEqual(identity);
+    expect(annotations).toContainEqual(identity);
   });
 
   it("opens the action span even when the handler throws before returning an effect", async () => {

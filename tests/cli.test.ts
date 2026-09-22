@@ -1,10 +1,14 @@
-import { expect, it, vi } from "vite-plus/test";
-import { Console, Effect, Exit, Schema, type Scope } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
+import { Effect, Exit, Schema, type Scope } from "effect";
+import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import { NodeFileSystem } from "@effect/platform-node";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionGroup from "../src/ActionGroup.js";
-import { capturingConsole, cliServices } from "./cli-services.js";
+import { cliServices, logged } from "./cli-services.js";
 
 const run = <Name extends string, Input, Context, E>(
   command: Command.Command<Name, Input, Context, E, Scope.Scope>,
@@ -45,19 +49,30 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
     success: Schema.String,
   });
 
+  const empties: object[] = [];
+
   const app = ActionGroup.make({ name: "local" }, NumberAction, Empty).implement({
     number: ({ value }) =>
       Effect.andThen(
         Effect.sync(() => inputs.push(value)),
         () => Effect.succeed(value * 2),
       ),
-    empty: () => Effect.succeed("empty"),
+    empty: (input) =>
+      Effect.andThen(
+        Effect.sync(() => empties.push(input)),
+        () => Effect.succeed("empty"),
+      ),
   });
 
   await run(ActionCli.command(app, "number"), ["--input", '{"value":"21"}']);
-  await run(ActionCli.command(app, "empty"), []);
+  const empty = ActionCli.command(app, "empty");
+  await run(empty, []);
+  await run(empty, []);
 
   expect(inputs).toEqual([21]);
+  // The default is decoded per invocation, so one command never shares an input value.
+  expect(empties).toEqual([{}, {}]);
+  expect(empties[0]).not.toBe(empties[1]);
 });
 
 it("maps explicit native parameters to canonical JSON without an implicit --input mode", async () => {
@@ -199,10 +214,6 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
 });
 
 it("keeps custom renderer JSON output and validates success before rendering", async () => {
-  const output: string[] = [];
-
-  const capturedConsole = capturingConsole(output);
-
   let rendered = 0;
 
   const Rendered = Action.make("rendered", {
@@ -219,14 +230,14 @@ it("keeps custom renderer JSON output and validates success before rendering", a
     render: (value) => `${++rendered}:${value}`,
   });
 
-  await Effect.runPromise(
+  const [, output] = await Effect.runPromise(
     Effect.scoped(
-      Command.runWith(command, { version: "0" })(["--json"]).pipe(
+      logged(Command.runWith(command, { version: "0" })(["--json"])).pipe(
         Effect.provide(cliServices),
-        Effect.provideService(Console.Console, capturedConsole),
       ),
     ),
   );
+
   expect(rendered).toBe(0);
   expect(output).toEqual(['"value"']);
 
@@ -327,4 +338,107 @@ it("runs local-only actions, scopes every invocation, and exposes group subcomma
   expect(inputs).toEqual(["direct", "group"]);
   expect(acquired).toBe(2);
   expect(released).toBe(2);
+});
+
+it("reads the whole canonical input from --input-file, which takes precedence over --input", async () => {
+  const inputs: number[] = [];
+
+  const NumberAction = Action.make("number", {
+    description: "Accept an encoded finite number",
+    access: "write",
+    input: Schema.Struct({ value: Schema.FiniteFromString }),
+    success: Schema.Number,
+  });
+
+  const app = ActionGroup.make({ name: "file" }, NumberAction).implement({
+    number: ({ value }) =>
+      Effect.andThen(
+        Effect.sync(() => inputs.push(value)),
+        () => Effect.succeed(value * 2),
+      ),
+  });
+
+  const directory = await mkdtemp(join(tmpdir(), "effect-actions-"));
+  onTestFinished(() => rm(directory, { recursive: true }));
+  const file = join(directory, "input.json");
+  await writeFile(file, '{"value":"21"}');
+  const invalid = join(directory, "invalid.json");
+  await writeFile(invalid, '{"value":"x"}');
+
+  const command = ActionCli.command(app, "number");
+
+  const exit = (args: ReadonlyArray<string>) =>
+    Effect.runPromise(
+      Effect.scoped(
+        Command.runWith(command, { version: "0" })(args).pipe(
+          Effect.provide(NodeFileSystem.layer),
+          Effect.provide(cliServices),
+          Effect.exit,
+        ),
+      ),
+    );
+
+  expect(Exit.isSuccess(await exit(["--input-file", file]))).toBe(true);
+  expect(inputs).toEqual([21]);
+
+  // A malformed file is its own error, not a fallback to the inline default.
+  expect(Exit.isFailure(await exit(["--input-file", invalid]))).toBe(true);
+
+  // A file takes precedence over inline input, which is still validated.
+  expect(Exit.isSuccess(await exit(["--input-file", file, "--input", '{"value":"1"}']))).toBe(true);
+  expect(Exit.isFailure(await exit(["--input-file", file, "--input", "{"]))).toBe(true);
+  expect(inputs).toEqual([21, 21]);
+});
+
+it("adds --json only to a command with a renderer, without contesting a host's own --json", async () => {
+  const Plain = Action.make("plain", {
+    description: "No renderer",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Pretty = Action.make("pretty", {
+    description: "Rendered",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const app = ActionGroup.make({ name: "output" }, Plain, Pretty).implement({
+    plain: () => Effect.succeed("plain"),
+    pretty: () => Effect.succeed("pretty"),
+  });
+
+  const lines = <Name extends string, Input, Context, E>(
+    command: Command.Command<Name, Input, Context, E, Scope.Scope>,
+    args: ReadonlyArray<string>,
+  ) =>
+    Effect.runPromise(
+      Effect.scoped(
+        logged(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices)),
+      ),
+    ).then(([, output]) => output);
+
+  const pretty = ActionCli.command(app, "pretty", { render: (value) => `rendered ${value}` });
+  expect(await lines(pretty, [])).toEqual(["rendered pretty"]);
+  expect(await lines(pretty, ["--json"])).toEqual(['"pretty"']);
+  // Without a renderer the output is JSON already, and the flag does not exist:
+  // the native parser treats it as unknown and shows help.
+  expect(await lines(ActionCli.command(app, "plain"), [])).toEqual(['"plain"']);
+  await expect(lines(ActionCli.command(app, "plain"), ["--json"])).rejects.toThrow(
+    "Help requested",
+  );
+
+  // A regular flag: a host that declares `--json` itself, globally or on a
+  // parent, still composes; the projected command keeps its own.
+  const HostJson = GlobalFlag.Setting("host-json")({
+    flag: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+  });
+
+  const hosted = Command.make("host", { json: Flag.Boolean("json") }).pipe(
+    Command.withSubcommands([pretty, ActionCli.group(app)]),
+    Command.withGlobalFlags([HostJson]),
+  );
+
+  expect(await lines(hosted, ["pretty", "--json"])).toEqual(['"pretty"']);
+  expect(await lines(hosted, ["output", "plain"])).toEqual(['"plain"']);
 });

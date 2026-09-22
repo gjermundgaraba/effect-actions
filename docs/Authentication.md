@@ -88,7 +88,7 @@ export const authentication = Authentication.middleware(
 
 export const routes = Layer.mergeAll(
   discovery.layer, // public
-  Http.layer(UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layer({}, UserApp).pipe(Layer.provide(authentication.layer)),
   mcp.pipe(Layer.provide(authentication.layer)),
 );
 ```

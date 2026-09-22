@@ -334,28 +334,30 @@ describe("projection boundaries", () => {
     expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
   });
 
-  it.each([Schema.String, Schema.Struct({})])(
-    "rejects non-object MCP input at ActionMcp.layerHttp, not action definition",
-    (input) => {
-      const Invalid = Action.make("invalid", {
-        description: "Unusable MCP input",
-        access: "write",
-        input,
-        success: Schema.String,
-      });
+  it.each([
+    Schema.String,
+    Schema.Struct({}),
+    // Compiles to a `$ref` root, which is still a scalar.
+    Schema.String.annotate({ identifier: "Named" }),
+  ])("rejects non-object MCP input at ActionMcp.layerHttp, not action definition", (input) => {
+    const Invalid = Action.make("invalid", {
+      description: "Unusable MCP input",
+      access: "write",
+      input,
+      success: Schema.String,
+    });
 
-      const app = ActionGroup.make({ name: "test" }, Invalid).implement({
-        invalid: () => Effect.succeed("unused"),
-      });
+    const app = ActionGroup.make({ name: "test" }, Invalid).implement({
+      invalid: () => Effect.succeed("unused"),
+    });
 
-      expect(() =>
-        ActionMcp.layerHttp(
-          { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-          app,
-        ),
-      ).toThrow("invalid: MCP input must have an object root");
-    },
-  );
+    expect(() =>
+      ActionMcp.layerHttp(
+        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
+        app,
+      ),
+    ).toThrow("invalid: MCP input must have an object root");
+  });
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
     const Scalar = Action.make("scalar", {

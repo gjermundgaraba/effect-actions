@@ -46,7 +46,7 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 
 ## Observability
 
-- Each handler runs in a span named `<group>.<action>`, a child of the transport's request span. The pre-handler hook, decoding and encoding happen outside the handler span.
+- Each handler runs in a span named `<group>.<action>`, a child of the transport's request span, with attributes `action.group`, `action.name` and `action.access`. Every log line the handler writes carries the same three annotations. The pre-handler hook, decoding and encoding happen outside the handler span.
 - MCP defects and encoding failures are logged with their cause and answered generically.
 
 ## MCP transport

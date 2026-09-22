@@ -81,13 +81,24 @@ export const dispatch = <A extends Action.Any, EB, R>(
 
   if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
 
+  // The contract's identity, on the span and on every log line the handler
+  // writes, so a trace or a log can be filtered by action without parsing names.
+  const attributes = {
+    "action.group": group.name,
+    "action.name": action.name,
+    "action.access": action.access,
+  };
+
   return (
     input: A["input"]["Type"],
   ): Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R> => {
     const handled = Effect.withSpan(
-      Effect.suspend(() => handle(input)),
+      Effect.annotateLogs(
+        Effect.suspend(() => handle(input)),
+        attributes,
+      ),
       `${group.name}.${action.name}`,
-      { captureStackTrace: false },
+      { captureStackTrace: false, attributes },
     );
 
     const invoked = before === undefined ? handled : Effect.flatMap(before(action), () => handled);
@@ -103,12 +114,38 @@ export const dispatch = <A extends Action.Any, EB, R>(
 /** Any nominal implementation of `G`, with its record and channels erased. */
 export type AnyImplementation<G extends Actions = Actions> = Implementation<G, any, any, any>;
 
-/** Per-request requirements of one implementation, or of a union of them. */
-export type RequestContext<App> =
-  App extends Implementation<any, infer H, any, any> ? HandlersContext<H> : never;
+/** The transports that serve a subset of a group's actions, by the contract flag that hides an action. */
+export type Transport = "http" | "mcp";
 
-/** Handler-acquisition failures of one implementation, or of a union of them. */
-export type BuildError<App> = App extends Implementation<any, any, infer EX, any> ? EX : never;
+/**
+ * Names of the actions of `G` that `T` may serve. Only an action hidden by a
+ * literal `false` is excluded; a flag decided at runtime keeps its requirements.
+ */
+export type ServedNames<G extends Actions, T extends Transport> = Exclude<
+  G["actions"][number],
+  T extends "http" ? { readonly http: false } : { readonly mcp: false }
+>["name"];
 
-/** Handler-acquisition requirements of one implementation, or of a union of them. */
-export type BuildContext<App> = App extends Implementation<any, any, any, infer RX> ? RX : never;
+/** Per-request requirements of the handlers `T` can invoke, or of a union of implementations. */
+export type RequestContext<App, T extends Transport> =
+  App extends Implementation<infer G, infer H, any, any>
+    ? {
+        readonly [K in Extract<ServedNames<G, T>, keyof H>]: HandlerContext<H, K>;
+      }[Extract<ServedNames<G, T>, keyof H>]
+    : never;
+
+/** Handler-acquisition failures of the implementations `T` acquires, or of a union of them. */
+export type BuildError<App, T extends Transport> =
+  App extends Implementation<infer G, any, infer EX, any>
+    ? [ServedNames<G, T>] extends [never]
+      ? never
+      : EX
+    : never;
+
+/** Handler-acquisition requirements of the implementations `T` acquires, or of a union of them. */
+export type BuildContext<App, T extends Transport> =
+  App extends Implementation<infer G, any, any, infer RX>
+    ? [ServedNames<G, T>] extends [never]
+      ? never
+      : RX
+    : never;

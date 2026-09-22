@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema } from "effect";
+import { Effect, JsonPointer, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
@@ -101,11 +101,25 @@ const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec
     action.mcp,
   );
 
-/** MCP's input schema must describe a JSON object, including no-argument tools. */
-const assertMcpObjectInput = (action: ToolEntry["action"], tool: Tool.Any): void => {
-  const root = Tool.getJsonSchemaFromSchema(tool.parametersSchema);
+/** The one keyword of a compiled root that this check reads before its `type`. */
+const RootReference = Schema.Struct({ $ref: Schema.optional(Schema.String) });
 
-  if (root.$ref === undefined && root.type !== "object") {
+/**
+ * MCP's input schema must describe a JSON object, including no-argument tools.
+ * The compiled document hides an identified or recursive root behind a `$ref`,
+ * which is followed into its definitions with Effect's own pointer parsing.
+ */
+const assertMcpObjectInput = (action: ToolEntry["action"]): void => {
+  const { schema, definitions } = Schema.toJsonSchemaDocument(Schema.toCodecJson(action.input));
+  const { $ref } = Schema.decodeUnknownSync(RootReference)(schema);
+
+  const [scope, key, ...rest] =
+    $ref === undefined ? [] : (JsonPointer.parseUriFragment($ref) ?? []);
+
+  const root =
+    scope === "$defs" && key !== undefined && rest.length === 0 ? definitions[key] : schema;
+
+  if (root?.type !== "object") {
     throw new Error(
       `${action.name}: MCP input must have an object root; omit input for no arguments`,
     );
@@ -124,7 +138,7 @@ const project = (projection: Projection, entry: ToolEntry, options: ToolOptions)
     projection === "native" ? nativeTool(entry.action, errors) : mcpTool(entry.action, errors);
 
   if (projection === "native") return tool;
-  assertMcpObjectInput(entry.action, tool);
+  assertMcpObjectInput(entry.action);
 
   // The native server then refuses undeclared arguments and publishes closed input schemas.
   return tool.annotate(Tool.Strict, true);

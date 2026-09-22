@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Console, Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -17,7 +17,7 @@ import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as Authentication from "../src/Authentication.js";
 import { httpClient } from "../src/Testing.js";
-import { capturingConsole, cliServices } from "./cli-services.js";
+import { cliServices, logged } from "./cli-services.js";
 
 class Principal extends Context.Service<Principal, string>()("surface-errors/Principal") {}
 
@@ -144,7 +144,6 @@ it("does not repeat a schema an action already declares", () => {
 
 it("decodes a surface error through ActionCliClient", async () => {
   const web = guarded();
-  const output: string[] = [];
 
   const fetchLayer = FetchHttpClient.layer.pipe(
     Layer.provide(
@@ -158,14 +157,10 @@ it("decodes a surface error through ActionCliClient", async () => {
     connection: { baseUrl: "http://localhost" },
   });
 
-  const failure = await Command.runWith(command, { version: "0" })([]).pipe(
-    Effect.provide(fetchLayer),
-    Effect.provide(cliServices),
-    Effect.provideService(Console.Console, capturingConsole(output)),
-    // The surface error is a typed failure of the command, not a decode error.
-    Effect.flip,
-    Effect.runPromise,
-  );
+  // The surface error is a typed failure of the command, not a decode error.
+  const [failure, output] = await logged(
+    Command.runWith(command, { version: "0" })([]).pipe(Effect.flip),
+  ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
 
   expect(failure).toBeInstanceOf(Unauthenticated);
   expect(failure).toHaveProperty("message", "A bearer token is required.");

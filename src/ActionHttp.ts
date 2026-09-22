@@ -109,10 +109,10 @@ export interface Http<
     ...apps: Apps
   ) => Layer.Layer<
     never,
-    BuildError<Apps[number]>,
-    | BuildContext<Apps[number]>
+    BuildError<Apps[number], "http">,
+    | BuildContext<Apps[number], "http">
     | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
+    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number], "http"> | RB>
     | Etag.Generator
     | FileSystem
     | HttpPlatform.HttpPlatform
@@ -316,10 +316,10 @@ export function make(
     ...apps: Apps
   ): Layer.Layer<
     never,
-    BuildError<Apps[number]>,
-    | BuildContext<Apps[number]>
+    BuildError<Apps[number], "http">,
+    | BuildContext<Apps[number], "http">
     | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
+    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number], "http"> | RB>
     | Etag.Generator
     | FileSystem
     | HttpPlatform.HttpPlatform
@@ -362,10 +362,10 @@ export function make(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic tuple reduction cannot express the same union as the public variadic signature.
     return merged as Layer.Layer<
       never,
-      BuildError<Apps[number]>,
-      | BuildContext<Apps[number]>
+      BuildError<Apps[number], "http">,
+      | BuildContext<Apps[number], "http">
       | HttpRouter.HttpRouter
-      | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
+      | HttpRouter.Request.From<"Requires", RequestContext<Apps[number], "http"> | RB>
       | Etag.Generator
       | FileSystem
       | HttpPlatform.HttpPlatform

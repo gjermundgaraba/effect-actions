@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Console, Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
+import { Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
 import { McpProtocol } from "effect/unstable/ai";
 import { Command } from "effect/unstable/cli";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -10,7 +10,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { mcpRequest } from "../src/Testing.js";
-import { capturingConsole, cliServices } from "./cli-services.js";
+import { cliServices, logged } from "./cli-services.js";
 import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
 import { post } from "./requests.js";
 
@@ -249,7 +249,6 @@ describe("the pre-handler hook", () => {
 
   it("runs over the CLI, so a local caller supplies its services too", async () => {
     const { app, hooks, handlers } = make();
-    const output: string[] = [];
     const before = authorize(hooks);
 
     const run = <Name extends string, Input, Services, E>(
@@ -258,19 +257,18 @@ describe("the pre-handler hook", () => {
     ) =>
       Effect.runPromise(
         Effect.scoped(
-          Command.runWith(command, { version: "0" })([...argv]).pipe(
+          logged(Command.runWith(command, { version: "0" })([...argv]).pipe(Effect.exit)).pipe(
             Effect.provide(cliServices),
             Effect.provide(readOnly),
-            Effect.provideService(Console.Console, capturingConsole(output)),
-            Effect.exit,
           ),
         ),
       );
 
-    expect((await run(ActionCli.command(app, "read", { before }), []))._tag).toBe("Success");
+    const [read, output] = await run(ActionCli.command(app, "read", { before }), []);
+    expect(read._tag).toBe("Success");
     expect(output).toEqual(['"read ok"']);
 
-    const refused = await run(ActionCli.command(app, "write", { before }), [
+    const [refused] = await run(ActionCli.command(app, "write", { before }), [
       "--input",
       '{"value":"x"}',
     ]);

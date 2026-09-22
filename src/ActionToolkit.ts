@@ -97,8 +97,8 @@ export function make<
   ...apps: Apps
 ): Binding<
   ToolkitTools<Apps, Errors[number], RB>,
-  BuildError<Apps[number]>,
-  BuildContext<Apps[number]>
+  BuildError<Apps[number], "mcp">,
+  BuildContext<Apps[number], "mcp">
 >;
 export function make(
   options: Options<ReadonlyArray<Action.Codec>, unknown>,

@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Cause, Console, Context, Effect, Exit, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -14,7 +14,7 @@ import * as Action from "../src/Action.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { capturingConsole, cliServices } from "./cli-services.js";
+import { cliServices, logged } from "./cli-services.js";
 
 class Domain extends Schema.TaggedError<Domain>()(
   "Domain",
@@ -80,7 +80,6 @@ it("projects grouped commands through the native HTTP client without a local fal
   onTestFinished(() => web.dispose());
 
   const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
-  const output: string[] = [];
   decodedInputs.length = 0;
 
   const command = ActionCliClient.group(Http, "remote", {
@@ -108,14 +107,9 @@ it("projects grouped commands through the native HTTP client without a local fal
     ),
   );
 
-  const capturedConsole = capturingConsole(output);
-
-  await Command.runWith(command, { version: "0" })(["remote", "--input", '{"value":"21"}']).pipe(
-    Effect.provide(fetchLayer),
-    Effect.provide(cliServices),
-    Effect.provideService(Console.Console, capturedConsole),
-    Effect.runPromise,
-  );
+  const [, output] = await logged(
+    Command.runWith(command, { version: "0" })(["remote", "--input", '{"value":"21"}']),
+  ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
 
   expect(requests).toEqual([
     {
@@ -156,6 +150,35 @@ it("projects grouped commands through the native HTTP client without a local fal
   expect(() => ActionCliClient.command(Http, "remote", unknownAction)).toThrow(
     'Unknown HTTP action "remote.missing"',
   );
+});
+
+it("keeps the selected action when a connection object carries selector keys", async () => {
+  const web = HttpRouter.toWebHandler(
+    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+  decodedInputs.length = 0;
+
+  const fetchLayer = FetchHttpClient.layer.pipe(
+    Layer.provide(
+      Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
+        web.handler(new Request(input, init), Context.empty()),
+      ),
+    ),
+  );
+
+  // Structurally assignable, since the host's object is not a literal here.
+  const connection = { baseUrl: "http://localhost", group: "other", endpoint: "hidden" };
+  const command = ActionCliClient.command(Http, "remote", "remote", { connection });
+
+  const [, output] = await logged(
+    Command.runWith(command, { version: "0" })(["--input", '{"value":"21"}']),
+  ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
+
+  expect(decodedInputs).toEqual([21]);
+  expect(output).toEqual(['"42"']);
 });
 
 it("propagates domain and native schema-policy failures through Command.runWith", async () => {

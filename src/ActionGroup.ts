@@ -1,4 +1,4 @@
-import { Effect, type Scope } from "effect";
+import { Effect, type Scope, type Types } from "effect";
 import {
   type Actions as Contract,
   assertDistinct,
@@ -130,15 +130,10 @@ type PerGroup<G extends Contract> = G extends unknown
   ? { readonly [A in G["actions"][number] as `${G["name"]}.${A["name"]}`]: A }
   : never;
 
-/** Merges those per-group maps into one, rather than leaving a union of them. */
-type Merged<Maps> = (Maps extends unknown ? (map: Maps) => void : never) extends (
-  map: infer Merged,
-) => void
-  ? Merged
-  : never;
-
-/** Every action of `Groups`, keyed `<group>.<action>`. */
-export type Contracts<Groups extends ReadonlyArray<Contract>> = Merged<PerGroup<Groups[number]>>;
+/** Every action of `Groups`, keyed `<group>.<action>`: the per-group maps merged into one. */
+export type Contracts<Groups extends ReadonlyArray<Contract>> = Types.UnionToIntersection<
+  PerGroup<Groups[number]>
+>;
 
 /**
  * Project groups into one map of their action contracts, keyed `<group>.<action>`:

@@ -123,7 +123,7 @@ export const Double = Action.make("double", {
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level. It is authorization metadata for a surface's `before` hook (see [guarantees.md](guarantees.md)); the library itself authorizes nothing and no adapter reads it.
 - `access` is independent of `mcp`. A local-only action (`mcp: false`) still has one, and an action may set `access: "write"` with `mcp: { readOnly: true }` if the tool hint should say something else. Derive authorization from `access`, never from a tool hint.
 - Both transports are on by default. `http: false` removes the route and the client method. `mcp: false` removes the tool. Both `false` makes a local-only action, reachable through `ActionCli` only.
-- MCP input must have an object-root JSON Schema. Scalar or array input is fine for HTTP, but `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, and `ActionToolkit.make` throw when called with such an action. Success and error schemas may be any shape.
+- MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but `ActionMcp.layerHttp` and `ActionMcp.layerStdio` throw when called with such an action. Success and error schemas may be any shape.
 - `mcp.name` is the tool name, at most 128 characters, unique within the group and within any Toolkit or MCP projection that serves the group. Default is the action name.
 - Hint defaults: `readOnly: access === "read"`, `destructive: !readOnly`, `idempotent: false`, `openWorld: true`. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
 - Schemas must be service-free. Put service access in the handler.
@@ -134,7 +134,7 @@ export const Double = Action.make("double", {
 
 - Throws at `make`: invalid name, name `then`, an `access` that is neither `"read"` nor `"write"`, `mcp.name` longer than 128 characters or not matching the pattern.
 - Type error `Effect<..., X, ...> is not assignable` in `implement`: the handler fails with an undeclared error `X`. Add it to `errors` or handle it.
-- `<action>: MCP input must have an object root` thrown by `ActionMcp.layerHttp`, `ActionMcp.layerStdio`, or `ActionToolkit.make`: an MCP-enabled action has non-object input. Wrap it in `Schema.Struct` or set `mcp: false`.
+- `<action>: MCP input must have an object root` thrown by `ActionMcp.layerHttp` or `ActionMcp.layerStdio`: an MCP-enabled action has non-object input. Wrap it in `Schema.Struct` or set `mcp: false`.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
 - `Property 'access' is missing` at `make`: every action declares `"read"` or `"write"`. There is no default.
 - A tool shows `readOnlyHint: false` for a read: the action sets `mcp: { readOnly: false }` explicitly, which wins over `access`.

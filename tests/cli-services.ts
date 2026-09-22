@@ -1,4 +1,5 @@
-import { Console, Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect";
+import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect";
+import { TestConsole } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 /** Every service `Command.runWith` needs, with no terminal input and no subprocesses. */
@@ -22,26 +23,6 @@ export const cliServices = Layer.mergeAll(
   ),
 );
 
-/** The real console, except that `log` collects each message into `output`. */
-export const capturingConsole = (output: string[]) =>
-  ({
-    assert: console.assert.bind(console),
-    clear: console.clear.bind(console),
-    count: console.count.bind(console),
-    countReset: console.countReset.bind(console),
-    debug: console.debug.bind(console),
-    dir: console.dir.bind(console),
-    dirxml: console.dirxml.bind(console),
-    error: console.error.bind(console),
-    group: console.group.bind(console),
-    groupCollapsed: console.groupCollapsed.bind(console),
-    groupEnd: console.groupEnd.bind(console),
-    info: console.info.bind(console),
-    log: (message: string) => output.push(message),
-    table: console.table.bind(console),
-    time: console.time.bind(console),
-    timeEnd: console.timeEnd.bind(console),
-    timeLog: console.timeLog.bind(console),
-    trace: console.trace.bind(console),
-    warn: console.warn.bind(console),
-  }) satisfies Console.Console;
+/** Run a CLI program against the native test console: its result, then every line it logged. */
+export const logged = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  Effect.all([program, TestConsole.logLines]).pipe(Effect.provide(TestConsole.layer));

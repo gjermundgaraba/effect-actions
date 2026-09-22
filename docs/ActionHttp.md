@@ -117,7 +117,7 @@ export const greeting = Effect.gen(function* () {
 - Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures, and native `HttpClientError`. MCP-only actions are absent from the client.
 - Add authentication headers with the native `transformClient` option. Use `HttpApiClient.makeWith` for custom error or service channels. Native per-call response modes are available.
 - Wire format without a policy: input failure is an empty 400, success is the encoded body, a declared error is its JSON encoding with its `httpApiStatus`, an encoding failure is an empty 400, a defect is an empty 500. Full table in [guarantees.md](guarantees.md).
-- Each handler runs in a span named `<group>.<action>`, a child of the request span. The hook, decoding and encoding are outside it, in the request span.
+- Each handler runs in a span named `<group>.<action>`, a child of the request span, attributed with `action.group`, `action.name` and `action.access`; its log lines carry the same annotations. The hook, decoding and encoding are outside it, in the request span.
 
 ## Failure modes
 

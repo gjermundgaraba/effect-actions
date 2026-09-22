@@ -531,3 +531,103 @@ export const surfaceErrorTypes = Effect.gen(function* () {
     // @ts-expect-error Undeclared, so the client has no such failure to catch.
     .pipe(Effect.catchTag("Unauthenticated", () => Effect.succeed("")));
 });
+
+export const servedRequirementTypes = () => {
+  class Principal extends Context.Service<Principal, string>()("types-spec/Principal") {}
+
+  class HiddenBuild extends Context.Service<HiddenBuild, string>()("types-spec/HiddenBuild") {}
+
+  // A mixed group: the hidden action is the only one that needs request identity.
+  const Mixed = ActionGroup.make(
+    { name: "mixed" },
+    Action.make("public", { description: "Public", access: "read", success: Schema.String }),
+    Action.make("hidden", {
+      description: "Hidden from both transports",
+      access: "write",
+      success: Schema.String,
+      http: false,
+      mcp: false,
+    }),
+  ).implement({
+    public: () => Effect.succeed("public"),
+    hidden: () => Effect.map(Principal, (principal) => principal),
+  });
+
+  const services = Layer.provide(HttpServer.layerServices);
+
+  const http = HttpRouter.toWebHandler(
+    ActionHttp.make({ apiPath: "/api" }, Mixed.group).layer({}, Mixed).pipe(services),
+  );
+
+  // No served HTTP action needs `Principal`, so no request owes it.
+  void http.handler(new Request("http://localhost"), Context.empty());
+
+  const mcp = HttpRouter.toWebHandler(
+    ActionMcp.layerHttp(
+      { protocols: [McpProtocol.v2026_07_28], name: "t", version: "0", path: "/mcp" },
+      Mixed,
+    ).pipe(services),
+  );
+
+  void mcp.handler(new Request("http://localhost/mcp"), Context.empty());
+
+  // A group with nothing to serve is never acquired, so its build channel is absent.
+  const LocalOnly = ActionGroup.make(
+    { name: "local" },
+    Action.make("only", {
+      description: "CLI only",
+      access: "write",
+      success: Schema.String,
+      http: false,
+      mcp: false,
+    }),
+  ).implement(
+    Effect.fail("build" as const).pipe(
+      Effect.tap(() => HiddenBuild),
+      Effect.as({ only: () => Effect.succeed("") }),
+    ),
+  );
+
+  const nothing = ActionHttp.make({ apiPath: "/api" }, LocalOnly.group).layer({}, LocalOnly);
+  const noBuildError: Equal<Layer.Error<typeof nothing>, never> = true;
+  const noBuildService: HiddenBuild extends Layer.Services<typeof nothing> ? false : true = true;
+  void noBuildError;
+  void noBuildService;
+  void HttpRouter.toWebHandler(nothing.pipe(services)).handler(new Request("http://localhost"));
+
+  // A flag decided at runtime may serve the action, so its requirements remain.
+  const enabled: boolean = process.env["ENABLE"] !== "no";
+
+  const Runtime = ActionGroup.make(
+    { name: "runtime" },
+    Action.make("maybe", {
+      description: "Served when enabled",
+      access: "read",
+      success: Schema.String,
+      http: enabled,
+      mcp: enabled ? {} : false,
+    }),
+  ).implement(Effect.map(HiddenBuild, () => ({ maybe: () => Effect.map(Principal, (p) => p) })));
+
+  const maybe = ActionHttp.make({ apiPath: "/api" }, Runtime.group).layer({}, Runtime);
+  const buildKept: HiddenBuild extends Layer.Services<typeof maybe> ? true : false = true;
+  void buildKept;
+
+  const request: Principal extends Layer.Services<typeof maybe> ? "build" : "request" = "request";
+  void request;
+
+  const maybeHttp = HttpRouter.toWebHandler(
+    maybe.pipe(services, Layer.provide(Layer.succeed(HiddenBuild)("built"))),
+  );
+
+  // @ts-expect-error `Principal` may be owed at request time.
+  void maybeHttp.handler(new Request("http://localhost"), Context.empty());
+
+  const maybeMcp = ActionMcp.layerHttp(
+    { protocols: [McpProtocol.v2026_07_28], name: "t", version: "0", path: "/mcp" },
+    Runtime,
+  );
+
+  const mcpBuildKept: HiddenBuild extends Layer.Services<typeof maybeMcp> ? true : false = true;
+  void mcpBuildKept;
+};
