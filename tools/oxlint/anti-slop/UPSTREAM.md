@@ -44,8 +44,8 @@ Preserve these when updating from upstream.
 ## Intentional deviations
 
 - Plugin authoring imports use `vite-plus/lint/plugins` instead of `@oxlint/plugins`.
-  Vite+ bundles Oxlint (`oxlint@1.82.0` via `vite-plus@0.3.2`) and documents this
-  re-export so local JS plugins stay pinned to the toolchain copy. Neither
+  Vite+ supplies the pinned Oxlint copy (inspect current versions with `vp toolchain`)
+  and documents this re-export so local JS plugins stay pinned to the toolchain copy. Neither
   `oxlint` nor `@oxlint/plugins` is added as a direct dependency.
 - Effect rules are enabled because this package depends on `effect` directly
   (peer and development) and the install requested the Effect rule group.

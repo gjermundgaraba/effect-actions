@@ -92,3 +92,8 @@ Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/
 - `quickstart.ts`, `quickstart-client.ts`: the minimal program and its typed client.
 - `contracts.ts`, `handlers.ts`, `app.ts`, `server.ts`: an authenticated application with three groups, per-group middleware, two MCP endpoints, OpenAPI and Swagger.
 - `toolkit.ts`, `catalog.ts`, `cli.ts`, `cli-client.ts`, `mcp-stdio.ts`: one file per other projection.
+
+- `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
+- `toolkit-authorized.ts`: native Toolkit invocation with authorization and correctly scoped identity.
+- `testing.ts`: in-memory HTTP and MCP calls with cleanup.
+- `cli-client-options.ts`, `testing-http-client.ts`: type-checked API reference definitions.

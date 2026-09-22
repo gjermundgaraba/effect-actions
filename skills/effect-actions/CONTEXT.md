@@ -18,7 +18,7 @@ use these words with these meanings.
 - **Adapter** (also **projection**): a module that maps implementations or contracts onto one surface: `ActionHttp`, `ActionMcp`, `ActionToolkit`, `ActionCli`, `ActionCliClient`, `ActionCatalog`. Each adapter reads only what it serves and validates only its own namespace.
 - **Binding**: the value an adapter returns before anything runs. `ActionHttp.make` returns the HTTP binding (`groups`, `api`, `layer`); `ActionToolkit.make` returns the Toolkit binding (`toolkit`, `layer`).
 - **Contract map**: the record `ActionGroup.contracts` returns, keyed `<group>.<action>`, with each action's exact type. The shared identity of an action across routes, tools and commands.
-- **Declared error**: an error schema listed on an action or inherited from its group. Handlers may fail with it. Encoded on every transport with its `httpApiStatus`.
+- **Declared error**: an error schema listed on an action or inherited from its group. Handlers may fail with it. HTTP encodes it with its `httpApiStatus`; MCP returns encoded error text in an `isError` result. Toolkit returns a native failure result, and CLI fails its command Effect without serializing the error.
 - **Schema-error policy**: a group option mapping Effect's `HttpApiSchemaError` (decode or encode failure) to a declared policy error with a status. HTTP only.
 - **Policy error**: an error a schema-error policy may answer with. Part of the transport contract, never returnable by a handler.
 - **Surface error**: an error declared on an adapter binding rather than on an action. Produced by middleware around the surface or by its pre-handler hook, never by a handler; declared so typed callers decode it.

@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
-import { Effect, Exit, Schema, type Scope } from "effect";
-import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import { Cause, Effect, Exit, Schema, type Scope } from "effect";
+import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import { NodeFileSystem } from "@effect/platform-node";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -205,10 +205,24 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
 
   await run(ActionCli.command(app, "scalar"), ["--input", '"text"']);
   await run(ActionCli.command(app, "nested"), ["--input", '{"nested":{"value":1}}']);
-  expect(Exit.isFailure(await runExit(ActionCli.command(app, "required"), ["--input", "{"]))).toBe(
-    true,
-  );
-  expect(Exit.isFailure(await runExit(ActionCli.command(app, "required"), []))).toBe(true);
+  const malformed = await runExit(ActionCli.command(app, "required"), ["--input", "{"]);
+  expect(Exit.isFailure(malformed)).toBe(true);
+
+  if (Exit.isFailure(malformed)) {
+    const error = Cause.squash(malformed.cause);
+    expect(error).toBeInstanceOf(CliError.ShowHelp);
+
+    if (error instanceof CliError.ShowHelp) {
+      expect(error.errors[0]).toBeInstanceOf(CliError.InvalidValue);
+    }
+  }
+
+  const omitted = await runExit(ActionCli.command(app, "required"), []);
+  expect(Exit.isFailure(omitted)).toBe(true);
+
+  if (Exit.isFailure(omitted)) {
+    expect(Cause.squash(omitted.cause)).toBeInstanceOf(Schema.SchemaError);
+  }
 
   expect(values).toEqual(["text", { nested: { value: 1 } }]);
 });

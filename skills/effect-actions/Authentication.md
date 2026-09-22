@@ -2,8 +2,8 @@
 
 Two helpers for hosts that own identity: router middleware that provides a request-scoped
 identity service, and RFC 9728 protected-resource discovery with bearer challenges. Token
-verification, login, and consent stay in the application. Authorization is a group's
-pre-handler hook ([ActionGroup.md](ActionGroup.md)), not part of this module.
+verification, login, and consent stay in the application. Authorization belongs in each adapter's
+`before` hook ([guarantees.md](guarantees.md)), not in this module or the group.
 
 ## API
 

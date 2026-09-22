@@ -44,25 +44,27 @@ Tool.Tool<
 ## Canonical
 
 ```ts
-import { Effect, Stream } from "effect";
+import { NodeRuntime } from "@effect/platform-node";
+import { Console, Effect, Layer, Stream } from "effect";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import { authorize, Forbidden } from "./auth.js";
+import { actors, authorize, CurrentActor, Forbidden } from "./auth.js";
 import { UserApp } from "./handlers.js";
+import { Users } from "./users.js";
 
-// The in-process caller is not trusted more than a remote one: it binds the same
-// rule, and a refusal is a declared tool failure.
+// The in-process caller binds the same rule as the guarded servers.
 const binding = ActionToolkit.make({ errors: [Forbidden], before: authorize }, UserApp);
 
 const program = Effect.gen(function* () {
-  const tools = yield* binding.toolkit; // bound handlers
+  const tools = yield* binding.toolkit;
   const calls = yield* tools.handle("get_user", { id: "1" }); // encoded arguments
   const results = yield* Stream.runCollect(calls);
-
-  return results;
+  yield* Console.log(results);
 }).pipe(
-  Effect.provideService(CurrentActor, actor), // request service, around the whole call
-  Effect.provide(binding.layer), // build services resolved here
+  Effect.provideService(CurrentActor, actors.alice), // identity around the whole invocation
+  Effect.provide(binding.layer.pipe(Layer.provide(Users.layerMemory))), // startup services only
 );
+
+program.pipe(NodeRuntime.runMain);
 ```
 
 With a model: pass `binding.toolkit` as `toolkit` to `LanguageModel.generateText` and provide `binding.layer`.

@@ -38,17 +38,21 @@ interface Described {
 ## Canonical
 
 ```ts
+import { NodeRuntime } from "@effect/platform-node";
+import { Console } from "effect";
 import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
 import { AuditActions, PublicActions, UserActions } from "./contracts.js";
 
-const catalog = ActionCatalog.make(PublicActions, UserActions, AuditActions);
-
-process.stdout.write(JSON.stringify(catalog, null, 2));
+// Contract inspection requires no implementation or domain-service Layer.
+Console.log(
+  JSON.stringify(ActionCatalog.make(PublicActions, UserActions, AuditActions), null, 2),
+).pipe(NodeRuntime.runMain);
 ```
 
 ## Rules
 
 - Takes groups, not implementations. Nothing is acquired or started.
+- Group names must be unique across the supplied groups. Entries preserve group declaration order, then action declaration order.
 - `id` is the stable `<group>.<action>` identity, equal to the HTTP operation ID.
 - Schemas describe encoded action values: the JSON on the wire, not MCP's `{ value }` envelope and not deployment URLs.
 - Both descriptions come from one lowering of the JSON wire form, the same `Schema.toCodecJson` every adapter sends. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. A codec's transformations are in neither. JSON-valued annotations set with `annotate` are persisted verbatim in `representation`; `TaggedError` class options such as `httpApiStatus` are not part of the wire form and do not appear.
@@ -62,6 +66,7 @@ process.stdout.write(JSON.stringify(catalog, null, 2));
 
 ## Failure modes
 
+- `Duplicate catalog group: <name>`: two supplied groups share a name, including the same group passed twice. Pass each named group once.
 - Type error passing an implementation: `make` takes groups. Pass `app.group` or the group value itself.
 - `fromRepresentation` throws `Missing reviver for <id>`: add that reviver to `revivers`. Wire forms carry filters of their own, such as `isStringBigInt` for a `bigint`, and `effect/schema/Json` needs `JsonReviver`. Custom filters need a reviver you write with `SchemaRepresentation.makeReviverFilter`.
 - An entry has no `representation`: Effect refused to persist that schema. Annotate the anonymous filter, or fix the `representation.id` it rejected; `SchemaRepresentation.toJson` on the schema's own document reports which.

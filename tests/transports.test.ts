@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
-import { Effect, Layer, Predicate, Schema } from "effect";
+import { Context, Effect, Layer, Predicate, Schema } from "effect";
 import { McpProtocol, McpSchema } from "effect/unstable/ai";
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as Authentication from "../src/Authentication.js";
 import { makeTestApp, testMcpPath } from "./server.js";
 import { Http, InvalidRequest, UserNotFound } from "../examples/contracts.js";
 import { Forbidden } from "../examples/auth.js";
@@ -435,16 +443,87 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
       headers: origin === undefined ? undefined : { origin },
     });
 
-  // Without `allowedOrigins` the native server admits Origin-less non-browser
-  // clients and answers any browser origin with 403, before authentication.
+  // Without `allowedOrigins` the native server admits Origin-less clients
+  // and answers Origin-bearing requests that reach it with 403.
   const closed = serve();
   expect((await closed(list())).status).toBe(200);
   expect((await closed(list("http://localhost:3000"))).status).toBe(403);
 
-  // Listing the exact origin is how a browser-hosted client is admitted.
+  // The exact allowlist admits the request, but does not supply browser CORS.
   const open = serve(["http://localhost:3000"]);
-  expect((await open(list("http://localhost:3000"))).status).toBe(200);
+  const allowed = await open(list("http://localhost:3000"));
+  expect(allowed.status).toBe(200);
+  expect(allowed.headers.get("access-control-allow-origin")).toBeNull();
   expect((await open(list("http://localhost:4000"))).status).toBe(403);
+
+  const preflight = await open(
+    new Request(`http://localhost${testMcpPath}`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type,mcp-protocol-version",
+      },
+    }),
+  );
+
+  expect(preflight.status).toBe(405);
+  expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+});
+
+it("runs wrapping authentication before the native MCP Origin check", async () => {
+  class Identity extends Context.Service<Identity, string>()("origin/Identity") {}
+
+  let authentications = 0;
+
+  const authentication = Authentication.middleware(
+    Identity,
+    Effect.gen(function* () {
+      authentications++;
+      const request = yield* HttpServerRequest.HttpServerRequest;
+
+      if (request.headers.authorization !== "Bearer accepted") {
+        return yield* Effect.fail(HttpServerResponse.empty({ status: 401 }));
+      }
+
+      return "caller";
+    }),
+  );
+
+  const web = HttpRouter.toWebHandler(
+    ActionMcp.layerHttp({
+      protocols: [McpProtocol.v2026_07_28],
+      name: "origin-order",
+      version: "0",
+      path: testMcpPath,
+      allowedOrigins: ["https://allowed.example"],
+    }).pipe(Layer.provide(authentication.layer), Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const rejected = await web.handler(
+    mcpRequest({
+      url: `http://localhost${testMcpPath}`,
+      method: "tools/list",
+      headers: { origin: "https://disallowed.example" },
+    }),
+  );
+
+  expect(rejected.status).toBe(401);
+  expect(authentications).toBe(1);
+
+  const authenticated = await web.handler(
+    mcpRequest({
+      url: `http://localhost${testMcpPath}`,
+      method: "tools/list",
+      headers: { origin: "https://disallowed.example", authorization: "Bearer accepted" },
+    }),
+  );
+
+  expect(authenticated.status).toBe(403);
+  expect(authentications).toBe(2);
 });
 
 it("supplies the native request context to handlers without a router requirement", async () => {

@@ -115,7 +115,7 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 
 ## Rules
 
-- `name` matches `[A-Za-z0-9_-]+` and must be unique within one `ActionHttp.make`. Action names must be unique within the group. MCP tool names must be unique within the group and within each Toolkit or MCP projection that serves it. Duplicates fail at `make`.
+- `name` matches `[A-Za-z0-9_-]+`, cannot be `then`, and must be unique within one `ActionHttp.make`. Action names must be unique within the group. MCP tool names must be unique within the group and within each Toolkit or MCP projection that serves it. Duplicates fail at `make`.
 - Group `errors` are appended to each action's own `errors`, so every handler of the group may fail with them. A failure that only the surface produces belongs on the adapter instead (`ActionHttp.make`'s `errors`, `ActionMcp`'s and `ActionToolkit`'s `errors`), not here.
 - `implement` takes a complete record or an Effect producing one. The record must have exactly one handler per action; a missing key is a compile error. It takes nothing else.
 - The builder Effect runs once per adapter layer that serves the implementation, in that layer's scope. An implementation served by HTTP and MCP is built twice. Acquire shared state in a Layer you provide to the adapters, not in the builder.

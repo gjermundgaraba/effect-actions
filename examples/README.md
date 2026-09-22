@@ -76,7 +76,7 @@ curl -s http://127.0.0.1:3000/mcp/public \
 curl -s http://127.0.0.1:3000/openapi.json
 ```
 
-For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The HTTP endpoint runs the same handler and so the same check.
+For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The HTTP surface binds the same authorization hook, so it enforces the same check before the handler.
 
 ## Application structure
 
@@ -141,3 +141,13 @@ node --import tsx examples/catalog.ts
 use `--help` for their options. [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
 stdout for JSON-RPC and routes Effect logs to stderr.
+
+[mcp-browser.ts](mcp-browser.ts) exports public stateless MCP routes with an explicit Origin
+allowlist and separate router CORS configuration; mount them with a platform server.
+[toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
+authorization hook and a per-invocation principal.
+Run `node --import tsx examples/testing.ts` for in-memory HTTP and MCP calls with cleanup.
+
+[cli-client-options.ts](cli-client-options.ts) and
+[testing-http-client.ts](testing-http-client.ts) are type-checked reference definitions
+compared with their documentation snippets, not standalone applications.

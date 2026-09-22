@@ -6,17 +6,28 @@ loads the optional `@modelcontextprotocol/client` peer and nothing else does.
 ## API
 
 ```ts
+import type { Effect } from "effect";
+import type { HttpClient } from "effect/unstable/http";
+import type { HttpApi, HttpApiClient, HttpApiGroup } from "effect/unstable/httpapi";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+
+/** Native grouped client calling a web handler in memory; baseUrl defaults to http://localhost. */
+export const httpClient: <Id extends string, Groups extends HttpApiGroup.Constraint>(
+  api: HttpApi.HttpApi<Id, Groups>,
+  handler: Testing.Handler,
+  options?: NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
+) => Effect.Effect<
+  HttpApiClient.Client<Groups>,
+  never,
+  Exclude<HttpApiGroup.MiddlewareClient<Groups>, HttpClient.HttpClient>
+> = Testing.httpClient;
+```
+
+### MCP helpers
+
+```ts
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import * as TestingClient from "@gjermundgaraba/effect-actions/TestingClient";
-
-type Handler = (request: Request) => Promise<Response>; // HttpRouter.toWebHandler(routes).handler
-
-/** Native grouped HttpApiClient calling `handler` in memory. baseUrl defaults to http://localhost. */
-const httpClient: <Api extends HttpApi.HttpApi<any, any>>(
-  api: Api,
-  handler: Handler,
-  options?: Parameters<typeof HttpApiClient.make>[1],
-) => Effect.Effect<HttpApiClient.Client<Api>>;
 
 /** One stateless 2026-07-28 JSON-RPC request with client metadata defaulted. */
 const mcpRequest: (options: McpRequestOptions) => Request;
@@ -53,25 +64,31 @@ import * as TestingClient from "@gjermundgaraba/effect-actions/TestingClient";
 import { Http, routes } from "./quickstart.js";
 
 const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)));
-// call web.dispose() when the test finishes
 
-// HTTP, typed, in memory.
-const greeting = Effect.gen(function* () {
-  const client = yield* Testing.httpClient(Http.api, web.handler);
+try {
+  const greeting = await Effect.runPromise(
+    Effect.gen(function* () {
+      const client = yield* Testing.httpClient(Http.api, web.handler);
 
-  return yield* client.greetings.greet({ payload: { name: "Ada" } });
-});
+      return yield* client.greetings.greet({ payload: { name: "Ada" } });
+    }),
+  );
 
-// MCP, raw request, no handshake (2026-07-28 is stateless).
-const listed = await web.handler(
-  Testing.mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }),
-);
+  // Raw MCP request; this stateless revision needs no initialize handshake.
+  const listed = await web.handler(
+    Testing.mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }),
+  );
 
-// MCP, official client.
-const result = await TestingClient.withMcpClient(
-  { fetch: web.handler, path: "/mcp", versionNegotiation: { mode: { pin: "2026-07-28" } } },
-  (client) => client.callTool({ name: "greet", arguments: { name: "Ada" } }),
-);
+  // The official client uses the same in-memory handler.
+  const result = await TestingClient.withMcpClient(
+    { fetch: web.handler, path: "/mcp", versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    (client) => client.callTool({ name: "greet", arguments: { name: "Ada" } }),
+  );
+
+  console.log({ greeting, listStatus: listed.status, result });
+} finally {
+  await web.dispose();
+}
 ```
 
 ## Rules
@@ -88,4 +105,5 @@ const result = await TestingClient.withMcpClient(
 - `@modelcontextprotocol/client` not found: only `TestingClient` needs it. Install the peer in devDependencies, or use `Testing.mcpRequest` instead.
 - Official client fails negotiation against a stateless endpoint: set `versionNegotiation: { mode: { pin: "2026-07-28" } }`.
 - Handler leaks between tests: `web.dispose()` was not called. Register it with the test runner's cleanup hook.
-- 404 from `httpClient`: `routes` did not include `Http.layer({}, app)`, or `HttpServer.layerServices` was not provided to `toWebHandler`.
+- 404 from `httpClient`: the requested route was not mounted, or the path/base URL is wrong. Include `Http.layer({}, app)` in the served routes.
+- Missing platform-service requirements when constructing the web handler: provide `HttpServer.layerServices` to the routes before `toWebHandler`.

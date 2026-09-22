@@ -39,7 +39,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - `docs/` is for coding agents. Every page has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. No tutorials, no narrative. State what holds and what breaks.
 - `docs/README.md` is the routing table and doubles as the skill body. One line per page saying when to read it.
 - A change to public behavior changes the matching `docs/` page in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
-- `tests/docs.test.ts` compares the README showcase and selected `docs/` snippets with files in `examples/`, so those snippets stay type-checked. Edit the example, then paste.
+- `tests/docs.test.ts` compares the README showcase, selected canonical examples, and reference type definitions with files in `examples/`, so those snippets stay type-checked. `tests/docs-types.spec.ts` also checks the documented types against the public APIs. Edit the example, then paste.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
 
 ## Release

@@ -9,33 +9,58 @@ handler locally and manages no credentials.
 import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
 
 /** One HTTP-enabled action retained by the binding. */
-const command: <const Groups, const GroupName, const ActionName, Parameters = never>(
-  http: Http<Groups>,
+const command: <
+  const Groups,
+  const Errors,
+  const GroupName,
+  const ActionName,
+  ParsedParameters = never,
+>(
+  http: Http<Groups, Errors>,
   groupName: GroupName,
   actionName: ActionName, // only actions with http: true
-  options?: Options<SuccessType, Parameters>,
+  options?: Options<SuccessType, ParsedParameters>,
 ) => Command.Command<string, never, {}, ClientErrors, HttpClient.HttpClient | ClientServices>;
 
 /** Every HTTP-enabled action of one group under the group name. */
-const group: <const Groups, const GroupName>(
-  http: Http<Groups>,
+const group: <const Groups, const Errors, const GroupName>(
+  http: Http<Groups, Errors>,
   groupName: GroupName,
   options?: GroupOptions,
 ) => Command.Command<string, {}, {}, ClientErrors, HttpClient.HttpClient | ClientServices>;
+```
 
-type Options<Output, Parameters> = ActionCli.Options<Output, Parameters> & {
-  /** Passed directly to HttpApiClient.make: baseUrl, transformClient, transformResponse. */
-  readonly connection?: Parameters<typeof HttpApiClient.make>[1];
-};
+### Options
 
-interface GroupOptions {
+```ts
+import type { Schema } from "effect";
+import type { Command } from "effect/unstable/cli";
+import type { HttpApiClient } from "effect/unstable/httpapi";
+
+/** Native client configuration: baseUrl, transformClient, transformResponse. */
+export type Connection = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
+
+/** Remote commands have no local `before` hook. */
+export type Options<Output, ParsedParameters extends Command.Command.Config = never> = {
   readonly name?: string;
-  readonly connection?: Parameters<typeof HttpApiClient.make>[1]; // shared by every action
+  readonly render?: (output: Output) => string;
+  readonly connection?: Connection;
+} & (
+  | { readonly parameters?: never; readonly input?: never }
+  | {
+      readonly parameters: ParsedParameters;
+      readonly input: (parsed: Command.Command.Config.InferValue<ParsedParameters>) => Schema.Json;
+    }
+);
+
+export interface GroupOptions {
+  readonly name?: string;
+  readonly connection?: Connection;
 }
 ```
 
 Parsing and rendering options (`name`, `render`, `parameters`, `input`) are the same as
-[ActionCli.md](ActionCli.md).
+[ActionCli.md](ActionCli.md). Remote commands have no `before` hook: the server owns authorization.
 
 ## Canonical
 
@@ -53,7 +78,8 @@ const command = ActionCliClient.command(Http, "public", "status", {
 Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
   Effect.tapCause((cause) => Console.error(cause)),
   Effect.provideService(Logger.LogToStderr, true),
-  Effect.provide(NodeHttpClient.layerUndici), // the host supplies HttpClient
+  // The host supplies the native client and its connection configuration.
+  Effect.provide(NodeHttpClient.layerUndici),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain({ disableErrorReporting: true }),
 );

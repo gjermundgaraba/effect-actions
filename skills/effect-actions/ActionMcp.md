@@ -38,7 +38,7 @@ interface SurfaceOptions<Errors, RB> {
 interface Options<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
   readonly name: string; // server info
   readonly version: string;
-  readonly protocols: ReadonlyArray<McpProtocol>; // required, e.g. [McpProtocol.v2026_07_28]
+  readonly protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>; // required, e.g. [McpProtocol.v2026_07_28]
   readonly path: HttpRouter.PathInput; // no default
   readonly allowedOrigins?: ReadonlyArray<string>; // passed to McpServer.layerHttp
   readonly instructions?: string;
@@ -47,7 +47,7 @@ interface Options<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
 interface StdioOptions<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
   readonly name: string;
   readonly version: string;
-  readonly protocols: ReadonlyArray<McpProtocol>;
+  readonly protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>;
   readonly instructions?: string;
 }
 ```
@@ -95,20 +95,79 @@ const mcp = ActionMcp.layerHttp(
 export const layer = Layer.mergeAll(publicMcp, mcp);
 ```
 
-Subprocess:
+### Cross-origin browsers
+
+`allowedOrigins` alone does not configure CORS. For a stateless browser endpoint, mount
+native router CORS outside the route middleware. This CORS layer is global to the router;
+choose its policy for every route it covers.
+
+```ts
+import { Effect, Layer } from "effect";
+import { McpProtocol } from "effect/unstable/ai";
+import { HttpRouter } from "effect/unstable/http";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Actions } from "./quickstart.js";
+
+const allowedOrigins = ["https://ui.example.com"];
+
+const app = Actions.implement({ greet: ({ name }) => Effect.succeed(`Hello, ${name}!`) });
+
+const mcp = ActionMcp.layerHttp(
+  {
+    name: "greetings",
+    version: "1.0.0",
+    path: "/mcp",
+    protocols: [McpProtocol.v2026_07_28],
+    allowedOrigins,
+  },
+  app,
+);
+
+// Global router CORS handles preflight outside route-level authentication.
+// This example is public; protected endpoints still need authentication and a hook.
+export const routes = Layer.mergeAll(
+  mcp,
+  HttpRouter.cors({
+    allowedOrigins,
+    allowedMethods: ["POST"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "MCP-Protocol-Version",
+      "MCP-Method",
+      "MCP-Name",
+    ],
+    exposedHeaders: ["WWW-Authenticate", "MCP-Protocol-Version"],
+  }),
+);
+```
+
+### Subprocess
 
 ```ts
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Console, Effect, Layer, Logger } from "effect";
+import { Console, Effect, Layer, Logger, Schema } from "effect";
 import { McpProtocol } from "effect/unstable/ai";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
+const Status = Action.make("status", {
+  description: "Report whether the subprocess is ready.",
+  success: Schema.Struct({ ready: Schema.Boolean }),
+  access: "read",
+});
+
+const app = ActionGroup.make({ name: "stdio" }, Status).implement({
+  status: () => Effect.log("status called").pipe(Effect.as({ ready: true })),
+});
+
 const layer = ActionMcp.layerStdio(
-  { name: "app-stdio", version: "1.0.0", protocols: [McpProtocol.v2026_07_28] },
+  { name: "effect-actions-stdio", version: "0.1.0", protocols: [McpProtocol.v2026_07_28] },
   app,
 ).pipe(Layer.provide(NodeStdio.layer));
 
-// stdout is protocol-only; logs go to stderr.
+// Protocol messages use stdout exclusively. Runtime diagnostics remain on stderr.
 Layer.launch(layer).pipe(
   Effect.tapCause((cause) => Console.error(cause)),
   Effect.provideService(Logger.LogToStderr, true),
@@ -118,9 +177,10 @@ Layer.launch(layer).pipe(
 
 ## Rules
 
-- `protocols` is required and takes Effect's native `McpProtocol` adapters. Effect owns negotiation, revision rejection, and sessions. `[McpProtocol.v2026_07_28]` gives a stateless endpoint that needs no initialize handshake.
+- `protocols` is required and must be a nonempty list of Effect's native `McpProtocol.ProtocolAdapter` values. Effect owns negotiation, revision rejection, and sessions. `[McpProtocol.v2026_07_28]` gives a stateless endpoint that needs no initialize handshake.
 - `path` has no default. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form, whatever revision is negotiated.
-- The native server answers any request carrying an `Origin` header with **403** unless that exact origin is listed in `allowedOrigins`, before authentication; an endpoint without the option therefore serves Origin-less non-browser clients only, and listing the origin is how a browser-hosted client is admitted.
+- Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication middleware wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
+- `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
 - An endpoint is one route. Middleware provided to `layerHttp` covers all of its tools. To serve tools under different middleware, mount them on different paths with separate `layerHttp` calls.
 - Only MCP-enabled actions become tools, under `mcp.name` with the resolved hints. A group with no tools is not built.
 - Every MCP-enabled action must have object-root input. Checked synchronously when `layerHttp` or `layerStdio` is called, before any handler is acquired; a violation throws. The `IllegalArgumentError` in the layer's error channel comes from the native transport, not from this check.
@@ -143,5 +203,8 @@ Layer.launch(layer).pipe(
 - Public tool requires a token: it shares an endpoint with protected tools. Give it its own path.
 - Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.
 - Older MCP client cannot connect: the client expects a revision not listed in `protocols`. Add the adapter for that revision.
-- A browser-hosted client gets an empty 403 from every call: its `Origin` is not in `allowedOrigins`. Add the exact origin, or keep the endpoint for non-browser clients.
+- An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.
+- A disallowed Origin receives 401 instead: wrapping authentication rejected it before the native Origin check. Put any required pre-authentication Host/Origin policy in outer host middleware.
+- Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.
+- Type error on an empty `protocols` array: provide at least one native protocol adapter.
 - A refusal arrives as a generic internal-error result: the hook failed with an error this transport does not declare, which is a defect. Add its schema to `errors`.

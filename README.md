@@ -104,7 +104,7 @@ Authentication and authorization belong to the application. See [docs/setup.md](
 
 ## Acknowledgements
 
-A few idea (like the native Toolkit, CLI, and catalog projections) are inspired by the excellent [rat-stack](https://github.com/joelhooks/rat-stack) by Joel Hooks.
+A few ideas (like the native Toolkit, CLI, and catalog projections) are inspired by the excellent [rat-stack](https://github.com/joelhooks/rat-stack) by Joel Hooks.
 
 ## Contributing
 

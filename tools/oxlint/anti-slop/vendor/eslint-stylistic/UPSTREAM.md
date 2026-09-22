@@ -23,6 +23,8 @@ The opinionated policy lives outside this directory in `../../rules/require-read
 
 ## Updating and verification
 
-Fetch an explicit upstream revision, compare the original rule and types against this revision, and port relevant fixes while retaining the adapters above. Update this record and preserve the license. Run `pnpm check` and `pnpm sync:skill-assets` as required by repository guidance.
+Fetch an explicit upstream revision, compare the original rule and types against this revision, and port relevant fixes while retaining the adapters above. Update this record and preserve the license. In this repository run `vp check` and `vp test`; see [the parent provenance record](../../UPSTREAM.md) and [CONTRIBUTING.md](../../../../../CONTRIBUTING.md#lint-policy).
 
-Focused Oxlint RuleTester cases live in `../../rules/require-readable-spacing.test.ts`; they test exact fixes, JSDoc/trailing comments, same-line statements, semicolon-free code, TypeScript exports/overloads, Effect-style generators, and upstream removal behavior. `../../rules/require-readable-spacing-cli.test.ts` verifies the exported plugin through the native Oxlint CLI on multiple files, including rejection, autofix, and repeated-fix stability. The complete upstream JS/TS test suites have not been ported; this is focused compatibility evidence, not a claim of full upstream conformance.
+The upstream anti-slop repository has focused tests at `rules/require-readable-spacing.test.ts` and `rules/require-readable-spacing-cli.test.ts`. Its `pnpm sync:skill-assets` command and those test files were not copied into this repository. Consult the pinned anti-slop revision in the parent provenance record for that compatibility evidence: exact fixes, comments, semicolon-free code, TypeScript exports/overloads, Effect-style generators, and CLI autofix stability.
+
+Local tests in `tools/oxlint/tests/` cover the rule corrections listed in the parent record; they are not a port of the upstream spacing suite. The complete ESLint Stylistic JS/TS suites have not been ported either. This is limited compatibility evidence, not a claim of full upstream conformance.
