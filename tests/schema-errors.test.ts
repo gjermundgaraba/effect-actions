@@ -1,14 +1,15 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Layer, Schema, SchemaIssue, SchemaTransformation } from "effect";
+import { Effect, Layer, Record, Schema, SchemaIssue, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
-import { McpProtocol, McpSchema } from "effect/unstable/ai";
+import { McpSchema } from "effect/unstable/ai";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
-import type { HttpApiError } from "effect/unstable/httpapi";
+import { HttpApiError } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { mcpRequest as toolRequest } from "../src/Testing.js";
+import { answerSchemaError } from "../src/internal/actions.js";
 
 class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
   "InvalidRequest",
@@ -29,12 +30,32 @@ class Rejected extends Schema.TaggedError<Rejected>()(
 ) {}
 
 const schemaError = {
-  errors: [InvalidRequest, InvalidResponse],
-  map: (failure: HttpApiError.HttpApiSchemaError) =>
-    failure.kind === "Body" || failure.kind === "ResponseHeaders"
-      ? new InvalidResponse({ error: "Invalid response" })
-      : new InvalidRequest({ error: "Invalid request" }),
+  invalid: { schema: InvalidRequest, make: () => new InvalidRequest({ error: "Invalid request" }) },
+  internal: {
+    schema: InvalidResponse,
+    make: () => new InvalidResponse({ error: "Invalid response" }),
+  },
 };
+
+/** The same answers, with every native failure they are asked to answer recorded. */
+const recordingPolicy = (failures: Array<HttpApiError.HttpApiSchemaError>) => ({
+  invalid: {
+    schema: InvalidRequest,
+    make: (failure: HttpApiError.HttpApiSchemaError) => {
+      failures.push(failure);
+
+      return schemaError.invalid.make();
+    },
+  },
+  internal: {
+    schema: InvalidResponse,
+    make: (failure: HttpApiError.HttpApiSchemaError) => {
+      failures.push(failure);
+
+      return schemaError.internal.make();
+    },
+  },
+});
 
 const Echo = Action.make("echo", {
   description: "Echo",
@@ -45,9 +66,13 @@ const Echo = Action.make("echo", {
 });
 
 // The policy belongs to the group, so a test with its own policy makes its own group.
-const echoGroup = <const Name extends string, const Errors extends ReadonlyArray<Action.Codec>>(
+const echoGroup = <
+  const Name extends string,
+  Invalid extends Action.Codec,
+  Internal extends Action.Codec,
+>(
   name: Name,
-  policy: ActionGroup.SchemaErrorPolicy<Errors>,
+  policy: ActionGroup.SchemaErrorPolicy<Invalid, Internal>,
 ) => ActionGroup.make({ name, schemaError: policy }, Echo);
 
 const actions = echoGroup("test", schemaError);
@@ -60,6 +85,28 @@ const request = (value: Schema.Json, group = "test") =>
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ value }),
   });
+
+// Every kind HttpApi reports, by whose fault it is. `satisfies` fails to compile when
+// Effect adds a kind, so a new one is placed deliberately rather than by default.
+const sides = {
+  Params: "invalid",
+  Headers: "invalid",
+  Query: "invalid",
+  Payload: "invalid",
+  Body: "internal",
+  ResponseHeaders: "internal",
+} as const satisfies Record<HttpApiError.HttpApiSchemaError["kind"], "invalid" | "internal">;
+
+it.each(Record.toEntries(sides))("answers a %s failure with the %s error", (kind, side) => {
+  const cause = Effect.runSync(Effect.flip(Schema.decodeUnknownEffect(Schema.String)(1)));
+  const failures: Array<HttpApiError.HttpApiSchemaError> = [];
+  const failure = new HttpApiError.HttpApiSchemaError({ kind, cause });
+
+  expect(answerSchemaError(recordingPolicy(failures), failure)).toEqual(
+    side === "invalid" ? schemaError.invalid.make() : schemaError.internal.make(),
+  );
+  expect(failures).toEqual([failure]);
+});
 
 it("maps input and output failures and exposes the same error contract to clients", async () => {
   const app = actions.implement({
@@ -129,8 +176,8 @@ it("answers with each group's own policy inside one adapter", async () => {
     {
       name: "second",
       schemaError: {
-        errors: [InvalidResponse],
-        map: () => new InvalidResponse({ error: "Second policy" }),
+        invalid: { schema: Rejected, make: () => new Rejected({ error: "Second policy" }) },
+        internal: schemaError.internal,
       },
     },
     Action.make("other", {
@@ -155,7 +202,7 @@ it("answers with each group's own policy inside one adapter", async () => {
 
   for (const [path, status, message] of [
     ["test/echo", 400, "Invalid request"],
-    ["second/other", 500, "Second policy"],
+    ["second/other", 409, "Second policy"],
   ] as const) {
     const response = await web.handler(
       new Request(`http://localhost/api/${path}`, {
@@ -177,12 +224,15 @@ it("gives the policy every issue", async () => {
     {
       name: "pair",
       schemaError: {
-        errors: [InvalidRequest],
-        map: (failure: HttpApiError.HttpApiSchemaError) => {
-          seen.push(failure.cause.issue);
+        invalid: {
+          schema: InvalidRequest,
+          make: (failure) => {
+            seen.push(failure.cause.issue);
 
-          return new InvalidRequest({ error: "Invalid request" });
+            return new InvalidRequest({ error: "Invalid request" });
+          },
         },
+        internal: schemaError.internal,
       },
     },
     Action.make("pair", {
@@ -232,16 +282,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
   const failures: HttpApiError.HttpApiSchemaError[] = [];
   let calls = 0;
 
-  const policy = {
-    errors: schemaError.errors,
-    map: (failure: HttpApiError.HttpApiSchemaError) => {
-      failures.push(failure);
-
-      return schemaError.map(failure);
-    },
-  };
-
-  const recorded = echoGroup("recorded", policy);
+  const recorded = echoGroup("recorded", recordingPolicy(failures));
 
   const app = recorded.implement({
     echo: ({ value }) => {
@@ -261,7 +302,6 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
     Layer.merge(
       recording.layer([app]),
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -340,7 +380,6 @@ it("executes each input/output transformation once with a policy enabled", async
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, group).layer([app]),
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -366,12 +405,15 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
   const brokenError = Broken.make({ value: Infinity }, { disableChecks: true });
 
   const broken = {
-    errors: [Broken],
-    map: () => {
-      mappings++;
+    invalid: {
+      schema: Broken,
+      make: () => {
+        mappings++;
 
-      return brokenError;
+        return brokenError;
+      },
     },
+    internal: schemaError.internal,
   };
 
   const app = echoGroup("broken", broken).implement({ echo: ({ value }) => Effect.succeed(value) });
@@ -380,7 +422,6 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer([app]),
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -400,23 +441,14 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
 });
 
 it("keeps invalid declared-error encoding a defect on both transports", async () => {
-  let mappings = 0;
-
-  const policy = {
-    errors: schemaError.errors,
-    map: (failure: HttpApiError.HttpApiSchemaError) => {
-      mappings++;
-
-      return schemaError.map(failure);
-    },
-  };
+  const failures: Array<HttpApiError.HttpApiSchemaError> = [];
 
   const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
   // Bypass construction checks deliberately; the adapter must reject this value.
   const domainError = Domain.make({ value: Infinity }, { disableChecks: true });
 
   const group = ActionGroup.make(
-    { name: "test", schemaError: policy },
+    { name: "test", schemaError: recordingPolicy(failures) },
     Action.make("echo", {
       description: "Broken domain error",
       access: "write",
@@ -434,7 +466,6 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     Layer.merge(
       ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer([app]),
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -452,5 +483,5 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     isError: true,
     content: [{ type: "text", text: "Tool execution failed due to an internal server error." }],
   });
-  expect(mappings).toBe(0);
+  expect(failures).toEqual([]);
 });

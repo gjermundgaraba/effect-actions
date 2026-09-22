@@ -1,4 +1,3 @@
-import { McpProtocol } from "effect/unstable/ai";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -33,7 +32,6 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
     transport === "HTTP"
       ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
       : ActionMcp.layerHttp([app], {
-          protocols: [McpProtocol.v2026_07_28],
           name: "test",
           version: "0",
           path: testMcpPath,
@@ -89,7 +87,6 @@ it("each adapter layer acquires and releases its own handler build", async () =>
   const routes = Layer.mergeAll(
     ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app]),
     ActionMcp.layerHttp([app], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "test",
       version: "0",
       path: testMcpPath,
@@ -110,7 +107,6 @@ it("each adapter layer acquires and releases its own handler build", async () =>
       expect(await response.json()).toBe("build/http");
       await withMcpClient(
         {
-          versionNegotiation: { mode: { pin: "2026-07-28" } },
           fetch: (request) => web.handler(request, Context.make(Actor, "mcp")),
           path: testMcpPath,
         },
@@ -138,13 +134,11 @@ it("keeps same-contract implementations apart over MCP", async () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
       ActionMcp.layerHttp([a], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "a",
         version: "0",
         path: "/a",
       }),
       ActionMcp.layerHttp([b], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "b",
         version: "0",
         path: "/b",
@@ -156,14 +150,11 @@ it("keeps same-contract implementations apart over MCP", async () => {
   onTestFinished(() => web.dispose());
 
   for (const name of ["a", "b", "a"]) {
-    await withMcpClient(
-      { versionNegotiation: { mode: { pin: "2026-07-28" } }, fetch: web.handler, path: `/${name}` },
-      async (client) => {
-        expect(
-          (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-        ).toEqual({ value: name });
-      },
-    );
+    await withMcpClient({ fetch: web.handler, path: `/${name}` }, async (client) => {
+      expect(
+        (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
+      ).toEqual({ value: name });
+    });
   }
 });
 
@@ -202,7 +193,6 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       transport === "HTTP"
         ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
         : ActionMcp.layerHttp([app], {
-            protocols: [McpProtocol.v2026_07_28],
             name: "test",
             version: "0",
             path: testMcpPath,
@@ -223,7 +213,6 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     } else {
       await withMcpClient(
         {
-          versionNegotiation: { mode: { pin: "2026-07-28" } },
           fetch: (request) => web.handler(request, context),
           path: testMcpPath,
         },
@@ -273,7 +262,6 @@ it.each(["HTTP", "MCP"])(
       transport === "HTTP"
         ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
         : ActionMcp.layerHttp([app], {
-            protocols: [McpProtocol.v2026_07_28],
             name: "test",
             version: "0",
             path: testMcpPath,

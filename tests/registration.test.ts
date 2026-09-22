@@ -1,8 +1,7 @@
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { withMcpClient } from "../src/TestingClient.js";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
-import { McpProtocol, McpSchema } from "effect/unstable/ai";
+import { McpSchema } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -15,25 +14,66 @@ import { post } from "./requests.js";
 const mcpCall = (name: string, args: Schema.Json = {}) =>
   mcpRequest({ url: testMcpUrl, method: "tools/call", params: { name, arguments: args } });
 
-it("forwards the configured MCP protocols", async () => {
+it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
   const web = HttpRouter.toWebHandler(
     ActionMcp.layerHttp([], {
       name: "configured",
       version: "0",
       path: "/mcp",
-      protocols: [McpProtocol.v2025_11_25],
+      description: "A configured server",
+      websiteUrl: "https://example.com",
+      icons: [{ src: "https://example.com/icon.png" }],
+      extensions: { "io.example/extension": {} },
     }).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
   onTestFinished(() => web.dispose());
 
-  await withMcpClient(
-    { fetch: web.handler, path: "/mcp", versionNegotiation: { mode: "legacy" } },
-    async (client) => {
-      expect((await client.listTools()).tools).toEqual([]);
-    },
+  const discovered = await web.handler(
+    mcpRequest({ url: "http://localhost/mcp", method: "server/discover" }),
   );
+
+  expect(discovered.status).toBe(200);
+  expect(await discovered.json()).toMatchObject({
+    result: {
+      _meta: {
+        "io.modelcontextprotocol/serverInfo": {
+          name: "configured",
+          version: "0",
+          description: "A configured server",
+          websiteUrl: "https://example.com",
+          icons: [{ src: "https://example.com/icon.png" }],
+        },
+      },
+      supportedVersions: ["2026-07-28"],
+      capabilities: { extensions: { "io.example/extension": {} } },
+    },
+  });
+
+  // A 2025 client opens with `initialize` and no protocol header; nothing answers it.
+  const legacy = await web.handler(
+    new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "legacy", version: "0" },
+        },
+      }),
+    }),
+  );
+
+  expect(legacy.status).toBe(400);
+  expect(await legacy.json()).toMatchObject({ error: { code: -32020 } });
 });
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
@@ -352,7 +392,6 @@ describe("projection boundaries", () => {
     });
 
     const layer = ActionMcp.layerHttp([app], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "test",
       version: "0",
       path: "/mcp",

@@ -22,8 +22,8 @@ const actions = ActionGroup.make(
   {
     name: "numbers",
     schemaError: {
-      errors: [Invalid],
-      map: () => new Invalid({ message: "Invalid output" }),
+      invalid: { schema: Invalid, make: () => new Invalid({ message: "Invalid input" }) },
+      internal: { schema: Invalid, make: () => new Invalid({ message: "Invalid output" }) },
     },
   },
   Action.make("double", {

@@ -1,6 +1,6 @@
 {
   "name": "@gjermundgaraba/effect-actions",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, catalogs, and CLIs.",
   "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
   "bugs": {
@@ -23,6 +23,7 @@
     "./ActionCliClient": "./dist/ActionCliClient.mjs",
     "./ActionGroup": "./dist/ActionGroup.mjs",
     "./ActionHttp": "./dist/ActionHttp.mjs",
+    "./ActionHttpClient": "./dist/ActionHttpClient.mjs",
     "./ActionMcp": "./dist/ActionMcp.mjs",
     "./ActionToolkit": "./dist/ActionToolkit.mjs",
     "./Authentication": "./dist/Authentication.mjs",
@@ -45,10 +46,10 @@
     "docs:sync": "node --import tsx scripts/sync-skill.ts"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-rc.116",
+    "@effect/platform-node": "4.0.0-rc.117",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.6.2",
-    "effect": "4.0.0-rc.116",
+    "effect": "4.0.0-rc.117",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",

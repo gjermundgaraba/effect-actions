@@ -9,7 +9,6 @@ import {
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
-import type { HttpApiError } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionGroup from "../src/ActionGroup.js";
@@ -47,8 +46,8 @@ const RemoteGroup = ActionGroup.make(
   {
     name: "remote",
     schemaError: {
-      errors: [Policy],
-      map: (failure: HttpApiError.HttpApiSchemaError) => new Policy({ kind: failure.kind }),
+      invalid: { schema: Policy, make: (failure) => new Policy({ kind: failure.kind }) },
+      internal: { schema: Policy, make: (failure) => new Policy({ kind: failure.kind }) },
     },
   },
   Remote,

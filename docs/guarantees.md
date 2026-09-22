@@ -32,7 +32,7 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 | Unknown path or method      | 404                                                                                                   | n/a                                                                                                    |
 | Invalid JSON / content type | 400 / 415                                                                                             | n/a                                                                                                    |
 
-- A group `schemaError` policy replaces the empty 400s on HTTP with a declared error and status. It never affects MCP. Details in [ActionGroup.md](ActionGroup.md).
+- A group `schemaError` policy replaces the empty 400s on HTTP with a declared error and status: its `invalid` error for input that does not decode, its `internal` error for output that does not encode. It never affects MCP. Details in [ActionGroup.md](ActionGroup.md).
 - `ActionHttp` sets no headers of its own. The host owns cache and challenge headers; `Authentication.middleware` marks its responses `cache-control: no-store`. Hook refusals and handler failures are ordinary declared error responses.
 - Routes are `POST <apiPath>/<group>/<action>`. Operation IDs are `<group>.<action>`. Effect generates OpenAPI component names and references.
 - `ActionHttp.make`'s `errors` are declared on every endpoint so clients decode the surface's own failures (401, 403, 429, 503). They are produced by middleware or by the binding's hook, never by a handler. `ActionMcp` and `ActionToolkit` declare their own `errors` the same way, joined into every tool's failure schema. Two errors may share an HTTP status; their `_tag`s must differ, because the client decodes a status by trying the schemas declared for it.
@@ -51,9 +51,9 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 
 ## MCP transport
 
-- `protocols` is required. Effect owns negotiation, revision rejection, and session lifecycle; the adapter forwards the selection unchanged. `[McpProtocol.v2026_07_28]` is a stateless endpoint.
-- `layerHttp` is single-endpoint Streamable HTTP, never two-endpoint HTTP+SSE, whatever revision is selected.
-- Cancellation is Effect's native RPC interruption.
+- MCP 2026-07-28 is the only revision served, on both transports; there is no option to select another. Effect owns version checks and rejects other revisions. Over HTTP the endpoint is stateless: no initialize handshake and no session.
+- `layerHttp` is single-endpoint Streamable HTTP, never two-endpoint HTTP+SSE.
+- Cancellation is Effect's native RPC interruption. Without an HTTP session, `notifications/cancelled` interrupts nothing over HTTP; a call ends with its request.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates names, not application context.
 
 ## Scope

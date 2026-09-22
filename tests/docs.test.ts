@@ -1,11 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { routes } from "../examples/quickstart.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
+import { userName } from "../examples/promise-client.js";
+import { makeTestApp } from "./server.js";
 import { docsDirectory } from "../scripts/skill.ts";
 import { mcpRequest } from "../src/Testing.js";
 
@@ -16,6 +18,7 @@ it.each([
   ["README.md", "## Looks like this", "quickstart.ts"],
   ["docs/README.md", "## Minimal program", "quickstart.ts"],
   ["docs/ActionHttp.md", "### Client", "quickstart-client.ts"],
+  ["docs/ActionHttpClient.md", "## Canonical", "promise-client.ts"],
   ["docs/ActionCli.md", "## Canonical", "cli.ts"],
   ["docs/ActionCliClient.md", "## Canonical", "cli-client.ts"],
   ["docs/ActionCatalog.md", "## Canonical", "catalog.ts"],
@@ -67,6 +70,25 @@ it("runs the documented client against the quickstart routes", async () => {
   );
 
   expect(result).toBe("Hello, Ada!");
+});
+
+it("runs the documented Promise client against the example application", async () => {
+  const web = makeTestApp();
+  onTestFinished(() => web.dispose());
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The example uses the global fetch; the in-memory application stands in for the server.
+  vi.stubGlobal("fetch", (input: string | URL | Request, init?: RequestInit) =>
+    web.handler(new Request(input, init)),
+  );
+
+  expect(await userName("1")).toBe("Ada");
+  expect(await userName("404")).toBe("(no such user)");
+
+  vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
+  expect(await userName("1")).toBe("(server unreachable)");
 });
 
 it("serves browser preflight and MCP calls with the documented CORS configuration", async () => {

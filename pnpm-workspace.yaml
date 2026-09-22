@@ -22,7 +22,7 @@ minimumReleaseAgeExclude:
   - "@voidzero-dev/vite-plus-win32-arm64-msvc@0.3.2"
   - "@voidzero-dev/vite-plus-win32-x64-msvc@0.3.2"
   - vite-plus@0.3.2
-  - "@effect/platform-node-shared@4.0.0-rc.116"
-  - "@effect/platform-node@4.0.0-rc.116"
-  - effect@4.0.0-rc.116
+  - "@effect/platform-node-shared@4.0.0-rc.117"
+  - "@effect/platform-node@4.0.0-rc.117"
+  - effect@4.0.0-rc.117
   - tsx@4.23.15

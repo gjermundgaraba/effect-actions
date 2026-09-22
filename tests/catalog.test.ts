@@ -130,7 +130,14 @@ describe("offline action catalog", () => {
     const Policy = Schema.Literal("invalid");
 
     const Group = ActionGroup.make(
-      { name: "errors", errors: [Shared], schemaError: { errors: [Policy], map: () => "invalid" } },
+      {
+        name: "errors",
+        errors: [Shared],
+        schemaError: {
+          invalid: { schema: Policy, make: () => "invalid" as const },
+          internal: { schema: Policy, make: () => "invalid" as const },
+        },
+      },
       Action.make("read", {
         description: "Read",
         access: "write",

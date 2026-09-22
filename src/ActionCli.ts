@@ -43,34 +43,25 @@ type BoundHandler<Name extends string, A extends Action.Any, R> = Readonly<
   Record<Name, Action.Handler<A, R>>
 >;
 
-const local = <
-  G extends Actions,
-  Name extends G["actions"][number]["name"],
-  H extends BoundHandler<Name, Selected<G, Name>, HandlerContext<H, Name>>,
-  EX,
-  RX,
-  EB,
-  RB,
->(
-  app: Implementation<G, H, EX, RX>,
-  action: Selected<G, Name>,
+/**
+ * Acquire the implementation in a scope of its own, run one action through the hook
+ * and its handler, and release it: every local command, selected or grouped.
+ */
+const local = <A extends Action.Any, H extends Handlers<R>, EX, RX, EB, R>(
+  app: Implementation<Actions, H, EX, RX>,
+  action: A,
   // Typed as the option itself, not as the erased `Before`, so the hook's failure
   // type reaches this effect instead of being inferred as `unknown`.
-  before: BeforeOptions<EB, RB>["before"],
-  input: Selected<G, Name>["input"]["Type"],
+  before: BeforeOptions<EB, R>["before"],
+  input: A["input"]["Type"],
 ): Effect.Effect<
-  Selected<G, Name>["success"]["Type"],
-  Selected<G, Name>["errors"][number]["Type"] | EX | EB,
-  Exclude<HandlerContext<H, Name> | RX | RB, Scope.Scope>
+  A["success"]["Type"],
+  A["errors"][number]["Type"] | EX | EB,
+  Exclude<R | RX, Scope.Scope>
 > =>
   Effect.scoped(
     Effect.flatMap(app.build, (handlers) =>
-      dispatch<Selected<G, Name>, EB, HandlerContext<H, Name> | RB>(
-        app.group,
-        action,
-        handlers,
-        before,
-      )(input),
+      dispatch<A, EB, R>(app.group, action, handlers, before)(input),
     ),
   );
 
@@ -98,7 +89,17 @@ export const command = <
     `action "${app.group.name}.${name}"`,
   );
 
-  return makeCommand(action, (input) => local(app, action, options?.before, input), options);
+  return makeCommand(
+    action,
+    (input) =>
+      local<Selected<G, Name>, H, EX, RX, EB, HandlerContext<H, Name> | RB>(
+        app,
+        action,
+        options?.before,
+        input,
+      ),
+    options,
+  );
 };
 
 /** Project every local action below its group namespace with default CLI options. */
@@ -115,15 +116,11 @@ export const group = <
 ) => {
   const commands = app.group.actions.map((action: G["actions"][number]) =>
     makeCommand(action, (input) =>
-      Effect.scoped(
-        Effect.flatMap(app.build, (handlers) =>
-          dispatch<typeof action, EB, HandlersContext<H> | RB>(
-            app.group,
-            action,
-            handlers,
-            options?.before,
-          )(input),
-        ),
+      local<typeof action, H, EX, RX, EB, HandlersContext<H> | RB>(
+        app,
+        action,
+        options?.before,
+        input,
       ),
     ),
   );

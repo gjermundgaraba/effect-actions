@@ -1,7 +1,7 @@
 import { Layer } from "effect";
 import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
-import { McpServer, type McpSchema } from "effect/unstable/ai";
+import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import { bindTools, type SurfaceOptions, type ToolOptions } from "./internal/tools.js";
@@ -12,33 +12,25 @@ import {
   type RequestContext,
 } from "./internal/implementation.js";
 
-/** One Streamable HTTP MCP endpoint; its fields become the native server info. */
-export interface Options<
-  Errors extends ReadonlyArray<Action.Codec> = [],
-  R = never,
-> extends SurfaceOptions<Errors, R> {
-  readonly name: string;
-  readonly version: string;
-  /** Native protocol adapters to serve; negotiation and sessions are owned by Effect. */
-  readonly protocols: Parameters<typeof McpServer.layerHttp>[0]["protocols"];
-  /** Route of the Streamable HTTP endpoint; no default. */
-  readonly path: HttpRouter.PathInput;
-  /** Browser origins accepted by the native server; passed through to `McpServer.layerHttp`. */
-  readonly allowedOrigins?: ReadonlyArray<string>;
-  readonly instructions?: string;
-}
+/**
+ * One Streamable HTTP MCP endpoint: every native `McpServer.layerHttp` option except
+ * `protocols` (server information, `path`, `allowedOrigins`, `instructions`,
+ * `extensions`, ...), plus the surface's `errors` and `before`.
+ */
+export interface Options<Errors extends ReadonlyArray<Action.Codec> = [], R = never>
+  extends Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols">, SurfaceOptions<Errors, R> {}
 
-/** Server information for an MCP subprocess connected through standard I/O. */
-export interface StdioOptions<
-  Errors extends ReadonlyArray<Action.Codec> = [],
-  R = never,
-> extends SurfaceOptions<Errors, R> {
-  readonly name: string;
-  readonly version: string;
-  /** Native protocol adapters to serve; negotiation is owned by Effect. */
-  readonly protocols: Parameters<typeof McpServer.layerStdio>[0]["protocols"];
-  readonly instructions?: string;
-}
+/** An MCP subprocess on standard I/O: every native `McpServer.layerStdio` option except `protocols`. */
+export interface StdioOptions<Errors extends ReadonlyArray<Action.Codec> = [], R = never>
+  extends
+    Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">,
+    SurfaceOptions<Errors, R> {}
+
+/**
+ * The one protocol revision served. 2026-07-28 is stateless over HTTP: no
+ * initialize handshake and no session, so every request stands alone.
+ */
+const protocols = [McpProtocol.v2026_07_28] as const;
 
 /** The native server supplies its own request context to every tool call. */
 type ToolRequestContext<App, RB> = Exclude<
@@ -66,7 +58,7 @@ const server = <Out, R>(
   );
 
 /**
- * Serve MCP tools over one Streamable HTTP endpoint.
+ * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28 only.
  *
  * Middleware provided around this layer has the normal HTTP lifetime. Native
  * context capture applies: never provide request-identity tags at startup.
@@ -89,22 +81,12 @@ export function layerHttp(
   apps: ReadonlyArray<AnyImplementation>,
   options: Options<ReadonlyArray<Action.Codec>, unknown>,
 ) {
-  return server(
-    apps,
-    options,
-    McpServer.layerHttp({
-      name: options.name,
-      version: options.version,
-      instructions: options.instructions,
-      path: options.path,
-      protocols: options.protocols,
-      allowedOrigins: options.allowedOrigins,
-    }),
-  );
+  return server(apps, options, McpServer.layerHttp({ ...options, protocols }));
 }
 
 /**
- * Serve MCP tools through newline-delimited JSON-RPC on standard I/O.
+ * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
+ * 2026-07-28 only.
  *
  * The host supplies the `Stdio` service. Arguments are tool input only and
  * never establish request identity or authority.
@@ -125,5 +107,5 @@ export function layerStdio(
   apps: ReadonlyArray<AnyImplementation>,
   options: StdioOptions<ReadonlyArray<Action.Codec>, unknown>,
 ) {
-  return server(apps, options, McpServer.layerStdio(options));
+  return server(apps, options, McpServer.layerStdio({ ...options, protocols }));
 }

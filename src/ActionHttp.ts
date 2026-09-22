@@ -1,7 +1,7 @@
 import { Effect, Layer, type Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import { type Etag, type HttpPlatform, HttpRouter } from "effect/unstable/http";
+import { type Etag, type HttpPlatform, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import {
   HttpApi,
   HttpApiBuilder,
@@ -11,12 +11,14 @@ import {
   OpenApi,
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
-import type { SchemaErrorPolicy } from "./ActionGroup.js";
 import {
   type Actions,
+  answerSchemaError,
   assertDistinct,
   type PolicyError,
+  policyErrors,
   projectedErrors,
+  type SchemaErrorPolicy,
 } from "./internal/actions.js";
 import {
   type AnyImplementation,
@@ -111,6 +113,14 @@ export interface Http<
     | HttpPlatform.HttpPlatform
     | Path
   >;
+  /**
+   * Serve the OpenAPI document of `api` with `GET path`, by default
+   * `<apiPath>/openapi.json`. It is a plain route: middleware provided to this layer
+   * covers it, and none is applied otherwise.
+   */
+  readonly openApi: (
+    path?: HttpRouter.PathInput,
+  ) => Layer.Layer<never, never, HttpRouter.HttpRouter>;
 }
 
 type ErasedOptions = Options<ReadonlyArray<Action.Codec>>;
@@ -124,19 +134,17 @@ const endpoint = (options: ErasedOptions, group: Actions, action: Action.Any) =>
     error: projectedErrors(action, options.errors),
   }).annotate(OpenApi.Description, action.description);
 
-type ErasedPolicy = SchemaErrorPolicy<ReadonlyArray<Action.Codec>>;
-
 /** The native middleware declares the policy's errors on every endpoint it wraps. */
-const schemaErrorMiddleware = (name: string, policy: ErasedPolicy) => {
+const schemaErrorMiddleware = (name: string, policy: SchemaErrorPolicy) => {
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
     `effect-actions/http/SchemaErrors/${name}`,
-    { error: policy.errors },
+    { error: policyErrors(policy) },
   ) {}
 
   return {
     SchemaErrors,
     layer: HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
-      Effect.fail(policy.map(failure)),
+      Effect.fail(answerSchemaError(policy, failure)),
     ),
   };
 };
@@ -206,16 +214,16 @@ const groupHandlers = <G extends Actions, H, EX, RX, RB>(
 ) => {
   const entries = (record: Handlers<HandlersContext<H>>) =>
     Object.fromEntries(
-      httpActions(app.group).map((action) => [
-        action.name,
-        (request: { readonly payload: ErasedValue }) =>
-          dispatch<Action.Any, ErasedValue, HandlersContext<H> | RB>(
-            app.group,
-            action,
-            record,
-            before,
-          )(request.payload),
-      ]),
+      httpActions(app.group).map((action) => {
+        const run = dispatch<Action.Any, ErasedValue, HandlersContext<H> | RB>(
+          app.group,
+          action,
+          record,
+          before,
+        );
+
+        return [action.name, (request: { readonly payload: ErasedValue }) => run(request.payload)];
+      }),
     );
 
   return Layer.unwrap(
@@ -314,5 +322,10 @@ export function make(
     >;
   };
 
-  return { groups, api: apiOf([...bound.values()].map(({ native }) => native)), layer };
+  const api = apiOf([...bound.values()].map(({ native }) => native));
+
+  const openApi = (path: HttpRouter.PathInput = `${options.apiPath}/openapi.json`) =>
+    HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api)));
+
+  return { groups, api, layer, openApi };
 }

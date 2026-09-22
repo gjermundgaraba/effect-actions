@@ -1,26 +1,65 @@
 import type * as Action from "../Action.js";
 import type { HttpApiError } from "effect/unstable/httpapi";
 
-/** Pure HTTP policy for native schema decoding and encoding failures. */
-export interface SchemaErrorPolicy<Errors extends ReadonlyArray<Action.Codec>> {
-  readonly errors: Errors;
-  readonly map: (failure: HttpApiError.HttpApiSchemaError) => NoInfer<Errors[number]["Type"]>;
+/** One side of a schema-error policy: the error it answers with, and how to make it. */
+export interface SchemaErrorAnswer<E extends Action.Codec> {
+  /** A declared error schema; its `httpApiStatus` is the HTTP status of the answer. */
+  readonly schema: E;
+  readonly make: (failure: HttpApiError.HttpApiSchemaError) => NoInfer<E["Type"]>;
+}
+
+/**
+ * Pure HTTP policy for native schema failures, split by whose fault they are. The
+ * library owns the split, so every group draws it the same way.
+ */
+export interface SchemaErrorPolicy<
+  Invalid extends Action.Codec = Action.Codec,
+  Internal extends Action.Codec = Action.Codec,
+> {
+  /** The request did not decode: its payload, or its params, headers or query. */
+  readonly invalid: SchemaErrorAnswer<Invalid>;
+  /** The handler's result did not encode: its body or its response headers. */
+  readonly internal: SchemaErrorAnswer<Internal>;
 }
 
 /** The contract half of a group: what adapters and clients need, without `implement`. */
 export interface Actions<
   Name extends string = string,
   A extends ReadonlyArray<Action.Any> = ReadonlyArray<Action.Any>,
-  PolicyErrors extends ReadonlyArray<Action.Codec> = ReadonlyArray<Action.Codec>,
+  PolicyError extends Action.Codec = Action.Codec,
 > {
   readonly name: Name;
   readonly actions: A;
   /** How HTTP answers failed decoding or encoding; native behavior without one. MCP is unaffected. */
-  readonly schemaError: SchemaErrorPolicy<PolicyErrors> | undefined;
+  readonly schemaError: SchemaErrorPolicy<PolicyError, PolicyError> | undefined;
 }
 
 /** The errors a group's policy may answer with, by lookup rather than a conditional type. */
-export type PolicyError<G extends Actions> = NonNullable<G["schemaError"]>["errors"][number];
+export type PolicyError<G extends Actions> = NonNullable<
+  G["schemaError"]
+>[keyof SchemaErrorPolicy]["schema"];
+
+/** Each distinct error a policy may answer with, invalid first. */
+export const policyErrors = (policy: SchemaErrorPolicy): ReadonlyArray<Action.Codec> => [
+  ...new Set([policy.invalid.schema, policy.internal.schema]),
+];
+
+/**
+ * `HttpApiBuilder` reports these kinds while encoding the handler's answer, after the
+ * handler ran; every other kind (`Payload`, `Params`, `Headers`, `Query`) comes from
+ * decoding the request before it.
+ */
+const responseKinds: ReadonlySet<HttpApiError.HttpApiSchemaError["kind"]> = new Set([
+  "Body",
+  "ResponseHeaders",
+]);
+
+/** The policy's answer to one native failure: `internal` for the response side, else `invalid`. */
+export const answerSchemaError = (
+  policy: SchemaErrorPolicy,
+  failure: HttpApiError.HttpApiSchemaError,
+) =>
+  responseKinds.has(failure.kind) ? policy.internal.make(failure) : policy.invalid.make(failure);
 
 /**
  * An action's own failures plus the ones its surface answers with, which is what

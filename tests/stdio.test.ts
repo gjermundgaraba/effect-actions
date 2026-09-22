@@ -2,7 +2,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Schema, Stdio } from "effect";
-import { McpProtocol } from "effect/unstable/ai";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -78,7 +77,6 @@ describe("MCP stdio example", () => {
     const layer = ActionMcp.layerStdio([empty, tools], {
       name: "test",
       version: "0",
-      protocols: [McpProtocol.v2026_07_28],
     }).pipe(Layer.provide(Stdio.layerTest({})));
 
     await Effect.runPromise(Effect.scoped(Layer.build(layer)));
@@ -100,7 +98,6 @@ describe("MCP stdio example", () => {
       ActionMcp.layerStdio([tools, duplicate], {
         name: "duplicate",
         version: "0",
-        protocols: [McpProtocol.v2026_07_28],
       }),
     ).toThrow("Duplicate MCP tool: one");
   });

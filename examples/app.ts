@@ -1,7 +1,6 @@
-import { McpProtocol } from "effect/unstable/ai";
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
+import { HttpApiSwagger } from "effect/unstable/httpapi";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { actors, authorize, CurrentActor, Forbidden, Unauthenticated } from "./auth.js";
@@ -65,7 +64,7 @@ const http = Layer.mergeAll(
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
 // JSON as a plain route, and a Swagger UI reading the same contract.
 const documentation = Layer.mergeAll(
-  HttpRouter.add("GET", "/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api))),
+  Http.openApi("/openapi.json"),
   HttpApiSwagger.layer(Http.api, { path: "/docs" }),
 );
 
@@ -76,7 +75,6 @@ const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 // that need no credentials at all therefore get their own endpoint, which
 // compiles because this implementation requires nothing per request.
 const publicMcp = ActionMcp.layerHttp([PublicApp], {
-  protocols: [McpProtocol.v2026_07_28],
   name: "effect-actions-public",
   version: "0.0.0",
   path: "/mcp/public",
@@ -84,7 +82,6 @@ const publicMcp = ActionMcp.layerHttp([PublicApp], {
 });
 
 const mcp = ActionMcp.layerHttp([UserApp, AuditApp], {
-  protocols: [McpProtocol.v2026_07_28],
   name: "effect-actions",
   version: "0.0.0",
   path: "/mcp",

@@ -1,6 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
-import { McpProtocol } from "effect/unstable/ai";
 import { Command } from "effect/unstable/cli";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
@@ -170,7 +169,6 @@ describe("the pre-handler hook", () => {
 
     const mcp = HttpRouter.toWebHandler(
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: testMcpPath,

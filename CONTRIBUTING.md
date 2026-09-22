@@ -45,12 +45,15 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 
 ## Release
 
-The package publishes to the `latest` tag. The `effect` peer is an exact pin on an Effect 4
-release candidate; bump it together with `devDependencies` and re-run the full check, then
-release a new version so consumers on the new Effect pin have a matching package.
+The package publishes to the `latest` tag. The `effect` peer accepts any Effect 4.0 release
+candidate from `4.0.0-rc.116` on (the peer's lower bound); the package is built and tested
+against the release candidate in `devDependencies`. When
+adopting a newer release candidate, bump `devDependencies`, re-run the full check, and raise the
+peer's lower bound only if the package starts to depend on the newer release.
 
-To release: set `version` in `package.json`, commit as `Prepare <version>`, tag `v<version>`,
-and push the commit and tag. The tag runs `.github/workflows/npm.yml`, which checks that the tag
+To release: set `version` in `package.json`, add its section to [CHANGELOG.md](CHANGELOG.md)
+(every breaking change and how a consumer migrates), commit as `Prepare <version>`, tag
+`v<version>`, and push the commit and tag. The tag runs `.github/workflows/npm.yml`, which checks that the tag
 matches `version`, repeats the CI checks, and publishes. It authenticates as the package's npm
 trusted publisher (this repository and that workflow file, set under the package's npm
 settings), so there is no registry token, and npm attaches provenance.

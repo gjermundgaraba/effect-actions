@@ -1,4 +1,3 @@
-import { McpProtocol } from "effect/unstable/ai";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Deferred, Effect, Layer, Schema } from "effect";
 import {
@@ -250,7 +249,6 @@ describe("Authentication.middleware", () => {
         transport === "http"
           ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
           : ActionMcp.layerHttp([app], {
-              protocols: [McpProtocol.v2026_07_28],
               name: "scope-test",
               version: "0",
               path: testMcpPath,

@@ -11,8 +11,8 @@ import type * as Action from "./Action.js";
 /** The bound handlers of one group; opaque, see `Group.implement`. */
 export type { Implementation } from "./internal/implementation.js";
 
-/** Native HTTP schema-error policy, owned by a group rather than an action. */
-export type { SchemaErrorPolicy } from "./internal/actions.js";
+/** A group's HTTP schema-error policy and each of its two answers. */
+export type { SchemaErrorAnswer, SchemaErrorPolicy } from "./internal/actions.js";
 
 type HandlersFrom<Actions extends ReadonlyArray<Action.Any>> = {
   readonly [A in Actions[number] as A["name"]]: Action.Handler<A, any>;
@@ -40,27 +40,32 @@ type WithErrors<
 export interface Options<
   Name extends string,
   Errors extends ReadonlyArray<Action.Codec>,
-  PolicyErrors extends ReadonlyArray<Action.Codec>,
+  Invalid extends Action.Codec = never,
+  Internal extends Action.Codec = never,
 > {
   /** The `HttpApiGroup` identifier, and so the OpenAPI tag and operation-ID prefix. */
   readonly name: Name;
   /** Failures every action of the group may have, added to each action's own. */
   readonly errors?: Errors;
-  /** How HTTP answers failed decoding or encoding of these actions; MCP keeps its native answers. */
-  readonly schemaError?: SchemaErrorPolicy<PolicyErrors>;
+  /**
+   * How HTTP answers a request that fails decoding (`invalid`) and a result that fails
+   * encoding (`internal`); without one, both are Effect's empty 400. MCP keeps its
+   * native answers.
+   */
+  readonly schemaError?: SchemaErrorPolicy<Invalid, Internal>;
 }
 
 /** A named set of action contracts: what adapters serve and what `implement` binds. */
 export interface Group<
   Name extends string,
   Actions extends ReadonlyArray<Action.Any>,
-  PolicyErrors extends ReadonlyArray<Action.Codec> = ReadonlyArray<Action.Codec>,
-> extends Contract<Name, Actions, PolicyErrors> {
+  PolicyError extends Action.Codec = Action.Codec,
+> extends Contract<Name, Actions, PolicyError> {
   /** Bind every handler at once, resolving build-time services once per adapter layer. */
   readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
     build: H | Effect.Effect<H, EX, RX>,
   ) => Implementation<
-    Group<Name, Actions, PolicyErrors>,
+    Group<Name, Actions, PolicyError>,
     H,
     NoInfer<EX>,
     NoInfer<Exclude<RX, Scope.Scope>>
@@ -68,20 +73,39 @@ export interface Group<
 }
 
 /** Any group, with its actions and error schemas erased. */
-export type Any = Group<string, ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>>;
+export type Any = Group<string, ReadonlyArray<Action.Any>, Action.Codec>;
+
+/**
+ * The types require every handler, but a record built in plain JavaScript or through a
+ * cast may still lack one, or hold `undefined` under its key. It fails before anything is served rather than on the
+ * first request for the missing action.
+ */
+const assertHandlers = <H extends object>(group: Contract, handlers: H): H => {
+  const bound = new Map(Object.entries(handlers));
+  const missing = group.actions.filter((action) => bound.get(action.name) === undefined);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing handlers for group "${group.name}": ${missing.map((action) => action.name).join(", ")}`,
+    );
+  }
+
+  return handlers;
+};
 
 /** Define a group. Invalid or duplicate action and MCP names fail here, at definition time. */
 export function make<
   const Name extends string,
   const Actions extends ReadonlyArray<Action.Any>,
   const Errors extends ReadonlyArray<Action.Codec> = [],
-  const PolicyErrors extends ReadonlyArray<Action.Codec> = [],
+  Invalid extends Action.Codec = never,
+  Internal extends Action.Codec = never,
 >(
-  options: Options<Name, Errors, PolicyErrors>,
+  options: Options<Name, Errors, Invalid, Internal>,
   ...actions: Actions
-): Group<Name, WithErrors<Actions, Errors>, PolicyErrors>;
+): Group<Name, WithErrors<Actions, Errors>, Invalid | Internal>;
 export function make(
-  options: Options<string, ReadonlyArray<Action.Codec>, ReadonlyArray<Action.Codec>>,
+  options: Options<string, ReadonlyArray<Action.Codec>, Action.Codec, Action.Codec>,
   ...declared: ReadonlyArray<Action.Any>
 ): Any {
   const { name } = options;
@@ -108,9 +132,10 @@ export function make(
     implement: <H extends HandlersFrom<ReadonlyArray<Action.Any>>, EX = never, RX = never>(
       build: H | Effect.Effect<H, EX, RX>,
     ) => {
+      // A plain record is checked here; a builder's record once the adapter builds it.
       const built: Effect.Effect<H, EX, RX> = Effect.isEffect(build)
-        ? build
-        : Effect.succeed(build);
+        ? Effect.map(build, (handlers) => assertHandlers(group, handlers))
+        : Effect.succeed(assertHandlers(group, build));
 
       return Implementation.make<Any, H, EX, Exclude<RX, Scope.Scope>>(
         group,

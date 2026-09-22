@@ -1,7 +1,7 @@
 import { JsonSchema, Schema } from "effect";
 import type * as Action from "./Action.js";
 import type * as ActionGroup from "./ActionGroup.js";
-import { assertDistinct } from "./internal/actions.js";
+import { assertDistinct, policyErrors } from "./internal/actions.js";
 
 /** One contract, with independently rooted descriptions of its encoded values. */
 export interface Entry {
@@ -61,7 +61,10 @@ export const make = (...groups: ReadonlyArray<ActionGroup.Any>): Catalog => {
         input: describe(action.input),
         success: describe(action.success),
         errors: action.errors.map(describe),
-        httpSchemaErrors: action.http ? (group.schemaError?.errors.map(describe) ?? []) : [],
+        httpSchemaErrors:
+          action.http && group.schemaError !== undefined
+            ? policyErrors(group.schemaError).map(describe)
+            : [],
       })),
     ),
   };

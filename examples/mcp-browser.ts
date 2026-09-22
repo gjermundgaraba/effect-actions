@@ -1,5 +1,4 @@
 import { Effect, Layer } from "effect";
-import { McpProtocol } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { Actions } from "./quickstart.js";
@@ -12,7 +11,6 @@ const mcp = ActionMcp.layerHttp([app], {
   name: "greetings",
   version: "1.0.0",
   path: "/mcp",
-  protocols: [McpProtocol.v2026_07_28],
   allowedOrigins,
 });
 

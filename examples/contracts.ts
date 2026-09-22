@@ -2,7 +2,6 @@ import { Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import type { HttpApiError } from "effect/unstable/httpapi";
 import { Forbidden, Unauthenticated } from "./auth.js";
 
 export const User = Schema.Struct({
@@ -86,13 +85,16 @@ export const ListChanges = Action.make("listChanges", {
   mcp: { name: "list_changes" },
 });
 
-// Malformed requests and unencodable results get one typed answer over HTTP.
+// Malformed requests and unencodable results each get one typed answer over HTTP.
 const schemaError = {
-  errors: [InvalidRequest, InternalError],
-  map: ({ kind }: HttpApiError.HttpApiSchemaError) =>
-    kind === "Body" || kind === "ResponseHeaders"
-      ? new InternalError({ message: "The request could not be completed." })
-      : new InvalidRequest({ message: "The request does not match the action's input." }),
+  invalid: {
+    schema: InvalidRequest,
+    make: () => new InvalidRequest({ message: "The request does not match the action's input." }),
+  },
+  internal: {
+    schema: InternalError,
+    make: () => new InternalError({ message: "The request could not be completed." }),
+  },
 };
 
 // One group per access rule: the host mounts each under its own middleware.

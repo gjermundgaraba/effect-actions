@@ -51,8 +51,8 @@ curl -s http://127.0.0.1:3000/api/actions/users/double \
   -d '{"value":"21"}'
 # 42
 
-# The same action over MCP. The 2026-07-28 revision is stateless, so a single
-# request needs no initialize handshake. These examples select only this revision.
+# The same action over MCP. The 2026-07-28 revision, the only one served, is
+# stateless, so a single request needs no initialize handshake.
 curl -s http://127.0.0.1:3000/mcp \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
@@ -146,3 +146,5 @@ allowlist and separate router CORS configuration; mount them with a platform ser
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
 authorization hook and a per-invocation principal.
 Run `node --import tsx examples/testing.ts` for in-memory HTTP and MCP calls with cleanup.
+[promise-client.ts](promise-client.ts) calls the running example from code that does not run
+Effects, such as a browser page, and handles a declared error and an unreachable server.

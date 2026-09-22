@@ -128,8 +128,7 @@ const handler = (
   handlers: Handlers<unknown>,
   before: Before<unknown> | undefined,
 ) => {
-  const run = (input: ErasedValue) =>
-    dispatch<ToolAction, ErasedValue, unknown>(app.group, action, handlers, before)(input);
+  const run = dispatch<ToolAction, ErasedValue, unknown>(app.group, action, handlers, before);
 
   return projection === "native"
     ? run

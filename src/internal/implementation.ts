@@ -65,8 +65,9 @@ export class Implementation<G extends Actions, H, EX, RX> {
 }
 
 /**
- * Select and invoke a handler after an adapter has selected a concrete action.
- * The surface's pre-handler hook runs first, outside the action's span, so a
+ * Select the handler of a concrete action, once, when an adapter binds its acquired
+ * record; `implement` has already refused a record without it. The returned function
+ * invokes it: the surface's pre-handler hook runs first, outside the action's span, so a
  * refusal is attributed to the surface rather than to a handler that never ran.
  * `R` remains in the returned effect so transport layers cannot erase required
  * per-request services while assembling routes.

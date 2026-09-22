@@ -232,7 +232,13 @@ const Hidden = Action.make("hidden", {
 });
 
 const RemoteGroup = ActionGroup.make(
-  { name: "remote", schemaError: { errors: [Policy], map: () => new Policy() } },
+  {
+    name: "remote",
+    schemaError: {
+      invalid: { schema: Policy, make: () => new Policy() },
+      internal: { schema: Policy, make: () => new Policy() },
+    },
+  },
   RemoteAction,
   HttpOnly,
   Hidden,

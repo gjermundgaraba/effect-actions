@@ -1,4 +1,3 @@
-import { McpProtocol } from "effect/unstable/ai";
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
 import {
@@ -48,13 +47,14 @@ const BillingApp = Billing.implement({
 
 const Http = ActionHttp.make({ apiPath: "/api" }, Users, Billing);
 
+const OpenApiPaths = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Json) });
+
 const serve = () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
       Http.layer([UsersApp]),
       Http.layer([BillingApp]),
       ActionMcp.layerHttp([UsersApp, BillingApp], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -88,6 +88,41 @@ it("serves several groups through one native grouped client and one document", a
   expect(Object.keys(document.paths)).toEqual(["/api/users/whoAmI", "/api/billing/invoice"]);
   expect(document.paths["/api/users/whoAmI"]?.post?.operationId).toBe("users.whoAmI");
   expect(document.paths["/api/billing/invoice"]?.post?.tags).toEqual(["billing"]);
+});
+
+it("serves the binding's OpenAPI document under its API path or a chosen one", async () => {
+  // A route like any other: the middleware provided to its layer covers it.
+  const refuseAnonymous = HttpRouter.middleware((httpEffect) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      request.headers.authorization === undefined
+        ? Effect.succeed(HttpServerResponse.empty({ status: 401 }))
+        : httpEffect,
+    ),
+  );
+
+  const web = HttpRouter.toWebHandler(
+    Layer.mergeAll(
+      Http.openApi(),
+      Http.openApi("/openapi.json").pipe(Layer.provide(refuseAnonymous.layer)),
+    ).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const served = await web.handler(new Request("http://localhost/api/openapi.json"));
+  expect(served.status).toBe(200);
+  expect(served.headers.get("content-type")).toContain("application/json");
+  expect(await served.json()).toEqual(JSON.parse(JSON.stringify(OpenApi.fromApi(Http.api))));
+  expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(401);
+
+  const authorized = await web.handler(
+    new Request("http://localhost/openapi.json", { headers: { authorization: "Bearer any" } }),
+  );
+
+  expect(
+    Object.keys(Schema.decodeUnknownSync(OpenApiPaths)(await authorized.json()).paths),
+  ).toEqual(["/api/users/whoAmI", "/api/billing/invoice"]);
 });
 
 it("preserves action APIs composed into a native host API", () => {
@@ -259,7 +294,6 @@ it("acquires only the implementations a transport serves", async () => {
     [Layer.mergeAll(bound.layer([mcpOnly]), bound.layer([httpOnly])), "httpOnly"],
     [
       ActionMcp.layerHttp([mcpOnly, httpOnly], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -393,7 +427,6 @@ it("adds a group's errors to every action, on both transports", async () => {
     Layer.mergeAll(
       bound.layer([app]),
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: "/mcp",
@@ -499,7 +532,6 @@ it("checks each namespace only where it is served", () => {
 
   // Tools are the MCP namespace; group and action names are not.
   const mcp = {
-    protocols: [McpProtocol.v2026_07_28],
     name: "test",
     version: "0",
     path: "/mcp",

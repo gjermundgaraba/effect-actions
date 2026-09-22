@@ -19,13 +19,14 @@ use these words with these meanings.
 - **Binding**: the value an adapter returns before anything runs. `ActionHttp.make` returns the HTTP binding (`groups`, `api`, `layer`); `ActionToolkit.make` returns the Toolkit binding (`toolkit`, `layer`).
 - **Contract map**: the record `ActionGroup.contracts` returns, keyed `<group>.<action>`, with each action's exact type. The shared identity of an action across routes, tools and commands.
 - **Declared error**: an error schema listed on an action or inherited from its group. Handlers may fail with it. HTTP encodes it with its `httpApiStatus`; MCP returns encoded error text in an `isError` result. Toolkit returns a native failure result, and CLI fails its command Effect without serializing the error.
-- **Schema-error policy**: a group option mapping Effect's `HttpApiSchemaError` (decode or encode failure) to a declared policy error with a status. HTTP only.
+- **Schema-error policy**: a group option answering Effect's `HttpApiSchemaError` with a declared policy error and its status: `invalid` when the request did not decode, `internal` when the handler's result did not encode. The library decides which applies. HTTP only.
 - **Policy error**: an error a schema-error policy may answer with. Part of the transport contract, never returnable by a handler.
 - **Surface error**: an error declared on an adapter binding rather than on an action. Produced by middleware around the surface or by its pre-handler hook, never by a handler; declared so typed callers decode it.
 - **Local-only action**: `http: false` and `mcp: false`. Reachable through `ActionCli` and listed in the catalog.
 - **Tool**: the MCP or Toolkit projection of an MCP-enabled action, named by `mcp.name` and carrying its hints.
 - **Endpoint**: one `ActionMcp.layerHttp` mount. One route, one middleware set, one tool registry.
-- **Document**: the OpenAPI output of `Http.api`, produced by Effect (`OpenApi.fromApi`).
+- **Document**: the OpenAPI output of `Http.api`, produced by Effect (`OpenApi.fromApi`) and served by `Http.openApi`.
+- **Promise client**: `ActionHttpClient.promise(Http)`, the native `HttpApiClient` as one Promise method per HTTP action, for code that does not run Effects. It rejects with what the native client fails with.
 - **Catalog**: the offline JSON description of groups produced by `ActionCatalog.make`, with standalone JSON Schemas for encoded values. Descriptive only.
 - **Identity**: the per-request principal, provided by `Authentication.middleware` under an application-owned tag. Never provided at startup.
 

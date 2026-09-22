@@ -13,6 +13,7 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `Http.groups`                | The exact bound contracts, in declaration order.                                     |
 | `Http.api`                   | Native Effect `HttpApi` for clients and OpenAPI.                                     |
 | `Http.layer(apps, options?)` | Serve a readonly collection of implementations; omit options when no hook is needed. |
+| `Http.openApi(path?)`        | Serve the OpenAPI document with `GET path`; defaults to `<apiPath>/openapi.json`.    |
 
 Exported types: `Options`, `LayerOptions`, `Http`, `Api`.
 
@@ -32,8 +33,7 @@ Route shape: `POST <apiPath>/<group>/<action>`. Operation ID: `<group>.<action>`
 
 ```ts
 import { Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiScalar, HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
+import { HttpApiScalar, HttpApiSwagger } from "effect/unstable/httpapi";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { PublicActions, UserActions } from "./contracts.js";
 import { PublicApp, UserApp } from "./handlers.js";
@@ -56,9 +56,9 @@ const routes = Layer.mergeAll(
   Http.layer([UserApp], { before: authorize }).pipe(Layer.provide(authentication.layer)),
 );
 
-// Documents are Effect's own, reading the same contract.
+// Documents are Effect's own, reading the same contract: `GET /api/actions/openapi.json`.
 const documentation = Layer.mergeAll(
-  HttpRouter.add("GET", "/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api))),
+  Http.openApi(),
   HttpApiSwagger.layer(Http.api, { path: "/docs" }),
   HttpApiScalar.layer(Http.api, { path: "/reference" }),
 );
@@ -70,7 +70,8 @@ Serve with `HttpRouter.serve(layer).pipe(Layer.provide(NodeHttpServer.layer(crea
 
 ### Client
 
-The client is Effect's native grouped `HttpApiClient` over `Http.api`:
+The client is Effect's native grouped `HttpApiClient` over `Http.api`. Code that does not
+run Effects uses the Promise client in [ActionHttpClient.md](ActionHttpClient.md).
 
 ```ts
 import { HttpApiClient } from "effect/unstable/httpapi";
@@ -98,6 +99,7 @@ export const greeting = Effect.gen(function* () {
 - A hook refusal and a handler error are plain declared errors: a JSON body and a status, no other headers. Challenge headers such as `WWW-Authenticate` belong to the admission middleware that runs before the router reaches these routes (see [Authentication.md](Authentication.md)), which sets them on its own response.
 - Request-time handler services are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`Authentication.middleware`, `HttpRouter.middleware`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
 - `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.
+- `Http.openApi(path?)` is `OpenApi.fromApi(Http.api)` as one `GET` route, `<apiPath>/openapi.json` unless a path is given. It documents every bound group, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Client calls always take `{ payload }`. No-input actions take `{ payload: {} }`. Pass `null` or `undefined` only when the codec accepts it. There is no flat client.
 - Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures, and native `HttpClientError`. MCP-only actions are absent from the client.
 - Add authentication headers with the native `transformClient` option. Use `HttpApiClient.makeWith` for custom error or service channels. Native per-call response modes are available.

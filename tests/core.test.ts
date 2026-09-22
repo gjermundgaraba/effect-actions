@@ -141,6 +141,54 @@ describe("implementations", () => {
     expect(await (await web.handler(request("/api/actions"))).json()).toBe("hi Ada");
   });
 
+  const Pair = ActionGroup.make(
+    { name: "pair" },
+    Hello,
+    Action.make("bye", { description: "Parts", access: "write", success: Schema.String }),
+  );
+
+  it("refuses a handler record that lacks an action when it is bound", () => {
+    expect(() =>
+      // @ts-expect-error A missing handler is a type error; plain JavaScript can still omit one.
+      Pair.implement({ hello: ({ name }) => Effect.succeed(`hi ${name}`) }),
+    ).toThrow('Missing handlers for group "pair": bye');
+  });
+
+  it("refuses a handler key whose value is undefined, like a missing one", () => {
+    const handlers = { hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") };
+    // The types require a function; plain JavaScript can still bind `undefined`.
+    Reflect.set(handlers, "bye", undefined);
+
+    expect(() => Pair.implement(handlers)).toThrow('Missing handlers for group "pair": bye');
+  });
+
+  it("fails the adapter build, not a later request, when a builder omits a handler", async () => {
+    const handlers = { hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") };
+    // The types require both; a record changed after it was typed can still lose one.
+    Reflect.deleteProperty(handlers, "bye");
+    const app = Pair.implement(Effect.sync(() => handlers));
+
+    const web = HttpRouter.toWebHandler(
+      ActionHttp.make({ apiPath: "/api" }, Pair)
+        .layer([app])
+        .pipe(Layer.provide(HttpServer.layerServices)),
+      { disableLogger: true },
+    );
+
+    onTestFinished(() => web.dispose());
+
+    // Even the action that has a handler is never served by an incomplete binding.
+    await expect(
+      web.handler(
+        new Request("http://localhost/api/pair/hello", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      ),
+    ).rejects.toThrow('Missing handlers for group "pair": bye');
+  });
+
   it("keeps same-contract implementations apart", async () => {
     const appA = Group.implement({ hello: () => Effect.succeed("from A") });
     const appB = Group.implement({ hello: () => Effect.succeed("from B") });

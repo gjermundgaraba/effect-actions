@@ -90,7 +90,6 @@ export const typeAssertions = () => {
 
   // MCP carries the same request requirement as HTTP; forgetting middleware is a compile error.
   const mcpLayer = ActionMcp.layerHttp([App], {
-    protocols: [McpProtocol.v2026_07_28],
     name: "t",
     version: "0",
     path: "/mcp",
@@ -118,7 +117,6 @@ export const typeAssertions = () => {
   });
 
   const stdio: Layer.Layer<never, unknown, Stdio.Stdio> = ActionMcp.layerStdio([contextual], {
-    protocols: [McpProtocol.v2026_07_28],
     name: "t",
     version: "0",
   });
@@ -148,7 +146,6 @@ export const typeAssertions = () => {
   for (const routes of [
     Http.layer([fallible]),
     ActionMcp.layerHttp([fallible], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "test",
       version: "0",
       path: "/mcp",
@@ -219,12 +216,15 @@ export const policyTypes = Effect.gen(function* () {
     success: Schema.Finite,
   });
 
-  // Written inline, the policy needs no annotation: `map` is typed from `errors`.
+  // Written inline, the policy needs no annotation: each `make` is typed from its `schema`.
   const Policed = ActionGroup.make(
     {
       name: "policed",
       errors: [Refused],
-      schemaError: { errors: [PolicyFailure], map: ({ kind }) => new PolicyFailure({ kind }) },
+      schemaError: {
+        invalid: { schema: PolicyFailure, make: ({ kind }) => new PolicyFailure({ kind }) },
+        internal: { schema: PolicyFailure, make: ({ kind }) => new PolicyFailure({ kind }) },
+      },
     },
     Echo,
   );
@@ -246,9 +246,9 @@ export const policyTypes = Effect.gen(function* () {
     {
       name: "undeclared",
       schemaError: {
-        errors: [PolicyFailure],
-        // @ts-expect-error The mapper can return only errors declared by this policy.
-        map: () => "undeclared",
+        // @ts-expect-error An answer can return only its own declared error.
+        invalid: { schema: PolicyFailure, make: () => "undeclared" },
+        internal: { schema: PolicyFailure, make: () => new PolicyFailure({ kind: "Body" }) },
       },
     },
     Echo,
@@ -257,9 +257,12 @@ export const policyTypes = Effect.gen(function* () {
     {
       name: "effectful",
       schemaError: {
-        errors: [PolicyFailure],
-        // @ts-expect-error Policy mapping is pure, not a service-requiring Effect.
-        map: () => Effect.as(CurrentActor, new PolicyFailure({ kind: "Body" })),
+        invalid: { schema: PolicyFailure, make: () => new PolicyFailure({ kind: "Payload" }) },
+        internal: {
+          schema: PolicyFailure,
+          // @ts-expect-error An answer is pure, not a service-requiring Effect.
+          make: () => Effect.as(CurrentActor, new PolicyFailure({ kind: "Body" })),
+        },
       },
     },
     Echo,
@@ -281,7 +284,6 @@ export const configuredAdapterTypes = () => {
   // @ts-expect-error Configuring the adapter must preserve request requirements.
   void web.handler(new Request("http://localhost"), Context.empty());
   ActionMcp.layerHttp([App], {
-    protocols: [McpProtocol.v2026_07_28],
     name: "test",
     version: "0",
     path: "/mcp",
@@ -290,12 +292,21 @@ export const configuredAdapterTypes = () => {
   });
   // @ts-expect-error HTTP mount path is required.
   ActionHttp.make({}, Actions);
-  // @ts-expect-error Protocol selection is required.
-  ActionMcp.layerHttp([App], { name: "test", version: "0", path: "/mcp" });
-  // @ts-expect-error At least one native protocol adapter is required.
-  ActionMcp.layerHttp([App], { name: "test", version: "0", path: "/mcp", protocols: [] });
+  ActionMcp.layerHttp([App], {
+    name: "test",
+    version: "0",
+    path: "/mcp",
+    // @ts-expect-error The protocol revision is fixed at 2026-07-28.
+    protocols: [McpProtocol.v2026_07_28],
+  });
+  ActionMcp.layerStdio([App], {
+    name: "test",
+    version: "0",
+    // @ts-expect-error The protocol revision is fixed at 2026-07-28.
+    protocols: [McpProtocol.v2026_07_28],
+  });
   // @ts-expect-error MCP mount path is required.
-  ActionMcp.layerHttp([App], { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0" });
+  ActionMcp.layerHttp([App], { name: "test", version: "0" });
 };
 
 export const multipleGroupTypes = () => {
@@ -398,7 +409,6 @@ export const multipleGroupTypes = () => {
 
   const mergedMcp = HttpRouter.toWebHandler(
     ActionMcp.layerHttp([App, BillingApp], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "test",
       version: "0",
       path: "/mcp",
@@ -420,7 +430,6 @@ export const multipleGroupTypes = () => {
 
   const inlineMcp = HttpRouter.toWebHandler(
     ActionMcp.layerHttp([Billing.implement({ invoice: () => Effect.succeed(1) })], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "test",
       version: "0",
       path: "/mcp",
@@ -482,7 +491,6 @@ export const beforeTypes = () => {
 
   // MCP types its hook the same way, from the errors that endpoint declares.
   const stdio = ActionMcp.layerStdio([app], {
-    protocols: [McpProtocol.v2026_07_28],
     name: "t",
     version: "0",
     errors: [Denied],
@@ -493,7 +501,6 @@ export const beforeTypes = () => {
   stdio satisfies Layer.Layer<never, unknown, Stdio.Stdio | Clock>;
 
   ActionMcp.layerStdio([app], {
-    protocols: [McpProtocol.v2026_07_28],
     name: "t",
     version: "0",
     errors: [Denied],
@@ -562,7 +569,6 @@ export const servedRequirementTypes = () => {
 
   const mcp = HttpRouter.toWebHandler(
     ActionMcp.layerHttp([Mixed], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "t",
       version: "0",
       path: "/mcp",
@@ -624,7 +630,6 @@ export const servedRequirementTypes = () => {
   void maybeHttp.handler(new Request("http://localhost"), Context.empty());
 
   const maybeMcp = ActionMcp.layerHttp([Runtime], {
-    protocols: [McpProtocol.v2026_07_28],
     name: "t",
     version: "0",
     path: "/mcp",

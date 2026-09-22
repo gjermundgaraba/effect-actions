@@ -4,10 +4,11 @@ import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
 import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import type { HttpApiClient } from "effect/unstable/httpapi";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { httpClient, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
+import { httpClient, mcpCall, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
 import { Effect, Layer, Schema, Stream } from "effect";
 import { Argument } from "effect/unstable/cli";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -57,8 +58,48 @@ try {
   }).pipe(Effect.runPromise);
 
   if (greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${greeting}`);
+
+  const promised = ActionHttpClient.promise(Http, {
+    baseUrl: "http://localhost",
+    fetch: (input, init) => web.handler(new Request(input, init)),
+  });
+
+  const checkPromiseTypes = () => {
+    // @ts-expect-error Published declarations must type Promise client input.
+    void promised.greetings.greet({ name: 123 });
+
+    // @ts-expect-error Published declarations must retain the Promise client's result type.
+    const wrong: Promise<number> = promised.greetings.greet({ name: "Ada" });
+
+    return wrong;
+  };
+
+  void checkPromiseTypes;
+
+  if ((await promised.greetings.greet({ name: "Ada" })) !== "Hello, Ada!")
+    throw new Error("Promise client failed");
+
+  const called = await mcpCall(web.handler, {
+    url: "http://localhost/mcp",
+    name: "greet",
+    arguments: { name: "Ada" },
+  });
+
+  if (called.isError || called.value !== "Hello, Ada!") throw new Error("MCP tool call failed");
 } finally {
   await web.dispose();
+}
+
+const documents = HttpRouter.toWebHandler(Http.openApi(), { disableLogger: true });
+
+try {
+  const document = await documents.handler(
+    new Request("http://localhost/api/actions/openapi.json"),
+  );
+
+  if (document.status !== 200) throw new Error("The OpenAPI route failed");
+} finally {
+  await documents.dispose();
 }
 
 const discovery = Authentication.protectedResource({

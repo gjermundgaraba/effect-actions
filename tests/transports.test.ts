@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Predicate, Schema } from "effect";
-import { McpProtocol, McpSchema } from "effect/unstable/ai";
+import { McpSchema } from "effect/unstable/ai";
 import {
   HttpClient,
   HttpClientRequest,
@@ -62,7 +62,6 @@ const authenticatedFetch = (token: string) => (request: Request) => {
 const withMcp = <A>(run: (client: Client) => Promise<A>, token = "alice") =>
   withMcpClient(
     {
-      versionNegotiation: { mode: { pin: "2026-07-28" } },
       fetch: authenticatedFetch(token),
       path: testMcpPath,
     },
@@ -356,7 +355,6 @@ describe("groups under their own middleware", () => {
   it("splits MCP access by endpoint, since middleware covers every tool of one", async () => {
     const tools = await withMcpClient(
       {
-        versionNegotiation: { mode: { pin: "2026-07-28" } },
         fetch: app.handler,
         path: "/mcp/public",
       },
@@ -367,7 +365,6 @@ describe("groups under their own middleware", () => {
 
     const status = await withMcpClient(
       {
-        versionNegotiation: { mode: { pin: "2026-07-28" } },
         fetch: app.handler,
         path: "/mcp/public",
       },
@@ -419,7 +416,6 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
   const serve = (allowedOrigins?: ReadonlyArray<string>) => {
     const web = HttpRouter.toWebHandler(
       ActionMcp.layerHttp([app], {
-        protocols: [McpProtocol.v2026_07_28],
         name: "test",
         version: "0",
         path: testMcpPath,
@@ -489,7 +485,6 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
 
   const web = HttpRouter.toWebHandler(
     ActionMcp.layerHttp([], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "origin-order",
       version: "0",
       path: testMcpPath,
@@ -541,7 +536,6 @@ it("supplies the native request context to handlers without a router requirement
 
   const web = HttpRouter.toWebHandler(
     ActionMcp.layerHttp([app], {
-      protocols: [McpProtocol.v2026_07_28],
       name: "test",
       version: "0",
       path: "/mcp",
