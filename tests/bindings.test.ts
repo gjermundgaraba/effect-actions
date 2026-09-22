@@ -31,11 +31,13 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
 
   const routes =
     transport === "HTTP"
-      ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
-      : ActionMcp.layerHttp(
-          { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
-          app,
-        );
+      ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
+      : ActionMcp.layerHttp([app], {
+          protocols: [McpProtocol.v2026_07_28],
+          name: "test",
+          version: "0",
+          path: testMcpPath,
+        });
 
   const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
     disableLogger: true,
@@ -85,11 +87,13 @@ it("each adapter layer acquires and releases its own handler build", async () =>
   );
 
   const routes = Layer.mergeAll(
-    ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app),
-    ActionMcp.layerHttp(
-      { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
-      app,
-    ),
+    ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app]),
+    ActionMcp.layerHttp([app], {
+      protocols: [McpProtocol.v2026_07_28],
+      name: "test",
+      version: "0",
+      path: testMcpPath,
+    }),
   ).pipe(Layer.provide(Layer.succeed(Greeting, "build")), Layer.provide(HttpServer.layerServices));
 
   // Two adapters serve the implementation, so each runtime acquires twice.
@@ -133,14 +137,18 @@ it("keeps same-contract implementations apart over MCP", async () => {
 
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "a", version: "0", path: "/a" },
-        a,
-      ),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "b", version: "0", path: "/b" },
-        b,
-      ),
+      ActionMcp.layerHttp([a], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "a",
+        version: "0",
+        path: "/a",
+      }),
+      ActionMcp.layerHttp([b], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "b",
+        version: "0",
+        path: "/b",
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -192,11 +200,13 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
-        : ActionMcp.layerHttp(
-            { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
-            app,
-          );
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
+        : ActionMcp.layerHttp([app], {
+            protocols: [McpProtocol.v2026_07_28],
+            name: "test",
+            version: "0",
+            path: testMcpPath,
+          });
 
     const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
       disableLogger: true,
@@ -261,11 +271,13 @@ it.each(["HTTP", "MCP"])(
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
-        : ActionMcp.layerHttp(
-            { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
-            app,
-          );
+        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
+        : ActionMcp.layerHttp([app], {
+            protocols: [McpProtocol.v2026_07_28],
+            name: "test",
+            version: "0",
+            path: testMcpPath,
+          });
 
     const web = HttpRouter.toWebHandler(
       routes.pipe(

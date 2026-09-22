@@ -12,7 +12,7 @@ use these words with these meanings.
 - **Handler**: a function from decoded input to an Effect of decoded success, failing only with the action's declared errors, possibly requiring services.
 - **Implementation**: a nominal binding of a complete handler record to a group, made by `group.implement`. Carries build-time error and requirement channels. Adapters accept implementations; `ActionCatalog` accepts contracts.
 - **Builder**: the record or Effect passed to `implement`. Runs once per adapter layer that serves the implementation.
-- **Pre-handler hook**: the `before` function an adapter binds. Runs once per invocation of that surface, with the selected action contract, before its handler. Fails with the surface's own errors. Its services are request-time requirements.
+- **Pre-handler hook**: the `before` function an adapter binds. Runs once after successful input decoding, with the selected action contract, before its handler. Invalid input skips the hook. Fails with the surface's own errors. Its services are request-time requirements.
 - **Build-time requirement**: a service yielded in the builder. Resolved when an adapter layer is built.
 - **Request-time requirement**: a service yielded inside a handler. Supplied per invocation: by router middleware for HTTP-hosted adapters, by the host for Toolkit, CLI, and stdio.
 - **Adapter** (also **projection**): a module that maps implementations or contracts onto one surface: `ActionHttp`, `ActionMcp`, `ActionToolkit`, `ActionCli`, `ActionCliClient`, `ActionCatalog`. Each adapter reads only what it serves and validates only its own namespace.
@@ -26,7 +26,7 @@ use these words with these meanings.
 - **Tool**: the MCP or Toolkit projection of an MCP-enabled action, named by `mcp.name` and carrying its hints.
 - **Endpoint**: one `ActionMcp.layerHttp` mount. One route, one middleware set, one tool registry.
 - **Document**: the OpenAPI output of `Http.api`, produced by Effect (`OpenApi.fromApi`).
-- **Catalog**: the offline JSON description of groups produced by `ActionCatalog.make`. Descriptive only.
+- **Catalog**: the offline JSON description of groups produced by `ActionCatalog.make`, with standalone JSON Schemas for encoded values. Descriptive only; no native schema persistence.
 - **Identity**: the per-request principal, provided by `Authentication.middleware` under an application-owned tag. Never provided at startup.
 
 ## Seams

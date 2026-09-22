@@ -30,10 +30,7 @@ export type PolicyError<G extends Actions> = NonNullable<G["schemaError"]>["erro
 export const projectedErrors = (
   action: Action.Any,
   surface: ReadonlyArray<Action.Codec> | undefined,
-): ReadonlyArray<Action.Codec> => [
-  ...action.errors,
-  ...(surface ?? []).filter((error) => !action.errors.includes(error)),
-];
+): ReadonlyArray<Action.Codec> => [...new Set([...action.errors, ...(surface ?? [])])];
 
 const validName = /^[A-Za-z0-9_-]+$/;
 

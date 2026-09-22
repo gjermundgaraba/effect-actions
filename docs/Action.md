@@ -5,56 +5,25 @@ metadata. An action holds no behavior; handlers are bound by `ActionGroup.implem
 
 ## API
 
-```ts
-import * as Action from "@gjermundgaraba/effect-actions/Action";
+Import `@gjermundgaraba/effect-actions/Action`.
 
-/** Any service-free schema. */
-type Codec = Schema.Codec<unknown, unknown, never, never>;
+| Export                                     | Purpose                                                                            |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `make(name, options)`                      | Define a pure contract; literal names, access and transport exclusions stay typed. |
+| `Action`, `Any`, `Options`                 | Concrete contracts, erased contracts and construction options.                     |
+| `Codec`, `Handler`, `Access`, `McpOptions` | Service-free codecs, typed handlers, read/write classification and tool metadata.  |
 
-function make<Name, Input = NoInput, Output, Errors = [], Acc extends Access, Http = true, Mcp = undefined>(
-  name: Name,
-  options: Options<Input, Output, Errors, Acc, Http, Mcp>,
-): Action<Name, Input, Output, Errors, Acc, Http, Mcp>;
+| Option                             | Meaning                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `description`, `success`, `access` | Required description, success codec and `"read"` / `"write"` classification. |
+| `input`                            | Optional codec; omission means an empty object.                              |
+| `errors`                           | Declared error codecs; defaults to none.                                     |
+| `http`                             | Defaults to enabled; `false` removes routes and client methods.              |
+| `mcp`                              | Defaults to enabled; `false` removes tools, otherwise accepts `McpOptions`.  |
 
-/** What the action does to its resource. Authorization metadata, not an MCP hint. */
-type Access = "read" | "write";
-
-interface Options<Input, Output, Errors, Acc, Http, Mcp> {
-  readonly description: string;
-  readonly input?: Input; // omit for an action without arguments
-  readonly success: Output;
-  readonly errors?: Errors; // ReadonlyArray<Codec>; defaults to []
-  readonly access: Acc; // required, no default
-  readonly http?: Http; // false hides the action from HTTP routes and clients
-  readonly mcp?: Mcp; // false hides the action from MCP; otherwise McpOptions
-}
-
-interface McpOptions {
-  readonly name?: string; // tool name; defaults to the action name; ^[A-Za-z0-9_-]{1,128}$
-  readonly readOnly?: boolean; // readOnlyHint, default access === "read"
-  readonly destructive?: boolean; // destructiveHint, default !readOnly
-  readonly idempotent?: boolean; // idempotentHint, default false
-  readonly openWorld?: boolean; // openWorldHint, default true
-}
-
-interface Action<Name, Input, Output, Errors, Acc, Http, Mcp> {
-  readonly name: Name;
-  readonly description: string;
-  readonly input: Input;
-  readonly success: Output;
-  readonly errors: Errors;
-  readonly access: Acc; // the literal it was declared with
-  readonly http: Http;
-  readonly mcp: false | { name; readOnly; destructive; idempotent; openWorld }; // resolved
-}
-
-/** Receives decoded input; may fail only with the declared errors. */
-type Handler<A extends Any, R = never> = (
-  input: A["input"]["Type"],
-) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R>;
-
-type Any; // any action with its schemas erased
-```
+MCP options: `name` defaults to the action name; `readOnly` to `access === "read"`;
+`destructive` to `!readOnly`; `idempotent` to `false`; `openWorld` to `true`.
+Handlers receive decoded input and return decoded success, failing only with declared errors.
 
 ## Canonical
 

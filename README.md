@@ -30,11 +30,13 @@ const app = Actions.implement({
 });
 
 export const routes = Layer.mergeAll(
-  Http.layer({}, app),
-  ActionMcp.layerHttp(
-    { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
-    app,
-  ),
+  Http.layer([app]),
+  ActionMcp.layerHttp([app], {
+    protocols: [McpProtocol.v2026_07_28],
+    name: "greetings",
+    version: "1.0.0",
+    path: "/mcp",
+  }),
 );
 ```
 
@@ -42,7 +44,7 @@ Serve `routes` with Effect's `HttpRouter` and you have `POST /api/actions/greeti
 and an MCP tool named `greet` at `/mcp`. The same `app` is also:
 
 ```ts
-const { toolkit, layer } = ActionToolkit.make({}, app); // native Effect AI Toolkit and its handler layer
+const { toolkit, layer } = ActionToolkit.make([app]); // native Effect AI Toolkit and its handler layer
 const cli = ActionCli.group(app); // greetings greet --input '{"name":"Ada"}'
 const remote = ActionCliClient.command(Http, "greetings", "greet"); // same command, over HTTP
 const catalog = ActionCatalog.make(Actions); // offline JSON contract, no handlers acquired
@@ -61,7 +63,7 @@ const greeting = Effect.gen(function* () {
 ## Why
 
 - Input, success, and errors are declared once. Routes, tools, commands, clients, OpenAPI, and the catalog are derived from that declaration, so they cannot disagree.
-- A handler may fail only with the errors its action declares. Each surface binds one `before` hook that runs before every handler it serves — on HTTP before the payload is even decoded — so a policy such as scope enforcement is written once per surface and no action of that surface can skip it.
+- A handler may fail only with the errors its action declares. Each surface binds one `before` hook that runs before every handler it serves — after successful input decoding — so a policy such as scope enforcement is written once per surface and no action of that surface can skip it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so `OpenApi.fromApi`, Swagger, Scalar, and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, one `Tool` per action, with no SDK runtime dependency.
 - Every action states its `access` (`"read"` or `"write"`, required), so authorization reads the contract instead of a hand-maintained list of mutation names.
 - Build-time services and per-request services are tracked separately in the types. Middleware is per group, so a public group and an authenticated group can share one mount path.

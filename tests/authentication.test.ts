@@ -248,16 +248,13 @@ describe("Authentication.middleware", () => {
 
       const routes =
         transport === "http"
-          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer({}, app)
-          : ActionMcp.layerHttp(
-              {
-                protocols: [McpProtocol.v2026_07_28],
-                name: "scope-test",
-                version: "0",
-                path: testMcpPath,
-              },
-              app,
-            );
+          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
+          : ActionMcp.layerHttp([app], {
+              protocols: [McpProtocol.v2026_07_28],
+              name: "scope-test",
+              version: "0",
+              path: testMcpPath,
+            });
 
       const web = HttpRouter.toWebHandler(
         routes.pipe(Layer.provide(auth.layer), Layer.provide(HttpServer.layerServices)),

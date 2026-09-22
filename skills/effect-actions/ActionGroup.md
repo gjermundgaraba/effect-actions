@@ -6,51 +6,21 @@ The pre-handler hook does not: each surface binds its own (see [guarantees.md](g
 
 ## API
 
-```ts
-import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
+Import `@gjermundgaraba/effect-actions/ActionGroup`.
 
-function make<Name, Actions, Errors = [], PolicyErrors = []>(
-  options: Options<Name, Errors, PolicyErrors>,
-  ...actions: Actions
-): Group<Name, WithErrors<Actions, Errors>, PolicyErrors>;
+| API                               | Purpose                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `make(options, ...actions)`       | Group actions under a required `name`; optional `errors` are inherited by each action.  |
+| `group.implement(recordOrEffect)` | Bind every action handler; an Effect builder carries startup requirements and failures. |
+| `app.group`, `app.build`          | Bound contract and scoped handler acquisition.                                          |
+| `contracts(...groups)`            | Exact action types keyed by `<group>.<action>`.                                         |
 
-interface Options<Name, Errors, PolicyErrors> {
-  readonly name: Name; // HttpApiGroup identifier, OpenAPI tag, operation-ID prefix
-  readonly errors?: Errors; // added to every action's own errors
-  readonly schemaError?: SchemaErrorPolicy<PolicyErrors>; // HTTP only; MCP keeps native answers
-}
+Exported types: `Group`, `Any`, `Options`, `Implementation`, `Contracts`, `SchemaErrorPolicy`.
 
-interface SchemaErrorPolicy<Errors extends ReadonlyArray<Codec>> {
-  readonly errors: Errors;
-  readonly map: (failure: HttpApiError.HttpApiSchemaError) => Errors[number]["Type"];
-}
-
-interface Group<Name, Actions, PolicyErrors> {
-  readonly name: Name;
-  readonly actions: Actions;
-  readonly schemaError: SchemaErrorPolicy<PolicyErrors> | undefined;
-  /** Bind every handler at once; build-time services resolve once per adapter layer. */
-  readonly implement: <H extends HandlersFrom<Actions>, EX = never, RX = never>(
-    build: H | Effect.Effect<H, EX, RX>,
-  ) => Implementation<Group<Name, Actions, PolicyErrors>, H, EX, Exclude<RX, Scope.Scope>>;
-}
-
-/** Nominal. `group` is the bound contract; `build` acquires the handler record in a scope. */
-class Implementation<G, H, EX, RX> {
-  readonly group: G;
-  get build(): Effect.Effect<H, EX, RX | Scope.Scope>;
-}
-
-/** Every action of the supplied groups, keyed `<group>.<action>`. */
-function contracts<const Groups extends ReadonlyArray<Group>>(
-  ...groups: Groups
-): Contracts<Groups>;
-
-type Contracts<Groups>; // { "users.getUser": typeof GetUser, "users.renameUser": ... }
-```
-
-`HandlersFrom<Actions>` is `{ [action name]: Handler<Action, R> }`, one key per action,
-all required.
+The optional `schemaError` group option contains `errors` (policy error codecs) and
+`map(failure)` (a native `HttpApiSchemaError` to one of their decoded values). It affects HTTP only.
+Handler records require every action key. Each handler's input, success and declared errors
+come from its action; request requirements stay distinct from the builder's requirements.
 
 ## Canonical
 
@@ -117,7 +87,7 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 
 - `name` matches `[A-Za-z0-9_-]+`, cannot be `then`, and must be unique within one `ActionHttp.make`. Action names must be unique within the group. MCP tool names must be unique within the group and within each Toolkit or MCP projection that serves it. Duplicates fail at `make`.
 - Group `errors` are appended to each action's own `errors`, so every handler of the group may fail with them. A failure that only the surface produces belongs on the adapter instead (`ActionHttp.make`'s `errors`, `ActionMcp`'s and `ActionToolkit`'s `errors`), not here.
-- `implement` takes a complete record or an Effect producing one. The record must have exactly one handler per action; a missing key is a compile error. It takes nothing else.
+- `implement` takes a complete record or an Effect producing one. Every action must have a handler; missing keys are compile errors. Additional keys are not dispatched. It takes nothing else.
 - The builder Effect runs once per adapter layer that serves the implementation, in that layer's scope. An implementation served by HTTP and MCP is built twice. Acquire shared state in a Layer you provide to the adapters, not in the builder.
 - Services yielded in the builder are build-time requirements (`RX`). Services yielded in a handler are request-time requirements (`R` of the handler). Adapters keep these separate in their types. Use distinct tags for each kind; never provide a request-identity tag at startup (see [guarantees.md](guarantees.md)).
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Each `implement` call is a separate binding.
@@ -134,7 +104,7 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 - The policy runs only on the server. Client-side codec failures stay `SchemaError`.
 - HTTP decodes with `errors: "all"`, so `cause` carries every issue. Issues never retain the rejected values.
 - Groups served by one adapter may have different policies; each action answers with its own group's.
-- A `before` hook refuses before decoding, so a refused request never reaches the policy.
+- Input schema-error policies run before the `before` hook. Invalid input is answered by the policy without invoking the hook or handler.
 - Domain errors, defects, interruptions, and protocol errors are not remapped. An unencodable declared error is a defect. A broken policy error is not recursively remapped.
 
 ## Failure modes

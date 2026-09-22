@@ -5,54 +5,28 @@ loads the optional `@modelcontextprotocol/client` peer and nothing else does.
 
 ## API
 
-```ts
-import type { Effect } from "effect";
-import type { HttpClient } from "effect/unstable/http";
-import type { HttpApi, HttpApiClient, HttpApiGroup } from "effect/unstable/httpapi";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+Import `@gjermundgaraba/effect-actions/Testing`; official-client helpers are in the separate
+`@gjermundgaraba/effect-actions/TestingClient` subpath.
 
-/** Native grouped client calling a web handler in memory; baseUrl defaults to http://localhost. */
-export const httpClient: <Id extends string, Groups extends HttpApiGroup.Constraint>(
-  api: HttpApi.HttpApi<Id, Groups>,
-  handler: Testing.Handler,
-  options?: NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
-) => Effect.Effect<
-  HttpApiClient.Client<Groups>,
-  never,
-  Exclude<HttpApiGroup.MiddlewareClient<Groups>, HttpClient.HttpClient>
-> = Testing.httpClient;
-```
+| API                                          | Purpose                                                                                               |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Testing.httpClient(api, handler, options?)` | Native grouped `HttpApiClient` over an in-memory web handler; retains client middleware requirements. |
+| `Testing.mcpRequest(options)`                | Build a stateless MCP JSON-RPC `Request`.                                                             |
+| `TestingClient.withMcpClient(options, run)`  | Connect the official client, run an asynchronous callback, then close it.                             |
 
-### MCP helpers
+`httpClient` takes native client options; `baseUrl` defaults to `http://localhost`.
+Its exported `Handler` type is a web request to response Promise.
 
-```ts
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import * as TestingClient from "@gjermundgaraba/effect-actions/TestingClient";
+| MCP option                            | Meaning                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------- |
+| `mcpRequest`: `url`, `method`         | Required destination and JSON-RPC method.                                           |
+| `mcpRequest`: `params`, `headers`     | Optional parameters and request headers.                                            |
+| `withMcpClient`: `fetch`, `path`      | Required in-memory request handler and endpoint path.                               |
+| `withMcpClient`: `baseUrl`, `headers` | Optional base URL (default `http://localhost`) and headers.                         |
+| `withMcpClient`: `versionNegotiation` | Optional native client negotiation configuration; omitted means its native default. |
 
-/** One stateless 2026-07-28 JSON-RPC request with client metadata defaulted. */
-const mcpRequest: (options: McpRequestOptions) => Request;
-
-interface McpRequestOptions {
-  readonly url: string | URL;
-  readonly method: string; // "tools/list", "tools/call", ...
-  readonly params?: McpRequestParams; // anything JSON.stringify accepts, undefined fields included
-  readonly headers?: HeadersInit;
-}
-
-/** Connect the official client, run the callback, always close the transport. */
-const withMcpClient: <A>(
-  options: McpClientOptions,
-  run: (client: Client) => Promise<A>,
-) => Promise<A>;
-
-interface McpClientOptions {
-  readonly fetch: (request: Request) => Promise<Response>; // the web handler
-  readonly path: string;
-  readonly versionNegotiation?: ClientOptions["versionNegotiation"]; // official client default is legacy
-  readonly baseUrl?: string | URL; // http://localhost
-  readonly headers?: HeadersInit;
-}
-```
+Exported option/value types: `McpRequestOptions`, `McpRequestParams`, `McpRequestValue`
+from `Testing`, and `McpClientOptions` from `TestingClient`.
 
 ## Canonical
 
@@ -105,5 +79,5 @@ try {
 - `@modelcontextprotocol/client` not found: only `TestingClient` needs it. Install the peer in devDependencies, or use `Testing.mcpRequest` instead.
 - Official client fails negotiation against a stateless endpoint: set `versionNegotiation: { mode: { pin: "2026-07-28" } }`.
 - Handler leaks between tests: `web.dispose()` was not called. Register it with the test runner's cleanup hook.
-- 404 from `httpClient`: the requested route was not mounted, or the path/base URL is wrong. Include `Http.layer({}, app)` in the served routes.
+- 404 from `httpClient`: the requested route was not mounted, or the path/base URL is wrong. Include `Http.layer([app])` in the served routes.
 - Missing platform-service requirements when constructing the web handler: provide `HttpServer.layerServices` to the routes before `toWebHandler`.

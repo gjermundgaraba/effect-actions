@@ -101,9 +101,6 @@ const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec
     action.mcp,
   );
 
-/** The one keyword of a compiled root that this check reads before its `type`. */
-const RootReference = Schema.Struct({ $ref: Schema.optional(Schema.String) });
-
 /**
  * MCP's input schema must describe a JSON object, including no-argument tools.
  * The compiled document hides an identified or recursive root behind a `$ref`,
@@ -111,7 +108,11 @@ const RootReference = Schema.Struct({ $ref: Schema.optional(Schema.String) });
  */
 const assertMcpObjectInput = (action: ToolEntry["action"]): void => {
   const { schema, definitions } = Schema.toJsonSchemaDocument(Schema.toCodecJson(action.input));
-  const { $ref } = Schema.decodeUnknownSync(RootReference)(schema);
+  const $ref = schema.$ref;
+
+  if ($ref !== undefined && typeof $ref !== "string") {
+    throw new Error(`${action.name}: MCP input schema $ref must be a string`);
+  }
 
   const [scope, key, ...rest] =
     $ref === undefined ? [] : (JsonPointer.parseUriFragment($ref) ?? []);

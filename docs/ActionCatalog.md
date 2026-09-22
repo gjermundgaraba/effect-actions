@@ -1,39 +1,24 @@
 # ActionCatalog
 
-An offline JSON document describing groups: identities, metadata, and each encoded value
-as a standalone JSON Schema and, where Effect can persist it, Effect's own schema
-representation. Built from contracts alone. No implementation, service, or server is involved.
+An offline JSON document of contract identities, metadata and encoded-value JSON Schemas.
+Built from contracts alone: no implementation, service or server is involved.
 
 ## API
 
-```ts
-import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
+Import `@gjermundgaraba/effect-actions/ActionCatalog`.
 
-const make: (...groups: ReadonlyArray<ActionGroup.Any>) => Catalog;
+`make(...groups)` returns `Catalog`: `version: "3"` and an ordered `actions` array of `Entry`.
 
-interface Catalog {
-  readonly version: "2";
-  readonly actions: ReadonlyArray<Entry>;
-}
+| Entry field                          | Meaning                                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `id`, `group`, `name`, `description` | Stable `<group>.<action>` identity and contract metadata.                    |
+| `http`, `mcp`                        | HTTP enablement and resolved MCP enablement/name/hints.                      |
+| `input`, `success`                   | Standalone draft 2020-12 JSON Schema objects, not wrappers.                  |
+| `errors`                             | JSON Schema objects for own and inherited group errors.                      |
+| `httpSchemaErrors`                   | JSON Schema objects for HTTP policy errors; empty for HTTP-disabled actions. |
 
-interface Entry {
-  readonly id: string; // "<group>.<action>"
-  readonly group: string;
-  readonly name: string;
-  readonly description: string;
-  readonly http: boolean;
-  readonly mcp: false | { name; readOnly; destructive; idempotent; openWorld };
-  readonly input: Described;
-  readonly success: Described;
-  readonly errors: ReadonlyArray<Described>; // own + inherited group errors
-  readonly httpSchemaErrors: ReadonlyArray<Described>; // policy errors, HTTP only
-}
-
-interface Described {
-  readonly jsonSchema: JsonSchema.JsonSchema; // draft 2020-12, for any consumer
-  readonly representation?: Schema.Json; // SchemaRepresentation.toJson; absent when Effect cannot persist the schema
-}
-```
+Version 3 removes the version-2 `jsonSchema`/`representation` wrappers. There is no
+`Described` type or persisted Effect representation. Exported types are `Catalog` and `Entry`.
 
 ## Canonical
 
@@ -52,23 +37,20 @@ Console.log(
 ## Rules
 
 - Takes groups, not implementations. Nothing is acquired or started.
-- Group names must be unique across the supplied groups. Entries preserve group declaration order, then action declaration order.
+- Group names must be unique. Entries preserve group declaration order, then action declaration order.
 - `id` is the stable `<group>.<action>` identity, equal to the HTTP operation ID.
-- Schemas describe encoded action values: the JSON on the wire, not MCP's `{ value }` envelope and not deployment URLs.
-- Both descriptions come from one lowering of the JSON wire form, the same `Schema.toCodecJson` every adapter sends. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. A codec's transformations are in neither. JSON-valued annotations set with `annotate` are persisted verbatim in `representation`; `TaggedError` class options such as `httpApiStatus` are not part of the wire form and do not appear.
-- `representation` is present when Effect can persist the wire form, and then names every check on that form. A check placed after a transformation, such as `FiniteFromString.check(isGreaterThan(0))`, is enforced on the decoded value and is in neither description: revival cannot reject what only the server's decode rejects, so the server stays authoritative. It revives with `SchemaRepresentation.fromJson` then `fromRepresentation`. To generate source, revive first, then `toRepresentation` of the revived AST and `toCodeDocument`: a persisted document carries no code generators. It keeps what JSON Schema cannot name: filters as `{ id, payload }`, brands, identifiers. Pass the revivers for what your schemas use: filter revivers such as `SchemaRepresentation.isMinLengthReviver` or `isStringBigIntReviver`, and `JsonReviver` for `Schema.Json` and `Schema.Unknown` fields, the one declaration the wire form has. None are installed implicitly.
-- A schema Effect cannot persist has no `representation`; its `jsonSchema` is unaffected. The usual cause is a filter without a `representation` annotation, such as a plain `Schema.makeFilter`, anywhere in the schema, including inside an annotated filter group. Annotate custom filters with `{ id, payload }` and supply a matching reviver. A contract that relies on revival should assert `representation` is present in its own tests; `make` never fails for this.
-- Each schema owns its `$defs`, and each representation its `references`. Equal schema identifiers in different entries never replace each other. Recursive references stay local to their schema.
-- `errors` includes group-level errors. HTTP schema-policy errors are listed separately in `httpSchemaErrors`. Surface errors are not listed: they belong to a binding, not to the contract.
-- `access` is not in the document. It is authorization metadata for a surface's hook, and the catalog is descriptive; read it from the contract (`group.actions`) when you need it.
-- Local-only actions (`http: false`, `mcp: false`) are included. Presence in a catalog is descriptive. It is not authorization, tool publication, or proof that a route is mounted. The host decides what to publish.
-- The package adds no search, no catalog HTTP endpoint, and no TypeScript code generation.
+- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument(Schema.toCodecJson(codec))`. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are action values, not MCP's `{ value }` envelope or deployment URLs.
+- JSON Schema does not preserve arbitrary Effect transformations or filters. Checks on the decoded side of a transformation, such as `FiniteFromString.check(isGreaterThan(0))`, are not described. The server's decode remains authoritative.
+- Each schema root includes its own `$schema` and, where needed, `$defs`. Equal identifiers across entries or fields cannot replace each other; recursive references resolve locally.
+- The catalog contains JSON Schema only. Use Effect's `SchemaRepresentation` directly when native schema persistence or revival is needed.
+- `errors` includes group-level errors. HTTP schema-policy errors are separate in `httpSchemaErrors`. Surface errors belong to bindings and are not listed.
+- `access` is omitted; read it from the contract when needed. Local-only actions are included. Presence grants no authorization or proof that an endpoint is mounted; the host decides what to publish.
+- No search, catalog HTTP endpoint, or TypeScript code generation is provided.
 
 ## Failure modes
 
-- `Duplicate catalog group: <name>`: two supplied groups share a name, including the same group passed twice. Pass each named group once.
-- Type error passing an implementation: `make` takes groups. Pass `app.group` or the group value itself.
-- `fromRepresentation` throws `Missing reviver for <id>`: add that reviver to `revivers`. Wire forms carry filters of their own, such as `isStringBigInt` for a `bigint`, and `effect/schema/Json` needs `JsonReviver`. Custom filters need a reviver you write with `SchemaRepresentation.makeReviverFilter`.
-- An entry has no `representation`: Effect refused to persist that schema. Annotate the anonymous filter, or fix the `representation.id` it rejected; `SchemaRepresentation.toJson` on the schema's own document reports which.
-- A revived schema accepts a value the server rejects: the check sits after a transformation, on the decoded side. Move it to the wire form if consumers must see it.
-- Consumers see `{ value }` in MCP responses but not in the catalog: expected. The catalog describes action values; MCP wraps them.
+- `Duplicate catalog group: <name>`: two supplied groups share a name, including a group passed twice.
+- Type error passing an implementation: pass `app.group` or the group value itself.
+- Native JSON Schema conversion throws: the codec or its annotations cannot be converted. Errors propagate; there is no persistence fallback.
+- JSON Schema accepts a value the server rejects: custom validation or a decoded-side check is not expressible in the wire schema. Server validation remains authoritative.
+- Consumers expect `entry.input.jsonSchema` or `representation`: version 3 stores the JSON Schema directly in `entry.input`, `entry.success` and each error entry.

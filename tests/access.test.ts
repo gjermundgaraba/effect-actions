@@ -80,7 +80,7 @@ type App = ReturnType<typeof make>["app"];
 const serveHttp = (app: App, before: ReturnType<typeof authorize>, granted: Layer.Layer<Scopes>) =>
   HttpRouter.toWebHandler(
     ActionHttp.make({ apiPath: testApiPath, errors: [InsufficientScope] }, Group)
-      .layer({ before }, app)
+      .layer([app], { before })
       .pipe(HttpRouter.provideRequest(granted), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -149,34 +149,29 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("refuses before HTTP decodes the payload, so a refusal tells nothing about input", async () => {
+  it("decodes HTTP input before running either the hook or handler", async () => {
     const { app, hooks, handlers } = make();
     const web = serveHttp(app, authorize(hooks), readOnly);
     onTestFinished(() => web.dispose());
 
-    // This payload does not satisfy the input schema, and the answer is still 403.
-    const refused = await web.handler(post("/api/actions/resource/write", { value: 42 }));
+    const invalid = await web.handler(post("/api/actions/resource/write", { value: 42 }));
+    expect(invalid.status).toBe(400);
+    expect(hooks).toEqual([]);
+    expect(handlers).toEqual([]);
+
+    const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
     expect(refused.status).toBe(403);
     expect(hooks).toEqual(["write"]);
     expect(handlers).toEqual([]);
-
-    const granted = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, ["read", "write"]));
-    onTestFinished(() => granted.dispose());
-
-    // Admitted, the same payload reaches decoding and is refused there instead.
-    expect((await granted.handler(post("/api/actions/resource/write", { value: 42 }))).status).toBe(
-      400,
-    );
-    expect(handlers).toEqual([]);
   });
 
-  it("marks every error answer uncacheable", async () => {
+  it("leaves cache policy to the host", async () => {
     const { app, hooks } = make();
     const web = serveHttp(app, authorize(hooks), readOnly);
     onTestFinished(() => web.dispose());
 
     const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
-    expect(refused.headers.get("cache-control")).toBe("no-store");
+    expect(refused.headers.get("cache-control")).toBe(null);
 
     const allowed = await web.handler(post("/api/actions/resource/read"));
     expect(allowed.headers.get("cache-control")).toBe(null);
@@ -186,17 +181,14 @@ describe("the pre-handler hook", () => {
     const { app, hooks, handlers } = make();
 
     const mcp = HttpRouter.toWebHandler(
-      ActionMcp.layerHttp(
-        {
-          protocols: [McpProtocol.v2026_07_28],
-          name: "test",
-          version: "0",
-          path: testMcpPath,
-          errors: [InsufficientScope],
-          before: authorize(hooks),
-        },
-        app,
-      ).pipe(HttpRouter.provideRequest(readOnly), Layer.provide(HttpServer.layerServices)),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: testMcpPath,
+        errors: [InsufficientScope],
+        before: authorize(hooks),
+      }).pipe(HttpRouter.provideRequest(readOnly), Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
 
@@ -219,10 +211,10 @@ describe("the pre-handler hook", () => {
   it("runs over the native Toolkit", async () => {
     const { app, hooks, handlers } = make();
 
-    const binding = ActionToolkit.make(
-      { errors: [InsufficientScope], before: authorize(hooks) },
-      app,
-    );
+    const binding = ActionToolkit.make([app], {
+      errors: [InsufficientScope],
+      before: authorize(hooks),
+    });
 
     const call = (name: "read" | "write") =>
       Effect.runPromise(

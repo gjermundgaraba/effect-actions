@@ -8,16 +8,13 @@ const allowedOrigins = ["https://ui.example.com"];
 
 const app = Actions.implement({ greet: ({ name }) => Effect.succeed(`Hello, ${name}!`) });
 
-const mcp = ActionMcp.layerHttp(
-  {
-    name: "greetings",
-    version: "1.0.0",
-    path: "/mcp",
-    protocols: [McpProtocol.v2026_07_28],
-    allowedOrigins,
-  },
-  app,
-);
+const mcp = ActionMcp.layerHttp([app], {
+  name: "greetings",
+  version: "1.0.0",
+  path: "/mcp",
+  protocols: [McpProtocol.v2026_07_28],
+  allowedOrigins,
+});
 
 // Global router CORS handles preflight outside route-level authentication.
 // This example is public; protected endpoints still need authentication and a hook.

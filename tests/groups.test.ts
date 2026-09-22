@@ -51,13 +51,14 @@ const Http = ActionHttp.make({ apiPath: "/api" }, Users, Billing);
 const serve = () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Http.layer({}, UsersApp),
-      Http.layer({}, BillingApp),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        UsersApp,
-        BillingApp,
-      ),
+      Http.layer([UsersApp]),
+      Http.layer([BillingApp]),
+      ActionMcp.layerHttp([UsersApp, BillingApp], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ).pipe(Layer.provide(Layer.succeed(Tenant, "acme")), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -161,15 +162,14 @@ it("never dispatches to a handler its own group did not declare", async () => {
 
   const handler = handlerOf(
     Layer.mergeAll(
-      bound.layer({}, A.implement({ alpha: () => Effect.succeed("right") })),
+      bound.layer([A.implement({ alpha: () => Effect.succeed("right") })]),
       // The constraint on handler records admits extra keys.
-      bound.layer(
-        {},
+      bound.layer([
         B.implement({
           beta: () => Effect.succeed("beta"),
           alpha: () => Effect.succeed("wrong group"),
         }),
-      ),
+      ]),
     ),
   );
 
@@ -190,11 +190,10 @@ it("namespaces equal HTTP action names by group", async () => {
   const http = ActionHttp.make({ apiPath: "/api" }, left, right);
 
   const handler = handlerOf(
-    http.layer(
-      {},
+    http.layer([
       left.implement({ echo: () => Effect.succeed("left") }),
       right.implement({ echo: () => Effect.succeed("right") }),
-    ),
+    ]),
   );
 
   expect(await (await handler(post("/api/left/echo"))).json()).toBe("left");
@@ -213,11 +212,11 @@ it("mounts only implementations of the groups it was made with", () => {
   const bound = ActionHttp.make({ apiPath: "/api" }, A);
 
   // Pairing is by identity: the same name and actions do not make it this group.
-  expect(() => bound.layer({}, lookAlike)).toThrow(
+  expect(() => bound.layer([lookAlike])).toThrow(
     'Implementation of group "a" is not served by this adapter',
   );
   // @ts-expect-error The group is part of an implementation's type, so this does not compile either.
-  expect(() => bound.layer({}, other)).toThrow(
+  expect(() => bound.layer([other])).toThrow(
     'Implementation of group "other" is not served by this adapter',
   );
 });
@@ -257,13 +256,14 @@ it("acquires only the implementations a transport serves", async () => {
   const bound = ActionHttp.make({ apiPath: "/api" }, McpOnly, HttpOnly);
 
   for (const [routes, expected] of [
-    [Layer.mergeAll(bound.layer({}, mcpOnly), bound.layer({}, httpOnly)), "httpOnly"],
+    [Layer.mergeAll(bound.layer([mcpOnly]), bound.layer([httpOnly])), "httpOnly"],
     [
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        mcpOnly,
-        httpOnly,
-      ),
+      ActionMcp.layerHttp([mcpOnly, httpOnly], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
       "mcpOnly",
     ],
   ] as const) {
@@ -303,7 +303,7 @@ it("reads only the actions a transport serves", async () => {
   );
 
   const bound = ActionHttp.make({ apiPath: "/api" }, Web, Tools);
-  const handler = handlerOf(bound.layer({}, Web.implement({ ping: () => Effect.succeed("pong") })));
+  const handler = handlerOf(bound.layer([Web.implement({ ping: () => Effect.succeed("pong") })]));
 
   const result = await Effect.runPromise(
     Effect.flatMap(httpClient(bound.api, handler), (client) => client.web.ping({ payload: {} })),
@@ -326,8 +326,8 @@ it("scopes router middleware to the layer it is provided to", async () => {
   ).layer;
 
   const tenant = Layer.provide(Layer.succeed(Tenant, "acme"));
-  const users = Http.layer({}, UsersApp).pipe(tenant);
-  const billing = Http.layer({}, BillingApp);
+  const users = Http.layer([UsersApp]).pipe(tenant);
+  const billing = Http.layer([BillingApp]);
 
   // The document is an ordinary route over the native API, so it takes middleware like any other.
   const document = HttpRouter.add(
@@ -391,11 +391,13 @@ it("adds a group's errors to every action, on both transports", async () => {
 
   const handler = handlerOf(
     Layer.mergeAll(
-      bound.layer({}, app),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        app,
-      ),
+      bound.layer([app]),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ),
   );
 
@@ -505,16 +507,20 @@ it("checks each namespace only where it is served", () => {
 
   expect(() =>
     ActionMcp.layerHttp(
+      [
+        one.implement({ first: () => Effect.succeed("a") }),
+        two.implement({ second: () => Effect.succeed("b") }),
+      ],
       mcp,
-      one.implement({ first: () => Effect.succeed("a") }),
-      two.implement({ second: () => Effect.succeed("b") }),
     ),
   ).toThrow("Duplicate MCP tool: same");
   expect(() =>
     ActionMcp.layerHttp(
+      [
+        Users.implement({ whoAmI: () => Effect.succeed("a") }),
+        again.implement({ other: () => Effect.succeed("b") }),
+      ],
       mcp,
-      Users.implement({ whoAmI: () => Effect.succeed("a") }),
-      again.implement({ other: () => Effect.succeed("b") }),
     ),
   ).not.toThrow();
 });

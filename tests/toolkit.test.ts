@@ -28,7 +28,7 @@ describe("ActionToolkit", () => {
       hidden: () => Effect.succeed("hidden"),
     });
 
-    const binding = ActionToolkit.make({}, app);
+    const binding = ActionToolkit.make([app]);
 
     expect(Object.keys(binding.toolkit.tools)).toEqual(["double_value"]);
 
@@ -63,7 +63,7 @@ describe("ActionToolkit", () => {
       ),
     );
 
-    const binding = ActionToolkit.make({}, app);
+    const binding = ActionToolkit.make([app]);
 
     await Effect.runPromise(
       Effect.scoped(
@@ -96,7 +96,7 @@ describe("ActionToolkit", () => {
       }),
     );
 
-    const binding = ActionToolkit.make({}, app);
+    const binding = ActionToolkit.make([app]);
 
     const result = await Effect.runPromise(
       // @ts-expect-error Deliberately omit Principal to verify it cannot leak from another invocation.

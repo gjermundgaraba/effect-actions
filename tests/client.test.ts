@@ -58,7 +58,7 @@ const app = actions.implement({
 
 it("keeps the client, routes and document on one configuration", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
     {
       disableLogger: true,
     },

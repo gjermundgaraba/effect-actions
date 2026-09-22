@@ -5,62 +5,22 @@ handler locally and manages no credentials.
 
 ## API
 
-```ts
-import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
+Import `@gjermundgaraba/effect-actions/ActionCliClient`.
 
-/** One HTTP-enabled action retained by the binding. */
-const command: <
-  const Groups,
-  const Errors,
-  const GroupName,
-  const ActionName,
-  ParsedParameters = never,
->(
-  http: Http<Groups, Errors>,
-  groupName: GroupName,
-  actionName: ActionName, // only actions with http: true
-  options?: Options<SuccessType, ParsedParameters>,
-) => Command.Command<string, never, {}, ClientErrors, HttpClient.HttpClient | ClientServices>;
+| API                                              | Purpose                                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------------------- |
+| `command(http, groupName, actionName, options?)` | Call one HTTP-enabled action through a native Effect `Command`.            |
+| `group(http, groupName, options?)`               | Every HTTP-enabled action of a bound group under one command.              |
+| `Options`, `GroupOptions`, `Connection`          | Single/aggregate command configuration and native HTTP connection options. |
 
-/** Every HTTP-enabled action of one group under the group name. */
-const group: <const Groups, const Errors, const GroupName>(
-  http: Http<Groups, Errors>,
-  groupName: GroupName,
-  options?: GroupOptions,
-) => Command.Command<string, {}, {}, ClientErrors, HttpClient.HttpClient | ClientServices>;
-```
+Single-command options: `name`, `render`, paired `parameters`/`input`, and `connection`.
+Group options: `name` and `connection`. Parsing/rendering semantics match [ActionCli.md](ActionCli.md).
+`connection` accepts native `HttpApiClient.make` configuration, including `baseUrl`,
+`transformClient` and `transformResponse`.
 
-### Options
-
-```ts
-import type { Schema } from "effect";
-import type { Command } from "effect/unstable/cli";
-import type { HttpApiClient } from "effect/unstable/httpapi";
-
-/** Native client configuration: baseUrl, transformClient, transformResponse. */
-export type Connection = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;
-
-/** Remote commands have no local `before` hook. */
-export type Options<Output, ParsedParameters extends Command.Command.Config = never> = {
-  readonly name?: string;
-  readonly render?: (output: Output) => string;
-  readonly connection?: Connection;
-} & (
-  | { readonly parameters?: never; readonly input?: never }
-  | {
-      readonly parameters: ParsedParameters;
-      readonly input: (parsed: Command.Command.Config.InferValue<ParsedParameters>) => Schema.Json;
-    }
-);
-
-export interface GroupOptions {
-  readonly name?: string;
-  readonly connection?: Connection;
-}
-```
-
-Parsing and rendering options (`name`, `render`, `parameters`, `input`) are the same as
-[ActionCli.md](ActionCli.md). Remote commands have no `before` hook: the server owns authorization.
+Remote commands have no local `before` hook: the server owns authorization. Their Effects
+retain the selected endpoint's client failures and middleware requirements, and require an
+`HttpClient` supplied by the host. Group/action selectors stay checked against the bound API.
 
 ## Canonical
 

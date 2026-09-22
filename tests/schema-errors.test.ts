@@ -70,7 +70,7 @@ it("maps input and output failures and exposes the same error contract to client
   });
 
   const web = HttpRouter.toWebHandler(
-    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -145,8 +145,8 @@ it("answers with each group's own policy inside one adapter", async () => {
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      both.layer({}, actions.implement({ echo: ({ value }) => Effect.succeed(value) })),
-      both.layer({}, second.implement({ other: ({ value }) => Effect.succeed(value) })),
+      both.layer([actions.implement({ echo: ({ value }) => Effect.succeed(value) })]),
+      both.layer([second.implement({ other: ({ value }) => Effect.succeed(value) })]),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -195,7 +195,7 @@ it("gives the policy every issue", async () => {
 
   const web = HttpRouter.toWebHandler(
     ActionHttp.make({ apiPath: "/api" }, group)
-      .layer({}, group.implement({ pair: ({ left }) => Effect.succeed(left) }))
+      .layer([group.implement({ pair: ({ left }) => Effect.succeed(left) })])
       .pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -259,11 +259,13 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      recording.layer({}, app),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        app,
-      ),
+      recording.layer([app]),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -336,11 +338,13 @@ it("executes each input/output transformation once with a policy enabled", async
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.make({ apiPath: "/api/actions" }, group).layer({}, app),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        app,
-      ),
+      ActionHttp.make({ apiPath: "/api/actions" }, group).layer([app]),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -374,11 +378,13 @@ it("does not recursively map a broken policy error; MCP never maps", async () =>
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer({}, app),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        app,
-      ),
+      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer([app]),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -426,11 +432,13 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
 
   const web = HttpRouter.toWebHandler(
     Layer.merge(
-      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer({}, app),
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        app,
-      ),
+      ActionHttp.make({ apiPath: "/api/actions" }, app.group).layer([app]),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );

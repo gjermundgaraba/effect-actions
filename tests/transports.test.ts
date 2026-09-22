@@ -418,16 +418,13 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
 
   const serve = (allowedOrigins?: ReadonlyArray<string>) => {
     const web = HttpRouter.toWebHandler(
-      ActionMcp.layerHttp(
-        {
-          protocols: [McpProtocol.v2026_07_28],
-          name: "test",
-          version: "0",
-          path: testMcpPath,
-          ...(allowedOrigins === undefined ? {} : { allowedOrigins }),
-        },
-        app,
-      ).pipe(Layer.provide(HttpServer.layerServices)),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: testMcpPath,
+        ...(allowedOrigins === undefined ? {} : { allowedOrigins }),
+      }).pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
 
@@ -491,7 +488,7 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
   );
 
   const web = HttpRouter.toWebHandler(
-    ActionMcp.layerHttp({
+    ActionMcp.layerHttp([], {
       protocols: [McpProtocol.v2026_07_28],
       name: "origin-order",
       version: "0",
@@ -543,10 +540,12 @@ it("supplies the native request context to handlers without a router requirement
   });
 
   const web = HttpRouter.toWebHandler(
-    ActionMcp.layerHttp(
-      { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-      app,
-    ).pipe(Layer.provide(HttpServer.layerServices)),
+    ActionMcp.layerHttp([app], {
+      protocols: [McpProtocol.v2026_07_28],
+      name: "test",
+      version: "0",
+      path: "/mcp",
+    }).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 

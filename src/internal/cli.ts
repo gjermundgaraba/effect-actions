@@ -119,7 +119,7 @@ const defaultCommand = <A extends Action.Any, E, R>(
 
   return make(action, execute, options, inputFlags(codec), (parsed) =>
     // A file takes precedence over inline input. Neither decodes `{}` afresh
-    // each run, so invocations of one command never share an input value.
+    // each run, including any codec defaults or transformations.
     Option.match(
       Option.orElse(parsed.inputFile, () => parsed.input),
       {

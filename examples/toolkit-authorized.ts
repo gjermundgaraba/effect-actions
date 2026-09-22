@@ -6,7 +6,7 @@ import { UserApp } from "./handlers.js";
 import { Users } from "./users.js";
 
 // The in-process caller binds the same rule as the guarded servers.
-const binding = ActionToolkit.make({ errors: [Forbidden], before: authorize }, UserApp);
+const binding = ActionToolkit.make([UserApp], { errors: [Forbidden], before: authorize });
 
 const program = Effect.gen(function* () {
   const tools = yield* binding.toolkit;

@@ -6,51 +6,28 @@ JSON-RPC on standard I/O for a subprocess.
 
 ## API
 
-```ts
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
-function layerHttp<const Apps extends ReadonlyArray<AnyImplementation>, Errors = [], RB = never>(
-  options: Options<Errors, RB>,
-  ...apps: Apps
-): Layer.Layer<
-  never,
-  BuildError<Apps[number]> | Cause.IllegalArgumentError,
-  | BuildContext<Apps[number]>
-  | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
->;
+| API                         | Purpose                                                                       |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `layerHttp(apps, options)`  | Serve a readonly collection of implementations at a Streamable HTTP endpoint. |
+| `layerStdio(apps, options)` | Serve implementations over a subprocess's standard I/O.                       |
+| `Options`, `StdioOptions`   | Configuration for the two transports.                                         |
 
-function layerStdio<const Apps extends ReadonlyArray<AnyImplementation>, Errors = [], RB = never>(
-  options: StdioOptions<Errors, RB>,
-  ...apps: Apps
-): Layer.Layer<
-  never,
-  BuildError<Apps[number]> | Cause.IllegalArgumentError,
-  BuildContext<Apps[number]> | Stdio | RequestContext<Apps[number]> | RB
->;
+| Option            | Meaning                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `name`, `version` | Required native server information.                                                                   |
+| `protocols`       | Required nonempty list of native protocol adapters.                                                   |
+| `path`            | Required HTTP endpoint path; HTTP only, no default.                                                   |
+| `allowedOrigins`  | Optional exact Origin allowlist; HTTP only, not CORS configuration.                                   |
+| `instructions`    | Optional native server instructions.                                                                  |
+| `errors`          | Optional surface error codecs, declared on every served tool.                                         |
+| `before`          | Optional Effectful hook receiving the selected `Action.Any`; fails only with declared surface errors. |
 
-/** Both transports share these. */
-interface SurfaceOptions<Errors, RB> {
-  readonly errors?: Errors; // declared on every tool of this transport
-  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], RB>;
-}
-
-interface Options<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
-  readonly name: string; // server info
-  readonly version: string;
-  readonly protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>; // required, e.g. [McpProtocol.v2026_07_28]
-  readonly path: HttpRouter.PathInput; // no default
-  readonly allowedOrigins?: ReadonlyArray<string>; // passed to McpServer.layerHttp
-  readonly instructions?: string;
-}
-
-interface StdioOptions<Errors = [], RB = never> extends SurfaceOptions<Errors, RB> {
-  readonly name: string;
-  readonly version: string;
-  readonly protocols: NonEmptyReadonlyArray<McpProtocol.ProtocolAdapter>;
-  readonly instructions?: string;
-}
-```
+Both layers retain served implementations' build failures and requirements, plus native
+`IllegalArgumentError`. HTTP needs the router and wraps handler/hook services as request
+requirements. stdio needs `Stdio` and the caller's request services. Native `McpRequestContext`
+is supplied by the server, not owed by the host.
 
 ## Canonical
 
@@ -65,32 +42,25 @@ const allowedOrigins = ["http://localhost:3000"];
 
 // One endpoint is one route: its middleware covers every tool on it.
 // Tools with different middleware needs get their own endpoint.
-const publicMcp = ActionMcp.layerHttp(
-  {
-    protocols: [McpProtocol.v2026_07_28],
-    name: "app-public",
-    version: "1.0.0",
-    path: "/mcp/public",
-    allowedOrigins,
-  },
-  PublicApp,
-);
+const publicMcp = ActionMcp.layerHttp([PublicApp], {
+  protocols: [McpProtocol.v2026_07_28],
+  name: "app-public",
+  version: "1.0.0",
+  path: "/mcp/public",
+  allowedOrigins,
+});
 
-const mcp = ActionMcp.layerHttp(
-  {
-    protocols: [McpProtocol.v2026_07_28],
-    name: "app",
-    version: "1.0.0",
-    path: "/mcp",
-    allowedOrigins,
-    // The same rule the HTTP binding runs, declared here so a refusal is an
-    // ordinary tool failure rather than a transport error.
-    errors: [Forbidden],
-    before: authorize,
-  },
-  UserApp,
-  AuditApp,
-).pipe(Layer.provide(authentication.layer));
+const mcp = ActionMcp.layerHttp([UserApp, AuditApp], {
+  protocols: [McpProtocol.v2026_07_28],
+  name: "app",
+  version: "1.0.0",
+  path: "/mcp",
+  allowedOrigins,
+  // The same rule the HTTP binding runs, declared here so a refusal is an
+  // ordinary tool failure rather than a transport error.
+  errors: [Forbidden],
+  before: authorize,
+}).pipe(Layer.provide(authentication.layer));
 
 export const layer = Layer.mergeAll(publicMcp, mcp);
 ```
@@ -112,16 +82,13 @@ const allowedOrigins = ["https://ui.example.com"];
 
 const app = Actions.implement({ greet: ({ name }) => Effect.succeed(`Hello, ${name}!`) });
 
-const mcp = ActionMcp.layerHttp(
-  {
-    name: "greetings",
-    version: "1.0.0",
-    path: "/mcp",
-    protocols: [McpProtocol.v2026_07_28],
-    allowedOrigins,
-  },
-  app,
-);
+const mcp = ActionMcp.layerHttp([app], {
+  name: "greetings",
+  version: "1.0.0",
+  path: "/mcp",
+  protocols: [McpProtocol.v2026_07_28],
+  allowedOrigins,
+});
 
 // Global router CORS handles preflight outside route-level authentication.
 // This example is public; protected endpoints still need authentication and a hook.
@@ -162,10 +129,11 @@ const app = ActionGroup.make({ name: "stdio" }, Status).implement({
   status: () => Effect.log("status called").pipe(Effect.as({ ready: true })),
 });
 
-const layer = ActionMcp.layerStdio(
-  { name: "effect-actions-stdio", version: "0.1.0", protocols: [McpProtocol.v2026_07_28] },
-  app,
-).pipe(Layer.provide(NodeStdio.layer));
+const layer = ActionMcp.layerStdio([app], {
+  name: "effect-actions-stdio",
+  version: "0.1.0",
+  protocols: [McpProtocol.v2026_07_28],
+}).pipe(Layer.provide(NodeStdio.layer));
 
 // Protocol messages use stdout exclusively. Runtime diagnostics remain on stderr.
 Layer.launch(layer).pipe(
@@ -193,7 +161,7 @@ Layer.launch(layer).pipe(
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. There is no authentication middleware. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 - `errors` are the failures this transport answers with rather than a handler. They join every tool's declared failures, so a refusal is returned exactly like an action's own error and no caller sees a protocol-level error instead. A schema an action already declares is not repeated.
-- `before` runs once per tool call, with the selected action contract, before the handler. The native server decodes the tool arguments first, so unlike HTTP the hook runs after input decoding; it still runs on every call and the handler never runs when it fails. Its services are request-time requirements, joined with the handlers'.
+- `before` runs after successful native argument decoding and before the selected handler, with its action contract. Invalid arguments skip the hook and handler. A hook failure prevents the handler from running; its services join handler request requirements.
 
 ## Failure modes
 

@@ -28,7 +28,7 @@ export const makeTestHttp = <Group extends ActionGroup.Any, H, EX>(
 ) =>
   HttpRouter.toWebHandler(
     ActionHttp.make({ apiPath: options?.apiPath ?? testApiPath }, app.group)
-      .layer({}, app)
+      .layer([app])
       .pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
@@ -39,9 +39,11 @@ export const makeTestMcp = <Group extends ActionGroup.Any, H, EX>(
   request: Layer.Layer<NoInfer<HandlersContext<H>>>,
 ) =>
   HttpRouter.toWebHandler(
-    ActionMcp.layerHttp(
-      { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: testMcpPath },
-      app,
-    ).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
+    ActionMcp.layerHttp([app], {
+      protocols: [McpProtocol.v2026_07_28],
+      name: "test",
+      version: "0",
+      path: testMcpPath,
+    }).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );

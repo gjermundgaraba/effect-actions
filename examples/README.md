@@ -93,9 +93,8 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 ```text
 HTTP getUser / MCP get_user
   → authentication middleware provides CurrentActor
+  → adapter decodes input (invalid input skips the hook and handler)
   → before hook reads access: "read" and checks users:read
-      (HTTP runs it before decoding; MCP decodes arguments first)
-  → adapter decodes input
   → handler calls Users.get(actor.tenantId, id)
   → adapter encodes the user or declared error
 ```
@@ -103,8 +102,8 @@ HTTP getUser / MCP get_user
 `UserNotFound` uses HTTP 404 and is declared on the actions that can raise it. `Forbidden`
 (403) and `Unauthenticated` (401) are declared on the `Http` binding instead, because the
 hook and the authentication middleware produce them rather than a handler; declaring them is
-what lets [client.ts](client.ts) decode a refusal as a typed failure. Every error response
-carries `cache-control: no-store`. MCP returns an `isError` tool
+what lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
+authentication middleware carry `cache-control: no-store`; other routes use the host's cache policy. MCP returns an `isError` tool
 result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
 
 A write through `renameUser` is visible through both transports, and through the MCP-only
@@ -147,7 +146,3 @@ allowlist and separate router CORS configuration; mount them with a platform ser
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
 authorization hook and a per-invocation principal.
 Run `node --import tsx examples/testing.ts` for in-memory HTTP and MCP calls with cleanup.
-
-[cli-client-options.ts](cli-client-options.ts) and
-[testing-http-client.ts](testing-http-client.ts) are type-checked reference definitions
-compared with their documentation snippets, not standalone applications.

@@ -75,11 +75,11 @@ describe("MCP stdio example", () => {
       }),
     );
 
-    const layer = ActionMcp.layerStdio(
-      { name: "test", version: "0", protocols: [McpProtocol.v2026_07_28] },
-      empty,
-      tools,
-    ).pipe(Layer.provide(Stdio.layerTest({})));
+    const layer = ActionMcp.layerStdio([empty, tools], {
+      name: "test",
+      version: "0",
+      protocols: [McpProtocol.v2026_07_28],
+    }).pipe(Layer.provide(Stdio.layerTest({})));
 
     await Effect.runPromise(Effect.scoped(Layer.build(layer)));
 
@@ -97,11 +97,11 @@ describe("MCP stdio example", () => {
     ).implement({ other: () => Effect.succeed(1) });
 
     expect(() =>
-      ActionMcp.layerStdio(
-        { name: "duplicate", version: "0", protocols: [McpProtocol.v2026_07_28] },
-        tools,
-        duplicate,
-      ),
+      ActionMcp.layerStdio([tools, duplicate], {
+        name: "duplicate",
+        version: "0",
+        protocols: [McpProtocol.v2026_07_28],
+      }),
     ).toThrow("Duplicate MCP tool: one");
   });
 });

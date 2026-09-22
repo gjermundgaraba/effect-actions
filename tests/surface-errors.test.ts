@@ -15,6 +15,7 @@ import * as Action from "../src/Action.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
 import { httpClient } from "../src/Testing.js";
 import { cliServices, logged } from "./cli-services.js";
@@ -70,10 +71,10 @@ const dispose = <Web extends { readonly dispose: () => Promise<void> }>(web: Web
 };
 
 const guarded = () =>
-  dispose(HttpRouter.toWebHandler(middleware(Guarded.layer({}, app)), { disableLogger: true }));
+  dispose(HttpRouter.toWebHandler(middleware(Guarded.layer([app])), { disableLogger: true }));
 
 const bare = () =>
-  dispose(HttpRouter.toWebHandler(middleware(Bare.layer({}, app)), { disableLogger: true }));
+  dispose(HttpRouter.toWebHandler(middleware(Bare.layer([app])), { disableLogger: true }));
 
 const bearer = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
@@ -136,6 +137,10 @@ it("does not repeat a schema an action already declares", () => {
     }),
   );
 
+  const app = Declared.implement({ whoAmI: () => Effect.succeed("ada") });
+  const binding = ActionToolkit.make([app], { errors: [Unauthenticated, Unauthenticated] });
+  expect(binding.toolkit.tools.whoAmI.failureSchema.members).toEqual([Unauthenticated]);
+
   const both = ActionHttp.make({ apiPath: "/api", errors: [Unauthenticated] }, Declared);
   const responses = OpenApi.fromApi(both.api).paths?.["/api/session/whoAmI"]?.post?.responses;
 
@@ -196,11 +201,11 @@ it("decodes two errors that share a status by their tag", async () => {
   const web = HttpRouter.toWebHandler(
     binding
       .layer(
+        [Refusals.implement({ refuse: () => Effect.fail(new Rejected({ reason: "closed" })) })],
         {
           before: (action) =>
             action.access === "read" ? Effect.void : Effect.fail(new Throttled({ retryAfter: 30 })),
         },
-        Refusals.implement({ refuse: () => Effect.fail(new Rejected({ reason: "closed" })) }),
       )
       .pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },

@@ -33,7 +33,7 @@ const app = ActionGroup.make({ name: "types" }, Aliased, ServiceFree, Hidden).im
   hidden: () => Effect.map(Principal, (principal) => principal),
 });
 
-const binding = ActionToolkit.make({}, app);
+const binding = ActionToolkit.make([app]);
 
 const exactAliasSuccess: Tool.Success<typeof binding.toolkit.tools.alias> = "principal";
 
@@ -86,7 +86,7 @@ const right = ActionGroup.make({ name: "right" }, Right).implement(
   Effect.fail("right-build" as const).pipe(Effect.as({ right: () => Effect.succeed(1) })),
 );
 
-const mixed = ActionToolkit.make({}, left, right);
+const mixed = ActionToolkit.make([left, right]);
 
 const mixedBuild = Effect.scoped(Layer.build(mixed.layer));
 

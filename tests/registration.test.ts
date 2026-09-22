@@ -17,7 +17,7 @@ const mcpCall = (name: string, args: Schema.Json = {}) =>
 
 it("forwards the configured MCP protocols", async () => {
   const web = HttpRouter.toWebHandler(
-    ActionMcp.layerHttp({
+    ActionMcp.layerHttp([], {
       name: "configured",
       version: "0",
       path: "/mcp",
@@ -352,10 +352,12 @@ describe("projection boundaries", () => {
     });
 
     expect(() =>
-      ActionMcp.layerHttp(
-        { protocols: [McpProtocol.v2026_07_28], name: "test", version: "0", path: "/mcp" },
-        app,
-      ),
+      ActionMcp.layerHttp([app], {
+        protocols: [McpProtocol.v2026_07_28],
+        name: "test",
+        version: "0",
+        path: "/mcp",
+      }),
     ).toThrow("invalid: MCP input must have an object root");
   });
 

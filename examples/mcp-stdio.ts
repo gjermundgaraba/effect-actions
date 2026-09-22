@@ -15,10 +15,11 @@ const app = ActionGroup.make({ name: "stdio" }, Status).implement({
   status: () => Effect.log("status called").pipe(Effect.as({ ready: true })),
 });
 
-const layer = ActionMcp.layerStdio(
-  { name: "effect-actions-stdio", version: "0.1.0", protocols: [McpProtocol.v2026_07_28] },
-  app,
-).pipe(Layer.provide(NodeStdio.layer));
+const layer = ActionMcp.layerStdio([app], {
+  name: "effect-actions-stdio",
+  version: "0.1.0",
+  protocols: [McpProtocol.v2026_07_28],
+}).pipe(Layer.provide(NodeStdio.layer));
 
 // Protocol messages use stdout exclusively. Runtime diagnostics remain on stderr.
 Layer.launch(layer).pipe(

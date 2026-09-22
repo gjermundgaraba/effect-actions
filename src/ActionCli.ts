@@ -4,7 +4,6 @@ import type * as Action from "./Action.js";
 import { command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
 import type { Actions } from "./internal/actions.js";
 import {
-  type Before,
   dispatch,
   type HandlerContext,
   type Handlers,
@@ -13,8 +12,8 @@ import {
 } from "./internal/implementation.js";
 
 /**
- * The hook a local command runs before the selected handler. A CLI encodes
- * nothing, so its refusal is a typed failure of the command effect rather than a
+ * The hook a local command runs before the selected handler. A CLI does not serialize
+ * failures, so its refusal is a typed failure of the command effect rather than a
  * declared surface error; the native parser has already decoded the input.
  */
 interface BeforeOptions<E, R> {
@@ -123,8 +122,6 @@ export const group = <
   app: Implementation<G, H, EX, RX>,
   options?: GroupOptions<EB, RB>,
 ) => {
-  const before: Before<RB> | undefined = options?.before;
-
   const commands = app.group.actions.map((action: G["actions"][number]) =>
     makeCommand(action, (input) =>
       Effect.scoped(
@@ -133,7 +130,7 @@ export const group = <
             app.group,
             action,
             handlers,
-            before,
+            options?.before,
           )(input),
         ),
       ),

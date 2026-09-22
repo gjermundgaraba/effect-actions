@@ -147,8 +147,8 @@ describe("implementations", () => {
 
     const web = HttpRouter.toWebHandler(
       Layer.mergeAll(
-        ActionHttp.make({ apiPath: "/a" }, Group).layer({}, appA),
-        ActionHttp.make({ apiPath: "/b" }, Group).layer({}, appB),
+        ActionHttp.make({ apiPath: "/a" }, Group).layer([appA]),
+        ActionHttp.make({ apiPath: "/b" }, Group).layer([appB]),
       ).pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
@@ -172,7 +172,7 @@ describe("implementations", () => {
 
     const web = HttpRouter.toWebHandler(
       ActionHttp.make({ apiPath: "/api" }, Proto)
-        .layer({}, app)
+        .layer([app])
         .pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );

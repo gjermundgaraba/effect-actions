@@ -7,41 +7,23 @@ verification, login, and consent stay in the application. Authorization belongs 
 
 ## API
 
-```ts
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+Import `@gjermundgaraba/effect-actions/Authentication`.
 
-/** Provide `service` on every request, or send the response `authenticate` fails with. */
-const middleware: <I, A, R>(
-  service: Context.Key<I, A>,
-  authenticate: Effect.Effect<A, HttpServerResponse.HttpServerResponse, R>,
-) => HttpRouter.Middleware<{
-  provides: I;
-  handles: never;
-  error: never;
-  requires: Exclude<R, HttpRouter.Provided>;
-  layerError: never;
-  layerRequires: never;
-}>;
+| API                                        | Purpose                                                                                                              |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `middleware(service, authenticate)`        | Native router middleware: provide an identity service per request, or return the response authentication fails with. |
+| `protectedResource(options)`               | Public RFC 9728 discovery routes, metadata URL and bearer challenge builder.                                         |
+| `discovery.layer`, `discovery.metadataUrl` | Router layer and public discovery URL.                                                                               |
+| `discovery.challenge(options?)`            | Escaped `WWW-Authenticate` header value.                                                                             |
 
-const protectedResource: (options: ProtectedResourceOptions) => {
-  layer: Layer.Layer<never, never, HttpRouter.HttpRouter>; // GET/HEAD /.well-known/oauth-protected-resource<path>
-  metadataUrl: string;
-  challenge: (challenge?: BearerChallengeOptions) => string; // WWW-Authenticate value
-};
+`authenticate` is an Effect producing the identity or failing with `HttpServerResponse`.
+Its dependencies remain request requirements. Provide the returned middleware's `.layer`
+to routes requiring that identity.
 
-interface ProtectedResourceOptions {
-  readonly resource: string; // exact OAuth resource identifier; its path and query select the discovery path
-  readonly authorizationServers: NonEmptyReadonlyArray<string>;
-  readonly scopesSupported?: ReadonlyArray<string>;
-  readonly resourceName?: string;
-}
-
-interface BearerChallengeOptions {
-  readonly error?: "invalid_token" | "insufficient_scope";
-  readonly errorDescription?: string;
-  readonly scope?: string; // scopes needed for this request, space-separated
-}
-```
+| Option type                | Fields                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `ProtectedResourceOptions` | Required `resource` and nonempty `authorizationServers`; optional `scopesSupported`, `resourceName`.         |
+| `BearerChallengeOptions`   | Optional `error` (`invalid_token` or `insufficient_scope`), `errorDescription`, and space-separated `scope`. |
 
 ## Canonical
 
@@ -88,7 +70,7 @@ export const authentication = Authentication.middleware(
 
 export const routes = Layer.mergeAll(
   discovery.layer, // public
-  Http.layer({}, UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layer([UserApp]).pipe(Layer.provide(authentication.layer)),
   mcp.pipe(Layer.provide(authentication.layer)),
 );
 ```

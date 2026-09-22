@@ -1,10 +1,9 @@
 import { type Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "./Action.js";
-import { bindTools, type ToolOptions } from "./internal/tools.js";
+import { bindTools } from "./internal/tools.js";
 import {
   type AnyImplementation,
-  type Before,
   type BuildContext,
   type BuildError,
   type HandlerContext,
@@ -93,22 +92,19 @@ export function make<
   const Errors extends ReadonlyArray<Action.Codec> = [],
   RB = never,
 >(
-  options: Options<Errors, RB>,
-  ...apps: Apps
+  apps: readonly [...Apps],
+  options?: Options<Errors, RB>,
 ): Binding<
   ToolkitTools<Apps, Errors[number], RB>,
   BuildError<Apps[number], "mcp">,
   BuildContext<Apps[number], "mcp">
 >;
 export function make(
-  options: Options<ReadonlyArray<Action.Codec>, unknown>,
-  ...apps: ReadonlyArray<AnyImplementation>
+  apps: ReadonlyArray<AnyImplementation>,
+  options: Options<ReadonlyArray<Action.Codec>, unknown> = {},
 ): {
   readonly toolkit: object;
   readonly layer: object;
 } {
-  const before: Before<unknown> | undefined = options.before;
-  const toolOptions: ToolOptions = { errors: options.errors, before };
-
-  return bindTools(apps, "native", toolOptions);
+  return bindTools(apps, "native", { errors: options.errors, before: options.before });
 }

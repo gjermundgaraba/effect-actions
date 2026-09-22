@@ -7,7 +7,6 @@ import type * as Action from "./Action.js";
 import { bindTools, type ToolOptions } from "./internal/tools.js";
 import {
   type AnyImplementation,
-  type Before,
   type BuildContext,
   type BuildError,
   type RequestContext,
@@ -83,15 +82,6 @@ const server = <Out, R>(
     Layer.fresh,
   );
 
-/** The hook and surface errors an erased transport binds. */
-const toolOptions = (
-  options: SurfaceOptions<ReadonlyArray<Action.Codec>, unknown>,
-): ToolOptions => {
-  const before: Before<unknown> | undefined = options.before;
-
-  return { errors: options.errors, before };
-};
-
 /**
  * Serve MCP tools over one Streamable HTTP endpoint.
  *
@@ -103,8 +93,8 @@ export function layerHttp<
   const Errors extends ReadonlyArray<Action.Codec> = [],
   RB = never,
 >(
+  apps: readonly [...Apps],
   options: Options<Errors, RB>,
-  ...apps: Apps
 ): Layer.Layer<
   never,
   BuildError<Apps[number], "mcp"> | Cause.IllegalArgumentError,
@@ -113,12 +103,12 @@ export function layerHttp<
   | HttpRouter.Request.From<"Requires", ToolRequestContext<Apps[number], RB>>
 >;
 export function layerHttp(
+  apps: ReadonlyArray<AnyImplementation>,
   options: Options<ReadonlyArray<Action.Codec>, unknown>,
-  ...apps: ReadonlyArray<AnyImplementation>
 ) {
   return server(
     apps,
-    toolOptions(options),
+    { errors: options.errors, before: options.before },
     McpServer.layerHttp({
       name: options.name,
       version: options.version,
@@ -141,16 +131,20 @@ export function layerStdio<
   const Errors extends ReadonlyArray<Action.Codec> = [],
   RB = never,
 >(
+  apps: readonly [...Apps],
   options: StdioOptions<Errors, RB>,
-  ...apps: Apps
 ): Layer.Layer<
   never,
   BuildError<Apps[number], "mcp"> | Cause.IllegalArgumentError,
   BuildContext<Apps[number], "mcp"> | StdioService | ToolRequestContext<Apps[number], RB>
 >;
 export function layerStdio(
+  apps: ReadonlyArray<AnyImplementation>,
   options: StdioOptions<ReadonlyArray<Action.Codec>, unknown>,
-  ...apps: ReadonlyArray<AnyImplementation>
 ) {
-  return server(apps, toolOptions(options), McpServer.layerStdio(options));
+  return server(
+    apps,
+    { errors: options.errors, before: options.before },
+    McpServer.layerStdio(options),
+  );
 }

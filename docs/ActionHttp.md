@@ -5,41 +5,26 @@ of groups into a contract value shared by the server, every client, and the Open
 
 ## API
 
-```ts
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+Import `@gjermundgaraba/effect-actions/ActionHttp`.
 
-function make<const G extends ReadonlyArray<Actions>, const E extends ReadonlyArray<Codec> = []>(
-  options: Options<E>,
-  ...groups: G
-): Http<G, E>;
+| API                          | Purpose                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `make(options, ...groups)`   | Bind contracts and a mount path; returns `Http`.                                     |
+| `Http.groups`                | The exact bound contracts, in declaration order.                                     |
+| `Http.api`                   | Native Effect `HttpApi` for clients and OpenAPI.                                     |
+| `Http.layer(apps, options?)` | Serve a readonly collection of implementations; omit options when no hook is needed. |
 
-interface Options<Errors = []> {
-  readonly apiPath: `/${string}`; // no default
-  readonly errors?: Errors; // failures the surface answers with, declared on every endpoint
-}
+Exported types: `Options`, `LayerOptions`, `Http`, `Api`.
 
-interface LayerOptions<Errors, RB> {
-  /** Runs before the payload is decoded, on every request this layer answers. */
-  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], RB>;
-}
+| Option            | Meaning                                                                                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make`: `apiPath` | Required absolute mount path; no default.                                                                                                                   |
+| `make`: `errors`  | Surface error codecs declared on every endpoint; defaults to none.                                                                                          |
+| `layer`: `before` | Effectful hook receiving the selected `Action.Any`, after successful input decoding and before its handler. Failures must belong to the binding's `errors`. |
 
-interface Http<Groups, Errors = []> {
-  readonly groups: Groups; // the exact contracts bound, in declaration order
-  readonly api: HttpApi.HttpApi<"actions", ...>; // native HttpApi, one HttpApiGroup per group
-  /** Serve implementations. Errors and requirements are unions over exactly these apps. */
-  readonly layer: <const Apps extends ReadonlyArray<AnyImplementation<Groups[number]>>, RB = never>(
-    options: LayerOptions<Errors, RB>,
-    ...apps: Apps
-  ) => Layer.Layer<
-    never,
-    BuildError<Apps[number]>,
-    | BuildContext<Apps[number]>
-    | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
-    | Etag.Generator | FileSystem | HttpPlatform.HttpPlatform | Path
-  >;
-}
-```
+Layer failures and startup requirements come from the supplied implementations that actually
+serve HTTP actions. Served handlers' and the hook's request services remain router request
+requirements; router/platform services are also required. No request identity is supplied at startup.
 
 Route shape: `POST <apiPath>/<group>/<action>`. Operation ID: `<group>.<action>`.
 
@@ -67,8 +52,8 @@ export const Http = ActionHttp.make(
 // One layer per middleware set and per policy. Middleware provided to a layer
 // applies to that layer only, and so does its `before` hook.
 const routes = Layer.mergeAll(
-  Http.layer({}, PublicApp),
-  Http.layer({ before: authorize }, UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layer([PublicApp]),
+  Http.layer([UserApp], { before: authorize }).pipe(Layer.provide(authentication.layer)),
 );
 
 // Documents are Effect's own, reading the same contract.
@@ -106,10 +91,10 @@ export const greeting = Effect.gen(function* () {
 - `errors` declares the failures the surface around these endpoints answers with rather than a handler: authentication, authorization, rate limiting, upstream unavailability. They are added to every endpoint's error schemas, so `HttpApiClient`, `ActionCliClient` and the in-memory `Testing.httpClient` decode them as typed failures, and they appear in OpenAPI on every operation. A schema an action already declares is not repeated.
 - Schemas reachable from one endpoint must have distinct `_tag`s: the client decodes a response by trying the schemas declared for its status, and two errors may share a status. Effect unions them per status.
 - `errors` changes only what is declared. Nothing produces them: the middleware that renders those responses must encode a body that matches the schema, or the client sees a decode error again. Handlers cannot fail with them.
-- `Http.layer(options, ...apps)` requires each implementation to reference the exact group object passed to `make`; reconstructing an equal-looking group is not sufficient. Import the shared group value and call its `implement`. Each group may occur only once in a single `layer` call. It mounts only the supplied implementations. A group that is never passed to `layer` has no routes. A group with no HTTP-enabled actions is not built at all. The options object is required; pass `{}` for a surface with no hook.
-- `before` runs once per request, with the selected action contract, **before the payload is decoded**, so an unauthorized caller learns nothing about the input schema and the handler never runs. It fails with the binding's own `errors`, and that failure is encoded exactly like a declared error, with the schema's `httpApiStatus`. Its services are request-time requirements, joined with the handlers'.
+- `Http.layer(apps, options?)` requires each implementation to reference the exact group object passed to `make`; reconstructing an equal-looking group is not sufficient. Each group may occur only once per call. Only supplied implementations are mounted, and a group with no HTTP-enabled actions is not built. Options are optional.
+- `before` runs after successful native input decoding and before the selected handler. Invalid input skips the hook and handler. A refusal uses the binding's declared error schema and `httpApiStatus`; its services join handler request requirements. Admission that must precede decoding belongs in outer native HTTP middleware.
 - Middleware and the hook are per layer call. Groups that need different middleware or a different policy go in separate `Http.layer` calls, merged with `Layer.mergeAll`.
-- Every response these routes answer with a status of 400 or more carries `cache-control: no-store`, including hook refusals, declared errors and defects. Successful responses are left alone; only the host knows whether they are public. The middleware covers the action routes only, not the router's 404 for an unmatched path or anything else the host mounts.
+- `ActionHttp` sets no cache policy. The host owns response headers; `Authentication.middleware` adds its own `Cache-Control: no-store` policy. POST default non-cacheability is not an explicit storage prohibition.
 - A hook refusal and a handler error are plain declared errors: a JSON body and a status, no other headers. Challenge headers such as `WWW-Authenticate` belong to the admission middleware that runs before the router reaches these routes (see [Authentication.md](Authentication.md)), which sets them on its own response.
 - Request-time handler services are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`Authentication.middleware`, `HttpRouter.middleware`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
 - `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.

@@ -71,13 +71,15 @@ if (!discovery.challenge().includes(discovery.metadataUrl))
 
 const catalog = ActionCatalog.make(Actions);
 
-if (catalog.actions[0]?.id !== "greetings.greet") throw new Error("Catalog projection failed");
+if (catalog.version !== "3" || catalog.actions[0]?.input.type !== "object") {
+  throw new Error("Catalog JSON Schema projection failed");
+}
 
 const app = Actions.implement({
   greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
 });
 
-const binding = ActionToolkit.make({}, app);
+const binding = ActionToolkit.make([app]);
 
 const checkToolkitTypes = () => {
   // @ts-expect-error Published Toolkit names must remain literal.
@@ -160,10 +162,9 @@ const GuardedHttp = ActionHttp.make(
 );
 
 const guardedWeb = HttpRouter.toWebHandler(
-  GuardedHttp.layer(
-    { before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())) },
-    guarded,
-  ).pipe(Layer.provide(HttpServer.layerServices)),
+  GuardedHttp.layer([guarded], {
+    before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
+  }).pipe(Layer.provide(HttpServer.layerServices)),
   { disableLogger: true },
 );
 

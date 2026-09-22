@@ -73,7 +73,7 @@ const app = RemoteGroup.implement({
 
 it("projects grouped commands through the native HTTP client without a local fallback", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -154,7 +154,7 @@ it("projects grouped commands through the native HTTP client without a local fal
 
 it("keeps the selected action when a connection object carries selector keys", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -183,7 +183,7 @@ it("keeps the selected action when a connection object carries selector keys", a
 
 it("propagates domain and native schema-policy failures through Command.runWith", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer({}, app).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 

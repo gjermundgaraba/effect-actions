@@ -1,9 +1,9 @@
 # effect-actions reference
 
 Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Every page is a
-card with the same sections: **API** (signatures), **Canonical** (the one right way to write
+card with the same sections: **API** (inventory and options), **Canonical** (the one right way to write
 it), **Rules** (must and never), **Failure modes** (what you see when it is wrong, and the fix).
-Read the card for a module before writing code that uses it. Vocabulary is defined in
+Read the card for a module before writing code that uses it. Exported TypeScript declarations are the exact signature reference. Vocabulary is defined in
 [CONTEXT.md](CONTEXT.md); the pages use those terms exactly.
 
 Package facts that apply everywhere:
@@ -66,11 +66,13 @@ const app = Actions.implement({
 });
 
 export const routes = Layer.mergeAll(
-  Http.layer({}, app),
-  ActionMcp.layerHttp(
-    { protocols: [McpProtocol.v2026_07_28], name: "greetings", version: "1.0.0", path: "/mcp" },
-    app,
-  ),
+  Http.layer([app]),
+  ActionMcp.layerHttp([app], {
+    protocols: [McpProtocol.v2026_07_28],
+    name: "greetings",
+    version: "1.0.0",
+    path: "/mcp",
+  }),
 );
 ```
 
@@ -87,4 +89,3 @@ Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/
 - `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
 - `toolkit-authorized.ts`: native Toolkit invocation with authorization and correctly scoped identity.
 - `testing.ts`: in-memory HTTP and MCP calls with cleanup.
-- `cli-client-options.ts`, `testing-http-client.ts`: type-checked API reference definitions.

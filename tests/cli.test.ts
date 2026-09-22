@@ -70,7 +70,7 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
   await run(empty, []);
 
   expect(inputs).toEqual([21]);
-  // The default is decoded per invocation, so one command never shares an input value.
+  // The built-in no-input codec receives a fresh default each invocation.
   expect(empties).toEqual([{}, {}]);
   expect(empties[0]).not.toBe(empties[1]);
 });

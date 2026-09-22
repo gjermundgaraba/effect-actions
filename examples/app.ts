@@ -56,10 +56,10 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
 
 // One layer per group: middleware provided to a layer applies to that group
 // alone. The public group needs no credentials, so it binds no hook; the user
-// group authorizes every request before its payload is even decoded.
+// group authorizes each decoded invocation before its handler runs.
 const http = Layer.mergeAll(
-  Http.layer({}, PublicApp),
-  Http.layer({ before: authorize }, UserApp).pipe(Layer.provide(authentication.layer)),
+  Http.layer([PublicApp]),
+  Http.layer([UserApp], { before: authorize }).pipe(Layer.provide(authentication.layer)),
 );
 
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
@@ -75,31 +75,24 @@ const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 // covers all of its tools; handlers still authorize each tool themselves. Tools
 // that need no credentials at all therefore get their own endpoint, which
 // compiles because this implementation requires nothing per request.
-const publicMcp = ActionMcp.layerHttp(
-  {
-    protocols: [McpProtocol.v2026_07_28],
-    name: "effect-actions-public",
-    version: "0.0.0",
-    path: "/mcp/public",
-    allowedOrigins,
-  },
-  PublicApp,
-);
+const publicMcp = ActionMcp.layerHttp([PublicApp], {
+  protocols: [McpProtocol.v2026_07_28],
+  name: "effect-actions-public",
+  version: "0.0.0",
+  path: "/mcp/public",
+  allowedOrigins,
+});
 
-const mcp = ActionMcp.layerHttp(
-  {
-    protocols: [McpProtocol.v2026_07_28],
-    name: "effect-actions",
-    version: "0.0.0",
-    path: "/mcp",
-    allowedOrigins,
-    // The same rule as HTTP, declared here so a refusal is an ordinary tool error.
-    errors: [Forbidden],
-    before: authorize,
-  },
-  UserApp,
-  AuditApp,
-).pipe(Layer.provide(authentication.layer));
+const mcp = ActionMcp.layerHttp([UserApp, AuditApp], {
+  protocols: [McpProtocol.v2026_07_28],
+  name: "effect-actions",
+  version: "0.0.0",
+  path: "/mcp",
+  allowedOrigins,
+  // The same rule as HTTP, declared here so a refusal is an ordinary tool error.
+  errors: [Forbidden],
+  before: authorize,
+}).pipe(Layer.provide(authentication.layer));
 
 export const layer = Layer.mergeAll(http, documentation, publicMcp, mcp).pipe(
   Layer.provide(requestPolicy.layer),
