@@ -28,12 +28,7 @@ const Billing = ActionGroup.make(
     input: Schema.Struct({ amount: Schema.FiniteFromString }),
     success: Schema.Finite,
   }),
-  Action.make("audit", {
-    description: "MCP only",
-    access: "write",
-    success: Schema.String,
-    http: false,
-  }),
+  Action.make("audit", { description: "Audit", access: "write", success: Schema.String }),
 );
 
 const UsersApp = Users.implement(
@@ -85,7 +80,11 @@ it("serves several groups through one native grouped client and one document", a
   expect(result).toEqual(["ada@acme", 42]);
 
   const document = OpenApi.fromApi(Http.api);
-  expect(Object.keys(document.paths)).toEqual(["/api/users/whoAmI", "/api/billing/invoice"]);
+  expect(Object.keys(document.paths)).toEqual([
+    "/api/users/whoAmI",
+    "/api/billing/invoice",
+    "/api/billing/audit",
+  ]);
   expect(document.paths["/api/users/whoAmI"]?.post?.operationId).toBe("users.whoAmI");
   expect(document.paths["/api/billing/invoice"]?.post?.tags).toEqual(["billing"]);
 });
@@ -122,7 +121,7 @@ it("serves the binding's OpenAPI document under its API path or a chosen one", a
 
   expect(
     Object.keys(Schema.decodeUnknownSync(OpenApiPaths)(await authorized.json()).paths),
-  ).toEqual(["/api/users/whoAmI", "/api/billing/invoice"]);
+  ).toEqual(["/api/users/whoAmI", "/api/billing/invoice", "/api/billing/audit"]);
 });
 
 it("preserves action APIs composed into a native host API", () => {
@@ -133,6 +132,7 @@ it("preserves action APIs composed into a native host API", () => {
   expect(Object.keys(OpenApi.fromApi(combined).paths)).toEqual([
     "/public/users/whoAmI",
     "/admin/billing/invoice",
+    "/admin/billing/audit",
   ]);
 });
 
@@ -256,7 +256,7 @@ it("mounts only implementations of the groups it was made with", () => {
   );
 });
 
-it("acquires only the implementations a transport serves", async () => {
+it("acquires only the implementations MCP serves", async () => {
   const built: Array<string> = [];
 
   const record = <H>(name: string, handlers: H) =>
@@ -266,18 +266,13 @@ it("acquires only the implementations a transport serves", async () => {
       return handlers;
     });
 
-  const McpOnly = ActionGroup.make(
-    { name: "mcpOnly" },
-    Action.make("tool", {
-      description: "Tool",
-      access: "write",
-      success: Schema.String,
-      http: false,
-    }),
+  const Tools = ActionGroup.make(
+    { name: "tools" },
+    Action.make("tool", { description: "Tool", access: "write", success: Schema.String }),
   );
 
-  const HttpOnly = ActionGroup.make(
-    { name: "httpOnly" },
+  const Hidden = ActionGroup.make(
+    { name: "hidden" },
     Action.make("route", {
       description: "Route",
       access: "write",
@@ -286,65 +281,20 @@ it("acquires only the implementations a transport serves", async () => {
     }),
   );
 
-  const mcpOnly = McpOnly.implement(record("mcpOnly", { tool: () => Effect.succeed("tool") }));
-  const httpOnly = HttpOnly.implement(record("httpOnly", { route: () => Effect.succeed("route") }));
-  const bound = ActionHttp.make({ apiPath: "/api" }, McpOnly, HttpOnly);
-
-  for (const [routes, expected] of [
-    [Layer.mergeAll(bound.layer([mcpOnly]), bound.layer([httpOnly])), "httpOnly"],
-    [
-      ActionMcp.layerHttp([mcpOnly, httpOnly], {
-        name: "test",
-        version: "0",
-        path: "/mcp",
-      }),
-      "mcpOnly",
-    ],
-  ] as const) {
-    built.length = 0;
-
-    const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-      disableLogger: true,
-    });
-
-    await web.handler(post("/api/httpOnly/route"));
-    await web.dispose();
-    expect(built).toEqual([expected]);
-  }
-});
-
-it("reads only the actions a transport serves", async () => {
-  const Web = ActionGroup.make(
-    { name: "web" },
-    Action.make("ping", {
-      description: "HTTP only",
-      access: "write",
-      success: Schema.String,
-      mcp: false,
-    }),
+  const web = HttpRouter.toWebHandler(
+    ActionMcp.layerHttp(
+      [
+        Tools.implement(record("tools", { tool: () => Effect.succeed("tool") })),
+        Hidden.implement(record("hidden", { route: () => Effect.succeed("route") })),
+      ],
+      { name: "test", version: "0", path: "/mcp" },
+    ).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
   );
 
-  // Same name on the other transport, with an input that accepts `undefined`.
-  const Tools = ActionGroup.make(
-    { name: "tools" },
-    Action.make("ping", {
-      description: "MCP only",
-      access: "write",
-      input: Schema.UndefinedOr(Schema.Struct({ value: Schema.optional(Schema.String) })),
-      success: Schema.String,
-      http: false,
-    }),
-  );
-
-  const bound = ActionHttp.make({ apiPath: "/api" }, Web, Tools);
-  const handler = handlerOf(bound.layer([Web.implement({ ping: () => Effect.succeed("pong") })]));
-
-  const result = await Effect.runPromise(
-    Effect.flatMap(httpClient(bound.api, handler), (client) => client.web.ping({ payload: {} })),
-  );
-
-  expect(result).toBe("pong");
-  expect(Object.keys(bound.api.groups)).toEqual(["web"]);
+  onTestFinished(() => web.dispose());
+  await web.handler(mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }));
+  expect(built).toEqual(["tools"]);
 });
 
 it("scopes router middleware to the layer it is provided to", async () => {
@@ -491,44 +441,10 @@ it("checks each namespace only where it is served", () => {
     "Duplicate action group: users",
   );
 
-  // MCP aliases are not an HTTP concern, nor are the names of MCP-only actions.
+  // MCP aliases are not an HTTP concern.
   const one = aliased("one", "first");
   const two = aliased("two", "second");
   expect(() => ActionHttp.make({ apiPath: "/api" }, one, two)).not.toThrow();
-  expect(() =>
-    ActionHttp.make(
-      { apiPath: "/api" },
-      Users,
-      ActionGroup.make(
-        { name: "tools" },
-        Action.make("whoAmI", {
-          description: "",
-          access: "write",
-          success: Schema.String,
-          http: false,
-          mcp: { name: "who" },
-        }),
-      ),
-    ),
-  ).not.toThrow();
-
-  // A group's name is its identity to this adapter, served or not: otherwise an
-  // MCP-only namesake could stand in for the group whose routes are missing.
-  expect(() =>
-    ActionHttp.make(
-      { apiPath: "/api" },
-      Users,
-      ActionGroup.make(
-        { name: "users" },
-        Action.make("tool", {
-          description: "",
-          access: "write",
-          success: Schema.String,
-          http: false,
-        }),
-      ),
-    ),
-  ).toThrow("Duplicate action group: users");
 
   // Tools are the MCP namespace; group and action names are not.
   const mcp = {

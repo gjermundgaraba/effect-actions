@@ -9,6 +9,7 @@ import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
+  type HiddenFromMcp,
   type RequestContext,
 } from "./internal/implementation.js";
 
@@ -34,7 +35,7 @@ const protocols = [McpProtocol.v2026_07_28] as const;
 
 /** The native server supplies its own request context to every tool call. */
 type ToolRequestContext<App, RB> = Exclude<
-  RequestContext<App, "mcp"> | RB,
+  RequestContext<App, HiddenFromMcp> | RB,
   McpSchema.McpRequestContext
 >;
 
@@ -72,8 +73,8 @@ export function layerHttp<
   options: Options<Errors, RB>,
 ): Layer.Layer<
   never,
-  BuildError<Apps[number], "mcp"> | Cause.IllegalArgumentError,
-  | BuildContext<Apps[number], "mcp">
+  BuildError<Apps[number], HiddenFromMcp> | Cause.IllegalArgumentError,
+  | BuildContext<Apps[number], HiddenFromMcp>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", ToolRequestContext<Apps[number], RB>>
 >;
@@ -101,8 +102,8 @@ export function layerStdio<
   options: StdioOptions<Errors, RB>,
 ): Layer.Layer<
   never,
-  BuildError<Apps[number], "mcp"> | Cause.IllegalArgumentError,
-  BuildContext<Apps[number], "mcp"> | StdioService | ToolRequestContext<Apps[number], RB>
+  BuildError<Apps[number], HiddenFromMcp> | Cause.IllegalArgumentError,
+  BuildContext<Apps[number], HiddenFromMcp> | StdioService | ToolRequestContext<Apps[number], RB>
 >;
 export function layerStdio(
   apps: ReadonlyArray<AnyImplementation>,

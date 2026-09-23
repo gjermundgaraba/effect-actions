@@ -23,9 +23,8 @@ Exported types: `Options`, `LayerOptions`, `Http`, `Api`.
 | `make`: `errors`  | Surface error codecs declared on every endpoint; defaults to none.                                                                                          |
 | `layer`: `before` | Effectful hook receiving the selected `Action.Any`, after successful input decoding and before its handler. Failures must belong to the binding's `errors`. |
 
-Layer failures and startup requirements come from the supplied implementations that actually
-serve HTTP actions. Served handlers' and the hook's request services remain router request
-requirements; router/platform services are also required. No request identity is supplied at startup.
+Layer failures and startup requirements come from the supplied implementations. Every
+handler's and the hook's request services remain router request requirements; router/platform services are also required. No request identity is supplied at startup.
 
 Route shape: `POST <apiPath>/<group>/<action>`. Operation ID: `<group>.<action>`.
 
@@ -88,11 +87,12 @@ export const greeting = Effect.gen(function* () {
 
 ## Rules
 
+- HTTP serves every action of every group passed to `make`; an action has no HTTP switch. To keep an action off HTTP, put it in a group left out of `make` and serve that group elsewhere (MCP, Toolkit, CLI).
 - `apiPath` has no default. Group names must be unique within one `make`. Action names need only be unique within their group; equal action names in different groups do not collide.
 - `errors` declares the failures the surface around these endpoints answers with rather than a handler: authentication, authorization, rate limiting, upstream unavailability. They are added to every endpoint's error schemas, so `HttpApiClient`, `ActionCliClient` and the in-memory `Testing.httpClient` decode them as typed failures, and they appear in OpenAPI on every operation. A schema an action already declares is not repeated.
 - Schemas reachable from one endpoint must have distinct `_tag`s: the client decodes a response by trying the schemas declared for its status, and two errors may share a status. Effect unions them per status.
 - `errors` changes only what is declared. Nothing produces them: the middleware that renders those responses must encode a body that matches the schema, or the client sees a decode error again. Handlers cannot fail with them.
-- `Http.layer(apps, options?)` requires each implementation to reference the exact group object passed to `make`; reconstructing an equal-looking group is not sufficient. Each group may occur only once per call. Only supplied implementations are mounted, and a group with no HTTP-enabled actions is not built. Options are optional.
+- `Http.layer(apps, options?)` requires each implementation to reference the exact group object passed to `make`; reconstructing an equal-looking group is not sufficient. Each group may occur only once per call. Only supplied implementations are mounted, and a group without actions is not built. Options are optional.
 - `before` runs after successful native input decoding and before the selected handler. Invalid input skips the hook and handler. A refusal uses the binding's declared error schema and `httpApiStatus`; its services join handler request requirements. Admission that must precede decoding belongs in outer native HTTP middleware.
 - Middleware and the hook are per layer call. Groups that need different middleware or a different policy go in separate `Http.layer` calls, merged with `Layer.mergeAll`.
 - `ActionHttp` sets no response headers of its own. The host owns cache policy; `Authentication.middleware` marks its responses `cache-control: no-store`.
@@ -101,19 +101,19 @@ export const greeting = Effect.gen(function* () {
 - `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.
 - `Http.openApi(path?)` is `OpenApi.fromApi(Http.api)` as one `GET` route, `<apiPath>/openapi.json` unless a path is given. It documents every bound group, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Client calls always take `{ payload }`. No-input actions take `{ payload: {} }`. Pass `null` or `undefined` only when the codec accepts it. There is no flat client.
-- Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures, and native `HttpClientError`. MCP-only actions are absent from the client.
+- Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures, and native `HttpClientError`.
 - Add authentication headers with the native `transformClient` option. Use `HttpApiClient.makeWith` for custom error or service channels. Native per-call response modes are available.
 - Wire format without a policy: input failure is an empty 400, success is the encoded body, a declared error is its JSON encoding with its `httpApiStatus`, an encoding failure is an empty 400, a defect is an empty 500. Full table in [guarantees.md](guarantees.md).
 - Each handler runs in a span named `<group>.<action>`, a child of the request span, attributed with `action.group`, `action.name` and `action.access`; its log lines carry the same annotations. The hook, decoding and encoding are outside it, in the request span.
 
 ## Failure modes
 
-- Route returns 404: the implementation was never passed to `Http.layer`, or the action has `http: false`, or the path lacks the group segment.
+- Route returns 404: the implementation was never passed to `Http.layer`, or its group is not bound by `make`, or the path lacks the group segment.
 - Type error listing `HttpRouter.Request.From<"Requires", CurrentActor>` as unsatisfied: a handler yields a request service and no middleware provides it. Wrap that `Http.layer` call with the middleware's `.layer`.
 - Two groups share a name: `make` throws. Rename one.
 - `Implementation of group "x" is not served by this adapter`: `Http.layer` received an implementation whose group was not passed to `ActionHttp.make`. Implement the exact shared group object bound by `make`, or add a genuinely new group to the binding. Matching names and schemas do not establish identity.
 - `Duplicate implementation group: <name>`: a single `Http.layer` call received more than one implementation of the same group. Pass one implementation per group.
-- Client method missing for an action: the action is `http: false`.
+- Client method missing for an action: its group is not bound by `make`.
 - Empty 400 on a valid-looking request: input did not decode. Set a `schemaError` policy on the group to get a typed body, and check `Content-Type: application/json`.
 - 415: wrong or missing content type.
 - `HttpClientError: Decode error (401 POST ...)` from a typed client: the surface answered with a status no endpoint declares. Add that error schema to `ActionHttp.make`'s `errors`.

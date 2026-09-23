@@ -300,17 +300,17 @@ it("keeps native parameter property names separate from renderer flag names", as
   expect(inputs).toEqual(["value"]);
 });
 
-it("runs local-only actions, scopes every invocation, and exposes group subcommands", async () => {
+it("runs any action locally, scopes every invocation, and exposes group subcommands", async () => {
   let acquired = 0;
   let released = 0;
   const inputs: string[] = [];
 
+  // Hidden from MCP, and its group bound to no HTTP adapter: the CLI still runs it.
   const Local = Action.make("local", {
-    description: "Never projected to HTTP or MCP",
+    description: "Runs locally",
     access: "write",
     input: Schema.Struct({ value: Schema.String }),
     success: Schema.String,
-    http: false,
     mcp: false,
   });
 

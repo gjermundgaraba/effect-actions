@@ -7,7 +7,6 @@ import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import { command as makeCommand, type Options as CliOptions } from "./internal/cli.js";
 import { type Actions, selectNamed } from "./internal/actions.js";
-import type { ServedNames } from "./internal/implementation.js";
 
 /**
  * What the host configures on Effect's native client: `baseUrl`, `transformClient`,
@@ -41,7 +40,7 @@ type Selected<G extends Actions, Name extends G["actions"][number]["name"]> = Ex
   { readonly name: Name }
 >;
 
-type HttpNames<G extends Actions> = ServedNames<G, "http">;
+type ActionNames<G extends Actions> = G["actions"][number]["name"];
 
 type ApiGroups<Groups extends ReadonlyArray<Actions>, Errors extends ReadonlyArray<Action.Codec>> =
   ActionHttp.Api<Groups[number], Errors[number]> extends HttpApi.HttpApi<"actions", infer ApiGroups>
@@ -52,7 +51,7 @@ type Endpoint<
   Groups extends ReadonlyArray<Actions>,
   Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
-  ActionName extends HttpNames<Group<Groups, GroupName>>,
+  ActionName extends ActionNames<Group<Groups, GroupName>>,
 > = Extract<
   HttpApiGroup.EndpointsWithIdentifier<
     ApiGroups<Groups, Errors>,
@@ -65,7 +64,7 @@ type NativeMethod<
   Groups extends ReadonlyArray<Actions>,
   Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
-  ActionName extends HttpNames<Group<Groups, GroupName>>,
+  ActionName extends ActionNames<Group<Groups, GroupName>>,
 > = HttpApiClient.Client.Method<
   Extract<Endpoint<Groups, Errors, GroupName, ActionName>, HttpApiEndpoint.ConstraintRequest>,
   never,
@@ -76,7 +75,7 @@ type RemoteCommand<
   Groups extends ReadonlyArray<Actions>,
   Errors extends ReadonlyArray<Action.Codec>,
   GroupName extends Groups[number]["name"],
-  ActionName extends HttpNames<Group<Groups, GroupName>>,
+  ActionName extends ActionNames<Group<Groups, GroupName>>,
 > = Command.Command<
   string,
   never,
@@ -95,11 +94,11 @@ type RemoteGroupCommand<
   {},
   {},
   Effect.Error<
-    ReturnType<NativeMethod<Groups, Errors, GroupName, HttpNames<Group<Groups, GroupName>>>>
+    ReturnType<NativeMethod<Groups, Errors, GroupName, ActionNames<Group<Groups, GroupName>>>>
   >,
   | HttpClient.HttpClient
   | Effect.Services<
-      ReturnType<NativeMethod<Groups, Errors, GroupName, HttpNames<Group<Groups, GroupName>>>>
+      ReturnType<NativeMethod<Groups, Errors, GroupName, ActionNames<Group<Groups, GroupName>>>>
     >
 >;
 
@@ -114,21 +113,8 @@ const erasedApi = (api: HttpApi.Constraint): HttpApi.Top => {
   return api as HttpApi.Top;
 };
 
-/** An action hidden from HTTP is unknown to this binding, exactly like a missing one. */
-const selectAction = <G extends Actions, Name extends G["actions"][number]["name"]>(
-  group: G,
-  name: Name,
-): Selected<G, Name> => {
-  const what = `HTTP action "${group.name}.${name}"`;
-  const action = selectNamed(group.actions, name, what);
-
-  if (!action.http) throw new Error(`Unknown ${what}`);
-
-  return action;
-};
-
 /**
- * Project one HTTP action retained by the binding into a native Effect CLI command.
+ * Project one action of the binding into a native Effect CLI command.
  * Group and action selectors resolve exclusively from `http.groups`; runtime guards
  * keep dynamically supplied selector strings from reaching the native client.
  */
@@ -136,7 +122,7 @@ export const command = <
   const Groups extends ReadonlyArray<Actions>,
   const Errors extends ReadonlyArray<Action.Codec>,
   const GroupName extends Groups[number]["name"],
-  const ActionName extends HttpNames<Group<Groups, GroupName>>,
+  const ActionName extends ActionNames<Group<Groups, GroupName>>,
   ParsedParameters extends Command.Command.Config = never,
 >(
   http: ActionHttp.Http<Groups, Errors>,
@@ -148,7 +134,7 @@ export const command = <
   >,
 ): RemoteCommand<Groups, Errors, GroupName, ActionName> => {
   const group = selectNamed(http.groups, groupName, `HTTP group "${groupName}"`);
-  const action = selectAction(group, actionName);
+  const action = selectNamed(group.actions, actionName, `HTTP action "${groupName}.${actionName}"`);
 
   return makeCommand(
     action,
@@ -183,7 +169,7 @@ export const command = <
   );
 };
 
-/** Project all HTTP-enabled actions retained by one group below its group namespace. */
+/** Project every action of one bound group below its group namespace. */
 export const group = <
   const Groups extends ReadonlyArray<Actions>,
   const Errors extends ReadonlyArray<Action.Codec>,
@@ -195,14 +181,10 @@ export const group = <
 ): RemoteGroupCommand<Groups, Errors, GroupName> => {
   const actions = selectNamed(http.groups, groupName, `HTTP group "${groupName}"`);
 
-  const commands = actions.actions.flatMap((action) =>
-    action.http
-      ? [
-          options?.connection === undefined
-            ? command(http, groupName, action.name)
-            : command(http, groupName, action.name, { connection: options.connection }),
-        ]
-      : [],
+  const commands = actions.actions.map((action) =>
+    options?.connection === undefined
+      ? command(http, groupName, action.name)
+      : command(http, groupName, action.name, { connection: options.connection }),
   );
 
   return Command.make(options?.name ?? actions.name).pipe(Command.withSubcommands(commands));

@@ -44,7 +44,6 @@ describe("contracts", () => {
       idempotent: false,
       openWorld: true,
     });
-    expect(Write.http).toBe(true);
   });
 
   it("rejects invalid names at definition time", () => {
@@ -147,104 +146,62 @@ describe("implementations", () => {
     Action.make("bye", { description: "Parts", access: "write", success: Schema.String }),
   );
 
-  // A class instance's handlers are inherited methods, called with the instance as `this`.
-  class PairHandlers {
-    readonly greeting = "hi";
-
-    hello(): Effect.Effect<string> {
-      return Effect.succeed(this.greeting);
-    }
-
-    bye(): Effect.Effect<string> {
-      return Effect.succeed(`${this.greeting}, bye`);
-    }
-  }
-
-  // An action named after what every object inherits from `Object.prototype`.
-  const Named = ActionGroup.make(
-    { name: "pair" },
-    Hello,
-    Action.make("toString", { description: "Names", access: "read", success: Schema.String }),
-  );
-
   // The types require a function for every action; plain JavaScript, a cast or a record
   // changed after it was typed can still bind something else.
-  const withBye = (bye: string | undefined) => {
-    const handlers = { hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") };
-    Reflect.set(handlers, "bye", bye);
+  const record = () => ({ hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") });
+
+  const pair = (change: (handlers: ReturnType<typeof record>) => boolean) => {
+    const handlers = record();
+    change(handlers);
 
     return handlers;
   };
 
-  const withoutBye = () => {
-    const handlers = { hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") };
-    Reflect.deleteProperty(handlers, "bye");
+  // `hello` is an own property; `bye` is inherited from the prototype.
+  class Inherited {
+    readonly hello = () => Effect.succeed("hi");
 
-    return handlers;
-  };
-
-  const withoutToString = () => {
-    const handlers = { hello: () => Effect.succeed("hi"), toString: () => Effect.succeed("") };
-    Reflect.deleteProperty(handlers, "toString");
-
-    return handlers;
-  };
+    bye() {
+      return Effect.succeed("bye");
+    }
+  }
 
   it.each([
     {
       handlers: "a missing key",
-      web: () => makeTestHttp(Pair.implement(withoutBye()), Layer.empty, { apiPath: "/api" }),
-      missing: "bye",
+      make: () => pair((handlers) => Reflect.deleteProperty(handlers, "bye")),
     },
     {
       handlers: "an undefined value",
-      web: () => makeTestHttp(Pair.implement(withBye(undefined)), Layer.empty, { apiPath: "/api" }),
-      missing: "bye",
+      make: () => pair((handlers) => Reflect.set(handlers, "bye", undefined)),
     },
     {
       handlers: "a non-function value",
-      web: () => makeTestHttp(Pair.implement(withBye("bye")), Layer.empty, { apiPath: "/api" }),
-      missing: "bye",
+      make: () => pair((handlers) => Reflect.set(handlers, "bye", "bye")),
     },
-    {
-      handlers: "a builder Effect's record with a missing key",
-      web: () =>
-        makeTestHttp(Pair.implement(Effect.sync(withoutBye)), Layer.empty, { apiPath: "/api" }),
-      missing: "bye",
-    },
-    {
-      handlers: "a missing key only Object.prototype supplies",
-      web: () => makeTestHttp(Named.implement(withoutToString()), Layer.empty, { apiPath: "/api" }),
-      missing: "toString",
-    },
-    {
-      handlers: "a class instance whose methods use `this`",
-      web: () => makeTestHttp(Pair.implement(new PairHandlers()), Layer.empty, { apiPath: "/api" }),
-      missing: undefined,
-    },
-  ])("checks $handlers before serving anything", async ({ web, missing }) => {
-    // A plain record is refused by `implement`; a builder's record by the adapter build.
-    // Either way no request reaches a handler, not even the action that has one.
-    const hello = async () => {
-      const { handler, dispose } = web();
-      onTestFinished(() => dispose());
+    { handlers: "an inherited method", make: () => new Inherited() },
+  ])("refuses a record with $handlers at implement", ({ make }) => {
+    expect(() => Pair.implement(make())).toThrow('Missing handlers for group "pair": bye');
+  });
 
-      const response = await handler(
+  it("fails the adapter build, not a request, when a builder's record lacks a handler", async () => {
+    const app = Pair.implement(
+      Effect.sync(() => pair((handlers) => Reflect.deleteProperty(handlers, "bye"))),
+    );
+
+    const { handler, dispose } = makeTestHttp(app, Layer.empty, { apiPath: "/api" });
+    onTestFinished(() => dispose());
+
+    // Even the action that has a handler is never served by an incomplete binding.
+    await expect(
+      handler(
         new Request("http://localhost/api/pair/hello", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: "Ada" }),
         }),
-      );
-
-      return response.json();
-    };
-
-    if (missing === undefined) {
-      expect(await hello()).toBe("hi");
-    } else {
-      await expect(hello()).rejects.toThrow(`Missing handlers for group "pair": ${missing}`);
-    }
+      ),
+    ).rejects.toThrow('Missing handlers for group "pair": bye');
   });
 
   it("keeps same-contract implementations apart", async () => {

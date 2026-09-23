@@ -57,22 +57,20 @@ export interface LayerOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
   readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
 }
 
-type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends { readonly http: false }
-  ? never
-  : A extends Action.Any
-    ? HttpApiEndpoint.HttpApiEndpoint<
-        A["name"],
-        "POST",
-        `/${string}`,
-        never,
-        never,
-        Schema.toCodecJson<A["input"]>,
-        never,
-        Schema.toCodecJson<A["success"]>,
-        Schema.toCodecJson<A["errors"][number] | E>,
-        never
-      >
-    : never;
+type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends Action.Any
+  ? HttpApiEndpoint.HttpApiEndpoint<
+      A["name"],
+      "POST",
+      `/${string}`,
+      never,
+      never,
+      Schema.toCodecJson<A["input"]>,
+      never,
+      Schema.toCodecJson<A["success"]>,
+      Schema.toCodecJson<A["errors"][number] | E>,
+      never
+    >
+  : never;
 
 type ApiGroup<G extends Actions, E extends Action.Codec> = G extends Actions
   ? [Endpoint<G["actions"][number], never>] extends [never]
@@ -80,7 +78,7 @@ type ApiGroup<G extends Actions, E extends Action.Codec> = G extends Actions
     : HttpApiGroup.HttpApiGroup<G["name"], Endpoint<G["actions"][number], PolicyError<G> | E>>
   : never;
 
-/** The native `HttpApi` of every HTTP-enabled action of `G`, one group per action group. */
+/** The native `HttpApi` of every action of `G`, one group per action group. */
 export type Api<G extends Actions, E extends Action.Codec = never> = HttpApi.HttpApi<
   "actions",
   ApiGroup<G, E>
@@ -104,10 +102,10 @@ export interface Http<
     options?: LayerOptions<Errors, RB>,
   ) => Layer.Layer<
     never,
-    BuildError<Apps[number], "http">,
-    | BuildContext<Apps[number], "http">
+    BuildError<Apps[number]>,
+    | BuildContext<Apps[number]>
     | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number], "http"> | RB>
+    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
     | Etag.Generator
     | FileSystem
     | HttpPlatform.HttpPlatform
@@ -124,8 +122,6 @@ export interface Http<
 }
 
 type ErasedOptions = Options<ReadonlyArray<Action.Codec>>;
-
-const httpActions = (group: Actions) => group.actions.filter((action) => action.http);
 
 const endpoint = (options: ErasedOptions, group: Actions, action: Action.Any) =>
   HttpApiEndpoint.post(action.name, `${options.apiPath}/${group.name}/${action.name}`, {
@@ -156,7 +152,7 @@ interface Bound {
   readonly middleware: Layer.Layer<never>;
 }
 
-/** Groups without HTTP actions have no native projection. */
+/** A group without actions has no native projection. */
 function bind(options: ErasedOptions, group: Actions): Bound | undefined;
 function bind(
   options: ErasedOptions,
@@ -164,7 +160,7 @@ function bind(
 ):
   | { readonly native: HttpApiGroup.Constraint; readonly middleware: Bound["middleware"] }
   | undefined {
-  const [first, ...rest] = httpActions(group).map((action) => endpoint(options, group, action));
+  const [first, ...rest] = group.actions.map((action) => endpoint(options, group, action));
 
   if (first === undefined) return undefined;
   const bound = HttpApiGroup.make(group.name).add(first, ...rest);
@@ -214,7 +210,7 @@ const groupHandlers = <G extends Actions, H, EX, RX, RB>(
 ) => {
   const entries = (record: Handlers<HandlersContext<H>>) =>
     Object.fromEntries(
-      httpActions(app.group).map((action) => {
+      app.group.actions.map((action) => {
         const run = dispatch<Action.Any, ErasedValue, HandlersContext<H> | RB>(
           app.group,
           action,
@@ -265,10 +261,10 @@ export function make(
     layerOptions: LayerOptions<ReadonlyArray<Action.Codec>, RB> = {},
   ): Layer.Layer<
     never,
-    BuildError<Apps[number], "http">,
-    | BuildContext<Apps[number], "http">
+    BuildError<Apps[number]>,
+    | BuildContext<Apps[number]>
     | HttpRouter.HttpRouter
-    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number], "http"> | RB>
+    | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
     | Etag.Generator
     | FileSystem
     | HttpPlatform.HttpPlatform
@@ -311,10 +307,10 @@ export function make(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic tuple reduction cannot express the same union as the public implementation collection signature.
     return merged as Layer.Layer<
       never,
-      BuildError<Apps[number], "http">,
-      | BuildContext<Apps[number], "http">
+      BuildError<Apps[number]>,
+      | BuildContext<Apps[number]>
       | HttpRouter.HttpRouter
-      | HttpRouter.Request.From<"Requires", RequestContext<Apps[number], "http"> | RB>
+      | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
       | Etag.Generator
       | FileSystem
       | HttpPlatform.HttpPlatform

@@ -19,19 +19,19 @@ describe("offline action catalog", () => {
     );
 
     const catalog = ActionCatalog.make(Group);
-    expect(catalog.version).toBe("3");
+    expect(catalog.version).toBe("4");
     expect(catalog.actions).toHaveLength(1);
     expect(catalog.actions[0]).toMatchObject({
       id: "numbers.double",
       group: "numbers",
       name: "double",
-      http: true,
       mcp: { name: "double_number", idempotent: true, openWorld: false },
       input: { type: "object", properties: { n: { type: "string" } } },
       success: { type: "string" },
       errors: [{ type: "string" }],
       httpSchemaErrors: [],
     });
+    expect(catalog.actions[0]).not.toHaveProperty("http");
     expect(Schema.decodeUnknownSync(Schema.Json)(JSON.parse(JSON.stringify(catalog)))).toEqual(
       catalog,
     );
@@ -144,11 +144,10 @@ describe("offline action catalog", () => {
         success: Schema.String,
         errors: [Own],
       }),
-      Action.make("local", {
-        description: "Local only",
+      Action.make("hidden", {
+        description: "Hidden from MCP",
         access: "write",
         success: Schema.String,
-        http: false,
         mcp: false,
       }),
     );
@@ -157,7 +156,10 @@ describe("offline action catalog", () => {
 
     expect(catalog.actions[0]?.errors).toMatchObject([{ enum: ["own"] }, { enum: ["shared"] }]);
     expect(catalog.actions[0]?.httpSchemaErrors).toMatchObject([{ enum: ["invalid"] }]);
-    expect(catalog.actions[1]).toMatchObject({ http: false, mcp: false, httpSchemaErrors: [] });
+    expect(catalog.actions[1]).toMatchObject({
+      mcp: false,
+      httpSchemaErrors: [{ enum: ["invalid"] }],
+    });
     expect(catalog.actions[1]?.errors).toMatchObject([{ enum: ["shared"] }]);
   });
 
@@ -258,6 +260,6 @@ describe("offline action catalog", () => {
 
     expect(ActionCatalog.make(First, Second).actions).toHaveLength(2);
     expect(() => ActionCatalog.make(First, First)).toThrow("Duplicate catalog group");
-    expect(ActionCatalog.make()).toEqual({ version: "3", actions: [] });
+    expect(ActionCatalog.make()).toEqual({ version: "4", actions: [] });
   });
 });

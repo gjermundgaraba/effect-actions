@@ -9,7 +9,6 @@ export interface Entry {
   readonly group: string;
   readonly name: string;
   readonly description: string;
-  readonly http: boolean;
   readonly mcp: Action.Any["mcp"];
   readonly input: JsonSchema.JsonSchema;
   readonly success: JsonSchema.JsonSchema;
@@ -21,7 +20,7 @@ export interface Entry {
 
 /** An offline contract document, not an authorization decision or a mounted endpoint. */
 export interface Catalog {
-  readonly version: "3";
+  readonly version: "4";
   readonly actions: ReadonlyArray<Entry>;
 }
 
@@ -40,7 +39,7 @@ const describe = (codec: Action.Codec): JsonSchema.JsonSchema => {
 /**
  * Describe the supplied groups without acquiring implementations. Schemas describe
  * encoded action values, not MCP's `{ value }` envelope or deployment-specific URLs.
- * Local-only actions are included; the host chooses what, if anything, to publish.
+ * The host chooses what, if anything, to publish.
  */
 export const make = (...groups: ReadonlyArray<ActionGroup.Any>): Catalog => {
   assertDistinct(
@@ -49,22 +48,19 @@ export const make = (...groups: ReadonlyArray<ActionGroup.Any>): Catalog => {
   );
 
   return {
-    version: "3",
+    version: "4",
     actions: groups.flatMap((group) =>
       group.actions.map((action): Entry => ({
         id: `${group.name}.${action.name}`,
         group: group.name,
         name: action.name,
         description: action.description,
-        http: action.http,
         mcp: action.mcp,
         input: describe(action.input),
         success: describe(action.success),
         errors: action.errors.map(describe),
         httpSchemaErrors:
-          action.http && group.schemaError !== undefined
-            ? policyErrors(group.schemaError).map(describe)
-            : [],
+          group.schemaError === undefined ? [] : policyErrors(group.schemaError).map(describe),
       })),
     ),
   };

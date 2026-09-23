@@ -8,10 +8,9 @@ import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import { mcpRequest } from "../src/Testing.js";
 import { cliServices, logged } from "./cli-services.js";
-import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
-import { post } from "./requests.js";
+import { testApiPath, testMcpPath } from "./server.js";
+import { post, rawToolCall } from "./requests.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
 
@@ -37,14 +36,6 @@ const Write = Action.make("write", {
 // The hook answers instead of a handler, so its failure is a surface error of
 // each binding rather than an error the actions of the group declare.
 const Group = ActionGroup.make({ name: "resource" }, Read, Write);
-
-// A raw `tools/call` request: these tests assert the wire envelope, which `Testing.mcpCall` removes.
-const rawToolCall = (name: string) =>
-  mcpRequest({
-    url: testMcpUrl,
-    method: "tools/call",
-    params: { name, arguments: name === "write" ? { value: "x" } : {} },
-  });
 
 /** One rule for a whole surface, read from the contract rather than from a name list. */
 const authorize =
@@ -184,7 +175,7 @@ describe("the pre-handler hook", () => {
     expect(await (await mcp.handler(rawToolCall("read"))).json()).toMatchObject({
       result: { isError: false, structuredContent: { value: "read ok" } },
     });
-    expect(await (await mcp.handler(rawToolCall("write"))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("write", { value: "x" }))).json()).toMatchObject({
       result: {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"InsufficientScope","required":"write"}' }],

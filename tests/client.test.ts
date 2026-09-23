@@ -39,12 +39,6 @@ const actions = ActionGroup.make(
     input: Schema.Struct({ value: Schema.optional(Schema.Number) }),
     success: Schema.Number,
   }),
-  Action.make("hidden", {
-    description: "MCP only",
-    access: "write",
-    success: Schema.String,
-    http: false,
-  }),
 );
 
 const Http = ActionHttp.make({ apiPath: "/rpc" }, actions);
@@ -53,7 +47,6 @@ const app = actions.implement({
   double: ({ value }) => Effect.succeed(value === 0 ? Infinity : value * 2),
   ping: () => Effect.succeed(true),
   optional: ({ value }) => Effect.succeed(value ?? 7),
-  hidden: () => Effect.succeed("hidden"),
 });
 
 it("keeps the client, routes and document on one configuration", async () => {
@@ -68,7 +61,6 @@ it("keeps the client, routes and document on one configuration", async () => {
   onTestFinished(() => web.dispose());
   const document = OpenApi.fromApi(Http.api);
   expect(document.paths?.["/rpc/numbers/double"]?.post?.responses).toHaveProperty("500");
-  expect(document.paths).not.toHaveProperty("/rpc/numbers/hidden");
   expect(Http.api.groups.numbers.endpoints.double).toBeDefined();
   await Effect.gen(function* () {
     const connection = {

@@ -5,7 +5,7 @@ use these words with these meanings.
 
 ## Terms
 
-- **Action**: one contract. A name, a description, an input schema, a success schema, declared error schemas, authorization metadata (`access`), and transport metadata (`http`, `mcp`). Holds no behavior. Made by `Action.make`.
+- **Action**: one contract. A name, a description, an input schema, a success schema, declared error schemas, authorization metadata (`access`), and MCP metadata (`mcp`). Holds no behavior. Made by `Action.make`.
 - **Access**: `"read"` or `"write"`, required on every action and kept as a literal. States what the action does to its resource. Authorization metadata read by a pre-handler hook, independent of the MCP `readOnly` hint, which defaults from it.
 - **Group**: a named, ordered set of actions plus group-level errors and an optional schema-error policy. Adapters serve groups, clients are organized by group, and the group name is the OpenAPI tag. Made by `ActionGroup.make`.
 - **Contract**: an action or a group. Pure data; safe to import anywhere, including browsers.
@@ -22,11 +22,10 @@ use these words with these meanings.
 - **Schema-error policy**: a group option answering Effect's `HttpApiSchemaError` with a declared policy error and its status: `invalid` when the request did not decode, `internal` when the handler's result did not encode. The library decides which applies. HTTP only.
 - **Policy error**: an error a schema-error policy may answer with. Part of the transport contract, never returnable by a handler.
 - **Surface error**: an error declared on an adapter binding rather than on an action. Produced by middleware around the surface or by its pre-handler hook, never by a handler; declared so typed callers decode it.
-- **Local-only action**: `http: false` and `mcp: false`. Reachable through `ActionCli` and listed in the catalog.
 - **Tool**: the MCP or Toolkit projection of an MCP-enabled action, named by `mcp.name` and carrying its hints.
 - **Endpoint**: one `ActionMcp.layerHttp` mount. One route, one middleware set, one tool registry.
 - **Document**: the OpenAPI output of `Http.api`, produced by Effect (`OpenApi.fromApi`) and served by `Http.openApi`.
-- **Promise client**: `ActionHttpClient.promise(Http)`, the native `HttpApiClient` as one Promise method per HTTP action, for code that does not run Effects. It rejects with what the native client fails with.
+- **Promise client**: `ActionHttpClient.promise(Http)`, the native `HttpApiClient` as one Promise method per action of the binding, for code that does not run Effects. It rejects with what the native client fails with.
 - **Catalog**: the offline JSON description of groups produced by `ActionCatalog.make`, with standalone JSON Schemas for encoded values. Descriptive only.
 - **Identity**: the per-request principal, provided by `Authentication.middleware` under an application-owned tag. Never provided at startup.
 

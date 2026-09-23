@@ -53,25 +53,9 @@ const Notes = ActionGroup.make(
     access: "write",
     success: Schema.Null,
   }),
-  Action.make("summarize", {
-    description: "MCP only",
-    access: "read",
-    success: Schema.String,
-    http: false,
-  }),
 );
 
-const Tools = ActionGroup.make(
-  { name: "tools" },
-  Action.make("reindex", {
-    description: "MCP only",
-    access: "write",
-    success: Schema.Null,
-    http: false,
-  }),
-);
-
-const Http = ActionHttp.make({ apiPath: "/api", errors: [Forbidden] }, Notes, Tools);
+const Http = ActionHttp.make({ apiPath: "/api", errors: [Forbidden] }, Notes);
 
 const at = new Date("2026-09-23T00:00:00.000Z");
 
@@ -85,7 +69,6 @@ const app = Notes.implement({
         }),
   count: () => Effect.succeed(Infinity),
   remove: () => Effect.succeed(null),
-  summarize: () => Effect.succeed("summary"),
 });
 
 const serve = () => {
@@ -218,7 +201,7 @@ it("resolves relative routes against the page and looks the global fetch up on e
   expect(requests[0]?.url).toBe("https://page.example/api/notes/get");
 });
 
-it("has a method only for HTTP-served actions", () => {
+it("has one method per action of every bound group", () => {
   const client = ActionHttpClient.promise(Http, { baseUrl: "https://notes.example" });
 
   expect(Object.keys(client)).toEqual(["notes"]);

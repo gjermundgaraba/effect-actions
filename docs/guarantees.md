@@ -42,7 +42,7 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 
 - Group names are unique within one `ActionHttp.make`. Action names are unique within a group. MCP tool names are unique within a group and within each Toolkit or MCP projection that serves it.
 - Adapters validate only the namespace they serve. HTTP does not check tool names; MCP does not check route names.
-- Each adapter builds only what it serves. A group with no HTTP actions is not built by `Http.layer`; a group with no tools is not built by MCP or Toolkit.
+- Each adapter builds only what it serves. HTTP serves every action of a group it binds, so `Http.layer` builds every implementation it is given (except a group without actions); a group with no tools is not built by MCP or Toolkit.
 
 ## Observability
 

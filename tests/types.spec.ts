@@ -1,4 +1,4 @@
-import { McpProtocol, McpSchema } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, Tool } from "effect/unstable/ai";
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
 import { Context, Effect, Layer, Schema, type Stdio } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -7,6 +7,7 @@ import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/auth.js";
 import { UserActions as Actions } from "../examples/contracts.js";
@@ -179,27 +180,6 @@ export const clientTypes = Effect.gen(function* () {
   // @ts-expect-error Results retain the success type.
   const wrong: string = yield* client.users.double({ payload: { value: 21 } });
   void wrong;
-
-  const mixed = ActionGroup.make(
-    { name: "test" },
-    Action.make("hidden", {
-      description: "MCP only",
-      access: "write",
-      success: Schema.String,
-      http: false,
-    }),
-    Action.make("visible", { description: "HTTP", access: "write", success: Schema.Boolean }),
-  );
-
-  const selected = yield* HttpApiClient.make(
-    ActionHttp.make({ apiPath: "/api/actions" }, mixed).api,
-  );
-
-  // @ts-expect-error MCP-only actions are not HTTP client methods.
-  // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
-  selected.test.hidden({ payload: {} });
-  const visible: boolean = yield* selected.test.visible({ payload: {} });
-  void visible;
 });
 
 export const policyTypes = Effect.gen(function* () {
@@ -542,49 +522,44 @@ export const servedRequirementTypes = () => {
 
   class HiddenBuild extends Context.Service<HiddenBuild, string>()("types-spec/HiddenBuild") {}
 
-  // A mixed group: the hidden action is the only one that needs request identity.
+  /** What every request to a layer must carry. */
+  type RequestServices<L extends Layer.Any> = HttpRouter.Request.Only<
+    "Requires",
+    Layer.Services<L>
+  >;
+
+  const mcpOptions = { name: "t", version: "0", path: "/mcp" } as const;
+  const principal = () => Effect.map(Principal, (name) => name);
+
+  // A mixed group: the action hidden from MCP is the only one that needs request identity.
   const Mixed = ActionGroup.make(
     { name: "mixed" },
     Action.make("public", { description: "Public", access: "read", success: Schema.String }),
     Action.make("hidden", {
-      description: "Hidden from both transports",
+      description: "Hidden from MCP",
       access: "write",
       success: Schema.String,
-      http: false,
       mcp: false,
     }),
-  ).implement({
-    public: () => Effect.succeed("public"),
-    hidden: () => Effect.map(Principal, (principal) => principal),
-  });
+  ).implement({ public: () => Effect.succeed("public"), hidden: principal });
 
-  const services = Layer.provide(HttpServer.layerServices);
+  // HTTP serves every action of a group it binds, so every request owes `Principal`.
+  const http = ActionHttp.make({ apiPath: "/api" }, Mixed.group).layer([Mixed]);
+  const httpOwes: Equal<RequestServices<typeof http>, Principal> = true;
+  void httpOwes;
 
-  const http = HttpRouter.toWebHandler(
-    ActionHttp.make({ apiPath: "/api" }, Mixed.group).layer([Mixed]).pipe(services),
-  );
+  // MCP does not serve the hidden action, so no request owes it.
+  const mcp = ActionMcp.layerHttp([Mixed], mcpOptions);
+  const mcpOwesNothing: Equal<RequestServices<typeof mcp>, never> = true;
+  void mcpOwesNothing;
 
-  // No served HTTP action needs `Principal`, so no request owes it.
-  void http.handler(new Request("http://localhost"), Context.empty());
-
-  const mcp = HttpRouter.toWebHandler(
-    ActionMcp.layerHttp([Mixed], {
-      name: "t",
-      version: "0",
-      path: "/mcp",
-    }).pipe(services),
-  );
-
-  void mcp.handler(new Request("http://localhost/mcp"), Context.empty());
-
-  // A group with nothing to serve is never acquired, so its build channel is absent.
-  const LocalOnly = ActionGroup.make(
-    { name: "local" },
+  // A group with nothing for MCP to serve is never acquired, so its build channel is absent.
+  const Hidden = ActionGroup.make(
+    { name: "hidden" },
     Action.make("only", {
-      description: "CLI only",
+      description: "Not a tool",
       access: "write",
       success: Schema.String,
-      http: false,
       mcp: false,
     }),
   ).implement(
@@ -594,117 +569,150 @@ export const servedRequirementTypes = () => {
     ),
   );
 
-  const nothing = ActionHttp.make({ apiPath: "/api" }, LocalOnly.group).layer([LocalOnly]);
-  const noBuildError: Equal<Layer.Error<typeof nothing>, never> = true;
+  const nothing = ActionMcp.layerHttp([Hidden], mcpOptions);
+  const noBuildError: "build" extends Layer.Error<typeof nothing> ? false : true = true;
   const noBuildService: HiddenBuild extends Layer.Services<typeof nothing> ? false : true = true;
   void noBuildError;
   void noBuildService;
-  void HttpRouter.toWebHandler(nothing.pipe(services)).handler(new Request("http://localhost"));
 
-  // Only a literal `false` hides an action from HTTP, so the served set is exact.
-  const served = Action.make("served", { description: "", access: "read", success: Schema.String });
-
-  const hidden = Action.make("hidden", {
-    description: "",
-    access: "read",
-    success: Schema.String,
-    http: false,
-  });
-
-  const servedIsLiteral: Equal<(typeof served)["http"], true> = true;
-  const hiddenIsLiteral: Equal<(typeof hidden)["http"], false> = true;
-  void servedIsLiteral;
-  void hiddenIsLiteral;
-
+  // Only a required literal `false` hides an action from MCP. Options that may serve it
+  // keep its requirements: a conditional spread, `false | undefined`, a runtime flag or
+  // an `Options` value whose `mcp` is optional.
   const enabled: boolean = process.env["ENABLE"] !== "no";
 
-  Action.make("maybeHttp", {
-    description: "Served when enabled",
-    access: "read",
-    success: Schema.String,
-    // @ts-expect-error A flag decided at runtime cannot hide an action from HTTP.
-    http: enabled,
-  });
+  const Spread = ActionGroup.make(
+    { name: "spread" },
+    Action.make("act", {
+      description: "Hidden when disabled",
+      access: "read",
+      success: Schema.String,
+      ...(enabled ? {} : { mcp: false }),
+    }),
+  ).implement({ act: principal });
 
-  Action.make("explicitHttp", {
-    description: "Served",
-    access: "read",
-    success: Schema.String,
-    // @ts-expect-error Omitting `http` serves an action; `true` is not an option.
-    http: true,
-  });
+  const spread = ActionMcp.layerHttp([Spread], mcpOptions);
+  const spreadOwes: Equal<RequestServices<typeof spread>, Principal> = true;
+  void spreadOwes;
 
-  // Options that may or may not hide the action match neither overload.
-  // @ts-expect-error A conditional spread may omit `http`, so it cannot type the action hidden.
-  Action.make("spreadHttp", {
-    description: "Hidden when disabled",
-    access: "read",
-    success: Schema.String,
-    ...(enabled ? {} : { http: false as const }),
-  });
+  const MaybeUndefined = ActionGroup.make(
+    { name: "maybeUndefined" },
+    Action.make("act", {
+      description: "Hidden when disabled",
+      access: "read",
+      success: Schema.String,
+      mcp: enabled ? undefined : false,
+    }),
+  ).implement({ act: principal });
 
-  Action.make("maybeUndefinedHttp", {
-    description: "Hidden when disabled",
-    access: "read",
-    success: Schema.String,
-    // @ts-expect-error `false | undefined` may serve the action, so it cannot type it hidden.
-    http: enabled ? undefined : false,
-  });
+  const maybeUndefined = ActionMcp.layerHttp([MaybeUndefined], mcpOptions);
+  const maybeUndefinedOwes: Equal<RequestServices<typeof maybeUndefined>, Principal> = true;
+  void maybeUndefinedOwes;
 
-  // Options typed as possibly hiding the action, with `http` optional, may still serve it.
-  const maybeHidden: Action.Options<typeof Schema.String, typeof Schema.String, [], "read", false> =
-    { description: "Hidden or not", access: "read", success: Schema.String };
-
-  // @ts-expect-error An optional `http: false` cannot type the action hidden.
-  Action.make("maybeHidden", maybeHidden);
-
-  // Options typed without `Http` cannot carry `false`, so the action is served.
-  const plain: Action.Options<typeof Schema.String, typeof Schema.String, [], "read"> = {
-    description: "Served",
+  const loose: Action.Options<typeof Schema.String, typeof Schema.String, [], "read", false> = {
+    description: "Hidden or not",
     access: "read",
     success: Schema.String,
   };
 
-  const fromPlain = Action.make("fromPlain", plain);
-  const plainIsServed: Equal<(typeof fromPlain)["http"], true> = true;
-  void plainIsServed;
+  const Loose = ActionGroup.make({ name: "loose" }, Action.make("act", loose)).implement({
+    act: principal,
+  });
 
-  // Options for a hidden action state `http: false` as required.
-  const hiddenOptions: Action.Options<
-    typeof Schema.String,
-    typeof Schema.String,
-    [],
-    "read",
-    false
-  > & { readonly http: false } = {
-    description: "Hidden",
-    access: "read",
-    success: Schema.String,
-    http: false,
-  };
+  const looseLayer = ActionMcp.layerHttp([Loose], mcpOptions);
+  const looseOwes: Equal<RequestServices<typeof looseLayer>, Principal> = true;
+  void looseOwes;
 
-  const fromHidden = Action.make("fromHidden", hiddenOptions);
-  const hiddenOptionsHide: Equal<(typeof fromHidden)["http"], false> = true;
-  void hiddenOptionsHide;
-
-  // An MCP flag decided at runtime may serve the action, so its requirements remain.
+  // A runtime flag keeps the build channel too, since the group may be acquired.
   const Runtime = ActionGroup.make(
     { name: "runtime" },
     Action.make("maybe", {
       description: "Served when enabled",
       access: "read",
       success: Schema.String,
-      http: false,
       mcp: enabled ? {} : false,
     }),
-  ).implement(Effect.map(HiddenBuild, () => ({ maybe: () => Effect.map(Principal, (p) => p) })));
+  ).implement(Effect.map(HiddenBuild, () => ({ maybe: principal })));
 
-  const maybeMcp = ActionMcp.layerHttp([Runtime], {
-    name: "t",
-    version: "0",
-    path: "/mcp",
-  });
-
+  const maybeMcp = ActionMcp.layerHttp([Runtime], mcpOptions);
   const mcpBuildKept: HiddenBuild extends Layer.Services<typeof maybeMcp> ? true : false = true;
+  const runtimeOwes: Equal<RequestServices<typeof maybeMcp>, Principal> = true;
   void mcpBuildKept;
+  void runtimeOwes;
+
+  // Tool metadata serves the action; a literal `false` does not.
+  const Hints = ActionGroup.make(
+    { name: "hints" },
+    Action.make("act", {
+      description: "A tool",
+      access: "read",
+      success: Schema.String,
+      mcp: { name: "hinted", idempotent: true },
+    }),
+  ).implement({ act: principal });
+
+  const hints = ActionMcp.layerHttp([Hints], mcpOptions);
+  const hintsOwe: Equal<RequestServices<typeof hints>, Principal> = true;
+  void hintsOwe;
+
+  const Literal = ActionGroup.make(
+    { name: "literal" },
+    Action.make("act", {
+      description: "Not a tool",
+      access: "read",
+      success: Schema.String,
+      mcp: false,
+    }),
+  ).implement({ act: principal });
+
+  const literal = ActionMcp.layerHttp([Literal], mcpOptions);
+  const literalOwesNothing: Equal<RequestServices<typeof literal>, never> = true;
+  void literalOwesNothing;
+
+  const Named = ActionGroup.make(
+    { name: "named" },
+    Action.make("act", {
+      description: "Served when enabled",
+      access: "read",
+      success: Schema.String,
+      mcp: enabled ? { name: "named_tool" } : false,
+    }),
+  ).implement({ act: principal });
+
+  const named = ActionMcp.layerHttp([Named], mcpOptions);
+  const namedOwes: Equal<RequestServices<typeof named>, Principal> = true;
+  void namedOwes;
+
+  // The Toolkit applies the same rule: an action that may be served is a tool that owes
+  // its handler's services; only a literal `false` has no tool.
+  const tools = {
+    spread: ActionToolkit.make([Spread]).toolkit.tools,
+    maybeUndefined: ActionToolkit.make([MaybeUndefined]).toolkit.tools,
+    loose: ActionToolkit.make([Loose]).toolkit.tools,
+    runtime: ActionToolkit.make([Runtime]).toolkit.tools,
+    named: ActionToolkit.make([Named]).toolkit.tools,
+    hints: ActionToolkit.make([Hints]).toolkit.tools,
+    literal: ActionToolkit.make([Literal]).toolkit.tools,
+  };
+
+  type Tools = typeof tools;
+
+  const toolAssertions: [
+    Equal<Tool.HandlerServices<Tools["spread"]["act"]>, Principal>,
+    Equal<Tool.HandlerServices<Tools["maybeUndefined"]["act"]>, Principal>,
+    Equal<Tool.HandlerServices<Tools["loose"]["act"]>, Principal>,
+    Equal<Tool.HandlerServices<Tools["runtime"]["maybe"]>, Principal>,
+    Equal<Tool.HandlerServices<Tools["named"]["named_tool"]>, Principal>,
+    Equal<Tool.HandlerServices<Tools["hints"]["hinted"]>, Principal>,
+    Equal<keyof Tools["literal"], never>,
+  ] = [true, true, true, true, true, true, true];
+
+  void toolAssertions;
+
+  Action.make("stale", {
+    description: "Formerly hidden from HTTP",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error `http` is gone: HTTP serves every action of a group it binds.
+    http: false,
+  });
 };

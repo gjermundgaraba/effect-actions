@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Predicate } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import type { Actions } from "./actions.js";
@@ -78,14 +78,9 @@ export const dispatch = <A extends Action.Any, EB, R>(
   handlers: Handlers<R>,
   before: Before<R> | undefined,
 ) => {
-  const handle = handlers[action.name];
+  const handle = Object.hasOwn(handlers, action.name) ? handlers[action.name] : undefined;
 
-  // Narrowing only: `implement` refuses a record without a function for every action.
-  if (handle === undefined) {
-    throw new Error(
-      `Internal invariant violated: no handler for "${group.name}.${action.name}"; implement enforces one per action`,
-    );
-  }
+  if (!Predicate.isFunction(handle)) throw new Error(`No handler for ${group.name}.${action.name}`);
 
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -100,8 +95,7 @@ export const dispatch = <A extends Action.Any, EB, R>(
   ): Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R> => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
-        // With its record as the receiver, so a class instance's method may use `this`.
-        Effect.suspend(() => handle.call(handlers, input)),
+        Effect.suspend(() => handle(input)),
         attributes,
       ),
       `${group.name}.${action.name}`,
@@ -121,40 +115,36 @@ export const dispatch = <A extends Action.Any, EB, R>(
 /** Any nominal implementation of `G`, with its record and channels erased. */
 export type AnyImplementation<G extends Actions = Actions> = Implementation<G, any, any, any>;
 
-/** The transports that serve a subset of a group's actions, by the contract flag that hides an action. */
-export type Transport = "http" | "mcp";
+/** What hides an action from MCP and Toolkit types: an `mcp` type of exactly `false`. The one rule both use. */
+export type HiddenFromMcp = { readonly mcp: false };
 
 /**
- * Names of the actions of `G` that `T` may serve. An action hidden by a literal `false`
- * is excluded. `Action.make` types `http` as a literal, so for its actions the set is exact
- * (the `Action` interface itself still admits `boolean`); an `mcp` flag decided at runtime
- * keeps its requirements.
+ * Names of the actions of `G` a surface serves: all of them, less those matching
+ * `Hidden`. An action whose `mcp` may be `false` at runtime does not match, so it keeps
+ * its requirements.
  */
-export type ServedNames<G extends Actions, T extends Transport> = Exclude<
-  G["actions"][number],
-  T extends "http" ? { readonly http: false } : { readonly mcp: false }
->["name"];
+type ServedNames<G extends Actions, Hidden> = Exclude<G["actions"][number], Hidden>["name"];
 
-/** Per-request requirements of the handlers `T` can invoke, or of a union of implementations. */
-export type RequestContext<App, T extends Transport> =
+/** Per-request requirements of the handlers a surface can invoke, or of a union of implementations. */
+export type RequestContext<App, Hidden = never> =
   App extends Implementation<infer G, infer H, any, any>
     ? {
-        readonly [K in Extract<ServedNames<G, T>, keyof H>]: HandlerContext<H, K>;
-      }[Extract<ServedNames<G, T>, keyof H>]
+        readonly [K in Extract<ServedNames<G, Hidden>, keyof H>]: HandlerContext<H, K>;
+      }[Extract<ServedNames<G, Hidden>, keyof H>]
     : never;
 
-/** Handler-acquisition failures of the implementations `T` acquires, or of a union of them. */
-export type BuildError<App, T extends Transport> =
+/** Handler-acquisition failures of the implementations a surface acquires, or of a union of them. */
+export type BuildError<App, Hidden = never> =
   App extends Implementation<infer G, any, infer EX, any>
-    ? [ServedNames<G, T>] extends [never]
+    ? [ServedNames<G, Hidden>] extends [never]
       ? never
       : EX
     : never;
 
-/** Handler-acquisition requirements of the implementations `T` acquires, or of a union of them. */
-export type BuildContext<App, T extends Transport> =
+/** Handler-acquisition requirements of the implementations a surface acquires, or of a union of them. */
+export type BuildContext<App, Hidden = never> =
   App extends Implementation<infer G, any, any, infer RX>
-    ? [ServedNames<G, T>] extends [never]
+    ? [ServedNames<G, Hidden>] extends [never]
       ? never
       : RX
     : never;

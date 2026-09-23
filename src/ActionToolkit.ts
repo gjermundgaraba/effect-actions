@@ -6,6 +6,7 @@ import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
+  type HiddenFromMcp,
   type HandlerContext,
   Implementation,
 } from "./internal/implementation.js";
@@ -16,40 +17,40 @@ export type Options<Errors extends ReadonlyArray<Action.Codec> = [], R = never> 
   R
 >;
 
-/** A native tool corresponding to an MCP-enabled action. */
-type NativeTool<A extends Action.Any, E extends Action.Codec, R> = A extends {
-  readonly mcp: { readonly name: infer Name extends string };
-}
-  ? Tool.Tool<
-      Name,
-      {
-        readonly parameters: A["input"];
-        readonly success: A["success"];
-        readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | E>>;
-        readonly failureMode: "return";
-      },
-      R
-    >
-  : never;
+/** A native tool corresponding to an action MCP may serve, named by its tool metadata. */
+type NativeTool<A extends Action.Any, E extends Action.Codec, R> =
+  Extract<A["mcp"], object> extends { readonly name: infer Name extends string }
+    ? Tool.Tool<
+        Name,
+        {
+          readonly parameters: A["input"];
+          readonly success: A["success"];
+          readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | E>>;
+          readonly failureMode: "return";
+        },
+        R
+      >
+    : never;
 
 type HandlersOf<App extends AnyImplementation> =
   App extends Implementation<any, infer H, any, any> ? H : never;
 
-/** A tool needs what its handler needs, plus what the binding's `before` hook needs. */
+/**
+ * A tool needs what its handler needs, plus what the binding's `before` hook needs. The
+ * rule is `ActionMcp`'s: only an action certainly hidden from MCP has no tool.
+ */
 type ToolForAction<
   App extends AnyImplementation,
   A extends Action.Any,
   E extends Action.Codec,
   RB,
-> = A extends {
-  readonly mcp: object;
-}
-  ? NativeTool<
+> = A extends HiddenFromMcp
+  ? never
+  : NativeTool<
       A,
       E,
       HandlerContext<HandlersOf<App>, Extract<A["name"], keyof HandlersOf<App>>> | RB
-    >
-  : never;
+    >;
 
 type ToolsFor<
   App extends AnyImplementation,
@@ -86,8 +87,8 @@ export function make<
   options?: Options<Errors, RB>,
 ): Binding<
   ToolkitTools<Apps, Errors[number], RB>,
-  BuildError<Apps[number], "mcp">,
-  BuildContext<Apps[number], "mcp">
+  BuildError<Apps[number], HiddenFromMcp>,
+  BuildContext<Apps[number], HiddenFromMcp>
 >;
 export function make(
   apps: ReadonlyArray<AnyImplementation>,

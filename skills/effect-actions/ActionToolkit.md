@@ -51,7 +51,7 @@ With a model: pass `binding.toolkit` as `toolkit` to `LanguageModel.generateText
 
 ## Rules
 
-- Selects MCP-enabled actions only, named by `mcp.name`, with resolved hints. Groups with no selected tools are not built. `make(apps, options?)` accepts a readonly implementation collection; options may be omitted.
+- Selects MCP-enabled actions only, named by `mcp.name`, with resolved hints. Groups with no selected tools are not built. The toolkit's type follows `ActionMcp`'s rule: only an action whose `mcp` type is exactly `false` has no tool; one whose `mcp` may be `false` at runtime is typed as a tool with its handler's requirements. `make(apps, options?)` accepts a readonly implementation collection; options may be omitted.
 - Successes are the action's native values. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes encoded arguments and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - `binding.layer` acquires each implementation once, in the layer's scope. Build-time requirements belong to the whole selected implementation.

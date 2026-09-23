@@ -53,7 +53,6 @@ export interface Options<
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
-  Http extends false = never,
   Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly description: string;
@@ -68,12 +67,6 @@ export interface Options<
    * library itself authorizes nothing.
    */
   readonly access: Acc;
-  /**
-   * `false` hides the action from HTTP routes and clients; omitted, it is served. `Http`
-   * is `never` unless the options hide the action, so options typed without it cannot
-   * carry `false`.
-   */
-  readonly http?: Http;
   /** `false` hides the action from MCP; otherwise tool metadata. */
   readonly mcp?: Mcp;
 }
@@ -85,7 +78,6 @@ export interface Action<
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
-  Http extends boolean = boolean,
   Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly name: Name;
@@ -96,16 +88,14 @@ export interface Action<
   // Declared, never defaulted, so a rule that switches on it reads a literal
   // rather than the runtime union the MCP hints are.
   readonly access: Acc;
-  /** Whether HTTP serves the action; a literal from `make`, so the served set is exact. */
-  readonly http: Http;
   readonly mcp: ResolvedMcp<Name, Mcp>;
 }
 
 /** Any action, with its schemas erased. */
 export type Any =
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, boolean, false>
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, boolean, McpOptions>
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, boolean, undefined>;
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, false>
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, McpOptions>
+  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, undefined>;
 
 /** Receives decoded input; may fail only with the declared errors. */
 export type Handler<A extends Any, R = never> = (
@@ -115,47 +105,44 @@ export type Handler<A extends Any, R = never> = (
 /** An empty object schema that also produces the object root MCP requires. */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
+type AnyOptions = Options<
+  Codec,
+  Codec,
+  ReadonlyArray<Codec>,
+  Access,
+  false | McpOptions | undefined
+>;
+
+/**
+ * The `mcp` option `make` received. Only a required literal `false` hides the action:
+ * options that may carry something else, such as a conditional spread, `false | undefined`
+ * or a broadly typed variable, may serve it, so its requirements are kept.
+ */
+type McpOf<O extends AnyOptions> = [O] extends [{ readonly mcp: false }]
+  ? false
+  : O extends { readonly mcp: infer Mcp extends false | McpOptions | undefined }
+    ? Mcp
+    : "mcp" extends keyof O
+      ? O["mcp"] | undefined
+      : undefined;
+
 /**
  * Define an action contract. Names are `[A-Za-z0-9_-]+`, other than `then`.
- * Actions can be local-only by setting both transports to `false`.
- *
- * Two overloads decide HTTP: `http: false`, always present, hides the action; `http`
- * absent serves it. Options that may or may not hide it, such as a conditional spread or
- * `false | undefined`, match neither, so the action's `http` type is never a guess.
+ * HTTP serves every action of a group it binds; `mcp: false` hides one from MCP.
  */
-export function make<
-  const Name extends string,
-  Input extends Codec = typeof NoInput,
-  Output extends Codec = never,
-  const Errors extends ReadonlyArray<Codec> = [],
-  const Acc extends Access = Access,
-  const Mcp extends false | McpOptions | undefined = undefined,
->(
+export function make<const Name extends string, const O extends AnyOptions>(
   name: Name,
-  options: Options<Input, Output, Errors, Acc, false, Mcp> & { readonly http: false },
-): Action<Name, Input, Output, Errors, Acc, false, Mcp>;
-export function make<
-  const Name extends string,
-  Input extends Codec = typeof NoInput,
-  Output extends Codec = never,
-  const Errors extends ReadonlyArray<Codec> = [],
-  const Acc extends Access = Access,
-  const Mcp extends false | McpOptions | undefined = undefined,
->(
-  name: Name,
-  options: Options<Input, Output, Errors, Acc, never, Mcp>,
-): Action<Name, Input, Output, Errors, Acc, true, Mcp>;
-export function make(
-  name: string,
-  options: Options<
-    Codec,
-    Codec,
-    ReadonlyArray<Codec>,
-    Access,
-    false,
-    false | McpOptions | undefined
-  >,
-): Any {
+  // A key `Options` does not declare, such as a stale or misspelled one, is refused.
+  options: O & { readonly [K in Exclude<keyof O, keyof AnyOptions>]: never },
+): Action<
+  Name,
+  "input" extends keyof O ? Exclude<O["input"], undefined> : typeof NoInput,
+  O["success"],
+  "errors" extends keyof O ? Exclude<O["errors"], undefined> : [],
+  O["access"],
+  McpOf<O>
+>;
+export function make(name: string, options: AnyOptions): Any {
   assertName("action name", name);
 
   const { access } = options;
@@ -192,7 +179,6 @@ export function make(
     success: options.success,
     errors: options.errors ?? [],
     access,
-    http: options.http !== false,
     mcp,
   };
 }

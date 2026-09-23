@@ -112,7 +112,7 @@ if (!discovery.challenge().includes(discovery.metadataUrl))
 
 const catalog = ActionCatalog.make(Actions);
 
-if (catalog.version !== "3" || catalog.actions[0]?.input.type !== "object") {
+if (catalog.version !== "4" || catalog.actions[0]?.input.type !== "object") {
   throw new Error("Catalog JSON Schema projection failed");
 }
 

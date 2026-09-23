@@ -9,11 +9,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
 import { mcpRequest } from "../src/Testing.js";
-import { post } from "./requests.js";
-
-// A raw `tools/call` request: these tests assert the wire envelope, which `Testing.mcpCall` removes.
-const rawToolCall = (name: string, args: Schema.Json = {}) =>
-  mcpRequest({ url: testMcpUrl, method: "tools/call", params: { name, arguments: args } });
+import { post, rawToolCall } from "./requests.js";
 
 it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
   const web = HttpRouter.toWebHandler(
@@ -134,22 +130,21 @@ describe("projection boundaries", () => {
       mcp: false,
     });
 
-    const Hidden = Action.make("hidden", {
-      description: "Not exposed over HTTP",
+    const Tool = Action.make("tool", {
+      description: "Served",
       access: "write",
       success: Schema.String,
-      http: false,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Echo, Hidden).implement({
+    const app = ActionGroup.make({ name: "test" }, Echo, Tool).implement({
       echo: Effect.succeed,
-      hidden: () => Effect.succeed("hidden"),
+      tool: () => Effect.succeed("tool"),
     });
 
     const options = { apiPath: "/rpc" } as const;
     expect(
       Object.keys(OpenApi.fromApi(ActionHttp.make(options, app.group).api).paths ?? {}),
-    ).toEqual(["/rpc/test/echo"]);
+    ).toEqual(["/rpc/test/echo", "/rpc/test/tool"]);
     const web = makeTestHttp(app, Layer.empty, options);
     onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(app, Layer.empty);
@@ -157,8 +152,7 @@ describe("projection boundaries", () => {
     const response = await web.handler(post("/rpc/test/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
-    expect((await web.handler(post("/rpc/test/hidden"))).status).toBe(404);
-    expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["hidden"]);
+    expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["tool"]);
   });
 
   it.each([409, undefined])(

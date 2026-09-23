@@ -9,8 +9,8 @@ peer range is unchanged (`>=4.0.0-rc.116 <4.0.0`).
 
 **`ActionHttpClient.promise` has no `token` option.** Its options are now the native
 `HttpApiClient.make` options `baseUrl` and `transformClient`, passed through, plus `fetch`.
-`transformResponse` is not offered: it may change a call's success, failure or required
-services, which neither the method types nor `Effect.runPromise` can follow.
+The native `transformResponse` is not offered: it may change a call's success, failure or
+required services, which neither the method types nor `Effect.runPromise` can follow.
 
 - Migrate: replace `token` with a `transformClient`, or with a `fetch` wrapper for a token read
   on each call:
@@ -28,30 +28,68 @@ services, which neither the method types nor `Effect.runPromise` can follow.
   });
   ```
 
-**`Action.make`'s `http` option is `false` or absent.** Absent means served, as before. `make` has
-two overloads: `http: false` gives an action whose `http` type is `false`, no `http` gives one
-whose `http` type is `true`. Options that could be either at runtime match neither and no longer
-compile: `http: true`, a `boolean`, `false | undefined`, a conditional spread of `{ http: false }`,
-and an `Action.Options` value with `Http = false` and an optional `http`. Before, a runtime flag
-kept the action's requirements whether or not it was served, and a conditional spread was typed
-hidden although it could be served. `Action.Options`' `Http` parameter now `extends false` and
-defaults to `never`, so options typed without it cannot hold `http: false`. `ActionCatalog` still
-reports `http` as a boolean.
+**`Action.make` has no `http` option.** HTTP serves every action of every group passed to
+`ActionHttp.make`. Keeping an action off HTTP means putting it in a group that the HTTP binding
+leaves out. There is no local-only action any more: `ActionCli` runs any action. `Action.Action`
+and `Action.Options` lose their `Http` type parameter, so `Mcp` moves up one position, and an
+action has no `http` field. `ActionCatalog` entries lose their `http` field, `httpSchemaErrors`
+lists a group's policy errors for every action, and the catalog `version` is `"4"`. `make`
+refuses keys that `Action.Options` does not declare, so a leftover `http` is a compile error
+rather than an action that is now served. `make` infers the whole options object: its type
+parameters are now `<Name, O>` instead of `<Name, Input, Output, Errors, Acc, Http, Mcp>`, so
+explicit type arguments or instantiation expressions no longer compile.
 
-- Migrate: delete `http: true`. Replace a runtime flag with a literal: define the served and
-  the hidden variant as separate contracts, or bind a different group, depending on the flag.
-  An `Action.Options` variable for a hidden action needs `Http = false` and a required
-  `http: false` (`Action.Options<…, false> & { readonly http: false }`).
+- Migrate: delete `http: true`. For an action with `http: false`, move it to a group of its own
+  (or of other actions hidden from HTTP), and leave that group out of `ActionHttp.make` while
+  still passing it to `ActionMcp`, `ActionToolkit` or `ActionCli`:
 
-**`implement` checks each handler by function, with a plain property read.** A record whose
-entry for an action is not a function (a missing key, `undefined`, any other value, or only what
-`Object.prototype` supplies, such as `toString` for an action of that name) is refused as
-missing, with the same `Missing handlers for group "<group>": <actions>` message, at `implement`
-or, for a builder Effect's record, when the adapter layer builds. Before, only a missing or
-`undefined` own property was refused, so a non-function value passed and failed on its first
-request, and a handler object whose handlers are inherited, such as a class instance, was
-refused although it worked in 0.5.0. Such objects are accepted again, and handlers are now
-called with their record as `this`, so a class's methods may use it.
+  ```ts
+  // before
+  const ListChanges = Action.make("listChanges", { ..., http: false });
+  const Users = ActionGroup.make({ name: "users" }, GetUser, ListChanges);
+  const Http = ActionHttp.make({ apiPath: "/api" }, Users);
+
+  // after
+  const ListChanges = Action.make("listChanges", { ... });
+  const Users = ActionGroup.make({ name: "users" }, GetUser);
+  const Audit = ActionGroup.make({ name: "audit" }, ListChanges);
+  const Http = ActionHttp.make({ apiPath: "/api" }, Users);
+  // Audit's implementation goes to ActionMcp.layerHttp, ActionToolkit.make or ActionCli.
+  ```
+
+  Catalog readers: drop `http`, and check for `version: "4"`. Explicit `Action.make<...>` type
+  arguments: delete them and let `make` infer.
+
+  Library authors: a package whose published declarations were built against effect-actions
+  0.6.0 or earlier names `Action.Action` with seven type arguments. Under 0.7.0 those
+  references do not resolve, and with `skipLibCheck` its contracts silently degrade to `any`.
+  Rebuild and republish such a package against 0.7.0 before its consumers upgrade.
+
+**An `mcp` option that may serve the action keeps its requirements.** An action is typed hidden
+from MCP only when its options' type has a required `mcp: false`, such as a literal
+`mcp: false`. A conditional spread of `{ mcp: false }` and an `Action.Options` value whose `mcp`
+is optional were typed hidden although they may serve the action, so an MCP layer dropped the
+handler's request requirements and a served tool could fail on a missing service. They are now
+typed served: the action's `mcp` type includes the resolved tool, and `ActionMcp` layers keep
+the handler's requirements. `ActionToolkit` applies the same rule: every action whose `mcp` type
+is not exactly `false` is a tool of the toolkit's type, carrying its handler's request
+requirements. Before, an action whose `mcp` might be `false` at runtime (the forms above,
+`false | undefined`, or `enabled ? { name } : false`) had no tool in the type although it had one
+at runtime, and calling it could fail on a service the types never asked for. Literal
+`mcp: false`, `mcp: { ... }` hints and omitted `mcp` infer exactly as before. A ternary
+between hints and `false` (`enabled ? { name: "nt" } : false`) now types the tool name as
+`string`; add `as const` to the hints branch to keep the literal name.
+
+- Migrate: nothing for literal options. Where a layer or a toolkit call now requires a service
+  it did not before, the action may be served: provide the service, or state `mcp: false`
+  literally.
+
+**Handlers must be own-property functions of a plain record.** 0.6.0 refused a record without
+an own property for an action, or with `undefined` there. `implement` now also refuses one whose
+value is not a function. A record that fails is refused with
+`Missing handlers for group "<group>": <actions>`, at `implement` or, for a builder Effect's
+record, when the adapter layer builds; before, a non-function value failed on its first request.
+Handlers are called without a receiver.
 
 - Migrate: nothing, unless a record held non-function values under action names; bind a
   function for every action.
@@ -61,6 +99,8 @@ called with their record as `this`, so a class's methods may use it.
 - `ActionHttpClient.promise` and `Testing.httpClient` build the native client the same way,
   over `FetchHttpClient` with the given `fetch`. `promise` still looks the global `fetch` up on
   each call when none is passed.
+- `Testing.mcpCall` reads `arguments` with a destructuring default; an omitted `arguments` is
+  still sent as `{}`.
 - `ActionMcp` documents that stdio refuses a host speaking an older revision deliberately, for
   uniformity with HTTP, although stdio has no sessions.
 

@@ -7,18 +7,17 @@ metadata. An action holds no behavior; handlers are bound by `ActionGroup.implem
 
 Import `@gjermundgaraba/effect-actions/Action`.
 
-| Export                                     | Purpose                                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `make(name, options)`                      | Define a pure contract; literal names, access and transport exclusions stay typed. |
-| `Action`, `Any`, `Options`                 | Concrete contracts, erased contracts and construction options.                     |
-| `Codec`, `Handler`, `Access`, `McpOptions` | Service-free codecs, typed handlers, read/write classification and tool metadata.  |
+| Export                                     | Purpose                                                                           |
+| ------------------------------------------ | --------------------------------------------------------------------------------- |
+| `make(name, options)`                      | Define a pure contract; literal names, access and MCP exclusion stay typed.       |
+| `Action`, `Any`, `Options`                 | Concrete contracts, erased contracts and construction options.                    |
+| `Codec`, `Handler`, `Access`, `McpOptions` | Service-free codecs, typed handlers, read/write classification and tool metadata. |
 
 | Option                             | Meaning                                                                      |
 | ---------------------------------- | ---------------------------------------------------------------------------- |
 | `description`, `success`, `access` | Required description, success codec and `"read"` / `"write"` classification. |
 | `input`                            | Optional codec; omission means an empty object.                              |
 | `errors`                           | Declared error codecs; defaults to none.                                     |
-| `http`                             | Omit to serve; `false` (literal only) removes routes and client methods.     |
 | `mcp`                              | Defaults to enabled; `false` removes tools, otherwise accepts `McpOptions`.  |
 
 MCP options: `name` defaults to the action name; `readOnly` to `access === "read"`;
@@ -65,12 +64,11 @@ export const WhoAmI = Action.make("whoAmI", {
   access: "read",
 });
 
-// MCP-only: no HTTP route, no client method.
+// A tool only: its group is left out of the HTTP binding (see ActionHttp.md).
 export const ListChanges = Action.make("listChanges", {
   description: "List renames in your tenant, oldest first.",
   success: Schema.Struct({ changes: Schema.Array(Schema.String) }),
   access: "read",
-  http: false,
   mcp: { name: "list_changes" },
 });
 
@@ -90,9 +88,10 @@ export const Double = Action.make("double", {
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation; an unannotated error is served as HTTP 500. Group-level `errors` are appended to every action of the group (see [ActionGroup.md](ActionGroup.md)).
 - A handler may fail only with the declared errors. Anything else is a defect.
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level. It is authorization metadata for a surface's `before` hook (see [guarantees.md](guarantees.md)); the library itself authorizes nothing. Its only built-in uses are default MCP hints and span/log annotations; adapters never enforce an authorization rule from it.
-- `access` is independent of `mcp`. A local-only action (`mcp: false`) still has one, and an action may set `access: "write"` with `mcp: { readOnly: true }` if the tool hint should say something else. Derive authorization from `access`, never from a tool hint.
-- Both transports are on by default. `http: false` removes the route and the client method. `mcp: false` removes the tool. Both `false` makes a local-only action, reachable through `ActionCli` only.
-- `http` is `false` or absent. `make` has one overload for each: `http: false` types the action's `http` as `false`, no `http` types it as `true`. Anything that could be either at runtime matches neither overload and is a compile error: `http: true`, a `boolean`, `false | undefined`, a conditional spread of `{ http: false }`, and an `Options` value typed with `Http = false` whose `http` is optional. `Options` typed without `Http` cannot hold `http: false`, so it makes a served action. `mcp` still accepts a runtime value; its requirements are then kept.
+- `access` is independent of `mcp`. An action hidden from MCP (`mcp: false`) still has one, and an action may set `access: "write"` with `mcp: { readOnly: true }` if the tool hint should say something else. Derive authorization from `access`, never from a tool hint.
+- An action has no HTTP switch. HTTP serves every action of every group it binds; to keep an action off HTTP, put it in a group the HTTP binding leaves out. `ActionCli` runs any action locally.
+- `mcp: false` removes the tool. The action's type is hidden from MCP only when the options' type has a required `mcp: false`, such as a literal `mcp: false` in the object passed to `make`. Options that may serve it type it as served, so MCP layers keep its handler's requirements: a conditional spread of `{ mcp: false }`, `false | undefined`, a flag-driven value such as `enabled ? {} : false`, or an `Options` value whose `mcp` is optional.
+- `make` accepts only the keys `Options` declares. An unknown key, such as a stale `http`, is a compile error.
 - MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but the native MCP server refuses it when an `ActionMcp` layer is built. Success and error schemas may be any shape.
 - `mcp.name` is the tool name, matches `[A-Za-z0-9_-]+` except `then`, is at most 128 characters, unique within the group and within any Toolkit or MCP projection that serves the group. Default is the action name.
 - Hint defaults: `readOnly: access === "read"`, `destructive: !readOnly`, `idempotent: false`, `openWorld: true`. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
@@ -106,4 +105,5 @@ export const Double = Action.make("double", {
 - Type error `Effect<..., X, ...> is not assignable` in `implement`: the handler fails with an undeclared error `X`. Add it to `errors` or handle it.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
 - `Property 'access' is missing` at `make`: every action declares `"read"` or `"write"`. There is no default.
+- `Type 'false' is not assignable to type 'never'` on `http` at `make`: the option is gone. Delete it; to keep the action off HTTP, move it to a group the HTTP binding leaves out.
 - A tool shows `readOnlyHint: false` for a read: the action sets `mcp: { readOnly: false }` explicitly, which wins over `access`.

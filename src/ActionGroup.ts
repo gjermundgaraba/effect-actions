@@ -29,10 +29,9 @@ type WithErrors<
     infer Output,
     infer Own,
     infer Access,
-    infer Http,
     infer Mcp
   >
-    ? Action.Action<Name, Input, Output, readonly [...Own, ...Errors], Access, Http, Mcp>
+    ? Action.Action<Name, Input, Output, readonly [...Own, ...Errors], Access, Mcp>
     : never;
 };
 
@@ -75,26 +74,15 @@ export interface Group<
 /** Any group, with its actions and error schemas erased. */
 export type Any = Group<string, ReadonlyArray<Action.Any>, Action.Codec>;
 
-/**
- * The types require every handler, but a record built in plain JavaScript or through a
- * cast may still lack one, or hold something other than a function under its key. It
- * fails before anything is served rather than on the first request for that action. The
- * lookup is the one dispatch uses, a plain property read, so a handler inherited from a
- * prototype, such as a class instance's method, is bound. What every object inherits
- * from `Object.prototype`, such as `toString` for an action of that name, is not a handler.
- */
+/** Refuse a record without an own-property function for every action, before anything is served. */
 const assertHandlers = <H extends HandlersFrom<ReadonlyArray<Action.Any>>>(
   group: Contract,
   handlers: H,
 ): H => {
-  const missing = group.actions.filter((action) => {
-    const handler = handlers[action.name];
-
-    return (
-      !Predicate.isFunction(handler) ||
-      handler === Object.getOwnPropertyDescriptor(Object.prototype, action.name)?.value
-    );
-  });
+  const missing = group.actions.filter(
+    (action) =>
+      !(Object.hasOwn(handlers, action.name) && Predicate.isFunction(handlers[action.name])),
+  );
 
   if (missing.length > 0) {
     throw new Error(

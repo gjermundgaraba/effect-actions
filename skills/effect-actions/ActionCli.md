@@ -1,17 +1,17 @@
 # ActionCli
 
 Native Effect CLI commands that run handlers in-process. The host provides every service;
-nothing is fetched over HTTP.
+nothing is fetched over HTTP. Any action runs locally, whether or not HTTP or MCP serves it.
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/ActionCli`.
 
-| API                            | Purpose                                                           |
-| ------------------------------ | ----------------------------------------------------------------- |
-| `command(app, name, options?)` | One selected action as a native Effect `Command`.                 |
-| `group(app, options?)`         | Every action under a group command, including local-only actions. |
-| `Options`, `GroupOptions`      | Configuration for single and aggregate commands.                  |
+| API                            | Purpose                                           |
+| ------------------------------ | ------------------------------------------------- |
+| `command(app, name, options?)` | One selected action as a native Effect `Command`. |
+| `group(app, options?)`         | Every action under a group command.               |
+| `Options`, `GroupOptions`      | Configuration for single and aggregate commands.  |
 
 | Option                | Meaning                                                                                                      |
 | --------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -56,7 +56,7 @@ Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
 
 ## Rules
 
-- `command(app, name)` selects one action by name from the bound group; the name is checked at the type level. `group(app)` puts every action under the group command, including actions with `http: false` and `mcp: false`.
+- `command(app, name)` selects one action by name from the bound group; the name is checked at the type level. `group(app)` puts every action under the group command, including actions with `mcp: false` and groups no HTTP binding serves.
 - Default syntax is `--input '<json>'` or `--input-file <path>` carrying the entire encoded input: nested objects, arrays, scalars. The file is read and JSON-parsed by the native `Flag.FileSchema`. Both are decoded by the native parser; if both are given, the file is used. Omitting both decodes `{}` separately on every invocation; result identity follows the codec's behavior. An action that requires input then fails with a `SchemaError`, exactly as a `parameters` command's mapped input does.
 - `parameters` and `input` are supplied together or not at all. With them, the command has explicit native flags and arguments and neither `--input` nor `--input-file`, so its syntax does not change when the schema changes.
 - `input(parsed)` returns encoded JSON. The action schema decodes it before dispatch; a mismatch is a `SchemaError` at runtime. Action fields are never turned into flags automatically.

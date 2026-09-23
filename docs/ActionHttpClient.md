@@ -7,11 +7,11 @@ page. It is Effect's native `HttpApiClient` over `fetch`, built once; each call 
 
 Import `@gjermundgaraba/effect-actions/ActionHttpClient`.
 
-| API                       | Purpose                                                                       |
-| ------------------------- | ----------------------------------------------------------------------------- |
-| `promise(http, options?)` | `client.<group>.<action>(input)` for every HTTP-served action of the binding. |
-| `Options`                 | Where and how requests are sent.                                              |
-| `Client`, `Method`        | The client's type, derived from the binding, and one action's method.         |
+| API                       | Purpose                                                               |
+| ------------------------- | --------------------------------------------------------------------- |
+| `promise(http, options?)` | `client.<group>.<action>(input)` for every action of the binding.     |
+| `Options`                 | Where and how requests are sent.                                      |
+| `Client`, `Method`        | The client's type, derived from the binding, and one action's method. |
 
 The options are the native `HttpApiClient.make` options except `transformResponse`, plus `fetch`.
 `transformResponse` may change a call's success, failure or required services, which neither
@@ -68,7 +68,7 @@ Reacting to a response every call may meet (a proxy's 401), or a token read per 
 - Anything the contract does not account for rejects with Effect's own error. `HttpClientError`: the server could not be reached (`response` is `undefined`), or answered with a status no schema declares, or with a body that could not be read. `SchemaError`: the input did not encode, or the success body did not decode.
 - The library adds no error type of its own and interprets no status. Which failures mean "signed out" or "try again" is the caller's decision.
 - Nothing is retried. A rejected write may or may not have happened; only a declared error says what the server did.
-- Only HTTP-served actions have methods. An action with `http: false` is absent, and so is a group without HTTP actions.
+- Every action of a bound group has a method. A group without actions has no namespace.
 - The client holds no connections or timers. Making one is synchronous and sends nothing.
 - A method is not an Effect. Code that runs Effects uses `HttpApiClient.make(Http.api)` directly (see [ActionHttp.md](ActionHttp.md)); its methods take `{ payload }`.
 
@@ -77,4 +77,4 @@ Reacting to a response every call may meet (a proxy's 401), or a token read per 
 - Rejects with `HttpClientError` whose `reason._tag` is `StatusCodeError` for a 401 or 403: the surface answered with an error the binding does not declare. Add it to `ActionHttp.make`'s `errors`, and have the middleware encode it.
 - Rejects with `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: `baseUrl` is omitted, and there is no page to resolve relative routes against. Set `baseUrl`.
 - A stubbed global `fetch` is not used: `fetch` was passed as an option, which takes precedence.
-- Property does not exist on the client: the action is `http: false`, or its group is not bound in this `Http`.
+- Property does not exist on the client: the action's group is not bound in this `Http`.

@@ -7,15 +7,15 @@ Built from contracts alone: no implementation, service or server is involved.
 
 Import `@gjermundgaraba/effect-actions/ActionCatalog`.
 
-`make(...groups)` returns `Catalog`: `version: "3"` and an ordered `actions` array of `Entry`.
+`make(...groups)` returns `Catalog`: `version: "4"` and an ordered `actions` array of `Entry`.
 
-| Entry field                          | Meaning                                                                      |
-| ------------------------------------ | ---------------------------------------------------------------------------- |
-| `id`, `group`, `name`, `description` | Stable `<group>.<action>` identity and contract metadata.                    |
-| `http`, `mcp`                        | HTTP enablement and resolved MCP enablement/name/hints.                      |
-| `input`, `success`                   | Standalone draft 2020-12 JSON Schema objects, not wrappers.                  |
-| `errors`                             | JSON Schema objects for own and inherited group errors.                      |
-| `httpSchemaErrors`                   | JSON Schema objects for HTTP policy errors; empty for HTTP-disabled actions. |
+| Entry field                          | Meaning                                                             |
+| ------------------------------------ | ------------------------------------------------------------------- |
+| `id`, `group`, `name`, `description` | Stable `<group>.<action>` identity and contract metadata.           |
+| `mcp`                                | Resolved MCP enablement, name and hints.                            |
+| `input`, `success`                   | Standalone draft 2020-12 JSON Schema objects, not wrappers.         |
+| `errors`                             | JSON Schema objects for own and inherited group errors.             |
+| `httpSchemaErrors`                   | JSON Schema objects for HTTP policy errors; empty without a policy. |
 
 Exported types are `Catalog` and `Entry`.
 
@@ -43,7 +43,7 @@ Console.log(
 - Each schema root includes its own `$schema` and, where needed, `$defs`. Equal identifiers across entries or fields cannot replace each other; recursive references resolve locally.
 - The catalog contains JSON Schema only. Use Effect's `SchemaRepresentation` directly when native schema persistence or revival is needed.
 - `errors` includes group-level errors. HTTP schema-policy errors are separate in `httpSchemaErrors`. Surface errors belong to bindings and are not listed.
-- `access` is omitted; read it from the contract when needed. Local-only actions are included. Presence grants no authorization or proof that an endpoint is mounted; the host decides what to publish.
+- `access` is omitted; read it from the contract when needed. Actions hidden from MCP are included. Presence grants no authorization or proof that an endpoint is mounted; the host decides what to publish.
 - No search, catalog HTTP endpoint, or TypeScript code generation is provided.
 
 ## Failure modes

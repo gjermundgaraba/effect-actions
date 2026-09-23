@@ -76,12 +76,10 @@ export const Change = Schema.Struct({
   name: Schema.String,
 });
 
-// A tool for agents reviewing what happened, not part of the HTTP API.
 export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
   success: Schema.Struct({ changes: Schema.Array(Change) }),
   access: "read",
-  http: false,
   mcp: { name: "list_changes" },
 });
 
@@ -108,6 +106,7 @@ export const UserActions = ActionGroup.make(
   WhoAmI,
 );
 
+// A tool for agents reviewing what happened: the HTTP binding leaves its group out.
 export const AuditActions = ActionGroup.make({ name: "audit", schemaError }, ListChanges);
 
 // Contract-level: the server and its clients share the mount path, and the
@@ -118,5 +117,4 @@ export const Http = ActionHttp.make(
   { apiPath: "/api/actions", errors: [Unauthenticated, Forbidden] },
   PublicActions,
   UserActions,
-  AuditActions,
 );

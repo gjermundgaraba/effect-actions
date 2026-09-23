@@ -3,34 +3,15 @@ import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import type { Actions } from "./internal/actions.js";
 import { type ClientOptions, fetchApiClient } from "./internal/fetchClient.js";
-import type { ErasedValue, ServedNames } from "./internal/implementation.js";
+import type { ErasedValue } from "./internal/implementation.js";
 
 /**
- * Where and how a Promise client sends its requests: the native `HttpApiClient.make`
- * options except `transformResponse`, plus the `fetch` it sends them with.
- *
- * - `baseUrl`: what the binding's routes are resolved against, such as
- *   `https://api.example.com`. Omitted, routes stay relative, which a browser resolves
- *   against the page's origin.
- * - `transformClient`: wraps the native `HttpClient`, such as
- *   `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))` to authenticate every call.
- *
- * `transformResponse` is left out: it may change a call's success, failure or required
- * services, which neither the `Method` types nor `Effect.runPromise` can follow.
+ * The native `HttpApiClient.make` options except `transformResponse`, plus `fetch`;
+ * see the options table in docs/ActionHttpClient.md.
  */
 export interface Options extends Omit<ClientOptions, "transformResponse"> {
-  /**
-   * The transport. Defaults to the global `fetch`, looked up per call. Wrap it to add
-   * headers or to observe responses, such as a proxy's 401.
-   */
   readonly fetch?: typeof globalThis.fetch;
 }
-
-/** The HTTP-served actions of `G`: an action with `http: false` has no method. */
-type HttpAction<G extends Actions> = Extract<
-  G["actions"][number],
-  { readonly name: ServedNames<G, "http"> }
->;
 
 /**
  * One action as a Promise of its decoded success. An action whose input may be empty,
@@ -40,10 +21,10 @@ export type Method<A extends Action.Any> = {} extends A["input"]["Type"]
   ? (input?: A["input"]["Type"]) => Promise<A["success"]["Type"]>
   : (input: A["input"]["Type"]) => Promise<A["success"]["Type"]>;
 
-/** Every HTTP-served action of the binding, as `client.<group>.<action>(input)`. */
+/** Every action of the binding, as `client.<group>.<action>(input)`. */
 export type Client<Groups extends ReadonlyArray<Actions>> = {
-  readonly [G in Groups[number] as [HttpAction<G>] extends [never] ? never : G["name"]]: {
-    readonly [A in HttpAction<G> as A["name"]]: Method<A>;
+  readonly [G in Groups[number] as [G["actions"][number]] extends [never] ? never : G["name"]]: {
+    readonly [A in G["actions"][number] as A["name"]]: Method<A>;
   };
 };
 
@@ -76,25 +57,19 @@ export function promise(
   // Building the client is construction, not a request, so it runs synchronously.
   const native = Effect.runSync(fetchApiClient(http.api, send, { baseUrl, transformClient }));
 
+  // The native client has one namespace per group with actions, one method per action.
   return Object.fromEntries(
-    http.groups.flatMap((group) => {
-      const endpoints = native[group.name];
+    Object.entries(native).map(([group, endpoints]) => [
+      group,
+      Object.fromEntries(
+        Object.entries(endpoints).map(([action, endpoint]) => {
+          // An omitted or `undefined` input is the empty input `Method` makes optional.
+          const method: ErasedMethod = (input) =>
+            Effect.runPromise(endpoint({ payload: input ?? {} }));
 
-      if (endpoints === undefined) return [];
-
-      const methods = group.actions.flatMap((action) => {
-        const endpoint = endpoints[action.name];
-
-        if (endpoint === undefined) return [];
-
-        // An omitted or `undefined` input is the empty input `Method` makes optional.
-        const method: ErasedMethod = (input) =>
-          Effect.runPromise(endpoint({ payload: input ?? {} }));
-
-        return [[action.name, method] as const];
-      });
-
-      return [[group.name, Object.fromEntries(methods)] as const];
-    }),
+          return [action, method] as const;
+        }),
+      ),
+    ]),
   );
 }

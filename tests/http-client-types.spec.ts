@@ -20,25 +20,9 @@ const Notes = ActionGroup.make(
     success: Schema.Array(Schema.String),
   }),
   Action.make("count", { description: "Count notes", access: "read", success: Schema.Finite }),
-  Action.make("summarize", {
-    description: "MCP only",
-    access: "read",
-    success: Schema.String,
-    http: false,
-  }),
 );
 
-const Tools = ActionGroup.make(
-  { name: "tools" },
-  Action.make("reindex", {
-    description: "MCP only",
-    access: "write",
-    success: Schema.Null,
-    http: false,
-  }),
-);
-
-const client = ActionHttpClient.promise(ActionHttp.make({ apiPath: "/api" }, Notes, Tools));
+const client = ActionHttpClient.promise(ActionHttp.make({ apiPath: "/api" }, Notes));
 
 export const decodedSuccess: Promise<{ readonly id: string; readonly at: DateTime.Utc }> =
   client.notes.get({ id: "a" });
@@ -52,10 +36,6 @@ export const promiseClientTypes = () => {
   void client.notes.get({ id: 1 });
   // @ts-expect-error An action with required input needs its argument.
   void client.notes.get();
-  // @ts-expect-error An action hidden from HTTP has no method.
-  void client.notes.summarize;
-  // @ts-expect-error A group without HTTP actions has no methods at all.
-  void client.tools;
 
   ActionHttpClient.promise(ActionHttp.make({ apiPath: "/api" }, Notes), {
     // @ts-expect-error A response transform could change what a method resolves with.

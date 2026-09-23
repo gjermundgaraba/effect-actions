@@ -224,13 +224,6 @@ const HttpOnly = Action.make("httpOnly", {
   mcp: false,
 });
 
-const Hidden = Action.make("hidden", {
-  description: "Hidden",
-  access: "write",
-  success: Schema.String,
-  http: false,
-});
-
 const RemoteGroup = ActionGroup.make(
   {
     name: "remote",
@@ -241,7 +234,6 @@ const RemoteGroup = ActionGroup.make(
   },
   RemoteAction,
   HttpOnly,
-  Hidden,
 );
 
 const OtherGroup = ActionGroup.make(
@@ -333,9 +325,6 @@ void remoteGroup;
 void sharedString;
 
 void sharedNumber;
-
-// @ts-expect-error HTTP-disabled actions have no remote command.
-ActionCliClient.command(http, "remote", "hidden");
 
 // @ts-expect-error Remote command names are exact.
 ActionCliClient.command(http, "remote", "missing");

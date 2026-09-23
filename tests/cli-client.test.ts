@@ -35,13 +35,6 @@ const Remote = Action.make("remote", {
   errors: [Domain],
 });
 
-const Hidden = Action.make("hidden", {
-  description: "Not HTTP",
-  access: "write",
-  success: Schema.String,
-  http: false,
-});
-
 const RemoteGroup = ActionGroup.make(
   {
     name: "remote",
@@ -51,7 +44,6 @@ const RemoteGroup = ActionGroup.make(
     },
   },
   Remote,
-  Hidden,
 );
 
 const Http = ActionHttp.make({ apiPath: "/api" }, RemoteGroup);
@@ -67,7 +59,6 @@ const app = RemoteGroup.implement({
           ? Effect.fail(new Domain({ message: "zero" }))
           : Effect.succeed(value === 13 ? Infinity : value * 2),
     ),
-  hidden: () => Effect.succeed("not mounted"),
 });
 
 it("projects grouped commands through the native HTTP client without a local fallback", async () => {
@@ -121,20 +112,6 @@ it("projects grouped commands through the native HTTP client without a local fal
   expect(decodedInputs).toEqual([21]);
   expect(output).toEqual(['"42"']);
 
-  // A direct HTTP request proves the HTTP-disabled action was never mounted.
-  expect(
-    (
-      await web.handler(
-        new Request("http://localhost/api/remote/hidden", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        }),
-        Context.empty(),
-      )
-    ).status,
-  ).toBe(404);
-
   // Runtime selectors are guarded even when values come from untyped callers.
   // SAFETY: runtime guards must reject selector strings supplied outside TypeScript.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Intentional untyped selector simulation.
@@ -169,7 +146,7 @@ it("keeps the selected action when a connection object carries selector keys", a
   );
 
   // Structurally assignable, since the host's object is not a literal here.
-  const connection = { baseUrl: "http://localhost", group: "other", endpoint: "hidden" };
+  const connection = { baseUrl: "http://localhost", group: "other", endpoint: "missing" };
   const command = ActionCliClient.command(Http, "remote", "remote", { connection });
 
   const [, output] = await logged(
