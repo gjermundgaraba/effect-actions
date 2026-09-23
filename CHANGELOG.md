@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.7.0
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.117`. The `effect`
+peer range is unchanged (`>=4.0.0-rc.116 <4.0.0`).
+
+### Breaking changes
+
+**`ActionHttpClient.promise` has no `token` option.** Its options are now the native
+`HttpApiClient.make` options (`baseUrl`, `transformClient`, `transformResponse`), passed
+through, plus `fetch`.
+
+- Migrate: replace `token` with a `transformClient`, or with a `fetch` wrapper for a token read
+  on each call:
+
+  ```ts
+  import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+
+  // before
+  ActionHttpClient.promise(Http, { baseUrl, token });
+
+  // after
+  ActionHttpClient.promise(Http, {
+    baseUrl,
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+  });
+  ```
+
+**`Action.make`'s `http` option is `false` or absent.** Absent means served, as before. `make` has
+two overloads: `http: false` gives an action whose `http` type is `false`, no `http` gives one
+whose `http` type is `true`. Options that could be either at runtime match neither and no longer
+compile: `http: true`, a `boolean`, `false | undefined`, a conditional spread of `{ http: false }`,
+and an `Action.Options` value with `Http = false` and an optional `http`. Before, a runtime flag
+kept the action's requirements whether or not it was served, and a conditional spread was typed
+hidden although it could be served. `Action.Options`' `Http` parameter now `extends false` and
+defaults to `never`, so options typed without it cannot hold `http: false`. `ActionCatalog` still
+reports `http` as a boolean.
+
+- Migrate: delete `http: true`. Replace a runtime flag with a literal: define the served and
+  the hidden variant as separate contracts, or bind a different group, depending on the flag.
+  An `Action.Options` variable for a hidden action needs `Http = false` and a required
+  `http: false` (`Action.Options<…, false> & { readonly http: false }`).
+
+**`implement` checks each handler by function, with a plain property read.** A record whose
+entry for an action is not a function (a missing key, `undefined`, any other value, or only what
+`Object.prototype` supplies, such as `toString` for an action of that name) is refused as
+missing, with the same `Missing handlers for group "<group>": <actions>` message, at `implement`
+or, for a builder Effect's record, when the adapter layer builds. Before, only a missing or
+`undefined` own property was refused, so a non-function value passed and failed on its first
+request, and a handler object whose handlers are inherited, such as a class instance, was
+refused although it worked in 0.5.0. Such objects are accepted again, and handlers are now
+called with their record as `this`, so a class's methods may use it.
+
+- Migrate: nothing, unless a record held non-function values under action names; bind a
+  function for every action.
+
+### Other changes
+
+- `ActionHttpClient.promise` and `Testing.httpClient` build the native client the same way,
+  over `FetchHttpClient` with the given `fetch`. `promise` still looks the global `fetch` up on
+  each call when none is passed.
+- `ActionMcp` documents that stdio refuses a host speaking an older revision deliberately, for
+  uniformity with HTTP, although stdio has no sessions.
+
 ## 0.6.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.117`. The `effect`

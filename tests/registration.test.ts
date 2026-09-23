@@ -11,7 +11,8 @@ import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
 import { mcpRequest } from "../src/Testing.js";
 import { post } from "./requests.js";
 
-const mcpCall = (name: string, args: Schema.Json = {}) =>
+// A raw `tools/call` request: these tests assert the wire envelope, which `Testing.mcpCall` removes.
+const rawToolCall = (name: string, args: Schema.Json = {}) =>
   mcpRequest({ url: testMcpUrl, method: "tools/call", params: { name, arguments: args } });
 
 it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
@@ -222,7 +223,9 @@ describe("projection boundaries", () => {
     expect((await web.handler(post("/api/actions/test/fail", { which: "conflict" }))).status).toBe(
       409,
     );
-    expect(await (await mcp.handler(mcpCall("fail", { which: "conflict" }))).json()).toMatchObject({
+    expect(
+      await (await mcp.handler(rawToolCall("fail", { which: "conflict" }))).json(),
+    ).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
   });
@@ -245,7 +248,7 @@ describe("projection boundaries", () => {
     );
 
     onTestFinished(() => mcp.dispose());
-    expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
       result: {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"Denied","message":"Owner access required"}' }],
@@ -270,7 +273,7 @@ describe("projection boundaries", () => {
 
     const mcp = makeTestMcp(app, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    expect(await (await mcp.handler(mcpCall("fail"))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
   });
@@ -337,7 +340,7 @@ describe("projection boundaries", () => {
       expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
 
       const value = { name: "root", children: [{ name: "leaf", children: [] }] };
-      const response = await web.handler(mcpCall("tree", value));
+      const response = await web.handler(rawToolCall("tree", value));
       expect(await response.json()).toMatchObject({
         result: { isError: false, structuredContent: { value } },
       });
@@ -421,7 +424,7 @@ describe("projection boundaries", () => {
     const response = await web.handler(post("/api/actions/test/scalar"));
     expect(response.status).toBe(500);
     expect(await response.json()).toBe("failure");
-    expect(await (await mcp.handler(mcpCall("scalar"))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("scalar"))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '"failure"' }] },
     });
   });
@@ -442,7 +445,7 @@ describe("projection boundaries", () => {
     );
 
     onTestFinished(() => web.dispose());
-    const response = await web.handler(mcpCall("encode"));
+    const response = await web.handler(rawToolCall("encode"));
     expect(await response.text()).toContain('"structuredContent":{"value":"42"}');
   });
 
@@ -463,7 +466,7 @@ describe("projection boundaries", () => {
 
     onTestFinished(() => web.dispose());
     // McpServer presents InvalidParams from a tool as an isError result carrying the message.
-    const reply = await (await web.handler(mcpCall("echo", { value: "nope" }))).json();
+    const reply = await (await web.handler(rawToolCall("echo", { value: "nope" }))).json();
     expect(reply).toMatchObject({ result: { isError: true } });
     expect(reply).not.toHaveProperty("result.structuredContent");
     expect(JSON.stringify(reply)).toContain("Expected a finite number");
@@ -501,7 +504,7 @@ describe("projection boundaries", () => {
       const http = await web.handler(post(`/api/actions/test/${name}`));
       expect(http.status).toBe(status);
       expect(await http.text()).toBe("");
-      const reply = await (await mcp.handler(mcpCall(name))).text();
+      const reply = await (await mcp.handler(rawToolCall(name))).text();
       expect(reply).toContain('"isError":true');
       expect(reply).toContain("internal server error");
       expect(reply).not.toContain("secret");
@@ -527,7 +530,7 @@ describe("projection boundaries", () => {
     const http = await web.handler(post("/api/actions/test/stamp", { d: iso }));
     expect(http.status).toBe(200);
     expect(await http.json()).toEqual({ d: iso });
-    expect(await (await mcp.handler(mcpCall("stamp", { d: iso }))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("stamp", { d: iso }))).json()).toMatchObject({
       result: { isError: false, structuredContent: { value: { d: iso } } },
     });
   });

@@ -38,7 +38,8 @@ const Write = Action.make("write", {
 // each binding rather than an error the actions of the group declare.
 const Group = ActionGroup.make({ name: "resource" }, Read, Write);
 
-const mcpCall = (name: string) =>
+// A raw `tools/call` request: these tests assert the wire envelope, which `Testing.mcpCall` removes.
+const rawToolCall = (name: string) =>
   mcpRequest({
     url: testMcpUrl,
     method: "tools/call",
@@ -180,10 +181,10 @@ describe("the pre-handler hook", () => {
 
     onTestFinished(() => mcp.dispose());
 
-    expect(await (await mcp.handler(mcpCall("read"))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("read"))).json()).toMatchObject({
       result: { isError: false, structuredContent: { value: "read ok" } },
     });
-    expect(await (await mcp.handler(mcpCall("write"))).json()).toMatchObject({
+    expect(await (await mcp.handler(rawToolCall("write"))).json()).toMatchObject({
       result: {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"InsufficientScope","required":"write"}' }],

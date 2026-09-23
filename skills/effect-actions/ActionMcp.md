@@ -142,7 +142,7 @@ Layer.launch(layer).pipe(
 
 ## Rules
 
-- Both transports serve MCP 2026-07-28 and no other revision; there is no `protocols` option. Over HTTP the endpoint is stateless: no initialize handshake, no session, and every request stands alone. Effect owns version checks and rejects any other revision.
+- Both transports serve MCP 2026-07-28 and no other revision; there is no `protocols` option. Over HTTP the endpoint is stateless: no initialize handshake, no session, and every request stands alone. Effect owns version checks and rejects any other revision. Stdio has no sessions, so it could serve an older host, but it refuses one deliberately, for uniformity: a client that works over one transport works over the other.
 - `path` has no default. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form, whatever revision is negotiated.
 - Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication middleware wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.

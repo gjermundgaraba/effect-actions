@@ -53,7 +53,7 @@ export interface Options<
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
-  Http extends boolean = boolean,
+  Http extends false = never,
   Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly description: string;
@@ -68,7 +68,11 @@ export interface Options<
    * library itself authorizes nothing.
    */
   readonly access: Acc;
-  /** `false` hides the action from HTTP routes and clients. */
+  /**
+   * `false` hides the action from HTTP routes and clients; omitted, it is served. `Http`
+   * is `never` unless the options hide the action, so options typed without it cannot
+   * carry `false`.
+   */
   readonly http?: Http;
   /** `false` hides the action from MCP; otherwise tool metadata. */
   readonly mcp?: Mcp;
@@ -92,6 +96,7 @@ export interface Action<
   // Declared, never defaulted, so a rule that switches on it reads a literal
   // rather than the runtime union the MCP hints are.
   readonly access: Acc;
+  /** Whether HTTP serves the action; a literal from `make`, so the served set is exact. */
   readonly http: Http;
   readonly mcp: ResolvedMcp<Name, Mcp>;
 }
@@ -113,6 +118,10 @@ const NoInput = Schema.Record(Schema.String, Schema.Never);
 /**
  * Define an action contract. Names are `[A-Za-z0-9_-]+`, other than `then`.
  * Actions can be local-only by setting both transports to `false`.
+ *
+ * Two overloads decide HTTP: `http: false`, always present, hides the action; `http`
+ * absent serves it. Options that may or may not hide it, such as a conditional spread or
+ * `false | undefined`, match neither, so the action's `http` type is never a guess.
  */
 export function make<
   const Name extends string,
@@ -120,12 +129,22 @@ export function make<
   Output extends Codec = never,
   const Errors extends ReadonlyArray<Codec> = [],
   const Acc extends Access = Access,
-  const Http extends boolean = true,
   const Mcp extends false | McpOptions | undefined = undefined,
 >(
   name: Name,
-  options: Options<Input, Output, Errors, Acc, Http, Mcp>,
-): Action<Name, Input, Output, Errors, Acc, Http, Mcp>;
+  options: Options<Input, Output, Errors, Acc, false, Mcp> & { readonly http: false },
+): Action<Name, Input, Output, Errors, Acc, false, Mcp>;
+export function make<
+  const Name extends string,
+  Input extends Codec = typeof NoInput,
+  Output extends Codec = never,
+  const Errors extends ReadonlyArray<Codec> = [],
+  const Acc extends Access = Access,
+  const Mcp extends false | McpOptions | undefined = undefined,
+>(
+  name: Name,
+  options: Options<Input, Output, Errors, Acc, never, Mcp>,
+): Action<Name, Input, Output, Errors, Acc, true, Mcp>;
 export function make(
   name: string,
   options: Options<
@@ -133,7 +152,7 @@ export function make(
     Codec,
     ReadonlyArray<Codec>,
     Access,
-    boolean,
+    false,
     false | McpOptions | undefined
   >,
 ): Any {

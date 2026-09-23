@@ -1,6 +1,12 @@
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { Effect, Layer, Schema } from "effect";
-import { HttpClientError, HttpRouter, HttpServer } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+} from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -150,12 +156,12 @@ it("rejects with the declared error values: the action's, the policy's and the s
   );
 });
 
-it("sends the bearer token with every call", async () => {
+it("passes the native client options through, such as a bearer token on every call", async () => {
   const { fetch, requests } = serve();
 
   const client = ActionHttpClient.promise(Http, {
     baseUrl: "https://notes.example",
-    token: "t0k",
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")),
     fetch,
   });
 

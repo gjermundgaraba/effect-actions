@@ -147,46 +147,104 @@ describe("implementations", () => {
     Action.make("bye", { description: "Parts", access: "write", success: Schema.String }),
   );
 
-  it("refuses a handler record that lacks an action when it is bound", () => {
-    expect(() =>
-      // @ts-expect-error A missing handler is a type error; plain JavaScript can still omit one.
-      Pair.implement({ hello: ({ name }) => Effect.succeed(`hi ${name}`) }),
-    ).toThrow('Missing handlers for group "pair": bye');
-  });
+  // A class instance's handlers are inherited methods, called with the instance as `this`.
+  class PairHandlers {
+    readonly greeting = "hi";
 
-  it("refuses a handler key whose value is undefined, like a missing one", () => {
+    hello(): Effect.Effect<string> {
+      return Effect.succeed(this.greeting);
+    }
+
+    bye(): Effect.Effect<string> {
+      return Effect.succeed(`${this.greeting}, bye`);
+    }
+  }
+
+  // An action named after what every object inherits from `Object.prototype`.
+  const Named = ActionGroup.make(
+    { name: "pair" },
+    Hello,
+    Action.make("toString", { description: "Names", access: "read", success: Schema.String }),
+  );
+
+  // The types require a function for every action; plain JavaScript, a cast or a record
+  // changed after it was typed can still bind something else.
+  const withBye = (bye: string | undefined) => {
     const handlers = { hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") };
-    // The types require a function; plain JavaScript can still bind `undefined`.
-    Reflect.set(handlers, "bye", undefined);
+    Reflect.set(handlers, "bye", bye);
 
-    expect(() => Pair.implement(handlers)).toThrow('Missing handlers for group "pair": bye');
-  });
+    return handlers;
+  };
 
-  it("fails the adapter build, not a later request, when a builder omits a handler", async () => {
+  const withoutBye = () => {
     const handlers = { hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") };
-    // The types require both; a record changed after it was typed can still lose one.
     Reflect.deleteProperty(handlers, "bye");
-    const app = Pair.implement(Effect.sync(() => handlers));
 
-    const web = HttpRouter.toWebHandler(
-      ActionHttp.make({ apiPath: "/api" }, Pair)
-        .layer([app])
-        .pipe(Layer.provide(HttpServer.layerServices)),
-      { disableLogger: true },
-    );
+    return handlers;
+  };
 
-    onTestFinished(() => web.dispose());
+  const withoutToString = () => {
+    const handlers = { hello: () => Effect.succeed("hi"), toString: () => Effect.succeed("") };
+    Reflect.deleteProperty(handlers, "toString");
 
-    // Even the action that has a handler is never served by an incomplete binding.
-    await expect(
-      web.handler(
+    return handlers;
+  };
+
+  it.each([
+    {
+      handlers: "a missing key",
+      web: () => makeTestHttp(Pair.implement(withoutBye()), Layer.empty, { apiPath: "/api" }),
+      missing: "bye",
+    },
+    {
+      handlers: "an undefined value",
+      web: () => makeTestHttp(Pair.implement(withBye(undefined)), Layer.empty, { apiPath: "/api" }),
+      missing: "bye",
+    },
+    {
+      handlers: "a non-function value",
+      web: () => makeTestHttp(Pair.implement(withBye("bye")), Layer.empty, { apiPath: "/api" }),
+      missing: "bye",
+    },
+    {
+      handlers: "a builder Effect's record with a missing key",
+      web: () =>
+        makeTestHttp(Pair.implement(Effect.sync(withoutBye)), Layer.empty, { apiPath: "/api" }),
+      missing: "bye",
+    },
+    {
+      handlers: "a missing key only Object.prototype supplies",
+      web: () => makeTestHttp(Named.implement(withoutToString()), Layer.empty, { apiPath: "/api" }),
+      missing: "toString",
+    },
+    {
+      handlers: "a class instance whose methods use `this`",
+      web: () => makeTestHttp(Pair.implement(new PairHandlers()), Layer.empty, { apiPath: "/api" }),
+      missing: undefined,
+    },
+  ])("checks $handlers before serving anything", async ({ web, missing }) => {
+    // A plain record is refused by `implement`; a builder's record by the adapter build.
+    // Either way no request reaches a handler, not even the action that has one.
+    const hello = async () => {
+      const { handler, dispose } = web();
+      onTestFinished(() => dispose());
+
+      const response = await handler(
         new Request("http://localhost/api/pair/hello", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: "{}",
+          body: JSON.stringify({ name: "Ada" }),
         }),
-      ),
-    ).rejects.toThrow('Missing handlers for group "pair": bye');
+      );
+
+      return response.json();
+    };
+
+    if (missing === undefined) {
+      expect(await hello()).toBe("hi");
+    } else {
+      await expect(hello()).rejects.toThrow(`Missing handlers for group "pair": ${missing}`);
+    }
   });
 
   it("keeps same-contract implementations apart", async () => {

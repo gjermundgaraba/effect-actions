@@ -13,11 +13,14 @@ Import `@gjermundgaraba/effect-actions/ActionHttpClient`.
 | `Options`                 | Where and how requests are sent.                                              |
 | `Client`, `Method`        | The client's type, derived from the binding, and one action's method.         |
 
-| Option    | Meaning                                                                                                                         |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl` | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
-| `token`   | Sent as `Authorization: Bearer <token>` with every call.                                                                        |
-| `fetch`   | The transport. Defaults to the global `fetch`, looked up on each call.                                                          |
+The options are the native `HttpApiClient.make` options, passed through, plus `fetch`.
+
+| Option              | Meaning                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`           | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
+| `transformClient`   | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
+| `transformResponse` | Wraps each call's Effect.                                                                                                       |
+| `fetch`             | The transport. Defaults to the global `fetch`, looked up on each call.                                                          |
 
 A method takes the action's decoded input and resolves with its decoded success. An action
 whose input may be empty (no `input`, or only optional fields) may be called without an argument.
@@ -25,14 +28,16 @@ whose input may be empty (no `input`, or only optional fields) may be called wit
 ## Canonical
 
 ```ts
-import { HttpClientError } from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import { Http, UserNotFound } from "./contracts.js";
 
 // Promises in, Promises out: for code that does not run Effects, such as a browser page.
+// The options are the native `HttpApiClient.make` options plus `fetch`; a bearer token is
+// a `transformClient`.
 const client = ActionHttpClient.promise(Http, {
   baseUrl: "http://127.0.0.1:3000",
-  token: "alice",
+  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
 });
 
 export const userName = async (id: string): Promise<string> => {
@@ -52,8 +57,9 @@ export const userName = async (id: string): Promise<string> => {
 };
 ```
 
-Other headers, or reacting to a response every call may meet (a proxy's 401), go through
-`fetch`: `fetch: (input, init) => { const request = new Request(input, init); request.headers.set("x-agent", agent); return fetch(request); }`.
+Other headers also go through `transformClient` (`HttpClient.mapRequest(HttpClientRequest.setHeader("x-agent", agent))`).
+Reacting to a response every call may meet (a proxy's 401), or a token read per call, goes through
+`fetch`: `fetch: (input, init) => { const request = new Request(input, init); request.headers.set("authorization", "Bearer " + readToken()); return fetch(request); }`.
 
 ## Rules
 

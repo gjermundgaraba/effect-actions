@@ -1,6 +1,6 @@
-import { Effect, Layer, Option, Predicate, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { type HttpApi, HttpApiClient, type HttpApiGroup } from "effect/unstable/httpapi";
+import { Option, Predicate, Schema } from "effect";
+import type { HttpApi, HttpApiGroup } from "effect/unstable/httpapi";
+import { type ClientOptions, fetchApiClient } from "./internal/fetchClient.js";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
 export type Handler = (request: Request) => Promise<Response>;
@@ -12,17 +12,12 @@ export type Handler = (request: Request) => Promise<Response>;
 export const httpClient = <Id extends string, Groups extends HttpApiGroup.Constraint>(
   api: HttpApi.HttpApi<Id, Groups>,
   handler: Handler,
-  options?: NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
+  options?: ClientOptions,
 ) =>
-  HttpApiClient.make(api, { baseUrl: "http://localhost", ...options }).pipe(
-    Effect.provide(
-      FetchHttpClient.layer.pipe(
-        Layer.provide(
-          Layer.succeed(FetchHttpClient.Fetch, (input, init) => handler(new Request(input, init))),
-        ),
-      ),
-    ),
-  );
+  fetchApiClient(api, (input, init) => handler(new Request(input, init)), {
+    baseUrl: "http://localhost",
+    ...options,
+  });
 
 /** A stateless 2026-07-28 request. */
 export interface McpRequestOptions {
@@ -101,8 +96,8 @@ export interface McpCallOptions {
 /**
  * A tool call's outcome with the library's wire envelope removed: the success from
  * `structuredContent.value`, or the error text of an `isError` result, parsed as JSON
- * when it is JSON (a declared error) and kept as the text otherwise (the native
- * server's own message, such as for invalid arguments).
+ * when it is JSON (a declared error, whatever its shape) and kept as the text otherwise
+ * (the native server's own message, such as for invalid arguments).
  */
 export type McpCallResult =
   | { readonly isError: false; readonly value: Schema.Json }
@@ -133,13 +128,13 @@ const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
  */
 export const mcpCall = async (
   handler: Handler,
-  { url, name, headers, ...options }: McpCallOptions,
+  { url, name, headers, arguments: args = {} }: McpCallOptions,
 ): Promise<McpCallResult> => {
   const response = await handler(
     mcpRequest({
       url,
       method: "tools/call",
-      params: { name, arguments: options.arguments ?? {} },
+      params: { name, arguments: args },
       ...(headers === undefined ? {} : { headers }),
     }),
   );

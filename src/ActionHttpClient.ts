@@ -1,20 +1,22 @@
 import { Effect } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import type { Actions } from "./internal/actions.js";
+import { type ClientOptions, fetchApiClient } from "./internal/fetchClient.js";
 import type { ErasedValue, ServedNames } from "./internal/implementation.js";
 
-/** Where and how a Promise client sends its requests. */
-export interface Options {
-  /**
-   * What the binding's routes are resolved against, such as `https://api.example.com`.
-   * Omitted, routes stay relative, which a browser resolves against the page's origin.
-   */
-  readonly baseUrl?: string | URL;
-  /** Sent as `Authorization: Bearer <token>` with every call. */
-  readonly token?: string;
+/**
+ * Where and how a Promise client sends its requests: the native `HttpApiClient.make`
+ * options, plus the `fetch` it sends them with.
+ *
+ * - `baseUrl`: what the binding's routes are resolved against, such as
+ *   `https://api.example.com`. Omitted, routes stay relative, which a browser resolves
+ *   against the page's origin.
+ * - `transformClient`: wraps the native `HttpClient`, such as
+ *   `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))` to authenticate every call.
+ * - `transformResponse`: wraps each call's Effect.
+ */
+export interface Options extends ClientOptions {
   /**
    * The transport. Defaults to the global `fetch`, looked up per call. Wrap it to add
    * headers or to observe responses, such as a proxy's 401.
@@ -22,7 +24,7 @@ export interface Options {
   readonly fetch?: typeof globalThis.fetch;
 }
 
-/** The HTTP-served actions of `G`: an action with a literal `http: false` has no method. */
+/** The HTTP-served actions of `G`: an action with `http: false` has no method. */
 type HttpAction<G extends Actions> = Extract<
   G["actions"][number],
   { readonly name: ServedNames<G, "http"> }
@@ -64,24 +66,13 @@ export function promise<
 >(http: ActionHttp.Http<Groups, Errors>, options?: Options): Client<Groups>;
 export function promise(
   http: ActionHttp.Http<ReadonlyArray<Actions>, ReadonlyArray<Action.Codec>>,
-  { baseUrl, token, fetch }: Options = {},
+  { fetch, ...options }: Options = {},
 ): Readonly<Record<string, Readonly<Record<string, ErasedMethod>>>> {
   // Late binding keeps a stubbed or replaced global `fetch` authoritative.
   const send: typeof globalThis.fetch = fetch ?? ((input, init) => globalThis.fetch(input, init));
 
   // Building the client is construction, not a request, so it runs synchronously.
-  const native = Effect.runSync(
-    HttpApiClient.make(http.api, {
-      baseUrl,
-      transformClient:
-        token === undefined
-          ? undefined
-          : HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
-    }).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, send),
-    ),
-  );
+  const native = Effect.runSync(fetchApiClient(http.api, send, options));
 
   return Object.fromEntries(
     http.groups.flatMap((group) => {

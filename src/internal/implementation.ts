@@ -80,7 +80,12 @@ export const dispatch = <A extends Action.Any, EB, R>(
 ) => {
   const handle = handlers[action.name];
 
-  if (handle === undefined) throw new Error(`Missing handler: ${action.name}`);
+  // Narrowing only: `implement` refuses a record without a function for every action.
+  if (handle === undefined) {
+    throw new Error(
+      `Internal invariant violated: no handler for "${group.name}.${action.name}"; implement enforces one per action`,
+    );
+  }
 
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -95,7 +100,8 @@ export const dispatch = <A extends Action.Any, EB, R>(
   ): Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R> => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
-        Effect.suspend(() => handle(input)),
+        // With its record as the receiver, so a class instance's method may use `this`.
+        Effect.suspend(() => handle.call(handlers, input)),
         attributes,
       ),
       `${group.name}.${action.name}`,
@@ -119,8 +125,9 @@ export type AnyImplementation<G extends Actions = Actions> = Implementation<G, a
 export type Transport = "http" | "mcp";
 
 /**
- * Names of the actions of `G` that `T` may serve. Only an action hidden by a
- * literal `false` is excluded; a flag decided at runtime keeps its requirements.
+ * Names of the actions of `G` that `T` may serve. An action hidden by a literal `false`
+ * is excluded. `http` is always a literal, so its set is exact; an `mcp` flag decided at
+ * runtime keeps its requirements.
  */
 export type ServedNames<G extends Actions, T extends Transport> = Exclude<
   G["actions"][number],

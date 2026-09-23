@@ -49,7 +49,7 @@ Authentication: `connection: { transformClient: HttpClient.mapRequest(HttpClient
 
 ## Rules
 
-- Selectors resolve from `http.groups` only. `groupName` must be a bound group; `actionName` must be an action of that group with `http: true`. Runtime guards reject dynamically supplied strings that the types would not accept.
+- Selectors resolve from `http.groups` only. `groupName` must be a bound group; `actionName` must be an action of that group served over HTTP (no `http: false`). Runtime guards reject dynamically supplied strings that the types would not accept.
 - The host provides `HttpClient` and its configuration. Endpoint selection, credentials, and storage are the host's; nothing is inferred from action arguments.
 - Input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. Do not pre-encode values.
 - Input syntax (`--input`, `--input-file`, or `parameters`) and output (`render` and its `--json` flag) are exactly as in `ActionCli`.

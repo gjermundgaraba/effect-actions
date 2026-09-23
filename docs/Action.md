@@ -18,7 +18,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `description`, `success`, `access` | Required description, success codec and `"read"` / `"write"` classification. |
 | `input`                            | Optional codec; omission means an empty object.                              |
 | `errors`                           | Declared error codecs; defaults to none.                                     |
-| `http`                             | Defaults to enabled; `false` removes routes and client methods.              |
+| `http`                             | Omit to serve; `false` (literal only) removes routes and client methods.     |
 | `mcp`                              | Defaults to enabled; `false` removes tools, otherwise accepts `McpOptions`.  |
 
 MCP options: `name` defaults to the action name; `readOnly` to `access === "read"`;
@@ -92,6 +92,7 @@ export const Double = Action.make("double", {
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level. It is authorization metadata for a surface's `before` hook (see [guarantees.md](guarantees.md)); the library itself authorizes nothing. Its only built-in uses are default MCP hints and span/log annotations; adapters never enforce an authorization rule from it.
 - `access` is independent of `mcp`. A local-only action (`mcp: false`) still has one, and an action may set `access: "write"` with `mcp: { readOnly: true }` if the tool hint should say something else. Derive authorization from `access`, never from a tool hint.
 - Both transports are on by default. `http: false` removes the route and the client method. `mcp: false` removes the tool. Both `false` makes a local-only action, reachable through `ActionCli` only.
+- `http` is `false` or absent. `make` has one overload for each: `http: false` types the action's `http` as `false`, no `http` types it as `true`. Anything that could be either at runtime matches neither overload and is a compile error: `http: true`, a `boolean`, `false | undefined`, a conditional spread of `{ http: false }`, and an `Options` value typed with `Http = false` whose `http` is optional. `Options` typed without `Http` cannot hold `http: false`, so it makes a served action. `mcp` still accepts a runtime value; its requirements are then kept.
 - MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but the native MCP server refuses it when an `ActionMcp` layer is built. Success and error schemas may be any shape.
 - `mcp.name` is the tool name, matches `[A-Za-z0-9_-]+` except `then`, is at most 128 characters, unique within the group and within any Toolkit or MCP projection that serves the group. Default is the action name.
 - Hint defaults: `readOnly: access === "read"`, `destructive: !readOnly`, `idempotent: false`, `openWorld: true`. Hints are metadata for the model. They do not enforce authorization, approval, or retries.

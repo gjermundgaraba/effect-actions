@@ -1,4 +1,4 @@
-import { Effect, type Scope, type Types } from "effect";
+import { Effect, Predicate, type Scope, type Types } from "effect";
 import {
   type Actions as Contract,
   assertDistinct,
@@ -77,12 +77,24 @@ export type Any = Group<string, ReadonlyArray<Action.Any>, Action.Codec>;
 
 /**
  * The types require every handler, but a record built in plain JavaScript or through a
- * cast may still lack one, or hold `undefined` under its key. It fails before anything is served rather than on the
- * first request for the missing action.
+ * cast may still lack one, or hold something other than a function under its key. It
+ * fails before anything is served rather than on the first request for that action. The
+ * lookup is the one dispatch uses, a plain property read, so a handler inherited from a
+ * prototype, such as a class instance's method, is bound. What every object inherits
+ * from `Object.prototype`, such as `toString` for an action of that name, is not a handler.
  */
-const assertHandlers = <H extends object>(group: Contract, handlers: H): H => {
-  const bound = new Map(Object.entries(handlers));
-  const missing = group.actions.filter((action) => bound.get(action.name) === undefined);
+const assertHandlers = <H extends HandlersFrom<ReadonlyArray<Action.Any>>>(
+  group: Contract,
+  handlers: H,
+): H => {
+  const missing = group.actions.filter((action) => {
+    const handler = handlers[action.name];
+
+    return (
+      !Predicate.isFunction(handler) ||
+      handler === Object.getOwnPropertyDescriptor(Object.prototype, action.name)?.value
+    );
+  });
 
   if (missing.length > 0) {
     throw new Error(

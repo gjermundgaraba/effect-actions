@@ -1,9 +1,11 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { mcpCall, mcpRequest } from "../src/Testing.js";
-import { makeTestApp, testMcpUrl } from "./server.js";
+import { makeTestApp, makeTestMcp, testMcpUrl } from "./server.js";
 import { Forbidden } from "../examples/auth.js";
 import { UserNotFound } from "../examples/contracts.js";
-import { Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
+import * as Action from "../src/Action.js";
+import * as ActionGroup from "../src/ActionGroup.js";
 
 it("supplies consistent stateless protocol defaults", async () => {
   const request = mcpRequest({ url: "http://localhost/mcp", method: "tools/list" });
@@ -118,6 +120,26 @@ describe("mcpCall", () => {
     expect(result.isError && result.error).toEqual(
       expect.stringContaining("Invalid parameters for tool 'get_user'"),
     );
+  });
+
+  it("returns a declared error of any shape as its decoded JSON, a string included", async () => {
+    const app = ActionGroup.make(
+      { name: "scalar" },
+      Action.make("fail", {
+        description: "Fails with a string",
+        access: "write",
+        success: Schema.String,
+        errors: [Schema.String],
+      }),
+    ).implement({ fail: () => Effect.fail("failure") });
+
+    const web = makeTestMcp(app, Layer.empty);
+    onTestFinished(() => web.dispose());
+
+    expect(await mcpCall(web.handler, { url: testMcpUrl, name: "fail" })).toEqual({
+      isError: true,
+      error: "failure",
+    });
   });
 
   it("throws for an answer that is not a tool result", async () => {

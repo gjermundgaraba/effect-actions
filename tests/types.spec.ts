@@ -601,33 +601,103 @@ export const servedRequirementTypes = () => {
   void noBuildService;
   void HttpRouter.toWebHandler(nothing.pipe(services)).handler(new Request("http://localhost"));
 
-  // A flag decided at runtime may serve the action, so its requirements remain.
+  // Only a literal `false` hides an action from HTTP, so the served set is exact.
+  const served = Action.make("served", { description: "", access: "read", success: Schema.String });
+
+  const hidden = Action.make("hidden", {
+    description: "",
+    access: "read",
+    success: Schema.String,
+    http: false,
+  });
+
+  const servedIsLiteral: Equal<(typeof served)["http"], true> = true;
+  const hiddenIsLiteral: Equal<(typeof hidden)["http"], false> = true;
+  void servedIsLiteral;
+  void hiddenIsLiteral;
+
   const enabled: boolean = process.env["ENABLE"] !== "no";
 
+  Action.make("maybeHttp", {
+    description: "Served when enabled",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error A flag decided at runtime cannot hide an action from HTTP.
+    http: enabled,
+  });
+
+  Action.make("explicitHttp", {
+    description: "Served",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error Omitting `http` serves an action; `true` is not an option.
+    http: true,
+  });
+
+  // Options that may or may not hide the action match neither overload.
+  // @ts-expect-error A conditional spread may omit `http`, so it cannot type the action hidden.
+  Action.make("spreadHttp", {
+    description: "Hidden when disabled",
+    access: "read",
+    success: Schema.String,
+    ...(enabled ? {} : { http: false as const }),
+  });
+
+  Action.make("maybeUndefinedHttp", {
+    description: "Hidden when disabled",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error `false | undefined` may serve the action, so it cannot type it hidden.
+    http: enabled ? undefined : false,
+  });
+
+  // Options typed as possibly hiding the action, with `http` optional, may still serve it.
+  const maybeHidden: Action.Options<typeof Schema.String, typeof Schema.String, [], "read", false> =
+    { description: "Hidden or not", access: "read", success: Schema.String };
+
+  // @ts-expect-error An optional `http: false` cannot type the action hidden.
+  Action.make("maybeHidden", maybeHidden);
+
+  // Options typed without `Http` cannot carry `false`, so the action is served.
+  const plain: Action.Options<typeof Schema.String, typeof Schema.String, [], "read"> = {
+    description: "Served",
+    access: "read",
+    success: Schema.String,
+  };
+
+  const fromPlain = Action.make("fromPlain", plain);
+  const plainIsServed: Equal<(typeof fromPlain)["http"], true> = true;
+  void plainIsServed;
+
+  // Options for a hidden action state `http: false` as required.
+  const hiddenOptions: Action.Options<
+    typeof Schema.String,
+    typeof Schema.String,
+    [],
+    "read",
+    false
+  > & { readonly http: false } = {
+    description: "Hidden",
+    access: "read",
+    success: Schema.String,
+    http: false,
+  };
+
+  const fromHidden = Action.make("fromHidden", hiddenOptions);
+  const hiddenOptionsHide: Equal<(typeof fromHidden)["http"], false> = true;
+  void hiddenOptionsHide;
+
+  // An MCP flag decided at runtime may serve the action, so its requirements remain.
   const Runtime = ActionGroup.make(
     { name: "runtime" },
     Action.make("maybe", {
       description: "Served when enabled",
       access: "read",
       success: Schema.String,
-      http: enabled,
+      http: false,
       mcp: enabled ? {} : false,
     }),
   ).implement(Effect.map(HiddenBuild, () => ({ maybe: () => Effect.map(Principal, (p) => p) })));
-
-  const maybe = ActionHttp.make({ apiPath: "/api" }, Runtime.group).layer([Runtime]);
-  const buildKept: HiddenBuild extends Layer.Services<typeof maybe> ? true : false = true;
-  void buildKept;
-
-  const request: Principal extends Layer.Services<typeof maybe> ? "build" : "request" = "request";
-  void request;
-
-  const maybeHttp = HttpRouter.toWebHandler(
-    maybe.pipe(services, Layer.provide(Layer.succeed(HiddenBuild)("built"))),
-  );
-
-  // @ts-expect-error `Principal` may be owed at request time.
-  void maybeHttp.handler(new Request("http://localhost"), Context.empty());
 
   const maybeMcp = ActionMcp.layerHttp([Runtime], {
     name: "t",

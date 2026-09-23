@@ -1,11 +1,13 @@
-import { HttpClientError } from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import { Http, UserNotFound } from "./contracts.js";
 
 // Promises in, Promises out: for code that does not run Effects, such as a browser page.
+// The options are the native `HttpApiClient.make` options plus `fetch`; a bearer token is
+// a `transformClient`.
 const client = ActionHttpClient.promise(Http, {
   baseUrl: "http://127.0.0.1:3000",
-  token: "alice",
+  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
 });
 
 export const userName = async (id: string): Promise<string> => {
