@@ -1,14 +1,3 @@
-/**
- * Serve action groups as MCP tools over Streamable HTTP or stdio, speaking MCP 2026-07-28
- * and no other revision.
- *
- * Over HTTP, 2026-07-28 removes the initialize handshake and the session. Stdio has no
- * sessions to remove, and a host speaking an older revision could be served, but it is
- * refused deliberately: both transports accept the same revision, so a client that
- * works over one works over the other.
- *
- * @module
- */
 import { Layer } from "effect";
 import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";

@@ -1,5 +1,5 @@
 // Compile-only Promise client assertions, included by `vp check`.
-import { type DateTime, Schema } from "effect";
+import { type DateTime, type Effect, Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -56,6 +56,11 @@ export const promiseClientTypes = () => {
   void client.notes.summarize;
   // @ts-expect-error A group without HTTP actions has no methods at all.
   void client.tools;
+
+  ActionHttpClient.promise(ActionHttp.make({ apiPath: "/api" }, Notes), {
+    // @ts-expect-error A response transform could change what a method resolves with.
+    transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
+  });
 
   // @ts-expect-error The success is the decoded type, not its JSON encoding.
   const encoded: Promise<{ readonly id: string; readonly at: string }> = client.notes.get({

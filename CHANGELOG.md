@@ -8,8 +8,9 @@ peer range is unchanged (`>=4.0.0-rc.116 <4.0.0`).
 ### Breaking changes
 
 **`ActionHttpClient.promise` has no `token` option.** Its options are now the native
-`HttpApiClient.make` options (`baseUrl`, `transformClient`, `transformResponse`), passed
-through, plus `fetch`.
+`HttpApiClient.make` options `baseUrl` and `transformClient`, passed through, plus `fetch`.
+`transformResponse` is not offered: it may change a call's success, failure or required
+services, which neither the method types nor `Effect.runPromise` can follow.
 
 - Migrate: replace `token` with a `transformClient`, or with a `fetch` wrapper for a token read
   on each call:

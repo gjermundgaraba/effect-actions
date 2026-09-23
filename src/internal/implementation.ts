@@ -126,8 +126,9 @@ export type Transport = "http" | "mcp";
 
 /**
  * Names of the actions of `G` that `T` may serve. An action hidden by a literal `false`
- * is excluded. `http` is always a literal, so its set is exact; an `mcp` flag decided at
- * runtime keeps its requirements.
+ * is excluded. `Action.make` types `http` as a literal, so for its actions the set is exact
+ * (the `Action` interface itself still admits `boolean`); an `mcp` flag decided at runtime
+ * keeps its requirements.
  */
 export type ServedNames<G extends Actions, T extends Transport> = Exclude<
   G["actions"][number],

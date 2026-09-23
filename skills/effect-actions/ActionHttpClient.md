@@ -13,14 +13,15 @@ Import `@gjermundgaraba/effect-actions/ActionHttpClient`.
 | `Options`                 | Where and how requests are sent.                                              |
 | `Client`, `Method`        | The client's type, derived from the binding, and one action's method.         |
 
-The options are the native `HttpApiClient.make` options, passed through, plus `fetch`.
+The options are the native `HttpApiClient.make` options except `transformResponse`, plus `fetch`.
+`transformResponse` may change a call's success, failure or required services, which neither
+the method types nor a Promise can follow; wrap `fetch` or use `transformClient` instead.
 
-| Option              | Meaning                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`           | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
-| `transformClient`   | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
-| `transformResponse` | Wraps each call's Effect.                                                                                                       |
-| `fetch`             | The transport. Defaults to the global `fetch`, looked up on each call.                                                          |
+| Option            | Meaning                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`         | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
+| `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
+| `fetch`           | The transport. Defaults to the global `fetch`, looked up on each call.                                                          |
 
 A method takes the action's decoded input and resolves with its decoded success. An action
 whose input may be empty (no `input`, or only optional fields) may be called without an argument.

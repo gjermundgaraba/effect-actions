@@ -7,16 +7,18 @@ import type { ErasedValue, ServedNames } from "./internal/implementation.js";
 
 /**
  * Where and how a Promise client sends its requests: the native `HttpApiClient.make`
- * options, plus the `fetch` it sends them with.
+ * options except `transformResponse`, plus the `fetch` it sends them with.
  *
  * - `baseUrl`: what the binding's routes are resolved against, such as
  *   `https://api.example.com`. Omitted, routes stay relative, which a browser resolves
  *   against the page's origin.
  * - `transformClient`: wraps the native `HttpClient`, such as
  *   `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))` to authenticate every call.
- * - `transformResponse`: wraps each call's Effect.
+ *
+ * `transformResponse` is left out: it may change a call's success, failure or required
+ * services, which neither the `Method` types nor `Effect.runPromise` can follow.
  */
-export interface Options extends ClientOptions {
+export interface Options extends Omit<ClientOptions, "transformResponse"> {
   /**
    * The transport. Defaults to the global `fetch`, looked up per call. Wrap it to add
    * headers or to observe responses, such as a proxy's 401.
@@ -66,13 +68,13 @@ export function promise<
 >(http: ActionHttp.Http<Groups, Errors>, options?: Options): Client<Groups>;
 export function promise(
   http: ActionHttp.Http<ReadonlyArray<Actions>, ReadonlyArray<Action.Codec>>,
-  { fetch, ...options }: Options = {},
+  { baseUrl, transformClient, fetch }: Options = {},
 ): Readonly<Record<string, Readonly<Record<string, ErasedMethod>>>> {
   // Late binding keeps a stubbed or replaced global `fetch` authoritative.
   const send: typeof globalThis.fetch = fetch ?? ((input, init) => globalThis.fetch(input, init));
 
   // Building the client is construction, not a request, so it runs synchronously.
-  const native = Effect.runSync(fetchApiClient(http.api, send, options));
+  const native = Effect.runSync(fetchApiClient(http.api, send, { baseUrl, transformClient }));
 
   return Object.fromEntries(
     http.groups.flatMap((group) => {
