@@ -5,7 +5,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { actors, authorize, CurrentActor, Forbidden, Unauthenticated } from "./auth.js";
 import { Http } from "./contracts.js";
-import { AuditApp, PublicApp, UserApp } from "./handlers.js";
+import { double, listChanges, status, userActions } from "./handlers.js";
 import { Users } from "./users.js";
 
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
@@ -53,12 +53,14 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
   }),
 );
 
-// One layer per group: middleware provided to a layer applies to that group
-// alone. The public group needs no credentials, so it binds no hook; the user
-// group authorizes each decoded invocation before its handler runs.
+// One layer per access rule: middleware provided to a layer applies to the routes of
+// the actions it serves, and to no others. Status needs no credentials, so it binds no
+// hook; every user action is authorized after decoding, before its handler runs.
 const http = Layer.mergeAll(
-  Http.layer([PublicApp]),
-  Http.layer([UserApp], { before: authorize }).pipe(Layer.provide(authentication.layer)),
+  Http.layer(status),
+  Http.layer([...userActions, ...double], { before: authorize }).pipe(
+    Layer.provide(authentication.layer),
+  ),
 );
 
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
@@ -71,20 +73,19 @@ const documentation = Layer.mergeAll(
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
 // An MCP endpoint is one route, so its middleware, authentication included,
-// covers all of its tools; handlers still authorize each tool themselves. Tools
-// that need no credentials at all therefore get their own endpoint, which
-// compiles because this implementation requires nothing per request.
-const publicMcp = ActionMcp.layerHttp([PublicApp], {
+// covers all of its tools; the hook still authorizes each call. Tools that need
+// no credentials at all therefore get their own endpoint, which compiles because
+// this implementation requires nothing per request.
+const publicMcp = ActionMcp.layerHttp(status, {
   name: "effect-actions-public",
   version: "0.0.0",
   path: "/mcp/public",
   allowedOrigins,
 });
 
-const mcp = ActionMcp.layerHttp([UserApp, AuditApp], {
+const mcp = ActionMcp.layerHttp([...userActions, ...double, ...listChanges], {
   name: "effect-actions",
   version: "0.0.0",
-  path: "/mcp",
   allowedOrigins,
   // The same rule as HTTP, declared here so a refusal is an ordinary tool error.
   errors: [Forbidden],

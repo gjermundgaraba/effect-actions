@@ -2,12 +2,11 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { mcpRequest } from "../src/Testing.js";
 import { withMcpClient } from "../src/TestingClient.js";
-import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
+import { testMcpPath, testMcpUrl } from "./server.js";
 import { post } from "./requests.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
@@ -24,14 +23,14 @@ class Greeting extends Context.Service<Greeting, string>()("bindings/Greeting") 
 it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transport) => {
   let executions = 0;
 
-  const app = ActionGroup.make({ name: "test" }, identity).implement({
-    identity: () => Effect.tap(Actor, () => Effect.sync(() => executions++)),
-  });
+  const app = Action.implement(identity, () =>
+    Effect.tap(Actor, () => Effect.sync(() => executions++)),
+  );
 
   const routes =
     transport === "HTTP"
-      ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
-      : ActionMcp.layerHttp([app], {
+      ? ActionHttp.make([identity]).layer(app)
+      : ActionMcp.layerHttp(app, {
           name: "test",
           version: "0",
           path: testMcpPath,
@@ -45,7 +44,7 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
 
   const request =
     transport === "HTTP"
-      ? post("/api/actions/test/identity")
+      ? post("/api/identity")
       : mcpRequest({
           url: testMcpUrl,
           method: "tools/call",
@@ -69,7 +68,8 @@ it("each adapter layer acquires and releases its own handler build", async () =>
   let acquired = 0;
   let finalized = 0;
 
-  const app = ActionGroup.make({ name: "test" }, identity).implement(
+  const app = Action.implement(
+    identity,
     Effect.gen(function* () {
       const greeting = yield* Effect.acquireRelease(
         Effect.gen(function* () {
@@ -80,13 +80,13 @@ it("each adapter layer acquires and releases its own handler build", async () =>
         () => Effect.sync(() => finalized++),
       );
 
-      return { identity: () => Effect.map(Actor, (actor) => `${greeting}/${actor}`) };
+      return () => Effect.map(Actor, (actor) => `${greeting}/${actor}`);
     }),
   );
 
   const routes = Layer.mergeAll(
-    ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app]),
-    ActionMcp.layerHttp([app], {
+    ActionHttp.make([identity]).layer(app),
+    ActionMcp.layerHttp(app, {
       name: "test",
       version: "0",
       path: testMcpPath,
@@ -99,10 +99,7 @@ it("each adapter layer acquires and releases its own handler build", async () =>
     const web = HttpRouter.toWebHandler(routes, { disableLogger: true });
 
     try {
-      const response = await web.handler(
-        post("/api/actions/test/identity"),
-        Context.make(Actor, "http"),
-      );
+      const response = await web.handler(post("/api/identity"), Context.make(Actor, "http"));
 
       expect(await response.json()).toBe("build/http");
       await withMcpClient(
@@ -127,18 +124,17 @@ it("each adapter layer acquires and releases its own handler build", async () =>
 });
 
 it("keeps same-contract implementations apart over MCP", async () => {
-  const group = ActionGroup.make({ name: "test" }, identity);
-  const a = group.implement({ identity: () => Effect.succeed("a") });
-  const b = group.implement({ identity: () => Effect.succeed("b") });
+  const a = Action.implement(identity, () => Effect.succeed("a"));
+  const b = Action.implement(identity, () => Effect.succeed("b"));
 
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      ActionMcp.layerHttp([a], {
+      ActionMcp.layerHttp(a, {
         name: "a",
         version: "0",
         path: "/a",
       }),
-      ActionMcp.layerHttp([b], {
+      ActionMcp.layerHttp(b, {
         name: "b",
         version: "0",
         path: "/b",
@@ -187,12 +183,12 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       },
     });
 
-    const app = ActionGroup.make({ name: "test" }, identity).implement({ identity: handler });
+    const app = Action.implement(identity, handler);
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
-        : ActionMcp.layerHttp([app], {
+        ? ActionHttp.make([identity]).layer(app)
+        : ActionMcp.layerHttp(app, {
             name: "test",
             version: "0",
             path: testMcpPath,
@@ -209,7 +205,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     onTestFinished(() => web.dispose());
 
     if (transport === "HTTP") {
-      await web.handler(post("/api/actions/test/identity"), context);
+      await web.handler(post("/api/identity"), context);
     } else {
       await withMcpClient(
         {
@@ -229,18 +225,17 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     );
 
     expect(logs).toContainEqual(["handler ran"]);
-    // The action span is named by the OpenAPI operation ID on both transports.
-    expect(parents.get("action.identity")).toBe("test.identity");
-    expect(parents.get("test.identity")).toMatch(requestSpan);
+    // The action span is named by the action on both transports.
+    expect(parents.get("action.identity")).toBe("identity");
+    expect(parents.get("identity")).toMatch(requestSpan);
 
     // The contract's identity is on the span and on every handler log line.
     const identity = new Map([
-      ["action.group", "test"],
       ["action.name", "identity"],
       ["action.access", "write"],
     ]);
 
-    expect(spans.get("test.identity")?.attributes).toEqual(identity);
+    expect(spans.get("identity")?.attributes).toEqual(identity);
     expect(annotations).toContainEqual(identity);
   });
 
@@ -249,19 +244,19 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       throw new Error("boom");
     });
 
-    expect(parents.get("test.identity")).toMatch(requestSpan);
+    expect(parents.get("identity")).toMatch(requestSpan);
   });
 });
 
 it.each(["HTTP", "MCP"])(
   "provides request identity through router wiring over %s",
   async (transport) => {
-    const app = ActionGroup.make({ name: "test" }, identity).implement({ identity: () => Actor });
+    const app = Action.implement(identity, () => Actor);
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
-        : ActionMcp.layerHttp([app], {
+        ? ActionHttp.make([identity]).layer(app)
+        : ActionMcp.layerHttp(app, {
             name: "test",
             version: "0",
             path: testMcpPath,
@@ -279,7 +274,7 @@ it.each(["HTTP", "MCP"])(
 
     const response = await web.handler(
       transport === "HTTP"
-        ? post("/api/actions/test/identity")
+        ? post("/api/identity")
         : mcpRequest({
             method: "tools/call",
             params: { name: "identity", arguments: {} },

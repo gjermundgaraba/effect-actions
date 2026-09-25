@@ -2,7 +2,6 @@
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { Tool } from "effect/unstable/ai";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-types/Principal") {}
@@ -27,13 +26,13 @@ const ServiceFree = Action.make("service_free", {
   success: Schema.String,
 });
 
-const app = ActionGroup.make({ name: "types" }, Aliased, ServiceFree, Hidden).implement({
+const app = Action.implement([Aliased, ServiceFree, Hidden], {
   original: () => Effect.map(Principal, (principal) => principal),
   service_free: () => Effect.succeed("free"),
   hidden: () => Effect.map(Principal, (principal) => principal),
 });
 
-const binding = ActionToolkit.make([app]);
+const binding = ActionToolkit.make(app);
 
 const exactAliasSuccess: Tool.Success<typeof binding.toolkit.tools.alias> = "principal";
 
@@ -78,15 +77,17 @@ const Right = Action.make("right", {
   success: Schema.Number,
 });
 
-const left = ActionGroup.make({ name: "left" }, Left).implement(
-  Effect.map(LeftBuild, (value) => ({ left: () => Effect.succeed(value) })),
+const left = Action.implement(
+  Left,
+  Effect.map(LeftBuild, (value) => () => Effect.succeed(value)),
 );
 
-const right = ActionGroup.make({ name: "right" }, Right).implement(
-  Effect.fail("right-build" as const).pipe(Effect.as({ right: () => Effect.succeed(1) })),
+const right = Action.implement(
+  Right,
+  Effect.fail("right-build" as const).pipe(Effect.as(() => Effect.succeed(1))),
 );
 
-const mixed = ActionToolkit.make([left, right]);
+const mixed = ActionToolkit.make([...left, ...right]);
 
 const mixedBuild = Effect.scoped(Layer.build(mixed.layer));
 
@@ -96,3 +97,39 @@ mixedBuild satisfies Effect.Effect<unknown, "right-build", LeftBuild>;
 const mixedWithLeft = mixedBuild.pipe(Effect.provideService(LeftBuild, "left"));
 
 mixedWithLeft satisfies Effect.Effect<unknown, "right-build", never>;
+
+class SharedBuild extends Context.Service<SharedBuild, string>()("toolkit-types/SharedBuild") {}
+
+// A hidden action sharing its builder with a visible one: the builder is still acquired.
+const sharing = Action.implement(
+  [ServiceFree, Hidden],
+  Effect.map(SharedBuild, (value) => ({
+    service_free: () => Effect.succeed(value),
+    hidden: () => Effect.map(Principal, (principal) => principal),
+  })),
+);
+
+const shared = ActionToolkit.make(sharing);
+
+Effect.scoped(Layer.build(shared.layer)) satisfies Effect.Effect<unknown, never, SharedBuild>;
+
+// @ts-expect-error The visible action's builder is a startup requirement, not erased.
+Effect.scoped(Layer.build(shared.layer)) satisfies Effect.Effect<unknown, never, never>;
+
+// ...while the hidden handler's per-call principal is absent: it has no tool.
+export const sharedCall = Effect.gen(function* () {
+  const tools = yield* shared.toolkit;
+  yield* Stream.runDrain(yield* tools.handle("service_free", {}));
+}).pipe(Effect.provide(shared.layer.pipe(Layer.provide(Layer.succeed(SharedBuild, "s")))));
+
+sharedCall satisfies Effect.Effect<unknown, unknown, never>;
+
+// A builder that serves only a hidden action is never acquired.
+const hiddenOnly = ActionToolkit.make(
+  Action.implement(
+    Hidden,
+    Effect.map(SharedBuild, () => () => Effect.succeed("")),
+  ),
+);
+
+Effect.scoped(Layer.build(hiddenOnly.layer)) satisfies Effect.Effect<unknown, never, never>;

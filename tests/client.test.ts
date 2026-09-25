@@ -9,8 +9,9 @@ import {
 } from "effect/unstable/http";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionHttpClient from "../src/ActionHttpClient.js";
+import * as Testing from "../src/Testing.js";
 
 class Invalid extends Schema.TaggedError<Invalid>()(
   "Invalid",
@@ -18,32 +19,35 @@ class Invalid extends Schema.TaggedError<Invalid>()(
   { httpApiStatus: 500 },
 ) {}
 
-const actions = ActionGroup.make(
-  {
-    name: "numbers",
-    schemaError: {
-      invalid: { schema: Invalid, make: () => new Invalid({ message: "Invalid input" }) },
-      internal: { schema: Invalid, make: () => new Invalid({ message: "Invalid output" }) },
-    },
+const Double = Action.make("double", {
+  description: "Transform in both directions",
+  access: "write",
+  input: { value: Schema.FiniteFromString },
+  success: Schema.FiniteFromString,
+});
+
+const Ping = Action.make("ping", {
+  description: "No input",
+  access: "write",
+  success: Schema.Boolean,
+});
+
+const Optional = Action.make("optional", {
+  description: "Optional input",
+  access: "write",
+  input: { value: Schema.optional(Schema.Number) },
+  success: Schema.Number,
+});
+
+const Http = ActionHttp.make([Double, Ping, Optional], {
+  prefix: "/rpc",
+  schemaError: {
+    invalid: { schema: Invalid, make: () => new Invalid({ message: "Invalid input" }) },
+    internal: { schema: Invalid, make: () => new Invalid({ message: "Invalid output" }) },
   },
-  Action.make("double", {
-    description: "Transform in both directions",
-    access: "write",
-    input: Schema.Struct({ value: Schema.FiniteFromString }),
-    success: Schema.FiniteFromString,
-  }),
-  Action.make("ping", { description: "No input", access: "write", success: Schema.Boolean }),
-  Action.make("optional", {
-    description: "Optional input",
-    access: "write",
-    input: Schema.Struct({ value: Schema.optional(Schema.Number) }),
-    success: Schema.Number,
-  }),
-);
+});
 
-const Http = ActionHttp.make({ apiPath: "/rpc" }, actions);
-
-const app = actions.implement({
+const app = Action.implement([Double, Ping, Optional], {
   double: ({ value }) => Effect.succeed(value === 0 ? Infinity : value * 2),
   ping: () => Effect.succeed(true),
   optional: ({ value }) => Effect.succeed(value ?? 7),
@@ -51,7 +55,7 @@ const app = actions.implement({
 
 it("keeps the client, routes and document on one configuration", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
     {
       disableLogger: true,
     },
@@ -60,8 +64,7 @@ it("keeps the client, routes and document on one configuration", async () => {
   const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
   onTestFinished(() => web.dispose());
   const document = OpenApi.fromApi(Http.api);
-  expect(document.paths?.["/rpc/numbers/double"]?.post?.responses).toHaveProperty("500");
-  expect(Http.api.groups.numbers.endpoints.double).toBeDefined();
+  expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
   await Effect.gen(function* () {
     const connection = {
       baseUrl: "http://localhost",
@@ -71,18 +74,23 @@ it("keeps the client, routes and document on one configuration", async () => {
         ),
     };
 
-    const client = yield* HttpApiClient.make(Http.api, connection);
+    const client = yield* ActionHttpClient.make(Http, connection);
 
-    expect(Object.keys(client.numbers).sort()).toEqual(["double", "optional", "ping"]);
-    expect(yield* client.numbers.double({ payload: { value: 21 } })).toBe(42);
-    expect(yield* client.numbers.ping({ payload: {} })).toBe(true);
-    expect(yield* client.numbers.optional({ payload: {} })).toBe(7);
-    expect(yield* client.numbers.optional({ payload: { value: 3 } })).toBe(3);
-    expect(yield* Effect.flip(client.numbers.double({ payload: { value: 0 } }))).toEqual(
+    expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
+    expect(yield* client.double({ value: 21 })).toBe(42);
+    expect(yield* client.ping()).toBe(true);
+    // `{}` is a valid input, so the argument may be omitted, and omitting it sends `{}`.
+    expect(yield* client.optional()).toBe(7);
+    expect(yield* client.optional({})).toBe(7);
+    expect(yield* client.optional({ value: 3 })).toBe(3);
+    expect(yield* Effect.flip(client.double({ value: 0 }))).toEqual(
       new Invalid({ message: "Invalid output" }),
     );
 
-    const [value, response] = yield* client.numbers.ping({
+    // The native client stays available on the same API, with its response modes.
+    const native = yield* HttpApiClient.make(Http.api, connection);
+
+    const [value, response] = yield* native.ping({
       payload: {},
       responseMode: "decoded-and-response",
     });
@@ -104,16 +112,14 @@ it("keeps the client, routes and document on one configuration", async () => {
     Effect.runPromise,
   );
   expect(sent[0]).toEqual({
-    url: "http://localhost/rpc/numbers/double",
+    url: "http://localhost/rpc/double",
     body: { value: "21" },
     token: "Bearer test",
   });
   expect(sent.slice(1, 3).map((request) => request.body)).toEqual([{}, {}]);
 });
 
-it("preserves null and explicitly undefined-valued input codecs", async () => {
-  const optional = Schema.Struct({ value: Schema.optional(Schema.Number) });
-
+it("sends a no-input call as {}, and any given input as given, through every Effect client", async () => {
   const undefinedFromString = Schema.Literal("absent").pipe(
     Schema.decodeTo(
       Schema.Undefined,
@@ -124,44 +130,77 @@ it("preserves null and explicitly undefined-valued input codecs", async () => {
     ),
   );
 
-  const group = ActionGroup.make(
-    { name: "inputs" },
-    Action.make("nullable", {
-      description: "Nullable object",
-      access: "write",
-      input: Schema.NullOr(optional),
-      success: Schema.Boolean,
-      mcp: false,
-    }),
-    Action.make("undefinedValue", {
-      description: "Undefined is real decoded data",
-      access: "write",
-      input: undefinedFromString,
-      success: Schema.Boolean,
-      mcp: false,
-    }),
+  const Nullable = Action.make("nullable", {
+    description: "Nullable object",
+    access: "write",
+    input: Schema.NullOr(Schema.Struct({ value: Schema.optional(Schema.Number) })),
+    success: Schema.String,
+  });
+
+  const UndefinedValue = Action.make("undefinedValue", {
+    description: "Undefined is real decoded data",
+    access: "write",
+    input: undefinedFromString,
+    success: Schema.String,
+  });
+
+  // Typed like an action without `input`, so it is called the same way.
+  const EmptyRecord = Action.make("emptyRecord", {
+    description: "A hand-written empty-record input",
+    access: "read",
+    input: Schema.Record(Schema.String, Schema.Never),
+    success: Schema.Boolean,
+  });
+
+  const Inputs = ActionHttp.make([Ping, Nullable, UndefinedValue, EmptyRecord]);
+
+  const bodies: Array<unknown> = [];
+
+  const web = HttpRouter.toWebHandler(
+    Inputs.layer(
+      Action.implement([Ping, Nullable, UndefinedValue, EmptyRecord], {
+        ping: () => Effect.succeed(true),
+        nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
+        undefinedValue: (input) => Effect.succeed(String(input)),
+        emptyRecord: () => Effect.succeed(true),
+      }),
+    ).pipe(Layer.provide(HttpServer.layerServices)),
+    { disableLogger: true },
   );
 
-  const bodies: unknown[] = [];
-  await Effect.gen(function* () {
-    const client = yield* HttpApiClient.make(
-      ActionHttp.make({ apiPath: "/api/actions" }, group).api,
-      {
-        baseUrl: "http://localhost",
-      },
-    );
+  onTestFinished(() => web.dispose());
 
-    yield* client.inputs.nullable({ payload: null });
-    yield* client.inputs.nullable({ payload: {} });
-    yield* client.inputs.undefinedValue({ payload: undefined });
-  }).pipe(
+  const handler = async (request: Request) => {
+    bodies.push(await request.clone().json());
+
+    return web.handler(request);
+  };
+
+  const calls = (client: ActionHttpClient.Client<typeof Inputs.actions, never>) =>
+    Effect.all([
+      client.ping(),
+      client.nullable(null),
+      client.nullable({}),
+      client.undefinedValue(undefined),
+      client.emptyRecord(),
+    ]);
+
+  const viaMake = await Effect.flatMap(
+    ActionHttpClient.make(Inputs, { baseUrl: "http://localhost" }),
+    calls,
+  ).pipe(
     Effect.provide(FetchHttpClient.layer),
-    Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
-      bodies.push(await new Request(input, init).json());
-
-      return Response.json(true);
-    }),
+    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+      handler(new Request(input, init)),
+    ),
     Effect.runPromise,
   );
-  expect(bodies).toEqual([null, {}, "absent"]);
+
+  const viaTesting = await Effect.flatMap(Testing.httpClient(Inputs, handler), calls).pipe(
+    Effect.runPromise,
+  );
+
+  expect(viaMake).toEqual([true, "null", "object", "undefined", true]);
+  expect(viaTesting).toEqual(viaMake);
+  expect(bodies).toEqual([{}, null, {}, "absent", {}, {}, null, {}, "absent", {}]);
 });

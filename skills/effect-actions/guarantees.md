@@ -5,17 +5,17 @@ Rules that hold across every adapter. Module pages link here rather than repeati
 ## Dependency lifetimes
 
 - Handlers receive decoded input, return decoded results, and may fail only with declared errors. Anything else is a defect.
-- Each surface binds its own pre-handler hook: `Http.layer(apps, { before })`, `ActionMcp.layerHttp`/`layerStdio`, `ActionToolkit.make`, `ActionCli.command`/`group`. After successful input decoding, a bound hook runs once before the selected handler and outside its span. There is no per-action opt-out; direct `build` calls bypass dispatch.
+- Each surface binds its own pre-handler hook: `Http.layer(apps, { before })`, `ActionMcp.layerHttp`/`layerStdio`, `ActionToolkit.make`, `ActionCli.command`/`make`. After successful input decoding, a bound hook runs once before the selected handler and outside its span. There is no per-action opt-out; calling a handler function directly bypasses dispatch.
 - The hook receives the selected action contract (`Action.Any`), so a policy reads `action.access`, `action.name` or `action.mcp` instead of a hand-maintained list. It is not authentication: establish identity in middleware, then let the hook authorize what that identity may do.
 - It fails with the surface's own `errors`, the same list that declares what the surface answers instead of a handler, so a refusal is encoded exactly like a declared error: the schema's `httpApiStatus` on HTTP, an `isError` tool result on MCP, a returned failure on the Toolkit. `ActionCli` declares no surface errors because it does not serialize failures; there a refusal is a typed failure of the command effect.
 - Its services are request-time requirements, like a handler's, and they join the adapter's request context. A local caller (`ActionCli`, `ActionToolkit`, stdio) supplies them itself.
 - All surfaces decode input before dispatch. Invalid input skips the hook and handler, so unauthorized callers can receive schema errors. Use outer native HTTP middleware for admission that must run before decoding; a pre-handler hook does not provide that guarantee.
-- Build-time services are those yielded in the `implement` builder Effect. They resolve once per adapter layer, in that layer's scope. An implementation served by two adapters is built twice. Share state through a Layer provided to the adapters, never through the builder.
+- Build-time services are those yielded in the builder Effect passed to `implement`. Every implementation one `implement` call returns shares that builder; an adapter layer runs it once, in that layer's scope, if the layer serves any of its actions, and not at all otherwise. A builder served by two adapters, or by two `Http.layer` calls, is built twice. Keep builders to wiring: acquire shared resources in a Layer provided to the adapters, which Effect builds once, never in the builder.
 - Request-time services are those yielded inside a handler. For HTTP-hosted adapters (`ActionHttp`, `ActionMcp.layerHttp`) they appear as `HttpRouter.Request.From<"Requires", R>` and are supplied by router middleware, `HttpRouter.provideRequest`, or request context. For `ActionToolkit`, `ActionCli`, and `ActionMcp.layerStdio` the host supplies them at invocation.
 - Use distinct tags for build-time capabilities and request-scoped identity. Never provide an identity or tenant tag in a startup layer or root context. The adapters use native Effect context capture and merging: a startup value under a tag can shadow a request value or satisfy a missing one. Types verify presence, not provenance.
 - Authentication must establish identity on every protected request. Types cannot verify that a handler performed authorization; the `before` hook is the one place the library guarantees runs before the handler, so put the check there rather than in each handler.
-- `access` is contract metadata, required on every action and kept as a literal type. It supplies the default MCP `readOnly` hint and the `action.access` span/log annotation, but enforces no authorization. A hook can switch on what an action does instead of on its name. The catalog omits it.
-- `ActionCli` acquires the implementation per invocation and releases it after the call. `ActionToolkit.make(...).layer` acquires it once for the layer's lifetime.
+- `access` is contract metadata, required on every action and kept as a literal type. It supplies the default MCP `readOnly` hint, the `action.access` span/log annotation and the catalog entry's `access`, but enforces no authorization. A hook can switch on what an action does instead of on its name.
+- `ActionCli` runs the selected implementation's builder per invocation and releases it after the call. `ActionToolkit.make(...).layer` runs each builder once for the layer's lifetime.
 
 ## Wire behavior
 
@@ -32,21 +32,22 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 | Unknown path or method      | 404                                                                                                   | n/a                                                                                                    |
 | Invalid JSON / content type | 400 / 415                                                                                             | n/a                                                                                                    |
 
-- A group `schemaError` policy replaces the empty 400s on HTTP with a declared error and status: its `invalid` error for input that does not decode, its `internal` error for output that does not encode. It never affects MCP. Details in [ActionGroup.md](ActionGroup.md).
+- A binding's `schemaError` policy replaces the empty 400s on HTTP with a declared error and status: its `invalid` error for input that does not decode, its `internal` error for output that does not encode. It never affects MCP. Details in [ActionHttp.md](ActionHttp.md#schema-error-policy).
 - `ActionHttp` sets no headers of its own. The host owns cache and challenge headers; `Authentication.middleware` marks its responses `cache-control: no-store`. Hook refusals and handler failures are ordinary declared error responses.
-- Routes are `POST <apiPath>/<group>/<action>`. Operation IDs are `<group>.<action>`. Effect generates OpenAPI component names and references.
+- Routes are `POST <prefix>/<action>`; the prefix defaults to `/api`. Operation IDs are the action names. Effect generates OpenAPI component names and references.
 - `ActionHttp.make`'s `errors` are declared on every endpoint so clients decode the surface's own failures (401, 403, 429, 503). They are produced by middleware or by the binding's hook, never by a handler. `ActionMcp` and `ActionToolkit` declare their own `errors` the same way, joined into every tool's failure schema. Two errors may share an HTTP status; their `_tag`s must differ, because the client decodes a status by trying the schemas declared for it.
 - HTTP strips undeclared input fields. MCP tools are strict (`Tool.Strict`): undeclared arguments are an invalid-arguments result and input schemas publish `additionalProperties: false`. HTTP is not strict, and cannot be made strict without a hack: Effect merges one `HttpApi.ParseOptions` per endpoint and uses it for payload decoding _and_ error encoding, so `onExcessProperty: "error"` also rejects a `TaggedError` instance's own `message` and `stack`, turning a declared 409 into an empty 500. Making the payload schema itself strict would require wrapping it in an open schema, which erases its OpenAPI shape. Declare the fields you accept and treat extra HTTP fields as ignored.
 
-## Namespaces
+## Names
 
-- Group names are unique within one `ActionHttp.make`. Action names are unique within a group. MCP tool names are unique within a group and within each Toolkit or MCP projection that serves it.
-- Adapters validate only the namespace they serve. HTTP does not check tool names; MCP does not check route names.
-- Each adapter builds only what it serves. HTTP serves every action of a group it binds, so `Http.layer` builds every implementation it is given (except a group without actions); a group with no tools is not built by MCP or Toolkit.
+- Action names are unique within one HTTP binding and within one catalog; two bindings with different prefixes may reuse one. MCP tool names are unique within each Toolkit or MCP projection that serves them, and CLI command names within each aggregate command.
+- Adapters validate only the names they serve. HTTP does not check tool names; MCP does not check route names.
+- Each adapter builds only what it serves. `Http.layer` builds the builders of the implementations it is given; MCP and Toolkit skip the builder of an implementation whose actions are all hidden from MCP.
+- Adapters match an implementation to a contract by object identity, never by name. `Http.layer` refuses an implementation of an action its binding does not hold; `ActionCli.command` refuses an action with no implementation in its list.
 
 ## Observability
 
-- Each handler runs in a span named `<group>.<action>`, a child of the transport's request span, with attributes `action.group`, `action.name` and `action.access`. Every log line the handler writes carries the same three annotations. The pre-handler hook, decoding and encoding happen outside the handler span.
+- Each handler runs in a span named after its action, a child of the transport's request span, with attributes `action.name` and `action.access`. Every log line the handler writes carries the same two annotations. Names are unique per binding; the request span's route tells two bindings' same-named actions apart. The pre-handler hook, decoding and encoding happen outside the handler span.
 - MCP defects and encoding failures are logged with their cause and answered generically.
 
 ## MCP transport

@@ -21,7 +21,6 @@
     "./ActionCatalog": "./dist/ActionCatalog.mjs",
     "./ActionCli": "./dist/ActionCli.mjs",
     "./ActionCliClient": "./dist/ActionCliClient.mjs",
-    "./ActionGroup": "./dist/ActionGroup.mjs",
     "./ActionHttp": "./dist/ActionHttp.mjs",
     "./ActionHttpClient": "./dist/ActionHttpClient.mjs",
     "./ActionMcp": "./dist/ActionMcp.mjs",

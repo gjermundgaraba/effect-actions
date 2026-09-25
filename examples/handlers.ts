@@ -1,24 +1,24 @@
 import { Effect } from "effect";
+import * as Action from "../src/Action.js";
 import { CurrentActor } from "./auth.js";
-import { AuditActions, PublicActions, UserActions } from "./contracts.js";
+import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
-// No request requirement at all, so this group can be mounted without authentication.
-export const PublicApp = PublicActions.implement(
+// No request requirement at all, so this action can be served without authentication.
+export const status = Action.implement(
+  Status,
   Effect.gen(function* () {
     const users = yield* Users;
 
-    return {
-      status: () =>
-        Effect.map(users.count, (count) => ({ service: "effect-actions", users: count })),
-    };
+    return () => Effect.map(users.count, (count) => ({ service: "effect-actions", users: count }));
   }),
 );
 
 // Capture Users at startup; resolve CurrentActor per request. Each surface binds
 // the `before` hook, which has already refused an actor without the permission
 // the action's access needs.
-export const UserApp = UserActions.implement(
+export const userActions = Action.implement(
+  [GetUser, RenameUser, WhoAmI],
   Effect.gen(function* () {
     const users = yield* Users;
 
@@ -26,23 +26,24 @@ export const UserApp = UserActions.implement(
       getUser: ({ id }) => Effect.flatMap(CurrentActor, (actor) => users.get(actor.tenantId, id)),
       renameUser: ({ id, name }) =>
         Effect.flatMap(CurrentActor, (actor) => users.rename(actor, id, name)),
-      double: ({ value }) => Effect.succeed(value * 2),
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
     };
   }),
 );
 
-export const AuditApp = AuditActions.implement(
+// Pure: no builder and no services, so any surface can serve it on its own.
+export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
+
+export const listChanges = Action.implement(
+  ListChanges,
   Effect.gen(function* () {
     const users = yield* Users;
 
-    return {
-      listChanges: () =>
-        Effect.gen(function* () {
-          const actor = yield* CurrentActor;
+    return () =>
+      Effect.gen(function* () {
+        const actor = yield* CurrentActor;
 
-          return { changes: yield* users.changes(actor.tenantId) };
-        }),
-    };
+        return { changes: yield* users.changes(actor.tenantId) };
+      });
   }),
 );

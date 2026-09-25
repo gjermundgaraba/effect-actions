@@ -2,9 +2,9 @@ import { Command } from "effect/unstable/cli";
 import { Console, Effect, Logger } from "effect";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCliClient from "../src/ActionCliClient.js";
-import { Http } from "./contracts.js";
+import { Http, Status } from "./contracts.js";
 
-const command = ActionCliClient.command(Http, "public", "status", {
+const command = ActionCliClient.command(Http, Status, {
   connection: { baseUrl: "http://127.0.0.1:3000" },
 });
 

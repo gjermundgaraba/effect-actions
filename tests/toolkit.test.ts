@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-test/Principal") {}
@@ -23,12 +22,12 @@ describe("ActionToolkit", () => {
       mcp: false,
     });
 
-    const app = ActionGroup.make({ name: "math" }, Double, Hidden).implement({
+    const app = Action.implement([Double, Hidden], {
       double: ({ value }) => Effect.succeed(value * 2),
       hidden: () => Effect.succeed("hidden"),
     });
 
-    const binding = ActionToolkit.make([app]);
+    const binding = ActionToolkit.make(app);
 
     expect(Object.keys(binding.toolkit.tools)).toEqual(["double_value"]);
 
@@ -46,13 +45,14 @@ describe("ActionToolkit", () => {
     expect(result).toMatchObject([{ result: 42, encodedResult: 42, isFailure: false }]);
   });
 
-  it("acquires a multi-tool implementation once and releases it with the layer", async () => {
+  it("releases a builder's resources with the layer", async () => {
     let acquired = 0;
     let released = 0;
     const One = Action.make("one", { description: "One", access: "write", success: Schema.Number });
     const Two = Action.make("two", { description: "Two", access: "write", success: Schema.Number });
 
-    const app = ActionGroup.make({ name: "count" }, One, Two).implement(
+    const app = Action.implement(
+      [One, Two],
       Effect.acquireRelease(
         Effect.sync(() => {
           acquired++;
@@ -63,7 +63,7 @@ describe("ActionToolkit", () => {
       ),
     );
 
-    const binding = ActionToolkit.make([app]);
+    const binding = ActionToolkit.make(app);
 
     await Effect.runPromise(
       Effect.scoped(
@@ -88,15 +88,16 @@ describe("ActionToolkit", () => {
 
     let acquired = 0;
 
-    const app = ActionGroup.make({ name: "principal" }, Who).implement(
+    const app = Action.implement(
+      Who,
       Effect.sync(() => {
         acquired++;
 
-        return { who: () => Principal };
+        return () => Principal;
       }),
     );
 
-    const binding = ActionToolkit.make([app]);
+    const binding = ActionToolkit.make(app);
 
     const result = await Effect.runPromise(
       // @ts-expect-error Deliberately omit Principal to verify it cannot leak from another invocation.

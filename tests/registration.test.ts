@@ -4,7 +4,6 @@ import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect"
 import { McpSchema } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
@@ -136,20 +135,21 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Echo, Tool).implement({
+    const apps = Action.implement([Echo, Tool], {
       echo: Effect.succeed,
       tool: () => Effect.succeed("tool"),
     });
 
-    const options = { apiPath: "/rpc" } as const;
-    expect(
-      Object.keys(OpenApi.fromApi(ActionHttp.make(options, app.group).api).paths ?? {}),
-    ).toEqual(["/rpc/test/echo", "/rpc/test/tool"]);
-    const web = makeTestHttp(app, Layer.empty, options);
+    const options = { prefix: "/rpc" } as const;
+    expect(Object.keys(OpenApi.fromApi(ActionHttp.make([Echo, Tool], options).api).paths)).toEqual([
+      "/rpc/echo",
+      "/rpc/tool",
+    ]);
+    const web = makeTestHttp(apps, Layer.empty, options);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
+    const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    const response = await web.handler(post("/rpc/test/echo", "hello"));
+    const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
     expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["tool"]);
@@ -167,18 +167,16 @@ describe("projection boundaries", () => {
         errors: [status === undefined ? Failure : Failure.annotate({ httpApiStatus: status })],
       });
 
-      const app = ActionGroup.make({ name: "test" }, Fail).implement({
+      const apps = Action.implement([Fail], {
         fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
       });
 
       expect(
-        OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api).paths?.[
-          "/api/actions/test/fail"
-        ]?.post?.responses,
+        OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
       ).toHaveProperty(String(status ?? 500));
-      const web = makeTestHttp(app, Layer.empty);
+      const web = makeTestHttp(apps, Layer.empty);
       onTestFinished(() => web.dispose());
-      const response = await web.handler(post("/api/actions/test/fail"));
+      const response = await web.handler(post("/api/fail"));
       expect(response.status).toBe(status ?? 500);
       expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
     },
@@ -196,27 +194,23 @@ describe("projection boundaries", () => {
       errors: [Missing, Conflict],
     });
 
-    const app = ActionGroup.make({ name: "test" }, Fail).implement({
+    const apps = Action.implement([Fail], {
       fail: ({ which }) =>
         which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
     });
 
-    const responses = OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api)
-      .paths?.["/api/actions/test/fail"]?.post?.responses;
+    const responses = OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post
+      ?.responses;
 
     expect(responses).toHaveProperty("404");
     expect(responses).toHaveProperty("409");
     expect(responses).not.toHaveProperty("500");
-    const web = makeTestHttp(app, Layer.empty);
+    const web = makeTestHttp(apps, Layer.empty);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
+    const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    expect((await web.handler(post("/api/actions/test/fail", { which: "missing" }))).status).toBe(
-      404,
-    );
-    expect((await web.handler(post("/api/actions/test/fail", { which: "conflict" }))).status).toBe(
-      409,
-    );
+    expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
+    expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
     expect(
       await (await mcp.handler(rawToolCall("fail", { which: "conflict" }))).json(),
     ).toMatchObject({
@@ -235,7 +229,7 @@ describe("projection boundaries", () => {
     });
 
     const mcp = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Fail).implement({
+      Action.implement([Fail], {
         fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
       }),
       Layer.empty,
@@ -261,11 +255,11 @@ describe("projection boundaries", () => {
       errors: [Schema.Union([Missing, Conflict])],
     });
 
-    const app = ActionGroup.make({ name: "test" }, Fail).implement({
+    const apps = Action.implement([Fail], {
       fail: () => Effect.fail(Conflict.make({})),
     });
 
-    const mcp = makeTestMcp(app, Layer.empty);
+    const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
     expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
@@ -282,12 +276,7 @@ describe("projection boundaries", () => {
     });
 
     expectReferencesResolve(
-      Schema.decodeUnknownSync(Schema.Json)(
-        OpenApi.fromApi(
-          ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make({ name: "test" }, Read))
-            .api,
-        ),
-      ),
+      Schema.decodeUnknownSync(Schema.Json)(OpenApi.fromApi(ActionHttp.make([Read]).api)),
       "#/components/schemas/",
     );
   });
@@ -312,10 +301,7 @@ describe("projection boundaries", () => {
         success: Node,
       });
 
-      const web = makeTestMcp(
-        ActionGroup.make({ name: "test" }, Tree).implement({ tree: Effect.succeed }),
-        Layer.empty,
-      );
+      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }), Layer.empty);
 
       onTestFinished(() => web.dispose());
       const tools = await listTools(web.handler);
@@ -352,7 +338,7 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Nested).implement({
+      Action.implement([Nested], {
         nested: ({ item }) => Effect.succeed({ first: item, second: item }),
       }),
       Layer.empty,
@@ -384,11 +370,11 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Invalid).implement({
+    const apps = Action.implement([Invalid], {
       invalid: () => Effect.succeed("unused"),
     });
 
-    const layer = ActionMcp.layerHttp([app], {
+    const layer = ActionMcp.layerHttp(apps, {
       name: "test",
       version: "0",
       path: "/mcp",
@@ -407,15 +393,15 @@ describe("projection boundaries", () => {
       errors: [Schema.String],
     });
 
-    const app = ActionGroup.make({ name: "test" }, Scalar).implement({
+    const apps = Action.implement([Scalar], {
       scalar: () => Effect.fail("failure"),
     });
 
-    const web = makeTestHttp(app, Layer.empty);
+    const web = makeTestHttp(apps, Layer.empty);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
+    const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
-    const response = await web.handler(post("/api/actions/test/scalar"));
+    const response = await web.handler(post("/api/scalar"));
     expect(response.status).toBe(500);
     expect(await response.json()).toBe("failure");
     expect(await (await mcp.handler(rawToolCall("scalar"))).json()).toMatchObject({
@@ -432,7 +418,7 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Encode).implement({
+      Action.implement([Encode], {
         encode: ({ value }) => Effect.succeed(value ?? 42),
       }),
       Layer.empty,
@@ -452,7 +438,7 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Echo).implement({
+      Action.implement([Echo], {
         echo: ({ value }) => Effect.succeed(value),
       }),
       Layer.empty,
@@ -479,14 +465,14 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Broken, Boom).implement({
+    const apps = Action.implement([Broken, Boom], {
       broken: () => Effect.succeed(Infinity),
       boom: () => Effect.die(new Error("secret database password")),
     });
 
-    const web = makeTestHttp(app, Layer.empty);
+    const web = makeTestHttp(apps, Layer.empty);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
+    const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
 
     // HttpApi renders a response-encoding failure as an empty 400 and a defect as an
@@ -495,7 +481,7 @@ describe("projection boundaries", () => {
       ["broken", 400],
       ["boom", 500],
     ] as const) {
-      const http = await web.handler(post(`/api/actions/test/${name}`));
+      const http = await web.handler(post(`/api/${name}`));
       expect(http.status).toBe(status);
       expect(await http.text()).toBe("");
       const reply = await (await mcp.handler(rawToolCall(name))).text();
@@ -513,15 +499,15 @@ describe("projection boundaries", () => {
       success: Schema.Struct({ d: Schema.Date }),
     });
 
-    const app = ActionGroup.make({ name: "test" }, Stamp).implement({ stamp: Effect.succeed });
+    const apps = Action.implement([Stamp], { stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
-    const web = makeTestHttp(app, Layer.empty);
+    const web = makeTestHttp(apps, Layer.empty);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
+    const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
     const tools = await listTools(mcp.handler);
     expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
-    const http = await web.handler(post("/api/actions/test/stamp", { d: iso }));
+    const http = await web.handler(post("/api/stamp", { d: iso }));
     expect(http.status).toBe(200);
     expect(await http.json()).toEqual({ d: iso });
     expect(await (await mcp.handler(rawToolCall("stamp", { d: iso }))).json()).toMatchObject({
@@ -539,7 +525,7 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Slow).implement({
+    const apps = Action.implement([Slow], {
       slow: () =>
         Deferred.succeed(started, undefined).pipe(
           Effect.andThen(Effect.never),
@@ -547,11 +533,11 @@ describe("projection boundaries", () => {
         ),
     });
 
-    const web = makeTestHttp(app, Layer.empty);
+    const web = makeTestHttp(apps, Layer.empty);
     onTestFinished(() => web.dispose());
     const abort = new AbortController();
 
-    const request = new Request("http://localhost/api/actions/test/slow", {
+    const request = new Request("http://localhost/api/slow", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",

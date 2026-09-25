@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased
+
+One contract, one `implement`, one binding. `ActionGroup` is gone: actions are implemented
+directly, HTTP binds a flat list of actions, and every client calls an action with its input.
+
+### Breaking changes
+
+**`ActionGroup` is removed; `Action.implement` binds handlers.** `implement(action, handler)`
+and `implement([actions], { name: handler })` both return a list of implementations, one per
+action. Either takes an Effect that builds the handler or record instead: every implementation
+one call returns shares that builder, and an adapter layer runs it once if it serves any of its
+actions, and not at all otherwise. Adapters take lists of implementations, combined by
+spreading. Group-level `errors` and the group's `schemaError` policy are gone; the policy moves
+to `ActionHttp.make`.
+
+A record must have exactly one handler per action: an extra key is now a compile error, where
+0.7.0 ignored it. Records are checked when an adapter layer builds them, never at `implement`,
+and one that slips past the types makes the build die with `Missing handler: <name>` or
+`Unknown handlers: <keys>`. 0.7.0 threw `Missing handlers for group ...` at `implement` for a
+plain record.
+
+- Migrate:
+
+  ```ts
+  // before
+  const Users = ActionGroup.make({ name: "users" }, GetUser, RenameUser);
+  const users = Users.implement(Effect.gen(function* () { ...; return { getUser, renameUser }; }));
+
+  // after
+  const users = Action.implement([GetUser, RenameUser], Effect.gen(function* () { ...; return { getUser, renameUser }; }));
+  ```
+
+  Errors shared by a group: spread one constant array into each action's `errors`.
+
+**`ActionHttp.make(actions, options?)` binds a flat list.** Actions come first. `prefix`
+(default `/api`) replaces the required `apiPath`, and `schemaError` joins `errors` as a binding
+option. Each action is served at `POST <prefix>/<action>` with operation ID `<action>` and the mount
+path as its OpenAPI tag, so names
+are unique per binding; an API that reused names across groups uses one binding per area, each
+with its own `prefix`. `Http.actions` holds the bound actions. `Http.layer(implementations,
+{ before })` serves exactly the implementations it receives, matched to the binding's actions by
+identity; each call builds its own native API, so middleware provided to it covers only its
+actions. An implementation of an action outside the binding is refused, and a bound action no
+layer serves answers 404. `Http.openApi()` defaults to `<prefix>/openapi.json`.
+
+- Migrate: `ActionHttp.make({ apiPath: "/api", errors }, Users)` becomes
+  `ActionHttp.make([GetUser, RenameUser], { errors })` for `/api/getUser`, or
+  `ActionHttp.make([GetUser, RenameUser], { prefix: "/api/users", errors })` to keep the
+  `/api/users/getUser` routes. Callers of the native client follow the route change.
+
+**Clients take the input, not `{ payload }`.** `ActionHttpClient.make(Http, options?)` is new:
+the native `HttpApiClient`, one Effect method per action, `client.getUser({ id })`.
+`ActionHttpClient.promise` and `Testing.httpClient(Http, handler)` are built on it;
+`Testing.httpClient` takes the binding rather than `Http.api`. The argument may be omitted
+exactly when `{}` is a valid input, and omitting it sends `{}`; a given argument is sent as
+given, where 0.7.0 sent `{}` for an `undefined` or `null` argument.
+
+**CLI selectors are contracts.** `ActionCli.command(implementations, Action, options?)` and
+`ActionCli.make(implementations, { name, before? })` replace `ActionCli.command(app, "name")` and
+`ActionCli.group(app)`. `ActionCliClient.command(Http, Action, options?)` and
+`ActionCliClient.make(Http, { name, connection? })` replace the string selectors and
+`ActionCliClient.group`. Both aggregates give one subcommand per action. A local command builds
+only its own implementation's builder. A remote command calls through `ActionHttpClient`, so
+`connection` no longer accepts `transformResponse`, whose effect the command's error type could
+not follow.
+
+**`ActionMcp.layerHttp`'s `path` defaults to `/mcp`.**
+
+**The catalog is version `"5"`.** `ActionCatalog.make` takes a list. Entries are
+`{ name, description, access, mcp, input, success, errors }`: `group` and `httpSchemaErrors` are
+gone, and `access` is included.
+
+**Spans are named after the action.** The handler span is `<action>`, not `<group>.<action>`,
+and `action.group` is no longer an attribute or log annotation. Action names are unique per
+binding; to tell two bindings' same-named actions apart, read the route on the request span.
+
+### Additions
+
+- `input` and `success` take plain fields: `input: { id: Schema.String }` is
+  `Schema.Struct({ id: Schema.String })`.
+- Handler parameters are typed from the contract in every `implement` form, without
+  annotations.
+
 ## 0.7.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.117`. The `effect`

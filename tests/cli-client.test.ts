@@ -10,8 +10,8 @@ import {
   HttpServer,
 } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { cliServices, logged } from "./cli-services.js";
 
@@ -35,22 +35,23 @@ const Remote = Action.make("remote", {
   errors: [Domain],
 });
 
-const RemoteGroup = ActionGroup.make(
-  {
-    name: "remote",
-    schemaError: {
-      invalid: { schema: Policy, make: (failure) => new Policy({ kind: failure.kind }) },
-      internal: { schema: Policy, make: (failure) => new Policy({ kind: failure.kind }) },
-    },
+const schemaError = {
+  invalid: {
+    schema: Policy,
+    make: (failure: { readonly kind: string }) => new Policy({ kind: failure.kind }),
   },
-  Remote,
-);
+  internal: {
+    schema: Policy,
+    make: (failure: { readonly kind: string }) => new Policy({ kind: failure.kind }),
+  },
+};
 
-const Http = ActionHttp.make({ apiPath: "/api" }, RemoteGroup);
+// `POST /api/remote`, one subcommand per action.
+const Http = ActionHttp.make([Remote], { schemaError });
 
 const decodedInputs: number[] = [];
 
-const app = RemoteGroup.implement({
+const app = Action.implement([Remote], {
   remote: ({ value }) =>
     Effect.andThen(
       Effect.sync(() => decodedInputs.push(value)),
@@ -61,9 +62,9 @@ const app = RemoteGroup.implement({
     ),
 });
 
-it("projects grouped commands through the native HTTP client without a local fallback", async () => {
+it("projects commands through the HTTP client without a local fallback", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -72,7 +73,8 @@ it("projects grouped commands through the native HTTP client without a local fal
   const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
   decodedInputs.length = 0;
 
-  const command = ActionCliClient.group(Http, "remote", {
+  const command = ActionCliClient.make(Http, {
+    name: "cli",
     connection: {
       baseUrl: "http://localhost",
       transformClient: (client) =>
@@ -103,7 +105,7 @@ it("projects grouped commands through the native HTTP client without a local fal
 
   expect(requests).toEqual([
     {
-      url: "http://localhost/api/remote/remote",
+      url: "http://localhost/api/remote",
       authorization: "Bearer host",
       body: { value: "21" },
     },
@@ -112,25 +114,75 @@ it("projects grouped commands through the native HTTP client without a local fal
   expect(decodedInputs).toEqual([21]);
   expect(output).toEqual(['"42"']);
 
-  // Runtime selectors are guarded even when values come from untyped callers.
-  // SAFETY: runtime guards must reject selector strings supplied outside TypeScript.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Intentional untyped selector simulation.
-  const unknownGroup = "missing" as "remote";
-  // SAFETY: runtime guards must reject selector strings supplied outside TypeScript.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Intentional untyped selector simulation.
-  const unknownAction = "missing" as "remote";
+  // The binding is selected by contract identity: an equal-looking action is not one of it.
+  const Lookalike = Action.make("remote", {
+    description: "Not the bound contract",
+    access: "write",
+    input: Schema.Struct({ value: Schema.FiniteFromString }),
+    success: Schema.FiniteFromString,
+    errors: [Domain],
+  });
 
-  expect(() => ActionCliClient.command(Http, unknownGroup, "remote")).toThrow(
-    'Unknown HTTP group "missing"',
-  );
-  expect(() => ActionCliClient.command(Http, "remote", unknownAction)).toThrow(
-    'Unknown HTTP action "remote.missing"',
+  expect(() => ActionCliClient.command(Http, Lookalike)).toThrow(
+    'Action "remote" is not in this HTTP binding',
   );
 });
 
-it("keeps the selected action when a connection object carries selector keys", async () => {
+it("projects a flat binding as one subcommand per action", async () => {
+  const Echo = Action.make("echo", {
+    description: "Echoes its input",
+    access: "read",
+    input: { value: Schema.String },
+    success: Schema.String,
+  });
+
+  const Flat = ActionHttp.make([Remote, Echo]);
+
   const web = HttpRouter.toWebHandler(
-    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
+    Flat.layer([...app, ...Action.implement(Echo, ({ value }) => Effect.succeed(value))]).pipe(
+      Layer.provide(HttpServer.layerServices),
+    ),
+    { disableLogger: true },
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const urls: string[] = [];
+
+  const fetchLayer = FetchHttpClient.layer.pipe(
+    Layer.provide(
+      Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
+        const request = new Request(input, init);
+        urls.push(request.url);
+
+        return web.handler(request, Context.empty());
+      }),
+    ),
+  );
+
+  const command = ActionCliClient.make(Flat, {
+    name: "cli",
+    connection: { baseUrl: "http://localhost" },
+  });
+
+  const runLines = (args: ReadonlyArray<string>) =>
+    logged(Command.runWith(command, { version: "0" })(args)).pipe(
+      Effect.provide(fetchLayer),
+      Effect.provide(cliServices),
+      Effect.runPromise,
+    );
+
+  const [, echoed] = await runLines(["echo", "--input", '{"value":"hi"}']);
+  const [, doubled] = await runLines(["remote", "--input", '{"value":"2"}']);
+
+  expect(echoed).toEqual(['"hi"']);
+  expect(doubled).toEqual(['"4"']);
+  expect(urls).toEqual(["http://localhost/api/echo", "http://localhost/api/remote"]);
+});
+
+it("connection options cannot select another action", async () => {
+  const web = HttpRouter.toWebHandler(
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -147,7 +199,7 @@ it("keeps the selected action when a connection object carries selector keys", a
 
   // Structurally assignable, since the host's object is not a literal here.
   const connection = { baseUrl: "http://localhost", group: "other", endpoint: "missing" };
-  const command = ActionCliClient.command(Http, "remote", "remote", { connection });
+  const command = ActionCliClient.command(Http, Remote, { connection });
 
   const [, output] = await logged(
     Command.runWith(command, { version: "0" })(["--input", '{"value":"21"}']),
@@ -157,9 +209,34 @@ it("keeps the selected action when a connection object carries selector keys", a
   expect(output).toEqual(['"42"']);
 });
 
+it("names the same subcommands as a local aggregate for the same actions", () => {
+  const Echo = Action.make("echo", {
+    description: "Echoes its input",
+    access: "read",
+    input: { value: Schema.String },
+    success: Schema.String,
+  });
+
+  const names = (command: {
+    readonly subcommands: ReadonlyArray<{
+      readonly commands: ReadonlyArray<{ readonly name: string }>;
+    }>;
+  }) => command.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name));
+
+  const local = ActionCli.make(
+    [...app, ...Action.implement(Echo, ({ value }) => Effect.succeed(value))],
+    { name: "cli" },
+  );
+
+  const remote = ActionCliClient.make(ActionHttp.make([Remote, Echo]), { name: "cli" });
+
+  expect(names(remote)).toEqual(["remote", "echo"]);
+  expect(names(local)).toEqual(names(remote));
+});
+
 it("propagates domain and native schema-policy failures through Command.runWith", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.layer([app]).pipe(Layer.provide(HttpServer.layerServices)),
+    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
     { disableLogger: true },
   );
 
@@ -179,7 +256,7 @@ it("propagates domain and native schema-policy failures through Command.runWith"
     ),
   );
 
-  const command = ActionCliClient.command(Http, "remote", "remote", {
+  const command = ActionCliClient.command(Http, Remote, {
     parameters: { value: Argument.String("value") },
     input: ({ value }) => ({ value }),
     connection: { baseUrl: "http://localhost" },

@@ -53,7 +53,7 @@ vp run docs:sync    # regenerate the skill after editing anything in docs/
 
 ## Invariants
 
-- Contracts (`Action`, `ActionGroup`) never import transport code. Each adapter owns its own mapping and validates only its own namespace.
+- Contracts (`Action`) never import transport code. Each adapter owns its own mapping and validates only the names it serves.
 - Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime and define no application error types.
 - Build-time and request-time requirements stay separate in the types. Never provide request identity at startup, in code or in docs.
 - Public behavior changes update the matching `docs/` page in the same commit, then `vp run docs:sync`.

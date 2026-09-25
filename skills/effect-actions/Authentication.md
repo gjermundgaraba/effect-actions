@@ -3,7 +3,7 @@
 Two helpers for hosts that own identity: router middleware that provides a request-scoped
 identity service, and RFC 9728 protected-resource discovery with bearer challenges. Token
 verification, login, and consent stay in the application. Authorization belongs in each adapter's
-`before` hook ([guarantees.md](guarantees.md)), not in this module or the group.
+`before` hook ([guarantees.md](guarantees.md)), not in this module or the handlers.
 
 ## API
 
@@ -70,7 +70,7 @@ export const authentication = Authentication.middleware(
 
 export const routes = Layer.mergeAll(
   discovery.layer, // public
-  Http.layer([UserApp]).pipe(Layer.provide(authentication.layer)),
+  Http.layer(userActions).pipe(Layer.provide(authentication.layer)),
   mcp.pipe(Layer.provide(authentication.layer)),
 );
 ```

@@ -9,57 +9,48 @@ Effect's own servers and clients underneath.
 ```ts
 import { Effect, Layer, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
-const Greet = Action.make("greet", {
+export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
-  input: Schema.Struct({ name: Schema.String }),
+  input: { name: Schema.String },
   success: Schema.String,
   access: "read",
 });
 
-export const Actions = ActionGroup.make({ name: "greetings" }, Greet);
+export const Http = ActionHttp.make([Greet]);
 
-export const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
-
-const app = Actions.implement({
-  greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
-});
+const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 export const routes = Layer.mergeAll(
-  Http.layer([app]),
-  ActionMcp.layerHttp([app], {
-    name: "greetings",
-    version: "1.0.0",
-    path: "/mcp",
-  }),
+  Http.layer(actions),
+  ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0" }),
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter` and you have `POST /api/actions/greetings/greet`
-and an MCP tool named `greet` at `/mcp`. The same `app` is also:
+Serve `routes` with Effect's `HttpRouter` and you have `POST /api/greet` and an MCP tool named
+`greet` at `/mcp`. The same `actions` are also:
 
 ```ts
-const { toolkit, layer } = ActionToolkit.make([app]); // native Effect AI Toolkit and its handler layer
-const cli = ActionCli.group(app); // greetings greet --input '{"name":"Ada"}'
-const remote = ActionCliClient.command(Http, "greetings", "greet"); // same command, over HTTP
-const catalog = ActionCatalog.make(Actions); // offline JSON contract, no handlers acquired
+const { toolkit, layer } = ActionToolkit.make(actions); // native Effect AI Toolkit and its handler layer
+const cli = ActionCli.make(actions, { name: "greetings" }); // greetings greet --input '{"name":"Ada"}'
+const remote = ActionCliClient.command(Http, Greet); // same command, over HTTP
+const catalog = ActionCatalog.make([Greet]); // offline JSON contract, no handlers acquired
 ```
 
-And the client is Effect's own, typed from the same contract:
+And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
 
 ```ts
 const greeting = Effect.gen(function* () {
-  const client = yield* HttpApiClient.make(Http.api, { baseUrl });
+  const client = yield* ActionHttpClient.make(Http, { baseUrl });
 
-  return yield* client.greetings.greet({ payload: { name: "Ada" } });
+  return yield* client.greet({ name: "Ada" });
 });
 ```
 
 Code that does not run Effects, such as a browser page, gets the same calls as Promises:
-`await ActionHttpClient.promise(Http, { baseUrl }).greetings.greet({ name: "Ada" })`.
+`await ActionHttpClient.promise(Http, { baseUrl }).greet({ name: "Ada" })`.
 
 ## Why
 
@@ -67,7 +58,7 @@ Code that does not run Effects, such as a browser page, gets the same calls as P
 - A handler may fail only with the errors its action declares. Each surface binds one `before` hook that runs before every handler it serves — after successful input decoding — so a policy such as scope enforcement is written once per surface and no action of that surface can skip it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so `OpenApi.fromApi`, Swagger, Scalar, and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, one `Tool` per action, with no SDK runtime dependency.
 - Every action states its `access` (`"read"` or `"write"`, required), so authorization reads the contract instead of a hand-maintained list of mutation names.
-- Build-time services and per-request services are tracked separately in the types. Middleware is per group, so a public group and an authenticated group can share one mount path.
+- Build-time services and per-request services are tracked separately in the types. Middleware is per `Http.layer` call, so public and authenticated actions share one binding, one mount path, one document and one client.
 - Tests run in memory. Call the routes through a web handler with the same typed client, or drive the official MCP client, without opening a port.
 
 ## Install
@@ -88,7 +79,7 @@ with the API, a canonical snippet, the rules, and the failure modes.
 - [docs/README.md](docs/README.md): start here, includes the adapter decision list.
 - [docs/guarantees.md](docs/guarantees.md): cross-cutting rules for lifetimes, wire formats, and scope.
 - [docs/CONTEXT.md](docs/CONTEXT.md): the vocabulary the docs and the code use.
-- [examples/](examples/README.md): a runnable authenticated application with three groups, two MCP endpoints, OpenAPI, and every other projection.
+- [examples/](examples/README.md): a runnable authenticated application with public and authenticated actions, two MCP endpoints, OpenAPI, and every other projection.
 
 ## For agents
 

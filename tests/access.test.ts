@@ -4,12 +4,10 @@ import { Command } from "effect/unstable/cli";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { cliServices, logged } from "./cli-services.js";
-import { testApiPath, testMcpPath } from "./server.js";
 import { post, rawToolCall } from "./requests.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
@@ -29,13 +27,13 @@ const Read = Action.make("read", {
 const Write = Action.make("write", {
   description: "Change the resource",
   access: "write",
-  input: Schema.Struct({ value: Schema.String }),
+  input: { value: Schema.String },
   success: Schema.String,
 });
 
 // The hook answers instead of a handler, so its failure is a surface error of
-// each binding rather than an error the actions of the group declare.
-const Group = ActionGroup.make({ name: "resource" }, Read, Write);
+// each binding rather than an error the actions declare.
+const Http = ActionHttp.make([Read, Write], { errors: [InsufficientScope] });
 
 /** One rule for a whole surface, read from the contract rather than from a name list. */
 const authorize =
@@ -59,7 +57,10 @@ const make = () => {
   return {
     hooks,
     handlers,
-    app: Group.implement({ read: () => record("read"), write: () => record("write") }),
+    app: Action.implement([Read, Write], {
+      read: () => record("read"),
+      write: () => record("write"),
+    }),
   };
 };
 
@@ -67,12 +68,13 @@ const readOnly = Layer.succeed(Scopes, ["read"]);
 
 type App = ReturnType<typeof make>["app"];
 
-/** Serve the group over HTTP with the hook bound to that surface. */
+/** Serve the actions over HTTP with the hook bound to that surface. */
 const serveHttp = (app: App, before: ReturnType<typeof authorize>, granted: Layer.Layer<Scopes>) =>
   HttpRouter.toWebHandler(
-    ActionHttp.make({ apiPath: testApiPath, errors: [InsufficientScope] }, Group)
-      .layer([app], { before })
-      .pipe(HttpRouter.provideRequest(granted), Layer.provide(HttpServer.layerServices)),
+    Http.layer(app, { before }).pipe(
+      HttpRouter.provideRequest(granted),
+      Layer.provide(HttpServer.layerServices),
+    ),
     { disableLogger: true },
   );
 
@@ -125,11 +127,11 @@ describe("the pre-handler hook", () => {
     const web = serveHttp(app, authorize(hooks), readOnly);
     onTestFinished(() => web.dispose());
 
-    const allowed = await web.handler(post("/api/actions/resource/read"));
+    const allowed = await web.handler(post("/api/read"));
     expect(allowed.status).toBe(200);
     expect(await allowed.json()).toBe("read ok");
 
-    const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
+    const refused = await web.handler(post("/api/write", { value: "x" }));
     expect(refused.status).toBe(403);
     // The body is the hook's error, encoded by its own schema like a handler's.
     expect(Schema.decodeUnknownSync(InsufficientScope)(await refused.json()).required).toBe(
@@ -145,12 +147,12 @@ describe("the pre-handler hook", () => {
     const web = serveHttp(app, authorize(hooks), readOnly);
     onTestFinished(() => web.dispose());
 
-    const invalid = await web.handler(post("/api/actions/resource/write", { value: 42 }));
+    const invalid = await web.handler(post("/api/write", { value: 42 }));
     expect(invalid.status).toBe(400);
     expect(hooks).toEqual([]);
     expect(handlers).toEqual([]);
 
-    const refused = await web.handler(post("/api/actions/resource/write", { value: "x" }));
+    const refused = await web.handler(post("/api/write", { value: "x" }));
     expect(refused.status).toBe(403);
     expect(hooks).toEqual(["write"]);
     expect(handlers).toEqual([]);
@@ -160,10 +162,9 @@ describe("the pre-handler hook", () => {
     const { app, hooks, handlers } = make();
 
     const mcp = HttpRouter.toWebHandler(
-      ActionMcp.layerHttp([app], {
+      ActionMcp.layerHttp(app, {
         name: "test",
         version: "0",
-        path: testMcpPath,
         errors: [InsufficientScope],
         before: authorize(hooks),
       }).pipe(HttpRouter.provideRequest(readOnly), Layer.provide(HttpServer.layerServices)),
@@ -189,7 +190,7 @@ describe("the pre-handler hook", () => {
   it("runs over the native Toolkit", async () => {
     const { app, hooks, handlers } = make();
 
-    const binding = ActionToolkit.make([app], {
+    const binding = ActionToolkit.make(app, {
       errors: [InsufficientScope],
       before: authorize(hooks),
     });
@@ -234,11 +235,11 @@ describe("the pre-handler hook", () => {
         ),
       );
 
-    const [read, output] = await run(ActionCli.command(app, "read", { before }), []);
+    const [read, output] = await run(ActionCli.command(app, Read, { before }), []);
     expect(read._tag).toBe("Success");
     expect(output).toEqual(['"read ok"']);
 
-    const [refused] = await run(ActionCli.command(app, "write", { before }), [
+    const [refused] = await run(ActionCli.command(app, Write, { before }), [
       "--input",
       '{"value":"x"}',
     ]);
@@ -254,9 +255,32 @@ describe("the pre-handler hook", () => {
     const web = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, ["read", "write"]));
     onTestFinished(() => web.dispose());
 
-    expect((await web.handler(post("/api/actions/resource/write", { value: "x" }))).status).toBe(
-      200,
-    );
+    expect((await web.handler(post("/api/write", { value: "x" }))).status).toBe(200);
     expect(hooks).toEqual(["write"]);
+  });
+
+  it("is bound per HTTP layer, so actions served without it skip it", async () => {
+    const { app, hooks, handlers } = make();
+
+    const [read, write] = [
+      app.filter((one) => one.action === Read),
+      app.filter((one) => one.action === Write),
+    ];
+
+    // One binding, two layers: only the write layer binds the hook.
+    const web = HttpRouter.toWebHandler(
+      Layer.merge(Http.layer(read), Http.layer(write, { before: authorize(hooks) })).pipe(
+        HttpRouter.provideRequest(readOnly),
+        Layer.provide(HttpServer.layerServices),
+      ),
+      { disableLogger: true },
+    );
+
+    onTestFinished(() => web.dispose());
+
+    expect((await web.handler(post("/api/read"))).status).toBe(200);
+    expect((await web.handler(post("/api/write", { value: "x" }))).status).toBe(403);
+    expect(hooks).toEqual(["write"]);
+    expect(handlers).toEqual(["read"]);
   });
 });

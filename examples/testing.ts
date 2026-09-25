@@ -9,9 +9,9 @@ const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerSe
 try {
   const greeting = await Effect.runPromise(
     Effect.gen(function* () {
-      const client = yield* Testing.httpClient(Http.api, web.handler);
+      const client = yield* Testing.httpClient(Http, web.handler);
 
-      return yield* client.greetings.greet({ payload: { name: "Ada" } });
+      return yield* client.greet({ name: "Ada" });
     }),
   );
 

@@ -2,13 +2,7 @@ import { Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
 import { assertDistinct, projectedErrors } from "./actions.js";
-import {
-  type Before,
-  dispatch,
-  type AnyImplementation,
-  type ErasedValue,
-  type Handlers,
-} from "./implementation.js";
+import { acquire, type AnyImplementation, dispatch, type ErasedValue } from "./implementation.js";
 
 /** What a tool surface binds around the implementations it projects. */
 export interface SurfaceOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
@@ -30,39 +24,18 @@ export interface SurfaceOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
 /** The erased view every tool projection binds. */
 export type ToolOptions = SurfaceOptions<ReadonlyArray<Action.Codec>, unknown>;
 
-/** An implementation/action pair exposed to a tool transport. */
-interface ToolEntry {
-  readonly app: AnyImplementation;
-  readonly action: ToolAction;
-}
+type ToolAction = Action.Any & { readonly mcp: Exclude<Action.Any["mcp"], false> };
 
-/** A served implementation and its tool-enabled actions. */
-interface ToolApp {
-  readonly app: AnyImplementation;
-  readonly actions: ReadonlyArray<ToolAction>;
-}
+/** An implementation whose action MCP and Toolkits may serve. */
+type ToolApp = AnyImplementation<ToolAction>;
+
+const isToolApp = (app: AnyImplementation): app is ToolApp => app.action.mcp !== false;
 
 /** Native tools and their acquired action handlers, with dynamic names erased. */
 interface BoundTools {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>;
   readonly layer: Layer.Layer<Tool.HandlersFor<Record<string, Tool.Any>>, unknown, unknown>;
 }
-
-type ToolAction = Action.Any & { readonly mcp: Exclude<Action.Any["mcp"], false> };
-
-const isToolAction = (action: Action.Any): action is ToolAction => action.mcp !== false;
-
-/** Only tool-enabled groups are acquired; each implementation appears once. */
-const toolApps = (apps: ReadonlyArray<AnyImplementation>): ReadonlyArray<ToolApp> =>
-  apps.flatMap((app) => {
-    const actions = app.group.actions.filter(isToolAction);
-
-    return actions.length === 0 ? [] : [{ app, actions }];
-  });
-
-/** Flatten the projected contracts only after deciding which groups are served. */
-const entries = (apps: ReadonlyArray<ToolApp>): ReadonlyArray<ToolEntry> =>
-  apps.flatMap(({ app, actions }) => actions.map((action) => ({ app, action })));
 
 const annotate = (tool: Tool.Any, mcp: Exclude<Action.Any["mcp"], false>) =>
   tool
@@ -75,7 +48,7 @@ const annotate = (tool: Tool.Any, mcp: Exclude<Action.Any["mcp"], false>) =>
  * A native Effect AI tool. Its schemas retain action transforms and its result
  * is the action result itself, rather than an MCP response envelope.
  */
-const nativeTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec>): Tool.Any =>
+const nativeTool = (action: ToolAction, errors: ReadonlyArray<Action.Codec>): Tool.Any =>
   annotate(
     Tool.make(action.mcp.name, {
       description: action.description,
@@ -91,7 +64,7 @@ const nativeTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Co
  * MCP has a JSON-only wire contract. Success uses its documented `{ value }`
  * structured-content envelope; declared failures are returned as JSON text.
  */
-const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec>): Tool.Any =>
+const mcpTool = (action: ToolAction, errors: ReadonlyArray<Action.Codec>): Tool.Any =>
   annotate(
     Tool.make(action.mcp.name, {
       description: action.description,
@@ -106,13 +79,12 @@ const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec
 /** The two concrete wire projections that share handler binding and lifetime ownership. */
 type Projection = "native" | "mcp";
 
-const project = (projection: Projection, entry: ToolEntry, options: ToolOptions): Tool.Any => {
+const project = (projection: Projection, action: ToolAction, options: ToolOptions): Tool.Any => {
   // A hook refusal is the surface's failure, so every tool declares it alongside
   // the action's own errors and returns it exactly as a handler failure.
-  const errors = projectedErrors(entry.action, options.errors);
+  const errors = projectedErrors(action, options.errors);
 
-  const tool =
-    projection === "native" ? nativeTool(entry.action, errors) : mcpTool(entry.action, errors);
+  const tool = projection === "native" ? nativeTool(action, errors) : mcpTool(action, errors);
 
   if (projection === "native") return tool;
 
@@ -121,55 +93,43 @@ const project = (projection: Projection, entry: ToolEntry, options: ToolOptions)
   return tool.annotate(Tool.Strict, true);
 };
 
-const handler = (
-  projection: Projection,
-  app: AnyImplementation,
-  action: ToolAction,
-  handlers: Handlers<unknown>,
-  before: Before<unknown> | undefined,
-) => {
-  const run = dispatch<ToolAction, ErasedValue, unknown>(app.group, action, handlers, before);
-
-  return projection === "native"
-    ? run
-    : (input: ErasedValue) => Effect.map(run(input), (value) => ({ value }));
-};
-
 /**
  * Project MCP-enabled actions and acquire their handlers exactly once per adapter layer.
  * Native and MCP differ only in tool codecs and the MCP success envelope; selection,
- * scoped acquisition, dispatch and native Toolkit binding stay identical.
+ * scoped acquisition, dispatch and native Toolkit binding stay identical. Only sources
+ * with a served action are acquired.
  */
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
   projection: Projection,
   options: ToolOptions,
 ): BoundTools => {
-  const served = toolApps(apps);
-  const selected = entries(served);
+  const served = apps.filter(isToolApp);
   // Fail before acquiring handlers when two exposed tools share a name.
   assertDistinct(
     "MCP tool",
-    selected.map(({ action }) => action.mcp.name),
+    served.map((app) => app.action.mcp.name),
   );
-  const toolkit = Toolkit.make(...selected.map((entry) => project(projection, entry, options)));
+  const toolkit = Toolkit.make(...served.map((app) => project(projection, app.action, options)));
 
   const layer = toolkit.toLayer(
-    Effect.map(
-      Effect.forEach(served, ({ app, actions }) =>
-        Effect.map(app.build, (handlers) => {
-          // SAFETY: every selected action belongs to this app's exact group. Dynamic
-          // Toolkit registration erases only the handler-record key set after selection.
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- See invariant above.
-          const record = handlers as Handlers<unknown>;
-
-          return actions.map(
-            (action) =>
-              [action.mcp.name, handler(projection, app, action, record, options.before)] as const,
+    Effect.map(acquire(served), (handlerOf) =>
+      Object.fromEntries(
+        served.map((app) => {
+          const run = dispatch<ToolAction, ErasedValue, unknown>(
+            app.action,
+            handlerOf(app),
+            options.before,
           );
+
+          return [
+            app.action.mcp.name,
+            projection === "native"
+              ? run
+              : (input: ErasedValue) => Effect.map(run(input), (value) => ({ value })),
+          ] as const;
         }),
       ),
-      (built) => Object.fromEntries(built.flat()),
     ),
   );
 

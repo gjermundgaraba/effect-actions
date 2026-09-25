@@ -18,34 +18,35 @@ guarded MCP endpoint and the CLI each bind the same `before` hook, which maps th
 `users:read` / `users:write` and refuses with `Forbidden`, so no handler contains
 authorization code and the same rule applies over every surface.
 
-The application has three groups, one per access rule:
+The application serves its implementations under three access rules:
 
-| Group    | Actions                                     | HTTP           | MCP                           |
-| -------- | ------------------------------------------- | -------------- | ----------------------------- |
-| `public` | `status`                                    | no credentials | `/mcp/public`, no credentials |
-| `users`  | `getUser`, `renameUser`, `double`, `whoAmI` | bearer token   | `/mcp`, bearer token          |
-| `audit`  | `listChanges`                               | not served     | `/mcp`, bearer token          |
+| Implementations | Actions                                     | HTTP           | MCP                           |
+| --------------- | ------------------------------------------- | -------------- | ----------------------------- |
+| `status`        | `status`                                    | no credentials | `/mcp/public`, no credentials |
+| `userActions`   | `getUser`, `renameUser`, `double`, `whoAmI` | bearer token   | `/mcp`, bearer token          |
+| `listChanges`   | `listChanges`                               | not served     | `/mcp`, bearer token          |
 
-HTTP groups share one mount path and differ by middleware. An MCP endpoint is a single
+Every HTTP action is in one binding, `Http`: one mount path, one document, one client. The
+two `Http.layer` calls differ only by middleware. An MCP endpoint is a single
 route, so its middleware covers every tool. That is why the public tool has its own endpoint.
 The OpenAPI document (`/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`.
 
 ```sh
-# The public group needs no token
-curl -s http://127.0.0.1:3000/api/actions/public/status \
+# The public action needs no token
+curl -s http://127.0.0.1:3000/api/status \
   -H 'Content-Type: application/json' -d '{}'
 # {"service":"effect-actions","users":2}
 
 # A generated HTTP RPC endpoint over the getUser action
-curl -s http://127.0.0.1:3000/api/actions/users/getUser \
+curl -s http://127.0.0.1:3000/api/getUser \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
   -d '{"id":"1"}'
 # {"id":"1","name":"Ada"}
 
 # A generated HTTP route; the schema transforms "21" to numeric 21
-curl -s http://127.0.0.1:3000/api/actions/users/double \
+curl -s http://127.0.0.1:3000/api/double \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
   -d '{"value":"21"}'
@@ -72,7 +73,7 @@ curl -s http://127.0.0.1:3000/mcp/public \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"}}}}'
 # ... "tools":[{"name":"status", ...
 
-# Generated OpenAPI 3.1 document, covering every HTTP group
+# Generated OpenAPI 3.1 document, covering every HTTP action
 curl -s http://127.0.0.1:3000/openapi.json
 ```
 
@@ -80,11 +81,11 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 
 ## Application structure
 
-- [contracts.ts](contracts.ts): schemas, per-action `access`, the three action groups, the shared schema-error policy, and the bound `Http` contract, including the surface errors its clients decode.
+- [contracts.ts](contracts.ts): schemas, per-action `access`, and the `Http` binding with its schema-error policy and the surface errors its clients decode. `listChanges` is left out of it, so it is MCP-only.
 - [auth.ts](auth.ts): demo actors, identity, permissions, authorization errors, and the `before` hook every guarded surface binds.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
-- [handlers.ts](handlers.ts): one implementation per group, with startup and request dependencies and no authorization code.
-- [app.ts](app.ts): `Authentication.middleware` on the `users` group only, the `before` hook on the guarded HTTP layer and MCP endpoint, the Host/Origin policy around everything, and adapter registration.
+- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies and no authorization code.
+- [app.ts](app.ts): `Authentication.middleware` on the user actions' layer only, the `before` hook on the guarded HTTP layer and MCP endpoint, the Host/Origin policy around everything, and adapter registration.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 

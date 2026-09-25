@@ -1,21 +1,18 @@
 import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Schema, Stream } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
 const Double = Action.make("double", {
   description: "Double a finite number.",
-  input: Schema.Struct({ value: Schema.FiniteFromString }),
+  input: { value: Schema.FiniteFromString },
   success: Schema.Finite,
   access: "read",
 });
 
-const app = ActionGroup.make({ name: "math" }, Double).implement({
-  double: ({ value }) => Effect.succeed(value * 2),
-});
+const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
 
-const binding = ActionToolkit.make([app]);
+const binding = ActionToolkit.make(double);
 
 const program = Effect.gen(function* () {
   const tools = yield* binding.toolkit;

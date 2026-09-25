@@ -21,7 +21,6 @@ There is no package root. Import one module per subpath, as a namespace:
 
 ```ts
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";

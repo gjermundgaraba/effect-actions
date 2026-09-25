@@ -12,7 +12,7 @@ const client = ActionHttpClient.promise(Http, {
 
 export const userName = async (id: string): Promise<string> => {
   try {
-    return (await client.users.getUser({ id })).name;
+    return (await client.getUser({ id })).name;
   } catch (error) {
     // A declared error rejects as its own value...
     if (error instanceof UserNotFound) return "(no such user)";

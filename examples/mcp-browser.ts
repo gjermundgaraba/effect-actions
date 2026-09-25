@@ -1,18 +1,14 @@
 import { Effect, Layer } from "effect";
 import { HttpRouter } from "effect/unstable/http";
+import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { Actions } from "./quickstart.js";
+import { Greet } from "./quickstart.js";
 
 const allowedOrigins = ["https://ui.example.com"];
 
-const app = Actions.implement({ greet: ({ name }) => Effect.succeed(`Hello, ${name}!`) });
+const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
-const mcp = ActionMcp.layerHttp([app], {
-  name: "greetings",
-  version: "1.0.0",
-  path: "/mcp",
-  allowedOrigins,
-});
+const mcp = ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0", allowedOrigins });
 
 // Global router CORS handles preflight outside route-level authentication.
 // This example is public; protected endpoints still need authentication and a hook.

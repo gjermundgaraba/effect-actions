@@ -1,7 +1,6 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { makeTestHttp } from "./server.js";
@@ -53,7 +52,6 @@ describe("contracts", () => {
       ).toThrow("Invalid action name");
     }
 
-    expect(() => ActionGroup.make({ name: "then" })).toThrow("Invalid action group name");
     expect(() =>
       Action.make("ok", {
         description: "",
@@ -80,11 +78,10 @@ describe("contracts", () => {
       Action.make("_private", { description: "", access: "write", success: Schema.String }).name,
     ).toBe("_private");
     expect(
-      ActionGroup.make(
-        { name: "9_group" },
-        Action.make("_action", { description: "", access: "write", success: Schema.String }),
-      ).name,
-    ).toBe("9_group");
+      ActionHttp.make([
+        Action.make("9_action", { description: "", access: "write", success: Schema.String }),
+      ]).actions.map((action) => action.name),
+    ).toEqual(["9_action"]);
     expect(
       Action.make("x".repeat(129), {
         description: "Long HTTP-only action",
@@ -95,20 +92,46 @@ describe("contracts", () => {
     ).toBe(false);
   });
 
-  it("rejects duplicate names at definition time", () => {
-    expect(() => ActionGroup.make({ name: "users" }, GetUser, GetUser)).toThrow("Duplicate action");
+  it("rejects duplicate names where they are bound", () => {
+    expect(() => ActionHttp.make([GetUser, GetUser])).toThrow("Duplicate action: getUser");
+    expect(() =>
+      Action.implement([GetUser, GetUser], { getUser: () => Effect.die("unused") }),
+    ).toThrow("Duplicate action: getUser");
+  });
 
-    const Alias = Action.make("alias", {
-      description: "Alias collision",
-      access: "write",
-      success: Schema.String,
-      mcp: { name: "get_user" },
+  it("accepts struct fields wherever a struct schema is accepted", () => {
+    const Fields = Action.make("fields", {
+      description: "Fields shorthand",
+      access: "read",
+      input: { id: Schema.String, limit: Schema.optionalKey(Schema.FiniteFromString) },
+      success: { total: Schema.Finite },
     });
 
-    expect(() => ActionGroup.make({ name: "users" }, GetUser, Alias)).toThrow("Duplicate MCP");
-    expect(() => ActionGroup.make({ name: "bad name" }, GetUser)).toThrow(
-      "Invalid action group name",
-    );
+    const Schemas = Action.make("schemas", {
+      description: "Schemas",
+      access: "read",
+      input: Schema.Struct({ id: Schema.String }),
+      success: Schema.Finite,
+    });
+
+    // The fields become the struct they stand for; a schema is kept as it is.
+    expect(Schema.isSchema(Fields.input)).toBe(true);
+    expect(Schema.decodeUnknownSync(Fields.input)({ id: "a", limit: "2" })).toEqual({
+      id: "a",
+      limit: 2,
+    });
+    expect(Schema.decodeUnknownSync(Fields.input)({ id: "a" })).toEqual({ id: "a" });
+    expect(Schema.is(Fields.success)({ total: 1 })).toBe(true);
+    expect(Schema.is(Fields.success)({ total: "1" })).toBe(false);
+    expect(Schemas.success).toBe(Schema.Finite);
+
+    // The decoded types follow the fields.
+    const input: { readonly id: string; readonly limit?: number } = Schema.decodeUnknownSync(
+      Fields.input,
+    )({ id: "a" });
+
+    const total: number = Schema.decodeUnknownSync(Fields.success)({ total: 3 }).total;
+    expect([input.id, total]).toEqual(["a", 3]);
   });
 });
 
@@ -116,134 +139,63 @@ describe("implementations", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
     access: "write",
-    input: Schema.Struct({ name: Schema.String }),
+    input: { name: Schema.String },
     success: Schema.String,
   });
 
-  const Group = ActionGroup.make({ name: "greetings" }, Hello);
-
-  const request = (prefix: string) =>
-    new Request(`http://localhost${prefix}/greetings/hello`, {
+  const request = (path: string) =>
+    new Request(`http://localhost${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Ada" }),
     });
 
-  it("binds a plain handler record without exposing service bindings", async () => {
-    const app = Group.implement({ hello: ({ name }) => Effect.succeed(`hi ${name}`) });
-    expect(Object.keys(app)).toEqual(["group"]);
-    expect(app.group).toBe(Group);
-    expect(app).not.toHaveProperty("handlers");
-    expect(app).not.toHaveProperty("layer");
+  it("binds a plain handler without exposing service bindings", async () => {
+    const app = Action.implement(Hello, ({ name }) => Effect.succeed(`hi ${name}`));
+    expect(app.map((one) => Object.keys(one))).toEqual([["action"]]);
+    expect(app.map((one) => one.action)).toEqual([Hello]);
+    expect(app[0]).not.toHaveProperty("handlers");
+    expect(app[0]).not.toHaveProperty("layer");
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
-    expect(await (await web.handler(request("/api/actions"))).json()).toBe("hi Ada");
-  });
-
-  const Pair = ActionGroup.make(
-    { name: "pair" },
-    Hello,
-    Action.make("bye", { description: "Parts", access: "write", success: Schema.String }),
-  );
-
-  // The types require a function for every action; plain JavaScript, a cast or a record
-  // changed after it was typed can still bind something else.
-  const record = () => ({ hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") });
-
-  const pair = (change: (handlers: ReturnType<typeof record>) => boolean) => {
-    const handlers = record();
-    change(handlers);
-
-    return handlers;
-  };
-
-  // `hello` is an own property; `bye` is inherited from the prototype.
-  class Inherited {
-    readonly hello = () => Effect.succeed("hi");
-
-    bye() {
-      return Effect.succeed("bye");
-    }
-  }
-
-  it.each([
-    {
-      handlers: "a missing key",
-      make: () => pair((handlers) => Reflect.deleteProperty(handlers, "bye")),
-    },
-    {
-      handlers: "an undefined value",
-      make: () => pair((handlers) => Reflect.set(handlers, "bye", undefined)),
-    },
-    {
-      handlers: "a non-function value",
-      make: () => pair((handlers) => Reflect.set(handlers, "bye", "bye")),
-    },
-    { handlers: "an inherited method", make: () => new Inherited() },
-  ])("refuses a record with $handlers at implement", ({ make }) => {
-    expect(() => Pair.implement(make())).toThrow('Missing handlers for group "pair": bye');
-  });
-
-  it("fails the adapter build, not a request, when a builder's record lacks a handler", async () => {
-    const app = Pair.implement(
-      Effect.sync(() => pair((handlers) => Reflect.deleteProperty(handlers, "bye"))),
-    );
-
-    const { handler, dispose } = makeTestHttp(app, Layer.empty, { apiPath: "/api" });
-    onTestFinished(() => dispose());
-
-    // Even the action that has a handler is never served by an incomplete binding.
-    await expect(
-      handler(
-        new Request("http://localhost/api/pair/hello", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: "Ada" }),
-        }),
-      ),
-    ).rejects.toThrow('Missing handlers for group "pair": bye');
+    expect(await (await web.handler(request("/api/hello"))).json()).toBe("hi Ada");
   });
 
   it("keeps same-contract implementations apart", async () => {
-    const appA = Group.implement({ hello: () => Effect.succeed("from A") });
-    const appB = Group.implement({ hello: () => Effect.succeed("from B") });
+    const appA = Action.implement(Hello, () => Effect.succeed("from A"));
+    const appB = Action.implement(Hello, () => Effect.succeed("from B"));
 
     const web = HttpRouter.toWebHandler(
       Layer.mergeAll(
-        ActionHttp.make({ apiPath: "/a" }, Group).layer([appA]),
-        ActionHttp.make({ apiPath: "/b" }, Group).layer([appB]),
+        ActionHttp.make([Hello], { prefix: "/a" }).layer(appA),
+        ActionHttp.make([Hello], { prefix: "/b" }).layer(appB),
       ).pipe(Layer.provide(HttpServer.layerServices)),
       { disableLogger: true },
     );
 
     onTestFinished(() => web.dispose());
-    expect(await (await web.handler(request("/a"))).json()).toBe("from A");
-    expect(await (await web.handler(request("/b"))).json()).toBe("from B");
+    expect(await (await web.handler(request("/a/hello"))).json()).toBe("from A");
+    expect(await (await web.handler(request("/b/hello"))).json()).toBe("from B");
   });
 
-  it("routes prototype-sensitive action names through native HTTP", async () => {
-    const Proto = ActionGroup.make(
-      { name: "safe" },
-      Action.make("__proto__", {
-        description: "Prototype-safe",
-        access: "write",
-        success: Schema.String,
-      }),
-    );
+  const Proto = Action.make("__proto__", {
+    description: "Prototype-safe",
+    access: "write",
+    success: Schema.String,
+  });
 
-    const app = Proto.implement({ ["__proto__"]: () => Effect.succeed("safe") });
-
-    const web = HttpRouter.toWebHandler(
-      ActionHttp.make({ apiPath: "/api" }, Proto)
-        .layer([app])
-        .pipe(Layer.provide(HttpServer.layerServices)),
-      { disableLogger: true },
-    );
-
+  it.each([
+    { form: "one action", make: () => Action.implement(Proto, () => Effect.succeed("safe")) },
+    {
+      form: "a record",
+      make: () => Action.implement([Proto], { ["__proto__"]: () => Effect.succeed("safe") }),
+    },
+  ])("routes prototype-sensitive action names through native HTTP: $form", async ({ make }) => {
+    const web = makeTestHttp(make(), Layer.empty);
     onTestFinished(() => web.dispose());
 
     const response = await web.handler(
-      new Request("http://localhost/api/safe/__proto__", {
+      new Request("http://localhost/api/__proto__", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",

@@ -7,12 +7,11 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { mcpRequest } from "../src/Testing.js";
-import { testApiPath, testMcpPath, testMcpUrl } from "./server.js";
+import { testMcpUrl } from "./server.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
@@ -235,24 +234,19 @@ describe("Authentication.middleware", () => {
         success: Schema.String,
       });
 
-      const app = ActionGroup.make({ name: "test" }, Identify).implement({
-        identify: () =>
-          Effect.gen(function* () {
-            expect(events).toEqual(["acquire"]);
-            events.push("handler");
+      const app = Action.implement(Identify, () =>
+        Effect.gen(function* () {
+          expect(events).toEqual(["acquire"]);
+          events.push("handler");
 
-            return (yield* Identity).id;
-          }),
-      });
+          return (yield* Identity).id;
+        }),
+      );
 
       const routes =
         transport === "http"
-          ? ActionHttp.make({ apiPath: testApiPath }, app.group).layer([app])
-          : ActionMcp.layerHttp([app], {
-              name: "scope-test",
-              version: "0",
-              path: testMcpPath,
-            });
+          ? ActionHttp.make([Identify]).layer(app)
+          : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" });
 
       const web = HttpRouter.toWebHandler(
         routes.pipe(Layer.provide(auth.layer), Layer.provide(HttpServer.layerServices)),
@@ -266,7 +260,7 @@ describe("Authentication.middleware", () => {
 
       const response = await web.handler(
         transport === "http"
-          ? new Request("http://localhost/api/actions/test/identify", {
+          ? new Request("http://localhost/api/identify", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: "{}",

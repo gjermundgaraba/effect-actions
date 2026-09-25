@@ -1,23 +1,22 @@
-import { Option, Predicate, Schema } from "effect";
-import type { HttpApi, HttpApiGroup } from "effect/unstable/httpapi";
-import { type ClientOptions, fetchApiClient } from "./internal/fetchClient.js";
+import { Effect, Option, Predicate, Schema } from "effect";
+import * as ActionHttpClient from "./ActionHttpClient.js";
+import { type AnyHttp, type Client, type ErrorsOf, withFetch } from "./internal/client.js";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
 export type Handler = (request: Request) => Promise<Response>;
 
 /**
- * The native grouped HTTP client, calling `handler` in memory instead of the network.
- * `baseUrl` defaults to `http://localhost`.
+ * `ActionHttpClient.make` for the binding, calling `handler` in memory instead of the
+ * network. `baseUrl` defaults to `http://localhost`.
  */
-export const httpClient = <Id extends string, Groups extends HttpApiGroup.Constraint>(
-  api: HttpApi.HttpApi<Id, Groups>,
+export const httpClient = <const H extends AnyHttp>(
+  http: H,
   handler: Handler,
-  options?: ClientOptions,
-) =>
-  fetchApiClient(api, (input, init) => handler(new Request(input, init)), {
-    baseUrl: "http://localhost",
-    ...options,
-  });
+  options?: ActionHttpClient.Options,
+): Effect.Effect<Client<H["actions"], ErrorsOf<H>>> =>
+  ActionHttpClient.make(http, { baseUrl: "http://localhost", ...options }).pipe(
+    withFetch((input, init) => handler(new Request(input, init))),
+  );
 
 /** A stateless 2026-07-28 request. */
 export interface McpRequestOptions {

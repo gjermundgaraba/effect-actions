@@ -15,11 +15,16 @@ import {
 
 /**
  * One Streamable HTTP MCP endpoint: every native `McpServer.layerHttp` option except
- * `protocols` (server information, `path`, `allowedOrigins`, `instructions`,
- * `extensions`, ...), plus the surface's `errors` and `before`.
+ * `protocols` (server information, `allowedOrigins`, `instructions`, `extensions`, ...),
+ * with `path` defaulting to `/mcp`, plus the surface's `errors` and `before`.
  */
 export interface Options<Errors extends ReadonlyArray<Action.Codec> = [], R = never>
-  extends Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols">, SurfaceOptions<Errors, R> {}
+  extends
+    Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path">,
+    SurfaceOptions<Errors, R> {
+  /** The endpoint's route; defaults to `/mcp`. */
+  readonly path?: HttpRouter.PathInput;
+}
 
 /** An MCP subprocess on standard I/O: every native `McpServer.layerStdio` option except `protocols`. */
 export interface StdioOptions<Errors extends ReadonlyArray<Action.Codec> = [], R = never>
@@ -82,7 +87,11 @@ export function layerHttp(
   apps: ReadonlyArray<AnyImplementation>,
   options: Options<ReadonlyArray<Action.Codec>, unknown>,
 ) {
-  return server(apps, options, McpServer.layerHttp({ ...options, protocols }));
+  return server(
+    apps,
+    options,
+    McpServer.layerHttp({ ...options, path: options.path ?? "/mcp", protocols }),
+  );
 }
 
 /**

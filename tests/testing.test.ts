@@ -1,11 +1,12 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { mcpCall, mcpRequest } from "../src/Testing.js";
+import { httpClient, mcpCall, mcpRequest } from "../src/Testing.js";
 import { makeTestApp, makeTestMcp, testMcpUrl } from "./server.js";
 import { Forbidden } from "../examples/auth.js";
 import { UserNotFound } from "../examples/contracts.js";
 import { Effect, Layer, Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { Http } from "../examples/contracts.js";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 
 it("supplies consistent stateless protocol defaults", async () => {
   const request = mcpRequest({ url: "http://localhost/mcp", method: "tools/list" });
@@ -123,17 +124,18 @@ describe("mcpCall", () => {
   });
 
   it("returns a declared error of any shape as its decoded JSON, a string included", async () => {
-    const app = ActionGroup.make(
-      { name: "scalar" },
-      Action.make("fail", {
-        description: "Fails with a string",
-        access: "write",
-        success: Schema.String,
-        errors: [Schema.String],
-      }),
-    ).implement({ fail: () => Effect.fail("failure") });
+    const Fail = Action.make("fail", {
+      description: "Fails with a string",
+      access: "write",
+      success: Schema.String,
+      errors: [Schema.String],
+    });
 
-    const web = makeTestMcp(app, Layer.empty);
+    const web = makeTestMcp(
+      Action.implement(Fail, () => Effect.fail("failure")),
+      Layer.empty,
+    );
+
     onTestFinished(() => web.dispose());
 
     expect(await mcpCall(web.handler, { url: testMcpUrl, name: "fail" })).toEqual({
@@ -165,5 +167,30 @@ describe("mcpCall", () => {
     );
 
     expect(result).toEqual({ isError: false, value: [1, 2] });
+  });
+});
+
+describe("httpClient", () => {
+  it("calls a flat binding in memory through the flat client", async () => {
+    const web = makeTestApp();
+    onTestFinished(() => web.dispose());
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* httpClient(Http, web.handler, {
+          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
+        });
+
+        return {
+          user: yield* client.getUser({ id: "1" }),
+          missing: yield* Effect.flip(client.getUser({ id: "404" })),
+          status: yield* client.status(),
+        };
+      }),
+    );
+
+    expect(result.user).toEqual({ id: "1", name: "Ada" });
+    expect(result.missing).toEqual(new UserNotFound({ id: "404" }));
+    expect(result.status.users).toBe(2);
   });
 });

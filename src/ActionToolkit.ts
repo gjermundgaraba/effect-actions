@@ -2,12 +2,11 @@ import { Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "./Action.js";
 import { bindTools, type SurfaceOptions } from "./internal/tools.js";
-import {
-  type AnyImplementation,
-  type BuildContext,
-  type BuildError,
-  type HiddenFromMcp,
-  type HandlerContext,
+import type {
+  AnyImplementation,
+  BuildContext,
+  BuildError,
+  HiddenFromMcp,
   Implementation,
 } from "./internal/implementation.js";
 
@@ -32,36 +31,19 @@ type NativeTool<A extends Action.Any, E extends Action.Codec, R> =
       >
     : never;
 
-type HandlersOf<App extends AnyImplementation> =
-  App extends Implementation<any, infer H, any, any> ? H : never;
-
 /**
  * A tool needs what its handler needs, plus what the binding's `before` hook needs. The
  * rule is `ActionMcp`'s: only an action certainly hidden from MCP has no tool.
  */
-type ToolForAction<
-  App extends AnyImplementation,
-  A extends Action.Any,
-  E extends Action.Codec,
-  RB,
-> = A extends HiddenFromMcp
-  ? never
-  : NativeTool<
-      A,
-      E,
-      HandlerContext<HandlersOf<App>, Extract<A["name"], keyof HandlersOf<App>>> | RB
-    >;
-
-type ToolsFor<
-  App extends AnyImplementation,
-  E extends Action.Codec,
-  RB,
-> = App extends AnyImplementation
-  ? ToolForAction<App, App["group"]["actions"][number], E, RB>
-  : never;
+type ToolFor<App, E extends Action.Codec, RB> =
+  App extends Implementation<infer A, infer R, any, any>
+    ? A extends HiddenFromMcp
+      ? never
+      : NativeTool<A, E, R | RB>
+    : never;
 
 type ToolkitTools<Apps extends ReadonlyArray<AnyImplementation>, E extends Action.Codec, RB> = {
-  readonly [T in ToolsFor<Apps[number], E, RB> as T["name"]]: T;
+  readonly [T in ToolFor<Apps[number], E, RB> as T["name"]]: T;
 };
 
 /** Native tools and the layer that binds their action implementations. */

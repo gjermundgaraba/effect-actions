@@ -2,13 +2,14 @@ import { Effect, type Scope } from "effect";
 import { Command } from "effect/unstable/cli";
 import type * as Action from "./Action.js";
 import { command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
-import { type Actions, selectNamed } from "./internal/actions.js";
+import { assertDistinct } from "./internal/actions.js";
 import {
+  acquire,
+  type AnyImplementation,
+  type BuildContext,
+  type BuildError,
   dispatch,
-  type HandlerContext,
-  type Handlers,
-  type HandlersContext,
-  Implementation,
+  type RequestContext,
 } from "./internal/implementation.js";
 
 /**
@@ -28,102 +29,90 @@ export type Options<
   Parameters extends Command.Command.Config = never,
 > = CommandOptions<Output, Parameters> & BeforeOptions<E, R>;
 
-/** Configuration for an aggregate group command. */
-export interface GroupOptions<E = never, R = never> extends BeforeOptions<E, R> {
-  /** Override the group command name. */
-  readonly name?: string;
+/** Configuration for an aggregate command. */
+export interface MakeOptions<E = never, R = never> extends BeforeOptions<E, R> {
+  /** The aggregate command's name. */
+  readonly name: string;
 }
 
-type Selected<G extends Actions, Name extends G["actions"][number]["name"]> = Extract<
-  G["actions"][number],
-  { readonly name: Name }
->;
-
-type BoundHandler<Name extends string, A extends Action.Any, R> = Readonly<
-  Record<Name, Action.Handler<A, R>>
+/** The implementation of `A` among `Apps`. */
+type Selected<Apps extends ReadonlyArray<AnyImplementation>, A extends Action.Any> = Extract<
+  Apps[number],
+  { readonly action: A }
 >;
 
 /**
- * Acquire the implementation in a scope of its own, run one action through the hook
- * and its handler, and release it: every local command, selected or grouped.
+ * Acquire the implementation's source in a scope of its own, run one action through the
+ * hook and its handler, and release it: every local command, selected or aggregated.
  */
-const local = <A extends Action.Any, H extends Handlers<R>, EX, RX, EB, R>(
-  app: Implementation<Actions, H, EX, RX>,
-  action: A,
+const local = <App extends AnyImplementation, EB, RB>(
+  app: App,
   // Typed as the option itself, not as the erased `Before`, so the hook's failure
   // type reaches this effect instead of being inferred as `unknown`.
-  before: BeforeOptions<EB, R>["before"],
-  input: A["input"]["Type"],
+  before: BeforeOptions<EB, RB>["before"],
+  input: App["action"]["input"]["Type"],
 ): Effect.Effect<
-  A["success"]["Type"],
-  A["errors"][number]["Type"] | EX | EB,
-  Exclude<R | RX, Scope.Scope>
+  App["action"]["success"]["Type"],
+  App["action"]["errors"][number]["Type"] | BuildError<App> | EB,
+  Exclude<RequestContext<App> | BuildContext<App> | RB, Scope.Scope>
 > =>
+  // SAFETY: the source's failures and services are the implementation's `EX` and `RX`,
+  // and the handler's are its `R`; `dispatch` keeps the action's own channels.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased source acquisition boundary.
   Effect.scoped(
-    Effect.flatMap(app.build, (handlers) =>
-      dispatch<A, EB, R>(app.group, action, handlers, before)(input),
+    Effect.flatMap(acquire([app]), (handlerOf) =>
+      dispatch<App["action"], EB, RB>(app.action, handlerOf(app), before)(input),
     ),
-  );
+  ) as Effect.Effect<
+    App["action"]["success"]["Type"],
+    App["action"]["errors"][number]["Type"] | BuildError<App> | EB,
+    Exclude<RequestContext<App> | BuildContext<App> | RB, Scope.Scope>
+  >;
+
+const select = <Apps extends ReadonlyArray<AnyImplementation>, A extends Action.Any>(
+  apps: Apps,
+  action: A,
+): Selected<Apps, A> => {
+  const app = apps.find((candidate): candidate is Selected<Apps, A> => candidate.action === action);
+
+  if (app === undefined) throw new Error(`Action "${action.name}" has no implementation here`);
+
+  return app;
+};
 
 /**
- * Project one explicitly selected local action into a native Effect CLI command.
- * The action name resolves against the bound group; no HTTP fallback exists.
+ * Project one action, selected by its contract from `apps`, into a native Effect CLI
+ * command that runs its handler in process. No HTTP fallback exists.
  */
 export const command = <
-  G extends Actions,
-  Name extends G["actions"][number]["name"],
-  H extends BoundHandler<Name, Selected<G, Name>, HandlerContext<H, Name>>,
-  EX,
-  RX,
+  const Apps extends ReadonlyArray<AnyImplementation>,
+  A extends Apps[number]["action"],
   EB = never,
   RB = never,
   Parameters extends Command.Command.Config = never,
 >(
-  app: Implementation<G, H, EX, RX>,
-  name: Name,
-  options?: Options<Selected<G, Name>["success"]["Type"], EB, RB, Parameters>,
+  apps: readonly [...Apps],
+  action: A,
+  options?: Options<A["success"]["Type"], EB, RB, Parameters>,
 ) => {
-  const action: Selected<G, Name> = selectNamed(
-    app.group.actions,
-    name,
-    `action "${app.group.name}.${name}"`,
-  );
+  const app: Selected<Apps, A> = select(apps, action);
 
-  return makeCommand(
-    action,
-    (input) =>
-      local<Selected<G, Name>, H, EX, RX, EB, HandlerContext<H, Name> | RB>(
-        app,
-        action,
-        options?.before,
-        input,
-      ),
-    options,
-  );
+  return makeCommand(action, (input) => local(app, options?.before, input), options);
 };
 
-/** Project every local action below its group namespace with default CLI options. */
-export const group = <
-  G extends Actions,
-  H extends Handlers<HandlersContext<H>>,
-  EX,
-  RX,
-  EB = never,
-  RB = never,
->(
-  app: Implementation<G, H, EX, RX>,
-  options?: GroupOptions<EB, RB>,
+/** Project every implemented action as a subcommand of one aggregate command. */
+export const make = <const Apps extends ReadonlyArray<AnyImplementation>, EB = never, RB = never>(
+  apps: readonly [...Apps],
+  options: MakeOptions<EB, RB>,
 ) => {
-  const commands = app.group.actions.map((action: G["actions"][number]) =>
-    makeCommand(action, (input) =>
-      local<typeof action, H, EX, RX, EB, HandlersContext<H> | RB>(
-        app,
-        action,
-        options?.before,
-        input,
-      ),
-    ),
+  assertDistinct(
+    "command",
+    apps.map((app) => app.action.name),
   );
 
-  return Command.make(options?.name ?? app.group.name).pipe(Command.withSubcommands(commands));
+  const commands = apps.map((app: Apps[number]) =>
+    makeCommand(app.action, (input) => local(app, options.before, input)),
+  );
+
+  return Command.make(options.name).pipe(Command.withSubcommands(commands));
 };

@@ -1,20 +1,19 @@
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
 import { Console, Effect, Layer, Logger, Schema } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 
 const Status = Action.make("status", {
   description: "Report whether the subprocess is ready.",
-  success: Schema.Struct({ ready: Schema.Boolean }),
+  success: { ready: Schema.Boolean },
   access: "read",
 });
 
-const app = ActionGroup.make({ name: "stdio" }, Status).implement({
-  status: () => Effect.log("status called").pipe(Effect.as({ ready: true })),
-});
+const status = Action.implement(Status, () =>
+  Effect.log("status called").pipe(Effect.as({ ready: true })),
+);
 
-const layer = ActionMcp.layerStdio([app], {
+const layer = ActionMcp.layerStdio(status, {
   name: "effect-actions-stdio",
   version: "0.1.0",
 }).pipe(Layer.provide(NodeStdio.layer));

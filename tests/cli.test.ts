@@ -7,7 +7,6 @@ import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import { NodeFileSystem } from "@effect/platform-node";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import { cliServices, logged } from "./cli-services.js";
 
 const run = <Name extends string, Input, Context, E>(
@@ -48,7 +47,7 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
 
   const empties: object[] = [];
 
-  const app = ActionGroup.make({ name: "local" }, NumberAction, Empty).implement({
+  const app = Action.implement([NumberAction, Empty], {
     number: ({ value }) =>
       Effect.andThen(
         Effect.sync(() => inputs.push(value)),
@@ -61,8 +60,8 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
       ),
   });
 
-  await run(ActionCli.command(app, "number"), ["--input", '{"value":"21"}']);
-  const empty = ActionCli.command(app, "empty");
+  await run(ActionCli.command(app, NumberAction), ["--input", '{"value":"21"}']);
+  const empty = ActionCli.command(app, Empty);
   await run(empty, []);
   await run(empty, []);
 
@@ -82,7 +81,7 @@ it("maps explicit native parameters to canonical JSON without an implicit --inpu
     success: Schema.Number,
   });
 
-  const app = ActionGroup.make({ name: "configured" }, NumberAction).implement({
+  const app = Action.implement([NumberAction], {
     number: ({ value }) =>
       Effect.andThen(
         Effect.sync(() => inputs.push(value)),
@@ -90,7 +89,7 @@ it("maps explicit native parameters to canonical JSON without an implicit --inpu
       ),
   });
 
-  const command = ActionCli.command(app, "number", {
+  const command = ActionCli.command(app, NumberAction, {
     parameters: { value: Flag.String("value") },
     input: ({ value }) => ({ value }),
   });
@@ -110,7 +109,7 @@ it("maps canonical JSON strings to codecs whose original encoding is not JSON", 
     success: Schema.String,
   });
 
-  const app = ActionGroup.make({ name: "dated" }, Dated).implement({
+  const app = Action.implement([Dated], {
     dated: ({ at }) =>
       Effect.andThen(
         Effect.sync(() => inputs.push(at)),
@@ -118,7 +117,7 @@ it("maps canonical JSON strings to codecs whose original encoding is not JSON", 
       ),
   });
 
-  const command = ActionCli.command(app, "dated", {
+  const command = ActionCli.command(app, Dated, {
     parameters: { at: Flag.String("at") },
     input: ({ at }) => ({ at }),
   });
@@ -138,7 +137,8 @@ it("rejects invalid mapped input before acquiring or invoking the handler", asyn
     success: Schema.Number,
   });
 
-  const app = ActionGroup.make({ name: "invalid-input" }, NumberAction).implement(
+  const app = Action.implement(
+    [NumberAction],
     Effect.sync(() => {
       builds++;
 
@@ -152,7 +152,7 @@ it("rejects invalid mapped input before acquiring or invoking the handler", asyn
     }),
   );
 
-  const command = ActionCli.command(app, "number", {
+  const command = ActionCli.command(app, NumberAction, {
     parameters: { value: Flag.String("value") },
     input: ({ value }) => ({ value }),
   });
@@ -186,7 +186,7 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
     success: Schema.String,
   });
 
-  const app = ActionGroup.make({ name: "json" }, Scalar, Nested, Required).implement({
+  const app = Action.implement([Scalar, Nested, Required], {
     scalar: (input) =>
       Effect.andThen(
         Effect.sync(() => values.push(input)),
@@ -200,9 +200,9 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
     required: ({ value }) => Effect.succeed(value),
   });
 
-  await run(ActionCli.command(app, "scalar"), ["--input", '"text"']);
-  await run(ActionCli.command(app, "nested"), ["--input", '{"nested":{"value":1}}']);
-  const malformed = await runExit(ActionCli.command(app, "required"), ["--input", "{"]);
+  await run(ActionCli.command(app, Scalar), ["--input", '"text"']);
+  await run(ActionCli.command(app, Nested), ["--input", '{"nested":{"value":1}}']);
+  const malformed = await runExit(ActionCli.command(app, Required), ["--input", "{"]);
   expect(Exit.isFailure(malformed)).toBe(true);
 
   if (Exit.isFailure(malformed)) {
@@ -214,7 +214,7 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
     }
   }
 
-  const omitted = await runExit(ActionCli.command(app, "required"), []);
+  const omitted = await runExit(ActionCli.command(app, Required), []);
   expect(Exit.isFailure(omitted)).toBe(true);
 
   if (Exit.isFailure(omitted)) {
@@ -233,11 +233,11 @@ it("keeps custom renderer JSON output and validates success before rendering", a
     success: Schema.String,
   });
 
-  const app = ActionGroup.make({ name: "rendered" }, Rendered).implement({
+  const app = Action.implement([Rendered], {
     rendered: () => Effect.succeed("value"),
   });
 
-  const command = ActionCli.command(app, "rendered", {
+  const command = ActionCli.command(app, Rendered, {
     render: (value) => `${++rendered}:${value}`,
   });
 
@@ -260,13 +260,13 @@ it("keeps custom renderer JSON output and validates success before rendering", a
     success: Schema.Finite,
   });
 
-  const invalid = ActionGroup.make({ name: "invalid" }, Invalid).implement({
+  const invalid = Action.implement([Invalid], {
     invalid: () => Effect.succeed(Infinity),
   });
 
   expect(
     Exit.isFailure(
-      await runExit(ActionCli.command(invalid, "invalid", { render: invalidRenderer }), []),
+      await runExit(ActionCli.command(invalid, Invalid, { render: invalidRenderer }), []),
     ),
   ).toBe(true);
   expect(invalidRenderer).not.toHaveBeenCalled();
@@ -282,7 +282,7 @@ it("keeps native parameter property names separate from renderer flag names", as
     success: Schema.String,
   });
 
-  const app = ActionGroup.make({ name: "collision" }, Configured).implement({
+  const app = Action.implement([Configured], {
     configured: ({ value }) =>
       Effect.andThen(
         Effect.sync(() => inputs.push(value)),
@@ -290,7 +290,7 @@ it("keeps native parameter property names separate from renderer flag names", as
       ),
   });
 
-  const command = ActionCli.command(app, "configured", {
+  const command = ActionCli.command(app, Configured, {
     parameters: { json: Flag.String("payload-json") },
     input: ({ json }) => ({ value: json }),
     render: (value) => value,
@@ -300,12 +300,12 @@ it("keeps native parameter property names separate from renderer flag names", as
   expect(inputs).toEqual(["value"]);
 });
 
-it("runs any action locally, scopes every invocation, and exposes group subcommands", async () => {
+it("runs any action locally, scopes every invocation, and exposes aggregate subcommands", async () => {
   let acquired = 0;
   let released = 0;
   const inputs: string[] = [];
 
-  // Hidden from MCP, and its group bound to no HTTP adapter: the CLI still runs it.
+  // Hidden from MCP and bound to no HTTP adapter: the CLI still runs it.
   const Local = Action.make("local", {
     description: "Runs locally",
     access: "write",
@@ -320,9 +320,8 @@ it("runs any action locally, scopes every invocation, and exposes group subcomma
     success: Schema.String,
   });
 
-  const group = ActionGroup.make({ name: "locals" }, Local, Other);
-
-  const app = group.implement(
+  const app = Action.implement(
+    [Local, Other],
     Effect.acquireRelease(
       Effect.sync(() => {
         acquired++;
@@ -343,8 +342,8 @@ it("runs any action locally, scopes every invocation, and exposes group subcomma
     ),
   );
 
-  await run(ActionCli.command(app, "local"), ["--input", '{"value":"direct"}']);
-  await run(ActionCli.group(app), ["local", "--input", '{"value":"group"}']);
+  await run(ActionCli.command(app, Local), ["--input", '{"value":"direct"}']);
+  await run(ActionCli.make(app, { name: "locals" }), ["local", "--input", '{"value":"group"}']);
 
   expect(inputs).toEqual(["direct", "group"]);
   expect(acquired).toBe(2);
@@ -361,7 +360,7 @@ it("reads the whole canonical input from --input-file, which takes precedence ov
     success: Schema.Number,
   });
 
-  const app = ActionGroup.make({ name: "file" }, NumberAction).implement({
+  const app = Action.implement([NumberAction], {
     number: ({ value }) =>
       Effect.andThen(
         Effect.sync(() => inputs.push(value)),
@@ -376,7 +375,7 @@ it("reads the whole canonical input from --input-file, which takes precedence ov
   const invalid = join(directory, "invalid.json");
   await writeFile(invalid, '{"value":"x"}');
 
-  const command = ActionCli.command(app, "number");
+  const command = ActionCli.command(app, NumberAction);
 
   const exit = (args: ReadonlyArray<string>) =>
     Effect.runPromiseExit(
@@ -413,7 +412,7 @@ it("adds --json only to a command with a renderer, without contesting a host's o
     success: Schema.String,
   });
 
-  const app = ActionGroup.make({ name: "output" }, Plain, Pretty).implement({
+  const app = Action.implement([Plain, Pretty], {
     plain: () => Effect.succeed("plain"),
     pretty: () => Effect.succeed("pretty"),
   });
@@ -428,15 +427,13 @@ it("adds --json only to a command with a renderer, without contesting a host's o
       ),
     ).then(([, output]) => output);
 
-  const pretty = ActionCli.command(app, "pretty", { render: (value) => `rendered ${value}` });
+  const pretty = ActionCli.command(app, Pretty, { render: (value) => `rendered ${value}` });
   expect(await lines(pretty, [])).toEqual(["rendered pretty"]);
   expect(await lines(pretty, ["--json"])).toEqual(['"pretty"']);
   // Without a renderer the output is JSON already, and the flag does not exist:
   // the native parser treats it as unknown and shows help.
-  expect(await lines(ActionCli.command(app, "plain"), [])).toEqual(['"plain"']);
-  await expect(lines(ActionCli.command(app, "plain"), ["--json"])).rejects.toThrow(
-    "Help requested",
-  );
+  expect(await lines(ActionCli.command(app, Plain), [])).toEqual(['"plain"']);
+  await expect(lines(ActionCli.command(app, Plain), ["--json"])).rejects.toThrow("Help requested");
 
   // A regular flag: a host that declares `--json` itself, globally or on a
   // parent, still composes; the projected command keeps its own.
@@ -445,10 +442,161 @@ it("adds --json only to a command with a renderer, without contesting a host's o
   });
 
   const hosted = Command.make("host", { json: Flag.Boolean("json") }).pipe(
-    Command.withSubcommands([pretty, ActionCli.group(app)]),
+    Command.withSubcommands([pretty, ActionCli.make(app, { name: "output" })]),
     Command.withGlobalFlags([HostJson]),
   );
 
   expect(await lines(hosted, ["pretty", "--json"])).toEqual(['"pretty"']);
   expect(await lines(hosted, ["output", "plain"])).toEqual(['"plain"']);
+});
+
+it("selects a command's implementation by contract identity, not by name", async () => {
+  const First = Action.make("same", {
+    description: "The first contract named same",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Second = Action.make("same", {
+    description: "Another contract with the same name",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const first = Action.implement(First, () => Effect.succeed("first"));
+  const second = Action.implement(Second, () => Effect.succeed("second"));
+
+  const lines = async (action: typeof First) => {
+    const [, output] = await Effect.runPromise(
+      Effect.scoped(
+        logged(
+          Command.runWith(ActionCli.command([...first, ...second], action), { version: "0" })([]),
+        ).pipe(Effect.provide(cliServices)),
+      ),
+    );
+
+    return output;
+  };
+
+  expect(await lines(First)).toEqual(['"first"']);
+  expect(await lines(Second)).toEqual(['"second"']);
+
+  const Missing = Action.make("missing", {
+    description: "Not implemented here",
+    access: "read",
+    success: Schema.String,
+  });
+
+  expect(() =>
+    // @ts-expect-error -- `Missing` is not the action of any implementation passed.
+    ActionCli.command(first, Missing),
+  ).toThrow('Action "missing" has no implementation here');
+});
+
+it("aggregates implementations under one named command and refuses duplicate command names", async () => {
+  const One = Action.make("one", { description: "One", access: "read", success: Schema.String });
+  const Two = Action.make("two", { description: "Two", access: "read", success: Schema.String });
+
+  const one = Action.implement(One, () => Effect.succeed("one"));
+  const two = Action.implement(Two, () => Effect.succeed("two"));
+
+  const tool = ActionCli.make([...one, ...two], { name: "tool" });
+  expect(tool.name).toBe("tool");
+
+  const [, output] = await Effect.runPromise(
+    Effect.scoped(
+      logged(Command.runWith(tool, { version: "0" })(["two"])).pipe(Effect.provide(cliServices)),
+    ),
+  );
+
+  expect(output).toEqual(['"two"']);
+
+  const Again = Action.make("one", {
+    description: "Again",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const again = Action.implement(Again, () => Effect.succeed("again"));
+
+  expect(() => ActionCli.make([...one, ...again], { name: "tool" })).toThrow(
+    "Duplicate command: one",
+  );
+});
+
+it("acquires only the builder of the selected command's implementation", async () => {
+  const builds: string[] = [];
+
+  const Built = Action.make("built", {
+    description: "Built",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Idle = Action.make("idle", { description: "Idle", access: "read", success: Schema.String });
+
+  const built = Action.implement(
+    Built,
+    Effect.sync(() => {
+      builds.push("built");
+
+      return () => Effect.succeed("built");
+    }),
+  );
+
+  const idle = Action.implement(
+    Idle,
+    Effect.sync(() => {
+      builds.push("idle");
+
+      return () => Effect.succeed("idle");
+    }),
+  );
+
+  await run(ActionCli.command([...built, ...idle], Built), []);
+  await run(ActionCli.make([...built, ...idle], { name: "tool" }), ["built"]);
+
+  expect(builds).toEqual(["built", "built"]);
+});
+
+it("dies when the command runs if its builder's record lacks the handler", async () => {
+  const Present = Action.make("present", {
+    description: "Has a handler",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Absent = Action.make("absent", {
+    description: "Its handler is missing at runtime",
+    access: "read",
+    success: Schema.String,
+  });
+
+  // An inherited method satisfies the types, but only own properties are handlers.
+  class Inherited {
+    absent() {
+      return Effect.succeed("inherited");
+    }
+  }
+
+  class Handlers extends Inherited {
+    readonly present = () => Effect.succeed("present");
+  }
+
+  const apps = Action.implement(
+    [Present, Absent],
+    Effect.sync(() => new Handlers()),
+  );
+
+  // Building the command checks nothing; running it builds the record.
+  const command = ActionCli.command(apps, Absent);
+  const exit = await runExit(command, []);
+
+  expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+
+  if (Exit.isFailure(exit)) {
+    expect(Cause.pretty(exit.cause)).toContain("Missing handler: absent");
+  }
+
+  expect(await run(ActionCli.command(apps, Present), [])).toBeUndefined();
 });

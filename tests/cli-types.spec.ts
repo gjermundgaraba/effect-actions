@@ -5,7 +5,6 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 
 type CommandError<C> =
@@ -47,9 +46,8 @@ const Two = Action.make("two", {
   success: Schema.Finite,
 });
 
-const LocalGroup = ActionGroup.make({ name: "local" }, One, Two);
-
-const local = LocalGroup.implement(
+const local = Action.implement(
+  [One, Two],
   Effect.map(Build, (prefix) => ({
     one: ({ value }: { value: string }) =>
       Effect.map(OneRequest, (request) => `${prefix}${request}${value}`),
@@ -57,15 +55,15 @@ const local = LocalGroup.implement(
   })),
 );
 
-const localOne = ActionCli.command(local, "one", {
+const localOne = ActionCli.command(local, One, {
   render: (output) => output.toUpperCase(),
 });
 
-const localTwo = ActionCli.command(local, "two", {
+const localTwo = ActionCli.command(local, Two, {
   render: (output) => String(output.toFixed()),
 });
 
-const localGroup = ActionCli.group(local);
+const localGroup = ActionCli.make(local, { name: "local" });
 
 const localOneBuild: Includes<CommandServices<typeof localOne>, Build> = true;
 
@@ -93,13 +91,16 @@ const localOneErrorIsKnown: Equal<
   false
 > = true;
 
-const guarded = ActionCli.command(local, "one", {
+const guarded = ActionCli.command(local, One, {
   before: () => Effect.fail(new Refused()),
 });
 
 const guardedRefusal: Includes<CommandError<typeof guarded>, Refused> = true;
 
-const guardedGroup = ActionCli.group(local, { before: () => Effect.fail(new Refused()) });
+const guardedGroup = ActionCli.make(local, {
+  name: "local",
+  before: () => Effect.fail(new Refused()),
+});
 
 const guardedGroupRefusal: Includes<CommandError<typeof guardedGroup>, Refused> = true;
 
@@ -125,14 +126,17 @@ void guardedRefusal;
 
 void guardedGroupRefusal;
 
-const noService = ActionGroup.make(
-  { name: "plain" },
-  Action.make("plain", { description: "Plain", access: "write", success: Schema.String }),
-).implement({ plain: () => Effect.succeed("plain") });
+const Plain = Action.make("plain", {
+  description: "Plain",
+  access: "write",
+  success: Schema.String,
+});
 
-const plainCommand = ActionCli.command(noService, "plain");
+const noService = Action.implement(Plain, () => Effect.succeed("plain"));
 
-const plainGroup = ActionCli.group(noService);
+const plainCommand = ActionCli.command(noService, Plain);
+
+const plainGroup = ActionCli.make(noService, { name: "plain" });
 
 const noUnknown: Equal<
   unknown extends CommandServices<typeof plainCommand> ? true : false,
@@ -148,19 +152,23 @@ const plainGroupNoUnknown: Equal<
 
 void plainGroupNoUnknown;
 
-const scoped = ActionGroup.make(
-  { name: "scoped" },
-  Action.make("scoped", { description: "Scoped", access: "write", success: Schema.String }),
-).implement(
+const Scoped = Action.make("scoped", {
+  description: "Scoped",
+  access: "write",
+  success: Schema.String,
+});
+
+const scoped = Action.implement(
+  [Scoped],
   Effect.acquireRelease(
     Effect.succeed({ scoped: () => Effect.succeed("scoped") }),
     () => Effect.void,
   ),
 );
 
-const scopedCommand = ActionCli.command(scoped, "scoped");
+const scopedCommand = ActionCli.command(scoped, Scoped);
 
-const scopedGroup = ActionCli.group(scoped);
+const scopedGroup = ActionCli.make(scoped, { name: "scoped" });
 
 const scopedCommandHasNoScope: Includes<CommandServices<typeof scopedCommand>, Scope.Scope> = false;
 
@@ -170,20 +178,19 @@ void scopedCommandHasNoScope;
 
 void scopedGroupHasNoScope;
 
-const scopedHandler = ActionGroup.make(
-  { name: "scoped-handler" },
-  Action.make("scopedHandler", {
-    description: "Scoped handler",
-    access: "write",
-    success: Schema.String,
-  }),
-).implement({
-  scopedHandler: () => Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
+const ScopedHandler = Action.make("scopedHandler", {
+  description: "Scoped handler",
+  access: "write",
+  success: Schema.String,
 });
 
-const scopedHandlerCommand = ActionCli.command(scopedHandler, "scopedHandler");
+const scopedHandler = Action.implement(ScopedHandler, () =>
+  Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
+);
 
-const scopedHandlerGroup = ActionCli.group(scopedHandler);
+const scopedHandlerCommand = ActionCli.command(scopedHandler, ScopedHandler);
+
+const scopedHandlerGroup = ActionCli.make(scopedHandler, { name: "scoped-handler" });
 
 const scopedHandlerCommandHasNoScope: Includes<
   CommandServices<typeof scopedHandlerCommand>,
@@ -199,11 +206,11 @@ void scopedHandlerCommandHasNoScope;
 
 void scopedHandlerGroupHasNoScope;
 
-// @ts-expect-error Local command names must belong to the implementation's group.
-ActionCli.command(local, "missing");
+// @ts-expect-error A local command selects an action implemented by `apps`.
+ActionCli.command(local, Plain);
 
 // @ts-expect-error The renderer receives the selected action's exact success value.
-ActionCli.command(local, "two", { render: (output: string) => output });
+ActionCli.command(local, Two, { render: (output: string) => output });
 
 class Domain extends Schema.TaggedError<Domain>()("Domain", {}) {}
 
@@ -224,65 +231,39 @@ const HttpOnly = Action.make("httpOnly", {
   mcp: false,
 });
 
-const RemoteGroup = ActionGroup.make(
-  {
-    name: "remote",
-    schemaError: {
-      invalid: { schema: Policy, make: () => new Policy() },
-      internal: { schema: Policy, make: () => new Policy() },
-    },
+const Other = Action.make("other", {
+  description: "Other",
+  access: "write",
+  success: Schema.String,
+});
+
+const http = ActionHttp.make([RemoteAction, HttpOnly, Other], {
+  schemaError: {
+    invalid: { schema: Policy, make: () => new Policy() },
+    internal: { schema: Policy, make: () => new Policy() },
   },
-  RemoteAction,
-  HttpOnly,
-);
+});
 
-const OtherGroup = ActionGroup.make(
-  { name: "other" },
-  Action.make("other", { description: "Other", access: "write", success: Schema.String }),
-);
-
-const http = ActionHttp.make({ apiPath: "/api" }, RemoteGroup, OtherGroup);
-
-const StringShared = ActionGroup.make(
-  { name: "string-shared" },
-  Action.make("shared", { description: "String shared", access: "write", success: Schema.String }),
-);
-
-const NumberShared = ActionGroup.make(
-  { name: "number-shared" },
-  Action.make("shared", { description: "Number shared", access: "write", success: Schema.Finite }),
-);
-
-const sharedHttp = ActionHttp.make({ apiPath: "/shared" }, StringShared, NumberShared);
-
-const sharedString = ActionCliClient.command(sharedHttp, "string-shared", "shared", {
+const remote = ActionCliClient.command(http, RemoteAction, {
   render: (output) => output.toUpperCase(),
 });
 
-const sharedNumber = ActionCliClient.command(sharedHttp, "number-shared", "shared", {
-  render: (output) => output.toFixed(),
-});
-
-const remote = ActionCliClient.command(http, "remote", "remote", {
-  render: (output) => output.toUpperCase(),
-});
-
-const configuredRemote = ActionCliClient.command(http, "remote", "remote", {
+const configuredRemote = ActionCliClient.command(http, RemoteAction, {
   parameters: { value: Argument.String("value") },
   input: ({ value }) => ({ value }),
   render: (output) => output.toUpperCase(),
 });
 
-const optionRemote = ActionCliClient.command(http, "remote", "remote", {
+const optionRemote = ActionCliClient.command(http, RemoteAction, {
   parameters: { value: Flag.String("value").pipe(Flag.optional) },
   input: ({ value }) => ({ value: Option.getOrElse(value, () => "") }),
 });
 
-const remoteHttpOnly = ActionCliClient.command(http, "remote", "httpOnly", {
+const remoteHttpOnly = ActionCliClient.command(http, HttpOnly, {
   render: (output) => String(output.toFixed()),
 });
 
-const remoteGroup = ActionCliClient.group(http, "remote");
+const remoteGroup = ActionCliClient.make(http, { name: "remote" });
 
 const remoteHttpClient: Includes<CommandServices<typeof remote>, HttpClient.HttpClient> = true;
 
@@ -322,30 +303,20 @@ void remoteHttpOnly;
 
 void remoteGroup;
 
-void sharedString;
-
-void sharedNumber;
-
-// @ts-expect-error Remote command names are exact.
-ActionCliClient.command(http, "remote", "missing");
-
-// @ts-expect-error An action of another mounted group cannot leak through this group's command.
-ActionCliClient.command(http, "remote", "other");
-
-// @ts-expect-error Selectors are strings retained by the HTTP binding, not separately supplied groups.
-ActionCliClient.command(http, RemoteGroup, "remote");
+// @ts-expect-error A remote command selects an action of the binding.
+ActionCliClient.command(http, Plain);
 
 // @ts-expect-error Explicit native parameters require their input mapper.
-ActionCliClient.command(http, "remote", "remote", {
+ActionCliClient.command(http, RemoteAction, {
   parameters: { value: Argument.String("value") },
 });
 
 // @ts-expect-error An input mapper without native parameters is not a command configuration.
-ActionCliClient.command(http, "remote", "remote", {
+ActionCliClient.command(http, RemoteAction, {
   input: () => ({ value: "ok" }),
 });
 
-ActionCliClient.command(http, "remote", "remote", {
+ActionCliClient.command(http, RemoteAction, {
   parameters: { value: Argument.String("value") },
   // @ts-expect-error Mapper must return JSON; action schema shape is checked at runtime.
   input: () => undefined,
