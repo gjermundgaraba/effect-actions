@@ -1,95 +1,72 @@
 # Testing
 
-In-memory calls against served layers. `Testing` needs no extra dependency. `TestingClient`
-loads the optional `@modelcontextprotocol/client` peer and nothing else does.
+In-memory calls against served layers. Needs no extra dependency.
 
 ## API
 
-Import `@gjermundgaraba/effect-actions/Testing`; official-client helpers are in the separate
-`@gjermundgaraba/effect-actions/TestingClient` subpath.
+Import `@gjermundgaraba/effect-actions/Testing`.
 
-| API                                           | Purpose                                                                                    |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `Testing.httpClient(Http, handler, options?)` | The binding's client, as `ActionHttpClient.make` shapes it, over an in-memory web handler. |
-| `Testing.mcpRequest(options)`                 | Build a stateless MCP JSON-RPC `Request`.                                                  |
-| `Testing.mcpCall(handler, options)`           | Call one tool in memory and return its outcome without the wire envelope.                  |
-| `TestingClient.withMcpClient(options, run)`   | Connect the official client, run an asynchronous callback, then close it.                  |
+| API                                  | Purpose                                                                    |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| `serve(routes)`                      | Serve routes in memory: `{ handler, dispose }`.                            |
+| `httpClient(Http, server, options?)` | The binding's client, as `ActionHttpClient.make` shapes it, over `server`. |
+| `mcpCall(server, options)`           | Call one tool in memory and return its outcome without the wire envelope.  |
 
-`httpClient` takes the binding from `ActionHttp.make` and `ActionHttpClient.Options`;
-`baseUrl` defaults to `http://localhost`.
-Its exported `Handler` type is a web request to response Promise.
+`server` is what `serve` returns, or any web handler (`(request) => Promise<Response>`, such as
+`HttpRouter.toWebHandler(routes).handler`). `httpClient` takes the binding from
+`ActionHttp.make` and `ActionHttpClient.Options`; `baseUrl` defaults to `http://localhost`.
 
-| MCP option                            | Meaning                                                     |
-| ------------------------------------- | ----------------------------------------------------------- |
-| `mcpRequest`: `url`, `method`         | Required destination and JSON-RPC method.                   |
-| `mcpRequest`: `params`, `headers`     | Optional parameters and request headers.                    |
-| `mcpCall`: `url`, `name`              | Required endpoint URL and tool name (`mcp.name`).           |
-| `mcpCall`: `arguments`, `headers`     | Optional tool arguments (default `{}`) and request headers. |
-| `withMcpClient`: `fetch`, `path`      | Required in-memory request handler and endpoint path.       |
-| `withMcpClient`: `baseUrl`, `headers` | Optional base URL (default `http://localhost`) and headers. |
+| `mcpCall` option  | Meaning                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `name`            | Required tool name: its action's name.                                                                |
+| `arguments`       | Tool arguments; default `{}`.                                                                         |
+| `headers`         | Request headers.                                                                                      |
+| `path`, `baseUrl` | Where the endpoint is: default `/mcp` (the `ActionMcp.layerHttp` default) against `http://localhost`. |
 
-Exported option/value types: `McpRequestOptions`, `McpRequestParams`, `McpRequestValue`,
-`McpCallOptions`, `McpCallResult` from `Testing`, and `McpClientOptions` from `TestingClient`.
+Exported types: `Server`, `Handler`, `McpCallResult`.
 
 ## Canonical
 
 ```ts
-import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { Effect } from "effect";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import * as TestingClient from "@gjermundgaraba/effect-actions/TestingClient";
 import { Http, routes } from "./quickstart.js";
 
-const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)));
+const server = Testing.serve(routes);
 
 try {
   const greeting = await Effect.runPromise(
     Effect.gen(function* () {
-      const client = yield* Testing.httpClient(Http, web.handler);
+      const client = yield* Testing.httpClient(Http, server);
 
       return yield* client.greet({ name: "Ada" });
     }),
   );
 
-  // Raw MCP request; this stateless revision needs no initialize handshake.
-  const listed = await web.handler(
-    Testing.mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }),
-  );
+  // One tool call to `/mcp`, answered as `{ isError: false, value: "Hello, Ada!" }`.
+  const called = await Testing.mcpCall(server, { name: "greet", arguments: { name: "Ada" } });
 
-  // One tool call, answered as `{ isError: false, value: "Hello, Ada!" }`.
-  const called = await Testing.mcpCall(web.handler, {
-    url: "http://localhost/mcp",
-    name: "greet",
-    arguments: { name: "Ada" },
-  });
-
-  // The official client uses the same in-memory handler.
-  const result = await TestingClient.withMcpClient({ fetch: web.handler, path: "/mcp" }, (client) =>
-    client.callTool({ name: "greet", arguments: { name: "Ada" } }),
-  );
-
-  console.log({ greeting, listStatus: listed.status, called, result });
+  console.log({ greeting, called });
 } finally {
-  await web.dispose();
+  await server.dispose();
 }
 ```
 
 ## Rules
 
-- `httpClient` is the client `ActionHttpClient.make` returns, with its transport replaced by `handler` and no `HttpClient` requirement. Same calls (`client.greet({ name })`), same error channel. The native client stays available as `HttpApiClient.make(Http.api)`.
-- `mcpRequest` pins protocol version 2026-07-28 in both the header and `_meta`. Caller `params._meta` fields override the defaulted client capabilities and info; the merge is shallow. Application metadata is preserved.
-- `params` accepts what `JSON.stringify` accepts, so tests can send malformed arguments on purpose. `undefined` fields are dropped.
-- `mcpCall` sends one `tools/call` through `mcpRequest` and resolves with `{ isError: false, value }`, the success taken from `structuredContent.value`, or `{ isError: true, error }`, the result's error text parsed as JSON. A declared error or a hook refusal is its JSON encoding, the same body HTTP sends; the native server's own messages (invalid arguments, defects) are not JSON and stay text. It reads a JSON or an event-stream response.
-- `mcpCall` throws when the answer is not a tool result: a status other than 200 (an authentication refusal), or a JSON-RPC error (an unknown tool). Use `mcpRequest` to assert on those responses.
-- `withMcpClient` pins the official client to MCP 2026-07-28, the only revision `ActionMcp` serves, and closes the transport in a `finally` block.
-- Add `Authorization` through `headers` in the MCP helpers, or through `transformClient` in `httpClient` options.
+- `serve(routes)` is `HttpRouter.toWebHandler` with `HttpServer.layerServices` provided and request logging off. Routes must satisfy their own per-request requirements, with their middleware; a route still owing one is a type error. Each `serve` builds the routes' layers anew, builders included.
+
+- `httpClient` is the client `ActionHttpClient.make` returns, with its transport replaced by `server` and no `HttpClient` requirement. Same calls (`client.greet({ name })`), same error channel. The native client stays available as `HttpApiClient.make(Http.api)`.
+- `mcpCall` sends one stateless `tools/call`, pinned to protocol version 2026-07-28 in both the header and `_meta`, and resolves with `{ isError: false, value }`, the success taken from `structuredContent.value`, or `{ isError: true, error }`, the result's error text parsed as JSON. A declared error or a hook refusal is its JSON encoding, the same body HTTP sends; the native server's own messages (invalid arguments, defects) are not JSON and stay text. It reads a JSON or an event-stream response.
+- `arguments` accepts what `JSON.stringify` accepts, so tests can send malformed arguments on purpose. `undefined` fields are dropped.
+- `mcpCall` throws when the answer is not a tool result, with its status and body: a status other than 200 (an authentication refusal), or a JSON-RPC error (an unknown tool). To assert on other MCP responses, send a `Request` to `server.handler` yourself.
+- Add `Authorization` through `headers` in `mcpCall`, or through `transformClient` in `httpClient` options.
 - Direct handler tests call the function passed to `Action.implement`, but they bypass decoding, encoding, middleware and the hook. Keep at least one adapter-level test per transport.
 
 ## Failure modes
 
-- `@modelcontextprotocol/client` not found: only `TestingClient` needs it. Install the peer in devDependencies, or use `Testing.mcpRequest` instead.
-- `withMcpClient` rejects its options with `versionNegotiation`: the revision is fixed at 2026-07-28. Delete the option.
 - `MCP tools/call "<name>" answered 401`: the call reached authentication without a credential. Pass `headers: { authorization: "Bearer ..." }`.
-- Handler leaks between tests: `web.dispose()` was not called. Register it with the test runner's cleanup hook.
-- 404 from `httpClient`: the action's implementation was not passed to any `Http.layer` call in the served routes, or the base URL is wrong. Include `Http.layer(actions)` in the routes.
-- Missing platform-service requirements when constructing the web handler: provide `HttpServer.layerServices` to the routes before `toWebHandler`.
+- Handler leaks between tests: `dispose()` was not called. Register it with the test runner's cleanup hook.
+- 404 from `httpClient`: the action's implementation was not passed to any `ActionHttp.layer` call in the served routes, or the base URL is wrong. Include `ActionHttp.layer(Http, implementations)` in the routes.
+- Type error at `serve` naming `HttpRouter.Request<"Requires", ...>`: a route owes a per-request service, such as an identity no middleware provides. Provide the middleware's layer to it.
+- 404 from `mcpCall`: the endpoint is not at `/mcp`. Pass its `path`.

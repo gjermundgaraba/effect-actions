@@ -2,20 +2,34 @@ import { Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import type { AnyImplementation, RequestContext } from "../src/internal/implementation.js";
+import {
+  type Member,
+  type RequestContext,
+  type Served,
+  toList,
+} from "../src/internal/implementation.js";
 import { layer } from "../examples/app.js";
-
-/** The default HTTP mount path. */
-export const testApiPath = "/api" as const;
-
-/** The default MCP endpoint path. */
-export const testMcpPath = "/mcp" as const;
-
-export const testMcpUrl = "http://localhost/mcp";
+import { serve } from "../src/Testing.js";
 
 // Each call builds fresh example state.
-export const makeTestApp = () =>
-  HttpRouter.toWebHandler(layer.pipe(Layer.provide(HttpServer.layerServices)), {
+export const makeTestApp = () => serve(layer);
+
+/** What routes may leave to `serveWithContext`: the router, the platform, request context. */
+type Routable =
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request<"Requires", any>
+  | HttpRouter.Request<"GlobalRequires", any>
+  | HttpRouter.Request<"Error", any>
+  | HttpRouter.Request<"GlobalError", any>
+  | Layer.Success<typeof HttpServer.layerServices>;
+
+/**
+ * `Testing.serve`, except that each request takes a context: for tests that supply
+ * request services per request, or deliberately leave them out. `Testing.serve` requires
+ * routes to satisfy them, so it cannot.
+ */
+export const serveWithContext = <A, E, R extends Routable>(routes: Layer.Layer<A, E, R>) =>
+  HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
     disableLogger: true,
   });
 
@@ -23,30 +37,28 @@ export const makeTestApp = () =>
  * Serve implementations over HTTP, from a binding of exactly their actions;
  * `request` supplies their per-request services.
  */
-export const makeTestHttp = <const Apps extends ReadonlyArray<AnyImplementation>>(
-  apps: readonly [...Apps],
-  request: Layer.Layer<NoInfer<RequestContext<Apps[number]>>>,
+export const makeTestHttp = <const Apps extends Served>(
+  apps: Apps,
+  request: Layer.Layer<NoInfer<RequestContext<Member<Apps>>>>,
   options?: ActionHttp.Options,
 ) =>
-  HttpRouter.toWebHandler(
-    ActionHttp.make(
-      apps.map((app) => app.action),
-      options,
-    )
-      .layer(apps)
-      .pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+  serve(
+    ActionHttp.layer(
+      ActionHttp.make(
+        toList(apps).flatMap((app) => app.actions),
+        options,
+      ),
+      apps,
+    ).pipe(HttpRouter.provideRequest(request)),
   );
 
 /** Serve implementations over MCP at `/mcp`; `request` supplies their per-request services. */
-export const makeTestMcp = <const Apps extends ReadonlyArray<AnyImplementation>>(
-  apps: readonly [...Apps],
-  request: Layer.Layer<NoInfer<RequestContext<Apps[number]>>>,
+export const makeTestMcp = <const Apps extends Served>(
+  apps: Apps,
+  request: Layer.Layer<NoInfer<RequestContext<Member<Apps>>>>,
 ) =>
-  HttpRouter.toWebHandler(
+  serve(
     ActionMcp.layerHttp(apps, { name: "test", version: "0" }).pipe(
       HttpRouter.provideRequest(request),
-      Layer.provide(HttpServer.layerServices),
     ),
-    { disableLogger: true },
   );

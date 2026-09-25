@@ -7,14 +7,13 @@ import {
   client,
   type Client,
   type ErasedMethod,
-  type ErrorsOf,
   type Options,
   withFetch,
 } from "./internal/client.js";
 import type { ErasedValue } from "./internal/implementation.js";
 
 /** A client's methods, one per action of the binding. */
-export type { AnyHttp, Client, ErrorsOf, Method, Options } from "./internal/client.js";
+export type { Client, Options } from "./internal/client.js";
 
 /** `Options`, plus the `fetch` the Promise client sends through. */
 export interface PromiseOptions extends Options {
@@ -22,11 +21,11 @@ export interface PromiseOptions extends Options {
 }
 
 /** One action as a Promise of its decoded success. */
-export type PromiseMethod<A extends Action.Any> = Call<A, Promise<A["success"]["Type"]>>;
+type PromiseMethod<A extends Action.Any> = Call<A, Promise<A["success"]["Type"]>>;
 
-/** Every action of `Actions`, as `client.<action>(input)`. */
-export type PromiseClient<Actions extends ReadonlyArray<Action.Any>> = {
-  readonly [A in Actions[number] as A["name"]]: PromiseMethod<A>;
+/** Every action of the binding `H`, as `client.<action>(input)`. */
+export type PromiseClient<H extends AnyHttp> = {
+  readonly [A in H["actions"][number] as A["name"]]: PromiseMethod<A>;
 };
 
 /**
@@ -38,7 +37,7 @@ export type PromiseClient<Actions extends ReadonlyArray<Action.Any>> = {
 export function make<const H extends AnyHttp>(
   http: H,
   options?: Options,
-): Effect.Effect<Client<H["actions"], ErrorsOf<H>>, never, HttpClient.HttpClient>;
+): Effect.Effect<Client<H>, never, HttpClient.HttpClient>;
 export function make(
   http: AnyHttp,
   options?: Options,
@@ -52,15 +51,15 @@ export function make(
  * is retried.
  *
  * A call resolves with the action's decoded success. It rejects with what `make`'s
- * method fails with: a declared error value (the action's, or the binding's surface or
- * schema-error policy errors), a native `HttpClientError` when the server could not be
+ * method fails with: a declared error value (the action's, or one of the binding's
+ * `errors`), a native `HttpClientError` when the server could not be
  * reached or answered with a status or body the contract does not declare, or a
  * `SchemaError` when the input does not encode or the success does not decode.
  */
 export function promise<const H extends AnyHttp>(
   http: H,
   options?: PromiseOptions,
-): PromiseClient<H["actions"]>;
+): PromiseClient<H>;
 export function promise(
   http: AnyHttp,
   { fetch, ...options }: PromiseOptions = {},

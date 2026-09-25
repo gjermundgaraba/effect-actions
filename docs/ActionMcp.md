@@ -1,18 +1,18 @@
 # ActionMcp
 
-MCP tools from implementations, on Effect's native `McpServer`. One `Tool` per MCP-enabled
-action. Two transports: a Streamable HTTP endpoint mounted on the router, or newline-delimited
+MCP tools from implementations, on Effect's native `McpServer`. One `Tool` per served action,
+named after it. Two transports: a Streamable HTTP endpoint mounted on the router, or newline-delimited
 JSON-RPC on standard I/O for a subprocess. Both speak MCP 2026-07-28 only.
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
-| API                         | Purpose                                                        |
-| --------------------------- | -------------------------------------------------------------- |
-| `layerHttp(apps, options)`  | Serve a list of implementations at a Streamable HTTP endpoint. |
-| `layerStdio(apps, options)` | Serve implementations over a subprocess's standard I/O.        |
-| `Options`, `StdioOptions`   | Configuration for the two transports.                          |
+| API                         | Purpose                                                 |
+| --------------------------- | ------------------------------------------------------- |
+| `layerHttp(apps, options)`  | Serve implementations at a Streamable HTTP endpoint.    |
+| `layerStdio(apps, options)` | Serve implementations over a subprocess's standard I/O. |
+| `Options`, `StdioOptions`   | Configuration for the two transports.                   |
 
 The options are the native `McpServer.layerHttp` / `McpServer.layerStdio` options, except
 `protocols`, plus this surface's `errors` and `before`. The native ones pass through unchanged;
@@ -29,7 +29,8 @@ The options are the native `McpServer.layerHttp` / `McpServer.layerStdio` option
 | `errors`                             | Optional surface error codecs, declared on every served tool.                                         |
 | `before`                             | Optional Effectful hook receiving the selected `Action.Any`; fails only with declared surface errors. |
 
-Both layers retain the build failures and requirements of the builders they acquire, plus native
+`apps` is one implementation or a list. Both layers retain the build failures and
+requirements of their builders, plus native
 `IllegalArgumentError`. HTTP needs the router and wraps handler/hook services as request
 requirements. stdio needs `Stdio` and the caller's request services. Native `McpRequestContext`
 is supplied by the server, not owed by the host.
@@ -39,29 +40,30 @@ is supplied by the server, not owed by the host.
 ```ts
 import { Layer } from "effect";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { guarded } from "./auth.js";
+import { authentication } from "./authentication.js";
 import { double, listChanges, status, userActions } from "./handlers.js";
-import { authentication, authorize, Forbidden } from "./auth.js";
 
-const allowedOrigins = ["http://localhost:3000"];
+const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-// One endpoint is one route: its middleware covers every tool on it.
-// Tools with different middleware needs get their own endpoint.
+// An MCP endpoint is one route, so its middleware, authentication included, covers all
+// of its tools. Tools that need no credentials get their own endpoint, which compiles
+// because this implementation requires nothing per request.
 const publicMcp = ActionMcp.layerHttp(status, {
-  name: "app-public",
-  version: "1.0.0",
+  name: "effect-actions-public",
+  version: "0.0.0",
   path: "/mcp/public",
   allowedOrigins,
 });
 
-// Lists of implementations combine by spreading. `path` defaults to `/mcp`.
-const mcp = ActionMcp.layerHttp([...userActions, ...double, ...listChanges], {
-  name: "app",
-  version: "1.0.0",
+// A list of implementations serves all of their actions. `path` defaults to `/mcp`.
+const mcp = ActionMcp.layerHttp([userActions, double, listChanges], {
+  name: "effect-actions",
+  version: "0.0.0",
   allowedOrigins,
-  // The same rule the HTTP binding runs, declared here so a refusal is an
-  // ordinary tool failure rather than a transport error.
-  errors: [Forbidden],
-  before: authorize,
+  // The same guard the HTTP layer binds; `Forbidden` is declared on each tool, so a
+  // refusal is an ordinary tool failure rather than a transport error.
+  ...guarded,
 }).pipe(Layer.provide(authentication.layer));
 
 export const layer = Layer.mergeAll(publicMcp, mcp);
@@ -139,15 +141,15 @@ Layer.launch(layer).pipe(
 ## Rules
 
 - Both transports serve MCP 2026-07-28 and no other revision; there is no `protocols` option. Over HTTP the endpoint is stateless: no initialize handshake, no session, and every request stands alone. Effect owns version checks and rejects any other revision. Stdio has no sessions, so it could serve an older host, but it refuses one deliberately, for uniformity: a client that works over one transport works over the other.
-- `path` defaults to `/mcp`. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form, whatever revision is negotiated.
+- `path` defaults to `/mcp`. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form.
 - Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication middleware wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
 - An endpoint is one route. Middleware provided to `layerHttp` covers all of its tools. To serve tools under different middleware, mount them on different paths with separate `layerHttp` calls.
-- Only MCP-enabled actions become tools, under `mcp.name` with the resolved hints. An implementation of an action with `mcp: false` may be in the list; it is skipped. The layer's types drop an action's requirements only when its type is certainly hidden (a literal `mcp: false`, see [Action.md](Action.md)); an `mcp` that may be `false` at runtime keeps them.
-- Builders run as [guarantees.md](guarantees.md#dependency-lifetimes) describes; only an MCP-enabled action counts as served. A hidden action adds no requirements of its own, but a builder it shares with a served tool still runs, with that builder's services and failures.
-- Every MCP-enabled action must have object-root input; the native server refuses anything else when the layer is built. Omit `input` for a tool with no arguments.
+- Every action of the implementations passed becomes a tool, named after the action, with the action's `mcp` hints. To keep an action off MCP, leave its implementation out; implement it on its own if it shares a builder with served actions, which then runs once per `implement` call; keep what the pieces must share in a Layer, which Effect builds once.
+- Builders run as [guarantees.md](guarantees.md#dependency-lifetimes) describes: once per host, shared with every other surface serving the same implementation. Only the tool registry is fresh per endpoint.
+- Every served action must have object-root input; the native server refuses anything else when the layer is built. Omit `input` for a tool with no arguments.
 - Success is `structuredContent: { value: <encoded success> }`. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
-- Invalid arguments and unencodable results are answered by the native `McpServer`: an `isError` result with a message for the model. An HTTP binding's `schemaError` policy does not apply.
+- Invalid arguments and unencodable results are answered by the native `McpServer`: an `isError` result with a message for the model. An HTTP binding's `schemaError` does not apply.
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
 - Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in `before`.
 - Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing; a tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
@@ -159,8 +161,8 @@ Layer.launch(layer).pipe(
 
 ## Failure modes
 
-- Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: an MCP-enabled action has scalar, array, or empty-struct input, which the native server refuses. It is not in the layer's error channel, so it cannot be caught by tag. Wrap the input in a struct with at least one field, omit `input` for no arguments, or set `mcp: false`.
-- `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `layerStdio` call: two implementations on one endpoint expose the same tool name. Rename with `mcp.name` or split the endpoint.
+- Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: a served action has scalar, array, or empty-struct input, which the native server refuses. It is not in the layer's error channel, so it cannot be caught by tag. Wrap the input in a struct with at least one field, omit `input` for no arguments, or leave the action off MCP.
+- `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `layerStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
 - Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler yields a request service and the endpoint has no middleware providing it. Provide it with `Layer.provide(middleware.layer)` on that `layerHttp`.
 - Public tool requires a token: it shares an endpoint with protected tools. Give it its own path.
 - Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.

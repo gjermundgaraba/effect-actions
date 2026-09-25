@@ -33,7 +33,8 @@ Preserve these when updating from upstream.
   inheriting the whole initializer object's evidence. A spread that could supply or override
   the position, a computed key, a rest binding, or a non-literal initializer yields no
   evidence. A computed key that is not a literal is treated like a spread. Previously
-  `const { user } = { user: load() }` counted as a known literal.
+  `const { user } = { user: load() }` counted as a known literal. An array pattern stops at
+  the first spread element, which narrows each remaining element to an expression.
 - `shared/dictionary-types.ts`, `classifyWideningTarget`: an inline mapped type is an open
   dictionary only when its key constraint is broad (`isBroadMappedKey`), matching the alias
   path below it. Previously `{ readonly [K in "a" | "b"]: number }` was reported as widening,

@@ -18,7 +18,7 @@ export type Codec = Schema.Codec<unknown, unknown, never, never>;
 export type Fields = { readonly [key: string]: Codec };
 
 /** The schema a `Codec | Fields` option stands for. */
-export type CodecOf<S extends Codec | Fields> = S extends Codec
+type CodecOf<S extends Codec | Fields> = S extends Codec
   ? S
   : S extends Schema.Struct.Fields
     ? Extract<Schema.Struct<S>, Codec>
@@ -30,10 +30,8 @@ export type CodecOf<S extends Codec | Fields> = S extends Codec
  */
 export type Access = "read" | "write";
 
-/** MCP tool metadata; every field has a default derived from the action. */
+/** MCP tool hints; every field has a default derived from the action. */
 export interface McpOptions {
-  /** Tool name; defaults to the action name. Must match `^[A-Za-z0-9_-]{1,128}$`. */
-  readonly name?: string;
   /** `readOnlyHint`; defaults to `access === "read"`. */
   readonly readOnly?: boolean;
   /** `destructiveHint`; defaults to `!readOnly`, as the MCP spec only defines it for writes. */
@@ -44,35 +42,12 @@ export interface McpOptions {
   readonly openWorld?: boolean;
 }
 
-type ResolvedMcp<
-  Name extends string,
-  Mcp extends false | McpOptions | undefined,
-> = Mcp extends false
-  ? false
-  : {
-      readonly name: Mcp extends McpOptions
-        ? "name" extends keyof Mcp
-          ? Extract<Mcp["name"], string> extends never
-            ? Name
-            : Extract<Mcp["name"], string> | (undefined extends Mcp["name"] ? Name : never)
-          : Name
-        : Name;
-      // Names and the `false` exclusion are contract-level type information.
-      // Hints are runtime metadata with defaults, so broad option variables
-      // must not claim a literal value that their runtime value may not have.
-      readonly readOnly: boolean;
-      readonly destructive: boolean;
-      readonly idempotent: boolean;
-      readonly openWorld: boolean;
-    };
-
 /** What `make` needs to define an action. */
 export interface Options<
   Input extends Codec | Fields,
   Output extends Codec | Fields,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
-  Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly description: string;
   /** A schema or struct fields. Omit for an action without arguments. */
@@ -87,8 +62,8 @@ export interface Options<
    * library itself authorizes nothing.
    */
   readonly access: Acc;
-  /** `false` hides the action from MCP; otherwise tool metadata. */
-  readonly mcp?: Mcp;
+  /** MCP tool hints. The tool is named after the action. */
+  readonly mcp?: McpOptions;
 }
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
@@ -98,7 +73,6 @@ export interface Action<
   Output extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
-  Mcp extends false | McpOptions | undefined = McpOptions | undefined,
 > {
   readonly name: Name;
   readonly description: string;
@@ -106,16 +80,13 @@ export interface Action<
   readonly success: Output;
   readonly errors: Errors;
   // Declared, never defaulted, so a rule that switches on it reads a literal
-  // rather than the runtime union the MCP hints are.
+  // rather than the runtime values the MCP hints are.
   readonly access: Acc;
-  readonly mcp: ResolvedMcp<Name, Mcp>;
+  readonly mcp: Required<McpOptions>;
 }
 
 /** Any action, with its schemas erased. */
-export type Any =
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, false>
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, McpOptions>
-  | Action<string, Codec, Codec, ReadonlyArray<Codec>, Access, undefined>;
+export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
 
 /** Receives decoded input; may fail only with the declared errors. */
 export type Handler<A extends Any, R = never> = (
@@ -125,33 +96,14 @@ export type Handler<A extends Any, R = never> = (
 /** An empty object schema that also produces the object root MCP requires. */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
-type AnyOptions = Options<
-  Codec | Fields,
-  Codec | Fields,
-  ReadonlyArray<Codec>,
-  Access,
-  false | McpOptions | undefined
->;
-
-/**
- * The `mcp` option `make` received. Only a required literal `false` hides the action:
- * options that may carry something else, such as a conditional spread, `false | undefined`
- * or a broadly typed variable, may serve it, so its requirements are kept.
- */
-type McpOf<O extends AnyOptions> = [O] extends [{ readonly mcp: false }]
-  ? false
-  : O extends { readonly mcp: infer Mcp extends false | McpOptions | undefined }
-    ? Mcp
-    : "mcp" extends keyof O
-      ? O["mcp"] | undefined
-      : undefined;
+type AnyOptions = Options<Codec | Fields, Codec | Fields, ReadonlyArray<Codec>>;
 
 const codecOf = (schema: Codec | Fields): Codec =>
   Schema.isSchema(schema) ? schema : Schema.Struct(schema);
 
 /**
- * Define an action contract. Names are `[A-Za-z0-9_-]+`, other than `then`.
- * `mcp: false` hides one from MCP and native Toolkits.
+ * Define an action contract. Names are `[A-Za-z0-9_-]{1,128}`, other than `then`: the name
+ * is also the route segment, the client method and the MCP tool name.
  */
 export function make<const Name extends string, const O extends AnyOptions>(
   name: Name,
@@ -162,8 +114,7 @@ export function make<const Name extends string, const O extends AnyOptions>(
   "input" extends keyof O ? CodecOf<Exclude<O["input"], undefined>> : typeof NoInput,
   CodecOf<O["success"]>,
   "errors" extends keyof O ? Exclude<O["errors"], undefined> : [],
-  O["access"],
-  McpOf<O>
+  O["access"]
 >;
 export function make(name: string, options: AnyOptions): Any {
   assertName("action name", name);
@@ -176,24 +127,14 @@ export function make(name: string, options: AnyOptions): Any {
 
   // One contract states the fact once: a read action is a read-only tool unless
   // the contract says otherwise.
-  const readOnly = options.mcp === false ? false : (options.mcp?.readOnly ?? access === "read");
+  const readOnly = options.mcp?.readOnly ?? access === "read";
 
-  const mcp =
-    options.mcp === false
-      ? false
-      : {
-          name: options.mcp?.name ?? name,
-          readOnly,
-          destructive: options.mcp?.destructive ?? !readOnly,
-          idempotent: options.mcp?.idempotent ?? false,
-          openWorld: options.mcp?.openWorld ?? true,
-        };
-
-  if (mcp !== false && mcp.name.length > 128) {
-    throw new Error(`Invalid MCP name: ${mcp.name}`);
-  }
-
-  if (mcp !== false) assertName("MCP name", mcp.name);
+  const mcp = {
+    readOnly,
+    destructive: options.mcp?.destructive ?? !readOnly,
+    idempotent: options.mcp?.idempotent ?? false,
+    openWorld: options.mcp?.openWorld ?? true,
+  };
 
   return {
     name,
@@ -207,37 +148,36 @@ export function make(name: string, options: AnyOptions): Any {
 }
 
 /** What `implement` binds: one action, or several that share one builder. */
-export type Target = Any | ReadonlyArray<Any>;
+type Target = Any | ReadonlyArray<Any>;
+
+/** The actions `T` stands for. */
+type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : T;
 
 /** The handler of one action, or a record of handlers keyed by action name. */
-export type HandlersFor<T extends Target> =
+type HandlersFor<T extends Target> =
   T extends ReadonlyArray<Any>
     ? { readonly [A in T[number] as A["name"]]: Handler<A, any> }
     : T extends Any
       ? Handler<T, any>
       : never;
 
-/** The handler `H` binds to `A`: `H` itself for one action, else its entry for `A`. */
-type HandlerFor<T extends Target, H, A extends Any> =
-  T extends ReadonlyArray<Any> ? H[A["name"] & keyof H] : H;
+/** Each action's per-request requirements, by name: its entry of `H`, or `H` itself. */
+type RequestsOf<T extends Target, H> = {
+  readonly [A in ActionsOf<T> as A["name"]]: HandlerContext<
+    T extends ReadonlyArray<Any> ? H[A["name"] & keyof H] : H
+  >;
+};
 
-type ImplementationOf<T extends Target, H, EX, RX, A> = A extends Any
-  ? Implementation<A, HandlerContext<HandlerFor<T, H, A>>, EX, RX>
-  : never;
+/** The names a handlers record may have: none for a single action's handler. */
+type Names<T extends Target> = T extends ReadonlyArray<Any> ? T[number]["name"] : never;
 
 /**
- * What `implement` returns: one `Implementation` per action, each carrying its own
- * handler's request requirements and the shared builder's failures and services.
+ * A handlers record with no key beyond its actions' names. `H` itself stays the inferred
+ * parameter, so handlers are contextually typed and a generic handler such as
+ * `Effect.succeed` is still inferred; the check does not take part in inference.
  */
-export type ImplementationFor<T extends Target, H, EX, RX> = ReadonlyArray<
-  ImplementationOf<T, H, EX, RX, T extends ReadonlyArray<Any> ? T[number] : T>
->;
-
-/** A handlers record with no key beyond its actions' names. */
-type Exact<T extends Target, H> =
-  T extends ReadonlyArray<Any>
-    ? H & { readonly [K in Exclude<keyof H, T[number]["name"]>]: never }
-    : H;
+type Exact<T extends Target, H> = H &
+  NoInfer<{ readonly [K in Exclude<keyof H, Names<T>>]: never }>;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
@@ -247,38 +187,49 @@ const isList = (target: Target): target is ReadonlyArray<Any> => Array.isArray(t
 /**
  * Bind handlers to contracts. Pass one action and its handler, or a list of actions and
  * a record of handlers keyed by action name. Either may instead be an Effect that builds
- * them: its services are resolved once per adapter layer that serves the result, and are
- * startup requirements, while services a handler yields are per-request requirements.
- * Returns one implementation per action, as a list; lists combine by spreading.
+ * them: its services are startup requirements, resolved once however many surfaces serve
+ * the result, while services a handler yields are per-request requirements.
  */
 export function implement<const T extends Target, H extends HandlersFor<T>, EX = never, RX = never>(
   target: T,
   build: Exact<T, H> | Effect.Effect<Exact<T, H>, EX, RX>,
-): ImplementationFor<T, H, NoInfer<EX>, NoInfer<Exclude<RX, Scope.Scope>>>;
+): Implementation<ActionsOf<T>, RequestsOf<T, H>, NoInfer<EX>, NoInfer<Exclude<RX, Scope.Scope>>>;
 export function implement(
   target: Target,
   build: Built | Effect.Effect<Built, unknown, unknown>,
-): ReadonlyArray<Implementation<Any, unknown, unknown, unknown>> {
+): Implementation<Any, {}, unknown, unknown> {
   const actions = isList(target) ? target : [target];
   const names = actions.map((action) => action.name);
 
   assertDistinct("action", names);
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
-  // key no action names is refused, so a stale handler cannot outlive its action. A
-  // missing handler is refused where it is looked up, when an adapter builds.
+  // key no action names is refused, so a stale handler cannot outlive its action, and so
+  // is an action without a handler.
   const record = (built: Built): Handlers<unknown> => {
-    if (Predicate.isFunction(built)) return isList(target) ? {} : { [target.name]: built };
+    const handlers: Handlers<unknown> = Predicate.isFunction(built)
+      ? isList(target)
+        ? {}
+        : { [target.name]: built }
+      : built;
 
-    const unknown = Object.keys(built).filter((key) => !names.includes(key));
+    const unknown = Object.keys(handlers).filter((key) => !names.includes(key));
 
     if (unknown.length > 0) throw new Error(`Unknown handlers: ${unknown.join(", ")}`);
 
-    return built;
+    const missing = names.filter(
+      (name) => !Object.hasOwn(handlers, name) || !Predicate.isFunction(handlers[name]),
+    );
+
+    if (missing.length > 0) throw new Error(`Missing handlers: ${missing.join(", ")}`);
+
+    return handlers;
   };
 
-  // Both forms are checked when an adapter builds them, never here.
-  const handlers = Effect.map(Effect.isEffect(build) ? build : Effect.succeed(build), record);
+  // Plain handlers are checked here; a builder's record when it is built.
+  const handlers = Effect.isEffect(build)
+    ? Effect.map(build, record)
+    : Effect.succeed(record(build));
 
-  return actions.map((action) => Implementation.make(action, handlers));
+  return new Implementation(actions, handlers);
 }

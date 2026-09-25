@@ -1,6 +1,7 @@
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
-import { Http, UserNotFound } from "./contracts.js";
+import { Http } from "./binding.js";
+import { UserNotFound } from "./contracts.js";
 
 // Promises in, Promises out: for code that does not run Effects, such as a browser page.
 // The options are the native `HttpApiClient.make` options plus `fetch`; a bearer token is

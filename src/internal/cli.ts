@@ -16,28 +16,65 @@ export interface JsonOptions<Output> extends CommonOptions<Output> {
   readonly input?: never;
 }
 
-/** Supply native CLI parameters and map their parsed values to canonical action JSON. */
-export interface ParametersOptions<
+/** Maps native parsed parameters to the action's canonical JSON input. */
+type InputMapper<Parameters extends Command.Command.Config> = (
+  parsed: Command.Command.Config.InferValue<Parameters>,
+) => Schema.Json;
+
+/**
+ * Supply native CLI parameters. Their parsed values are the input when they are already
+ * the action's encoded input `Encoded` (`{ value: Flag.String("value") }` parses to
+ * `{ value }`); otherwise `input` maps them, and is required.
+ */
+export type ParametersOptions<
+  Output,
+  Parameters extends Command.Command.Config,
+  Encoded = unknown,
+> = CommonOptions<Output> & {
+  /** Native Effect CLI flags and arguments. */
+  readonly parameters: Parameters;
+} & (IsInput<Command.Command.Config.InferValue<Parameters>, Encoded> extends true
+    ? { readonly input?: InputMapper<Parameters> }
+    : { readonly input: InputMapper<Parameters> });
+
+/** The keys `E` requires. */
+type RequiredKeys<E> = {
+  [K in keyof E]-?: {} extends Pick<E, K> ? never : K;
+}[keyof E];
+
+/**
+ * Whether parsed values `P` can stand for encoded input `E` as they are: JSON, every key
+ * `E` requires and none it lacks. Values are checked by decoding: a transformation such
+ * as a date's encoding is JSON on the wire but not in `E`.
+ */
+type IsInput<P, E> = unknown extends E
+  ? true
+  : [P] extends [Schema.Json]
+    ? [Exclude<RequiredKeys<E>, keyof P> | Exclude<keyof P, keyof E>] extends [never]
+      ? true
+      : false
+    : false;
+
+/** `ParametersOptions`, with `input` optional: what a command reads. */
+interface ReadParametersOptions<
   Output,
   Parameters extends Command.Command.Config,
 > extends CommonOptions<Output> {
-  /** Native Effect CLI flags and arguments. */
   readonly parameters: Parameters;
-  /** Maps native parsed parameters to the action's canonical JSON input. */
-  readonly input: (parsed: Command.Command.Config.InferValue<Parameters>) => Schema.Json;
+  readonly input?: InputMapper<Parameters>;
 }
 
 /**
  * A command either accepts whole JSON input or has explicit native CLI parameters.
  * The latter intentionally has no implicit `--input` mode.
  */
-export type Options<Output, Parameters extends Command.Command.Config = never> =
+export type Options<Output, Parameters extends Command.Command.Config = never, Encoded = unknown> =
   | JsonOptions<Output>
-  | ParametersOptions<Output, Parameters>;
+  | ParametersOptions<Output, Parameters, Encoded>;
 
 const isParametersOptions = <Output, Parameters extends Command.Command.Config>(
-  options: Options<Output, Parameters> | undefined,
-): options is ParametersOptions<Output, Parameters> => options?.parameters !== undefined;
+  options: JsonOptions<Output> | ReadParametersOptions<Output, Parameters> | undefined,
+): options is ReadParametersOptions<Output, Parameters> => options?.parameters !== undefined;
 
 /**
  * A command with a renderer takes `--json` as a flag of its own, so nothing is
@@ -133,10 +170,12 @@ const defaultCommand = <A extends Action.Any, E, R>(
 const parametersCommand = <A extends Action.Any, E, R, Parameters extends Command.Command.Config>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options: ParametersOptions<A["success"]["Type"], Parameters>,
+  options: ReadParametersOptions<A["success"]["Type"], Parameters>,
 ) =>
   make(action, execute, options, options.parameters, (parsed) =>
-    Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))(options.input(parsed)),
+    Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))(
+      options.input === undefined ? parsed : options.input(parsed),
+    ),
   );
 
 /** Build one native command around an action-bound operation. */
@@ -148,9 +187,9 @@ export const command = <
 >(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options?: Options<A["success"]["Type"], Parameters>,
+  options?: Options<A["success"]["Type"], Parameters, A["input"]["Encoded"]>,
 ): Command.Command<string, never, {}, E | Schema.SchemaError, R> => {
-  if (isParametersOptions(options)) {
+  if (isParametersOptions<A["success"]["Type"], Parameters>(options)) {
     return parametersCommand(action, execute, options);
   }
 

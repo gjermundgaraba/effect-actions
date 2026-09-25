@@ -42,3 +42,10 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
 
   if (!actor.permissions.includes(permission)) return yield* new Forbidden({ permission });
 });
+
+/**
+ * The rule with what it refuses with: one guard every surface binds as it is. A tool
+ * surface declares `Forbidden`, so a refusal is an ordinary tool error; HTTP requires it
+ * among its binding's errors, which clients decode; the CLI reads only the rule.
+ */
+export const guarded = { errors: [Forbidden], before: authorize };

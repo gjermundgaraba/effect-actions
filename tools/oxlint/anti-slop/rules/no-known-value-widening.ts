@@ -89,11 +89,10 @@ function selectFromPattern(
 	}
 	if (literal.type !== "ArrayExpression") return null;
 	for (const [index, element] of pattern.elements.entries()) {
-		if (element === null || element.type === "RestElement") continue;
-		if (literal.elements.slice(0, index + 1).some((item) => item?.type === "SpreadElement")) {
-			return null;
-		}
 		const source = literal.elements[index];
+		// A spread shifts every position after it, so no later element is known either.
+		if (source?.type === "SpreadElement") return null;
+		if (element === null || element.type === "RestElement") continue;
 		if (source === null || source === undefined) continue;
 		const found = selectFromPattern(element, source, variableName);
 		if (found !== null) return found;

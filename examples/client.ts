@@ -1,7 +1,7 @@
 import { Console, Effect } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
-import { Http } from "./contracts.js";
+import { Http } from "./binding.js";
 
 const lookup = Effect.gen(function* () {
   const client = yield* ActionHttpClient.make(Http, {

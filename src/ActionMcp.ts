@@ -9,8 +9,10 @@ import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
-  type HiddenFromMcp,
+  type Member,
   type RequestContext,
+  type Served,
+  toList,
 } from "./internal/implementation.js";
 
 /**
@@ -39,29 +41,24 @@ export interface StdioOptions<Errors extends ReadonlyArray<Action.Codec> = [], R
 const protocols = [McpProtocol.v2026_07_28] as const;
 
 /** The native server supplies its own request context to every tool call. */
-type ToolRequestContext<App, RB> = Exclude<
-  RequestContext<App, HiddenFromMcp> | RB,
-  McpSchema.McpRequestContext
->;
-
-const registration = (apps: ReadonlyArray<AnyImplementation>, options: ToolOptions) => {
-  const binding = bindTools(apps, "mcp", options);
-
-  return Layer.effectDiscard(McpServer.registerToolkit(binding.toolkit)).pipe(
-    Layer.provide(binding.layer),
-  );
-};
+type ToolRequestContext<App, RB> = Exclude<RequestContext<App> | RB, McpSchema.McpRequestContext>;
 
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
   options: ToolOptions,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
-) =>
-  registration(apps, options).pipe(
+) => {
+  const binding = bindTools(apps, "mcp", options);
+
+  return Layer.effectDiscard(McpServer.registerToolkit(binding.toolkit)).pipe(
+    Layer.provide(binding.layer),
     Layer.provide(transport),
-    // The native registry is mutable; every endpoint/subprocess gets its own one.
+    // The native registry is mutable; every endpoint/subprocess gets its own one. Only
+    // the registry: handlers are provided outside it, so builders stay shared.
     Layer.fresh,
+    binding.handlers,
   );
+};
 
 /**
  * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28 only.
@@ -70,25 +67,22 @@ const server = <Out, R>(
  * context capture applies: never provide request-identity tags at startup.
  */
 export function layerHttp<
-  const Apps extends ReadonlyArray<AnyImplementation>,
+  const Apps extends Served,
   const Errors extends ReadonlyArray<Action.Codec> = [],
   RB = never,
 >(
-  apps: readonly [...Apps],
+  apps: Apps,
   options: Options<Errors, RB>,
 ): Layer.Layer<
   never,
-  BuildError<Apps[number], HiddenFromMcp> | Cause.IllegalArgumentError,
-  | BuildContext<Apps[number], HiddenFromMcp>
+  BuildError<Member<Apps>> | Cause.IllegalArgumentError,
+  | BuildContext<Member<Apps>>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", ToolRequestContext<Apps[number], RB>>
+  | HttpRouter.Request.From<"Requires", ToolRequestContext<Member<Apps>, RB>>
 >;
-export function layerHttp(
-  apps: ReadonlyArray<AnyImplementation>,
-  options: Options<ReadonlyArray<Action.Codec>, unknown>,
-) {
+export function layerHttp(apps: Served, options: Options<ReadonlyArray<Action.Codec>, unknown>) {
   return server(
-    apps,
+    toList(apps),
     options,
     McpServer.layerHttp({ ...options, path: options.path ?? "/mcp", protocols }),
   );
@@ -103,20 +97,20 @@ export function layerHttp(
  * never establish request identity or authority.
  */
 export function layerStdio<
-  const Apps extends ReadonlyArray<AnyImplementation>,
+  const Apps extends Served,
   const Errors extends ReadonlyArray<Action.Codec> = [],
   RB = never,
 >(
-  apps: readonly [...Apps],
+  apps: Apps,
   options: StdioOptions<Errors, RB>,
 ): Layer.Layer<
   never,
-  BuildError<Apps[number], HiddenFromMcp> | Cause.IllegalArgumentError,
-  BuildContext<Apps[number], HiddenFromMcp> | StdioService | ToolRequestContext<Apps[number], RB>
+  BuildError<Member<Apps>> | Cause.IllegalArgumentError,
+  BuildContext<Member<Apps>> | StdioService | ToolRequestContext<Member<Apps>, RB>
 >;
 export function layerStdio(
-  apps: ReadonlyArray<AnyImplementation>,
+  apps: Served,
   options: StdioOptions<ReadonlyArray<Action.Codec>, unknown>,
 ) {
-  return server(apps, options, McpServer.layerStdio({ ...options, protocols }));
+  return server(toList(apps), options, McpServer.layerStdio({ ...options, protocols }));
 }

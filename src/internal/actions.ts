@@ -1,31 +1,18 @@
 import type { HttpApiError } from "effect/unstable/httpapi";
 import type * as Action from "../Action.js";
-
-/** One side of a schema-error policy: the error it answers with, and how to make it. */
-export interface SchemaErrorAnswer<E extends Action.Codec> {
-  /** A declared error schema; its `httpApiStatus` is the HTTP status of the answer. */
-  readonly schema: E;
-  readonly make: (failure: HttpApiError.HttpApiSchemaError) => NoInfer<E["Type"]>;
-}
+import type { ErasedValue } from "./implementation.js";
 
 /**
- * Pure HTTP policy for native schema failures, split by whose fault they are. The
- * library owns the split, so every binding draws it the same way.
+ * How HTTP answers native schema failures, split by whose fault they are: each side
+ * returns one of the binding's declared errors, and an omitted side keeps Effect's native
+ * empty 400. The library owns the split, so every binding draws it the same way.
  */
-export interface SchemaErrorPolicy<
-  Invalid extends Action.Codec = Action.Codec,
-  Internal extends Action.Codec = Action.Codec,
-> {
+export interface SchemaErrorPolicy<E = ErasedValue> {
   /** The request did not decode: its payload, or its params, headers or query. */
-  readonly invalid: SchemaErrorAnswer<Invalid>;
+  readonly invalid?: (failure: HttpApiError.HttpApiSchemaError) => E;
   /** The handler's result did not encode: its body or its response headers. */
-  readonly internal: SchemaErrorAnswer<Internal>;
+  readonly internal?: (failure: HttpApiError.HttpApiSchemaError) => E;
 }
-
-/** Each distinct error a policy may answer with, invalid first. */
-export const policyErrors = (policy: SchemaErrorPolicy): ReadonlyArray<Action.Codec> => [
-  ...new Set([policy.invalid.schema, policy.internal.schema]),
-];
 
 /**
  * `HttpApiBuilder` reports these kinds while encoding the handler's answer, after the
@@ -37,12 +24,15 @@ const responseKinds: ReadonlySet<HttpApiError.HttpApiSchemaError["kind"]> = new 
   "ResponseHeaders",
 ]);
 
-/** The policy's answer to one native failure: `internal` for the response side, else `invalid`. */
+/** The policy's answer to one native failure, or the failure itself for an omitted side. */
 export const answerSchemaError = (
   policy: SchemaErrorPolicy,
   failure: HttpApiError.HttpApiSchemaError,
-) =>
-  responseKinds.has(failure.kind) ? policy.internal.make(failure) : policy.invalid.make(failure);
+): ErasedValue => {
+  const answer = responseKinds.has(failure.kind) ? policy.internal : policy.invalid;
+
+  return answer === undefined ? failure : answer(failure);
+};
 
 /**
  * An action's own failures plus the ones its surface answers with, which is what
@@ -54,7 +44,7 @@ export const projectedErrors = (
   surface: ReadonlyArray<Action.Codec> | undefined,
 ): ReadonlyArray<Action.Codec> => [...new Set([...action.errors, ...(surface ?? [])])];
 
-const validName = /^[A-Za-z0-9_-]+$/;
+const validName = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Names become path segments, OpenAPI identifiers and client method keys. */
 export const assertName = (what: string, name: string): void => {

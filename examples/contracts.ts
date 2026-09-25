@@ -1,7 +1,5 @@
 import { Schema } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionHttp from "../src/ActionHttp.js";
-import { Forbidden, Unauthenticated } from "./auth.js";
 
 export const User = Schema.Struct({
   id: Schema.String,
@@ -39,7 +37,6 @@ export const GetUser = Action.make("getUser", {
   success: User,
   errors: [UserNotFound],
   access: "read",
-  mcp: { name: "get_user" },
 });
 
 export const RenameUser = Action.make("renameUser", {
@@ -51,7 +48,7 @@ export const RenameUser = Action.make("renameUser", {
   success: User,
   errors: [UserNotFound],
   access: "write",
-  mcp: { name: "rename_user", destructive: false },
+  mcp: { destructive: false },
 });
 
 // On either transport, input is { value: "21" }. The handler receives numeric 21.
@@ -79,27 +76,4 @@ export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
   success: { changes: Schema.Array(Change) },
   access: "read",
-  mcp: { name: "list_changes" },
-});
-
-// Malformed requests and unencodable results each get one typed answer over HTTP.
-const schemaError = {
-  invalid: {
-    schema: InvalidRequest,
-    make: () => new InvalidRequest({ message: "The request does not match the action's input." }),
-  },
-  internal: {
-    schema: InternalError,
-    make: () => new InternalError({ message: "The request could not be completed." }),
-  },
-};
-
-// Contract-level: the server and its clients share it. The binding declares the
-// failures the surface itself answers with, so a typed client decodes the 401 from
-// authentication middleware and the 403 from the authorization hook instead of
-// reporting a decode error. No handler can return either. `ListChanges` is a tool for
-// agents reviewing what happened, so HTTP leaves it out.
-export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI], {
-  errors: [Unauthenticated, Forbidden],
-  schemaError,
 });

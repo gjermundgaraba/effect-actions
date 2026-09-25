@@ -4,11 +4,7 @@ import type { HttpClient, HttpClientError } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
-
-type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
-    ? true
-    : false;
+import type { Equal } from "./equal.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
 
@@ -78,11 +74,8 @@ export const promiseClientTypes = () => {
 
 // The Effect client: one method per action, input directly, the native `HttpClient` required.
 const guarded = ActionHttp.make(Notes, {
-  errors: [Denied],
-  schemaError: {
-    invalid: { schema: Invalid, make: () => new Invalid() },
-    internal: { schema: Invalid, make: () => new Invalid() },
-  },
+  errors: [Denied, Invalid],
+  schemaError: { invalid: () => new Invalid(), internal: () => new Invalid() },
 });
 
 const made = ActionHttpClient.make(guarded, { baseUrl: "http://localhost" });
@@ -96,7 +89,7 @@ export const effectClientTypes = Effect.gen(function* () {
   const methods = yield* made;
   const get = methods.get({ id: "a" });
 
-  // Failures: the action's own, the binding's surface and policy errors, then transport
+  // Failures: the action's own, the binding's errors, then transport
   // and encoding failures.
   const failures: Equal<
     Effect.Error<typeof get>,
@@ -126,7 +119,7 @@ export const effectClientTypes = Effect.gen(function* () {
   const bare = yield* ActionHttpClient.make(ActionHttp.make(Notes));
   const bareCount = bare.count();
 
-  // Without surface or policy errors, a method has none of them.
+  // Without binding errors, a method has none of them.
   const bareFailures: Equal<
     Effect.Error<typeof bareCount>,
     HttpClientError.HttpClientError | Schema.SchemaError

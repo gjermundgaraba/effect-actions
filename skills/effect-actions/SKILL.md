@@ -31,11 +31,10 @@ Package facts that apply everywhere:
 | [ActionHttpClient.md](ActionHttpClient.md) | call the HTTP API: one method per action, as Effects or as Promises                   |
 | [ActionMcp.md](ActionMcp.md)               | serve MCP 2026-07-28 tools over Streamable HTTP or stdio                              |
 | [ActionToolkit.md](ActionToolkit.md)       | use actions as a native Effect AI `Toolkit` without a server                          |
-| [ActionCli.md](ActionCli.md)               | run handlers in-process from a terminal command                                       |
-| [ActionCliClient.md](ActionCliClient.md)   | call the HTTP API from a terminal command                                             |
+| [ActionCli.md](ActionCli.md)               | run handlers in-process, or call the HTTP API, from a terminal command                |
 | [ActionCatalog.md](ActionCatalog.md)       | export contracts as an offline JSON document                                          |
 | [Authentication.md](Authentication.md)     | provide a per-request identity, publish RFC 9728 discovery, build bearer challenges   |
-| [Testing.md](Testing.md)                   | call routes and tools in memory, build MCP requests, drive the official MCP client    |
+| [Testing.md](Testing.md)                   | call routes and tools in memory                                                       |
 | [guarantees.md](guarantees.md)             | cross-cutting rules: builder lifetimes, wire formats, spans, request context, scope   |
 
 ## Choose an adapter
@@ -43,11 +42,10 @@ Package facts that apply everywhere:
 - Callers speak JSON over HTTP: `ActionHttp`. Clients use `ActionHttpClient.make(Http)`, or `ActionHttpClient.promise(Http)` where nothing runs Effects.
 - Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.layerStdio` for a subprocess.
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
-- Callers are humans or scripts in a terminal, handlers run locally: `ActionCli`.
-- Callers are humans or scripts in a terminal, handlers run on a server: `ActionCliClient`.
+- Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
 - Nothing runs, only the contract is published: `ActionCatalog`.
 
-Every adapter that runs handlers takes the same list of implementations (`Action.implement(...)`), with options last.
+Every adapter that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last.
 
 ## Minimal program
 
@@ -66,11 +64,11 @@ export const Greet = Action.make("greet", {
 
 export const Http = ActionHttp.make([Greet]);
 
-const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 export const routes = Layer.mergeAll(
-  Http.layer(actions),
-  ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0" }),
+  ActionHttp.layer(Http, greet),
+  ActionMcp.layerHttp(greet, { name: "greetings", version: "1.0.0" }),
 );
 ```
 
@@ -82,8 +80,8 @@ Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/
 
 - `quickstart.ts`, `quickstart-client.ts`: the minimal program and its typed client.
 - `promise-client.ts`: the Promise client, with a declared error and an unreachable server.
-- `contracts.ts`, `handlers.ts`, `app.ts`, `server.ts`: an authenticated application with public and protected routes under separate middleware, two MCP endpoints, a schema-error policy, OpenAPI and Swagger.
-- `toolkit.ts`, `catalog.ts`, `cli.ts`, `cli-client.ts`, `mcp-stdio.ts`: one file per other projection.
+- `contracts.ts`, `binding.ts`, `handlers.ts`, `authentication.ts`, `http.ts`, `mcp.ts`, `app.ts`, `server.ts`: an authenticated application with public and protected routes under separate middleware, two MCP endpoints, typed schema-error answers, OpenAPI and Swagger.
+- `toolkit.ts`, `catalog.ts`, `cli.ts`, `cli-remote.ts`, `mcp-stdio.ts`: one file per other projection.
 - `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
 - `toolkit-authorized.ts`: native Toolkit invocation with authorization and correctly scoped identity.
 - `testing.ts`: in-memory HTTP and MCP calls with cleanup.

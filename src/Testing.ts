@@ -1,93 +1,64 @@
-import { Effect, Option, Predicate, Schema } from "effect";
+import { Effect, Layer, Option, Predicate, Schema } from "effect";
+import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as ActionHttpClient from "./ActionHttpClient.js";
-import { type AnyHttp, type Client, type ErrorsOf, withFetch } from "./internal/client.js";
+import { type AnyHttp, type Client, withFetch } from "./internal/client.js";
+import { type McpEndpoint, mcpRequest, type McpRequestValue } from "./internal/mcp-request.js";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
 export type Handler = (request: Request) => Promise<Response>;
 
+/** Served routes in memory: their web handler, and how to release them. */
+export interface Server {
+  readonly handler: Handler;
+  /** Release the routes' resources. Register it with the test runner's cleanup hook. */
+  readonly dispose: () => Promise<void>;
+}
+
+/** What `serve` provides or leaves to routes: the router, the platform, nothing per request. */
+type Served =
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request<"Requires", never>
+  | HttpRouter.Request<"GlobalRequires", never>
+  | HttpRouter.Request<"Error", any>
+  | HttpRouter.Request<"GlobalError", any>
+  | Layer.Success<typeof HttpServer.layerServices>;
+
 /**
- * `ActionHttpClient.make` for the binding, calling `handler` in memory instead of the
+ * Serve `routes` in memory, without a network or request logs, providing the platform
+ * services `HttpServer.layerServices` provides. Routes must satisfy their per-request
+ * requirements themselves, with their middleware.
+ */
+export function serve<A, E, R extends Served>(routes: Layer.Layer<A, E, R>): Server;
+export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
+  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+    disableLogger: true,
+  });
+
+  return { handler: (request) => web.handler(request), dispose: web.dispose };
+}
+
+/** A served `Server` or its bare web handler. */
+const handlerOf = (target: Server | Handler): Handler =>
+  Predicate.isFunction(target) ? target : target.handler;
+
+/**
+ * `ActionHttpClient.make` for the binding, calling `server` in memory instead of the
  * network. `baseUrl` defaults to `http://localhost`.
  */
 export const httpClient = <const H extends AnyHttp>(
   http: H,
-  handler: Handler,
+  server: Server | Handler,
   options?: ActionHttpClient.Options,
-): Effect.Effect<Client<H["actions"], ErrorsOf<H>>> =>
+): Effect.Effect<Client<H>> =>
   ActionHttpClient.make(http, { baseUrl: "http://localhost", ...options }).pipe(
-    withFetch((input, init) => handler(new Request(input, init))),
+    withFetch((input, init) => handlerOf(server)(new Request(input, init))),
   );
 
-/** A stateless 2026-07-28 request. */
-export interface McpRequestOptions {
-  readonly url: string | URL;
-  readonly method: string;
-  readonly params?: McpRequestParams;
-  readonly headers?: ConstructorParameters<typeof Headers>[0];
-}
-
-/**
- * What `JSON.stringify` accepts, not only valid JSON: `undefined` fields are
- * dropped, and tests send malformed arguments on purpose.
- */
-export type McpRequestValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | ReadonlyArray<McpRequestValue>
-  | { readonly [key: string]: McpRequestValue };
-
-/** JSON-RPC `params`; `_meta` is merged shallowly over the defaults `mcpRequest` supplies. */
-export interface McpRequestParams {
-  readonly _meta?: { readonly [key: string]: McpRequestValue };
-  readonly [key: string]: McpRequestValue;
-}
-
-/** Build one stateless 2026-07-28 JSON-RPC request, with client metadata defaulted. */
-export const mcpRequest = ({
-  url,
-  method,
-  params = {},
-  headers: init,
-}: McpRequestOptions): Request => {
-  const headers = new Headers(init);
-  headers.set("content-type", "application/json");
-  headers.set("accept", "application/json, text/event-stream");
-  headers.set("mcp-protocol-version", "2026-07-28");
-  headers.set("mcp-method", method);
-
-  if (Predicate.isString(params.name)) headers.set("mcp-name", params.name);
-
-  return new Request(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: {
-        ...params,
-        _meta: Object.assign(
-          {
-            "io.modelcontextprotocol/clientCapabilities": {},
-            "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
-          },
-          params._meta,
-          { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
-        ),
-      },
-    }),
-  });
-};
-
 /** One `tools/call` for `mcpCall`: the endpoint, the tool and its arguments. */
-export interface McpCallOptions {
-  readonly url: string | URL;
-  /** The tool name, `mcp.name` of its action. */
+interface McpCallOptions extends McpEndpoint {
+  /** The tool name: its action's name. */
   readonly name: string;
-  /** Defaults to `{}`. Like `params`, it may be malformed on purpose. */
+  /** Defaults to `{}`. It may be malformed on purpose. */
   readonly arguments?: { readonly [key: string]: McpRequestValue };
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
@@ -121,17 +92,17 @@ const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply))
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
 
 /**
- * Call one tool through `handler` with a stateless 2026-07-28 request and return its
+ * Call one tool through `server` with a stateless 2026-07-28 request and return its
  * outcome. A response that is not an HTTP 200 carrying a tool result, such as an
- * authentication refusal or a JSON-RPC error, throws; use `mcpRequest` to inspect one.
+ * authentication refusal or a JSON-RPC error, throws with its status and body.
  */
 export const mcpCall = async (
-  handler: Handler,
-  { url, name, headers, arguments: args = {} }: McpCallOptions,
+  server: Server | Handler,
+  { name, headers, arguments: args = {}, ...endpoint }: McpCallOptions,
 ): Promise<McpCallResult> => {
-  const response = await handler(
+  const response = await handlerOf(server)(
     mcpRequest({
-      url,
+      ...endpoint,
       method: "tools/call",
       params: { name, arguments: args },
       ...(headers === undefined ? {} : { headers }),

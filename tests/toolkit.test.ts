@@ -6,36 +6,26 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 class Principal extends Context.Service<Principal, string>()("toolkit-test/Principal") {}
 
 describe("ActionToolkit", () => {
-  it("uses native action schemas/results, aliases MCP names, and excludes disabled tools", async () => {
+  it("uses native action schemas/results, and names tools after actions", async () => {
     const Double = Action.make("double", {
       description: "Double a number.",
       access: "write",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Finite,
-      mcp: { name: "double_value", readOnly: true },
+      mcp: { readOnly: true },
     });
 
-    const Hidden = Action.make("hidden", {
-      description: "Not a tool.",
-      access: "write",
-      success: Schema.String,
-      mcp: false,
-    });
+    const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
 
-    const app = Action.implement([Double, Hidden], {
-      double: ({ value }) => Effect.succeed(value * 2),
-      hidden: () => Effect.succeed("hidden"),
-    });
+    const binding = ActionToolkit.make(double);
 
-    const binding = ActionToolkit.make(app);
-
-    expect(Object.keys(binding.toolkit.tools)).toEqual(["double_value"]);
+    expect(Object.keys(binding.toolkit.tools)).toEqual(["double"]);
 
     const result = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const tools = yield* binding.toolkit;
-          const calls = yield* tools.handle("double_value", { value: "21" });
+          const calls = yield* tools.handle("double", { value: "21" });
 
           return yield* Stream.runCollect(calls);
         }).pipe(Effect.provide(binding.layer)),

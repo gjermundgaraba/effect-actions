@@ -5,18 +5,15 @@ import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
-  HttpRouter,
-  HttpServer,
   HttpServerRequest,
-  HttpServerResponse,
 } from "effect/unstable/http";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
-import * as ActionCliClient from "../src/ActionCliClient.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { httpClient } from "../src/Testing.js";
+import { httpClient, serve } from "../src/Testing.js";
 import { cliServices, logged } from "./cli-services.js";
 
 class Principal extends Context.Service<Principal, string>()("surface-errors/Principal") {}
@@ -41,37 +38,32 @@ const Guarded = ActionHttp.make([WhoAmI], { errors: [Unauthenticated] });
 /** The same contract without that declaration, for contrast. */
 const Bare = ActionHttp.make([WhoAmI]);
 
-const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated)(
-  new Unauthenticated({ message: "A bearer token is required." }),
-  { status: 401, headers: { "www-authenticate": "Bearer" } },
-).pipe(Effect.orDie);
-
+// The middleware answers with the declared error, encoded as the binding declares it.
 const authentication = Authentication.middleware(
   Principal,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
 
-    if (request.headers.authorization !== "Bearer ada") return yield* Effect.flip(unauthenticated);
+    if (request.headers.authorization !== "Bearer ada") {
+      return yield* new Unauthenticated({ message: "A bearer token is required." });
+    }
 
     return "ada";
   }),
+  { errors: [Unauthenticated], headers: { "www-authenticate": "Bearer" } },
 );
 
 /** Each binding is served on its own: their layers differ in the errors they declare. */
-const middleware = <A, E, R>(routes: Layer.Layer<A, E, R>) =>
-  routes.pipe(Layer.provide(authentication.layer), Layer.provide(HttpServer.layerServices));
-
-const dispose = <Web extends { readonly dispose: () => Promise<void> }>(web: Web) => {
+const authenticated = (http: typeof Guarded | typeof Bare) => {
+  const web = serve(ActionHttp.layer(http, app).pipe(Layer.provide(authentication.layer)));
   onTestFinished(() => web.dispose());
 
   return web;
 };
 
-const guarded = () =>
-  dispose(HttpRouter.toWebHandler(middleware(Guarded.layer(app)), { disableLogger: true }));
+const guarded = () => authenticated(Guarded);
 
-const bare = () =>
-  dispose(HttpRouter.toWebHandler(middleware(Bare.layer(app)), { disableLogger: true }));
+const bare = () => authenticated(Bare);
 
 const bearer = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
@@ -138,20 +130,16 @@ it("does not repeat a schema an action already declares", () => {
   expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "401"]);
 });
 
-it("decodes a surface error through ActionCliClient", async () => {
+it("decodes a surface error through a remote ActionCli command", async () => {
   const web = guarded();
 
   const fetchLayer = FetchHttpClient.layer.pipe(
     Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
-        web.handler(new Request(input, init), Context.empty()),
-      ),
+      Layer.succeed(FetchHttpClient.Fetch, (input, init) => web.handler(new Request(input, init))),
     ),
   );
 
-  const command = ActionCliClient.command(Guarded, WhoAmI, {
-    connection: { baseUrl: "http://localhost" },
-  });
+  const command = ActionCli.command(Guarded, WhoAmI, { baseUrl: "http://localhost" });
 
   // The surface error is a typed failure of the command, not a decode error.
   const [failure, output] = await logged(
@@ -187,17 +175,15 @@ it("decodes two errors that share a status by their tag", async () => {
 
   const binding = ActionHttp.make([Refuse], { errors: [Throttled] });
 
-  const web = HttpRouter.toWebHandler(
-    binding
-      .layer(
-        Action.implement(Refuse, () => Effect.fail(new Rejected({ reason: "closed" }))),
-        {
-          before: (action) =>
-            action.access === "read" ? Effect.void : Effect.fail(new Throttled({ retryAfter: 30 })),
-        },
-      )
-      .pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+  const web = serve(
+    ActionHttp.layer(
+      binding,
+      Action.implement(Refuse, () => Effect.fail(new Rejected({ reason: "closed" }))),
+      {
+        before: (action) =>
+          action.access === "read" ? Effect.void : Effect.fail(new Throttled({ retryAfter: 30 })),
+      },
+    ),
   );
 
   onTestFinished(() => web.dispose());

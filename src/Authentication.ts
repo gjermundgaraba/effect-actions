@@ -1,28 +1,102 @@
-import { type Context, Effect } from "effect";
+import { type Context, Effect, Option, Predicate, Schema, SchemaAST } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
+  type Headers,
   HttpEffect,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import type * as Action from "./Action.js";
+
+/** How `middleware` answers a refusal it declares. */
+export interface MiddlewareOptions<Errors extends ReadonlyArray<Action.Codec>> {
+  /**
+   * The errors `authenticate` may fail with besides a response: each is sent as its JSON
+   * encoding with its `httpApiStatus` (500 without one). Pass the binding's `Http.errors`,
+   * so what clients decode and what is sent are declared once.
+   */
+  readonly errors?: Errors;
+  /**
+   * Headers of such an answer, such as `{ "www-authenticate": "Bearer" }`, or a function
+   * of the error, so a challenge goes only with the refusals that need it.
+   */
+  readonly headers?: Headers.Input | ((error: Errors[number]["Type"]) => Headers.Input);
+}
+
+const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+
+/**
+ * The response to a declared refusal. It was declared, so it encodes; an encoding
+ * failure is a defect.
+ */
+const respond =
+  (options: MiddlewareOptions<ReadonlyArray<Action.Codec>>) =>
+  <E>(error: E): Effect.Effect<HttpServerResponse.HttpServerResponse> => {
+    const schema = options.errors?.find((candidate) => Schema.is(candidate)(error));
+
+    if (schema === undefined) return Effect.die(error);
+
+    const headers = Predicate.isFunction(options.headers)
+      ? options.headers(error)
+      : options.headers;
+
+    return HttpServerResponse.schemaJson(schema)(error, {
+      status: statusOf(schema.ast) ?? 500,
+      ...(headers === undefined ? {} : { headers }),
+    }).pipe(Effect.orDie);
+  };
+
+/**
+ * The bearer token of the request's `Authorization` header, if it has one. The scheme
+ * is matched case-insensitively, as RFC 9110 requires.
+ */
+export const bearerToken: Effect.Effect<
+  Option.Option<string>,
+  never,
+  HttpServerRequest.HttpServerRequest
+> = Effect.map(HttpServerRequest.HttpServerRequest, (request) => {
+  const match = /^Bearer +(\S+) *$/i.exec(request.headers.authorization ?? "");
+
+  return Option.fromNullishOr(match?.[1]);
+});
 
 /**
  * Authenticate each request and provide its identity to the downstream handler.
- * `authenticate` fails with the response to send instead, so the host owns its
- * status, body and challenge headers. Dependencies remain native router request
- * requirements. Acquired resources live until the request scope closes, including
- * while the handler is running. Every response is marked `Cache-Control: no-store`,
- * including private failures serialized by enclosing middleware.
+ * `authenticate` fails with a declared error from `options.errors`, answered as JSON
+ * with its status, or with the response to send instead. Dependencies remain native
+ * router request requirements. Acquired resources live until the request scope closes,
+ * including while the handler is running. Every response is marked
+ * `Cache-Control: no-store`, including private failures serialized by enclosing
+ * middleware.
  */
-export const middleware = <I, A, R>(
+export function middleware<I, A, R, const Errors extends ReadonlyArray<Action.Codec> = []>(
   service: Context.Key<I, A>,
-  authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse, R>,
+  authenticate: Effect.Effect<
+    NoInfer<A>,
+    HttpServerResponse.HttpServerResponse | NoInfer<Errors[number]["Type"]>,
+    R
+  >,
+  options?: MiddlewareOptions<Errors>,
+): ReturnType<typeof router<I, R>>;
+export function middleware<I, A, R, E>(
+  service: Context.Key<I, A>,
+  authenticate: Effect.Effect<A, E, R>,
+  options: MiddlewareOptions<ReadonlyArray<Action.Codec>> = {},
+) {
+  return router<I, R, E>(service, authenticate, respond(options));
+}
+
+const router = <I, R, E = never>(
+  service: Context.Key<I, unknown>,
+  authenticate: Effect.Effect<unknown, E, R>,
+  refuse: (error: E) => Effect.Effect<HttpServerResponse.HttpServerResponse>,
 ) =>
   HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
     authenticate.pipe(
       Effect.matchEffect({
-        onFailure: Effect.succeed,
+        onFailure: (error) =>
+          HttpServerResponse.isHttpServerResponse(error) ? Effect.succeed(error) : refuse(error),
         onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
       }),
       HttpEffect.withPreResponseHandler((_request, response) =>

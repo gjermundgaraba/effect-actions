@@ -1,13 +1,13 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { mcpRequest } from "../src/Testing.js";
-import { withMcpClient } from "../src/TestingClient.js";
-import { testMcpPath, testMcpUrl } from "./server.js";
-import { post } from "./requests.js";
+import { withMcpClient } from "./mcp-client.js";
+import { post, rawToolCall } from "./requests.js";
+import { serveWithContext } from "./server.js";
+import { serve } from "../src/Testing.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
@@ -29,27 +29,18 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
 
   const routes =
     transport === "HTTP"
-      ? ActionHttp.make([identity]).layer(app)
+      ? ActionHttp.layer(ActionHttp.make([identity]), app)
       : ActionMcp.layerHttp(app, {
           name: "test",
           version: "0",
-          path: testMcpPath,
         });
 
-  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+  // The request identity these routes require is deliberately missing.
+  const web = serveWithContext(routes);
 
   onTestFinished(() => web.dispose());
 
-  const request =
-    transport === "HTTP"
-      ? post("/api/identity")
-      : mcpRequest({
-          url: testMcpUrl,
-          method: "tools/call",
-          params: { name: "identity", arguments: {} },
-        });
+  const request = transport === "HTTP" ? post("/api/identity") : rawToolCall("identity");
 
   // @ts-expect-error Deliberately omit the required request identity to exercise runtime failure.
   const response = await web.handler(request, Context.empty());
@@ -64,7 +55,7 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
   expect(executions).toBe(0);
 });
 
-it("each adapter layer acquires and releases its own handler build", async () => {
+it("builds an implementation once per host build, however many adapters serve it", async () => {
   let acquired = 0;
   let finalized = 0;
 
@@ -85,27 +76,29 @@ it("each adapter layer acquires and releases its own handler build", async () =>
   );
 
   const routes = Layer.mergeAll(
-    ActionHttp.make([identity]).layer(app),
+    ActionHttp.layer(ActionHttp.make([identity]), app),
+    ActionHttp.layer(ActionHttp.make([identity], { prefix: "/v2" }), app),
     ActionMcp.layerHttp(app, {
       name: "test",
       version: "0",
-      path: testMcpPath,
     }),
-  ).pipe(Layer.provide(Layer.succeed(Greeting, "build")), Layer.provide(HttpServer.layerServices));
+  ).pipe(Layer.provide(Layer.succeed(Greeting, "build")));
 
-  // Two adapters serve the implementation, so each runtime acquires twice.
-  // Reusing the implementation across runtimes must not share state either.
+  // Three layers serve the implementation and share one build per runtime. Reusing the
+  // implementation across runtimes must not share state.
   for (let runtime = 1; runtime <= 2; runtime++) {
-    const web = HttpRouter.toWebHandler(routes, { disableLogger: true });
+    const web = serveWithContext(routes);
 
     try {
       const response = await web.handler(post("/api/identity"), Context.make(Actor, "http"));
 
       expect(await response.json()).toBe("build/http");
+      expect(
+        await (await web.handler(post("/v2/identity"), Context.make(Actor, "v2"))).json(),
+      ).toBe("build/v2");
       await withMcpClient(
         {
           fetch: (request) => web.handler(request, Context.make(Actor, "mcp")),
-          path: testMcpPath,
         },
         async (client) => {
           expect(
@@ -113,21 +106,96 @@ it("each adapter layer acquires and releases its own handler build", async () =>
           ).toEqual({ value: "build/mcp" });
         },
       );
-      expect(acquired).toBe(2 * runtime);
-      expect(finalized).toBe(2 * (runtime - 1));
+      expect(acquired).toBe(runtime);
+      expect(finalized).toBe(runtime - 1);
     } finally {
       await web.dispose();
     }
 
-    expect(finalized).toBe(2 * runtime);
+    expect(finalized).toBe(runtime);
   }
+});
+
+it("builds a shared implementation with one set of startup services, not one per surface", async () => {
+  const app = Action.implement(
+    identity,
+    Effect.map(Greeting, (greeting) => () => Effect.succeed(greeting)),
+  );
+
+  // Startup services provided around one surface reach every surface serving the same
+  // implementation: its builder runs once, with the services of whichever builds it.
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([identity]), app).pipe(
+        Layer.provide(Layer.succeed(Greeting, "http")),
+      ),
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
+        Layer.provide(Layer.succeed(Greeting, "mcp")),
+      ),
+    ),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const http = await (await web.handler(post("/api/identity"))).json();
+
+  await withMcpClient({ fetch: web.handler }, async (client) => {
+    expect((await client.callTool({ name: "identity", arguments: {} })).structuredContent).toEqual({
+      value: http,
+    });
+  });
+});
+
+it("serves a copy of a binding like the binding itself", async () => {
+  const Http = ActionHttp.make([identity], { prefix: "/v1" });
+  const app = Action.implement(identity, () => Effect.succeed("copied"));
+
+  const web = serve(
+    Layer.mergeAll(ActionHttp.layer({ ...Http }, app), ActionHttp.openApi({ ...Http })),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  expect(await (await web.handler(post("/v1/identity"))).json()).toBe("copied");
+  expect((await web.handler(new Request("http://localhost/v1/openapi.json"))).status).toBe(200);
+});
+
+it("mounts routes and the OpenAPI document under the binding's prefix, even with no actions", async () => {
+  expect(ActionHttp.make([identity]).prefix).toBe("/api");
+  expect(ActionHttp.make([identity], { prefix: "/v1/" }).prefix).toBe("/v1");
+  expect(ActionHttp.make([identity], { prefix: "/" }).prefix).toBe("");
+
+  const Empty = ActionHttp.make([], { prefix: "/empty" });
+
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(Empty, []),
+      ActionHttp.openApi(Empty),
+      ActionHttp.openApi(ActionHttp.make([], { prefix: "/", name: "root" })),
+    ),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  expect((await web.handler(new Request("http://localhost/empty/openapi.json"))).status).toBe(200);
+  expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(200);
+});
+
+it("refuses an object that only looks like an implementation", () => {
+  // SAFETY: deliberately fabricated, as a second installed copy of the package would make one.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Fabrication fixture.
+  const fake = { actions: [identity] } as never;
+
+  expect(() => ActionHttp.layer(ActionHttp.make([identity]), fake)).toThrow(
+    "Not an implementation made by this Action.implement",
+  );
 });
 
 it("keeps same-contract implementations apart over MCP", async () => {
   const a = Action.implement(identity, () => Effect.succeed("a"));
   const b = Action.implement(identity, () => Effect.succeed("b"));
 
-  const web = HttpRouter.toWebHandler(
+  const web = serve(
     Layer.mergeAll(
       ActionMcp.layerHttp(a, {
         name: "a",
@@ -139,8 +207,7 @@ it("keeps same-contract implementations apart over MCP", async () => {
         version: "0",
         path: "/b",
       }),
-    ).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    ),
   );
 
   onTestFinished(() => web.dispose());
@@ -187,16 +254,14 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make([identity]).layer(app)
+        ? ActionHttp.layer(ActionHttp.make([identity]), app)
         : ActionMcp.layerHttp(app, {
             name: "test",
             version: "0",
-            path: testMcpPath,
           });
 
-    const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-      disableLogger: true,
-    });
+    // Each request carries its own logger and tracer context.
+    const web = serveWithContext(routes);
 
     const context = Context.make(Logger.CurrentLoggers, new Set([logger])).pipe(
       Context.add(Tracer.Tracer, tracer),
@@ -210,7 +275,6 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       await withMcpClient(
         {
           fetch: (request) => web.handler(request, context),
-          path: testMcpPath,
         },
         (client) => client.callTool({ name: "identity", arguments: {} }).catch(() => undefined),
       );
@@ -255,31 +319,18 @@ it.each(["HTTP", "MCP"])(
 
     const routes =
       transport === "HTTP"
-        ? ActionHttp.make([identity]).layer(app)
+        ? ActionHttp.layer(ActionHttp.make([identity]), app)
         : ActionMcp.layerHttp(app, {
             name: "test",
             version: "0",
-            path: testMcpPath,
           });
 
-    const web = HttpRouter.toWebHandler(
-      routes.pipe(
-        HttpRouter.provideRequest(Layer.succeed(Actor, "request")),
-        Layer.provide(HttpServer.layerServices),
-      ),
-      { disableLogger: true },
-    );
+    const web = serve(routes.pipe(HttpRouter.provideRequest(Layer.succeed(Actor, "request"))));
 
     onTestFinished(() => web.dispose());
 
     const response = await web.handler(
-      transport === "HTTP"
-        ? post("/api/identity")
-        : mcpRequest({
-            method: "tools/call",
-            params: { name: "identity", arguments: {} },
-            url: testMcpUrl,
-          }),
+      transport === "HTTP" ? post("/api/identity") : rawToolCall("identity"),
     );
 
     expect(response.status).toBe(200);

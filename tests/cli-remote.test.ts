@@ -1,19 +1,17 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Schema } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
-  HttpRouter,
-  HttpServer,
 } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
-import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { cliServices, logged } from "./cli-services.js";
+import { serve } from "../src/Testing.js";
 
 class Domain extends Schema.TaggedError<Domain>()(
   "Domain",
@@ -35,19 +33,14 @@ const Remote = Action.make("remote", {
   errors: [Domain],
 });
 
-const schemaError = {
-  invalid: {
-    schema: Policy,
-    make: (failure: { readonly kind: string }) => new Policy({ kind: failure.kind }),
-  },
-  internal: {
-    schema: Policy,
-    make: (failure: { readonly kind: string }) => new Policy({ kind: failure.kind }),
-  },
-};
-
 // `POST /api/remote`, one subcommand per action.
-const Http = ActionHttp.make([Remote], { schemaError });
+const Http = ActionHttp.make([Remote], {
+  errors: [Policy],
+  schemaError: {
+    invalid: (failure) => new Policy({ kind: failure.kind }),
+    internal: (failure) => new Policy({ kind: failure.kind }),
+  },
+});
 
 const decodedInputs: number[] = [];
 
@@ -63,25 +56,20 @@ const app = Action.implement([Remote], {
 });
 
 it("projects commands through the HTTP client without a local fallback", async () => {
-  const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
+  const web = serve(ActionHttp.layer(Http, app));
 
   onTestFinished(() => web.dispose());
 
   const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
   decodedInputs.length = 0;
 
-  const command = ActionCliClient.make(Http, {
+  const command = ActionCli.make(Http, {
     name: "cli",
-    connection: {
-      baseUrl: "http://localhost",
-      transformClient: (client) =>
-        client.pipe(
-          HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer host")),
-        ),
-    },
+    baseUrl: "http://localhost",
+    transformClient: (client) =>
+      client.pipe(
+        HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer host")),
+      ),
   });
 
   const fetchLayer = FetchHttpClient.layer.pipe(
@@ -94,7 +82,7 @@ it("projects commands through the HTTP client without a local fallback", async (
           body: await request.clone().json(),
         });
 
-        return web.handler(request, Context.empty());
+        return web.handler(request);
       }),
     ),
   );
@@ -123,7 +111,7 @@ it("projects commands through the HTTP client without a local fallback", async (
     errors: [Domain],
   });
 
-  expect(() => ActionCliClient.command(Http, Lookalike)).toThrow(
+  expect(() => ActionCli.command(Http, Lookalike)).toThrow(
     'Action "remote" is not in this HTTP binding',
   );
 });
@@ -138,11 +126,8 @@ it("projects a flat binding as one subcommand per action", async () => {
 
   const Flat = ActionHttp.make([Remote, Echo]);
 
-  const web = HttpRouter.toWebHandler(
-    Flat.layer([...app, ...Action.implement(Echo, ({ value }) => Effect.succeed(value))]).pipe(
-      Layer.provide(HttpServer.layerServices),
-    ),
-    { disableLogger: true },
+  const web = serve(
+    ActionHttp.layer(Flat, [app, Action.implement(Echo, ({ value }) => Effect.succeed(value))]),
   );
 
   onTestFinished(() => web.dispose());
@@ -155,14 +140,14 @@ it("projects a flat binding as one subcommand per action", async () => {
         const request = new Request(input, init);
         urls.push(request.url);
 
-        return web.handler(request, Context.empty());
+        return web.handler(request);
       }),
     ),
   );
 
-  const command = ActionCliClient.make(Flat, {
+  const command = ActionCli.make(Flat, {
     name: "cli",
-    connection: { baseUrl: "http://localhost" },
+    baseUrl: "http://localhost",
   });
 
   const runLines = (args: ReadonlyArray<string>) =>
@@ -180,35 +165,6 @@ it("projects a flat binding as one subcommand per action", async () => {
   expect(urls).toEqual(["http://localhost/api/echo", "http://localhost/api/remote"]);
 });
 
-it("connection options cannot select another action", async () => {
-  const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
-
-  onTestFinished(() => web.dispose());
-  decodedInputs.length = 0;
-
-  const fetchLayer = FetchHttpClient.layer.pipe(
-    Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
-        web.handler(new Request(input, init), Context.empty()),
-      ),
-    ),
-  );
-
-  // Structurally assignable, since the host's object is not a literal here.
-  const connection = { baseUrl: "http://localhost", group: "other", endpoint: "missing" };
-  const command = ActionCliClient.command(Http, Remote, { connection });
-
-  const [, output] = await logged(
-    Command.runWith(command, { version: "0" })(["--input", '{"value":"21"}']),
-  ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
-
-  expect(decodedInputs).toEqual([21]);
-  expect(output).toEqual(['"42"']);
-});
-
 it("names the same subcommands as a local aggregate for the same actions", () => {
   const Echo = Action.make("echo", {
     description: "Echoes its input",
@@ -224,42 +180,31 @@ it("names the same subcommands as a local aggregate for the same actions", () =>
   }) => command.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name));
 
   const local = ActionCli.make(
-    [...app, ...Action.implement(Echo, ({ value }) => Effect.succeed(value))],
+    [app, Action.implement(Echo, ({ value }) => Effect.succeed(value))],
     { name: "cli" },
   );
 
-  const remote = ActionCliClient.make(ActionHttp.make([Remote, Echo]), { name: "cli" });
+  const remote = ActionCli.make(ActionHttp.make([Remote, Echo]), { name: "cli" });
 
   expect(names(remote)).toEqual(["remote", "echo"]);
   expect(names(local)).toEqual(names(remote));
 });
 
 it("propagates domain and native schema-policy failures through Command.runWith", async () => {
-  const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
+  const web = serve(ActionHttp.layer(Http, app));
 
   onTestFinished(() => web.dispose());
 
   const fetchLayer = FetchHttpClient.layer.pipe(
     Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
-        web.handler(
-          new Request(
-            `http://localhost${new URL(input instanceof Request ? input.url : input).pathname}`,
-            init,
-          ),
-          Context.empty(),
-        ),
-      ),
+      Layer.succeed(FetchHttpClient.Fetch, (input, init) => web.handler(new Request(input, init))),
     ),
   );
 
-  const command = ActionCliClient.command(Http, Remote, {
+  const command = ActionCli.command(Http, Remote, {
+    // Without `input`, the parsed `{ value }` is the encoded input as it is.
     parameters: { value: Argument.String("value") },
-    input: ({ value }) => ({ value }),
-    connection: { baseUrl: "http://localhost" },
+    baseUrl: "http://localhost",
   });
 
   const run = (value: string) =>

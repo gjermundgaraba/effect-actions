@@ -1,4 +1,4 @@
-import { defineConfig } from "vite-plus";
+import { defaultExclude, defineConfig } from "vite-plus";
 
 export default defineConfig({
   staged: {
@@ -6,6 +6,8 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
+    // Lint-configuration probes are fixtures another run writes and deletes mid-run.
+    exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
   },
   pack: {
     entry: {
@@ -16,10 +18,8 @@ export default defineConfig({
       ActionToolkit: "src/ActionToolkit.ts",
       ActionCatalog: "src/ActionCatalog.ts",
       ActionCli: "src/ActionCli.ts",
-      ActionCliClient: "src/ActionCliClient.ts",
       Authentication: "src/Authentication.ts",
       Testing: "src/Testing.ts",
-      TestingClient: "src/TestingClient.ts",
     },
     // Preserve module boundaries for JS and declarations. Bundled declarations
     // currently emit a dangling __exportAll export with this toolchain.
@@ -44,6 +44,8 @@ export default defineConfig({
       ".roo/**",
       ".windsurf/**",
       "tools/oxlint/anti-slop/**",
+      // Transient lint-configuration probes; see tools/oxlint/tests/configuration.test.ts.
+      "tools/oxlint/tests/probe-*/**",
     ],
   },
   lint: {

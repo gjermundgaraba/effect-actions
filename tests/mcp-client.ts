@@ -1,10 +1,11 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 /** How `withMcpClient` connects the official client. */
-export interface McpClientOptions {
+interface McpClientOptions {
   /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
   readonly fetch: (request: Request) => Promise<Response>;
-  readonly path: string;
+  /** Defaults to `/mcp`, the default `ActionMcp.layerHttp` path. */
+  readonly path?: string;
   /** Defaults to `http://localhost`. */
   readonly baseUrl?: string | URL;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
@@ -15,7 +16,7 @@ export interface McpClientOptions {
  * serves, and always close its transport after the callback.
  */
 export const withMcpClient = async <A>(
-  { fetch, path, baseUrl = "http://localhost", headers }: McpClientOptions,
+  { fetch, path = "/mcp", baseUrl = "http://localhost", headers }: McpClientOptions,
   run: (client: Client) => Promise<A>,
 ): Promise<A> => {
   const client = new Client(

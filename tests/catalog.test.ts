@@ -11,7 +11,7 @@ describe("offline action catalog", () => {
       input: { n: Schema.FiniteFromString },
       success: Schema.FiniteFromString,
       errors: [Schema.FiniteFromString],
-      mcp: { name: "double_number", idempotent: true, openWorld: false },
+      mcp: { idempotent: true, openWorld: false },
     });
 
     const catalog = ActionCatalog.make([Double]);
@@ -32,7 +32,6 @@ describe("offline action catalog", () => {
       description: "Double a number encoded as a string",
       access: "write",
       mcp: {
-        name: "double_number",
         readOnly: false,
         destructive: true,
         idempotent: true,
@@ -125,7 +124,7 @@ describe("offline action catalog", () => {
     });
   });
 
-  it("lists each action's own errors, and actions hidden from MCP", () => {
+  it("lists each action's own errors, and its hints", () => {
     const Own = Schema.Literal("own");
 
     const catalog = ActionCatalog.make([
@@ -135,16 +134,21 @@ describe("offline action catalog", () => {
         success: Schema.String,
         errors: [Own],
       }),
-      Action.make("hidden", {
-        description: "Hidden from MCP",
+      Action.make("write", {
+        description: "Write",
         access: "write",
         success: Schema.String,
-        mcp: false,
       }),
     ]);
 
     expect(catalog.actions[0]?.errors).toMatchObject([{ enum: ["own"] }]);
-    expect(catalog.actions[1]).toMatchObject({ mcp: false, access: "write", errors: [] });
+    expect(catalog.actions[1]).toEqual(
+      expect.objectContaining({
+        access: "write",
+        errors: [],
+        mcp: { readOnly: false, destructive: true, idempotent: false, openWorld: true },
+      }),
+    );
   });
 
   it("preserves dictionary values instead of projecting an empty object", () => {
@@ -220,23 +224,20 @@ describe("offline action catalog", () => {
     expect(Schema.decodeUnknownExit(Positive)("-1")._tag).toBe("Failure");
   });
 
-  it("owns only its action names, not a server's tool registry", () => {
+  it("refuses equal action names", () => {
     const read = () =>
       Action.make("read", {
         description: "Read",
         access: "write",
         success: Schema.String,
-        mcp: { name: "same_tool" },
       });
 
     const Read = read();
 
-    // Equal MCP names are distinct entries; equal action names are refused.
     const Other = Action.make("other", {
       description: "Other",
       access: "read",
       success: Schema.String,
-      mcp: { name: "same_tool" },
     });
 
     expect(ActionCatalog.make([Read, Other]).actions).toHaveLength(2);

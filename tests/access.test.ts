@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -9,6 +9,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { cliServices, logged } from "./cli-services.js";
 import { post, rawToolCall } from "./requests.js";
+import { serve } from "../src/Testing.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
 
@@ -70,13 +71,7 @@ type App = ReturnType<typeof make>["app"];
 
 /** Serve the actions over HTTP with the hook bound to that surface. */
 const serveHttp = (app: App, before: ReturnType<typeof authorize>, granted: Layer.Layer<Scopes>) =>
-  HttpRouter.toWebHandler(
-    Http.layer(app, { before }).pipe(
-      HttpRouter.provideRequest(granted),
-      Layer.provide(HttpServer.layerServices),
-    ),
-    { disableLogger: true },
-  );
+  serve(ActionHttp.layer(Http, app, { before }).pipe(HttpRouter.provideRequest(granted)));
 
 describe("action access", () => {
   it("is declared by every action and derives the MCP read-only hint from it", () => {
@@ -88,7 +83,7 @@ describe("action access", () => {
     expect(Write.mcp).toMatchObject({ readOnly: false, destructive: true });
   });
 
-  it("keeps an explicit hint that disagrees, and keeps access without a tool", () => {
+  it("keeps an explicit hint that disagrees with access", () => {
     const advertised = Action.make("advertised", {
       description: "A write the model may call without approval",
       access: "write",
@@ -96,17 +91,8 @@ describe("action access", () => {
       mcp: { readOnly: true },
     });
 
-    const local = Action.make("local", {
-      description: "No tool projection at all",
-      access: "read",
-      success: Schema.String,
-      mcp: false,
-    });
-
     expect(advertised.access).toBe("write");
     expect(advertised.mcp).toMatchObject({ readOnly: true, destructive: false });
-    expect(local.access).toBe("read");
-    expect(local.mcp).toBe(false);
   });
 
   it("refuses a value the contract does not define, so plain JavaScript cannot skip a rule", () => {
@@ -161,14 +147,13 @@ describe("the pre-handler hook", () => {
   it("runs over MCP, where a refusal is the tool's declared failure", async () => {
     const { app, hooks, handlers } = make();
 
-    const mcp = HttpRouter.toWebHandler(
+    const mcp = serve(
       ActionMcp.layerHttp(app, {
         name: "test",
         version: "0",
         errors: [InsufficientScope],
         before: authorize(hooks),
-      }).pipe(HttpRouter.provideRequest(readOnly), Layer.provide(HttpServer.layerServices)),
-      { disableLogger: true },
+      }).pipe(HttpRouter.provideRequest(readOnly)),
     );
 
     onTestFinished(() => mcp.dispose());
@@ -220,7 +205,7 @@ describe("the pre-handler hook", () => {
 
   it("runs over the CLI, so a local caller supplies its services too", async () => {
     const { app, hooks, handlers } = make();
-    const before = authorize(hooks);
+    const guard = { errors: [InsufficientScope], before: authorize(hooks) };
 
     const run = <Name extends string, Input, Services, E>(
       command: Command.Command<Name, Input, Services, E, Scope.Scope | Scopes>,
@@ -235,14 +220,11 @@ describe("the pre-handler hook", () => {
         ),
       );
 
-    const [read, output] = await run(ActionCli.command(app, Read, { before }), []);
+    const [read, output] = await run(ActionCli.command(app, Read, guard), []);
     expect(read._tag).toBe("Success");
     expect(output).toEqual(['"read ok"']);
 
-    const [refused] = await run(ActionCli.command(app, Write, { before }), [
-      "--input",
-      '{"value":"x"}',
-    ]);
+    const [refused] = await run(ActionCli.command(app, Write, guard), ["--input", '{"value":"x"}']);
 
     expect(refused._tag).toBe("Failure");
 
@@ -260,20 +242,18 @@ describe("the pre-handler hook", () => {
   });
 
   it("is bound per HTTP layer, so actions served without it skip it", async () => {
-    const { app, hooks, handlers } = make();
-
-    const [read, write] = [
-      app.filter((one) => one.action === Read),
-      app.filter((one) => one.action === Write),
-    ];
+    const hooks: Array<string> = [];
+    const handlers: Array<string> = [];
+    const record = (name: string) => Effect.sync(() => (handlers.push(name), `${name} ok`));
+    const read = Action.implement(Read, () => record("read"));
+    const write = Action.implement(Write, () => record("write"));
 
     // One binding, two layers: only the write layer binds the hook.
-    const web = HttpRouter.toWebHandler(
-      Layer.merge(Http.layer(read), Http.layer(write, { before: authorize(hooks) })).pipe(
-        HttpRouter.provideRequest(readOnly),
-        Layer.provide(HttpServer.layerServices),
-      ),
-      { disableLogger: true },
+    const web = serve(
+      Layer.merge(
+        ActionHttp.layer(Http, read),
+        ActionHttp.layer(Http, write, { before: authorize(hooks) }),
+      ).pipe(HttpRouter.provideRequest(readOnly)),
     );
 
     onTestFinished(() => web.dispose());

@@ -13,19 +13,11 @@ import { CurrentActor } from "../examples/auth.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
 import { userActions as App } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
+import type { Equal } from "./equal.js";
 
 const Actions = [GetUser, RenameUser, Double, WhoAmI] as const;
 
 const Http = ActionHttp.make(Actions);
-
-interface OptionalAlias {
-  readonly name?: "alias";
-}
-
-type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
-    ? true
-    : false;
 
 /** What every request to a layer must carry. */
 type RequestServices<L extends Layer.Any> = HttpRouter.Request.Only<"Requires", Layer.Services<L>>;
@@ -34,17 +26,6 @@ const services = Layer.provide(HttpServer.layerServices);
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
-  const optionalAlias: OptionalAlias = {};
-
-  const optionallyAliased = Action.make("fallback", {
-    description: "Optional alias",
-    access: "write",
-    success: Schema.String,
-    mcp: optionalAlias,
-  });
-
-  const optionalName: "alias" | "fallback" = optionallyAliased.mcp.name;
-  void optionalName;
 
   const ok = {
     getUser: ({ id }: { id: string }) => Effect.succeed({ id, name: "Ada" }),
@@ -59,10 +40,10 @@ export const typeAssertions = () => {
   // @ts-expect-error No public handler record.
   void single.handlers;
   // @ts-expect-error Implementations cannot be fabricated from a contract.
-  Http.layer([{ action: Double }]);
+  ActionHttp.layer(Http, [{ actions: [Double] }]);
   // @ts-expect-error Spreading a nominal implementation cannot manufacture its private builder.
   // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication compile-failure fixture.
-  Http.layer([{ ...single, action: Double }]);
+  ActionHttp.layer(Http, [{ ...single, actions: [Double] }]);
   // @ts-expect-error Every listed action needs a handler.
   Action.implement(Actions, { ...ok, whoAmI: undefined });
   // @ts-expect-error Handler results must match the success schema.
@@ -89,11 +70,11 @@ export const typeAssertions = () => {
 
   HttpRouter.toWebHandler(
     // @ts-expect-error Build-time handler dependencies are Layer requirements.
-    Http.layer(App).pipe(services),
+    ActionHttp.layer(Http, App).pipe(services),
   );
 
   const http = HttpRouter.toWebHandler(
-    Http.layer(App).pipe(Layer.provide(Users.layerMemory), services),
+    ActionHttp.layer(Http, App).pipe(Layer.provide(Users.layerMemory), services),
   );
 
   // @ts-expect-error Request-scoped handler dependencies must be present per request.
@@ -136,15 +117,15 @@ export const typeAssertions = () => {
   });
 
   // @ts-expect-error Test helpers require an explicit request Layer.
-  makeTestHttp(requestOnly);
+  makeTestHttp([requestOnly]);
   // @ts-expect-error Test helpers must not erase missing request services.
-  makeTestHttp(requestOnly, Layer.empty);
+  makeTestHttp([requestOnly], Layer.empty);
   // @ts-expect-error Test helpers require an explicit request Layer.
-  makeTestMcp(requestOnly);
+  makeTestMcp([requestOnly]);
   // @ts-expect-error Test helpers must not erase missing request services.
-  makeTestMcp(requestOnly, Layer.empty);
-  makeTestHttp(requestOnly, requestActor);
-  makeTestMcp(requestOnly, requestActor);
+  makeTestMcp([requestOnly], Layer.empty);
+  makeTestHttp([requestOnly], requestActor);
+  makeTestMcp([requestOnly], requestActor);
 
   const fallible = Action.implement(
     Actions,
@@ -152,7 +133,7 @@ export const typeAssertions = () => {
   );
 
   for (const routes of [
-    Http.layer(fallible),
+    ActionHttp.layer(Http, fallible),
     ActionMcp.layerHttp(fallible, { name: "test", version: "0" }),
   ]) {
     const build = Layer.build(routes.pipe(Layer.provide(HttpRouter.layer), services)).pipe(
@@ -200,7 +181,6 @@ export const implementTypes = () => {
     access: "write",
     input: Schema.Struct({ id: Schema.String, name: Schema.String }),
     success: Schema.String,
-    mcp: false,
   });
 
   // One action, one handler: its parameter is typed from the contract.
@@ -208,8 +188,12 @@ export const implementTypes = () => {
     Effect.succeed({ id, name: id.toUpperCase() }),
   );
 
+  // One implementation, whose request requirements are kept per action name.
   const plainChannels: [
-    Equal<Action.Implementation<typeof Lookup, never, never, never>, (typeof plain)[number]>,
+    Equal<
+      Action.Implementation<typeof Lookup, { readonly lookup: never }, never, never>,
+      typeof plain
+    >,
   ] = [true];
 
   void plainChannels;
@@ -226,8 +210,8 @@ export const implementTypes = () => {
   );
 
   const builtChannels: Equal<
-    Action.Implementation<typeof Lookup, Principal, never, Store>,
-    (typeof built)[number]
+    Action.Implementation<typeof Lookup, { readonly lookup: Principal }, never, Store>,
+    typeof built
   > = true;
 
   void builtChannels;
@@ -259,12 +243,20 @@ export const implementTypes = () => {
   // @ts-expect-error A builder's handlers may only fail with declared errors.
   Action.implement([Lookup], Effect.succeed({ lookup: () => Effect.fail("nope" as const) }));
 
-  // Lists spread; each surface computes its requirements from what it serves.
-  const all = [...plain, ...built, ...record, ...shared];
+  // Per action: the shared builder's `rename` owes `Principal`, its `lookup` nothing.
+  const sharedRequests: Equal<
+    (typeof shared)["~request"],
+    { readonly lookup: never; readonly rename: Principal }
+  > = true;
+
+  void sharedRequests;
+
+  // Surfaces take implementations as they are, and compute their requirements from them.
+  const all = [plain, built, record, shared];
   const http = ActionHttp.make([Lookup, Rename]);
 
   // HTTP serves `rename`, so the request owes its `Principal`; builders owe `Store`.
-  const routes = http.layer(all);
+  const routes = ActionHttp.layer(http, all);
   const httpRequest: Equal<RequestServices<typeof routes>, Principal> = true;
   const httpBuild: Store extends Layer.Services<typeof routes> ? true : false = true;
   const httpError: Equal<Layer.Error<typeof routes>, BuildFailed> = true;
@@ -272,30 +264,14 @@ export const implementTypes = () => {
   void httpBuild;
   void httpError;
 
-  // MCP hides `rename`, so no request owes its `Principal`. `built` still owes it for
-  // `lookup`, and the shared builder is still acquired for `lookup`, so its channels stay.
-  const tools = ActionMcp.layerHttp([...plain, ...shared], { name: "t", version: "0" });
-  const mcpRequest: Equal<RequestServices<typeof tools>, never> = true;
+  // MCP serves what it is given: the shared builder's channels and `rename`'s request.
+  const tools = ActionMcp.layerHttp([plain, shared], { name: "t", version: "0" });
+  const mcpRequest: Equal<RequestServices<typeof tools>, Principal> = true;
   const mcpBuild: Store extends Layer.Services<typeof tools> ? true : false = true;
   const mcpError: "BuildFailed" extends Layer.Error<typeof tools>["_tag"] ? true : false = true;
   void mcpRequest;
   void mcpBuild;
   void mcpError;
-
-  // A hidden action alone is never acquired: its builder's channels are absent.
-  const hiddenOnly = Action.implement(
-    Rename,
-    Effect.fail("hidden-build" as const).pipe(
-      Effect.tap(() => Store),
-      Effect.as(({ name }: { readonly name: string }) => Effect.succeed(name)),
-    ),
-  );
-
-  const nothing = ActionMcp.layerHttp(hiddenOnly, { name: "t", version: "0" });
-  const noBuild: Store extends Layer.Services<typeof nothing> ? false : true = true;
-  const noBuildError: "hidden-build" extends Layer.Error<typeof nothing> ? false : true = true;
-  void noBuild;
-  void noBuildError;
 
   const Foreign = Action.make("foreign", {
     description: "Foreign",
@@ -303,8 +279,9 @@ export const implementTypes = () => {
     success: Schema.String,
   });
 
+  const foreign = Action.implement(Foreign, () => Effect.succeed(""));
   // @ts-expect-error Route layers exist only for implementations of the bound actions.
-  http.layer(Action.implement(Foreign, () => Effect.succeed("")));
+  ActionHttp.layer(http, foreign);
   // @ts-expect-error A list of implementations is not a list of contracts.
   ActionHttp.make(all);
 };
@@ -350,21 +327,21 @@ export const policyTypes = Effect.gen(function* () {
     success: Schema.Finite,
   });
 
-  // Written inline, the policy needs no annotation: each `make` is typed from its `schema`.
+  // Written inline, the policy needs no annotation: each answer is typed from `errors`.
   const bound = ActionHttp.make([Echo], {
-    errors: [Refused],
+    errors: [Refused, PolicyFailure],
     schemaError: {
-      invalid: { schema: PolicyFailure, make: ({ kind }) => new PolicyFailure({ kind }) },
-      internal: { schema: PolicyFailure, make: ({ kind }) => new PolicyFailure({ kind }) },
+      invalid: ({ kind }) => new PolicyFailure({ kind }),
+      internal: ({ kind }) => new PolicyFailure({ kind }),
     },
   });
 
-  // @ts-expect-error Policy errors belong to the transport, not to handlers.
+  // @ts-expect-error Binding errors belong to the transport, not to handlers.
   Action.implement(Echo, () => Effect.fail(new PolicyFailure({ kind: "Body" })));
   // @ts-expect-error Surface errors belong to the surface, not to handlers.
   Action.implement(Echo, () => Effect.fail(new Refused()));
 
-  // Surface and policy errors reach every client method as typed failures.
+  // Binding errors reach every client method as typed failures.
   const client = yield* ActionHttpClient.make(bound);
   yield* client.echo({ value: 1 }).pipe(
     Effect.catchTag("PolicyFailure", () => Effect.succeed(0)),
@@ -378,31 +355,32 @@ export const policyTypes = Effect.gen(function* () {
   );
 
   ActionHttp.make([Echo], {
+    errors: [PolicyFailure],
     schemaError: {
-      // @ts-expect-error An answer can return only its own declared error.
-      invalid: { schema: PolicyFailure, make: () => "undeclared" },
-      internal: { schema: PolicyFailure, make: () => new PolicyFailure({ kind: "Body" }) },
+      // @ts-expect-error An answer returns one of the binding's errors.
+      invalid: () => "undeclared",
     },
   });
   ActionHttp.make([Echo], {
+    errors: [PolicyFailure],
     schemaError: {
-      invalid: { schema: PolicyFailure, make: () => new PolicyFailure({ kind: "Payload" }) },
-      internal: {
-        schema: PolicyFailure,
-        // @ts-expect-error An answer is pure, not a service-requiring Effect.
-        make: () => Effect.as(CurrentActor, new PolicyFailure({ kind: "Body" })),
-      },
+      // @ts-expect-error An answer is pure, not a service-requiring Effect.
+      internal: () => Effect.as(CurrentActor, new PolicyFailure({ kind: "Body" })),
     },
+  });
+  ActionHttp.make([Echo], {
+    // @ts-expect-error Without declared errors, there is nothing to answer with.
+    schemaError: { invalid: () => new PolicyFailure({ kind: "Payload" }) },
   });
 });
 
 export const configuredAdapterTypes = () => {
   const Bound = ActionHttp.make(Actions, { prefix: "/rpc" });
   // @ts-expect-error A configured binding must preserve acquisition requirements.
-  HttpRouter.toWebHandler(Bound.layer(App).pipe(services));
+  HttpRouter.toWebHandler(ActionHttp.layer(Bound, App).pipe(services));
 
   const web = HttpRouter.toWebHandler(
-    Bound.layer(App).pipe(Layer.provide(Users.layerMemory), services),
+    ActionHttp.layer(Bound, App).pipe(Layer.provide(Users.layerMemory), services),
   );
 
   // @ts-expect-error Configuring the binding must preserve request requirements.
@@ -429,6 +407,11 @@ export const configuredAdapterTypes = () => {
   });
   // Both mount paths have defaults: `/api` and `/mcp`.
   ActionHttp.make(Actions);
+  // The group name, which is the OpenAPI tag, may be chosen.
+  ActionHttp.make(Actions, { prefix: "/users", name: "users" });
+  // The document is served from the binding, not from a layer of it.
+  ActionHttp.openApi(Bound) satisfies Layer.Layer<never, never, HttpRouter.HttpRouter>;
+  ActionHttp.openApi(Bound, "/openapi.json");
   ActionMcp.layerHttp(App, { name: "test", version: "0" });
   // @ts-expect-error MCP server information is required.
   ActionMcp.layerHttp(App, { path: "/mcp" });
@@ -458,7 +441,7 @@ export const layerTypes = () => {
     void nativeTotal;
   });
 
-  Both.layer([...App, ...billingApp]);
+  ActionHttp.layer(Both, [App, billingApp]);
 
   const failsAfterBuildA = Action.implement(
     Invoice,
@@ -481,7 +464,7 @@ export const layerTypes = () => {
     ),
   );
 
-  const combined = Both.layer([...failsAfterBuildA, ...failsAfterBuildB]);
+  const combined = ActionHttp.layer(Both, [failsAfterBuildA, failsAfterBuildB]);
   // @ts-expect-error One layer preserves both disjoint build-service requirements.
   HttpRouter.toWebHandler(combined.pipe(services));
 
@@ -500,7 +483,7 @@ export const layerTypes = () => {
   );
 
   // Each layer carries only its own implementations' requirements.
-  const billingOnly = HttpRouter.toWebHandler(Both.layer(billingApp).pipe(services));
+  const billingOnly = HttpRouter.toWebHandler(ActionHttp.layer(Both, billingApp).pipe(services));
   void billingOnly.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
 
   const both = Context.make(Tenant, "acme").pipe(
@@ -509,7 +492,7 @@ export const layerTypes = () => {
 
   // Checked per adapter: over a union of both, one's requirements would hide the other's absence.
   const mergedHttp = HttpRouter.toWebHandler(
-    Layer.mergeAll(Both.layer(App), Both.layer(billingApp)).pipe(
+    Layer.mergeAll(ActionHttp.layer(Both, App), ActionHttp.layer(Both, billingApp)).pipe(
       Layer.provide(Users.layerMemory),
       services,
     ),
@@ -520,7 +503,7 @@ export const layerTypes = () => {
   void mergedHttp.handler(new Request("http://localhost"), both);
 
   const mergedMcp = HttpRouter.toWebHandler(
-    ActionMcp.layerHttp([...App, ...billingApp], { name: "test", version: "0" }).pipe(
+    ActionMcp.layerHttp([App, billingApp], { name: "test", version: "0" }).pipe(
       Layer.provide(Users.layerMemory),
       services,
     ),
@@ -532,9 +515,10 @@ export const layerTypes = () => {
 
   // Implementing inline must not let the adapter's parameter type erase requirements.
   const inline = HttpRouter.toWebHandler(
-    ActionHttp.make([Invoice])
-      .layer(Action.implement(Invoice, () => Effect.succeed(1)))
-      .pipe(services),
+    ActionHttp.layer(
+      ActionHttp.make([Invoice]),
+      Action.implement(Invoice, () => Effect.succeed(1)),
+    ).pipe(services),
   );
 
   void inline.handler(new Request("http://localhost"));
@@ -553,7 +537,7 @@ export const layerTypes = () => {
 
   HttpRouter.toWebHandler(
     // @ts-expect-error Build requirements are the union over every merged layer.
-    Layer.mergeAll(Both.layer(App), Both.layer(billingApp)).pipe(services),
+    Layer.mergeAll(ActionHttp.layer(Both, App), ActionHttp.layer(Both, billingApp)).pipe(services),
   );
 };
 
@@ -574,24 +558,32 @@ export const beforeTypes = () => {
 
   const binding = ActionHttp.make([Read], { errors: [Denied] });
 
-  // The hook may fail with the surface errors the binding declares on every endpoint.
-  binding.layer(app, { before: () => Effect.fail(new Denied()) });
+  // The hook may fail with the errors the binding declares on every endpoint.
+  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Denied()) });
 
-  // @ts-expect-error A hook may not fail with an error the surface does not declare.
-  binding.layer(app, { before: () => Effect.fail(new Unrelated()) });
+  // @ts-expect-error A hook may not fail with an error the binding does not declare.
+  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Unrelated()) });
+
+  // A guard shared with the tool surfaces carries `errors`; HTTP reads only `before`.
+  const guard = { errors: [Denied], before: () => Effect.fail(new Denied()) };
+  ActionHttp.layer(binding, app, guard);
+
+  const unrelated = { errors: [Unrelated], before: () => Effect.fail(new Unrelated()) };
+  // @ts-expect-error A shared guard's refusal must be declared on the binding.
+  ActionHttp.layer(binding, app, unrelated);
 
   const bare = ActionHttp.make([Read]);
   // @ts-expect-error A binding without declared errors has no failure for a hook to use.
-  bare.layer(app, { before: () => Effect.fail(new Denied()) });
+  ActionHttp.layer(bare, app, { before: () => Effect.fail(new Denied()) });
 
   // The hook reads the contract it is about to run, including its access.
-  binding.layer(app, {
+  ActionHttp.layer(binding, app, {
     before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
   });
 
   // Hook services are request-time requirements, exactly like a handler's.
   const timed = HttpRouter.toWebHandler(
-    binding.layer(app, { before: () => Effect.asVoid(Clock) }).pipe(services),
+    ActionHttp.layer(binding, app, { before: () => Effect.asVoid(Clock) }).pipe(services),
   );
 
   // @ts-expect-error The hook's services must be supplied per request, not erased.
@@ -645,147 +637,33 @@ export const surfaceErrorTypes = Effect.gen(function* () {
 export const servedRequirementTypes = () => {
   class Principal extends Context.Service<Principal, string>()("types-spec/Principal") {}
 
-  class HiddenBuild extends Context.Service<HiddenBuild, string>()("types-spec/HiddenBuild") {}
-
-  const mcpOptions = { name: "t", version: "0" } as const;
   const principal = () => Effect.map(Principal, (name) => name);
 
-  // Only a required literal `false` hides an action from MCP. Options that may serve it
-  // keep its requirements: a conditional spread, `false | undefined`, a runtime flag or
-  // an `Options` value whose `mcp` is optional.
-  const enabled: boolean = process.env["ENABLE"] !== "no";
-
-  const spreadApp = Action.implement(
-    Action.make("act", {
-      description: "Hidden when disabled",
-      access: "read",
-      success: Schema.String,
-      ...(enabled ? {} : { mcp: false }),
-    }),
-    principal,
-  );
-
-  const spread = ActionMcp.layerHttp(spreadApp, mcpOptions);
-  const spreadOwes: Equal<RequestServices<typeof spread>, Principal> = true;
-  void spreadOwes;
-
-  const maybeUndefinedApp = Action.implement(
-    Action.make("act", {
-      description: "Hidden when disabled",
-      access: "read",
-      success: Schema.String,
-      mcp: enabled ? undefined : false,
-    }),
-    principal,
-  );
-
-  const maybeUndefined = ActionMcp.layerHttp(maybeUndefinedApp, mcpOptions);
-  const maybeUndefinedOwes: Equal<RequestServices<typeof maybeUndefined>, Principal> = true;
-  void maybeUndefinedOwes;
-
-  const loose: Action.Options<typeof Schema.String, typeof Schema.String, [], "read", false> = {
-    description: "Hidden or not",
-    access: "read",
-    success: Schema.String,
-  };
-
-  const looseApp = Action.implement(Action.make("act", loose), principal);
-
-  const looseLayer = ActionMcp.layerHttp(looseApp, mcpOptions);
-  const looseOwes: Equal<RequestServices<typeof looseLayer>, Principal> = true;
-  void looseOwes;
-
-  // A runtime flag keeps the build channel too, since the source may be acquired.
-  const runtimeApp = Action.implement(
-    Action.make("maybe", {
-      description: "Served when enabled",
-      access: "read",
-      success: Schema.String,
-      mcp: enabled ? {} : false,
-    }),
-    Effect.map(HiddenBuild, () => principal),
-  );
-
-  const maybeMcp = ActionMcp.layerHttp(runtimeApp, mcpOptions);
-  const mcpBuildKept: HiddenBuild extends Layer.Services<typeof maybeMcp> ? true : false = true;
-  const runtimeOwes: Equal<RequestServices<typeof maybeMcp>, Principal> = true;
-  void mcpBuildKept;
-  void runtimeOwes;
-
-  // Tool metadata serves the action; a literal `false` does not.
   const hintsApp = Action.implement(
     Action.make("act", {
       description: "A tool",
       access: "read",
       success: Schema.String,
-      mcp: { name: "hinted", idempotent: true },
+      mcp: { idempotent: true },
     }),
     principal,
   );
 
-  const hints = ActionMcp.layerHttp(hintsApp, mcpOptions);
-  const hintsOwe: Equal<RequestServices<typeof hints>, Principal> = true;
-  void hintsOwe;
+  // Every hint is resolved on the contract.
+  const resolved: Equal<
+    (typeof hintsApp)["actions"][number]["mcp"],
+    Required<Action.McpOptions>
+  > = true;
 
-  const literalApp = Action.implement(
-    Action.make("act", {
-      description: "Not a tool",
-      access: "read",
-      success: Schema.String,
-      mcp: false,
-    }),
-    principal,
-  );
+  void resolved;
 
-  const literal = ActionMcp.layerHttp(literalApp, mcpOptions);
-  const literalOwesNothing: Equal<RequestServices<typeof literal>, never> = true;
-  void literalOwesNothing;
-
-  const namedApp = Action.implement(
-    Action.make("act", {
-      description: "Served when enabled",
-      access: "read",
-      success: Schema.String,
-      mcp: enabled ? { name: "named_tool" } : false,
-    }),
-    principal,
-  );
-
-  const named = ActionMcp.layerHttp(namedApp, mcpOptions);
-  const namedOwes: Equal<RequestServices<typeof named>, Principal> = true;
-  void namedOwes;
-
-  // The Toolkit applies the same rule: an action that may be served is a tool that owes
-  // its handler's services; only a literal `false` has no tool.
-  const tools = {
-    spread: ActionToolkit.make(spreadApp).toolkit.tools,
-    maybeUndefined: ActionToolkit.make(maybeUndefinedApp).toolkit.tools,
-    loose: ActionToolkit.make(looseApp).toolkit.tools,
-    runtime: ActionToolkit.make(runtimeApp).toolkit.tools,
-    named: ActionToolkit.make(namedApp).toolkit.tools,
-    hints: ActionToolkit.make(hintsApp).toolkit.tools,
-    literal: ActionToolkit.make(literalApp).toolkit.tools,
-  };
-
-  type Tools = typeof tools;
+  // A tool is named after its action, and owes its handler's services.
+  const tools = ActionToolkit.make(hintsApp).toolkit.tools;
 
   const toolAssertions: [
-    Equal<Tool.HandlerServices<Tools["spread"]["act"]>, Principal>,
-    Equal<Tool.HandlerServices<Tools["maybeUndefined"]["act"]>, Principal>,
-    Equal<Tool.HandlerServices<Tools["loose"]["act"]>, Principal>,
-    Equal<Tool.HandlerServices<Tools["runtime"]["maybe"]>, Principal>,
-    Equal<Tool.HandlerServices<Tools["named"]["named_tool"]>, Principal>,
-    Equal<Tool.HandlerServices<Tools["hints"]["hinted"]>, Principal>,
-    Equal<keyof Tools["literal"], never>,
-  ] = [true, true, true, true, true, true, true];
+    Equal<keyof typeof tools, "act">,
+    Equal<Tool.HandlerServices<(typeof tools)["act"]>, Principal>,
+  ] = [true, true];
 
   void toolAssertions;
-
-  Action.make("stale", {
-    description: "Formerly hidden from HTTP",
-    access: "read",
-    success: Schema.String,
-    // @ts-expect-error `http` is gone: HTTP serves every action a binding lists.
-    http: false,
-  });
 };

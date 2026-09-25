@@ -4,8 +4,8 @@ import { HttpClient, type HttpClientError } from "effect/unstable/http";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
-import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import type { Equal } from "./equal.js";
 
 type CommandError<C> =
   C extends Command.Command<infer _Name, infer _Input, infer _ContextInput, infer E, infer _R>
@@ -18,11 +18,6 @@ type CommandServices<C> =
     : never;
 
 type Includes<Whole, Part> = Part extends Whole ? true : false;
-
-type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
-    ? true
-    : false;
 
 class Build extends Context.Service<Build, string>()("cli-types/Build") {}
 
@@ -91,16 +86,15 @@ const localOneErrorIsKnown: Equal<
   false
 > = true;
 
-const guarded = ActionCli.command(local, One, {
-  before: () => Effect.fail(new Refused()),
-});
+// The hook's failure is inferred: a CLI does not encode it, so nothing declares it.
+const guarded = ActionCli.command(local, One, { before: () => Effect.fail(new Refused()) });
 
 const guardedRefusal: Includes<CommandError<typeof guarded>, Refused> = true;
 
-const guardedGroup = ActionCli.make(local, {
-  name: "local",
-  before: () => Effect.fail(new Refused()),
-});
+// A guard shared with the tool surfaces carries `errors`; the CLI reads only `before`.
+const shared = { errors: [Refused], before: () => Effect.fail(new Refused()) };
+
+const guardedGroup = ActionCli.make(local, { name: "local", ...shared });
 
 const guardedGroupRefusal: Includes<CommandError<typeof guardedGroup>, Refused> = true;
 
@@ -209,6 +203,21 @@ void scopedHandlerGroupHasNoScope;
 // @ts-expect-error A local command selects an action implemented by `apps`.
 ActionCli.command(local, Plain);
 
+// Native parameters without a mapper are the input as parsed.
+ActionCli.command(local, One, { parameters: { value: Argument.String("value") } });
+
+// @ts-expect-error Parsed parameters that are not the encoded input need a mapper.
+ActionCli.command(local, One, { parameters: { other: Argument.String("other") } });
+
+// @ts-expect-error An optional flag parses to an `Option`, which is not encoded input.
+ActionCli.command(local, One, { parameters: { value: Flag.String("value").pipe(Flag.optional) } });
+
+// With a mapper, any parameters do.
+ActionCli.command(local, One, {
+  parameters: { other: Argument.String("other") },
+  input: ({ other }) => ({ value: other }),
+});
+
 // @ts-expect-error The renderer receives the selected action's exact success value.
 ActionCli.command(local, Two, { render: (output: string) => output });
 
@@ -224,11 +233,10 @@ const RemoteAction = Action.make("remote", {
   errors: [Domain],
 });
 
-const HttpOnly = Action.make("httpOnly", {
-  description: "HTTP only",
+const Count = Action.make("count", {
+  description: "Count",
   access: "write",
   success: Schema.Finite,
-  mcp: false,
 });
 
 const Other = Action.make("other", {
@@ -237,33 +245,31 @@ const Other = Action.make("other", {
   success: Schema.String,
 });
 
-const http = ActionHttp.make([RemoteAction, HttpOnly, Other], {
-  schemaError: {
-    invalid: { schema: Policy, make: () => new Policy() },
-    internal: { schema: Policy, make: () => new Policy() },
-  },
+const http = ActionHttp.make([RemoteAction, Count, Other], {
+  errors: [Policy],
+  schemaError: { invalid: () => new Policy(), internal: () => new Policy() },
 });
 
-const remote = ActionCliClient.command(http, RemoteAction, {
+const remote = ActionCli.command(http, RemoteAction, {
   render: (output) => output.toUpperCase(),
 });
 
-const configuredRemote = ActionCliClient.command(http, RemoteAction, {
+const configuredRemote = ActionCli.command(http, RemoteAction, {
   parameters: { value: Argument.String("value") },
   input: ({ value }) => ({ value }),
   render: (output) => output.toUpperCase(),
 });
 
-const optionRemote = ActionCliClient.command(http, RemoteAction, {
+const optionRemote = ActionCli.command(http, RemoteAction, {
   parameters: { value: Flag.String("value").pipe(Flag.optional) },
   input: ({ value }) => ({ value: Option.getOrElse(value, () => "") }),
 });
 
-const remoteHttpOnly = ActionCliClient.command(http, HttpOnly, {
+const remoteCount = ActionCli.command(http, Count, {
   render: (output) => String(output.toFixed()),
 });
 
-const remoteGroup = ActionCliClient.make(http, { name: "remote" });
+const remoteGroup = ActionCli.make(http, { name: "remote" });
 
 const remoteHttpClient: Includes<CommandServices<typeof remote>, HttpClient.HttpClient> = true;
 
@@ -299,25 +305,80 @@ void configuredRemote;
 
 void optionRemote;
 
-void remoteHttpOnly;
+void remoteCount;
 
 void remoteGroup;
 
 // @ts-expect-error A remote command selects an action of the binding.
-ActionCliClient.command(http, Plain);
+ActionCli.command(http, Plain);
 
-// @ts-expect-error Explicit native parameters require their input mapper.
-ActionCliClient.command(http, RemoteAction, {
+// Explicit native parameters without a mapper send the parsed parameters as the input.
+ActionCli.command(http, RemoteAction, {
   parameters: { value: Argument.String("value") },
 });
 
 // @ts-expect-error An input mapper without native parameters is not a command configuration.
-ActionCliClient.command(http, RemoteAction, {
+ActionCli.command(http, RemoteAction, {
   input: () => ({ value: "ok" }),
 });
 
-ActionCliClient.command(http, RemoteAction, {
+// @ts-expect-error Mapper must return JSON; action schema shape is checked at runtime.
+ActionCli.command(http, RemoteAction, {
   parameters: { value: Argument.String("value") },
-  // @ts-expect-error Mapper must return JSON; action schema shape is checked at runtime.
   input: () => undefined,
 });
+
+// A command from a binding fails with exactly what its client method fails with: the
+// action's own errors, the binding's surface errors, and the native transport and schema
+// failures.
+class Denied extends Schema.TaggedError<Denied>()("Denied", {}, { httpApiStatus: 403 }) {}
+
+class Gone extends Schema.TaggedError<Gone>()("Gone", {}, { httpApiStatus: 410 }) {}
+
+const Erring = Action.make("erring", {
+  description: "Declares an error",
+  access: "read",
+  success: Schema.String,
+  errors: [Gone],
+});
+
+const Guarded = ActionHttp.make([Plain, Erring], { errors: [Denied] });
+
+type Transport = HttpClientError.HttpClientError | Schema.SchemaError;
+
+const guardedPlain = ActionCli.command(Guarded, Plain);
+
+const guardedErring = ActionCli.command(Guarded, Erring);
+
+const guardedAll = ActionCli.make(Guarded, { name: "remote" });
+
+const remoteErrors: [
+  Equal<Command.Error<typeof guardedPlain>, Denied | Transport>,
+  Equal<Command.Error<typeof guardedErring>, Gone | Denied | Transport>,
+  Equal<Command.Error<typeof guardedAll>, Gone | Denied | Transport>,
+] = [true, true, true];
+
+void remoteErrors;
+
+// The server owns authorization: a command from a binding binds no hook.
+const remoteOptionsHaveNoHook: [
+  "before" extends keyof ActionCli.RemoteOptions<string> ? true : false,
+  "before" extends keyof ActionCli.RemoteMakeOptions ? true : false,
+] = [false, false];
+
+void remoteOptionsHaveNoHook;
+
+// @ts-expect-error A remote command binds no hook.
+ActionCli.command(Guarded, Plain, { before: () => Effect.void });
+
+const transformResponse = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
+
+// `transformResponse` could change a call's failures, which the command's type states.
+// @ts-expect-error The command takes the client's options, which exclude it.
+ActionCli.command(Guarded, Plain, { transformResponse });
+
+// @ts-expect-error The aggregate excludes it too.
+ActionCli.make(Guarded, { name: "r", transformResponse });
+
+// @ts-expect-error An aggregate remote command needs a name.
+ActionCli.make(Guarded, {});

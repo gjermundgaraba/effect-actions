@@ -1,38 +1,9 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiSwagger } from "effect/unstable/httpapi";
-import * as ActionMcp from "../src/ActionMcp.js";
-import * as Authentication from "../src/Authentication.js";
-import { actors, authorize, CurrentActor, Forbidden, Unauthenticated } from "./auth.js";
-import { Http } from "./contracts.js";
-import { double, listChanges, status, userActions } from "./handlers.js";
+import { discovery } from "./authentication.js";
+import { layer as http } from "./http.js";
+import { layer as mcp } from "./mcp.js";
 import { Users } from "./users.js";
-
-const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
-
-const authenticate = (request: HttpServerRequest.HttpServerRequest) => {
-  const authorization = request.headers.authorization;
-  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
-
-  return isActorToken(token) ? Option.some(actors[token]) : Option.none();
-};
-
-// The host renders its own 401; Authentication provides CurrentActor per request.
-const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated)(
-  new Unauthenticated({ message: "A demo bearer token is required." }),
-  { status: 401, headers: { "www-authenticate": "Bearer" } },
-).pipe(Effect.orDie);
-
-const authentication = Authentication.middleware(
-  CurrentActor,
-  Effect.gen(function* () {
-    const actor = authenticate(yield* HttpServerRequest.HttpServerRequest);
-
-    if (Option.isNone(actor)) return yield* Effect.flip(unauthenticated);
-
-    return actor.value;
-  }),
-);
 
 const requestPolicy = HttpRouter.middleware((httpEffect) =>
   Effect.gen(function* () {
@@ -53,46 +24,9 @@ const requestPolicy = HttpRouter.middleware((httpEffect) =>
   }),
 );
 
-// One layer per access rule: middleware provided to a layer applies to the routes of
-// the actions it serves, and to no others. Status needs no credentials, so it binds no
-// hook; every user action is authorized after decoding, before its handler runs.
-const http = Layer.mergeAll(
-  Http.layer(status),
-  Http.layer([...userActions, ...double], { before: authorize }).pipe(
-    Layer.provide(authentication.layer),
-  ),
-);
-
-// `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
-// JSON as a plain route, and a Swagger UI reading the same contract.
-const documentation = Layer.mergeAll(
-  Http.openApi("/openapi.json"),
-  HttpApiSwagger.layer(Http.api, { path: "/docs" }),
-);
-
-const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
-
-// An MCP endpoint is one route, so its middleware, authentication included,
-// covers all of its tools; the hook still authorizes each call. Tools that need
-// no credentials at all therefore get their own endpoint, which compiles because
-// this implementation requires nothing per request.
-const publicMcp = ActionMcp.layerHttp(status, {
-  name: "effect-actions-public",
-  version: "0.0.0",
-  path: "/mcp/public",
-  allowedOrigins,
-});
-
-const mcp = ActionMcp.layerHttp([...userActions, ...double, ...listChanges], {
-  name: "effect-actions",
-  version: "0.0.0",
-  allowedOrigins,
-  // The same rule as HTTP, declared here so a refusal is an ordinary tool error.
-  errors: [Forbidden],
-  before: authorize,
-}).pipe(Layer.provide(authentication.layer));
-
-export const layer = Layer.mergeAll(http, documentation, publicMcp, mcp).pipe(
+// Every surface of one host. Each builder runs once, however many of these layers
+// serve its implementation.
+export const layer = Layer.mergeAll(http, mcp, discovery.layer).pipe(
   Layer.provide(requestPolicy.layer),
   Layer.provide(Users.layerMemory),
 );

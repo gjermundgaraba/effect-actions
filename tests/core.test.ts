@@ -2,9 +2,9 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { makeTestHttp } from "./server.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
+import { serve } from "../src/Testing.js";
 
 describe("contracts", () => {
   it("defaults to no input and errors to none", () => {
@@ -16,14 +16,12 @@ describe("contracts", () => {
 
   it("derives MCP hints: destructive follows readOnly unless stated", () => {
     expect(GetUser.mcp).toEqual({
-      name: "get_user",
       readOnly: true,
       destructive: false,
       idempotent: false,
       openWorld: true,
     });
     expect(RenameUser.mcp).toEqual({
-      name: "rename_user",
       readOnly: false,
       destructive: false,
       idempotent: false,
@@ -37,7 +35,6 @@ describe("contracts", () => {
     });
 
     expect(Write.mcp).toEqual({
-      name: "write",
       readOnly: false,
       destructive: true,
       idempotent: false,
@@ -45,32 +42,22 @@ describe("contracts", () => {
     });
   });
 
-  it("rejects invalid names at definition time", () => {
-    for (const name of ["bad name", "then"]) {
+  it("rejects invalid names at definition time, where they are also tool names", () => {
+    // A name is a route segment, a client method and an MCP tool name, which is at
+    // most 128 characters.
+    for (const name of ["bad name", "then", "", "x".repeat(129)]) {
       expect(() =>
         Action.make(name, { description: "", access: "write", success: Schema.String }),
       ).toThrow("Invalid action name");
     }
 
-    expect(() =>
-      Action.make("ok", {
-        description: "",
-        access: "write",
-        success: Schema.String,
-        mcp: { name: "bad name" },
-      }),
-    ).toThrow("Invalid MCP name");
-    expect(() =>
-      Action.make("ok", {
-        description: "",
-        access: "write",
-        success: Schema.String,
-        mcp: { name: "then" },
-      }),
-    ).toThrow("Invalid MCP name");
+    expect(
+      Action.make("x".repeat(128), { description: "", access: "write", success: Schema.String })
+        .name,
+    ).toHaveLength(128);
   });
 
-  it("accepts relaxed HTTP segment names and keeps MCP validation independent", () => {
+  it("accepts names that start with a digit or an underscore", () => {
     expect(
       Action.make("1st", { description: "", access: "write", success: Schema.String }).name,
     ).toBe("1st");
@@ -82,14 +69,6 @@ describe("contracts", () => {
         Action.make("9_action", { description: "", access: "write", success: Schema.String }),
       ]).actions.map((action) => action.name),
     ).toEqual(["9_action"]);
-    expect(
-      Action.make("x".repeat(129), {
-        description: "Long HTTP-only action",
-        access: "write",
-        success: Schema.String,
-        mcp: false,
-      }).mcp,
-    ).toBe(false);
   });
 
   it("rejects duplicate names where they are bound", () => {
@@ -150,12 +129,10 @@ describe("implementations", () => {
       body: JSON.stringify({ name: "Ada" }),
     });
 
-  it("binds a plain handler without exposing service bindings", async () => {
+  it("binds a plain handler, with its actions as its only data", async () => {
     const app = Action.implement(Hello, ({ name }) => Effect.succeed(`hi ${name}`));
-    expect(app.map((one) => Object.keys(one))).toEqual([["action"]]);
-    expect(app.map((one) => one.action)).toEqual([Hello]);
-    expect(app[0]).not.toHaveProperty("handlers");
-    expect(app[0]).not.toHaveProperty("layer");
+    expect(Object.keys(app)).toEqual(["actions"]);
+    expect(app.actions).toEqual([Hello]);
     const web = makeTestHttp(app, Layer.empty);
     onTestFinished(() => web.dispose());
     expect(await (await web.handler(request("/api/hello"))).json()).toBe("hi Ada");
@@ -165,12 +142,11 @@ describe("implementations", () => {
     const appA = Action.implement(Hello, () => Effect.succeed("from A"));
     const appB = Action.implement(Hello, () => Effect.succeed("from B"));
 
-    const web = HttpRouter.toWebHandler(
+    const web = serve(
       Layer.mergeAll(
-        ActionHttp.make([Hello], { prefix: "/a" }).layer(appA),
-        ActionHttp.make([Hello], { prefix: "/b" }).layer(appB),
-      ).pipe(Layer.provide(HttpServer.layerServices)),
-      { disableLogger: true },
+        ActionHttp.layer(ActionHttp.make([Hello], { prefix: "/a" }), appA),
+        ActionHttp.layer(ActionHttp.make([Hello], { prefix: "/b" }), appB),
+      ),
     );
 
     onTestFinished(() => web.dispose());

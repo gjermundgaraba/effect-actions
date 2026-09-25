@@ -20,14 +20,12 @@
     "./Action": "./dist/Action.mjs",
     "./ActionCatalog": "./dist/ActionCatalog.mjs",
     "./ActionCli": "./dist/ActionCli.mjs",
-    "./ActionCliClient": "./dist/ActionCliClient.mjs",
     "./ActionHttp": "./dist/ActionHttp.mjs",
     "./ActionHttpClient": "./dist/ActionHttpClient.mjs",
     "./ActionMcp": "./dist/ActionMcp.mjs",
     "./ActionToolkit": "./dist/ActionToolkit.mjs",
     "./Authentication": "./dist/Authentication.mjs",
     "./Testing": "./dist/Testing.mjs",
-    "./TestingClient": "./dist/TestingClient.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -55,13 +53,7 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
     "effect": ">=4.0.0-rc.116 <4.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@modelcontextprotocol/client": {
-      "optional": true
-    }
   },
   "devEngines": {
     "packageManager": {

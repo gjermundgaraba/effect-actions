@@ -1,12 +1,6 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Layer, Schema, SchemaTransformation } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpRouter,
-  HttpServer,
-} from "effect/unstable/http";
+import { Effect, Schema, SchemaTransformation } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -41,9 +35,10 @@ const Optional = Action.make("optional", {
 
 const Http = ActionHttp.make([Double, Ping, Optional], {
   prefix: "/rpc",
+  errors: [Invalid],
   schemaError: {
-    invalid: { schema: Invalid, make: () => new Invalid({ message: "Invalid input" }) },
-    internal: { schema: Invalid, make: () => new Invalid({ message: "Invalid output" }) },
+    invalid: () => new Invalid({ message: "Invalid input" }),
+    internal: () => new Invalid({ message: "Invalid output" }),
   },
 });
 
@@ -54,12 +49,7 @@ const app = Action.implement([Double, Ping, Optional], {
 });
 
 it("keeps the client, routes and document on one configuration", async () => {
-  const web = HttpRouter.toWebHandler(
-    Http.layer(app).pipe(Layer.provide(HttpServer.layerServices)),
-    {
-      disableLogger: true,
-    },
-  );
+  const web = Testing.serve(ActionHttp.layer(Http, app));
 
   const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
   onTestFinished(() => web.dispose());
@@ -156,16 +146,16 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
 
   const bodies: Array<unknown> = [];
 
-  const web = HttpRouter.toWebHandler(
-    Inputs.layer(
+  const web = Testing.serve(
+    ActionHttp.layer(
+      Inputs,
       Action.implement([Ping, Nullable, UndefinedValue, EmptyRecord], {
         ping: () => Effect.succeed(true),
         nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
         undefinedValue: (input) => Effect.succeed(String(input)),
         emptyRecord: () => Effect.succeed(true),
       }),
-    ).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    ),
   );
 
   onTestFinished(() => web.dispose());
@@ -176,7 +166,7 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
     return web.handler(request);
   };
 
-  const calls = (client: ActionHttpClient.Client<typeof Inputs.actions, never>) =>
+  const calls = (client: ActionHttpClient.Client<typeof Inputs>) =>
     Effect.all([
       client.ping(),
       client.nullable(null),

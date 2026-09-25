@@ -1,6 +1,7 @@
-import { Effect, Predicate } from "effect";
+import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
+import { assertDistinct } from "./actions.js";
 
 /** Decoded values at the adapter dispatch boundary. */
 export type ErasedValue = Action.Any["input"]["Type"];
@@ -28,94 +29,165 @@ export type HandlerContext<H> = H extends (
   ? R
   : never;
 
+/** The acquired handlers of one implementation, under a key private to it. */
+type HandlersKey = Context.Key<Handlers<unknown>, Handlers<unknown>>;
+
+let implementations = 0;
+
 /**
- * One action bound to its handler.
+ * Actions bound to their handlers: everything one `Action.implement` call binds.
  *
- * The private field makes this class nominal: a structurally similar object,
+ * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
- * `R` is the handler's per-request requirements; `EX` and `RX` are the failures
- * and services of its builder.
+ * `R` maps each action name to its handler's per-request requirements; `EX` and
+ * `RX` are the failures and services of the builder.
  */
-export class Implementation<A extends Action.Any, R, EX, RX> {
-  /** Type-only: the handler's per-request requirements. */
+export class Implementation<
+  A extends Action.Any,
+  R extends { readonly [name: string]: unknown },
+  EX,
+  RX,
+> {
+  /** Type-only: each handler's per-request requirements, by action name. */
   declare readonly "~request": R;
 
-  readonly #build: Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope>;
+  readonly #key: HandlersKey;
+  readonly #layer: Layer.Layer<Handlers<unknown>, EX, RX>;
 
-  private constructor(
-    /** The contract this implementation answers. */
-    readonly action: A,
+  constructor(
+    /** The contracts this implementation answers. */
+    readonly actions: ReadonlyArray<A>,
     build: Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope>,
   ) {
-    this.#build = build;
+    // A string key is a service's identity, so it is unique to this implementation
+    // even across copies of this module.
+    this.#key = Context.Service<Handlers<unknown>>(
+      `effect-actions/Implementation/${(implementations += 1)}/${Math.random().toString(36).slice(2)}`,
+    );
+    this.#layer = Layer.effect(this.#key, build);
   }
 
   /**
-   * The builder of the handlers record, shared by every implementation one
-   * `Action.implement` call returns. Adapters run each distinct builder once.
+   * The builder of `app`, as a layer. Effect memoizes a layer by reference within one
+   * build of the host's layers, so every adapter serving `app` shares one run. Static,
+   * so it stays off the public instance type.
    */
-  get build(): Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope> {
-    return this.#build;
+  static layerOf<EX, RX>(
+    app: Implementation<any, any, EX, RX>,
+  ): Layer.Layer<Handlers<unknown>, EX, RX> {
+    return Implementation.own(app).#layer;
   }
 
-  static make<A extends Action.Any, R, EX, RX>(
-    action: A,
-    build: Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope>,
-  ): Implementation<A, R, EX, RX> {
-    return new Implementation(action, build);
+  /** The built handlers of `app`, from the context `layerOf(app)` provides. */
+  static handlersOf(
+    app: AnyImplementation,
+  ): Effect.Effect<Handlers<unknown>, never, Handlers<unknown>> {
+    return Implementation.own(app).#key;
+  }
+
+  /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
+  private static own<App extends AnyImplementation>(app: App): App {
+    if (!(#key in app)) {
+      throw new Error(
+        "Not an implementation made by this Action.implement: is effect-actions installed twice?",
+      );
+    }
+
+    return app;
   }
 }
 
 // `any` is a wildcard in these inference positions; `unknown` would fail to match.
-/** Any implementation, with its action and channels erased. */
+/** Any implementation, with its actions and channels erased. */
 export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<A, any, any, any>;
 
-/** What hides an action from MCP and Toolkit types: an `mcp` type of exactly `false`. The one rule both use. */
-export type HiddenFromMcp = { readonly mcp: false };
+/** What a surface serves: one implementation, or a list of them. */
+export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
 
-/**
- * Per-request requirements of the implementations a surface can invoke: all of them,
- * less those whose action matches `Hidden`. An action whose `mcp` may be `false` at
- * runtime does not match, so it keeps its requirements.
- */
-export type RequestContext<App, Hidden = never> =
-  App extends Implementation<infer A, infer R, any, any> ? (A extends Hidden ? never : R) : never;
+/** The implementations `S` stands for. */
+export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
+
+/** A surface's implementations as a list. */
+export const toList = (served: Served): ReadonlyArray<AnyImplementation> =>
+  isList(served) ? served : [served];
+
+const isList = (served: Served): served is ReadonlyArray<AnyImplementation> =>
+  Array.isArray(served);
+
+/** The actions of the implementations a surface serves. */
+export type ActionOf<App> = App extends Implementation<infer A, any, any, any> ? A : never;
+
+/** Per-request requirements of `App`'s handler for each `A` it implements. */
+export type RequestOf<App, A extends Action.Any> = App extends {
+  readonly "~request": infer R;
+}
+  ? A extends Action.Any
+    ? A["name"] extends keyof R
+      ? R[A["name"]]
+      : never
+    : never
+  : never;
+
+/** Per-request requirements of the implementations a surface can invoke. */
+export type RequestContext<App> =
+  App extends Implementation<any, infer R, any, any> ? R[keyof R] : never;
 
 /** Builder failures of the implementations a surface builds. */
-export type BuildError<App, Hidden = never> =
-  App extends Implementation<infer A, any, infer EX, any> ? (A extends Hidden ? never : EX) : never;
+export type BuildError<App> = App extends Implementation<any, any, infer EX, any> ? EX : never;
 
 /** Builder requirements of the implementations a surface builds. */
-export type BuildContext<App, Hidden = never> =
-  App extends Implementation<infer A, any, any, infer RX> ? (A extends Hidden ? never : RX) : never;
+export type BuildContext<App> = App extends Implementation<any, any, any, infer RX> ? RX : never;
 
-/** An adapter's view of the acquired handler of one implementation. */
-export type HandlerOf = (app: AnyImplementation) => ErasedHandler<unknown>;
+/** An adapter's view of the acquired handler of one served action. */
+export type HandlerOf = (action: Action.Any) => ErasedHandler<unknown>;
+
+/** Every action `apps` serve, each once: a name served twice is refused. */
+export const servedActions = (
+  what: string,
+  apps: ReadonlyArray<AnyImplementation>,
+): ReadonlyArray<Action.Any> => {
+  const actions = apps.flatMap((app) => app.actions);
+
+  assertDistinct(
+    what,
+    actions.map((action) => action.name),
+  );
+
+  return actions;
+};
 
 /**
- * Run each distinct builder of `apps` once, in the caller's scope, and look up the handler
- * of any of them. This is where a record without a function for a served action is
- * refused: the layer build dies, since the types already refuse it.
+ * Provide `layer` the handlers of `apps`. Each implementation's layer is memoized, so its
+ * builder runs once per host build however many adapters serve it.
+ */
+export const provideHandlers =
+  (apps: ReadonlyArray<AnyImplementation>) =>
+  <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, unknown, unknown> => {
+    const [first, ...rest] = [...new Set(apps.map((app) => Implementation.layerOf(app)))];
+
+    return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
+  };
+
+/**
+ * Look up the handler of any action `apps` serve, from the handlers `provideHandlers`
+ * built. Every record is complete: `Action.implement` checks it.
  */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
-): Effect.Effect<HandlerOf, unknown, unknown> =>
+): Effect.Effect<HandlerOf, never, unknown> =>
   Effect.map(
-    Effect.forEach(new Set(apps.map((app) => app.build)), (build) =>
-      Effect.map(build, (handlers) => [build, handlers] as const),
-    ),
-    (built) => {
-      const records = new Map(built);
+    Effect.forEach(apps, (app) => Implementation.handlersOf(app)),
+    (records) => {
+      const handlers = new Map(
+        apps.flatMap((app, index) =>
+          app.actions.map((action) => [action, records[index]?.[action.name]] as const),
+        ),
+      );
 
-      return (app) => {
-        const handlers = records.get(app.build);
+      return (action) => {
+        const handle = handlers.get(action);
 
-        const handle =
-          handlers !== undefined && Object.hasOwn(handlers, app.action.name)
-            ? handlers[app.action.name]
-            : undefined;
-
-        if (!Predicate.isFunction(handle)) throw new Error(`Missing handler: ${app.action.name}`);
+        if (handle === undefined) throw new Error(`No handler for ${action.name}`);
 
         return handle;
       };

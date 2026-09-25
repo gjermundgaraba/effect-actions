@@ -6,12 +6,13 @@ import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
-import { mcpRequest } from "../src/Testing.js";
+import { makeTestHttp, makeTestMcp } from "./server.js";
+import { mcpRequest } from "../src/internal/mcp-request.js";
 import { post, rawToolCall } from "./requests.js";
+import { serve } from "../src/Testing.js";
 
 it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
-  const web = HttpRouter.toWebHandler(
+  const web = serve(
     ActionMcp.layerHttp([], {
       name: "configured",
       version: "0",
@@ -20,15 +21,12 @@ it("serves MCP 2026-07-28 only and passes the native server options through", as
       websiteUrl: "https://example.com",
       icons: [{ src: "https://example.com/icon.png" }],
       extensions: { "io.example/extension": {} },
-    }).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    }),
   );
 
   onTestFinished(() => web.dispose());
 
-  const discovered = await web.handler(
-    mcpRequest({ url: "http://localhost/mcp", method: "server/discover" }),
-  );
+  const discovered = await web.handler(mcpRequest({ method: "server/discover" }));
 
   expect(discovered.status).toBe(200);
   expect(await discovered.json()).toMatchObject({
@@ -73,7 +71,7 @@ it("serves MCP 2026-07-28 only and passes the native server options through", as
 });
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
-  const response = await handler(mcpRequest({ url: testMcpUrl, method: "tools/list" }));
+  const response = await handler(mcpRequest({ method: "tools/list" }));
   expect(response.status).toBe(200);
 
   const reply = Schema.decodeUnknownSync(
@@ -120,13 +118,12 @@ const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
 };
 
 describe("projection boundaries", () => {
-  it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
+  it("serves scalar input over HTTP, and MCP only the implementations it receives", async () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
       access: "write",
       input: Schema.String,
       success: Schema.String,
-      mcp: false,
     });
 
     const Tool = Action.make("tool", {
@@ -135,19 +132,19 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const apps = Action.implement([Echo, Tool], {
-      echo: Effect.succeed,
-      tool: () => Effect.succeed("tool"),
-    });
+    // MCP needs an object root, so the scalar action has an implementation of its own
+    // that only HTTP serves.
+    const echo = Action.implement(Echo, Effect.succeed);
+    const tool = Action.implement(Tool, () => Effect.succeed("tool"));
 
     const options = { prefix: "/rpc" } as const;
     expect(Object.keys(OpenApi.fromApi(ActionHttp.make([Echo, Tool], options).api).paths)).toEqual([
       "/rpc/echo",
       "/rpc/tool",
     ]);
-    const web = makeTestHttp(apps, Layer.empty, options);
+    const web = makeTestHttp([echo, tool], Layer.empty, options);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(apps, Layer.empty);
+    const mcp = makeTestMcp(tool, Layer.empty);
     onTestFinished(() => mcp.dispose());
     const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);

@@ -11,8 +11,9 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import { httpClient, mcpCall, mcpRequest } from "../src/Testing.js";
-import { post } from "./requests.js";
+import { httpClient, mcpCall, serve as serveRoutes } from "../src/Testing.js";
+import { mcpRequest } from "../src/internal/mcp-request.js";
+import { post, rawToolCall } from "./requests.js";
 
 class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") {}
 
@@ -56,9 +57,7 @@ type Routes<E> = Layer.Layer<
 >;
 
 const handlerOf = <E>(routes: Routes<E>) => {
-  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+  const web = serveRoutes(routes);
 
   onTestFinished(() => web.dispose());
 
@@ -68,9 +67,9 @@ const handlerOf = <E>(routes: Routes<E>) => {
 const serve = () =>
   handlerOf(
     Layer.mergeAll(
-      Http.layer(whoAmI),
-      Http.layer(billing),
-      ActionMcp.layerHttp([...whoAmI, ...billing], { name: "test", version: "0" }),
+      ActionHttp.layer(Http, whoAmI),
+      ActionHttp.layer(Http, billing),
+      ActionMcp.layerHttp([whoAmI, billing], { name: "test", version: "0" }),
     ).pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
   );
 
@@ -134,12 +133,12 @@ describe("implement", () => {
       bye: "bye@acme",
     },
   ])("binds $form", async ({ make, hello, bye }) => {
-    const apps = make();
+    const app = make();
 
     const handler = handlerOf(
-      ActionHttp.make(apps.map((app) => app.action))
-        .layer(apps)
-        .pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
+      ActionHttp.layer(ActionHttp.make(app.actions), app).pipe(
+        Layer.provide(Layer.succeed(Tenant, "acme")),
+      ),
     );
 
     expect(await (await handler(post("/api/hello", { name: "Ada" }))).json()).toBe(hello);
@@ -147,16 +146,14 @@ describe("implement", () => {
     if (bye !== undefined) expect(await (await handler(post("/api/bye"))).json()).toBe(bye);
   });
 
-  it("returns one implementation per action, each bound to its contract", () => {
-    const apps = Action.implement([Hello, Bye], {
+  it("returns one implementation of every action it binds", () => {
+    const app = Action.implement([Hello, Bye], {
       hello: () => Effect.succeed("hi"),
       bye: () => Effect.succeed("bye"),
     });
 
-    expect(apps.map((app) => app.action)).toEqual([Hello, Bye]);
-    expect(Action.implement(Hello, () => Effect.succeed("hi")).map((app) => app.action)).toEqual([
-      Hello,
-    ]);
+    expect(app.actions).toEqual([Hello, Bye]);
+    expect(Action.implement(Hello, () => Effect.succeed("hi")).actions).toEqual([Hello]);
   });
 
   it("refuses duplicate actions at implement", () => {
@@ -166,8 +163,8 @@ describe("implement", () => {
   });
 
   // The types require a function for every action; plain JavaScript, a cast or a record
-  // changed after it was typed can still bind something else. Nothing is checked until
-  // an adapter builds, and then the build dies.
+  // changed after it was typed can still bind something else. A plain record is checked
+  // at implement; a builder's record when its layer builds, which then dies.
   const record = () => ({ hello: () => Effect.succeed("hi"), bye: () => Effect.succeed("bye") });
 
   const pair = (change: (handlers: ReturnType<typeof record>) => boolean) => {
@@ -215,30 +212,32 @@ describe("implement", () => {
       handlers: "a record with an inherited method",
       make: () => Action.implement([Hello, Bye], new Inherited()),
     },
-    {
-      handlers: "a builder's record missing a key",
-      make: () =>
-        Action.implement(
-          [Hello, Bye],
-          Effect.sync(() => pair((h) => Reflect.deleteProperty(h, "bye"))),
-        ),
-    },
-  ])("dies at layer build, not at implement or a request, for $handlers", async ({ make }) => {
-    const apps = make();
-    const handler = handlerOf(ActionHttp.make([Hello, Bye]).layer(apps));
+  ])("throws at implement for $handlers", ({ make }) => {
+    expect(make).toThrow("Missing handlers: bye");
+  });
+
+  it("dies at layer build, not at a request, for a builder's record missing a key", async () => {
+    const app = Action.implement(
+      [Hello, Bye],
+      Effect.sync(() => pair((h) => Reflect.deleteProperty(h, "bye"))),
+    );
+
+    const handler = handlerOf(ActionHttp.layer(ActionHttp.make([Hello, Bye]), app));
 
     // Even the action that has a handler is never served by an incomplete record.
     await expect(handler(post("/api/hello", { name: "Ada" }))).rejects.toThrow(
-      "Missing handler: bye",
+      "Missing handlers: bye",
     );
   });
 
-  it("dies at layer build for a record key that names no action", async () => {
-    const plain = Action.implement([Hello], {
-      hello: () => Effect.succeed("hi"),
-      // @ts-expect-error A record names only its actions.
-      stale: () => Effect.succeed("stale"),
-    });
+  it("refuses a record key that names no action: a plain one at implement", async () => {
+    expect(() =>
+      Action.implement([Hello], {
+        hello: () => Effect.succeed("hi"),
+        // @ts-expect-error A record names only its actions.
+        stale: () => Effect.succeed("stale"),
+      }),
+    ).toThrow("Unknown handlers: stale");
 
     const built = Action.implement(
       [Hello],
@@ -246,13 +245,9 @@ describe("implement", () => {
       Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
     );
 
-    for (const apps of [plain, built]) {
-      const toolkit = ActionToolkit.make(apps);
-
-      await expect(Effect.runPromise(Effect.scoped(Layer.build(toolkit.layer)))).rejects.toThrow(
-        "Unknown handlers: stale",
-      );
-    }
+    await expect(
+      Effect.runPromise(Effect.scoped(Layer.build(ActionToolkit.make(built).layer))),
+    ).rejects.toThrow("Unknown handlers: stale");
   });
 });
 
@@ -260,27 +255,13 @@ describe("builder acquisition", () => {
   const One = Action.make("one", { description: "One", access: "write", success: Schema.Number });
   const Two = Action.make("two", { description: "Two", access: "write", success: Schema.Number });
 
-  const Hidden = Action.make("hidden", {
-    description: "Hidden",
-    access: "write",
-    success: Schema.String,
-    mcp: false,
-  });
-
-  const Shown = Action.make("shown", {
-    description: "Shown",
+  const Solo = Action.make("solo", {
+    description: "Solo",
     access: "write",
     success: Schema.String,
   });
 
-  const Unlisted = Action.make("unlisted", {
-    description: "Unlisted",
-    access: "write",
-    success: Schema.String,
-    mcp: false,
-  });
-
-  // Three builders: two tools, one hidden action, and a tool with a hidden sibling.
+  // Two builders, each recording its runs.
   const fixture = () => {
     const built: Array<string> = [];
 
@@ -291,69 +272,49 @@ describe("builder acquisition", () => {
         return handlers;
       });
 
-    const [one, two] = Action.implement(
+    const pair = Action.implement(
       [One, Two],
       builder("pair", { one: () => Effect.succeed(1), two: () => Effect.succeed(2) }),
     );
 
-    const [hidden] = Action.implement(
-      Hidden,
-      builder("hidden", () => Effect.succeed("hidden")),
+    const solo = Action.implement(
+      Solo,
+      builder("solo", () => Effect.succeed("solo")),
     );
 
-    const [shown, unlisted] = Action.implement(
-      [Shown, Unlisted],
-      builder("mixed", {
-        shown: () => Effect.succeed("shown"),
-        unlisted: () => Effect.succeed(""),
-      }),
-    );
-
-    if (
-      one === undefined ||
-      two === undefined ||
-      hidden === undefined ||
-      shown === undefined ||
-      unlisted === undefined
-    ) {
-      throw new Error("Missing implementations");
-    }
-
-    // Implementations of one builder, listed apart and out of order.
-    return { built, apps: [unlisted, two, hidden, shown, one] as const };
+    return { built, pair, solo };
   };
 
-  type Apps = ReturnType<typeof fixture>["apps"];
+  type Fixture = ReturnType<typeof fixture>;
 
   it.each([
     {
-      adapter: "Http.layer",
-      // HTTP serves every action it receives, hidden from MCP or not.
-      built: ["hidden", "mixed", "pair"],
-      build: async (apps: Apps) => {
-        const handler = handlerOf(ActionHttp.make(apps.map((app) => app.action)).layer(apps));
+      adapter: "ActionHttp.layer",
+      build: async ({ pair, solo }: Fixture) => {
+        const handler = handlerOf(
+          ActionHttp.layer(ActionHttp.make([One, Two, Solo]), [solo, pair]),
+        );
+
         expect(await (await handler(post("/api/one"))).json()).toBe(1);
       },
     },
     {
       adapter: "ActionMcp.layerHttp",
-      built: ["mixed", "pair"],
-      build: async (apps: Apps) => {
-        const handler = handlerOf(ActionMcp.layerHttp(apps, { name: "test", version: "0" }));
-        expect(await mcpCall(handler, { url: "http://localhost/mcp", name: "one" })).toEqual({
-          isError: false,
-          value: 1,
-        });
+      build: async ({ pair, solo }: Fixture) => {
+        const handler = handlerOf(
+          ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
+        );
+
+        expect(await mcpCall(handler, { name: "one" })).toEqual({ isError: false, value: 1 });
       },
     },
     {
       adapter: "ActionMcp.layerStdio",
-      built: ["mixed", "pair"],
-      build: (apps: Apps) =>
+      build: ({ pair, solo }: Fixture) =>
         Effect.runPromise(
           Effect.scoped(
             Layer.build(
-              ActionMcp.layerStdio(apps, { name: "test", version: "0" }).pipe(
+              ActionMcp.layerStdio([solo, pair], { name: "test", version: "0" }).pipe(
                 Layer.provide(Stdio.layerTest({})),
               ),
             ),
@@ -362,36 +323,25 @@ describe("builder acquisition", () => {
     },
     {
       adapter: "ActionToolkit",
-      built: ["mixed", "pair"],
-      build: (apps: Apps) =>
-        Effect.runPromise(Effect.scoped(Layer.build(ActionToolkit.make(apps).layer))),
+      build: ({ pair, solo }: Fixture) =>
+        Effect.runPromise(Effect.scoped(Layer.build(ActionToolkit.make([solo, pair]).layer))),
     },
-  ])(
-    "$adapter runs each builder once, and only if it serves one of its actions",
-    async ({ build, built: expected }) => {
-      const { built, apps } = fixture();
+  ])("$adapter runs the builder of each implementation it serves once", async ({ build }) => {
+    const fixed = fixture();
 
-      await build(apps);
+    await build(fixed);
 
-      expect(built.sort()).toEqual(expected);
-    },
-  );
+    expect(fixed.built.sort()).toEqual(["pair", "solo"]);
+  });
 
-  it("runs a builder once per layer that serves any of its actions", async () => {
-    const { built, apps } = fixture();
-    const [, two, , , one] = apps;
-    const binding = ActionHttp.make([One, Two]);
+  it("runs a builder again for a host built separately", async () => {
+    const { built, pair } = fixture();
+    const toolkit = ActionToolkit.make(pair);
 
-    const handler = handlerOf(
-      Layer.mergeAll(
-        binding.layer([one]),
-        binding.layer([two]),
-        ActionMcp.layerHttp([one, two], { name: "test", version: "0" }),
-      ),
-    );
+    await Effect.runPromise(Effect.scoped(Layer.build(toolkit.layer)));
+    await Effect.runPromise(Effect.scoped(Layer.build(toolkit.layer)));
 
-    expect(await (await handler(post("/api/two"))).json()).toBe(2);
-    expect(built).toEqual(["pair", "pair", "pair"]);
+    expect(built).toEqual(["pair", "pair"]);
   });
 });
 
@@ -426,7 +376,7 @@ describe("HTTP bindings", () => {
     );
 
     const handler = handlerOf(
-      Layer.mergeAll(binding.layer(whoAmI), binding.openApi()).pipe(
+      Layer.mergeAll(ActionHttp.layer(binding, whoAmI), ActionHttp.openApi(binding)).pipe(
         Layer.provide(Layer.succeed(Tenant, "acme")),
       ),
     );
@@ -452,8 +402,8 @@ describe("HTTP bindings", () => {
 
     const handler = handlerOf(
       Layer.mergeAll(
-        Http.openApi(),
-        Http.openApi("/openapi.json").pipe(Layer.provide(refuseAnonymous.layer)),
+        ActionHttp.openApi(Http),
+        ActionHttp.openApi(Http, "/openapi.json").pipe(Layer.provide(refuseAnonymous.layer)),
       ),
     );
 
@@ -470,6 +420,20 @@ describe("HTTP bindings", () => {
     expect(
       Object.keys(Schema.decodeUnknownSync(OpenApiPaths)(await authorized.json()).paths),
     ).toEqual(["/api/whoAmI", "/api/invoice", "/api/audit"]);
+  });
+
+  it("tags its group with the mount path's segments, or the name it is given", () => {
+    const tagsOf = (binding: { readonly api: typeof Http.api }) => {
+      const document = OpenApi.fromApi(binding.api);
+
+      return [document.tags.map((tag) => tag.name), document.paths["/api/whoAmI"]?.post?.tags];
+    };
+
+    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit]))).toEqual([["api"], ["api"]]);
+    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { name: "Billing" }))).toEqual([
+      ["Billing"],
+      ["Billing"],
+    ]);
   });
 
   it("preserves action APIs composed into a native host API", () => {
@@ -508,16 +472,22 @@ describe("HTTP bindings", () => {
     const alpha = Action.implement(Alpha, () => Effect.succeed("x"));
 
     // Pairing is by identity: the same name and schemas do not make it this action.
-    expect(() => bound.layer(Action.implement(LookAlike, () => Effect.succeed("x")))).toThrow(
-      'Action "alpha" is not in this HTTP binding',
-    );
     expect(() =>
-      // @ts-expect-error An action outside the binding is part of the implementation's type.
-      bound.layer(Action.implement(Beta, () => Effect.succeed("x"))),
+      ActionHttp.layer(
+        bound,
+        Action.implement(LookAlike, () => Effect.succeed("x")),
+      ),
+    ).toThrow('Action "alpha" is not in this HTTP binding');
+    expect(() =>
+      ActionHttp.layer(
+        bound,
+        // @ts-expect-error An action outside the binding is part of the implementation's type.
+        Action.implement(Beta, () => Effect.succeed("x")),
+      ),
     ).toThrow('Action "beta" is not in this HTTP binding');
-    expect(() => bound.layer([...alpha, ...alpha])).toThrow("Duplicate served action: alpha");
+    expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow("Duplicate served action: alpha");
     expect(() =>
-      bound.layer([...alpha, ...Action.implement(Alpha, () => Effect.succeed("y"))]),
+      ActionHttp.layer(bound, [alpha, Action.implement(Alpha, () => Effect.succeed("y"))]),
     ).toThrow("Duplicate served action: alpha");
   });
 
@@ -526,8 +496,14 @@ describe("HTTP bindings", () => {
 
     const handler = handlerOf(
       Layer.mergeAll(
-        bound.layer(Action.implement(Alpha, () => Effect.succeed("alpha"))),
-        bound.layer(Action.implement(Beta, () => Effect.succeed("beta"))),
+        ActionHttp.layer(
+          bound,
+          Action.implement(Alpha, () => Effect.succeed("alpha")),
+        ),
+        ActionHttp.layer(
+          bound,
+          Action.implement(Beta, () => Effect.succeed("beta")),
+        ),
       ),
     );
 
@@ -548,9 +524,9 @@ describe("HTTP bindings", () => {
       Effect.as(route, HttpServerResponse.text("blocked", { status: 403 })),
     ).layer;
 
-    const users = Http.layer(whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme")));
-    const invoices = Http.layer(billing);
-    const document = Http.openApi();
+    const users = ActionHttp.layer(Http, whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme")));
+    const invoices = ActionHttp.layer(Http, billing);
+    const document = ActionHttp.openApi(Http);
 
     const statuses = async (handler: (request: Request) => Promise<Response>) => [
       (await handler(new Request("http://localhost/api/openapi.json"))).status,
@@ -609,7 +585,10 @@ describe("HTTP bindings", () => {
     const bound = ActionHttp.make([Find, List]);
 
     const handler = handlerOf(
-      Layer.mergeAll(bound.layer(apps), ActionMcp.layerHttp(apps, { name: "test", version: "0" })),
+      Layer.mergeAll(
+        ActionHttp.layer(bound, apps),
+        ActionMcp.layerHttp(apps, { name: "test", version: "0" }),
+      ),
     );
 
     expect((await handler(post("/api/find"))).status).toBe(404);
@@ -619,13 +598,7 @@ describe("HTTP bindings", () => {
       Schema.encodeSync(Refused)(new Refused({ reason: "closed" })),
     );
 
-    const tool = await handler(
-      mcpRequest({
-        url: "http://localhost/mcp",
-        method: "tools/call",
-        params: { name: "list", arguments: {} },
-      }),
-    );
+    const tool = await handler(rawToolCall("list"));
 
     // A TaggedError without a message is shown as its encoding.
     const reply: unknown = await tool.json();
@@ -644,9 +617,7 @@ describe("MCP registration", () => {
   it("serves several implementations as the tools of one endpoint", async () => {
     const handler = serve();
 
-    const response = await handler(
-      mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }),
-    );
+    const response = await handler(mcpRequest({ method: "tools/list" }));
 
     const reply = Schema.decodeUnknownSync(
       Schema.Struct({
@@ -660,37 +631,31 @@ describe("MCP registration", () => {
       "whoAmI",
     ]);
 
-    expect(await mcpCall(handler, { url: "http://localhost/mcp", name: "whoAmI" })).toEqual({
+    expect(await mcpCall(handler, { name: "whoAmI" })).toEqual({
       isError: false,
       value: "ada@acme",
     });
   });
 
-  it("checks tool names where tools are served, and nowhere else", () => {
-    const aliased = (name: string) =>
-      Action.make(name, {
-        description: "",
-        access: "write",
-        success: Schema.String,
-        mcp: { name: "same" },
-      });
+  it("names each tool after its action, and checks names where tools are served", () => {
+    const same = () =>
+      Action.make("same", { description: "", access: "write", success: Schema.String });
 
-    const First = aliased("first");
-    const Second = aliased("second");
+    const First = same();
+    const Second = same();
 
-    // MCP aliases are not an HTTP concern.
-    expect(() => ActionHttp.make([First, Second])).not.toThrow();
+    // Two contracts may share a name; whoever serves both refuses them.
+    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action: same");
 
-    // Tool names are checked by each tool surface; action names are not tool names.
     const apps = [
-      ...Action.implement(First, () => Effect.succeed("a")),
-      ...Action.implement(Second, () => Effect.succeed("b")),
+      Action.implement(First, () => Effect.succeed("a")),
+      Action.implement(Second, () => Effect.succeed("b")),
     ];
 
     const options = { name: "test", version: "0" };
     expect(() => ActionMcp.layerHttp(apps, options)).toThrow("Duplicate MCP tool: same");
     expect(() => ActionMcp.layerStdio(apps, options)).toThrow("Duplicate MCP tool: same");
-    expect(() => ActionToolkit.make(apps)).toThrow("Duplicate MCP tool: same");
+    expect(() => ActionToolkit.make(apps)).toThrow("Duplicate tool: same");
 
     const Other = Action.make("other", {
       description: "",
@@ -699,10 +664,7 @@ describe("MCP registration", () => {
     });
 
     expect(() =>
-      ActionMcp.layerHttp(
-        [...whoAmI, ...Action.implement(Other, () => Effect.succeed("b"))],
-        options,
-      ),
+      ActionMcp.layerHttp([whoAmI, Action.implement(Other, () => Effect.succeed("b"))], options),
     ).not.toThrow();
   });
 

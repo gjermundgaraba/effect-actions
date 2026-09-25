@@ -1,6 +1,5 @@
 import type { Schema } from "effect";
-import { mcpRequest } from "../src/Testing.js";
-import { testMcpUrl } from "./server.js";
+import { mcpRequest } from "../src/internal/mcp-request.js";
 
 export const post = (path: string, body: Schema.Json = {}): Request =>
   new Request(`http://localhost${path}`, {
@@ -11,4 +10,4 @@ export const post = (path: string, body: Schema.Json = {}): Request =>
 
 /** A raw `tools/call` request, for tests that assert the wire envelope `Testing.mcpCall` removes. */
 export const rawToolCall = (name: string, args: Schema.Json = {}): Request =>
-  mcpRequest({ url: testMcpUrl, method: "tools/call", params: { name, arguments: args } });
+  mcpRequest({ method: "tools/call", params: { name, arguments: args } });

@@ -12,9 +12,9 @@ export const Greet = Action.make("greet", {
 
 export const Http = ActionHttp.make([Greet]);
 
-const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 export const routes = Layer.mergeAll(
-  Http.layer(actions),
-  ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0" }),
+  ActionHttp.layer(Http, greet),
+  ActionMcp.layerHttp(greet, { name: "greetings", version: "1.0.0" }),
 );

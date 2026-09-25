@@ -71,7 +71,7 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
   expect(empties[0]).not.toBe(empties[1]);
 });
 
-it("maps explicit native parameters to canonical JSON without an implicit --input mode", async () => {
+it("takes parsed native parameters as the canonical input, without an implicit --input mode", async () => {
   const inputs: number[] = [];
 
   const NumberAction = Action.make("number", {
@@ -89,9 +89,9 @@ it("maps explicit native parameters to canonical JSON without an implicit --inpu
       ),
   });
 
+  // Without `input`, the parsed `{ value }` is the encoded input as it is.
   const command = ActionCli.command(app, NumberAction, {
     parameters: { value: Flag.String("value") },
-    input: ({ value }) => ({ value }),
   });
 
   await run(command, ["--value", "21"]);
@@ -119,7 +119,6 @@ it("maps canonical JSON strings to codecs whose original encoding is not JSON", 
 
   const command = ActionCli.command(app, Dated, {
     parameters: { at: Flag.String("at") },
-    input: ({ at }) => ({ at }),
   });
 
   await run(command, ["--at", "2026-01-02T03:04:05.000Z"]);
@@ -305,13 +304,12 @@ it("runs any action locally, scopes every invocation, and exposes aggregate subc
   let released = 0;
   const inputs: string[] = [];
 
-  // Hidden from MCP and bound to no HTTP adapter: the CLI still runs it.
+  // Bound to no HTTP or MCP adapter: the CLI still runs it.
   const Local = Action.make("local", {
     description: "Runs locally",
     access: "write",
     input: Schema.Struct({ value: Schema.String }),
     success: Schema.String,
-    mcp: false,
   });
 
   const Other = Action.make("other", {
@@ -466,20 +464,25 @@ it("selects a command's implementation by contract identity, not by name", async
   const first = Action.implement(First, () => Effect.succeed("first"));
   const second = Action.implement(Second, () => Effect.succeed("second"));
 
-  const lines = async (action: typeof First) => {
+  const lines = async (app: typeof first, action: typeof First) => {
     const [, output] = await Effect.runPromise(
       Effect.scoped(
-        logged(
-          Command.runWith(ActionCli.command([...first, ...second], action), { version: "0" })([]),
-        ).pipe(Effect.provide(cliServices)),
+        logged(Command.runWith(ActionCli.command([app], action), { version: "0" })([])).pipe(
+          Effect.provide(cliServices),
+        ),
       ),
     );
 
     return output;
   };
 
-  expect(await lines(First)).toEqual(['"first"']);
-  expect(await lines(Second)).toEqual(['"second"']);
+  expect(await lines(first, First)).toEqual(['"first"']);
+  expect(await lines(second, Second)).toEqual(['"second"']);
+
+  // A contract of the same name is not the implemented one.
+  expect(() => ActionCli.command([first], Second)).toThrow(
+    'Action "same" has no implementation here',
+  );
 
   const Missing = Action.make("missing", {
     description: "Not implemented here",
@@ -500,7 +503,7 @@ it("aggregates implementations under one named command and refuses duplicate com
   const one = Action.implement(One, () => Effect.succeed("one"));
   const two = Action.implement(Two, () => Effect.succeed("two"));
 
-  const tool = ActionCli.make([...one, ...two], { name: "tool" });
+  const tool = ActionCli.make([one, two], { name: "tool" });
   expect(tool.name).toBe("tool");
 
   const [, output] = await Effect.runPromise(
@@ -519,9 +522,7 @@ it("aggregates implementations under one named command and refuses duplicate com
 
   const again = Action.implement(Again, () => Effect.succeed("again"));
 
-  expect(() => ActionCli.make([...one, ...again], { name: "tool" })).toThrow(
-    "Duplicate command: one",
-  );
+  expect(() => ActionCli.make([one, again], { name: "tool" })).toThrow("Duplicate command: one");
 });
 
 it("acquires only the builder of the selected command's implementation", async () => {
@@ -553,13 +554,13 @@ it("acquires only the builder of the selected command's implementation", async (
     }),
   );
 
-  await run(ActionCli.command([...built, ...idle], Built), []);
-  await run(ActionCli.make([...built, ...idle], { name: "tool" }), ["built"]);
+  await run(ActionCli.command([built, idle], Built), []);
+  await run(ActionCli.make([built, idle], { name: "tool" }), ["built"]);
 
   expect(builds).toEqual(["built", "built"]);
 });
 
-it("dies when the command runs if its builder's record lacks the handler", async () => {
+it("dies when the command runs if its builder's record lacks a handler, whichever runs", async () => {
   const Present = Action.make("present", {
     description: "Has a handler",
     access: "read",
@@ -588,15 +589,14 @@ it("dies when the command runs if its builder's record lacks the handler", async
     Effect.sync(() => new Handlers()),
   );
 
-  // Building the command checks nothing; running it builds the record.
-  const command = ActionCli.command(apps, Absent);
-  const exit = await runExit(command, []);
+  // Building the command checks nothing; running it builds and checks the whole record.
+  for (const action of [Absent, Present]) {
+    const exit = await runExit(ActionCli.command(apps, action), []);
 
-  expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
 
-  if (Exit.isFailure(exit)) {
-    expect(Cause.pretty(exit.cause)).toContain("Missing handler: absent");
+    if (Exit.isFailure(exit)) {
+      expect(Cause.pretty(exit.cause)).toContain("Missing handlers: absent");
+    }
   }
-
-  expect(await run(ActionCli.command(apps, Present), [])).toBeUndefined();
 });

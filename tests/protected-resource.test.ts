@@ -1,7 +1,8 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Layer } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import * as Authentication from "../src/Authentication.js";
+import { serve } from "../src/Testing.js";
 
 it("publishes standalone metadata and a bearer challenge", async () => {
   const resource = "https://api.example.com/mcp?tenant=alice";
@@ -22,10 +23,7 @@ it("publishes standalone metadata and a bearer challenge", async () => {
     }).metadataUrl,
   ).toBe("https://api.example.com/.well-known/oauth-protected-resource");
 
-  const web = HttpRouter.toWebHandler(
-    discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
+  const web = serve(discovery.layer);
 
   onTestFinished(() => web.dispose());
   const response = await web.handler(new Request(discovery.metadataUrl));
@@ -125,13 +123,12 @@ it("matches literal resource paths exactly and delegates other requests to the h
 
   const prefix = "/.well-known/oauth-protected-resource";
 
-  const web = HttpRouter.toWebHandler(
+  const web = serve(
     Layer.mergeAll(
       HttpRouter.add("GET", `${prefix}/mcp/unrelated`, HttpServerResponse.text("host route")),
       HttpRouter.add("POST", `${prefix}/mcp/*`, HttpServerResponse.text("host post")),
       ...discoveries.map((discovery) => discovery.layer),
-    ).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    ),
   );
 
   onTestFinished(() => web.dispose());

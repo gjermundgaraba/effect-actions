@@ -1,17 +1,16 @@
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
-import { Effect, Layer, Schema, SchemaGetter as Getter } from "effect";
+import { Effect, Schema, SchemaGetter as Getter } from "effect";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
-  HttpRouter,
-  HttpServer,
 } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
+import { httpClient, serve } from "../src/Testing.js";
 
 class NotFound extends Schema.TaggedError<NotFound>()(
   "NotFound",
@@ -53,12 +52,13 @@ const Remove = Action.make("remove", {
   success: Schema.Null,
 });
 
-const schemaError = {
-  invalid: { schema: InvalidInput, make: () => new InvalidInput({ message: "Bad input" }) },
-  internal: { schema: Unencodable, make: () => new Unencodable() },
-};
-
-const Http = ActionHttp.make([Get, Count, Remove], { errors: [Forbidden], schemaError });
+const Http = ActionHttp.make([Get, Count, Remove], {
+  errors: [Forbidden, InvalidInput, Unencodable],
+  schemaError: {
+    invalid: () => new InvalidInput({ message: "Bad input" }),
+    internal: () => new Unencodable(),
+  },
+});
 
 const at = new Date("2026-09-23T00:00:00.000Z");
 
@@ -74,14 +74,13 @@ const apps = Action.implement([Get, Count, Remove], {
   remove: () => Effect.succeed(null),
 });
 
-const serve = () => {
+const serveNotes = () => {
   const requests: Array<Request> = [];
 
-  const web = HttpRouter.toWebHandler(
-    Http.layer(apps, {
+  const web = serve(
+    ActionHttp.layer(Http, apps, {
       before: (action) => (action.access === "write" ? Effect.fail(new Forbidden()) : Effect.void),
-    }).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    }),
   );
 
   onTestFinished(() => web.dispose());
@@ -97,7 +96,7 @@ const serve = () => {
 };
 
 it("resolves with each action's decoded success, sending its encoded input", async () => {
-  const { fetch, requests } = serve();
+  const { fetch, requests } = serveNotes();
   const client = ActionHttpClient.promise(Http, { baseUrl: "https://notes.example", fetch });
 
   const note = await client.get({ id: "a" });
@@ -110,7 +109,7 @@ it("resolves with each action's decoded success, sending its encoded input", asy
 });
 
 it("calls an action without input with no argument", async () => {
-  const { fetch, requests } = serve();
+  const { fetch, requests } = serveNotes();
   const client = ActionHttpClient.promise(Http, { baseUrl: "https://notes.example", fetch });
 
   // `Infinity` is not JSON, so the count is refused by the binding's policy instead.
@@ -149,14 +148,14 @@ it("sends null, and undefined its input schema accepts, as the input rather than
 
   const Echoes = ActionHttp.make([Echo, Absent]);
 
-  const web = HttpRouter.toWebHandler(
-    Echoes.layer(
+  const web = serve(
+    ActionHttp.layer(
+      Echoes,
       Action.implement([Echo, Absent], {
         echo: (input) => Effect.succeed(input === null ? "null" : "object"),
         absent: (input) => Effect.succeed(String(input)),
       }),
-    ).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    ),
   );
 
   onTestFinished(() => web.dispose());
@@ -181,7 +180,7 @@ it("sends null, and undefined its input schema accepts, as the input rather than
 });
 
 it("rejects with the declared error values: the action's, the policy's and the surface's", async () => {
-  const { fetch } = serve();
+  const { fetch } = serveNotes();
   const client = ActionHttpClient.promise(Http, { baseUrl: "https://notes.example", fetch });
 
   const missing = client.get({ id: "missing" });
@@ -198,7 +197,7 @@ it("rejects with the declared error values: the action's, the policy's and the s
 });
 
 it("passes the native client options through, such as a bearer token on every call", async () => {
-  const { fetch, requests } = serve();
+  const { fetch, requests } = serveNotes();
 
   const client = ActionHttpClient.promise(Http, {
     baseUrl: "https://notes.example",
@@ -246,7 +245,7 @@ it("rejects with Effect's own errors when the contract cannot account for the an
 });
 
 it("resolves relative routes against the page and looks the global fetch up on each call", async () => {
-  const { fetch, requests } = serve();
+  const { fetch, requests } = serveNotes();
   const client = ActionHttpClient.promise(Http);
   // Stubbed after the client was made: a page's own origin, and the global transport.
   vi.stubGlobal("location", { origin: "https://page.example", pathname: "/notes" });
@@ -268,11 +267,7 @@ it("has one method per action", () => {
 /** The Effect client over `fetch`, as a program's own `HttpClient` would carry it. */
 const effectClient =
   (fetch: typeof globalThis.fetch) =>
-  <A, E>(
-    use: (
-      client: ActionHttpClient.Client<typeof Http.actions, ActionHttpClient.ErrorsOf<typeof Http>>,
-    ) => Effect.Effect<A, E>,
-  ) =>
+  <A, E>(use: (client: ActionHttpClient.Client<typeof Http>) => Effect.Effect<A, E>) =>
     Effect.flatMap(ActionHttpClient.make(Http, { baseUrl: "https://notes.example" }), use).pipe(
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -280,7 +275,7 @@ const effectClient =
     );
 
 it("gives the Effect client each action's success and every declared failure", async () => {
-  const { fetch, requests } = serve();
+  const { fetch, requests } = serveNotes();
 
   const results = await effectClient(fetch)((client) =>
     Effect.all({
@@ -315,8 +310,28 @@ it("fails the Effect client with Effect's own error when the server is unreachab
   expect(HttpClientError.isHttpClientError(unreachable) && unreachable.response).toBeUndefined();
 });
 
+it("fails an unserved action's call by whether the action declares its 404", async () => {
+  const web = serve(ActionHttp.layer(Http, []));
+
+  onTestFinished(() => web.dispose());
+
+  const reasonOf = <A, E>(call: Effect.Effect<A, E>) =>
+    Effect.map(Effect.flip(call), (error) =>
+      HttpClientError.isHttpClientError(error) ? error.reason._tag : "declared",
+    );
+
+  const reasons = await Effect.runPromise(
+    Effect.flatMap(httpClient(Http, web), (client) =>
+      Effect.all([reasonOf(client.get({ id: "a" })), reasonOf(client.count())]),
+    ),
+  );
+
+  // `get` declares a 404, whose body the empty answer is not; `count` declares none.
+  expect(reasons).toEqual(["StatusCodeError", "DecodeError"]);
+});
+
 it("keeps the native HttpApi usable with Effect's own client", async () => {
-  const flat = serve();
+  const flat = serveNotes();
 
   const note = await Effect.gen(function* () {
     const client = yield* HttpApiClient.make(Http.api, { baseUrl: "https://notes.example" });

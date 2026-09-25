@@ -1,20 +1,18 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import type { HttpApiClient } from "effect/unstable/httpapi";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { httpClient, mcpCall, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { httpClient, mcpCall, serve } from "@gjermundgaraba/effect-actions/Testing";
+import { Effect, Schema, Stream } from "effect";
 import { Argument } from "effect/unstable/cli";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { Greet, Http, routes } from "./quickstart.js";
 
 // Subpaths are the only entry points: one module each, so nothing loads the MCP
-// server or the optional client peer by accident.
+// server by accident.
 const packageRoot: string = "@gjermundgaraba/effect-actions";
 
 const rootImport = await import(packageRoot).then(
@@ -38,20 +36,11 @@ const checkTypes = (client: HttpApiClient.ForApi<typeof Http.api>) => {
 
 void checkTypes;
 
-const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-  disableLogger: true,
-});
+const web = serve(routes);
 
 try {
-  const response = await web.handler(
-    mcpRequest({ method: "tools/list", url: "http://localhost/mcp" }),
-  );
-
-  if (response.status !== 200)
-    throw new Error("Stateless MCP request failed without the optional client peer");
-
   const greeting = await Effect.gen(function* () {
-    const client = yield* httpClient(Http, web.handler);
+    const client = yield* httpClient(Http, web);
 
     return yield* client.greet({ name: "Ada" });
   }).pipe(Effect.runPromise);
@@ -78,18 +67,14 @@ try {
   if ((await promised.greet({ name: "Ada" })) !== "Hello, Ada!")
     throw new Error("Promise client failed");
 
-  const called = await mcpCall(web.handler, {
-    url: "http://localhost/mcp",
-    name: "greet",
-    arguments: { name: "Ada" },
-  });
+  const called = await mcpCall(web, { name: "greet", arguments: { name: "Ada" } });
 
   if (called.isError || called.value !== "Hello, Ada!") throw new Error("MCP tool call failed");
 } finally {
   await web.dispose();
 }
 
-const documents = HttpRouter.toWebHandler(Http.openApi(), { disableLogger: true });
+const documents = serve(ActionHttp.openApi(Http));
 
 try {
   const document = await documents.handler(new Request("http://localhost/api/openapi.json"));
@@ -136,19 +121,18 @@ const localCommand = ActionCli.make(greet, { name: "greetings" });
 
 if (localCommand.name !== "greetings") throw new Error("Local CLI projection failed");
 
-const remoteCommand = ActionCliClient.make(Http, { name: "greetings" });
+const remoteCommand = ActionCli.make(Http, { name: "greetings" });
 
 if (remoteCommand.name !== "greetings") throw new Error("Remote CLI projection failed");
 
 const configuredCommand = ActionCli.command(greet, Greet, {
   parameters: { name: Argument.String("name") },
-  input: ({ name }) => ({ name }),
   render: (greeting) => greeting.toUpperCase(),
 });
 
 if (configuredCommand.name !== "greet") throw new Error("Configured CLI projection failed");
 
-const configuredRemote = ActionCliClient.command(Http, Greet, {
+const configuredRemote = ActionCli.command(Http, Greet, {
   parameters: { name: Argument.String("name") },
   input: ({ name }) => ({ name }),
   render: (greeting) => greeting.toUpperCase(),
@@ -174,7 +158,7 @@ const Write = Action.make("write", {
 
 const checkCliTypes = () => {
   // @ts-expect-error Remote commands accept only the binding's own actions.
-  ActionCliClient.command(Http, Read);
+  ActionCli.command(Http, Read);
 };
 
 void checkCliTypes;
@@ -189,11 +173,10 @@ const guarded = Action.implement([Read, Write], {
 
 const GuardedHttp = ActionHttp.make([Read, Write], { errors: [Unauthenticated, Denied] });
 
-const guardedWeb = HttpRouter.toWebHandler(
-  GuardedHttp.layer(guarded, {
+const guardedWeb = serve(
+  ActionHttp.layer(GuardedHttp, guarded, {
     before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
-  }).pipe(Layer.provide(HttpServer.layerServices)),
-  { disableLogger: true },
+  }),
 );
 
 const call = (action: string) =>

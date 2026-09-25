@@ -1,33 +1,42 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
-import { Effect, Layer } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import { Effect } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { routes } from "../examples/quickstart.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
 import { userName } from "../examples/promise-client.js";
 import { makeTestApp } from "./server.js";
 import { docsDirectory } from "../scripts/skill.ts";
-import { mcpRequest } from "../src/Testing.js";
+import { mcpRequest } from "../src/internal/mcp-request.js";
+import { serve } from "../src/Testing.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 // Documented snippets that must stay byte-identical to a type-checked example.
-it.each([
+const snippets = [
   ["README.md", "## Looks like this", "quickstart.ts"],
   ["docs/README.md", "## Minimal program", "quickstart.ts"],
+  ["docs/Action.md", "## Canonical", "contracts.ts"],
+  ["docs/Action.md", "### Implementations", "handlers.ts"],
+  ["docs/ActionHttp.md", "## Canonical", "binding.ts"],
+  ["docs/ActionHttp.md", "### Serving", "http.ts"],
   ["docs/ActionHttp.md", "### Client", "quickstart-client.ts"],
+  ["docs/Authentication.md", "## Canonical", "authentication.ts"],
+  ["docs/ActionMcp.md", "## Canonical", "mcp.ts"],
   ["docs/ActionHttpClient.md", "## Canonical", "client.ts"],
   ["docs/ActionHttpClient.md", "### Promise", "promise-client.ts"],
   ["docs/ActionCli.md", "## Canonical", "cli.ts"],
-  ["docs/ActionCliClient.md", "## Canonical", "cli-client.ts"],
+  ["docs/ActionCli.md", "### Over HTTP", "cli-remote.ts"],
   ["docs/ActionCatalog.md", "## Canonical", "catalog.ts"],
   ["docs/ActionToolkit.md", "## Canonical", "toolkit-authorized.ts"],
   ["docs/Testing.md", "## Canonical", "testing.ts"],
   ["docs/ActionMcp.md", "### Cross-origin browsers", "mcp-browser.ts"],
   ["docs/ActionMcp.md", "### Subprocess", "mcp-stdio.ts"],
-])("keeps %s %s aligned with its type-checked source", (document, heading, file) => {
+] as const;
+
+it.each(snippets)("keeps %s %s aligned with its type-checked source", (document, heading, file) => {
   const source = read(`examples/${file}`)
     .trim()
     .replace(/"\.\.\/src\/(\w+)\.js"/g, '"@gjermundgaraba/effect-actions/$1"');
@@ -35,6 +44,19 @@ it.each([
   const section = read(document).split(`\n${heading}\n`)[1];
   const snippet = section?.match(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/)?.[1];
   expect(snippet).toBe(source);
+});
+
+// Code copied from a page's canonical example must compile, so every one is an example.
+it("pairs every canonical snippet with a type-checked example", () => {
+  const pages = readdirSync(docsDirectory).filter((name) =>
+    readFileSync(join(docsDirectory, name), "utf8").includes("\n## Canonical\n"),
+  );
+
+  const paired = snippets.flatMap(([document, heading]) =>
+    heading === "## Canonical" ? [document] : [],
+  );
+
+  expect(paired).toEqual(expect.arrayContaining(pages.map((page) => `docs/${page}`)));
 });
 
 // The skill is a copy of docs/, so every relative link must resolve inside docs/.
@@ -56,9 +78,7 @@ it("keeps relative links in docs/ inside docs/", () => {
 });
 
 it("runs the documented client against the quickstart routes", async () => {
-  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+  const web = serve(routes);
 
   onTestFinished(() => web.dispose());
 
@@ -93,9 +113,7 @@ it("runs the documented Promise client against the example application", async (
 });
 
 it("serves browser preflight and MCP calls with the documented CORS configuration", async () => {
-  const web = HttpRouter.toWebHandler(browserRoutes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+  const web = serve(browserRoutes);
 
   onTestFinished(() => web.dispose());
 
@@ -120,7 +138,6 @@ it("serves browser preflight and MCP calls with the documented CORS configuratio
 
   const response = await web.handler(
     mcpRequest({
-      url: "http://localhost/mcp",
       method: "tools/call",
       params: { name: "greet", arguments: { name: "Ada" } },
       headers: { origin: "https://ui.example.com" },

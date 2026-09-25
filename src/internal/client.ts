@@ -24,7 +24,7 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
 
 /**
  * What one call of `A` fails with: a declared error value (the action's own, or the
- * binding's surface and policy errors `E`), a native `HttpClientError` for a failed
+ * binding's `errors`, `E`), a native `HttpClientError` for a failed
  * request or an undeclared answer, or a `SchemaError` when the input does not encode or
  * the success does not decode.
  */
@@ -40,11 +40,6 @@ export type Method<A extends Action.Any, E> = Call<
   Effect.Effect<A["success"]["Type"], MethodError<A, E>>
 >;
 
-/** Every action of `Actions`, as `client.<action>(input)`. */
-export type Client<Actions extends ReadonlyArray<Action.Any>, E> = {
-  readonly [A in Actions[number] as A["name"]]: Method<A, E>;
-};
-
 /**
  * What a client needs of an HTTP binding. The API is a native constraint here because
  * native groups are invariant in their endpoints; `actions` and `errors` carry the types.
@@ -55,10 +50,10 @@ export interface AnyHttp {
   readonly api: HttpApi.Constraint;
 }
 
-/** The extra errors every method of a binding's client may fail with. */
-export type ErrorsOf<H> = H extends { readonly errors: ReadonlyArray<infer E extends Action.Codec> }
-  ? E["Type"]
-  : never;
+/** Every action of the binding `H`, as `client.<action>(input)`. */
+export type Client<H extends AnyHttp> = {
+  readonly [A in H["actions"][number] as A["name"]]: Method<A, H["errors"][number]["Type"]>;
+};
 
 /** A client method, erased: the binding's actions restore its exact type. */
 export type ErasedMethod = (

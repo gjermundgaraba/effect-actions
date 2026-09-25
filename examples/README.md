@@ -20,16 +20,18 @@ authorization code and the same rule applies over every surface.
 
 The application serves its implementations under three access rules:
 
-| Implementations | Actions                                     | HTTP           | MCP                           |
-| --------------- | ------------------------------------------- | -------------- | ----------------------------- |
-| `status`        | `status`                                    | no credentials | `/mcp/public`, no credentials |
-| `userActions`   | `getUser`, `renameUser`, `double`, `whoAmI` | bearer token   | `/mcp`, bearer token          |
-| `listChanges`   | `listChanges`                               | not served     | `/mcp`, bearer token          |
+| Implementation | Actions                           | HTTP           | MCP                           |
+| -------------- | --------------------------------- | -------------- | ----------------------------- |
+| `status`       | `status`                          | no credentials | `/mcp/public`, no credentials |
+| `userActions`  | `getUser`, `renameUser`, `whoAmI` | bearer token   | `/mcp`, bearer token          |
+| `double`       | `double`                          | bearer token   | `/mcp`, bearer token          |
+| `listChanges`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
 
 Every HTTP action is in one binding, `Http`: one mount path, one document, one client. The
-two `Http.layer` calls differ only by middleware. An MCP endpoint is a single
+two `ActionHttp.layer` calls differ only by middleware. The `Users` builder runs once, though
+HTTP and MCP both serve `userActions`. An MCP endpoint is a single
 route, so its middleware covers every tool. That is why the public tool has its own endpoint.
-The OpenAPI document (`/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
+The OpenAPI document (`/api/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`.
 
 ```sh
@@ -74,25 +76,29 @@ curl -s http://127.0.0.1:3000/mcp/public \
 # ... "tools":[{"name":"status", ...
 
 # Generated OpenAPI 3.1 document, covering every HTTP action
-curl -s http://127.0.0.1:3000/openapi.json
+curl -s http://127.0.0.1:3000/api/openapi.json
 ```
 
 For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The HTTP surface binds the same authorization hook, so it enforces the same check before the handler.
 
 ## Application structure
 
-- [contracts.ts](contracts.ts): schemas, per-action `access`, and the `Http` binding with its schema-error policy and the surface errors its clients decode. `listChanges` is left out of it, so it is MCP-only.
+- [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
+- [binding.ts](binding.ts): the `Http` binding with the errors its clients decode, including its schema-error answers. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
 - [auth.ts](auth.ts): demo actors, identity, permissions, authorization errors, and the `before` hook every guarded surface binds.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies and no authorization code.
-- [app.ts](app.ts): `Authentication.middleware` on the user actions' layer only, the `before` hook on the guarded HTTP layer and MCP endpoint, the Host/Origin policy around everything, and adapter registration.
+- [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.middleware` answering a missing or unknown token with the declared 401 and its challenge.
+- [http.ts](http.ts): the HTTP layers, public and guarded, plus the OpenAPI document and Swagger UI.
+- [mcp.ts](mcp.ts): the public and the guarded MCP endpoints.
+- [app.ts](app.ts): every surface of the host, under the Host/Origin policy.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 
 ## Follow a request
 
 ```text
-HTTP getUser / MCP get_user
+HTTP /api/getUser / MCP tool getUser
   → authentication middleware provides CurrentActor
   → adapter decodes input (invalid input skips the hook and handler)
   → before hook reads access: "read" and checks users:read
@@ -108,7 +114,7 @@ authentication middleware carry `cache-control: no-store`; other routes use the 
 result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
 
 A write through `renameUser` is visible through both transports, and through the MCP-only
-`list_changes` tool. `double`
+`listChanges` tool. `double`
 demonstrates string-to-number input decoding. `whoAmI` reads the authenticated
 identity from request context, not action arguments.
 
@@ -128,7 +134,7 @@ These examples use the same action contracts without changing their handlers:
 node --import tsx examples/cli.ts --value 21
 
 # Public status action over HTTP; start `vp run example` first
-node --import tsx examples/cli-client.ts
+node --import tsx examples/cli-remote.ts
 
 # Native Effect Toolkit result, without an MCP envelope
 node --import tsx examples/toolkit.ts
@@ -137,7 +143,7 @@ node --import tsx examples/toolkit.ts
 node --import tsx examples/catalog.ts
 ```
 
-[cli.ts](cli.ts) and [cli-client.ts](cli-client.ts) return native Effect CLI commands;
+[cli.ts](cli.ts) and [cli-remote.ts](cli-remote.ts) return native Effect CLI commands;
 use `--help` for their options. [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
 stdout for JSON-RPC and routes Effect logs to stderr.

@@ -21,21 +21,21 @@ export const Greet = Action.make("greet", {
 
 export const Http = ActionHttp.make([Greet]);
 
-const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 export const routes = Layer.mergeAll(
-  Http.layer(actions),
-  ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0" }),
+  ActionHttp.layer(Http, greet),
+  ActionMcp.layerHttp(greet, { name: "greetings", version: "1.0.0" }),
 );
 ```
 
 Serve `routes` with Effect's `HttpRouter` and you have `POST /api/greet` and an MCP tool named
-`greet` at `/mcp`. The same `actions` are also:
+`greet` at `/mcp`. The same `greet` implementation is also:
 
 ```ts
-const { toolkit, layer } = ActionToolkit.make(actions); // native Effect AI Toolkit and its handler layer
-const cli = ActionCli.make(actions, { name: "greetings" }); // greetings greet --input '{"name":"Ada"}'
-const remote = ActionCliClient.command(Http, Greet); // same command, over HTTP
+const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolkit and its handler layer
+const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --input '{"name":"Ada"}'
+const remote = ActionCli.command(Http, Greet); // same command, over HTTP
 const catalog = ActionCatalog.make([Greet]); // offline JSON contract, no handlers acquired
 ```
 
@@ -55,11 +55,11 @@ Code that does not run Effects, such as a browser page, gets the same calls as P
 ## Why
 
 - Input, success, and errors are declared once. Routes, tools, commands, clients, OpenAPI, and the catalog are derived from that declaration, so they cannot disagree.
-- A handler may fail only with the errors its action declares. Each surface binds one `before` hook that runs before every handler it serves — after successful input decoding — so a policy such as scope enforcement is written once per surface and no action of that surface can skip it.
+- A handler may fail only with the errors its action declares. One guard, `{ errors, before }`, binds to every surface as it is, and its hook runs before every handler the surface serves — after successful input decoding — so a policy such as scope enforcement is written once and no action can skip it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so `OpenApi.fromApi`, Swagger, Scalar, and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, one `Tool` per action, with no SDK runtime dependency.
 - Every action states its `access` (`"read"` or `"write"`, required), so authorization reads the contract instead of a hand-maintained list of mutation names.
-- Build-time services and per-request services are tracked separately in the types. Middleware is per `Http.layer` call, so public and authenticated actions share one binding, one mount path, one document and one client.
-- Tests run in memory. Call the routes through a web handler with the same typed client, or drive the official MCP client, without opening a port.
+- Build-time services and per-request services are tracked separately in the types. Middleware is per `ActionHttp.layer` call, so public and authenticated actions share one binding, one mount path, one document and one client, and each builder runs once however many surfaces serve it.
+- Tests run in memory. Call the routes with the same typed client, and the tools with one call each, without opening a port.
 
 ## Install
 

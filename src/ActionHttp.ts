@@ -14,10 +14,10 @@ import type * as Action from "./Action.js";
 import {
   answerSchemaError,
   assertDistinct,
-  policyErrors,
   projectedErrors,
   type SchemaErrorPolicy,
 } from "./internal/actions.js";
+import type { AnyHttp } from "./internal/client.js";
 import {
   acquire,
   type AnyImplementation,
@@ -26,45 +26,46 @@ import {
   type BuildError,
   dispatch,
   type ErasedValue,
+  type Member,
+  provideHandlers,
   type RequestContext,
+  type Served,
+  servedActions,
+  toList,
 } from "./internal/implementation.js";
 
-/** An HTTP schema-error policy and each of its two answers. */
-export type { SchemaErrorAnswer, SchemaErrorPolicy } from "./internal/actions.js";
-
 /** Contract-level configuration: servers and clients must agree on it. */
-export interface Options<
-  Errors extends ReadonlyArray<Action.Codec> = [],
-  Invalid extends Action.Codec = never,
-  Internal extends Action.Codec = never,
-> {
+export interface Options<Errors extends ReadonlyArray<Action.Codec> = []> {
   /** Mount path of every route; defaults to `/api`. `/` mounts at the root. */
   readonly prefix?: `/${string}`;
   /**
-   * Failures the surface around these endpoints answers with instead of a
-   * handler: authentication, authorization, rate limits. Declared on every
-   * endpoint, so clients decode them as typed failures rather than reporting a
-   * decode error. Each schema keeps its own `httpApiStatus`, and their `_tag`s
-   * must be distinct.
+   * The native group's name, which is its OpenAPI tag; defaults to the mount path.
+   * Bindings composed into one host API need distinct names.
+   */
+  readonly name?: string;
+  /**
+   * Failures the surface around these endpoints answers with instead of a handler:
+   * authentication, authorization, rate limits, invalid input. Declared on every
+   * endpoint, so clients decode them as typed failures rather than reporting a decode
+   * error. Each schema keeps its own `httpApiStatus`, and their `_tag`s must be distinct.
    */
   readonly errors?: Errors;
   /**
    * How HTTP answers a request that fails decoding (`invalid`) and a result that fails
-   * encoding (`internal`); without one, both are Effect's empty 400. MCP keeps its
-   * native answers.
+   * encoding (`internal`), each with one of `errors`; an omitted side is Effect's empty
+   * 400. MCP keeps its native answers.
    */
-  readonly schemaError?: SchemaErrorPolicy<Invalid, Internal>;
+  readonly schemaError?: SchemaErrorPolicy<NoInfer<Errors[number]["Type"]>>;
 }
 
-/** What `Http.layer` binds around the implementations it serves. */
-export interface LayerOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
+/** What `layer` binds around the implementations it serves. */
+export interface LayerOptions<E, R> {
   /**
-   * Runs once after successful payload decoding, before the selected handler,
-   * with its action contract. It fails with the binding's own `errors`, encoded
-   * exactly like a declared error. Its services are request-time
-   * requirements, like a handler's.
+   * Runs once after successful payload decoding, before the selected handler, with its
+   * action contract. It fails with one of the binding's `errors`, encoded exactly like a
+   * declared error. Its services are request-time requirements, like a handler's.
    */
-  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
+  readonly before?: (action: Action.Any) => Effect.Effect<void, E, R>;
 }
 
 type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends Action.Any
@@ -87,68 +88,61 @@ type Endpoint<A extends Action.Any, E extends Action.Codec> = A extends Action.A
  * top-level group, so native client methods are not nested, named after the binding's
  * mount path so bindings composed into one host API keep their own groups.
  */
-export type Api<
+type Api<
   Actions extends ReadonlyArray<Action.Any>,
   E extends Action.Codec = never,
 > = HttpApi.HttpApi<
   "actions",
-  [Actions[number]] extends [never]
-    ? never
-    : HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E>, true>
+  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E>, true>
 >;
 
 /**
- * What `Http.layer` builds: failures, build services and request services are unions
- * over precisely the implementations `Apps` and the hook's services `RB`, joined by the
- * router and platform services `HttpApiBuilder.layer` needs.
+ * What `layer` builds: failures, build services and request services are unions over
+ * precisely the implementations `App` and the hook's services `RB`, joined by the router
+ * and platform services `HttpApiBuilder.layer` needs.
  */
-export type HttpLayer<Apps extends ReadonlyArray<AnyImplementation>, RB> = Layer.Layer<
+type HttpLayer<App, RB> = Layer.Layer<
   never,
-  BuildError<Apps[number]>,
-  | BuildContext<Apps[number]>
+  BuildError<App>,
+  | BuildContext<App>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<Apps[number]> | RB>
+  | HttpRouter.Request.From<"Requires", RequestContext<App> | RB>
   | Etag.Generator
   | FileSystem
   | HttpPlatform.HttpPlatform
   | Path
 >;
 
-/** An HTTP binding: actions, where they are mounted, and the errors around them. */
+/**
+ * An HTTP binding: actions, where they are mounted, and the errors around them. Plain
+ * data, so a client importing it bundles no server code, and a copy of it, or one made by
+ * another installed copy of this package, serves the same; `layer` serves it.
+ */
 export interface Http<
   Actions extends ReadonlyArray<Action.Any>,
   Errors extends ReadonlyArray<Action.Codec> = [],
-  Policy extends Action.Codec = never,
 > {
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
-  /** Every error declared on every endpoint beyond the action's own: surface and policy. */
-  readonly errors: ReadonlyArray<Errors[number] | Policy>;
-  readonly api: Api<Actions, Errors[number] | Policy>;
-  /**
-   * Serve any number of implementations of this binding's actions in one layer, with
-   * one pre-handler hook around every request they answer. Each call mounts only the
-   * routes of the implementations it receives, so actions with different middleware
-   * are served by separate calls.
-   */
-  readonly layer: <
-    const Apps extends ReadonlyArray<AnyImplementation<Actions[number]>>,
-    RB = never,
-  >(
-    apps: readonly [...Apps],
-    options?: LayerOptions<Errors, RB>,
-  ) => HttpLayer<Apps, RB>;
-  /**
-   * Serve the OpenAPI document of `api` with `GET path`, by default
-   * `<prefix>/openapi.json`. It is a plain route: middleware provided to this layer
-   * covers it, and none is applied otherwise.
-   */
-  readonly openApi: (
-    path?: HttpRouter.PathInput,
-  ) => Layer.Layer<never, never, HttpRouter.HttpRouter>;
+  /** Every error declared on every endpoint beyond the action's own. */
+  readonly errors: Errors;
+  /** Mount path of every route: `/api` by default, empty at the root. */
+  readonly prefix: Prefix;
+  /** How `layer` answers schema failures, as `make` was given it. */
+  readonly schemaError?: SchemaErrorPolicy<Errors[number]["Type"]>;
+  readonly api: Api<Actions, Errors[number]>;
 }
 
-type ErasedOptions = Options<ReadonlyArray<Action.Codec>, Action.Codec, Action.Codec>;
+/** A mount path as routes are joined to it: empty at the root. */
+type Prefix = "" | `/${string}`;
+
+/** What `layer` and `openApi` read of a binding. */
+interface AnyBinding extends AnyHttp {
+  readonly prefix: Prefix;
+  readonly schemaError?: SchemaErrorPolicy;
+}
+
+type ErasedOptions = Options<ReadonlyArray<Action.Codec>>;
 
 /** A native request, as `HttpApiBuilder.handleAll` passes it to a handler. */
 interface Request {
@@ -162,32 +156,86 @@ const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> 
 /** An absolute route from path segments. */
 const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
 
-/** The native middleware declares the policy's errors on every endpoint it wraps. */
-const schemaErrorMiddleware = (prefix: string, policy: SchemaErrorPolicy) => {
+let middlewares = 0;
+
+/**
+ * The native middleware answering schema failures with `policy`, and its layer. It
+ * declares the binding's `errors` it answers with; every endpoint declares them too, and
+ * Effect keeps each schema once.
+ */
+const schemaErrors = (errors: ReadonlyArray<Action.Codec>, policy: SchemaErrorPolicy) => {
   class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
-    `effect-actions/http/SchemaErrors${prefix}`,
-    { error: policyErrors(policy) },
+    `effect-actions/http/SchemaErrors/${(middlewares += 1)}`,
+    { error: errors },
   ) {}
 
   return {
-    SchemaErrors,
+    middleware: SchemaErrors,
     layer: HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
       Effect.fail(answerSchemaError(policy, failure)),
     ),
   };
 };
 
+/** A native API of one top-level group of `endpoints`. */
+function apiOf(
+  group: string,
+  endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
+): Api<ReadonlyArray<Action.Any>, Action.Codec>;
+function apiOf(
+  group: string,
+  endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
+): HttpApi.Constraint {
+  const empty = HttpApiGroup.make(group, { topLevel: true });
+  const [first, ...rest] = endpoints;
+
+  return HttpApi.make("actions")
+    .annotate(HttpApi.ParseOptions, { errors: "all" })
+    .add(first === undefined ? empty : empty.add(first, ...rest));
+}
+
+/** A binding's API as the native helpers read it. */
+const native = (api: HttpApi.Constraint): HttpApi.Top =>
+  // SAFETY: every binding API is a native `HttpApi` of one group; only its invariant
+  // group map is erased.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary.
+  api as HttpApi.Top;
+
+/** The binding's one native group, as `make` built it. */
+const groupOf = (api: HttpApi.Constraint): HttpApiGroup.Top => {
+  const [group] = Object.values(native(api).groups);
+
+  if (group === undefined) throw new Error("Not an HTTP binding made by ActionHttp.make");
+
+  return group;
+};
+
+/** The native endpoint of each of `served`, refusing an action outside the binding. */
+const endpointsOf = (
+  http: AnyHttp,
+  served: ReadonlyArray<Action.Any>,
+): ReadonlyArray<HttpApiEndpoint.Top> =>
+  served.map((action) => {
+    const endpoint = http.actions.includes(action)
+      ? groupOf(http.api).endpoints[action.name]
+      : undefined;
+
+    if (endpoint === undefined) {
+      throw new Error(`Action "${action.name}" is not in this HTTP binding`);
+    }
+
+    return endpoint;
+  });
+
 /** Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`. */
 export function make<
   const Actions extends ReadonlyArray<Action.Any>,
   const E extends ReadonlyArray<Action.Codec> = [],
-  Invalid extends Action.Codec = never,
-  Internal extends Action.Codec = never,
->(actions: Actions, options?: Options<E, Invalid, Internal>): Http<Actions, E, Invalid | Internal>;
+>(actions: Actions, options?: Options<E>): Http<Actions, E>;
 export function make(
   actions: ReadonlyArray<Action.Any>,
   options: ErasedOptions = {},
-): Http<ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>, Action.Codec> {
+): Http<ReadonlyArray<Action.Any>, ReadonlyArray<Action.Codec>> {
   assertDistinct(
     "action",
     actions.map((action) => action.name),
@@ -195,111 +243,106 @@ export function make(
 
   const mount = mountSegments(options.prefix);
   const prefix = mount.length === 0 ? "" : route(mount);
+  const errors = options.errors ?? [];
 
-  // The one native group is top level, so its client methods are not nested. Its name
-  // is the mount path, `/api` or `/`, which is also its OpenAPI tag: `HttpApi.addHttpApi`
-  // keys groups by name, so two bindings on different prefixes compose side by side.
-  const group = route(mount);
-
-  const policy =
-    options.schemaError === undefined
-      ? undefined
-      : schemaErrorMiddleware(prefix, options.schemaError);
-
-  const endpoints = new Map(
-    actions.map((action) => [
-      action,
-      HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
-        payload: action.input,
-        success: action.success,
-        error: projectedErrors(action, options.errors),
-      }).annotate(OpenApi.Description, action.description),
-    ]),
+  const endpoints = actions.map((action) =>
+    HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
+      payload: action.input,
+      success: action.success,
+      error: projectedErrors(action, errors),
+    }).annotate(OpenApi.Description, action.description),
   );
 
-  const endpointOf = (action: Action.Any): HttpApiEndpoint.Constraint => {
-    const endpoint = endpoints.get(action);
+  // The one native group is top level, so its client methods are not nested. Its name
+  // is its OpenAPI tag, and `HttpApi.addHttpApi` keys groups by it, so it defaults to
+  // the mount path: two bindings on different prefixes compose side by side.
+  const api = apiOf(options.name ?? (mount.join("/") || "actions"), endpoints);
 
-    if (endpoint === undefined) {
-      throw new Error(`Action "${action.name}" is not in this HTTP binding`);
-    }
-
-    return endpoint;
+  return {
+    actions,
+    errors,
+    prefix,
+    ...(options.schemaError === undefined ? {} : { schemaError: options.schemaError }),
+    api,
   };
-
-  /** A native API of exactly `served`, with the binding's policy on its group. */
-  function apiOf(served: ReadonlyArray<Action.Any>): Api<ReadonlyArray<Action.Any>, Action.Codec>;
-  function apiOf(served: ReadonlyArray<Action.Any>): HttpApi.Constraint {
-    const empty = HttpApi.make("actions").annotate(HttpApi.ParseOptions, { errors: "all" });
-    const [first, ...rest] = served.map(endpointOf);
-
-    if (first === undefined) return empty;
-
-    const native = HttpApiGroup.make(group, { topLevel: true }).add(first, ...rest);
-
-    return empty.add(policy === undefined ? native : native.middleware(policy.SchemaErrors));
-  }
-
-  const api = apiOf(actions);
-
-  const layer = <const Apps extends ReadonlyArray<AnyImplementation>, RB = never>(
-    apps: readonly [...Apps],
-    layerOptions: LayerOptions<ReadonlyArray<Action.Codec>, RB> = {},
-  ): HttpLayer<Apps, RB> => {
-    const served = apiOf(apps.map((app) => app.action));
-
-    // Every action is in the binding, whose names are distinct, so a repeated name is a
-    // repeated action.
-    assertDistinct(
-      "served action",
-      apps.map((app) => app.action.name),
-    );
-
-    const before: Before<unknown> | undefined = layerOptions.before;
-
-    const handlers =
-      apps.length === 0
-        ? Layer.empty
-        : Layer.unwrap(
-            Effect.map(acquire(apps), (handlerOf) =>
-              HttpApiBuilder.group(served, group, (builder) =>
-                builder.handleAll(
-                  // SAFETY: the native router selects the endpoint, and so the action, before
-                  // `dispatch` calls its handler; `Http.layer`'s signature restores every channel.
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary.
-                  Object.fromEntries(
-                    // Own properties, so an action named `__proto__` is a route, not a prototype.
-                    apps.map((app) => {
-                      const run = dispatch<Action.Any, ErasedValue, unknown>(
-                        app.action,
-                        handlerOf(app),
-                        before,
-                      );
-
-                      return [app.action.name, (request: Request) => run(request.payload)];
-                    }),
-                  ) as never,
-                ),
-              ),
-            ),
-          );
-
-    // SAFETY: handlers are built from exactly these implementations, so the layer's
-    // failures and services are the unions `HttpLayer` states.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic tuple reduction cannot express the public union.
-    return HttpApiBuilder.layer(served).pipe(
-      Layer.provide(handlers),
-      Layer.provide(policy?.layer ?? Layer.empty),
-    ) as HttpLayer<Apps, RB>;
-  };
-
-  const openApi = (path: HttpRouter.PathInput = route([...mount, "openapi.json"])) =>
-    HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api)));
-
-  const errors = [
-    ...(options.errors ?? []),
-    ...(options.schemaError === undefined ? [] : policyErrors(options.schemaError)),
-  ];
-
-  return { actions, errors, api, layer, openApi };
 }
+
+/**
+ * Serve implementations of a binding's actions in one layer, with one pre-handler hook
+ * around every request they answer. Each call mounts only the routes of the actions it
+ * serves, so actions with different middleware are served by separate calls. Each
+ * implementation's builder runs once however many layers serve it.
+ */
+export function layer<
+  const H extends AnyBinding,
+  const Apps extends Served &
+    (
+      | AnyImplementation<H["actions"][number]>
+      | ReadonlyArray<AnyImplementation<H["actions"][number]>>
+    ),
+  RB = never,
+>(
+  http: H,
+  apps: Apps,
+  options?: LayerOptions<H["errors"][number]["Type"], RB>,
+): HttpLayer<Member<Apps>, RB>;
+export function layer(
+  http: AnyBinding,
+  served: Served,
+  options: LayerOptions<unknown, unknown> = {},
+): Layer.Layer<never, unknown, unknown> {
+  const apps = toList(served);
+  const actions = servedActions("served action", apps);
+  const name = groupOf(http.api).identifier;
+  const before: Before<unknown> | undefined = options.before;
+
+  const answer =
+    http.schemaError === undefined ? undefined : schemaErrors(http.errors, http.schemaError);
+
+  const api = apiOf(
+    name,
+    endpointsOf(http, actions).map((endpoint) =>
+      answer === undefined ? endpoint : endpoint.middleware(answer.middleware),
+    ),
+  );
+
+  const handlers = Layer.unwrap(
+    Effect.map(acquire(apps), (handlerOf) =>
+      HttpApiBuilder.group(api, name, (builder) =>
+        builder.handleAll(
+          // SAFETY: the native router selects the endpoint, and so the action, before
+          // `dispatch` calls its handler; `layer`'s signature restores every channel.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary.
+          Object.fromEntries(
+            // Own properties, so an action named `__proto__` is a route, not a prototype.
+            actions.map((action) => {
+              const run = dispatch<Action.Any, ErasedValue, unknown>(
+                action,
+                handlerOf(action),
+                before,
+              );
+
+              return [action.name, (request: Request) => run(request.payload)];
+            }),
+          ) as never,
+        ),
+      ),
+    ),
+  ).pipe(provideHandlers(apps));
+
+  return HttpApiBuilder.layer(api).pipe(
+    Layer.provide(handlers),
+    Layer.provide(answer?.layer ?? Layer.empty),
+  );
+}
+
+/**
+ * Serve the OpenAPI document of a binding with `GET path`, by default
+ * `<prefix>/openapi.json`. It is a plain route: middleware provided to this layer
+ * covers it, and none is applied otherwise.
+ */
+export const openApi = (
+  http: AnyBinding,
+  path: HttpRouter.PathInput = `${http.prefix}/openapi.json`,
+): Layer.Layer<never, never, HttpRouter.HttpRouter> =>
+  HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(native(http.api))));

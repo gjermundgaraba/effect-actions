@@ -3,23 +3,22 @@
 ## Unreleased
 
 One contract, one `implement`, one binding. `ActionGroup` is gone: actions are implemented
-directly, HTTP binds a flat list of actions, and every client calls an action with its input.
+directly, HTTP binds a flat list of actions, every client calls an action with its input, and a
+builder runs once however many surfaces serve it.
 
 ### Breaking changes
 
 **`ActionGroup` is removed; `Action.implement` binds handlers.** `implement(action, handler)`
-and `implement([actions], { name: handler })` both return a list of implementations, one per
-action. Either takes an Effect that builds the handler or record instead: every implementation
-one call returns shares that builder, and an adapter layer runs it once if it serves any of its
-actions, and not at all otherwise. Adapters take lists of implementations, combined by
-spreading. Group-level `errors` and the group's `schemaError` policy are gone; the policy moves
-to `ActionHttp.make`.
+and `implement([actions], { name: handler })` both return one `Implementation` of everything
+they bind. Either takes an Effect that builds the handler or record instead. Adapters take one
+implementation or a list of them, `[userActions, double]`, and serve every action of each.
+Group-level `errors` and the group's `schemaError` policy are gone; `schemaError` moves to
+`ActionHttp.make`.
 
 A record must have exactly one handler per action: an extra key is now a compile error, where
-0.7.0 ignored it. Records are checked when an adapter layer builds them, never at `implement`,
-and one that slips past the types makes the build die with `Missing handler: <name>` or
-`Unknown handlers: <keys>`. 0.7.0 threw `Missing handlers for group ...` at `implement` for a
-plain record.
+0.7.0 ignored it. A plain handler or record is checked at `implement`, which throws
+`Missing handlers: <names>` or `Unknown handlers: <keys>`; a builder's record is checked when
+it is built, and the layer build dies with the same message.
 
 - Migrate:
 
@@ -34,43 +33,122 @@ plain record.
 
   Errors shared by a group: spread one constant array into each action's `errors`.
 
-**`ActionHttp.make(actions, options?)` binds a flat list.** Actions come first. `prefix`
-(default `/api`) replaces the required `apiPath`, and `schemaError` joins `errors` as a binding
-option. Each action is served at `POST <prefix>/<action>` with operation ID `<action>` and the mount
-path as its OpenAPI tag, so names
+**A builder runs once per host.** Each implementation's builder is a layer Effect memoizes, so
+within one build of the host's layers it runs once however many HTTP layers, MCP endpoints and
+Toolkits serve it, in the host's scope. 0.7.0 ran it once per adapter layer. It still runs again
+in a separately built layer graph, and per invocation in `ActionCli`. Its startup services are
+therefore provided once, above every surface: services provided around one surface now reach
+the others, where 0.7.0 gave each adapter its own.
+
+**`mcp: false` and `mcp.name` are removed.** A tool is named after its action, and `mcp` holds
+only the hints (`readOnly`, `destructive`, `idempotent`, `openWorld`). A surface serves the
+implementations passed to it, so an action stays off MCP by leaving its implementation out of
+the MCP layer; implement it on its own if it shared a builder with served actions. Action names
+are at most 128 characters, the MCP limit.
+
+- Migrate: rename an action whose `mcp.name` differed (`get_user` becomes the tool `getUser`),
+  or keep the old name as the action name; delete `mcp: false` and leave the implementation out
+  of `ActionMcp` and `ActionToolkit`.
+
+**`ActionHttp.make(actions, options?)` binds a flat list, as data.** Actions come first.
+`prefix` (default `/api`) replaces the required `apiPath`, `schemaError` joins `errors` as a
+binding option, and `name` sets the native group's name and OpenAPI tag (default: the mount
+path's segments, such as `api` or `api/users`, or `actions` at the root). Each action is served at `POST <prefix>/<action>` with operation ID `<action>`, so names
 are unique per binding; an API that reused names across groups uses one binding per area, each
-with its own `prefix`. `Http.actions` holds the bound actions. `Http.layer(implementations,
-{ before })` serves exactly the implementations it receives, matched to the binding's actions by
-identity; each call builds its own native API, so middleware provided to it covers only its
-actions. An implementation of an action outside the binding is refused, and a bound action no
-layer serves answers 404. `Http.openApi()` defaults to `<prefix>/openapi.json`.
+with its own `prefix`. The binding is `{ actions, errors, prefix, schemaError, api }`, plain
+data holding no server code, so a browser client importing it bundles none, and a copy of it,
+or one made by another installed copy of the package, serves the same.
+`ActionHttp.layer(Http, implementations, { before })` serves every action of the
+implementations it receives, matched to the binding's actions by identity, and answers schema
+failures with the binding's `schemaError`; its hook fails only with the binding's `errors`;
+middleware provided to it covers only those actions. An implementation of an action outside the binding is refused,
+and a bound action no layer serves answers 404. `ActionHttp.openApi(Http, path?)` defaults to
+`<prefix>/openapi.json`.
 
 - Migrate: `ActionHttp.make({ apiPath: "/api", errors }, Users)` becomes
   `ActionHttp.make([GetUser, RenameUser], { errors })` for `/api/getUser`, or
   `ActionHttp.make([GetUser, RenameUser], { prefix: "/api/users", errors })` to keep the
-  `/api/users/getUser` routes. Callers of the native client follow the route change.
+  `/api/users/getUser` routes; its OpenAPI tag is then `api/users`, unless `name` sets another.
+  `Http.layer(apps)` becomes `ActionHttp.layer(Http, apps)` and
+  `Http.openApi()` becomes `ActionHttp.openApi(Http)`. Callers of the native client follow the
+  route change.
 
 **Clients take the input, not `{ payload }`.** `ActionHttpClient.make(Http, options?)` is new:
 the native `HttpApiClient`, one Effect method per action, `client.getUser({ id })`.
 `ActionHttpClient.promise` and `Testing.httpClient(Http, handler)` are built on it;
-`Testing.httpClient` takes the binding rather than `Http.api`. The argument may be omitted
-exactly when `{}` is a valid input, and omitting it sends `{}`; a given argument is sent as
-given, where 0.7.0 sent `{}` for an `undefined` or `null` argument.
+`Testing.httpClient` takes the binding rather than `Http.api`. `Client<typeof Http>` and
+`PromiseClient<typeof Http>` name their types. The argument may be omitted exactly when `{}` is
+a valid input, and omitting it sends `{}`; a given argument is sent as given, where 0.7.0 sent
+`{}` for an `undefined` or `null` argument.
+
+**`schemaError` answers with the binding's own `errors`.** Each side is a function of the
+native failure returning one of `errors`, `schemaError: { invalid: () => new InvalidRequest(...) }`,
+and a side left out keeps Effect's empty 400. `ActionHttp.SchemaErrorPolicy`,
+`ActionHttp.SchemaErrorAnswer` and the `{ schema, make }` answers are gone, and so is the
+binding's third type parameter.
+
+- Migrate: move each answer's `schema` into `errors`, and its `make` to the side itself:
+
+  ```ts
+  // before
+  ActionHttp.make(actions, {
+    errors: [Forbidden],
+    schemaError: { invalid: { schema: InvalidRequest, make: () => new InvalidRequest(...) }, ... },
+  });
+
+  // after
+  ActionHttp.make(actions, {
+    errors: [Forbidden, InvalidRequest],
+    schemaError: { invalid: () => new InvalidRequest(...) },
+  });
+  ```
+
+**One guard object binds to every surface.** `{ errors, before }` is passed as it is to
+`ActionMcp`, `ActionToolkit`, `ActionHttp.layer` and `ActionCli`: MCP and the Toolkit declare
+its `errors` on their tools, HTTP declares the binding's and reads only `before`, and the CLI
+reads only `before`, inferring its failure as 0.7.0 did.
+
+- Migrate: nothing is required. To share one rule, bind one constant:
+  `ActionHttp.layer(Http, apps, guarded)`, `ActionCli.command(app, Action, { ...guarded })`.
+
+**`ActionCliClient` is merged into `ActionCli`.** A command from an HTTP binding calls the
+action over HTTP, one from implementations runs it in process:
+`ActionCli.command(Http, Action, options?)` and `ActionCli.make(Http, { name })`. The client's
+`baseUrl` and `transformClient` are options of the command itself; `connection` is gone.
+
+- Migrate: `ActionCliClient.command(Http, Action, { connection: { baseUrl } })` becomes
+  `ActionCli.command(Http, Action, { baseUrl })`.
 
 **CLI selectors are contracts.** `ActionCli.command(implementations, Action, options?)` and
-`ActionCli.make(implementations, { name, before? })` replace `ActionCli.command(app, "name")` and
-`ActionCli.group(app)`. `ActionCliClient.command(Http, Action, options?)` and
-`ActionCliClient.make(Http, { name, connection? })` replace the string selectors and
-`ActionCliClient.group`. Both aggregates give one subcommand per action. A local command builds
+`ActionCli.make(implementations, { name, before? })` replace
+`ActionCli.command(app, "name")` and `ActionCli.group(app)`. `ActionCli.command(Http, Action)`
+and `ActionCli.make(Http, { name })` replace the remote string selectors and
+`ActionCliClient.group`. Aggregates give one subcommand per action. A `parameters`
+command needs `input` unless its parsed values could be the encoded input (JSON, with every
+key the encoded input requires and none it lacks), so an optional flag's `Option` is a compile error rather than a runtime `SchemaError`. A local command builds
 only its own implementation's builder. A remote command calls through `ActionHttpClient`, so
-`connection` no longer accepts `transformResponse`, whose effect the command's error type could
+it no longer accepts `transformResponse`, whose effect the command's error type could
 not follow.
+
+**`TestingClient` and `Testing.mcpRequest` are removed.** The package no longer has the
+optional `@modelcontextprotocol/client` peer. `Testing.httpClient` and `Testing.mcpCall` take
+what `Testing.serve` returns, or a web handler as before. `mcpCall` takes `path` and
+`baseUrl`, not `url`; `path` defaults to `/mcp` and `baseUrl` to `http://localhost`.
+
+- Migrate: assert on a tool's outcome with `Testing.mcpCall`. To drive the official client,
+  depend on `@modelcontextprotocol/client` directly and pass it `fetch: server.handler`. For a
+  raw MCP response, send your own `Request` to `server.handler`.
+
+**Fewer exported types.** `Action.CodecOf`, `ActionHttp.Api`, `ActionHttpClient.Method`,
+`ActionHttpClient.PromiseMethod`, and the MCP request types of `Testing` are no longer exported.
+Use `Client<typeof Http>` and `PromiseClient<typeof Http>` for clients, and `typeof Http.api`
+for the native API.
 
 **`ActionMcp.layerHttp`'s `path` defaults to `/mcp`.**
 
 **The catalog is version `"5"`.** `ActionCatalog.make` takes a list. Entries are
 `{ name, description, access, mcp, input, success, errors }`: `group` and `httpSchemaErrors` are
-gone, and `access` is included.
+gone, `access` is included, and `mcp` is the four resolved hints.
 
 **Spans are named after the action.** The handler span is `<action>`, not `<group>.<action>`,
 and `action.group` is no longer an attribute or log annotation. Action names are unique per
@@ -81,7 +159,15 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
 - `input` and `success` take plain fields: `input: { id: Schema.String }` is
   `Schema.Struct({ id: Schema.String })`.
 - Handler parameters are typed from the contract in every `implement` form, without
-  annotations.
+  annotations, and a generic handler such as `Effect.succeed` is inferred as itself.
+- `Authentication.middleware(service, authenticate, { errors?, headers? })`: `authenticate` may
+  fail with a declared error, sent as its JSON encoding with its `httpApiStatus` and `headers`,
+  instead of a hand-built response. Pass `Http.errors` to declare it once; `headers` may be a
+  function of the error. A response still works as before.
+- `Authentication.bearerToken` reads the request's bearer token as an `Option`.
+- `Testing.serve(routes)` serves routes in memory with the platform services provided and
+  returns `{ handler, dispose }`.
+- A CLI command with `parameters` and no `input` uses the parsed parameters as the input.
 
 ## 0.7.0
 

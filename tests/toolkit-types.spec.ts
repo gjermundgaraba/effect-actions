@@ -6,18 +6,17 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-types/Principal") {}
 
-const Aliased = Action.make("original", {
-  description: "An aliased tool.",
+const Named = Action.make("named", {
+  description: "A read-only tool.",
   access: "write",
   success: Schema.String,
-  mcp: { name: "alias", readOnly: true },
+  mcp: { readOnly: true },
 });
 
-const Hidden = Action.make("hidden", {
-  description: "Not exposed to tools.",
+const Guarded = Action.make("guarded", {
+  description: "Needs a principal.",
   access: "write",
   success: Schema.String,
-  mcp: false,
 });
 
 const ServiceFree = Action.make("service_free", {
@@ -26,31 +25,38 @@ const ServiceFree = Action.make("service_free", {
   success: Schema.String,
 });
 
-const app = Action.implement([Aliased, ServiceFree, Hidden], {
-  original: () => Effect.map(Principal, (principal) => principal),
+const app = Action.implement([Named, ServiceFree, Guarded], {
+  named: () => Effect.map(Principal, (principal) => principal),
   service_free: () => Effect.succeed("free"),
-  hidden: () => Effect.map(Principal, (principal) => principal),
+  guarded: () => Effect.map(Principal, (principal) => principal),
 });
 
 const binding = ActionToolkit.make(app);
 
-const exactAliasSuccess: Tool.Success<typeof binding.toolkit.tools.alias> = "principal";
+// Every action is a tool, named after it.
+const toolNames: [keyof typeof binding.toolkit.tools] extends ["named" | "service_free" | "guarded"]
+  ? ["named" | "service_free" | "guarded"] extends [keyof typeof binding.toolkit.tools]
+    ? true
+    : false
+  : false = true;
 
-void exactAliasSuccess;
+void toolNames;
+
+const exactNamedSuccess: Tool.Success<typeof binding.toolkit.tools.named> = "principal";
+
+void exactNamedSuccess;
 
 // @ts-expect-error Native tool successes retain the action schema's decoded type.
-const wrongAliasSuccess: Tool.Success<typeof binding.toolkit.tools.alias> = 1;
+const wrongNamedSuccess: Tool.Success<typeof binding.toolkit.tools.named> = 1;
 
-void wrongAliasSuccess;
+void wrongNamedSuccess;
 
 export const toolkitTypes = Effect.gen(function* () {
   const tools = yield* binding.toolkit;
-  const calls = yield* tools.handle("alias", {});
+  const calls = yield* tools.handle("named", {});
   yield* Stream.runDrain(calls);
-  // @ts-expect-error Tool names use `mcp.name`, not the action name.
-  tools.handle("original", {});
-  // @ts-expect-error Tool-disabled actions are absent.
-  tools.handle("hidden", {});
+  // @ts-expect-error Tool names are exactly the action names.
+  tools.handle("renamed", {});
 }).pipe(Effect.provide(binding.layer));
 
 toolkitTypes satisfies Effect.Effect<unknown, unknown, Principal>;
@@ -58,7 +64,7 @@ toolkitTypes satisfies Effect.Effect<unknown, unknown, Principal>;
 // @ts-expect-error Running the returned stream retains the handler's per-call principal.
 toolkitTypes satisfies Effect.Effect<unknown, unknown, never>;
 
-/** A service-free tool is not widened by active or hidden sibling handlers. */
+/** A service-free tool is not widened by sibling handlers of the same implementation. */
 export const serviceFreeToolkitCall = Effect.gen(function* () {
   const tools = yield* binding.toolkit;
   const calls = yield* tools.handle("service_free", {});
@@ -87,7 +93,7 @@ const right = Action.implement(
   Effect.fail("right-build" as const).pipe(Effect.as(() => Effect.succeed(1))),
 );
 
-const mixed = ActionToolkit.make([...left, ...right]);
+const mixed = ActionToolkit.make([left, right]);
 
 const mixedBuild = Effect.scoped(Layer.build(mixed.layer));
 
@@ -100,12 +106,12 @@ mixedWithLeft satisfies Effect.Effect<unknown, "right-build", never>;
 
 class SharedBuild extends Context.Service<SharedBuild, string>()("toolkit-types/SharedBuild") {}
 
-// A hidden action sharing its builder with a visible one: the builder is still acquired.
+// Two actions sharing one builder: the builder is a startup requirement of the toolkit...
 const sharing = Action.implement(
-  [ServiceFree, Hidden],
+  [ServiceFree, Guarded],
   Effect.map(SharedBuild, (value) => ({
     service_free: () => Effect.succeed(value),
-    hidden: () => Effect.map(Principal, (principal) => principal),
+    guarded: () => Effect.map(Principal, (principal) => principal),
   })),
 );
 
@@ -113,10 +119,10 @@ const shared = ActionToolkit.make(sharing);
 
 Effect.scoped(Layer.build(shared.layer)) satisfies Effect.Effect<unknown, never, SharedBuild>;
 
-// @ts-expect-error The visible action's builder is a startup requirement, not erased.
+// @ts-expect-error The builder is a startup requirement, not erased.
 Effect.scoped(Layer.build(shared.layer)) satisfies Effect.Effect<unknown, never, never>;
 
-// ...while the hidden handler's per-call principal is absent: it has no tool.
+// ...while each tool owes only its own handler's per-call services.
 export const sharedCall = Effect.gen(function* () {
   const tools = yield* shared.toolkit;
   yield* Stream.runDrain(yield* tools.handle("service_free", {}));
@@ -124,12 +130,12 @@ export const sharedCall = Effect.gen(function* () {
 
 sharedCall satisfies Effect.Effect<unknown, unknown, never>;
 
-// A builder that serves only a hidden action is never acquired.
-const hiddenOnly = ActionToolkit.make(
-  Action.implement(
-    Hidden,
-    Effect.map(SharedBuild, () => () => Effect.succeed("")),
-  ),
-);
+export const guardedCall = Effect.gen(function* () {
+  const tools = yield* shared.toolkit;
+  yield* Stream.runDrain(yield* tools.handle("guarded", {}));
+}).pipe(Effect.provide(shared.layer.pipe(Layer.provide(Layer.succeed(SharedBuild, "s")))));
 
-Effect.scoped(Layer.build(hiddenOnly.layer)) satisfies Effect.Effect<unknown, never, never>;
+guardedCall satisfies Effect.Effect<unknown, unknown, Principal>;
+
+// @ts-expect-error The guarded tool keeps its principal.
+guardedCall satisfies Effect.Effect<unknown, unknown, never>;
