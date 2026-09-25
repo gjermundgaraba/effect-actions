@@ -12,7 +12,7 @@ describe("ActionToolkit", () => {
       access: "write",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Finite,
-      mcp: { readOnly: true },
+      hints: { readOnly: true },
     });
 
     const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
@@ -33,6 +33,67 @@ describe("ActionToolkit", () => {
     );
 
     expect(result).toMatchObject([{ result: 42, encodedResult: 42, isFailure: false }]);
+  });
+
+  it("returns a before hook's refusal as the tool's failure, without running the handler", async () => {
+    const Read = Action.make("read", {
+      description: "Read",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const Write = Action.make("write", {
+      description: "Write",
+      access: "write",
+      success: Schema.String,
+    });
+
+    const ran: Array<string> = [];
+
+    const run = (name: string) =>
+      Effect.sync(() => {
+        ran.push(name);
+
+        return name;
+      });
+
+    const app = Action.implement([Read, Write], {
+      read: () => run("read"),
+      write: () => run("write"),
+    });
+
+    const binding = ActionToolkit.make(app, {
+      before: (action) =>
+        action.access === "read"
+          ? Effect.void
+          : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+    });
+
+    const [read, write] = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* binding.toolkit;
+
+          return yield* Effect.all(
+            (["read", "write"] as const).map((name) =>
+              Effect.flatMap(tools.handle(name, {}), Stream.runCollect),
+            ),
+          );
+        }).pipe(Effect.provide(binding.layer)),
+      ),
+    );
+
+    expect(read).toMatchObject([{ result: "read", isFailure: false }]);
+    const refusal = new Action.Forbidden({ message: "Read only." });
+
+    expect(write).toMatchObject([
+      {
+        result: refusal,
+        encodedResult: Schema.encodeSync(Action.Forbidden)(refusal),
+        isFailure: true,
+      },
+    ]);
+    expect(ran).toEqual(["read"]);
   });
 
   it("releases a builder's resources with the layer", async () => {

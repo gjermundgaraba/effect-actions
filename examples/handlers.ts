@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import * as Action from "../src/Action.js";
-import { CurrentActor } from "./auth.js";
+import { CurrentActor } from "./authorization.js";
 import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 

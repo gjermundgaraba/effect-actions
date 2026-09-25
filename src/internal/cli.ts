@@ -1,80 +1,22 @@
-import { Console, Effect, Option, Schema } from "effect";
+import { Console, Effect, Option, Predicate, Schema, SchemaAST } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as Action from "../Action.js";
+import { assertDistinct } from "./actions.js";
 
-/** Options shared by the local and HTTP command projections. */
-interface CommonOptions<Output> {
-  /** Override the command name. The action name is used by default. */
+/** How one command is named and prints its result. */
+export interface Options<Output> {
+  /** Override the command name. The action name, in kebab case, is used by default. */
   readonly name?: string;
   /** Human output. Adds a `--json` flag to the command that selects JSON instead. */
   readonly render?: (output: Output) => string;
 }
 
-/** The default projection accepts a whole canonical JSON input with `--input`. */
-export interface JsonOptions<Output> extends CommonOptions<Output> {
-  readonly parameters?: never;
-  readonly input?: never;
-}
-
-/** Maps native parsed parameters to the action's canonical JSON input. */
-type InputMapper<Parameters extends Command.Command.Config> = (
-  parsed: Command.Command.Config.InferValue<Parameters>,
-) => Schema.Json;
-
-/**
- * Supply native CLI parameters. Their parsed values are the input when they are already
- * the action's encoded input `Encoded` (`{ value: Flag.String("value") }` parses to
- * `{ value }`); otherwise `input` maps them, and is required.
- */
-export type ParametersOptions<
-  Output,
-  Parameters extends Command.Command.Config,
-  Encoded = unknown,
-> = CommonOptions<Output> & {
-  /** Native Effect CLI flags and arguments. */
-  readonly parameters: Parameters;
-} & (IsInput<Command.Command.Config.InferValue<Parameters>, Encoded> extends true
-    ? { readonly input?: InputMapper<Parameters> }
-    : { readonly input: InputMapper<Parameters> });
-
-/** The keys `E` requires. */
-type RequiredKeys<E> = {
-  [K in keyof E]-?: {} extends Pick<E, K> ? never : K;
-}[keyof E];
-
-/**
- * Whether parsed values `P` can stand for encoded input `E` as they are: JSON, every key
- * `E` requires and none it lacks. Values are checked by decoding: a transformation such
- * as a date's encoding is JSON on the wire but not in `E`.
- */
-type IsInput<P, E> = unknown extends E
-  ? true
-  : [P] extends [Schema.Json]
-    ? [Exclude<RequiredKeys<E>, keyof P> | Exclude<keyof P, keyof E>] extends [never]
-      ? true
-      : false
-    : false;
-
-/** `ParametersOptions`, with `input` optional: what a command reads. */
-interface ReadParametersOptions<
-  Output,
-  Parameters extends Command.Command.Config,
-> extends CommonOptions<Output> {
-  readonly parameters: Parameters;
-  readonly input?: InputMapper<Parameters>;
-}
-
-/**
- * A command either accepts whole JSON input or has explicit native CLI parameters.
- * The latter intentionally has no implicit `--input` mode.
- */
-export type Options<Output, Parameters extends Command.Command.Config = never, Encoded = unknown> =
-  | JsonOptions<Output>
-  | ParametersOptions<Output, Parameters, Encoded>;
-
-const isParametersOptions = <Output, Parameters extends Command.Command.Config>(
-  options: JsonOptions<Output> | ReadParametersOptions<Output, Parameters> | undefined,
-): options is ReadParametersOptions<Output, Parameters> => options?.parameters !== undefined;
+/** `getUser` as a command or flag name: `get-user`. */
+export const kebab = (name: string): string =>
+  name
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/_/g, "-")
+    .toLowerCase();
 
 /**
  * A command with a renderer takes `--json` as a flag of its own, so nothing is
@@ -84,6 +26,100 @@ const isParametersOptions = <Output, Parameters extends Command.Command.Config>(
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDefault(false),
   Flag.withDescription("Print machine-readable JSON"),
+);
+
+/** Flags the native parser claims on every command. */
+const builtInFlags = ["help", "version", "wizard", "completions", "log-level"];
+
+/** Any JSON value, as one flag's text. */
+const jsonValue = Schema.fromJsonString(Schema.Json);
+
+/** The strings a union of string literals accepts, if it is one. */
+const choices = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
+  const members = SchemaAST.isUnion(ast) ? ast.types : [ast];
+
+  const literals = members.flatMap((member) =>
+    SchemaAST.isLiteral(member) && Predicate.isString(member.literal) ? [member.literal] : [],
+  );
+
+  return literals.length === members.length ? literals : undefined;
+};
+
+/**
+ * The native flag parsing one field's encoded JSON value: a string, number or boolean
+ * flag for those, a choice for string literals, and a JSON flag for anything else.
+ */
+const valueFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<unknown> => {
+  const literals = choices(encoded);
+
+  if (literals !== undefined) return Flag.Literals(name, literals);
+
+  if (SchemaAST.isString(encoded)) return Flag.String(name);
+
+  if (SchemaAST.isNumber(encoded)) return Flag.Finite(name);
+
+  if (SchemaAST.isBoolean(encoded)) return Flag.Boolean(name);
+
+  return Flag.String(name).pipe(Flag.withSchema(jsonValue), Flag.withMetavar("json"));
+};
+
+/**
+ * A field's flag, `None` when omitted. A required boolean is a switch: omitted, it is
+ * `false`, as a switch reads.
+ */
+const fieldFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<Option.Option<unknown>> =>
+  SchemaAST.isBoolean(encoded) && !SchemaAST.isOptional(encoded)
+    ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
+    : Flag.optional(valueFlag(name, encoded));
+
+/** One flag per input field, parsed as the field's encoded value, `None` when omitted. */
+type FieldFlags = Readonly<Record<string, Flag.Flag<Option.Option<unknown>>>>;
+
+/** What `FieldFlags` parse to, by field. */
+type Parsed = Readonly<Record<string, Option.Option<unknown>>>;
+
+/**
+ * One flag per top-level field of a struct input, named after the field in kebab case.
+ * Every flag is optional to the parser: the action's schema decides what is required, so
+ * a missing field is reported exactly as any other invalid input.
+ */
+const fieldFlags = (input: SchemaAST.Objects, encoded: SchemaAST.Objects): FieldFlags => {
+  const flags = encoded.propertySignatures.map((property) => {
+    const key = String(property.name);
+    const described = input.propertySignatures.find((field) => field.name === property.name);
+
+    const description =
+      described === undefined ? undefined : SchemaAST.resolveDescription(described.type);
+
+    const flag = fieldFlag(kebab(key), property.type);
+
+    return [
+      key,
+      description === undefined ? flag : Flag.withDescription(flag, description),
+    ] as const;
+  });
+
+  assertDistinct(
+    "flag",
+    flags.map(([key]) => kebab(key)),
+  );
+
+  return Object.fromEntries(flags);
+};
+
+/** The encoded input the parsed flags stand for: every given field, and no other. */
+const fromFields = (parsed: Parsed) =>
+  Object.fromEntries(
+    Object.entries(parsed).flatMap(([key, value]) =>
+      Option.toArray(Option.map(value, (v) => [key, v] as const)),
+    ),
+  );
+
+/** The whole encoded input as JSON, for an input that is not a struct of fields. */
+const inputFlag = Flag.String("input").pipe(
+  Flag.withSchema(jsonValue),
+  Flag.optional,
+  Flag.withDescription("Whole action input as JSON"),
 );
 
 const output = <A extends Action.Any, E, R>(
@@ -101,97 +137,72 @@ const output = <A extends Action.Any, E, R>(
     yield* Console.log(render === undefined ? JSON.stringify(encoded, null, 2) : render(value));
   });
 
+/** An action's input as native flags, and how to decode what they parse. */
+interface InputConfig<A extends Action.Any> {
+  readonly config: FieldFlags;
+  readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], Schema.SchemaError>;
+}
+
 /**
- * One native command. The action's own parameters are one nested config, so the
- * flag added for a renderer never meets them in one record.
+ * The action's input as native flags: one per field of a struct input, named after it,
+ * or `--input` taking the whole input as JSON otherwise.
  */
-const make = <A extends Action.Any, E, R, Config extends Command.Command.Config>(
+const inputConfig = <A extends Action.Any>(action: A): InputConfig<A> => {
+  const codec = Schema.toCodecJson(action.input);
+  const encoded = SchemaAST.toEncoded(codec.ast);
+  const decode = Schema.decodeUnknownEffect(codec);
+
+  // A record's keys are not known in advance, so only a struct of named fields gets flags;
+  // an action without input is one, of none.
+  if (
+    SchemaAST.isObjects(encoded) &&
+    SchemaAST.isObjects(codec.ast) &&
+    encoded.indexSignatures.every((signature) => SchemaAST.isNever(signature.type))
+  ) {
+    return {
+      config: fieldFlags(codec.ast, encoded),
+      decode: (parsed) => decode(fromFields(parsed)),
+    };
+  }
+
+  return {
+    config: { input: inputFlag },
+    // With no input, `{}` is decoded afresh each run so invocations never share a value.
+    decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
+  };
+};
+
+/**
+ * One native command around an action-bound operation, its flags derived from the
+ * action's input. A flag named like one the native parser or a renderer claims
+ * (`--help`, `--json`, ...) is refused when the command is built: the parser would reject
+ * every run.
+ */
+export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options: CommonOptions<A["success"]["Type"]> | undefined,
-  config: Config,
-  decode: (
-    parsed: Command.Command.Config.InferValue<Config>,
-  ) => Effect.Effect<A["input"]["Type"], Schema.SchemaError>,
-) => {
-  const name = options?.name ?? action.name;
+  options?: Options<A["success"]["Type"]>,
+): Command.Command<string, never, {}, E | Schema.SchemaError, R> => {
+  const name = options?.name ?? kebab(action.name);
   const render = options?.render;
+  const { config, decode } = inputConfig(action);
+
+  const claimed = [...builtInFlags, ...(render === undefined ? [] : ["json"])];
+
+  for (const flag of Object.keys(config).map(kebab)) {
+    if (claimed.includes(flag)) throw new Error(`Reserved flag of ${name}: --${flag}`);
+  }
 
   const command =
     render === undefined
-      ? Command.make(name, { parameters: config }, ({ parameters }) =>
-          Effect.flatMap(decode(parameters), (input) => output(action, execute, input, undefined)),
+      ? Command.make(name, { input: config }, ({ input }) =>
+          Effect.flatMap(decode(input), (value) => output(action, execute, value, undefined)),
         )
-      : Command.make(name, { parameters: config, json: jsonFlag }, ({ parameters, json }) =>
-          Effect.flatMap(decode(parameters), (input) =>
-            output(action, execute, input, json ? undefined : render),
+      : Command.make(name, { input: config, json: jsonFlag }, ({ input, json }) =>
+          Effect.flatMap(decode(input), (value) =>
+            output(action, execute, value, json ? undefined : render),
           ),
         );
 
   return command.pipe(Command.withDescription(action.description));
-};
-
-/**
- * The whole encoded input, inline or from a file. The native parser decodes both,
- * so an invalid value is rendered with the command's help wherever it came from.
- */
-const inputFlags = (codec: Action.Codec) => ({
-  input: Flag.String("input").pipe(
-    Flag.withSchema(Schema.fromJsonString(codec)),
-    Flag.optional,
-    Flag.withDescription("Whole canonical action input as JSON"),
-  ),
-  inputFile: Flag.FileSchema("input-file", codec, { format: "json" }).pipe(
-    Flag.optional,
-    Flag.withDescription("File containing the whole canonical action input as JSON"),
-  ),
-});
-
-const defaultCommand = <A extends Action.Any, E, R>(
-  action: A,
-  execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options: JsonOptions<A["success"]["Type"]> | undefined,
-) => {
-  const codec = Schema.toCodecJson(action.input);
-
-  return make(action, execute, options, inputFlags(codec), (parsed) =>
-    // A file takes precedence over inline input. With neither, `{}` is decoded
-    // afresh each run so invocations never share an input value.
-    Option.match(
-      Option.orElse(parsed.inputFile, () => parsed.input),
-      {
-        onNone: () => Schema.decodeUnknownEffect(codec)({}),
-        onSome: Effect.succeed,
-      },
-    ),
-  );
-};
-
-const parametersCommand = <A extends Action.Any, E, R, Parameters extends Command.Command.Config>(
-  action: A,
-  execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options: ReadParametersOptions<A["success"]["Type"], Parameters>,
-) =>
-  make(action, execute, options, options.parameters, (parsed) =>
-    Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))(
-      options.input === undefined ? parsed : options.input(parsed),
-    ),
-  );
-
-/** Build one native command around an action-bound operation. */
-export const command = <
-  A extends Action.Any,
-  E,
-  R,
-  Parameters extends Command.Command.Config = never,
->(
-  action: A,
-  execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options?: Options<A["success"]["Type"], Parameters, A["input"]["Encoded"]>,
-): Command.Command<string, never, {}, E | Schema.SchemaError, R> => {
-  if (isParametersOptions<A["success"]["Type"], Parameters>(options)) {
-    return parametersCommand(action, execute, options);
-  }
-
-  return defaultCommand(action, execute, options);
 };

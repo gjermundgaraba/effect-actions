@@ -1,16 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it, onTestFinished, vi } from "vite-plus/test";
+import { expect, it, onTestFinished } from "vite-plus/test";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { routes } from "../examples/quickstart.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
-import { userName } from "../examples/promise-client.js";
-import { makeTestApp } from "./server.js";
 import { docsDirectory } from "../scripts/skill.ts";
 import { mcpRequest } from "../src/internal/mcp-request.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -26,10 +24,8 @@ const snippets = [
   ["docs/Authentication.md", "## Canonical", "authentication.ts"],
   ["docs/ActionMcp.md", "## Canonical", "mcp.ts"],
   ["docs/ActionHttpClient.md", "## Canonical", "client.ts"],
-  ["docs/ActionHttpClient.md", "### Promise", "promise-client.ts"],
   ["docs/ActionCli.md", "## Canonical", "cli.ts"],
   ["docs/ActionCli.md", "### Over HTTP", "cli-remote.ts"],
-  ["docs/ActionCatalog.md", "## Canonical", "catalog.ts"],
   ["docs/ActionToolkit.md", "## Canonical", "toolkit-authorized.ts"],
   ["docs/Testing.md", "## Canonical", "testing.ts"],
   ["docs/ActionMcp.md", "### Cross-origin browsers", "mcp-browser.ts"],
@@ -91,25 +87,6 @@ it("runs the documented client against the quickstart routes", async () => {
   );
 
   expect(result).toBe("Hello, Ada!");
-});
-
-it("runs the documented Promise client against the example application", async () => {
-  const web = makeTestApp();
-  onTestFinished(() => web.dispose());
-  onTestFinished(() => {
-    vi.unstubAllGlobals();
-  });
-
-  // The example uses the global fetch; the in-memory application stands in for the server.
-  vi.stubGlobal("fetch", (input: string | URL | Request, init?: RequestInit) =>
-    web.handler(new Request(input, init)),
-  );
-
-  expect(await userName("1")).toBe("Ada");
-  expect(await userName("404")).toBe("(no such user)");
-
-  vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
-  expect(await userName("1")).toBe("(server unreachable)");
 });
 
 it("serves browser preflight and MCP calls with the documented CORS configuration", async () => {

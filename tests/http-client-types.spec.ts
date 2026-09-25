@@ -8,10 +8,6 @@ import type { Equal } from "./equal.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
 
-class Denied extends Schema.TaggedError<Denied>()("Denied", {}, { httpApiStatus: 403 }) {}
-
-class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {}, { httpApiStatus: 400 }) {}
-
 const Get = Action.make("get", {
   description: "Read a note",
   access: "read",
@@ -35,50 +31,16 @@ const Count = Action.make("count", {
 
 const Notes = [Get, List, Count] as const;
 
-const client = ActionHttpClient.promise(ActionHttp.make(Notes));
-
-export const decodedSuccess: Promise<{ readonly id: string; readonly at: DateTime.Utc }> =
-  client.get({ id: "a" });
-
-// The argument may be omitted exactly when `{}` is a valid input.
-export const optionalInput: Promise<ReadonlyArray<string>> = client.list();
-
-export const givenOptionalInput: Promise<ReadonlyArray<string>> = client.list({ limit: 1 });
-
-export const noInput: Promise<number> = client.count();
-
-export const promiseClientTypes = () => {
-  // @ts-expect-error Input is typed by the action.
-  void client.get({ id: 1 });
-  // @ts-expect-error An action with required input needs its argument.
-  void client.get();
-  // @ts-expect-error An omitted argument is left out, not passed as `undefined`.
-  void client.list(undefined);
-  // @ts-expect-error An action declared without `input` takes no `undefined` either.
-  void client.count(undefined);
-  // @ts-expect-error `null` is not this action's input.
-  void client.get(null);
-
-  ActionHttpClient.promise(ActionHttp.make(Notes), {
-    // @ts-expect-error A response transform could change what a method resolves with.
-    transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
-  });
-
-  // @ts-expect-error The success is the decoded type, not its JSON encoding.
-  const encoded: Promise<{ readonly id: string; readonly at: string }> = client.get({
-    id: "a",
-  });
-
-  return encoded;
-};
+/** What every call may fail with besides the action's own errors. */
+type BuiltIn =
+  | Action.InvalidInput
+  | Action.Unauthenticated
+  | Action.Forbidden
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
 
 // The Effect client: one method per action, input directly, the native `HttpClient` required.
-const guarded = ActionHttp.make(Notes, {
-  errors: [Denied, Invalid],
-  schemaError: { invalid: () => new Invalid(), internal: () => new Invalid() },
-});
-
-const made = ActionHttpClient.make(guarded, { baseUrl: "http://localhost" });
+const made = ActionHttpClient.make(ActionHttp.make(Notes), { baseUrl: "http://localhost" });
 
 export const effectClientRequires: Equal<
   Effect.Services<typeof made>,
@@ -89,43 +51,60 @@ export const effectClientTypes = Effect.gen(function* () {
   const methods = yield* made;
   const get = methods.get({ id: "a" });
 
-  // Failures: the action's own, the binding's errors, then transport
+  // Failures: the action's own, the built-in refusals and bad input, then transport
   // and encoding failures.
-  const failures: Equal<
-    Effect.Error<typeof get>,
-    Missing | Denied | Invalid | HttpClientError.HttpClientError | Schema.SchemaError
-  > = true;
+  const failures: Equal<Effect.Error<typeof get>, Missing | BuiltIn> = true;
 
   void failures;
 
   const count = methods.count();
 
-  // An action without declared errors fails only with the binding's and the transport's.
-  const countFailures: Equal<
-    Effect.Error<typeof count>,
-    Denied | Invalid | HttpClientError.HttpClientError | Schema.SchemaError
-  > = true;
+  // An action without declared errors fails only with the built-in ones and the transport's.
+  const countFailures: Equal<Effect.Error<typeof count>, BuiltIn> = true;
 
   void countFailures;
+
+  // Each built-in failure is typed, so a caller catches it by its tag.
+  yield* count.pipe(
+    Effect.catchTag("InvalidInput", ({ message }) => Effect.succeed(message.length)),
+    Effect.catchTag("Unauthenticated", () => Effect.succeed(0)),
+    Effect.catchTag("Forbidden", () => Effect.succeed(0)),
+  );
+
+  // @ts-expect-error Undeclared, so the client has no such failure to catch.
+  yield* count.pipe(Effect.catchTag("Missing", () => Effect.succeed(0)));
+
+  // The success is the decoded type, not its JSON encoding.
+  const decoded: Equal<
+    Effect.Success<typeof get>,
+    { readonly id: string; readonly at: DateTime.Utc }
+  > = true;
+
+  void decoded;
 
   const at: DateTime.Utc = (yield* get).at;
   void at;
 
+  // The argument may be omitted exactly when `{}` is a valid input.
+  const listed: ReadonlyArray<string> = yield* methods.list();
+  const limited: ReadonlyArray<string> = yield* methods.list({ limit: 1 });
+  const counted: number = yield* methods.count();
+  void listed;
+  void limited;
+  void counted;
+
   // @ts-expect-error Input is typed by the action.
   methods.get({ id: 1 });
+  // @ts-expect-error An action with required input needs its argument.
+  methods.get();
+  // @ts-expect-error An omitted argument is left out, not passed as `undefined`.
+  methods.list(undefined);
+  // @ts-expect-error An action declared without `input` takes no `undefined` either.
+  methods.count(undefined);
+  // @ts-expect-error `null` is not this action's input.
+  methods.get(null);
   // @ts-expect-error Methods take the input itself, not a native payload wrapper.
   methods.get({ payload: { id: "a" } });
-
-  const bare = yield* ActionHttpClient.make(ActionHttp.make(Notes));
-  const bareCount = bare.count();
-
-  // Without binding errors, a method has none of them.
-  const bareFailures: Equal<
-    Effect.Error<typeof bareCount>,
-    HttpClientError.HttpClientError | Schema.SchemaError
-  > = true;
-
-  void bareFailures;
 });
 
 ActionHttpClient.make(ActionHttp.make(Notes), {

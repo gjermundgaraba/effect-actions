@@ -1,6 +1,6 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Cause, Effect, Exit, Layer, Schema } from "effect";
-import { Argument, Command } from "effect/unstable/cli";
+import { Effect, Exit, Layer, Option, Schema } from "effect";
+import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
   HttpClient,
@@ -11,18 +11,12 @@ import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { cliServices, logged } from "./cli-services.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 class Domain extends Schema.TaggedError<Domain>()(
   "Domain",
   { message: Schema.String },
   { httpApiStatus: 409 },
-) {}
-
-class Policy extends Schema.TaggedError<Policy>()(
-  "Policy",
-  { kind: Schema.String },
-  { httpApiStatus: 500 },
 ) {}
 
 const Remote = Action.make("remote", {
@@ -34,13 +28,7 @@ const Remote = Action.make("remote", {
 });
 
 // `POST /api/remote`, one subcommand per action.
-const Http = ActionHttp.make([Remote], {
-  errors: [Policy],
-  schemaError: {
-    invalid: (failure) => new Policy({ kind: failure.kind }),
-    internal: (failure) => new Policy({ kind: failure.kind }),
-  },
-});
+const Http = ActionHttp.make([Remote]);
 
 const decodedInputs: number[] = [];
 
@@ -88,7 +76,7 @@ it("projects commands through the HTTP client without a local fallback", async (
   );
 
   const [, output] = await logged(
-    Command.runWith(command, { version: "0" })(["remote", "--input", '{"value":"21"}']),
+    Command.runWith(command, { version: "0" })(["remote", "--value", "21"]),
   ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
 
   expect(requests).toEqual([
@@ -116,18 +104,18 @@ it("projects commands through the HTTP client without a local fallback", async (
   );
 });
 
-it("projects a flat binding as one subcommand per action", async () => {
-  const Echo = Action.make("echo", {
+it("projects a flat binding as one kebab-case subcommand per action", async () => {
+  const Echo = Action.make("echoText", {
     description: "Echoes its input",
     access: "read",
-    input: { value: Schema.String },
+    input: { text: Schema.String },
     success: Schema.String,
   });
 
   const Flat = ActionHttp.make([Remote, Echo]);
 
   const web = serve(
-    ActionHttp.layer(Flat, [app, Action.implement(Echo, ({ value }) => Effect.succeed(value))]),
+    ActionHttp.layer(Flat, [app, Action.implement(Echo, ({ text }) => Effect.succeed(text))]),
   );
 
   onTestFinished(() => web.dispose());
@@ -157,19 +145,20 @@ it("projects a flat binding as one subcommand per action", async () => {
       Effect.runPromise,
     );
 
-  const [, echoed] = await runLines(["echo", "--input", '{"value":"hi"}']);
-  const [, doubled] = await runLines(["remote", "--input", '{"value":"2"}']);
+  const [, echoed] = await runLines(["echo-text", "--text", "hi"]);
+  const [, doubled] = await runLines(["remote", "--value", "2"]);
 
   expect(echoed).toEqual(['"hi"']);
   expect(doubled).toEqual(['"4"']);
-  expect(urls).toEqual(["http://localhost/api/echo", "http://localhost/api/remote"]);
+  // The subcommand is kebab case; the route keeps the action's name.
+  expect(urls).toEqual(["http://localhost/api/echoText", "http://localhost/api/remote"]);
 });
 
 it("names the same subcommands as a local aggregate for the same actions", () => {
-  const Echo = Action.make("echo", {
+  const Echo = Action.make("echoText", {
     description: "Echoes its input",
     access: "read",
-    input: { value: Schema.String },
+    input: { text: Schema.String },
     success: Schema.String,
   });
 
@@ -179,64 +168,72 @@ it("names the same subcommands as a local aggregate for the same actions", () =>
     }>;
   }) => command.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name));
 
-  const local = ActionCli.make(
-    [app, Action.implement(Echo, ({ value }) => Effect.succeed(value))],
-    { name: "cli" },
-  );
+  const local = ActionCli.make([app, Action.implement(Echo, ({ text }) => Effect.succeed(text))], {
+    name: "cli",
+  });
 
   const remote = ActionCli.make(ActionHttp.make([Remote, Echo]), { name: "cli" });
 
-  expect(names(remote)).toEqual(["remote", "echo"]);
+  expect(names(remote)).toEqual(["remote", "echo-text"]);
   expect(names(local)).toEqual(names(remote));
 });
 
-it("propagates domain and native schema-policy failures through Command.runWith", async () => {
-  const web = serve(ActionHttp.layer(Http, app));
-
-  onTestFinished(() => web.dispose());
-
-  const fetchLayer = FetchHttpClient.layer.pipe(
-    Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) => web.handler(new Request(input, init))),
-    ),
+/** The typed failure of a run that must fail. */
+const failed = <A, E>(exit: Exit.Exit<A, E>): E =>
+  Option.getOrThrowWith(
+    Exit.findErrorOption(exit),
+    () => new Error(`Expected a typed failure: ${String(exit)}`),
   );
 
-  const command = ActionCli.command(Http, Remote, {
-    // Without `input`, the parsed `{ value }` is the encoded input as it is.
-    parameters: { value: Argument.String("value") },
-    baseUrl: "http://localhost",
-  });
+it("propagates domain, refusal, encoding and transport failures as typed failures", async () => {
+  const refusing = serve(
+    ActionHttp.layer(Http, app, {
+      before: () => Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
+    }),
+  );
 
-  const run = (value: string) =>
-    Command.runWith(command, { version: "0" })([value]).pipe(
-      Effect.provide(fetchLayer),
+  const open = serve(ActionHttp.layer(Http, app));
+
+  onTestFinished(() => refusing.dispose());
+  onTestFinished(() => open.dispose());
+
+  const through = (server: typeof refusing) =>
+    FetchHttpClient.layer.pipe(
+      Layer.provide(
+        Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
+          server.handler(new Request(input, init)),
+        ),
+      ),
+    );
+
+  const command = ActionCli.command(Http, Remote, { baseUrl: "http://localhost" });
+
+  const run = (server: typeof refusing, value: string) =>
+    Command.runWith(command, { version: "0" })(["--value", value]).pipe(
+      Effect.provide(through(server)),
       Effect.provide(cliServices),
       Effect.runPromiseExit,
     );
 
-  const domain = await run("0");
-  expect(Exit.isFailure(domain)).toBe(true);
+  decodedInputs.length = 0;
 
-  if (Exit.isFailure(domain)) {
-    const reason = domain.cause.reasons.at(0);
+  expect(failed(await run(open, "0"))).toEqual(new Domain({ message: "zero" }));
 
-    if (reason === undefined) throw new Error("Expected a domain failure reason");
-    expect(Cause.isFailReason(reason)).toBe(true);
+  // The server's hook refuses; the client decodes its refusal as a typed failure.
+  expect(failed(await run(refusing, "21"))).toEqual(
+    new Action.Forbidden({ message: "Requires users:write." }),
+  );
 
-    if (Cause.isFailReason(reason)) expect(reason.error).toEqual(new Domain({ message: "zero" }));
+  // A result the server cannot encode is an empty 500, which the client cannot decode.
+  const unencodable = failed(await run(open, "13"));
+  expect(HttpClientError.isHttpClientError(unencodable)).toBe(true);
+
+  if (HttpClientError.isHttpClientError(unencodable)) {
+    expect(unencodable.response?.status).toBe(500);
   }
 
-  const policy = await run("13");
-  expect(Exit.isFailure(policy)).toBe(true);
-
-  if (Exit.isFailure(policy)) {
-    const reason = policy.cause.reasons.at(0);
-
-    if (reason === undefined) throw new Error("Expected a policy failure reason");
-    expect(Cause.isFailReason(reason)).toBe(true);
-
-    if (Cause.isFailReason(reason)) expect(reason.error).toEqual(new Policy({ kind: "Body" }));
-  }
+  // Refused, the handler never ran.
+  expect(decodedInputs).toEqual([0, 13]);
 
   let transportAttempts = 0;
 
@@ -249,23 +246,22 @@ it("propagates domain and native schema-policy failures through Command.runWith"
     ),
   );
 
-  const unavailable = await Command.runWith(command, { version: "0" })(["21"]).pipe(
+  const unavailable = await Command.runWith(command, { version: "0" })(["--value", "21"]).pipe(
     Effect.provide(unavailableLayer),
     Effect.provide(cliServices),
     Effect.runPromiseExit,
   );
 
-  expect(Exit.isFailure(unavailable)).toBe(true);
+  expect(HttpClientError.isHttpClientError(failed(unavailable))).toBe(true);
+  expect(transportAttempts).toBe(1);
 
-  if (Exit.isFailure(unavailable)) {
-    const reason = unavailable.cause.reasons.at(0);
+  // Input that does not decode is refused locally, before any request.
+  const invalid = await Command.runWith(command, { version: "0" })(["--value", "x"]).pipe(
+    Effect.provide(unavailableLayer),
+    Effect.provide(cliServices),
+    Effect.runPromiseExit,
+  );
 
-    if (reason === undefined) throw new Error("Expected a client transport failure");
-    expect(Cause.isFailReason(reason)).toBe(true);
-
-    if (Cause.isFailReason(reason))
-      expect(HttpClientError.isHttpClientError(reason.error)).toBe(true);
-  }
-
+  expect(failed(invalid)).toBeInstanceOf(Schema.SchemaError);
   expect(transportAttempts).toBe(1);
 });

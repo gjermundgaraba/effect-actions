@@ -3,6 +3,7 @@ import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { Tool } from "effect/unstable/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import type { Equal } from "./equal.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-types/Principal") {}
 
@@ -10,7 +11,7 @@ const Named = Action.make("named", {
   description: "A read-only tool.",
   access: "write",
   success: Schema.String,
-  mcp: { readOnly: true },
+  hints: { readOnly: true },
 });
 
 const Guarded = Action.make("guarded", {
@@ -50,6 +51,47 @@ void exactNamedSuccess;
 const wrongNamedSuccess: Tool.Success<typeof binding.toolkit.tools.named> = 1;
 
 void wrongNamedSuccess;
+
+class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
+
+const Fetch = Action.make("fetch", {
+  description: "May be gone.",
+  access: "read",
+  success: Schema.String,
+  errors: [Gone],
+});
+
+const fetched = ActionToolkit.make(Action.implement(Fetch, () => Effect.succeed(""))).toolkit;
+
+// Every tool declares its action's errors plus the refusals a `before` hook may fail with.
+const toolFailures: [
+  Equal<Tool.Failure<typeof fetched.tools.fetch>, Gone | Action.Unauthenticated | Action.Forbidden>,
+  Equal<Tool.Failure<typeof binding.toolkit.tools.named>, Action.Refusal>,
+] = [true, true];
+
+void toolFailures;
+
+class Clock extends Context.Service<Clock, number>()("toolkit-types/Clock") {}
+
+class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
+
+// The hook fails only with a refusal, and its services are owed by every call.
+const hooked = ActionToolkit.make(app, {
+  before: (action) =>
+    Effect.flatMap(Clock, () =>
+      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
+    ),
+});
+
+const hookedServices: Equal<
+  Tool.HandlerServices<typeof hooked.toolkit.tools.service_free>,
+  Clock
+> = true;
+
+void hookedServices;
+
+// @ts-expect-error A hook may not fail with anything but a refusal.
+ActionToolkit.make(app, { before: () => Effect.fail(new Unrelated()) });
 
 export const toolkitTypes = Effect.gen(function* () {
   const tools = yield* binding.toolkit;

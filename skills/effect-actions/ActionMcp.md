@@ -12,24 +12,22 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | --------------------------- | ------------------------------------------------------- |
 | `layerHttp(apps, options)`  | Serve implementations at a Streamable HTTP endpoint.    |
 | `layerStdio(apps, options)` | Serve implementations over a subprocess's standard I/O. |
-| `Options`, `StdioOptions`   | Configuration for the two transports.                   |
 
 The options are the native `McpServer.layerHttp` / `McpServer.layerStdio` options, except
-`protocols`, plus this surface's `errors` and `before`. The native ones pass through unchanged;
-`path` gains a default.
+`protocols`, plus `before`. The native ones pass through unchanged; `path` gains a default.
 
-| Option                               | Meaning                                                                                               |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `name`, `version`                    | Required native server information.                                                                   |
-| `description`, `websiteUrl`, `icons` | Optional native server information, sent to clients with `name` and `version`.                        |
-| `instructions`                       | Optional native server instructions.                                                                  |
-| `extensions`                         | Optional native server capability extensions.                                                         |
-| `path`                               | HTTP endpoint path; HTTP only, defaults to `/mcp`.                                                    |
-| `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only, not CORS configuration.                                   |
-| `errors`                             | Optional surface error codecs, declared on every served tool.                                         |
-| `before`                             | Optional Effectful hook receiving the selected `Action.Any`; fails only with declared surface errors. |
+| Option                               | Meaning                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------ |
+| `name`, `version`                    | Required native server information.                                                  |
+| `description`, `websiteUrl`, `icons` | Optional native server information, sent to clients with `name` and `version`.       |
+| `instructions`                       | Optional native server instructions.                                                 |
+| `extensions`                         | Optional native server capability extensions.                                        |
+| `path`                               | HTTP endpoint path; HTTP only, defaults to `/mcp`.                                   |
+| `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only, not CORS configuration.                  |
+| `before`                             | Optional hook receiving the selected `Action.Any`; fails only with `Action.Refusal`. |
 
-`apps` is one implementation or a list. Both layers retain the build failures and
+`apps` is one implementation or a list. Every tool declares its action's errors plus the
+built-in `Unauthenticated` and `Forbidden`. Both layers retain the build failures and
 requirements of their builders, plus native
 `IllegalArgumentError`. HTTP needs the router and wraps handler/hook services as request
 requirements. stdio needs `Stdio` and the caller's request services. Native `McpRequestContext`
@@ -40,8 +38,8 @@ is supplied by the server, not owed by the host.
 ```ts
 import { Layer } from "effect";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { guarded } from "./auth.js";
 import { authentication } from "./authentication.js";
+import { authorize } from "./authorization.js";
 import { double, listChanges, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
@@ -61,9 +59,9 @@ const mcp = ActionMcp.layerHttp([userActions, double, listChanges], {
   name: "effect-actions",
   version: "0.0.0",
   allowedOrigins,
-  // The same guard the HTTP layer binds; `Forbidden` is declared on each tool, so a
+  // The same hook the HTTP layer binds; `Forbidden` is declared on each tool, so a
   // refusal is an ordinary tool failure rather than a transport error.
-  ...guarded,
+  before: authorize,
 }).pipe(Layer.provide(authentication.layer));
 
 export const layer = Layer.mergeAll(publicMcp, mcp);
@@ -145,19 +143,20 @@ Layer.launch(layer).pipe(
 - Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication middleware wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
 - An endpoint is one route. Middleware provided to `layerHttp` covers all of its tools. To serve tools under different middleware, mount them on different paths with separate `layerHttp` calls.
-- Every action of the implementations passed becomes a tool, named after the action, with the action's `mcp` hints. To keep an action off MCP, leave its implementation out; implement it on its own if it shares a builder with served actions, which then runs once per `implement` call; keep what the pieces must share in a Layer, which Effect builds once.
+- Every action of the implementations passed becomes a tool, named after the action, with the action's `hints`. To keep an action off MCP, leave its implementation out; implement it on its own if it shares a builder with served actions, which then runs once per `implement` call; keep what the pieces must share in a Layer, which Effect builds once.
 - Builders run as [guarantees.md](guarantees.md#dependency-lifetimes) describes: once per host, shared with every other surface serving the same implementation. Only the tool registry is fresh per endpoint.
 - Every served action must have object-root input; the native server refuses anything else when the layer is built. Omit `input` for a tool with no arguments.
 - Success is `structuredContent: { value: <encoded success> }`. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
-- Invalid arguments and unencodable results are answered by the native `McpServer`: an `isError` result with a message for the model. An HTTP binding's `schemaError` does not apply.
+- Invalid arguments and unencodable results are answered by the native `McpServer`: an `isError` result with a message for the model, such as `Invalid parameters for tool 'greet': Expected string\n  at ["name"]`. HTTP's `InvalidInput` does not apply.
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
 - Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in `before`.
 - Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing; a tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. There is no authentication middleware. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
-- `errors` are the failures this transport answers with rather than a handler. They join every tool's declared failures, so a refusal is returned exactly like an action's own error and no caller sees a protocol-level error instead. A schema an action already declares is not repeated.
+- `Unauthenticated` and `Forbidden` join every tool's declared failures, so a `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error. A schema an action already declares is not repeated.
 - `before` follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes). Here input is the tool's arguments, decoded by the native server.
+- `Authentication.middleware` refuses before the MCP handler: an HTTP 401 or 403, not a tool result. An MCP client reads the 401's `WWW-Authenticate: Bearer` and finds its authorization server through `Authentication.protectedResource` ([Authentication.md](Authentication.md)).
 
 ## Failure modes
 
@@ -171,4 +170,4 @@ Layer.launch(layer).pipe(
 - A disallowed Origin receives 401 instead: wrapping authentication rejected it before the native Origin check. Put any required pre-authentication Host/Origin policy in outer host middleware.
 - Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.
 - `Object literal may only specify known properties, and 'protocols'`: the revision is fixed. Delete the option.
-- A refusal arrives as a generic internal-error result: the hook failed with an error this transport does not declare, which is a defect. Add its schema to `errors`.
+- Type error at `layerHttp` or `layerStdio` naming `before`: the hook fails with something other than `Action.Unauthenticated` or `Action.Forbidden`. Map the failure to a refusal.

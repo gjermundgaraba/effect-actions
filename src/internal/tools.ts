@@ -2,34 +2,16 @@ import { Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
+import { refusals } from "./errors.js";
 import {
   acquire,
   type AnyImplementation,
   dispatch,
   type ErasedValue,
+  type Hook,
   provideHandlers,
   servedActions,
 } from "./implementation.js";
-
-/** What a tool surface binds around the implementations it projects. */
-export interface SurfaceOptions<Errors extends ReadonlyArray<Action.Codec>, R> {
-  /**
-   * Failures the surface answers with instead of a handler: authorization, rate
-   * limits. Declared on every tool, so a refusal is returned exactly like an
-   * action's own error.
-   */
-  readonly errors?: Errors;
-  /**
-   * Runs once per tool call, after the arguments are decoded and before the
-   * selected handler, with the action contract it is about to run. It fails with
-   * this surface's `errors`. Its services are request-time requirements, like a
-   * handler's.
-   */
-  readonly before?: (action: Action.Any) => Effect.Effect<void, Errors[number]["Type"], R>;
-}
-
-/** The erased view every tool projection binds. */
-export type ToolOptions = SurfaceOptions<ReadonlyArray<Action.Codec>, unknown>;
 
 /** Native tools and their acquired action handlers, with dynamic names erased. */
 interface BoundTools {
@@ -39,12 +21,12 @@ interface BoundTools {
   readonly handlers: <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.Layer<A, unknown, unknown>;
 }
 
-const annotate = (tool: Tool.Any, mcp: Action.Any["mcp"]) =>
+const annotate = (tool: Tool.Any, hints: Action.Any["hints"]) =>
   tool
-    .annotate(Tool.Readonly, mcp.readOnly)
-    .annotate(Tool.Destructive, mcp.destructive)
-    .annotate(Tool.Idempotent, mcp.idempotent)
-    .annotate(Tool.OpenWorld, mcp.openWorld);
+    .annotate(Tool.Readonly, hints.readOnly)
+    .annotate(Tool.Destructive, hints.destructive)
+    .annotate(Tool.Idempotent, hints.idempotent)
+    .annotate(Tool.OpenWorld, hints.openWorld);
 
 /**
  * A native Effect AI tool. Its schemas retain action transforms and its result
@@ -59,7 +41,7 @@ const nativeTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): To
       failure: Schema.Union(errors),
       failureMode: "return",
     }),
-    action.mcp,
+    action.hints,
   );
 
 /**
@@ -77,16 +59,16 @@ const mcpTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): Tool.
       failure: Schema.toCodecJson(Schema.Union(errors)),
       failureMode: "return",
     }),
-    action.mcp,
+    action.hints,
   ).annotate(Tool.Strict, true);
 
 /** The two concrete wire projections that share handler binding and lifetime ownership. */
 type Projection = "native" | "mcp";
 
-const project = (projection: Projection, action: Action.Any, options: ToolOptions): Tool.Any => {
-  // A hook refusal is the surface's failure, so every tool declares it alongside
-  // the action's own errors and returns it exactly as a handler failure.
-  const errors = projectedErrors(action, options.errors);
+const project = (projection: Projection, action: Action.Any): Tool.Any => {
+  // A hook refusal is the surface's failure, so every tool declares the refusals
+  // alongside the action's own errors and returns them exactly as a handler failure.
+  const errors = projectedErrors(action, refusals);
 
   return projection === "native" ? nativeTool(action, errors) : mcpTool(action, errors);
 };
@@ -99,11 +81,11 @@ const project = (projection: Projection, action: Action.Any, options: ToolOption
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
   projection: Projection,
-  options: ToolOptions,
+  options: Hook<unknown>,
 ): BoundTools => {
   // Fail before building handlers when two tools share a name.
   const actions = servedActions(projection === "mcp" ? "MCP tool" : "tool", apps);
-  const toolkit = Toolkit.make(...actions.map((action) => project(projection, action, options)));
+  const toolkit = Toolkit.make(...actions.map((action) => project(projection, action)));
 
   const layer = toolkit.toLayer(
     Effect.map(acquire(apps), (handlerOf) =>

@@ -1,60 +1,48 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Deferred, Effect, Layer, Option, Schema } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
-import { serve } from "../src/Testing.js";
+import { httpClient, mcpCall, serve } from "./serve.js";
 import { rawToolCall } from "./requests.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
 class Tokens extends Context.Service<Tokens, { readonly prefix: string }>()("test/Tokens") {}
 
-class Unauthorized extends Schema.TaggedError<Unauthorized>()(
-  "Unauthorized",
-  { message: Schema.String },
-  { httpApiStatus: 401 },
-) {}
-
-class Forbidden extends Schema.TaggedError<Forbidden>()(
-  "Forbidden",
-  { message: Schema.String },
-  { httpApiStatus: 403 },
-) {}
+class Private extends Schema.TaggedError<Private>()("Private", { message: Schema.String }) {}
 
 const request = (token?: string) =>
   new Request("http://localhost/identity", {
     headers: token === undefined ? {} : { authorization: token },
   });
 
-/** The host renders its own failures: any response, with the status and headers it chooses. */
-const refuse = <E extends Unauthorized | Forbidden>(error: E, status: number) =>
-  HttpServerResponse.schemaJson(Schema.Union([Unauthorized, Forbidden]))(error, {
-    status,
-    headers: { "www-authenticate": `Bearer error="${error._tag}"` },
-  }).pipe(Effect.orDie, Effect.flip);
+/** Authenticate the token as the identity, refusing a missing token and `denied`. */
+const authenticateToken = Effect.gen(function* () {
+  const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
+
+  if (token === undefined) {
+    return yield* new Action.Unauthenticated({ message: "Missing token" });
+  }
+
+  if (token === "denied") return yield* new Action.Forbidden({ message: "Denied token" });
+
+  return { id: token };
+});
 
 describe("Authentication.middleware", () => {
-  it("sends the host's failure response, with its status and challenge headers", async () => {
+  it("answers a refusal as its JSON: a 401 with a Bearer challenge, or a 403 without one", async () => {
     let calls = 0;
 
-    const auth = Authentication.middleware(
-      Identity,
-      Effect.gen(function* () {
-        const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
-
-        if (token === undefined) {
-          return yield* refuse(new Unauthorized({ message: "Missing token" }), 401);
-        }
-
-        if (token === "denied")
-          return yield* refuse(new Forbidden({ message: "Denied token" }), 403);
-
-        return { id: token };
-      }),
-    );
+    const auth = Authentication.middleware(Identity, authenticateToken);
 
     const web = serve(
       HttpRouter.add(
@@ -70,15 +58,29 @@ describe("Authentication.middleware", () => {
 
     onTestFinished(() => web.dispose());
 
-    for (const [token, status, tag] of [
-      [undefined, 401, "Unauthorized"],
-      ["denied", 403, "Forbidden"],
+    // The body is the error's own JSON encoding, the one a typed client decodes.
+    for (const [token, status, challenge, body] of [
+      [
+        undefined,
+        401,
+        "Bearer",
+        Schema.encodeSync(Action.Unauthenticated)(
+          new Action.Unauthenticated({ message: "Missing token" }),
+        ),
+      ],
+      [
+        "denied",
+        403,
+        null,
+        Schema.encodeSync(Action.Forbidden)(new Action.Forbidden({ message: "Denied token" })),
+      ],
     ] as const) {
       const response = await web.handler(request(token));
       expect(response.status).toBe(status);
-      expect(response.headers.get("www-authenticate")).toBe(`Bearer error="${tag}"`);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("www-authenticate")).toBe(challenge);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(await response.json()).toMatchObject({ _tag: tag });
+      expect(await response.json()).toEqual(body);
     }
 
     expect(calls).toBe(0);
@@ -87,19 +89,42 @@ describe("Authentication.middleware", () => {
     expect(calls).toBe(2);
   });
 
-  it("answers a declared refusal as its JSON, with its status and the configured headers", async () => {
+  it("answers a default refusal with its default message", async () => {
+    const auth = Authentication.middleware(Identity, Effect.fail(new Action.Unauthenticated()));
+
+    const web = serve(
+      HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
+        Layer.provide(auth.layer),
+      ),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    const response = await web.handler(request());
+    expect(response.status).toBe(401);
+    // The constructor's default message, `Authentication is required.`, on the wire.
+    expect(await response.json()).toEqual(
+      Schema.encodeSync(Action.Unauthenticated)(new Action.Unauthenticated()),
+    );
+  });
+
+  it("sends the host's own response instead, with its status and headers", async () => {
     const auth = Authentication.middleware(
       Identity,
       Effect.gen(function* () {
         const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
 
-        if (token === undefined) return yield* new Unauthorized({ message: "Missing token" });
-
-        if (token === "denied") return yield* new Forbidden({ message: "Denied token" });
+        if (token === undefined) {
+          return yield* Effect.fail(
+            HttpServerResponse.text("Sign in first", {
+              status: 401,
+              headers: { "www-authenticate": 'Bearer realm="host"' },
+            }),
+          );
+        }
 
         return { id: token };
       }),
-      { errors: [Unauthorized, Forbidden], headers: { "www-authenticate": "Bearer" } },
     );
 
     const web = serve(
@@ -112,87 +137,19 @@ describe("Authentication.middleware", () => {
 
     onTestFinished(() => web.dispose());
 
-    // The body is the error's own JSON encoding, the one a typed client decodes.
-    for (const [token, status, body] of [
-      [
-        undefined,
-        401,
-        Schema.encodeSync(Unauthorized)(new Unauthorized({ message: "Missing token" })),
-      ],
-      ["denied", 403, Schema.encodeSync(Forbidden)(new Forbidden({ message: "Denied token" }))],
-    ] as const) {
-      const response = await web.handler(request(token));
-      expect(response.status).toBe(status);
-      expect(response.headers.get("content-type")).toContain("application/json");
-      expect(response.headers.get("www-authenticate")).toBe("Bearer");
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(await response.json()).toEqual(body);
-    }
-
+    const response = await web.handler(request());
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe('Bearer realm="host"');
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toBe("Sign in first");
     expect(await (await web.handler(request("alice"))).text()).toBe("alice");
   });
 
-  it("sends headers chosen per refusal, such as a challenge on the 401 only", async () => {
+  it("rejects any other failure in the types, and answers it with an empty 500", async () => {
     const auth = Authentication.middleware(
       Identity,
-      Effect.gen(function* () {
-        const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
-
-        if (token === undefined) return yield* new Unauthorized({ message: "Missing token" });
-
-        return yield* new Forbidden({ message: "Denied token" });
-      }),
-      {
-        errors: [Unauthorized, Forbidden],
-        headers: (error) =>
-          Schema.is(Unauthorized)(error) ? { "www-authenticate": "Bearer" } : {},
-      },
-    );
-
-    const web = serve(
-      HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
-        Layer.provide(auth.layer),
-      ),
-    );
-
-    onTestFinished(() => web.dispose());
-
-    const [missing, denied] = await Promise.all([
-      web.handler(request()),
-      web.handler(request("denied")),
-    ]);
-
-    expect([missing.status, missing.headers.get("www-authenticate")]).toEqual([401, "Bearer"]);
-    expect([denied.status, denied.headers.has("www-authenticate")]).toEqual([403, false]);
-  });
-
-  it("answers a declared refusal without a status annotation with 500", async () => {
-    class Unannotated extends Schema.TaggedError<Unannotated>()("Unannotated", {}) {}
-
-    const auth = Authentication.middleware(Identity, Effect.fail(new Unannotated()), {
-      errors: [Unannotated],
-    });
-
-    const web = serve(
-      HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
-        Layer.provide(auth.layer),
-      ),
-    );
-
-    onTestFinished(() => web.dispose());
-
-    const response = await web.handler(request());
-    expect(response.status).toBe(500);
-    expect(response.headers.has("www-authenticate")).toBe(false);
-    expect(await response.json()).toEqual(Schema.encodeSync(Unannotated)(new Unannotated()));
-  });
-
-  it("answers an undeclared refusal with an empty 500, as a defect", async () => {
-    const auth = Authentication.middleware(
-      Identity,
-      // @ts-expect-error `Forbidden` is not one of `errors`; plain JavaScript can still fail with it.
-      Effect.fail(new Forbidden({ message: "Undeclared" })),
-      { errors: [Unauthorized] },
+      // @ts-expect-error Only a refusal or a response may fail authentication; plain JavaScript can still fail with anything.
+      Effect.fail(new Private({ message: "Undeclared" })),
     );
 
     const web = serve(
@@ -206,6 +163,58 @@ describe("Authentication.middleware", () => {
     const response = await web.handler(request());
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("");
+  });
+
+  it("delivers its refusals to the typed client and to MCP callers", async () => {
+    const Identify = Action.make("identify", {
+      description: "Read the authenticated identity",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const app = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id));
+    const Http = ActionHttp.make([Identify]);
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Http, app),
+        ActionMcp.layerHttp(app, { name: "refusal-test", version: "0" }),
+      ).pipe(Layer.provide(Authentication.middleware(Identity, authenticateToken).layer)),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    const failureOf = (token?: string) =>
+      Effect.runPromise(
+        Effect.flip(
+          Effect.flatMap(
+            httpClient(Http, web, {
+              transformClient: HttpClient.mapRequest((request) =>
+                token === undefined
+                  ? request
+                  : HttpClientRequest.setHeader(request, "authorization", token),
+              ),
+            }),
+            (client) => client.identify(),
+          ),
+        ),
+      );
+
+    const missing = await failureOf();
+    expect(missing).toBeInstanceOf(Action.Unauthenticated);
+    expect(missing).toMatchObject({ message: "Missing token" });
+    const denied = await failureOf("denied");
+    expect(denied).toBeInstanceOf(Action.Forbidden);
+    expect(denied).toMatchObject({ message: "Denied token" });
+
+    // The MCP endpoint is refused before any tool runs: the HTTP 401 itself.
+    await expect(mcpCall(web, { name: "identify" })).rejects.toThrow(
+      /answered 401: .*"Missing token"/,
+    );
+    expect(await mcpCall(web, { name: "identify", headers: { authorization: "alice" } })).toEqual({
+      isError: false,
+      value: "alice",
+    });
   });
 
   it("keeps resources acquired by authentication alive for the handler and releases on handler failure", async () => {
@@ -250,9 +259,9 @@ describe("Authentication.middleware", () => {
   it("protects private errors serialized by enclosing middleware", async () => {
     const auth = Authentication.middleware(Identity, Effect.succeed({ id: "alice" }));
 
-    const outer = HttpRouter.middleware<{ handles: Unauthorized }>()((effect) =>
+    const outer = HttpRouter.middleware<{ handles: Private }>()((effect) =>
       Effect.catch(effect, (error) =>
-        Schema.is(Unauthorized)(error)
+        Schema.is(Private)(error)
           ? Effect.succeed(
               HttpServerResponse.text(error.message, {
                 status: 404,
@@ -270,7 +279,7 @@ describe("Authentication.middleware", () => {
         Effect.gen(function* () {
           const identity = yield* Identity;
 
-          return yield* new Unauthorized({ message: `private data for ${identity.id}` });
+          return yield* new Private({ message: `private data for ${identity.id}` });
         }),
       ).pipe(Layer.provide(auth.combine(outer).layer)),
     );

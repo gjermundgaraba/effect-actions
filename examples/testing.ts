@@ -1,22 +1,17 @@
 import { Effect } from "effect";
+import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import * as Testing from "../src/Testing.js";
 import { Http, routes } from "./quickstart.js";
 
-const server = Testing.serve(routes);
-
-try {
-  const greeting = await Effect.runPromise(
-    Effect.gen(function* () {
-      const client = yield* Testing.httpClient(Http, server);
-
-      return yield* client.greet({ name: "Ada" });
-    }),
-  );
+const program = Effect.gen(function* () {
+  const client = yield* ActionHttpClient.make(Http);
+  const greeting = yield* client.greet({ name: "Ada" });
 
   // One tool call to `/mcp`, answered as `{ isError: false, value: "Hello, Ada!" }`.
-  const called = await Testing.mcpCall(server, { name: "greet", arguments: { name: "Ada" } });
+  const called = yield* Testing.mcpCall({ name: "greet", arguments: { name: "Ada" } });
 
-  console.log({ greeting, called });
-} finally {
-  await server.dispose();
-}
+  return { greeting, called };
+});
+
+// The routes answer in memory for the program's scope, and are released after it.
+console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(routes)))));

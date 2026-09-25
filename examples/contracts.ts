@@ -12,18 +12,6 @@ export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
   { httpApiStatus: 404 },
 ) {}
 
-export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
-  "InvalidRequest",
-  { message: Schema.String },
-  { httpApiStatus: 400 },
-) {}
-
-export class InternalError extends Schema.TaggedError<InternalError>()(
-  "InternalError",
-  { message: Schema.String },
-  { httpApiStatus: 500 },
-) {}
-
 // Reachable without credentials: it must work before anyone has signed in.
 export const Status = Action.make("status", {
   description: "Report whether the service is up.",
@@ -48,7 +36,7 @@ export const RenameUser = Action.make("renameUser", {
   success: User,
   errors: [UserNotFound],
   access: "write",
-  mcp: { destructive: false },
+  hints: { destructive: false },
 });
 
 // On either transport, input is { value: "21" }. The handler receives numeric 21.

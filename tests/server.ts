@@ -9,7 +9,7 @@ import {
   toList,
 } from "../src/internal/implementation.js";
 import { layer } from "../examples/app.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 // Each call builds fresh example state.
 export const makeTestApp = () => serve(layer);
@@ -40,7 +40,7 @@ export const serveWithContext = <A, E, R extends Routable>(routes: Layer.Layer<A
 export const makeTestHttp = <const Apps extends Served>(
   apps: Apps,
   request: Layer.Layer<NoInfer<RequestContext<Member<Apps>>>>,
-  options?: ActionHttp.Options,
+  options?: Parameters<typeof ActionHttp.make>[1],
 ) =>
   serve(
     ActionHttp.layer(

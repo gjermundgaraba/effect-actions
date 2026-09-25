@@ -7,7 +7,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import { withMcpClient } from "./mcp-client.js";
 import { post, rawToolCall } from "./requests.js";
 import { serveWithContext } from "./server.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
@@ -171,7 +171,7 @@ it("mounts routes and the OpenAPI document under the binding's prefix, even with
     Layer.mergeAll(
       ActionHttp.layer(Empty, []),
       ActionHttp.openApi(Empty),
-      ActionHttp.openApi(ActionHttp.make([], { prefix: "/", name: "root" })),
+      ActionHttp.openApi(ActionHttp.make([], { prefix: "/" })),
     ),
   );
 

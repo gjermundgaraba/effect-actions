@@ -3,12 +3,12 @@ import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
-import type * as Action from "./Action.js";
-import { bindTools, type SurfaceOptions, type ToolOptions } from "./internal/tools.js";
+import { bindTools } from "./internal/tools.js";
 import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
+  type Hook,
   type Member,
   type RequestContext,
   type Served,
@@ -18,21 +18,17 @@ import {
 /**
  * One Streamable HTTP MCP endpoint: every native `McpServer.layerHttp` option except
  * `protocols` (server information, `allowedOrigins`, `instructions`, `extensions`, ...),
- * with `path` defaulting to `/mcp`, plus the surface's `errors` and `before`.
+ * with `path` defaulting to `/mcp`, plus the surface's `before` hook.
  */
-export interface Options<Errors extends ReadonlyArray<Action.Codec> = [], R = never>
-  extends
-    Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path">,
-    SurfaceOptions<Errors, R> {
+interface Options<R>
+  extends Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path">, Hook<R> {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
 }
 
 /** An MCP subprocess on standard I/O: every native `McpServer.layerStdio` option except `protocols`. */
-export interface StdioOptions<Errors extends ReadonlyArray<Action.Codec> = [], R = never>
-  extends
-    Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">,
-    SurfaceOptions<Errors, R> {}
+interface StdioOptions<R>
+  extends Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">, Hook<R> {}
 
 /**
  * The one protocol revision served. 2026-07-28 is stateless over HTTP: no
@@ -45,7 +41,7 @@ type ToolRequestContext<App, RB> = Exclude<RequestContext<App> | RB, McpSchema.M
 
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
-  options: ToolOptions,
+  options: Hook<unknown>,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
 ) => {
   const binding = bindTools(apps, "mcp", options);
@@ -66,13 +62,9 @@ const server = <Out, R>(
  * Middleware provided around this layer has the normal HTTP lifetime. Native
  * context capture applies: never provide request-identity tags at startup.
  */
-export function layerHttp<
-  const Apps extends Served,
-  const Errors extends ReadonlyArray<Action.Codec> = [],
-  RB = never,
->(
+export function layerHttp<const Apps extends Served, RB = never>(
   apps: Apps,
-  options: Options<Errors, RB>,
+  options: Options<RB>,
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
@@ -80,7 +72,7 @@ export function layerHttp<
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", ToolRequestContext<Member<Apps>, RB>>
 >;
-export function layerHttp(apps: Served, options: Options<ReadonlyArray<Action.Codec>, unknown>) {
+export function layerHttp(apps: Served, options: Options<unknown>) {
   return server(
     toList(apps),
     options,
@@ -96,21 +88,14 @@ export function layerHttp(apps: Served, options: Options<ReadonlyArray<Action.Co
  * The host supplies the `Stdio` service. Arguments are tool input only and
  * never establish request identity or authority.
  */
-export function layerStdio<
-  const Apps extends Served,
-  const Errors extends ReadonlyArray<Action.Codec> = [],
-  RB = never,
->(
+export function layerStdio<const Apps extends Served, RB = never>(
   apps: Apps,
-  options: StdioOptions<Errors, RB>,
+  options: StdioOptions<RB>,
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
   BuildContext<Member<Apps>> | StdioService | ToolRequestContext<Member<Apps>, RB>
 >;
-export function layerStdio(
-  apps: Served,
-  options: StdioOptions<ReadonlyArray<Action.Codec>, unknown>,
-) {
+export function layerStdio(apps: Served, options: StdioOptions<unknown>) {
   return server(toList(apps), options, McpServer.layerStdio({ ...options, protocols }));
 }

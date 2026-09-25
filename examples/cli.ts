@@ -1,17 +1,14 @@
 import { Console, Effect, Logger } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command } from "effect/unstable/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
-import { actors, CurrentActor, guarded } from "./auth.js";
+import { actors, authorize, CurrentActor } from "./authorization.js";
 import { Double } from "./contracts.js";
 import { double } from "./handlers.js";
 
-// The CLI binds the same guard as the servers; a local caller is not trusted more.
-// The parsed `{ value }` is the action's encoded input as it is.
-const command = ActionCli.command(double, Double, {
-  parameters: { value: Flag.String("value") },
-  ...guarded,
-});
+// `double --value 21`: one flag per input field. The CLI binds the same hook as the
+// servers; a local caller is not trusted more.
+const command = ActionCli.command(double, Double, { before: authorize });
 
 Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
   Effect.tapCause((cause) => Console.error(cause)),

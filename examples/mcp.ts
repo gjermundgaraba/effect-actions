@@ -1,7 +1,7 @@
 import { Layer } from "effect";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { guarded } from "./auth.js";
 import { authentication } from "./authentication.js";
+import { authorize } from "./authorization.js";
 import { double, listChanges, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
@@ -21,9 +21,9 @@ const mcp = ActionMcp.layerHttp([userActions, double, listChanges], {
   name: "effect-actions",
   version: "0.0.0",
   allowedOrigins,
-  // The same guard the HTTP layer binds; `Forbidden` is declared on each tool, so a
+  // The same hook the HTTP layer binds; `Forbidden` is declared on each tool, so a
   // refusal is an ordinary tool failure rather than a transport error.
-  ...guarded,
+  before: authorize,
 }).pipe(Layer.provide(authentication.layer));
 
 export const layer = Layer.mergeAll(publicMcp, mcp);

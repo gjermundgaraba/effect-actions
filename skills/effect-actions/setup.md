@@ -24,7 +24,6 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";

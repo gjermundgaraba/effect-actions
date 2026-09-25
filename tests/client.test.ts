@@ -1,17 +1,16 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Schema, SchemaTransformation } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+} from "effect/unstable/http";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
-import * as Testing from "../src/Testing.js";
-
-class Invalid extends Schema.TaggedError<Invalid>()(
-  "Invalid",
-  { message: Schema.String },
-  { httpApiStatus: 500 },
-) {}
+import { httpClient, serve } from "./serve.js";
 
 const Double = Action.make("double", {
   description: "Transform in both directions",
@@ -33,14 +32,7 @@ const Optional = Action.make("optional", {
   success: Schema.Number,
 });
 
-const Http = ActionHttp.make([Double, Ping, Optional], {
-  prefix: "/rpc",
-  errors: [Invalid],
-  schemaError: {
-    invalid: () => new Invalid({ message: "Invalid input" }),
-    internal: () => new Invalid({ message: "Invalid output" }),
-  },
-});
+const Http = ActionHttp.make([Double, Ping, Optional], { prefix: "/rpc" });
 
 const app = Action.implement([Double, Ping, Optional], {
   double: ({ value }) => Effect.succeed(value === 0 ? Infinity : value * 2),
@@ -49,12 +41,12 @@ const app = Action.implement([Double, Ping, Optional], {
 });
 
 it("keeps the client, routes and document on one configuration", async () => {
-  const web = Testing.serve(ActionHttp.layer(Http, app));
+  const web = serve(ActionHttp.layer(Http, app));
 
   const sent: Array<{ url: string; body: unknown; token: string | null }> = [];
   onTestFinished(() => web.dispose());
   const document = OpenApi.fromApi(Http.api);
-  expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("500");
+  expect(document.paths?.["/rpc/double"]?.post?.responses).toHaveProperty("200");
   await Effect.gen(function* () {
     const connection = {
       baseUrl: "http://localhost",
@@ -73,8 +65,10 @@ it("keeps the client, routes and document on one configuration", async () => {
     expect(yield* client.optional()).toBe(7);
     expect(yield* client.optional({})).toBe(7);
     expect(yield* client.optional({ value: 3 })).toBe(3);
-    expect(yield* Effect.flip(client.double({ value: 0 }))).toEqual(
-      new Invalid({ message: "Invalid output" }),
+    // `Infinity` does not encode: a defect, answered with an empty 500.
+    const unencodable = yield* Effect.flip(client.double({ value: 0 }));
+    expect(HttpClientError.isHttpClientError(unencodable) && unencodable.response?.status).toBe(
+      500,
     );
 
     // The native client stays available on the same API, with its response modes.
@@ -146,7 +140,7 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
 
   const bodies: Array<unknown> = [];
 
-  const web = Testing.serve(
+  const web = serve(
     ActionHttp.layer(
       Inputs,
       Action.implement([Ping, Nullable, UndefinedValue, EmptyRecord], {
@@ -186,11 +180,11 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
     Effect.runPromise,
   );
 
-  const viaTesting = await Effect.flatMap(Testing.httpClient(Inputs, handler), calls).pipe(
+  const viaHelper = await Effect.flatMap(httpClient(Inputs, handler), calls).pipe(
     Effect.runPromise,
   );
 
   expect(viaMake).toEqual([true, "null", "object", "undefined", true]);
-  expect(viaTesting).toEqual(viaMake);
+  expect(viaHelper).toEqual(viaMake);
   expect(bodies).toEqual([{}, null, {}, "absent", {}, {}, null, {}, "absent", {}]);
 });

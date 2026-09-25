@@ -1,8 +1,8 @@
 # effect-actions
 
 Define an Effect action once. Serve it over HTTP and MCP, hand it to a model as a native
-Toolkit, run it from a CLI, and publish its contract as JSON. Same schemas, same handler,
-Effect's own servers and clients underneath.
+Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
+underneath.
 
 ## Looks like this
 
@@ -29,14 +29,23 @@ export const routes = Layer.mergeAll(
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter` and you have `POST /api/greet` and an MCP tool named
-`greet` at `/mcp`. The same `greet` implementation is also:
+Serve `routes` with Effect's `HttpRouter` and a platform server:
+
+```ts
+HttpRouter.serve(routes).pipe(
+  Layer.provide(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 3000 })),
+  Layer.launch,
+  NodeRuntime.runMain,
+);
+```
+
+and you have `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greet`
+implementation is also:
 
 ```ts
 const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolkit and its handler layer
-const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --input '{"name":"Ada"}'
-const remote = ActionCli.command(Http, Greet); // same command, over HTTP
-const catalog = ActionCatalog.make([Greet]); // offline JSON contract, no handlers acquired
+const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --name Ada
+const remote = ActionCli.command(Http, Greet); // greet --name Ada, over HTTP
 ```
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
@@ -49,17 +58,15 @@ const greeting = Effect.gen(function* () {
 });
 ```
 
-Code that does not run Effects, such as a browser page, gets the same calls as Promises:
-`await ActionHttpClient.promise(Http, { baseUrl }).greet({ name: "Ada" })`.
-
 ## Why
 
-- Input, success, and errors are declared once. Routes, tools, commands, clients, OpenAPI, and the catalog are derived from that declaration, so they cannot disagree.
-- A handler may fail only with the errors its action declares. One guard, `{ errors, before }`, binds to every surface as it is, and its hook runs before every handler the surface serves — after successful input decoding — so a policy such as scope enforcement is written once and no action can skip it.
-- The pieces are Effect's own. `Http.api` is a native `HttpApi`, so `OpenApi.fromApi`, Swagger, Scalar, and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, one `Tool` per action, with no SDK runtime dependency.
-- Every action states its `access` (`"read"` or `"write"`, required), so authorization reads the contract instead of a hand-maintained list of mutation names.
-- Build-time services and per-request services are tracked separately in the types. Middleware is per `ActionHttp.layer` call, so public and authenticated actions share one binding, one mount path, one document and one client, and each builder runs once however many surfaces serve it.
-- Tests run in memory. Call the routes with the same typed client, and the tools with one call each, without opening a port.
+- Input, success and errors are declared once. Routes, tools, CLI flags, clients and the OpenAPI document are derived from that declaration, so they cannot disagree.
+- A handler can fail only with the errors its action declares, and every client decodes them as typed values. Bad input, a missing credential and a refusal come back as three built-in errors (400, 401, 403) that every client decodes too, never as an unreadable body.
+- One authorization rule covers every surface. The same `before` function binds to HTTP, MCP, the Toolkit and the CLI and runs before every handler, so no action can skip it and no handler contains authorization code.
+- Every action states whether it reads or writes (`access`), so that rule reads the contract instead of a hand-maintained list of mutation names.
+- A handler that needs a request identity can't be served without the middleware that provides it: it is a type error. Public and authenticated actions still share one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.
+- The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency.
+- Tests run in memory. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpCall`, without opening a port.
 
 ## Install
 
@@ -76,10 +83,10 @@ never loads a server.
 The reference in [docs/](docs/README.md) is written for coding agents: one card per module
 with the API, a canonical snippet, the rules, and the failure modes.
 
-- [docs/README.md](docs/README.md): start here, includes the adapter decision list.
+- [docs/README.md](docs/README.md): start here, includes which module to use for which caller.
 - [docs/guarantees.md](docs/guarantees.md): cross-cutting rules for lifetimes, wire formats, and scope.
 - [docs/CONTEXT.md](docs/CONTEXT.md): the vocabulary the docs and the code use.
-- [examples/](examples/README.md): a runnable authenticated application with public and authenticated actions, two MCP endpoints, OpenAPI, and every other projection.
+- [examples/](examples/README.md): a runnable authenticated application with public and authenticated actions, two MCP endpoints, OpenAPI, and every other surface.
 
 ## For agents
 
@@ -94,11 +101,11 @@ in `node_modules/@gjermundgaraba/effect-actions/docs`) gives the same content.
 
 The `effect` peer accepts any Effect 4.0 release candidate from `4.0.0-rc.116` on; the package
 is built and tested against the release candidate in its `devDependencies` (see [docs/setup.md](docs/setup.md)). Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
-Authentication and authorization belong to the application. See [docs/setup.md](docs/setup.md).
+Token verification and the authorization rule belong to the application; the library supplies the middleware, the hook and the refusals. See [docs/setup.md](docs/setup.md).
 
 ## Acknowledgements
 
-A few ideas (like the native Toolkit, CLI, and catalog projections) are inspired by the excellent [rat-stack](https://github.com/joelhooks/rat-stack) by Joel Hooks.
+A few ideas (like the native Toolkit and CLI projections) are inspired by the excellent [rat-stack](https://github.com/joelhooks/rat-stack) by Joel Hooks.
 
 ## Contributing
 

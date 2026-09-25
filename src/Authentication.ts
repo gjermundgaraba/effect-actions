@@ -1,51 +1,25 @@
-import { type Context, Effect, Option, Predicate, Schema, SchemaAST } from "effect";
+import { type Context, Effect, Option, Schema } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
-  type Headers,
   HttpEffect,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import type * as Action from "./Action.js";
-
-/** How `middleware` answers a refusal it declares. */
-export interface MiddlewareOptions<Errors extends ReadonlyArray<Action.Codec>> {
-  /**
-   * The errors `authenticate` may fail with besides a response: each is sent as its JSON
-   * encoding with its `httpApiStatus` (500 without one). Pass the binding's `Http.errors`,
-   * so what clients decode and what is sent are declared once.
-   */
-  readonly errors?: Errors;
-  /**
-   * Headers of such an answer, such as `{ "www-authenticate": "Bearer" }`, or a function
-   * of the error, so a challenge goes only with the refusals that need it.
-   */
-  readonly headers?: Headers.Input | ((error: Errors[number]["Type"]) => Headers.Input);
-}
-
-const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+import { Forbidden, type Refusal, Unauthenticated } from "./internal/errors.js";
 
 /**
- * The response to a declared refusal. It was declared, so it encodes; an encoding
- * failure is a defect.
+ * The response to a refusal: its JSON with its status. A 401 carries the plain
+ * `WWW-Authenticate: Bearer` challenge; an MCP client then finds the authorization server
+ * at the well-known URL `protectedResource` serves.
  */
-const respond =
-  (options: MiddlewareOptions<ReadonlyArray<Action.Codec>>) =>
-  <E>(error: E): Effect.Effect<HttpServerResponse.HttpServerResponse> => {
-    const schema = options.errors?.find((candidate) => Schema.is(candidate)(error));
-
-    if (schema === undefined) return Effect.die(error);
-
-    const headers = Predicate.isFunction(options.headers)
-      ? options.headers(error)
-      : options.headers;
-
-    return HttpServerResponse.schemaJson(schema)(error, {
-      status: statusOf(schema.ast) ?? 500,
-      ...(headers === undefined ? {} : { headers }),
-    }).pipe(Effect.orDie);
-  };
+const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+  Schema.is(Unauthenticated)(error)
+    ? HttpServerResponse.schemaJson(Unauthenticated)(error, {
+        status: 401,
+        headers: { "www-authenticate": "Bearer" },
+      }).pipe(Effect.orDie)
+    : HttpServerResponse.schemaJson(Forbidden)(error, { status: 403 }).pipe(Effect.orDie);
 
 /**
  * The bearer token of the request's `Authorization` header, if it has one. The scheme
@@ -63,34 +37,21 @@ export const bearerToken: Effect.Effect<
 
 /**
  * Authenticate each request and provide its identity to the downstream handler.
- * `authenticate` fails with a declared error from `options.errors`, answered as JSON
- * with its status, or with the response to send instead. Dependencies remain native
- * router request requirements. Acquired resources live until the request scope closes,
- * including while the handler is running. Every response is marked
- * `Cache-Control: no-store`, including private failures serialized by enclosing
- * middleware.
+ * `authenticate` fails with `Unauthenticated` (a 401 with a `Bearer` challenge) or
+ * `Forbidden` (a 403), each sent as the JSON every client decodes, or with the response
+ * to send instead. Dependencies remain native router request requirements. Acquired
+ * resources live until the request scope closes, including while the handler is running.
+ * Every response is marked `Cache-Control: no-store`, including private failures
+ * serialized by enclosing middleware.
  */
-export function middleware<I, A, R, const Errors extends ReadonlyArray<Action.Codec> = []>(
+export const middleware = <I, A, R>(
   service: Context.Key<I, A>,
-  authenticate: Effect.Effect<
-    NoInfer<A>,
-    HttpServerResponse.HttpServerResponse | NoInfer<Errors[number]["Type"]>,
-    R
-  >,
-  options?: MiddlewareOptions<Errors>,
-): ReturnType<typeof router<I, R>>;
-export function middleware<I, A, R, E>(
-  service: Context.Key<I, A>,
-  authenticate: Effect.Effect<A, E, R>,
-  options: MiddlewareOptions<ReadonlyArray<Action.Codec>> = {},
-) {
-  return router<I, R, E>(service, authenticate, respond(options));
-}
+  authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
+) => router<I, R>(service, authenticate);
 
-const router = <I, R, E = never>(
+const router = <I, R>(
   service: Context.Key<I, unknown>,
-  authenticate: Effect.Effect<unknown, E, R>,
-  refuse: (error: E) => Effect.Effect<HttpServerResponse.HttpServerResponse>,
+  authenticate: Effect.Effect<unknown, HttpServerResponse.HttpServerResponse | Refusal, R>,
 ) =>
   HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
     authenticate.pipe(
@@ -106,7 +67,7 @@ const router = <I, R, E = never>(
   );
 
 /** RFC 9728 metadata to publish; the host is responsible for these being valid OAuth URLs. */
-export interface ProtectedResourceOptions {
+interface ProtectedResourceOptions {
   /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
   readonly authorizationServers: NonEmptyReadonlyArray<string>;
@@ -114,30 +75,17 @@ export interface ProtectedResourceOptions {
   readonly resourceName?: string;
 }
 
-/** Parameters of one `WWW-Authenticate: Bearer` challenge, RFC 6750 §3. */
-export interface BearerChallengeOptions {
-  readonly error?: "invalid_token" | "insufficient_scope";
-  readonly errorDescription?: string;
-  /** Space-separated scopes needed for this request, not all supported scopes. */
-  readonly scope?: string;
-}
-
-const quoted = (value: string) => `"${value.replace(/["\\]/g, "\\$&")}"`;
-
 /**
- * Publish RFC 9728 discovery independently from the authenticated routes.
- * This supplies metadata and challenges; the host still verifies access tokens.
+ * Publish RFC 9728 discovery at `/.well-known/oauth-protected-resource` followed by the
+ * resource's path, where MCP clients look when a 401 names no metadata URL. Serve it
+ * independently from the authenticated routes; the host still verifies access tokens.
  */
 export const protectedResource = (options: ProtectedResourceOptions) => {
   const resource = new URL(options.resource);
 
-  const path =
-    `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}` as const;
-
   const discoveryUrl = new URL(resource);
-  discoveryUrl.pathname = path;
-  const metadataUrl = discoveryUrl.href;
-  const target = metadataUrl.slice(discoveryUrl.origin.length);
+  discoveryUrl.pathname = `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}`;
+  const target = discoveryUrl.href.slice(discoveryUrl.origin.length);
 
   // `undefined` fields are dropped by JSON serialization.
   const response = HttpServerResponse.jsonUnsafe({
@@ -148,38 +96,22 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
     resource_name: options.resourceName,
   });
 
-  return {
-    // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
-    // to the host, including other discovery documents on the same router.
-    layer: HttpRouter.middleware(
-      (next) =>
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const url = new URL(request.url, resource.origin);
+  // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
+  // to the host, including other discovery documents on the same router.
+  return HttpRouter.middleware(
+    (next) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = new URL(request.url, resource.origin);
 
-          if (
-            (request.method === "GET" || request.method === "HEAD") &&
-            url.href.slice(url.origin.length) === target
-          )
-            return response;
+        if (
+          (request.method === "GET" || request.method === "HEAD") &&
+          url.href.slice(url.origin.length) === target
+        )
+          return response;
 
-          return yield* next;
-        }),
-      { global: true },
-    ),
-    metadataUrl,
-    /** The `WWW-Authenticate` value; parameter values are quoted and escaped. */
-    challenge: (challenge: BearerChallengeOptions = {}): string => {
-      const parameters = [
-        ["resource_metadata", metadataUrl],
-        ["error", challenge.error],
-        ["error_description", challenge.errorDescription],
-        ["scope", challenge.scope],
-      ] as const;
-
-      return `Bearer ${parameters
-        .flatMap(([name, value]) => (value === undefined ? [] : [`${name}=${quoted(value)}`]))
-        .join(", ")}`;
-    },
-  };
+        return yield* next;
+      }),
+    { global: true },
+  );
 };

@@ -1,7 +1,8 @@
 import { Effect, type Schema } from "effect";
-import { FetchHttpClient, type HttpClient, type HttpClientError } from "effect/unstable/http";
+import type { HttpClient, HttpClientError } from "effect/unstable/http";
 import { type HttpApi, HttpApiClient } from "effect/unstable/httpapi";
 import type * as Action from "../Action.js";
+import type { httpErrors } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 
 /**
@@ -23,36 +24,32 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
   : (input: A["input"]["Type"]) => R;
 
 /**
- * What one call of `A` fails with: a declared error value (the action's own, or the
- * binding's `errors`, `E`), a native `HttpClientError` for a failed
+ * What one call of `A` fails with: a declared error value (the action's own, or a built-in
+ * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` for a failed
  * request or an undeclared answer, or a `SchemaError` when the input does not encode or
  * the success does not decode.
  */
-export type MethodError<A extends Action.Any, E> =
+export type MethodError<A extends Action.Any> =
   | A["errors"][number]["Type"]
-  | E
+  | InstanceType<(typeof httpErrors)[number]>
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
 /** One action as an Effect of its decoded success, failing with `MethodError`. */
-export type Method<A extends Action.Any, E> = Call<
-  A,
-  Effect.Effect<A["success"]["Type"], MethodError<A, E>>
->;
+type Method<A extends Action.Any> = Call<A, Effect.Effect<A["success"]["Type"], MethodError<A>>>;
 
 /**
  * What a client needs of an HTTP binding. The API is a native constraint here because
- * native groups are invariant in their endpoints; `actions` and `errors` carry the types.
+ * native groups are invariant in their endpoints; `actions` carries the types.
  */
 export interface AnyHttp {
   readonly actions: ReadonlyArray<Action.Any>;
-  readonly errors: ReadonlyArray<Action.Codec>;
   readonly api: HttpApi.Constraint;
 }
 
 /** Every action of the binding `H`, as `client.<action>(input)`. */
 export type Client<H extends AnyHttp> = {
-  readonly [A in H["actions"][number] as A["name"]]: Method<A, H["errors"][number]["Type"]>;
+  readonly [A in H["actions"][number] as A["name"]]: Method<A>;
 };
 
 /** A client method, erased: the binding's actions restore its exact type. */
@@ -109,12 +106,3 @@ export const client = (
   Effect.map(methods(http, options), (methodOf) =>
     Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
   );
-
-/** Provide the native client that sends every request through `fetch`. */
-export const withFetch =
-  (fetch: typeof globalThis.fetch) =>
-  <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>): Effect.Effect<A, E> =>
-    effect.pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, fetch),
-    );

@@ -1,10 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { expect, it, onTestFinished, vi } from "vite-plus/test";
-import { Cause, Effect, Exit, Schema, type Scope } from "effect";
+import { expect, it, vi } from "vite-plus/test";
+import { Cause, Effect, Exit, Option, Schema, type Scope } from "effect";
 import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import { NodeFileSystem } from "@effect/platform-node";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import { cliServices, logged } from "./cli-services.js";
@@ -29,7 +25,11 @@ const runExit = <Name extends string, Input, Context, E>(
     ),
   );
 
-it("uses --input canonical JSON and supplies {} for no-input actions", async () => {
+/** The typed failure of a failed run: the command's own, or the native parser's. */
+const failure = <A, E>(exit: Exit.Exit<A, E>): E | undefined =>
+  Option.getOrUndefined(Exit.findErrorOption(exit));
+
+it("takes one flag per input field and no flags for an action without input", async () => {
   const inputs: number[] = [];
 
   const NumberAction = Action.make("number", {
@@ -60,46 +60,129 @@ it("uses --input canonical JSON and supplies {} for no-input actions", async () 
       ),
   });
 
-  await run(ActionCli.command(app, NumberAction), ["--input", '{"value":"21"}']);
+  // `FiniteFromString` is string-encoded, so its flag is a string flag.
+  const number = ActionCli.command(app, NumberAction);
+  await run(number, ["--value", "21"]);
+  // A struct input takes no whole-input flag.
+  expect(failure(await runExit(number, ["--input", '{"value":"22"}']))).toBeInstanceOf(
+    CliError.ShowHelp,
+  );
+
   const empty = ActionCli.command(app, Empty);
   await run(empty, []);
   await run(empty, []);
+  expect(failure(await runExit(empty, ["--input", "{}"]))).toBeInstanceOf(CliError.ShowHelp);
 
   expect(inputs).toEqual([21]);
-  // The built-in no-input codec receives a fresh default each invocation.
+  // The no-input codec receives a fresh default each invocation.
   expect(empties).toEqual([{}, {}]);
   expect(empties[0]).not.toBe(empties[1]);
 });
 
-it("takes parsed native parameters as the canonical input, without an implicit --input mode", async () => {
-  const inputs: number[] = [];
+it("derives each field's flag from its encoded JSON value", async () => {
+  const inputs: unknown[] = [];
 
-  const NumberAction = Action.make("number", {
-    description: "Accept a finite number",
+  const Flags = Action.make("flags", {
+    description: "One field of every kind",
     access: "write",
-    input: Schema.Struct({ value: Schema.FiniteFromString }),
-    success: Schema.Number,
+    input: {
+      tenantId: Schema.String,
+      count: Schema.Finite,
+      dryRun: Schema.Boolean,
+      verbose: Schema.optionalKey(Schema.Boolean),
+      mode: Schema.Literals(["fast", "safe"]),
+      tags: Schema.Array(Schema.String),
+      owner: Schema.Struct({ id: Schema.String }),
+      note: Schema.optionalKey(Schema.String),
+    },
+    success: Schema.String,
   });
 
-  const app = Action.implement([NumberAction], {
-    number: ({ value }) =>
-      Effect.andThen(
-        Effect.sync(() => inputs.push(value)),
-        () => Effect.succeed(value * 2),
-      ),
-  });
+  const app = Action.implement(Flags, (input) =>
+    Effect.andThen(
+      Effect.sync(() => inputs.push(input)),
+      () => Effect.succeed("ok"),
+    ),
+  );
 
-  // Without `input`, the parsed `{ value }` is the encoded input as it is.
-  const command = ActionCli.command(app, NumberAction, {
-    parameters: { value: Flag.String("value") },
-  });
+  const command = ActionCli.command(app, Flags);
 
-  await run(command, ["--value", "21"]);
-  expect(inputs).toEqual([21]);
-  expect(Exit.isFailure(await runExit(command, ["--input", '{"value":"22"}']))).toBe(true);
+  await run(command, [
+    "--tenant-id",
+    "acme",
+    "--count",
+    "2.5",
+    "--dry-run",
+    "--verbose",
+    "--mode",
+    "fast",
+    "--tags",
+    '["a","b"]',
+    "--owner",
+    '{"id":"alice"}',
+    "--note",
+    "hi",
+  ]);
+
+  // An omitted required boolean is a switch left off; an omitted optional field is absent.
+  await run(command, [
+    "--tenant-id",
+    "acme",
+    "--count",
+    "1",
+    "--mode",
+    "safe",
+    "--tags",
+    "[]",
+    "--owner",
+    '{"id":"bob"}',
+  ]);
+
+  expect(inputs).toStrictEqual([
+    {
+      tenantId: "acme",
+      count: 2.5,
+      dryRun: true,
+      verbose: true,
+      mode: "fast",
+      tags: ["a", "b"],
+      owner: { id: "alice" },
+      note: "hi",
+    },
+    { tenantId: "acme", count: 1, dryRun: false, mode: "safe", tags: [], owner: { id: "bob" } },
+  ]);
+
+  const required = ["--count", "1", "--mode", "fast", "--owner", '{"id":"a"}'];
+
+  // A choice, a number and a JSON flag are parsed natively: a bad value shows help.
+  for (const args of [
+    ["--tenant-id", "acme", "--count", "1", "--mode", "slow", "--tags", "[]", "--owner", "{}"],
+    ["--tenant-id", "acme", "--count", "many", "--mode", "fast", "--tags", "[]"],
+    ["--tenant-id", "acme", "--tags", "[", ...required],
+  ]) {
+    const error = failure(await runExit(command, args));
+    expect(error).toBeInstanceOf(CliError.ShowHelp);
+
+    if (error instanceof CliError.ShowHelp) {
+      expect(error.errors[0]).toBeInstanceOf(CliError.InvalidValue);
+    }
+  }
+
+  // The action's schema, not the parser, decides what is required.
+  const missing = failure(await runExit(command, ["--tags", "[]", ...required]));
+  expect(missing).toBeInstanceOf(Schema.SchemaError);
+  expect(String(missing)).toContain("Missing key");
+  expect(String(missing)).toContain("tenantId");
+
+  // A JSON flag holding JSON of the wrong shape is invalid input as well.
+  expect(
+    failure(await runExit(command, ["--tenant-id", "acme", "--tags", "[1]", ...required])),
+  ).toBeInstanceOf(Schema.SchemaError);
+
+  expect(inputs).toHaveLength(2);
 });
 
-it("maps canonical JSON strings to codecs whose original encoding is not JSON", async () => {
+it("maps flag strings to codecs whose original encoding is not JSON", async () => {
   const inputs: Date[] = [];
 
   const Dated = Action.make("dated", {
@@ -117,15 +200,11 @@ it("maps canonical JSON strings to codecs whose original encoding is not JSON", 
       ),
   });
 
-  const command = ActionCli.command(app, Dated, {
-    parameters: { at: Flag.String("at") },
-  });
-
-  await run(command, ["--at", "2026-01-02T03:04:05.000Z"]);
+  await run(ActionCli.command(app, Dated), ["--at", "2026-01-02T03:04:05.000Z"]);
   expect(inputs.map((date) => date.toISOString())).toEqual(["2026-01-02T03:04:05.000Z"]);
 });
 
-it("rejects invalid mapped input before acquiring or invoking the handler", async () => {
+it("rejects invalid input before acquiring or invoking the handler", async () => {
   let builds = 0;
   let calls = 0;
 
@@ -151,17 +230,16 @@ it("rejects invalid mapped input before acquiring or invoking the handler", asyn
     }),
   );
 
-  const command = ActionCli.command(app, NumberAction, {
-    parameters: { value: Flag.String("value") },
-    input: ({ value }) => ({ value }),
-  });
+  const command = ActionCli.command(app, NumberAction);
 
-  expect(Exit.isFailure(await runExit(command, ["--value", "not-a-number"]))).toBe(true);
+  expect(failure(await runExit(command, ["--value", "not-a-number"]))).toBeInstanceOf(
+    Schema.SchemaError,
+  );
   expect(builds).toBe(0);
   expect(calls).toBe(0);
 });
 
-it("accepts scalar and nested default JSON and rejects malformed or missing required input", async () => {
+it("takes an input that is not a struct of fields as one --input JSON flag", async () => {
   const values: unknown[] = [];
 
   const Scalar = Action.make("scalar", {
@@ -171,56 +249,56 @@ it("accepts scalar and nested default JSON and rejects malformed or missing requ
     success: Schema.String,
   });
 
-  const Nested = Action.make("nested", {
-    description: "Nested input",
+  const Shape = Action.make("shape", {
+    description: "A union root",
     access: "write",
-    input: Schema.Struct({ nested: Schema.Struct({ value: Schema.Number }) }),
+    input: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("circle"), radius: Schema.Finite }),
+      Schema.Struct({ kind: Schema.Literal("square"), side: Schema.Finite }),
+    ]),
     success: Schema.String,
   });
 
-  const Required = Action.make("required", {
-    description: "Required input",
+  const Scores = Action.make("scores", {
+    description: "A record's keys are not known in advance",
     access: "write",
-    input: Schema.Struct({ value: Schema.String }),
+    input: Schema.Record(Schema.String, Schema.Finite),
     success: Schema.String,
   });
 
-  const app = Action.implement([Scalar, Nested, Required], {
-    scalar: (input) =>
-      Effect.andThen(
-        Effect.sync(() => values.push(input)),
-        () => Effect.succeed("scalar"),
-      ),
-    nested: (input) =>
-      Effect.andThen(
-        Effect.sync(() => values.push(input)),
-        () => Effect.succeed("nested"),
-      ),
-    required: ({ value }) => Effect.succeed(value),
+  const record = <Input>(input: Input) =>
+    Effect.andThen(
+      Effect.sync(() => values.push(input)),
+      () => Effect.succeed("ok"),
+    );
+
+  const app = Action.implement([Scalar, Shape, Scores], {
+    scalar: record,
+    shape: record,
+    scores: record,
   });
 
   await run(ActionCli.command(app, Scalar), ["--input", '"text"']);
-  await run(ActionCli.command(app, Nested), ["--input", '{"nested":{"value":1}}']);
-  const malformed = await runExit(ActionCli.command(app, Required), ["--input", "{"]);
-  expect(Exit.isFailure(malformed)).toBe(true);
+  await run(ActionCli.command(app, Shape), ["--input", '{"kind":"square","side":2}']);
+  await run(ActionCli.command(app, Scores), ["--input", '{"a":1,"b":2}']);
 
-  if (Exit.isFailure(malformed)) {
-    const error = Cause.squash(malformed.cause);
-    expect(error).toBeInstanceOf(CliError.ShowHelp);
+  const malformed = failure(await runExit(ActionCli.command(app, Shape), ["--input", "{"]));
+  expect(malformed).toBeInstanceOf(CliError.ShowHelp);
 
-    if (error instanceof CliError.ShowHelp) {
-      expect(error.errors[0]).toBeInstanceOf(CliError.InvalidValue);
-    }
+  if (malformed instanceof CliError.ShowHelp) {
+    expect(malformed.errors[0]).toBeInstanceOf(CliError.InvalidValue);
   }
 
-  const omitted = await runExit(ActionCli.command(app, Required), []);
-  expect(Exit.isFailure(omitted)).toBe(true);
+  // No field of a union member is a flag of its own.
+  expect(
+    failure(await runExit(ActionCli.command(app, Shape), ["--kind", "square", "--side", "2"])),
+  ).toBeInstanceOf(CliError.ShowHelp);
+  // Omitted, the input is `{}`, which the schema rejects.
+  expect(failure(await runExit(ActionCli.command(app, Shape), []))).toBeInstanceOf(
+    Schema.SchemaError,
+  );
 
-  if (Exit.isFailure(omitted)) {
-    expect(Cause.squash(omitted.cause)).toBeInstanceOf(Schema.SchemaError);
-  }
-
-  expect(values).toEqual(["text", { nested: { value: 1 } }]);
+  expect(values).toEqual(["text", { kind: "square", side: 2 }, { a: 1, b: 2 }]);
 });
 
 it("keeps custom renderer JSON output and validates success before rendering", async () => {
@@ -271,32 +349,62 @@ it("keeps custom renderer JSON output and validates success before rendering", a
   expect(invalidRenderer).not.toHaveBeenCalled();
 });
 
-it("keeps native parameter property names separate from renderer flag names", async () => {
+it("keeps an input field's flags apart from the renderer's --json", async () => {
   const inputs: string[] = [];
 
   const Configured = Action.make("configured", {
-    description: "A config property named json uses a distinct native flag",
+    description: "A field whose flag is not the renderer's",
     access: "write",
-    input: Schema.Struct({ value: Schema.String }),
+    input: Schema.Struct({ payloadJson: Schema.String }),
     success: Schema.String,
   });
 
   const app = Action.implement([Configured], {
-    configured: ({ value }) =>
+    configured: ({ payloadJson }) =>
       Effect.andThen(
-        Effect.sync(() => inputs.push(value)),
-        () => Effect.succeed(value),
+        Effect.sync(() => inputs.push(payloadJson)),
+        () => Effect.succeed(payloadJson),
       ),
   });
 
-  const command = ActionCli.command(app, Configured, {
-    parameters: { json: Flag.String("payload-json") },
-    input: ({ json }) => ({ value: json }),
-    render: (value) => value,
+  const command = ActionCli.command(app, Configured, { render: (value) => `rendered ${value}` });
+
+  const lines = (args: ReadonlyArray<string>) =>
+    Effect.runPromise(
+      Effect.scoped(
+        logged(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices)),
+      ),
+    ).then(([, output]) => output);
+
+  expect(await lines(["--payload-json", "value", "--json"])).toEqual(['"value"']);
+  expect(await lines(["--payload-json", "value"])).toEqual(["rendered value"]);
+  expect(inputs).toEqual(["value", "value"]);
+});
+
+it("refuses a field whose flag the parser or a renderer claims", () => {
+  const Claimed = Action.make("claimed", {
+    description: "Has fields named like built-in flags",
+    access: "read",
+    input: { json: Schema.String },
+    success: Schema.String,
   });
 
-  await run(command, ["--payload-json", "value", "--json"]);
-  expect(inputs).toEqual(["value"]);
+  const Help = Action.make("help", {
+    description: "Has a help field",
+    access: "read",
+    input: { help: Schema.String },
+    success: Schema.String,
+  });
+
+  const claimed = Action.implement(Claimed, ({ json }) => Effect.succeed(json));
+  const help = Action.implement(Help, ({ help }) => Effect.succeed(help));
+
+  // `--json` is claimed only by a renderer.
+  expect(ActionCli.command(claimed, Claimed).name).toBe("claimed");
+  expect(() => ActionCli.command(claimed, Claimed, { render: String })).toThrow(
+    "Reserved flag of claimed: --json",
+  );
+  expect(() => ActionCli.command(help, Help)).toThrow("Reserved flag of help: --help");
 });
 
 it("runs any action locally, scopes every invocation, and exposes aggregate subcommands", async () => {
@@ -340,61 +448,12 @@ it("runs any action locally, scopes every invocation, and exposes aggregate subc
     ),
   );
 
-  await run(ActionCli.command(app, Local), ["--input", '{"value":"direct"}']);
-  await run(ActionCli.make(app, { name: "locals" }), ["local", "--input", '{"value":"group"}']);
+  await run(ActionCli.command(app, Local), ["--value", "direct"]);
+  await run(ActionCli.make(app, { name: "locals" }), ["local", "--value", "group"]);
 
   expect(inputs).toEqual(["direct", "group"]);
   expect(acquired).toBe(2);
   expect(released).toBe(2);
-});
-
-it("reads the whole canonical input from --input-file, which takes precedence over --input", async () => {
-  const inputs: number[] = [];
-
-  const NumberAction = Action.make("number", {
-    description: "Accept an encoded finite number",
-    access: "write",
-    input: Schema.Struct({ value: Schema.FiniteFromString }),
-    success: Schema.Number,
-  });
-
-  const app = Action.implement([NumberAction], {
-    number: ({ value }) =>
-      Effect.andThen(
-        Effect.sync(() => inputs.push(value)),
-        () => Effect.succeed(value * 2),
-      ),
-  });
-
-  const directory = await mkdtemp(join(tmpdir(), "effect-actions-"));
-  onTestFinished(() => rm(directory, { recursive: true }));
-  const file = join(directory, "input.json");
-  await writeFile(file, '{"value":"21"}');
-  const invalid = join(directory, "invalid.json");
-  await writeFile(invalid, '{"value":"x"}');
-
-  const command = ActionCli.command(app, NumberAction);
-
-  const exit = (args: ReadonlyArray<string>) =>
-    Effect.runPromiseExit(
-      Effect.scoped(
-        Command.runWith(command, { version: "0" })(args).pipe(
-          Effect.provide(NodeFileSystem.layer),
-          Effect.provide(cliServices),
-        ),
-      ),
-    );
-
-  expect(Exit.isSuccess(await exit(["--input-file", file]))).toBe(true);
-  expect(inputs).toEqual([21]);
-
-  // A malformed file is its own error, not a fallback to the inline default.
-  expect(Exit.isFailure(await exit(["--input-file", invalid]))).toBe(true);
-
-  // A file takes precedence over inline input, which is still validated.
-  expect(Exit.isSuccess(await exit(["--input-file", file, "--input", '{"value":"1"}']))).toBe(true);
-  expect(Exit.isFailure(await exit(["--input-file", file, "--input", "{"]))).toBe(true);
-  expect(inputs).toEqual([21, 21]);
 });
 
 it("adds --json only to a command with a renderer, without contesting a host's own --json", async () => {
@@ -523,6 +582,92 @@ it("aggregates implementations under one named command and refuses duplicate com
   const again = Action.implement(Again, () => Effect.succeed("again"));
 
   expect(() => ActionCli.make([one, again], { name: "tool" })).toThrow("Duplicate command: one");
+});
+
+it("names commands and flags in kebab case, unless a name is given", async () => {
+  const users: string[] = [];
+
+  const GetUser = Action.make("getUser", {
+    description: "Reads a user",
+    access: "read",
+    input: { userId: Schema.String },
+    success: Schema.String,
+  });
+
+  const app = Action.implement(GetUser, ({ userId }) =>
+    Effect.andThen(
+      Effect.sync(() => users.push(userId)),
+      () => Effect.succeed(userId),
+    ),
+  );
+
+  const command = ActionCli.command(app, GetUser);
+  expect(command.name).toBe("get-user");
+  expect(ActionCli.command(app, GetUser, { name: "whois" }).name).toBe("whois");
+
+  await run(command, ["--user-id", "alice"]);
+  await run(ActionCli.make(app, { name: "users" }), ["get-user", "--user-id", "bob"]);
+
+  // The action's own name is not a subcommand.
+  expect(
+    failure(await runExit(ActionCli.make(app, { name: "users" }), ["getUser", "--user-id", "x"])),
+  ).toBeInstanceOf(CliError.ShowHelp);
+
+  expect(users).toEqual(["alice", "bob"]);
+
+  // Two distinct action names can share a kebab-case command name.
+  const Snake = Action.make("get_user", {
+    description: "Another spelling",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const snake = Action.implement(Snake, () => Effect.succeed("snake"));
+
+  expect(() => ActionCli.make([app, snake], { name: "users" })).toThrow(
+    "Duplicate command: get-user",
+  );
+});
+
+it("runs the before hook first, and its refusal is the command's typed failure", async () => {
+  const seen: string[] = [];
+  let calls = 0;
+
+  const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
+
+  const Write = Action.make("write", {
+    description: "Write",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const app = Action.implement([Read, Write], {
+    read: () => Effect.sync(() => `read ${++calls}`),
+    write: () => Effect.sync(() => `write ${++calls}`),
+  });
+
+  const before = (action: Action.Any) =>
+    Effect.andThen(
+      Effect.sync(() => seen.push(action.name)),
+      () =>
+        action.access === "read"
+          ? Effect.void
+          : Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
+    );
+
+  await run(ActionCli.command(app, Read, { before }), []);
+
+  const refused = failure(await runExit(ActionCli.command(app, Write, { before }), []));
+  expect(refused).toBeInstanceOf(Action.Forbidden);
+  expect(refused).toEqual(new Action.Forbidden({ message: "Requires users:write." }));
+
+  const aggregate = ActionCli.make(app, { name: "tool", before });
+  await run(aggregate, ["read"]);
+  expect(failure(await runExit(aggregate, ["write"]))).toBeInstanceOf(Action.Forbidden);
+
+  // Refused, the handler never runs.
+  expect(seen).toEqual(["read", "write", "read", "write"]);
+  expect(calls).toBe(2);
 });
 
 it("acquires only the builder of the selected command's implementation", async () => {

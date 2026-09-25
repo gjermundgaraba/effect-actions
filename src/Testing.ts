@@ -1,20 +1,15 @@
-import { Effect, Layer, Option, Predicate, Schema } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
-import * as ActionHttpClient from "./ActionHttpClient.js";
-import { type AnyHttp, type Client, withFetch } from "./internal/client.js";
-import { type McpEndpoint, mcpRequest, type McpRequestValue } from "./internal/mcp-request.js";
+import { Effect, Layer, Option, Schema } from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpEffect,
+  HttpRouter,
+  HttpServer,
+} from "effect/unstable/http";
+import { mcpMessage, type McpRequestValue } from "./internal/mcp-request.js";
 
-/** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
-export type Handler = (request: Request) => Promise<Response>;
-
-/** Served routes in memory: their web handler, and how to release them. */
-export interface Server {
-  readonly handler: Handler;
-  /** Release the routes' resources. Register it with the test runner's cleanup hook. */
-  readonly dispose: () => Promise<void>;
-}
-
-/** What `serve` provides or leaves to routes: the router, the platform, nothing per request. */
+/** What `layer` provides or leaves to routes: the router, the platform, nothing per request. */
 type Served =
   | HttpRouter.HttpRouter
   | HttpRouter.Request<"Requires", never>
@@ -23,43 +18,53 @@ type Served =
   | HttpRouter.Request<"GlobalError", any>
   | Layer.Success<typeof HttpServer.layerServices>;
 
-/**
- * Serve `routes` in memory, without a network or request logs, providing the platform
- * services `HttpServer.layerServices` provides. Routes must satisfy their per-request
- * requirements themselves, with their middleware.
- */
-export function serve<A, E, R extends Served>(routes: Layer.Layer<A, E, R>): Server;
-export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
-  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+/** Where relative request URLs resolve, so a client needs no `baseUrl`. */
+const origin = "http://localhost";
 
-  return { handler: (request) => web.handler(request), dispose: web.dispose };
+/**
+ * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
+ * it to `ActionHttpClient.make` and to `mcpCall`. The routes are built with this layer and
+ * released with its scope, without request logs, with the platform services
+ * `HttpServer.layerServices` provides. They must satisfy their per-request requirements
+ * themselves, with their middleware. A relative URL resolves against `http://localhost`.
+ */
+export function layer<A, E, R extends Served>(
+  routes: Layer.Layer<A, E, R>,
+): Layer.Layer<HttpClient.HttpClient, E>;
+export function layer(
+  routes: Layer.Layer<unknown, unknown, Served>,
+): Layer.Layer<HttpClient.HttpClient, unknown> {
+  return Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const app = yield* HttpRouter.toHttpEffect(
+        routes.pipe(Layer.provide(HttpServer.layerServices)),
+      );
+
+      const handler = HttpEffect.toWebHandler(app);
+
+      const fetch: typeof globalThis.fetch = (input, init) => handler(new Request(input, init));
+
+      const client = yield* Effect.provide(HttpClient.HttpClient, FetchHttpClient.layer);
+
+      return client.pipe(
+        HttpClient.mapRequest((request) =>
+          request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, origin) : request,
+        ),
+        HttpClient.transformResponse(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+      );
+    }),
+  );
 }
 
-/** A served `Server` or its bare web handler. */
-const handlerOf = (target: Server | Handler): Handler =>
-  Predicate.isFunction(target) ? target : target.handler;
-
-/**
- * `ActionHttpClient.make` for the binding, calling `server` in memory instead of the
- * network. `baseUrl` defaults to `http://localhost`.
- */
-export const httpClient = <const H extends AnyHttp>(
-  http: H,
-  server: Server | Handler,
-  options?: ActionHttpClient.Options,
-): Effect.Effect<Client<H>> =>
-  ActionHttpClient.make(http, { baseUrl: "http://localhost", ...options }).pipe(
-    withFetch((input, init) => handlerOf(server)(new Request(input, init))),
-  );
-
 /** One `tools/call` for `mcpCall`: the endpoint, the tool and its arguments. */
-interface McpCallOptions extends McpEndpoint {
+interface McpCallOptions {
   /** The tool name: its action's name. */
   readonly name: string;
   /** Defaults to `{}`. It may be malformed on purpose. */
   readonly arguments?: { readonly [key: string]: McpRequestValue };
+  /** The endpoint's path; defaults to `/mcp`, the default `ActionMcp.layerHttp` path. */
+  readonly path?: string;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
@@ -92,56 +97,72 @@ const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply))
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
 
 /**
- * Call one tool through `server` with a stateless 2026-07-28 request and return its
- * outcome. A response that is not an HTTP 200 carrying a tool result, such as an
- * authentication refusal or a JSON-RPC error, throws with its status and body.
+ * Call one tool with a stateless 2026-07-28 request on the `HttpClient`, such as the one
+ * `layer` provides, and return its outcome. A response that is not an HTTP 200 carrying a
+ * tool result, such as an authentication refusal or a JSON-RPC error, fails with its
+ * status and body.
  */
-export const mcpCall = async (
-  server: Server | Handler,
-  { name, headers, arguments: args = {}, ...endpoint }: McpCallOptions,
-): Promise<McpCallResult> => {
-  const response = await handlerOf(server)(
-    mcpRequest({
-      ...endpoint,
+export const mcpCall = ({
+  name,
+  headers: init,
+  arguments: args = {},
+  path = "/mcp",
+}: McpCallOptions): Effect.Effect<McpCallResult, Error, HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    const { headers, body } = mcpMessage({
       method: "tools/call",
       params: { name, arguments: args },
-      ...(headers === undefined ? {} : { headers }),
-    }),
-  );
+      ...(init === undefined ? {} : { headers: init }),
+    });
 
-  const body = await response.text();
-
-  if (response.status !== 200) {
-    throw new Error(`MCP tools/call "${name}" answered ${response.status}: ${body}`);
-  }
-
-  // A JSON body is one message; an event stream carries one per `data:` line, and
-  // notifications may precede the reply.
-  const reply = body
-    .split("\n")
-    .map((line) => line.replace(/^data:/, "").trim())
-    .flatMap((line) => Option.toArray(decodeReply(line)))
-    .at(-1);
-
-  if (reply === undefined) throw new Error(`MCP tools/call "${name}" had no reply: ${body}`);
-
-  if ("error" in reply) {
-    throw new Error(
-      `MCP tools/call "${name}" failed with ${reply.error.code}: ${reply.error.message}`,
+    const response = yield* HttpClient.execute(
+      HttpClientRequest.post(path).pipe(
+        HttpClientRequest.setHeaders(Object.fromEntries(headers)),
+        HttpClientRequest.bodyText(body, "application/json"),
+      ),
     );
-  }
 
-  const { result } = reply;
+    const text = yield* response.text;
 
-  if (result.isError === true) {
-    const text = result.content.find((content) => content.type === "text")?.text ?? "";
+    if (response.status !== 200) {
+      return yield* Effect.fail(
+        new Error(`MCP tools/call "${name}" answered ${response.status}: ${text}`),
+      );
+    }
 
-    return { isError: true, error: Option.getOrElse(parseJson(text), () => text) };
-  }
+    // A JSON body is one message; an event stream carries one per `data:` line, and
+    // notifications may precede the reply.
+    const reply = text
+      .split("\n")
+      .map((line) => line.replace(/^data:/, "").trim())
+      .flatMap((line) => Option.toArray(decodeReply(line)))
+      .at(-1);
 
-  if (result.structuredContent === undefined) {
-    throw new Error(`MCP tools/call "${name}" returned no structured content: ${body}`);
-  }
+    if (reply === undefined) {
+      return yield* Effect.fail(new Error(`MCP tools/call "${name}" had no reply: ${text}`));
+    }
 
-  return { isError: false, value: result.structuredContent.value };
-};
+    if ("error" in reply) {
+      return yield* Effect.fail(
+        new Error(
+          `MCP tools/call "${name}" failed with ${reply.error.code}: ${reply.error.message}`,
+        ),
+      );
+    }
+
+    const { result } = reply;
+
+    if (result.isError === true) {
+      const error = result.content.find((content) => content.type === "text")?.text ?? "";
+
+      return { isError: true, error: Option.getOrElse(parseJson(error), () => error) };
+    }
+
+    if (result.structuredContent === undefined) {
+      return yield* Effect.fail(
+        new Error(`MCP tools/call "${name}" returned no structured content: ${text}`),
+      );
+    }
+
+    return { isError: false, value: result.structuredContent.value };
+  });

@@ -29,7 +29,7 @@ release. Add a tool name to select part of the graph. For example, run
 # effect-actions
 
 Library: `@gjermundgaraba/effect-actions`. Define Effect action contracts once and project them
-onto HTTP, MCP, native Toolkits, CLIs, and an offline catalog. Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md).
+onto HTTP, MCP, native Toolkits, and CLIs. Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md).
 Maintainer guide, lint policy, and release notes: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Repository map
@@ -53,8 +53,8 @@ vp run docs:sync    # regenerate the skill after editing anything in docs/
 
 ## Invariants
 
-- Contracts (`Action`) never import transport code. Each adapter owns its own mapping and validates only the names it serves.
-- Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime and define no application error types.
+- Contracts (`Action`) never import transport code. Each surface owns its own mapping and validates only the names it serves.
+- Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime.
 - Build-time and request-time requirements stay separate in the types. Never provide request identity at startup, in code or in docs.
 - Public behavior changes update the matching `docs/` page in the same commit, then `vp run docs:sync`.
 - Doc snippets that are also examples stay identical to the example file; edit the example first.

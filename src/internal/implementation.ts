@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
+import type { Refusal } from "./errors.js";
 
 /** Decoded values at the adapter dispatch boundary. */
 export type ErasedValue = Action.Any["input"]["Type"];
@@ -16,11 +17,19 @@ export type ErasedHandler<R> = {
 /** An adapter's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
-/**
- * An adapter's erased view of the pre-handler hook one surface binds. It sees the
- * selected action contract, so a policy reads `access` rather than the action name.
- */
-export type Before<R> = (action: Action.Any) => Effect.Effect<void, ErasedValue, R>;
+/** What every surface binds around the implementations it serves. */
+export interface Hook<R> {
+  /**
+   * Runs once per call, after the input is decoded and before the selected handler, with
+   * its action contract, so a policy reads `access` rather than the action name. It fails
+   * with a refusal, answered exactly as a declared error. Its services are request-time
+   * requirements, like a handler's.
+   */
+  readonly before?: ((action: Action.Any) => Effect.Effect<void, Refusal, R>) | undefined;
+}
+
+/** A surface's hook, erased. */
+type Before<R> = (action: Action.Any) => Effect.Effect<void, unknown, R>;
 
 /** Per-request requirements of one handler. */
 export type HandlerContext<H> = H extends (

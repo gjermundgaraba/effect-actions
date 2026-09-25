@@ -9,7 +9,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest } from "../src/internal/mcp-request.js";
 import { post, rawToolCall } from "./requests.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
   const web = serve(
@@ -449,6 +449,37 @@ describe("projection boundaries", () => {
     expect(JSON.stringify(reply)).toContain("Expected a finite number");
   });
 
+  it("answers HTTP input that does not decode with a 400 InvalidInput and the schema's message", async () => {
+    const Greet = Action.make("greet", {
+      description: "Greet",
+      access: "write",
+      input: { name: Schema.String },
+      success: Schema.String,
+    });
+
+    let ran = 0;
+
+    const web = makeTestHttp(
+      Action.implement(Greet, ({ name }) =>
+        Effect.as(
+          Effect.sync(() => ran++),
+          name,
+        ),
+      ),
+      Layer.empty,
+    );
+
+    onTestFinished(() => web.dispose());
+    const response = await web.handler(post("/api/greet", { name: 1 }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(
+      Schema.encodeSync(Action.InvalidInput)(
+        new Action.InvalidInput({ message: 'Expected string\n  at ["name"]' }),
+      ),
+    );
+    expect(ran).toBe(0);
+  });
+
   it("turns invalid output and defects into sanitized native failures on both transports", async () => {
     const Broken = Action.make("broken", {
       description: "Bad output",
@@ -472,14 +503,11 @@ describe("projection boundaries", () => {
     const mcp = makeTestMcp(apps, Layer.empty);
     onTestFinished(() => mcp.dispose());
 
-    // HttpApi renders a response-encoding failure as an empty 400 and a defect as an
-    // empty 500; the native McpServer reports both as a generic isError tool result.
-    for (const [name, status] of [
-      ["broken", 400],
-      ["boom", 500],
-    ] as const) {
+    // A result that does not encode is a defect, like any other: HTTP answers both with an
+    // empty 500, and the native McpServer reports both as a generic isError tool result.
+    for (const name of ["broken", "boom"]) {
       const http = await web.handler(post(`/api/${name}`));
-      expect(http.status).toBe(status);
+      expect(http.status).toBe(500);
       expect(await http.text()).toBe("");
       const reply = await (await mcp.handler(rawToolCall(name))).text();
       expect(reply).toContain('"isError":true');

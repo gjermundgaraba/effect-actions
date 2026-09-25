@@ -1,8 +1,10 @@
 import { Effect, Option } from "effect";
+import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
-import { actors, CurrentActor, Unauthenticated } from "./auth.js";
+import { actors, CurrentActor } from "./authorization.js";
 
-// RFC 9728 discovery, public: where a client learns which server issues its tokens.
+// RFC 9728 discovery, public: where an MCP client that was refused finds the server that
+// issues its tokens.
 export const discovery = Authentication.protectedResource({
   resource: "http://localhost:3000/mcp",
   authorizationServers: ["https://auth.example.com"],
@@ -13,15 +15,13 @@ export const discovery = Authentication.protectedResource({
 // server's library instead.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
-// Provides CurrentActor per request. A refusal is a declared error: sent as its JSON with
-// its `httpApiStatus` (401), plus the challenge. The binding declares it too, so what is
-// sent is what clients decode.
+// Provides CurrentActor per request. A refusal is the built-in `Unauthenticated`: a 401
+// every client decodes, with a `Bearer` challenge.
 export const authentication = Authentication.middleware(
   CurrentActor,
   Effect.flatMap(Authentication.bearerToken, (token) =>
     Option.isSome(token) && isActorToken(token.value)
       ? Effect.succeed(actors[token.value])
-      : Effect.fail(new Unauthenticated({ message: "A demo bearer token is required." })),
+      : Effect.fail(new Action.Unauthenticated({ message: "A demo bearer token is required." })),
   ),
-  { errors: [Unauthenticated], headers: { "www-authenticate": discovery.challenge() } },
 );

@@ -15,7 +15,7 @@ Do not deploy these credentials or this authentication implementation. State res
 
 Every action declares `access: "read"` or `access: "write"`. The guarded HTTP layer, the
 guarded MCP endpoint and the CLI each bind the same `before` hook, which maps that to
-`users:read` / `users:write` and refuses with `Forbidden`, so no handler contains
+`users:read` / `users:write` and refuses with the built-in `Action.Forbidden`, so no handler contains
 authorization code and the same rule applies over every surface.
 
 The application serves its implementations under three access rules:
@@ -81,17 +81,23 @@ curl -s http://127.0.0.1:3000/api/openapi.json
 
 For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The HTTP surface binds the same authorization hook, so it enforces the same check before the handler.
 
+Without a valid token, a guarded route or the `/mcp` endpoint answers 401
+`{"_tag":"Unauthenticated","message":"A demo bearer token is required."}` with
+`WWW-Authenticate: Bearer`. An MCP client then finds the authorization server at
+`/.well-known/oauth-protected-resource/mcp`, which is public.
+
 ## Application structure
 
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
-- [binding.ts](binding.ts): the `Http` binding with the errors its clients decode, including its schema-error answers. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
-- [auth.ts](auth.ts): demo actors, identity, permissions, authorization errors, and the `before` hook every guarded surface binds.
+- [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
+- [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook every guarded surface binds.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies and no authorization code.
-- [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.middleware` answering a missing or unknown token with the declared 401 and its challenge.
+- [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.middleware` answering a missing or unknown token with the built-in 401 and its `Bearer` challenge.
 - [http.ts](http.ts): the HTTP layers, public and guarded, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the guarded MCP endpoints.
-- [app.ts](app.ts): every surface of the host, under the Host/Origin policy.
+- [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
+- [app.ts](app.ts): every surface of the host, under that policy.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 
@@ -100,16 +106,16 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 ```text
 HTTP /api/getUser / MCP tool getUser
   → authentication middleware provides CurrentActor
-  → adapter decodes input (invalid input skips the hook and handler)
+  → the surface decodes input (invalid input is a 400 InvalidInput; the hook and handler never run)
   → before hook reads access: "read" and checks users:read
   → handler calls Users.get(actor.tenantId, id)
-  → adapter encodes the user or declared error
+  → the surface encodes the user or the declared error
 ```
 
 `UserNotFound` uses HTTP 404 and is declared on the actions that can raise it. `Forbidden`
-(403) and `Unauthenticated` (401) are declared on the `Http` binding instead, because the
-hook and the authentication middleware produce them rather than a handler; declaring them is
-what lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
+(403) and `Unauthenticated` (401) are built in: every endpoint and tool declares them, because
+the hook and the authentication middleware produce them rather than a handler. That is what
+lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
 authentication middleware carry `cache-control: no-store`; other routes use the host's cache policy. MCP returns an `isError` tool
 result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
 
@@ -122,15 +128,15 @@ See [dependency lifetimes](../docs/guarantees.md#dependency-lifetimes) for how t
 handlers share `Users` while resolving `CurrentActor` on each request.
 
 Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
-Never provide `CurrentActor` at startup: adapters retain native Effect context semantics,
+Never provide `CurrentActor` at startup: surfaces retain native Effect context semantics,
 not an extra identity-isolation boundary. Authentication establishes it on each request.
 
-## Other projections
+## Other surfaces
 
 These examples use the same action contracts without changing their handlers:
 
 ```sh
-# Local execution with explicit native CLI flags
+# Local execution; one flag per input field
 node --import tsx examples/cli.ts --value 21
 
 # Public status action over HTTP; start `vp run example` first
@@ -139,8 +145,6 @@ node --import tsx examples/cli-remote.ts
 # Native Effect Toolkit result, without an MCP envelope
 node --import tsx examples/toolkit.ts
 
-# Offline JSON catalog; no implementation or server startup
-node --import tsx examples/catalog.ts
 ```
 
 [cli.ts](cli.ts) and [cli-remote.ts](cli-remote.ts) return native Effect CLI commands;
@@ -153,5 +157,3 @@ allowlist and separate router CORS configuration; mount them with a platform ser
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
 authorization hook and a per-invocation principal.
 Run `node --import tsx examples/testing.ts` for in-memory HTTP and MCP calls with cleanup.
-[promise-client.ts](promise-client.ts) calls the running example from code that does not run
-Effects, such as a browser page, and handles a declared error and an unreachable server.

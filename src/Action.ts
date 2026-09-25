@@ -15,7 +15,7 @@ export type { Implementation } from "./internal/implementation.js";
 export type Codec = Schema.Codec<unknown, unknown, never, never>;
 
 /** Struct fields, accepted wherever a struct schema is: `{ name: Schema.String }`. */
-export type Fields = { readonly [key: string]: Codec };
+type Fields = { readonly [key: string]: Codec };
 
 /** The schema a `Codec | Fields` option stands for. */
 type CodecOf<S extends Codec | Fields> = S extends Codec
@@ -26,15 +26,15 @@ type CodecOf<S extends Codec | Fields> = S extends Codec
 
 /**
  * What an action does to the resource it serves: `"read"` observes, `"write"`
- * may change it. Authorization metadata, not an MCP hint.
+ * may change it. Authorization metadata, not a tool hint.
  */
 export type Access = "read" | "write";
 
-/** MCP tool hints; every field has a default derived from the action. */
-export interface McpOptions {
+/** Tool hints; every field has a default derived from the action. */
+export interface Hints {
   /** `readOnlyHint`; defaults to `access === "read"`. */
   readonly readOnly?: boolean;
-  /** `destructiveHint`; defaults to `!readOnly`, as the MCP spec only defines it for writes. */
+  /** `destructiveHint`; defaults to `!readOnly`, as MCP only defines it for writes. */
   readonly destructive?: boolean;
   /** `idempotentHint`; defaults to `false`. */
   readonly idempotent?: boolean;
@@ -42,12 +42,15 @@ export interface McpOptions {
   readonly openWorld?: boolean;
 }
 
+/** The refusals every surface answers with; see `internal/errors`. */
+export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./internal/errors.js";
+
 /** What `make` needs to define an action. */
-export interface Options<
+interface Options<
   Input extends Codec | Fields,
   Output extends Codec | Fields,
   Errors extends ReadonlyArray<Codec>,
-  Acc extends Access = Access,
+  Acc extends Access,
 > {
   readonly description: string;
   /** A schema or struct fields. Omit for an action without arguments. */
@@ -62,8 +65,8 @@ export interface Options<
    * library itself authorizes nothing.
    */
   readonly access: Acc;
-  /** MCP tool hints. The tool is named after the action. */
-  readonly mcp?: McpOptions;
+  /** Tool hints, for MCP and native Toolkit tools. The tool is named after the action. */
+  readonly hints?: Hints;
 }
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
@@ -80,9 +83,9 @@ export interface Action<
   readonly success: Output;
   readonly errors: Errors;
   // Declared, never defaulted, so a rule that switches on it reads a literal
-  // rather than the runtime values the MCP hints are.
+  // rather than the runtime values the hints are.
   readonly access: Acc;
-  readonly mcp: Required<McpOptions>;
+  readonly hints: Required<Hints>;
 }
 
 /** Any action, with its schemas erased. */
@@ -96,26 +99,25 @@ export type Handler<A extends Any, R = never> = (
 /** An empty object schema that also produces the object root MCP requires. */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
-type AnyOptions = Options<Codec | Fields, Codec | Fields, ReadonlyArray<Codec>>;
+type AnyOptions = Options<Codec | Fields, Codec | Fields, ReadonlyArray<Codec>, Access>;
 
 const codecOf = (schema: Codec | Fields): Codec =>
   Schema.isSchema(schema) ? schema : Schema.Struct(schema);
 
 /**
  * Define an action contract. Names are `[A-Za-z0-9_-]{1,128}`, other than `then`: the name
- * is also the route segment, the client method and the MCP tool name.
+ * is also the route segment, the client method and the tool name.
  */
-export function make<const Name extends string, const O extends AnyOptions>(
+export function make<
+  const Name extends string,
+  Input extends Codec | Fields = typeof NoInput,
+  Output extends Codec | Fields = never,
+  const Errors extends ReadonlyArray<Codec> = [],
+  const Acc extends Access = Access,
+>(
   name: Name,
-  // A key `Options` does not declare, such as a stale or misspelled one, is refused.
-  options: O & { readonly [K in Exclude<keyof O, keyof AnyOptions>]: never },
-): Action<
-  Name,
-  "input" extends keyof O ? CodecOf<Exclude<O["input"], undefined>> : typeof NoInput,
-  CodecOf<O["success"]>,
-  "errors" extends keyof O ? Exclude<O["errors"], undefined> : [],
-  O["access"]
->;
+  options: Options<Input, Output, Errors, Acc>,
+): Action<Name, CodecOf<Input>, CodecOf<Output>, Errors, Acc>;
 export function make(name: string, options: AnyOptions): Any {
   assertName("action name", name);
 
@@ -127,13 +129,13 @@ export function make(name: string, options: AnyOptions): Any {
 
   // One contract states the fact once: a read action is a read-only tool unless
   // the contract says otherwise.
-  const readOnly = options.mcp?.readOnly ?? access === "read";
+  const readOnly = options.hints?.readOnly ?? access === "read";
 
-  const mcp = {
+  const hints = {
     readOnly,
-    destructive: options.mcp?.destructive ?? !readOnly,
-    idempotent: options.mcp?.idempotent ?? false,
-    openWorld: options.mcp?.openWorld ?? true,
+    destructive: options.hints?.destructive ?? !readOnly,
+    idempotent: options.hints?.idempotent ?? false,
+    openWorld: options.hints?.openWorld ?? true,
   };
 
   return {
@@ -143,7 +145,7 @@ export function make(name: string, options: AnyOptions): Any {
     success: codecOf(options.success),
     errors: options.errors ?? [],
     access,
-    mcp,
+    hints,
   };
 }
 

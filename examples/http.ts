@@ -1,8 +1,8 @@
 import { Layer } from "effect";
 import { HttpApiSwagger } from "effect/unstable/httpapi";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { guarded } from "./auth.js";
 import { authentication } from "./authentication.js";
+import { authorize } from "./authorization.js";
 import { Http } from "./binding.js";
 import { double, status, userActions } from "./handlers.js";
 
@@ -11,7 +11,9 @@ import { double, status, userActions } from "./handlers.js";
 // hook; every user action is authorized after decoding, before its handler runs.
 const routes = Layer.mergeAll(
   ActionHttp.layer(Http, status),
-  ActionHttp.layer(Http, [userActions, double], guarded).pipe(Layer.provide(authentication.layer)),
+  ActionHttp.layer(Http, [userActions, double], { before: authorize }).pipe(
+    Layer.provide(authentication.layer),
+  ),
 );
 
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI JSON at

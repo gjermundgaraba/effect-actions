@@ -1,18 +1,21 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { httpClient, mcpCall, serve as serveRoutes } from "../src/Testing.js";
-import { mcpRequest } from "../src/internal/mcp-request.js";
-import { makeTestApp, makeTestMcp } from "./server.js";
-import { Forbidden } from "../examples/auth.js";
-import { UserNotFound } from "../examples/contracts.js";
+import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
   HttpRouter,
+  HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import { layer as host } from "../examples/app.js";
 import { Http } from "../examples/binding.js";
+import { UserNotFound } from "../examples/contracts.js";
 import * as Action from "../src/Action.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionHttpClient from "../src/ActionHttpClient.js";
+import * as ActionMcp from "../src/ActionMcp.js";
+import { mcpRequest } from "../src/internal/mcp-request.js";
+import * as Testing from "../src/Testing.js";
 
 it("sends to /mcp on http://localhost unless told otherwise", () => {
   expect(mcpRequest({ method: "tools/list" }).url).toBe("http://localhost/mcp");
@@ -85,49 +88,54 @@ it("preserves malformed tool names without inventing a routing header", async ()
   expect(await request.json()).toMatchObject({ params: { name: 123, arguments: {} } });
 });
 
+/** Run `program` against the example host, answered in memory with fresh example state. */
+const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
+  program.pipe(Effect.provide(Testing.layer(host)), Effect.runPromise);
+
+type Arguments = NonNullable<Parameters<typeof Testing.mcpCall>[0]["arguments"]>;
+
+/** One tool call to the example host's `/mcp`, as the actor `token` names. */
+const call = (name: string, input?: Arguments, token = "alice") =>
+  Testing.mcpCall({
+    name,
+    ...(input === undefined ? {} : { arguments: input }),
+    headers: { authorization: `Bearer ${token}` },
+  });
+
 describe("mcpCall", () => {
-  const serve = () => {
-    const web = makeTestApp();
-    onTestFinished(() => web.dispose());
-
-    return (name: string, input: Parameters<typeof mcpCall>[1]["arguments"], token = "alice") =>
-      mcpCall(web.handler, {
-        name,
-        ...(input === undefined ? {} : { arguments: input }),
-        headers: { authorization: `Bearer ${token}` },
-      });
-  };
-
   it("returns a success without the `{ value }` envelope", async () => {
-    const call = serve();
+    const results = await againstHost(
+      Effect.all([call("getUser", { id: "1" }), call("double", { value: "21" }), call("whoAmI")]),
+    );
 
-    expect(await call("getUser", { id: "1" })).toEqual({
-      isError: false,
-      value: { id: "1", name: "Ada" },
-    });
-    expect(await call("double", { value: "21" })).toEqual({ isError: false, value: 42 });
-    expect(await call("whoAmI", undefined)).toEqual({
-      isError: false,
-      value: { id: "alice", tenantId: "acme" },
-    });
+    expect(results).toEqual([
+      { isError: false, value: { id: "1", name: "Ada" } },
+      { isError: false, value: 42 },
+      { isError: false, value: { id: "alice", tenantId: "acme" } },
+    ]);
   });
 
   it("returns a declared or refused error as its decoded JSON", async () => {
-    const call = serve();
+    const results = await againstHost(
+      Effect.all([
+        call("getUser", { id: "404" }),
+        call("renameUser", { id: "1", name: "Grace" }, "reader"),
+      ]),
+    );
 
-    expect(await call("getUser", { id: "404" })).toEqual({
-      isError: true,
-      error: Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "404" })),
-    });
-    expect(await call("renameUser", { id: "1", name: "Grace" }, "reader")).toEqual({
-      isError: true,
-      error: Schema.encodeSync(Forbidden)(new Forbidden({ permission: "users:write" })),
-    });
+    expect(results).toEqual([
+      { isError: true, error: Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "404" })) },
+      {
+        isError: true,
+        error: Schema.encodeSync(Action.Forbidden)(
+          new Action.Forbidden({ message: "Requires users:write." }),
+        ),
+      },
+    ]);
   });
 
   it("returns the native message of an error that is not JSON", async () => {
-    const call = serve();
-    const result = await call("getUser", { id: 1 });
+    const result = await againstHost(call("getUser", { id: 1 }));
 
     expect(result.isError).toBe(true);
     expect(result.isError && result.error).toEqual(
@@ -143,47 +151,40 @@ describe("mcpCall", () => {
       errors: [Schema.String],
     });
 
-    const web = makeTestMcp(
+    const routes = ActionMcp.layerHttp(
       Action.implement(Fail, () => Effect.fail("failure")),
-      Layer.empty,
+      { name: "test", version: "0" },
     );
 
-    onTestFinished(() => web.dispose());
-
-    expect(await mcpCall(web.handler, { name: "fail" })).toEqual({
-      isError: true,
-      error: "failure",
-    });
-  });
-
-  it("throws for an answer that is not a tool result", async () => {
-    const call = serve();
-
-    await expect(call("getUser", { id: "1" }, "nobody")).rejects.toThrow(
-      'MCP tools/call "getUser" answered 401',
+    const result = await Testing.mcpCall({ name: "fail" }).pipe(
+      Effect.provide(Testing.layer(routes)),
+      Effect.runPromise,
     );
-    await expect(call("missing_tool", {})).rejects.toThrow('MCP tools/call "missing_tool"');
+
+    expect(result).toEqual({ isError: true, error: "failure" });
   });
 
-  it("calls the endpoint its path and base URL name", async () => {
-    const urls: string[] = [];
+  it("fails with the status and body of an answer that is not a tool result", async () => {
+    const [refused, missing] = await againstHost(
+      Effect.all([
+        Effect.flip(call("getUser", { id: "1" }, "nobody")),
+        Effect.flip(call("missing_tool", {})),
+      ]),
+    );
 
-    const reply = {
-      jsonrpc: "2.0",
-      id: 1,
-      result: { content: [], structuredContent: { value: 1 } },
-    };
+    expect(refused).toBeInstanceOf(Error);
+    expect(refused.message).toContain('MCP tools/call "getUser" answered 401');
+    expect(refused.message).toContain(
+      '{"_tag":"Unauthenticated","message":"A demo bearer token is required."}',
+    );
+    expect(missing.message).toContain('MCP tools/call "missing_tool"');
+  });
 
-    const handler = async (request: Request) => {
-      urls.push(request.url);
+  it("calls the endpoint its path names", async () => {
+    // The example's public endpoint needs no credentials.
+    const result = await againstHost(Testing.mcpCall({ name: "status", path: "/mcp/public" }));
 
-      return Response.json(reply);
-    };
-
-    await mcpCall(handler, { name: "one" });
-    await mcpCall(handler, { name: "one", path: "/mcp/public", baseUrl: "https://api.example" });
-
-    expect(urls).toEqual(["http://localhost/mcp", "https://api.example/mcp/public"]);
+    expect(result).toEqual({ isError: false, value: { service: "effect-actions", users: 2 } });
   });
 
   it("reads the reply from an event stream that carries notifications first", async () => {
@@ -194,23 +195,28 @@ describe("mcpCall", () => {
       .map((message) => `data: ${JSON.stringify(message)}\n\n`)
       .join("");
 
-    const result = await mcpCall(
-      async () => new Response(stream, { headers: { "content-type": "text/event-stream" } }),
-      { name: "listed" },
+    const routes = HttpRouter.add(
+      "POST",
+      "/events",
+      HttpServerResponse.text(stream, { contentType: "text/event-stream" }),
+    );
+
+    const result = await Testing.mcpCall({ name: "listed", path: "/events" }).pipe(
+      Effect.provide(Testing.layer(routes)),
+      Effect.runPromise,
     );
 
     expect(result).toEqual({ isError: false, value: [1, 2] });
   });
 });
 
-describe("httpClient", () => {
-  it("calls a flat binding in memory through the flat client", async () => {
-    const web = makeTestApp();
-    onTestFinished(() => web.dispose());
+describe("layer", () => {
+  class Visits extends Context.Service<Visits, { count: number }>()("testing/Visits") {}
 
-    const result = await Effect.runPromise(
+  it("answers a client made without a base URL, and every tool call, in memory", async () => {
+    const result = await againstHost(
       Effect.gen(function* () {
-        const client = yield* httpClient(Http, web.handler, {
+        const client = yield* ActionHttpClient.make(Http, {
           transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
         });
 
@@ -218,60 +224,93 @@ describe("httpClient", () => {
           user: yield* client.getUser({ id: "1" }),
           missing: yield* Effect.flip(client.getUser({ id: "404" })),
           status: yield* client.status(),
+          doubled: yield* call("double", { value: "2" }),
         };
       }),
     );
 
     expect(result.user).toEqual({ id: "1", name: "Ada" });
     expect(result.missing).toEqual(new UserNotFound({ id: "404" }));
-    expect(result.status.users).toBe(2);
+    expect(result.status).toEqual({ service: "effect-actions", users: 2 });
+    expect(result.doubled).toEqual({ isError: false, value: 4 });
   });
-});
 
-describe("serve", () => {
-  class Visits extends Context.Service<Visits, { count: number }>()("testing/Visits") {}
+  it("resolves a relative URL against http://localhost, and answers any origin in memory", async () => {
+    const routes = HttpRouter.add(
+      "GET",
+      "/where",
+      Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+        HttpServerResponse.text(request.originalUrl),
+      ),
+    );
 
-  it("serves routes in memory with the platform services, until disposed", async () => {
+    const urls = await Effect.forEach(
+      ["/where", "http://localhost/where", "https://api.example/where"],
+      (url) => Effect.flatMap(HttpClient.get(url), (response) => response.text),
+    ).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
+
+    expect(urls).toEqual([
+      "http://localhost/where",
+      "http://localhost/where",
+      "https://api.example/where",
+    ]);
+  });
+
+  it("serves routes with the services their middleware provides, until its scope closes", async () => {
     const visits = { count: 0 };
+    let released = false;
 
-    const server = serveRoutes(
+    const routes = Layer.merge(
       HttpRouter.add(
         "GET",
         "/visits",
         Effect.map(Visits, (seen) => HttpServerResponse.text(String(++seen.count))),
       ).pipe(HttpRouter.provideRequest(Layer.succeed(Visits, visits))),
+      Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(() => (released = true)))),
     );
 
-    try {
-      const response = await server.handler(new Request("http://localhost/visits"));
+    const [visited, missing] = await Effect.gen(function* () {
+      const response = yield* HttpClient.get("/visits");
+      const visited = [response.status, yield* response.text, released] as const;
 
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe("1");
-      expect((await server.handler(new Request("http://localhost/missing"))).status).toBe(404);
-    } finally {
-      await server.dispose();
-    }
+      return [visited, (yield* HttpClient.get("/missing")).status] as const;
+    }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
+    expect(visited).toEqual([200, "1", false]);
+    expect(missing).toBe(404);
     expect(visits.count).toBe(1);
+    expect(released).toBe(true);
   });
 
-  it("serves the example host for every in-memory helper, given the server itself", async () => {
-    const { layer } = await import("../examples/app.js");
-    const server = serveRoutes(layer);
-    onTestFinished(() => server.dispose());
+  it("fails with the routes' build failure", async () => {
+    class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 
-    const status = await Effect.runPromise(
-      Effect.flatMap(httpClient(Http, server), (client) => client.status()),
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      access: "read",
+      success: Schema.Boolean,
+    });
+
+    // The builder fails, so the routes are never built.
+    const routes = ActionHttp.layer(
+      ActionHttp.make([Ping]),
+      Action.implement(
+        Ping,
+        Effect.gen(function* () {
+          yield* new Unavailable();
+
+          return () => Effect.succeed(true);
+        }),
+      ),
     );
 
-    expect(status.service).toBe("effect-actions");
-    expect(
-      await mcpCall(server, {
-        name: "double",
-        arguments: { value: "2" },
-        headers: { authorization: "Bearer alice" },
-      }),
-    ).toEqual({ isError: false, value: 4 });
+    const failure = await HttpClient.get("/api/ping").pipe(
+      Effect.provide(Testing.layer(routes)),
+      Effect.flip,
+      Effect.runPromise,
+    );
+
+    expect(failure).toEqual(new Unavailable());
   });
 
   it("refuses routes that still need a per-request service", () => {
@@ -283,7 +322,7 @@ describe("serve", () => {
 
     const check = () => {
       // @ts-expect-error -- Nothing provides `Visits`, so the routes cannot be served.
-      serveRoutes(needsVisits);
+      Testing.layer(needsVisits);
     };
 
     void check;

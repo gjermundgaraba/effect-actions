@@ -4,7 +4,7 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { makeTestHttp } from "./server.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 describe("contracts", () => {
   it("defaults to no input and errors to none", () => {
@@ -14,14 +14,14 @@ describe("contracts", () => {
     expect(Double.errors).toEqual([]);
   });
 
-  it("derives MCP hints: destructive follows readOnly unless stated", () => {
-    expect(GetUser.mcp).toEqual({
+  it("derives tool hints: destructive follows readOnly unless stated", () => {
+    expect(GetUser.hints).toEqual({
       readOnly: true,
       destructive: false,
       idempotent: false,
       openWorld: true,
     });
-    expect(RenameUser.mcp).toEqual({
+    expect(RenameUser.hints).toEqual({
       readOnly: false,
       destructive: false,
       idempotent: false,
@@ -34,12 +34,19 @@ describe("contracts", () => {
       success: Schema.String,
     });
 
-    expect(Write.mcp).toEqual({
+    expect(Write.hints).toEqual({
       readOnly: false,
       destructive: true,
       idempotent: false,
       openWorld: true,
     });
+  });
+
+  it("owns the built-in failures, each with a default message", () => {
+    expect(new Action.Forbidden().message).toBe("Not allowed.");
+    expect(new Action.Unauthenticated().message).toBe("Authentication is required.");
+    expect(new Action.InvalidInput().message).toBe("The input does not match the action's input.");
+    expect(new Action.InvalidInput({ message: "Expected string" }).message).toBe("Expected string");
   });
 
   it("rejects invalid names at definition time, where they are also tool names", () => {

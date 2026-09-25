@@ -9,7 +9,7 @@ import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
-import { CurrentActor } from "../examples/auth.js";
+import { CurrentActor } from "../examples/authorization.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
 import { userActions as App } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
@@ -97,7 +97,7 @@ export const typeAssertions = () => {
       description: "Client",
       access: "write",
       success: Schema.String,
-      mcp: {},
+      hints: {},
     }),
     () => Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? ""),
   );
@@ -313,12 +313,8 @@ export const clientTypes = Effect.gen(function* () {
   native.double({ value: 21 });
 });
 
-export const policyTypes = Effect.gen(function* () {
-  class PolicyFailure extends Schema.TaggedError<PolicyFailure>()("PolicyFailure", {
-    kind: Schema.String,
-  }) {}
-
-  class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
+export const builtInErrorTypes = Effect.gen(function* () {
+  class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
 
   const Echo = Action.make("echo", {
     description: "Echo",
@@ -327,51 +323,40 @@ export const policyTypes = Effect.gen(function* () {
     success: Schema.Finite,
   });
 
-  // Written inline, the policy needs no annotation: each answer is typed from `errors`.
-  const bound = ActionHttp.make([Echo], {
-    errors: [Refused, PolicyFailure],
-    schemaError: {
-      invalid: ({ kind }) => new PolicyFailure({ kind }),
-      internal: ({ kind }) => new PolicyFailure({ kind }),
-    },
-  });
+  const bound = ActionHttp.make([Echo]);
 
-  // @ts-expect-error Binding errors belong to the transport, not to handlers.
-  Action.implement(Echo, () => Effect.fail(new PolicyFailure({ kind: "Body" })));
-  // @ts-expect-error Surface errors belong to the surface, not to handlers.
-  Action.implement(Echo, () => Effect.fail(new Refused()));
+  // A binding is plain data: its actions, where they are mounted, and the native API.
+  const fields: Equal<keyof typeof bound, "actions" | "prefix" | "api"> = true;
+  void fields;
 
-  // Binding errors reach every client method as typed failures.
+  // @ts-expect-error Refusals belong to the surface, not to handlers.
+  Action.implement(Echo, () => Effect.fail(new Action.Forbidden()));
+  // @ts-expect-error Bad input is answered before a handler runs, not by it.
+  Action.implement(Echo, () => Effect.fail(new Action.InvalidInput()));
+  // @ts-expect-error Surface errors are built in, not declared on the binding.
+  ActionHttp.make([Echo], { errors: [Unrelated] });
+  // @ts-expect-error Bad input is always answered with `InvalidInput`; there is no policy.
+  ActionHttp.make([Echo], { schemaError: {} });
+
+  // Every built-in error reaches every client method as a typed failure.
   const client = yield* ActionHttpClient.make(bound);
   yield* client.echo({ value: 1 }).pipe(
-    Effect.catchTag("PolicyFailure", () => Effect.succeed(0)),
-    Effect.catchTag("Refused", () => Effect.succeed(0)),
+    Effect.catchTag("InvalidInput", () => Effect.succeed(0)),
+    Effect.catchTag("Unauthenticated", () => Effect.succeed(0)),
+    Effect.catchTag("Forbidden", () => Effect.succeed(0)),
   );
 
   const native = yield* HttpApiClient.make(bound.api);
   yield* native.echo({ payload: { value: 1 } }).pipe(
-    Effect.catchTag("PolicyFailure", () => Effect.succeed(0)),
-    Effect.catchTag("Refused", () => Effect.succeed(0)),
+    Effect.catchTag("InvalidInput", () => Effect.succeed(0)),
+    Effect.catchTag("Unauthenticated", () => Effect.succeed(0)),
+    Effect.catchTag("Forbidden", () => Effect.succeed(0)),
   );
 
-  ActionHttp.make([Echo], {
-    errors: [PolicyFailure],
-    schemaError: {
-      // @ts-expect-error An answer returns one of the binding's errors.
-      invalid: () => "undeclared",
-    },
-  });
-  ActionHttp.make([Echo], {
-    errors: [PolicyFailure],
-    schemaError: {
-      // @ts-expect-error An answer is pure, not a service-requiring Effect.
-      internal: () => Effect.as(CurrentActor, new PolicyFailure({ kind: "Body" })),
-    },
-  });
-  ActionHttp.make([Echo], {
-    // @ts-expect-error Without declared errors, there is nothing to answer with.
-    schemaError: { invalid: () => new PolicyFailure({ kind: "Payload" }) },
-  });
+  yield* client
+    .echo({ value: 1 })
+    // @ts-expect-error Undeclared, so the client has no such failure to catch.
+    .pipe(Effect.catchTag("Unrelated", () => Effect.succeed(0)));
 });
 
 export const configuredAdapterTypes = () => {
@@ -385,12 +370,6 @@ export const configuredAdapterTypes = () => {
 
   // @ts-expect-error Configuring the binding must preserve request requirements.
   void web.handler(new Request("http://localhost"), Context.empty());
-  ActionMcp.layerHttp(App, {
-    name: "test",
-    version: "0",
-    // @ts-expect-error The schema-error policy is HTTP's; MCP keeps its native answers.
-    schemaError: { invalid: undefined, internal: undefined },
-  });
   // @ts-expect-error A prefix is an absolute path.
   ActionHttp.make(Actions, { prefix: "api" });
   ActionMcp.layerHttp(App, {
@@ -407,7 +386,7 @@ export const configuredAdapterTypes = () => {
   });
   // Both mount paths have defaults: `/api` and `/mcp`.
   ActionHttp.make(Actions);
-  // The group name, which is the OpenAPI tag, may be chosen.
+  // @ts-expect-error The group name, which is the OpenAPI tag, is the mount path.
   ActionHttp.make(Actions, { prefix: "/users", name: "users" });
   // The document is served from the binding, not from a layer of it.
   ActionHttp.openApi(Bound) satisfies Layer.Layer<never, never, HttpRouter.HttpRouter>;
@@ -544,8 +523,6 @@ export const layerTypes = () => {
 export const beforeTypes = () => {
   class Denied extends Schema.TaggedError<Denied>()("Denied", {}, { httpApiStatus: 403 }) {}
 
-  class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
-
   class Clock extends Context.Service<Clock, number>()("types-spec/Clock") {}
 
   const Read = Action.make("read", {
@@ -556,29 +533,34 @@ export const beforeTypes = () => {
 
   const app = Action.implement(Read, () => Effect.succeed("ok"));
 
-  const binding = ActionHttp.make([Read], { errors: [Denied] });
+  const binding = ActionHttp.make([Read]);
 
-  // The hook may fail with the errors the binding declares on every endpoint.
+  // The hook may fail with either refusal, which every endpoint declares.
+  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Action.Forbidden()) });
+  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Action.Unauthenticated()) });
+
+  // @ts-expect-error A hook may not fail with anything but a refusal, even a 403 of its own.
   ActionHttp.layer(binding, app, { before: () => Effect.fail(new Denied()) });
+  // @ts-expect-error Bad input is answered before the hook runs, not by it.
+  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Action.InvalidInput()) });
 
-  // @ts-expect-error A hook may not fail with an error the binding does not declare.
-  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Unrelated()) });
+  // One hook binds to every surface; there is no `errors` to declare alongside it.
+  const guard = {
+    before: (action: Action.Any) =>
+      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
+  };
 
-  // A guard shared with the tool surfaces carries `errors`; HTTP reads only `before`.
-  const guard = { errors: [Denied], before: () => Effect.fail(new Denied()) };
   ActionHttp.layer(binding, app, guard);
+  ActionMcp.layerHttp(app, { name: "t", version: "0", ...guard });
+  ActionToolkit.make(app, guard);
 
-  const unrelated = { errors: [Unrelated], before: () => Effect.fail(new Unrelated()) };
-  // @ts-expect-error A shared guard's refusal must be declared on the binding.
-  ActionHttp.layer(binding, app, unrelated);
-
-  const bare = ActionHttp.make([Read]);
-  // @ts-expect-error A binding without declared errors has no failure for a hook to use.
-  ActionHttp.layer(bare, app, { before: () => Effect.fail(new Denied()) });
+  // @ts-expect-error Surfaces take no `errors`: the refusals are built in.
+  ActionHttp.layer(binding, app, { errors: [Denied], ...guard });
 
   // The hook reads the contract it is about to run, including its access.
   ActionHttp.layer(binding, app, {
-    before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
+    before: (action) =>
+      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
   });
 
   // Hook services are request-time requirements, exactly like a handler's.
@@ -590,11 +572,10 @@ export const beforeTypes = () => {
   void timed.handler(new Request("http://localhost"), Context.empty());
   void timed.handler(new Request("http://localhost"), Context.make(Clock, 0));
 
-  // MCP types its hook the same way, from the errors that endpoint declares.
+  // MCP types its hook the same way.
   const stdio = ActionMcp.layerStdio(app, {
     name: "t",
     version: "0",
-    errors: [Denied],
     before: () => Effect.asVoid(Clock),
   });
 
@@ -604,35 +585,10 @@ export const beforeTypes = () => {
   ActionMcp.layerStdio(app, {
     name: "t",
     version: "0",
-    errors: [Denied],
-    // @ts-expect-error An MCP hook may not fail with an error the endpoint does not declare.
-    before: () => Effect.fail(new Unrelated()),
+    // @ts-expect-error An MCP hook may not fail with anything but a refusal.
+    before: () => Effect.fail(new Denied()),
   });
 };
-
-export const surfaceErrorTypes = Effect.gen(function* () {
-  class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
-    "Unauthenticated",
-    {},
-    { httpApiStatus: 401 },
-  ) {}
-
-  const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
-
-  const guarded = yield* ActionHttpClient.make(
-    ActionHttp.make([Read], { errors: [Unauthenticated] }),
-  );
-
-  // A failure the surface renders around every endpoint is a typed client failure.
-  yield* guarded.read().pipe(Effect.catchTag("Unauthenticated", () => Effect.succeed("")));
-
-  const bare = yield* ActionHttpClient.make(ActionHttp.make([Read]));
-
-  yield* bare
-    .read()
-    // @ts-expect-error Undeclared, so the client has no such failure to catch.
-    .pipe(Effect.catchTag("Unauthenticated", () => Effect.succeed("")));
-});
 
 export const servedRequirementTypes = () => {
   class Principal extends Context.Service<Principal, string>()("types-spec/Principal") {}
@@ -644,15 +600,30 @@ export const servedRequirementTypes = () => {
       description: "A tool",
       access: "read",
       success: Schema.String,
-      mcp: { idempotent: true },
+      hints: { idempotent: true },
     }),
     principal,
   );
 
+  Action.make("typo", {
+    description: "Typo",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error A misspelled option is an unknown property, not silently ignored.
+    hint: { idempotent: true },
+  });
+  Action.make("renamed", {
+    description: "Renamed",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error Tool hints are `hints`; there is no `mcp` option.
+    mcp: { idempotent: true },
+  });
+
   // Every hint is resolved on the contract.
   const resolved: Equal<
-    (typeof hintsApp)["actions"][number]["mcp"],
-    Required<Action.McpOptions>
+    (typeof hintsApp)["actions"][number]["hints"],
+    Required<Action.Hints>
   > = true;
 
   void resolved;
@@ -663,7 +634,9 @@ export const servedRequirementTypes = () => {
   const toolAssertions: [
     Equal<keyof typeof tools, "act">,
     Equal<Tool.HandlerServices<(typeof tools)["act"]>, Principal>,
-  ] = [true, true];
+    // Every tool declares the refusals a `before` hook may fail with.
+    Equal<Tool.Failure<(typeof tools)["act"]>, Action.Unauthenticated | Action.Forbidden>,
+  ] = [true, true, true];
 
   void toolAssertions;
 };

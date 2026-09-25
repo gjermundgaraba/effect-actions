@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
-import { Context, Effect, Layer, Predicate, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import {
   HttpClient,
@@ -14,10 +14,8 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { makeTestApp } from "./server.js";
 import { Http } from "../examples/binding.js";
-import { InvalidRequest, UserNotFound } from "../examples/contracts.js";
-import { Forbidden } from "../examples/auth.js";
-import { discovery } from "../examples/authentication.js";
-import { httpClient, serve } from "../src/Testing.js";
+import { UserNotFound } from "../examples/contracts.js";
+import { httpClient, serve } from "./serve.js";
 import { mcpRequest } from "../src/internal/mcp-request.js";
 import { withMcpClient } from "./mcp-client.js";
 
@@ -116,8 +114,12 @@ describe("one implementation, both transports", () => {
   });
 
   it("rejects malformed input with each protocol's native error", async () => {
-    expect((await app.handler(request("/api/double", "alice", { value: "nope" }))).status).toBe(
-      400,
+    const invalid = await app.handler(request("/api/double", "alice", { value: "nope" }));
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual(
+      Schema.encodeSync(Action.InvalidInput)(
+        new Action.InvalidInput({ message: 'Expected a finite number\n  at ["value"]' }),
+      ),
     );
     expect(await tool("double", { value: "nope" })).toMatchObject({ isError: true });
     expect(
@@ -132,8 +134,8 @@ describe("one implementation, both transports", () => {
     const denied = await tool("renameUser", { id: "1", name: "unauthorized" }, "reader");
     expect(denied.isError).toBe(true);
 
-    const forbiddenBody = Schema.encodeSync(Forbidden)(
-      new Forbidden({ permission: "users:write" }),
+    const forbiddenBody = Schema.encodeSync(Action.Forbidden)(
+      new Action.Forbidden({ message: "Requires users:write." }),
     );
 
     expect(denied.content).toEqual([{ type: "text", text: JSON.stringify(forbiddenBody) }]);
@@ -199,8 +201,12 @@ describe("one implementation, both transports", () => {
       );
 
       expect(response.status).toBe(401);
-      expect(response.headers.get("www-authenticate")).toBe(discovery.challenge());
-      expect(Predicate.isTagged("Unauthenticated")(await response.json())).toBe(true);
+      expect(response.headers.get("www-authenticate")).toBe("Bearer");
+      expect(await response.json()).toEqual(
+        Schema.encodeSync(Action.Unauthenticated)(
+          new Action.Unauthenticated({ message: "A demo bearer token is required." }),
+        ),
+      );
     }
 
     expect((await app.handler(request("/api/getUser", "toString", { id: "1" }))).status).toBe(401);
@@ -267,6 +273,18 @@ describe("one implementation, both transports", () => {
         },
         responses: {
           "200": {},
+          "400": {
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/InvalidInputEncoded" } },
+            },
+          },
+          "401": {
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UnauthenticatedEncoded" },
+              },
+            },
+          },
           "403": {
             content: {
               "application/json": { schema: { $ref: "#/components/schemas/ForbiddenEncoded" } },
@@ -310,34 +328,53 @@ describe("actions under their own middleware", () => {
 
     const unauthenticated = await app.handler(anonymous("/api/whoAmI", {}));
     expect(unauthenticated.status).toBe(401);
-    expect(unauthenticated.headers.get("www-authenticate")).toBe(discovery.challenge());
+    expect(unauthenticated.headers.get("www-authenticate")).toBe("Bearer");
     expect((await app.handler(request("/api/whoAmI", "alice", {}))).status).toBe(200);
   });
 
-  it("calls every action through one flat client, with the shared policy errors", async () => {
+  it("calls every action through one flat client, which decodes the built-in refusals", async () => {
+    const as = (token?: string) =>
+      httpClient(
+        Http,
+        app.handler,
+        token === undefined
+          ? {}
+          : { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) },
+      );
+
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const client = yield* httpClient(Http, app.handler, {
-          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
-        });
+        const client = yield* as("alice");
 
         return {
           status: yield* client.status(),
           identity: yield* client.whoAmI(),
+          // The authentication middleware's 401 and the hook's 403, as typed failures.
+          unauthenticated: yield* Effect.flip((yield* as()).whoAmI()),
+          forbidden: yield* Effect.flip(
+            (yield* as("reader")).renameUser({ id: "1", name: "Reader" }),
+          ),
         };
       }),
     );
 
     expect(result.status.users).toBe(2);
     expect(result.identity).toEqual({ id: "alice", tenantId: "acme" });
+    expect(result.unauthenticated).toBeInstanceOf(Action.Unauthenticated);
+    expect(result.unauthenticated).toMatchObject({ message: "A demo bearer token is required." });
+    expect(result.forbidden).toBeInstanceOf(Action.Forbidden);
+    expect(result.forbidden).toMatchObject({ message: "Requires users:write." });
 
-    // The typed client validates locally, so the server's policy needs a raw request.
+    // The typed client validates locally, so bad input needs a raw request. Its message
+    // is the schema's own account of what is wrong.
     const rejected = await app.handler(request("/api/renameUser", "alice", { id: "1", name: "" }));
 
     expect(rejected.status).toBe(400);
     expect(await rejected.json()).toEqual(
-      Schema.encodeSync(InvalidRequest)(
-        new InvalidRequest({ message: "The request does not match the action's input." }),
+      Schema.encodeSync(Action.InvalidInput)(
+        new Action.InvalidInput({
+          message: 'Expected a value with a length of at least 1\n  at ["name"]',
+        }),
       ),
     );
   });
@@ -497,7 +534,7 @@ it("supplies the native request context to handlers without a router requirement
     description: "The connected client's declared name",
     access: "write",
     success: Schema.String,
-    mcp: { readOnly: true },
+    hints: { readOnly: true },
   });
 
   const app = Action.implement(ClientName, () =>

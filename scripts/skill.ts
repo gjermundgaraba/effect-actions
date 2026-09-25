@@ -22,8 +22,9 @@ name: effect-actions
 description: >
   Reference for @gjermundgaraba/effect-actions. Use when defining Effect action contracts
   and implementations (Action), serving them over HTTP or MCP, projecting them into an
-  Effect AI Toolkit or a CLI, exporting a catalog, wiring Authentication middleware, calling
-  an ActionHttp binding with ActionHttpClient, or testing those adapters in memory.
+  Effect AI Toolkit or a CLI, authorizing them with a before hook, wiring Authentication
+  middleware, calling an ActionHttp binding with ActionHttpClient, or testing those surfaces
+  in memory.
 ---
 
 `;

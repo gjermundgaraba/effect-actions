@@ -2,7 +2,9 @@ import { Effect, Predicate, type Schema, type Scope } from "effect";
 import { Command } from "effect/unstable/cli";
 import type { HttpClient } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import { command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
+import { assertDistinct } from "./internal/actions.js";
+import { kebab, command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
+import type { Refusal } from "./internal/errors.js";
 import {
   type AnyHttp,
   type MethodError,
@@ -26,53 +28,35 @@ import {
 
 /**
  * The hook a local command runs before the selected handler. A CLI does not serialize
- * failures, so a refusal is a typed failure of the command effect; the native parser has
- * already decoded the input.
+ * failures, so a refusal is a typed failure of the command effect: the refusals the hook
+ * fails with, `EB`.
  */
-interface Hook<EB, R> {
+interface LocalHook<EB extends Refusal, R> {
   readonly before?: (action: Action.Any) => Effect.Effect<void, EB, R>;
 }
 
-/**
- * Parsing, rendering and the hook of one local command. `Encoded` is the action's
- * encoded input, which parsed `parameters` must be to leave `input` out.
- */
-export type Options<
-  Output,
-  EB = never,
-  R = never,
-  Parameters extends Command.Command.Config = never,
-  Encoded = unknown,
-> = CommandOptions<Output, Parameters, Encoded> & Hook<EB, R>;
+/** How a local command is named and prints its result, and its hook. */
+interface Options<Output, EB extends Refusal, R> extends CommandOptions<Output>, LocalHook<EB, R> {}
 
-/**
- * Parsing, rendering and the native client of one remote command: `baseUrl` and
- * `transformClient`, as `ActionHttpClient.make` takes them.
- */
-export type RemoteOptions<
-  Output,
-  Parameters extends Command.Command.Config = never,
-  Encoded = unknown,
-> = CommandOptions<Output, Parameters, Encoded> & ClientOptions;
+/** How a remote command is named and prints its result, and its native client options. */
+interface RemoteOptions<Output> extends CommandOptions<Output>, ClientOptions {}
 
-/** `Options`, erased: the public signatures restore them. */
-type ErasedOptions = CommandOptions<Action.Any["success"]["Type"], Command.Command.Config> &
-  Hook<unknown, unknown> &
+/** The name of an aggregate local command, and its hook. */
+interface MakeOptions<EB extends Refusal, R> extends LocalHook<EB, R> {
+  /** The aggregate command's name. */
+  readonly name: string;
+}
+
+/** The name of an aggregate remote command, and its native client options. */
+interface RemoteMakeOptions extends ClientOptions {
+  /** The aggregate command's name. */
+  readonly name: string;
+}
+
+/** Every option, erased: the public signatures restore them. */
+type ErasedOptions = CommandOptions<Action.Any["success"]["Type"]> &
+  LocalHook<Refusal, unknown> &
   ClientOptions;
-
-/** Configuration for an aggregate local command. */
-export interface MakeOptions<EB = never, R = never> extends Hook<EB, R> {
-  /** The aggregate command's name. */
-  readonly name: string;
-}
-
-/** Configuration for an aggregate remote command. */
-export interface RemoteMakeOptions extends ClientOptions {
-  /** The aggregate command's name. */
-  readonly name: string;
-}
-
-type ErasedMakeOptions = MakeOptions<unknown, unknown> & ClientOptions;
 
 /** The implementation of `A` among `App`. */
 type Selected<App, A extends Action.Any> = App extends unknown
@@ -97,12 +81,12 @@ type LocalCommand<App, A extends Action.Any, EB, RB, Subcommands = never> = Comm
   Exclude<RequestOf<App, A> | BuildContext<App> | RB, Scope.Scope>
 >;
 
-/** A native command calling `A` of the binding `H` over HTTP, failing as its client method. */
-type RemoteCommand<H extends AnyHttp, A extends Action.Any, Subcommands = never> = Command.Command<
+/** A native command calling `A` over HTTP, failing as its client method. */
+type RemoteCommand<A extends Action.Any, Subcommands = never> = Command.Command<
   string,
   Subcommands,
   {},
-  MethodError<A, H["errors"][number]["Type"]>,
+  MethodError<A>,
   HttpClient.HttpClient
 >;
 
@@ -156,29 +140,26 @@ const remote = (http: AnyHttp, action: Action.Any, options: ErasedOptions | unde
 const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasProperty(value, "api");
 
 /**
- * Project one action into a native Effect CLI command. From an HTTP binding, the command
- * calls the action over HTTP through its `ActionHttpClient` method, on the host's
- * `HttpClient`. From implementations, it runs the handler in process.
+ * Project one action into a native Effect CLI command, named after it in kebab case with
+ * one flag per field of its input (`--user-id`), or `--input` taking the whole input as
+ * JSON when it is not a struct. From an HTTP binding, the command calls the action over
+ * HTTP through its `ActionHttpClient` method, on the host's `HttpClient`. From
+ * implementations, it runs the handler in process.
  */
-export function command<
-  const H extends AnyHttp,
-  A extends H["actions"][number],
-  Parameters extends Command.Command.Config = never,
->(
+export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
-  options?: RemoteOptions<A["success"]["Type"], Parameters, A["input"]["Encoded"]>,
-): RemoteCommand<H, A>;
+  options?: RemoteOptions<A["success"]["Type"]>,
+): RemoteCommand<A>;
 export function command<
   const Apps extends Served,
   A extends ActionOf<Member<Apps>>,
-  EB = never,
+  EB extends Refusal = never,
   RB = never,
-  Parameters extends Command.Command.Config = never,
 >(
   apps: Apps,
   action: A,
-  options?: Options<A["success"]["Type"], EB, RB, Parameters, A["input"]["Encoded"]>,
+  options?: Options<A["success"]["Type"], EB, RB>,
 ): LocalCommand<Selected<Member<Apps>, A>, A, EB, RB>;
 export function command(
   target: AnyHttp | Served,
@@ -193,26 +174,34 @@ export function command(
 }
 
 /**
- * Project every action as a subcommand of one aggregate command: each action of an HTTP
- * binding called over HTTP, or each implemented action run in process.
+ * Project every action as a subcommand of one aggregate command, each named after its
+ * action in kebab case: each action of an HTTP binding called over HTTP, or each
+ * implemented action run in process.
  */
 export function make<const H extends AnyHttp>(
   http: H,
   options: RemoteMakeOptions,
-): RemoteCommand<H, H["actions"][number], {}>;
-export function make<const Apps extends Served, EB = never, RB = never>(
+): RemoteCommand<H["actions"][number], {}>;
+export function make<const Apps extends Served, EB extends Refusal = never, RB = never>(
   apps: Apps,
   options: MakeOptions<EB, RB>,
 ): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, EB, RB, {}>;
 export function make(
   target: AnyHttp | Served,
-  options: ErasedMakeOptions,
+  options: ErasedOptions & { readonly name: string },
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const { baseUrl, transformClient } = options;
 
+  const actions = isHttp(target) ? target.actions : servedActions("command", toList(target));
+
+  assertDistinct(
+    "command",
+    actions.map((action) => kebab(action.name)),
+  );
+
   const commands = isHttp(target)
-    ? target.actions.map((action) => remote(target, action, { baseUrl, transformClient }))
-    : servedActions("command", toList(target)).map((action) =>
+    ? actions.map((action) => remote(target, action, { baseUrl, transformClient }))
+    : actions.map((action) =>
         makeCommand(action, (input) =>
           local(select(toList(target), action), action, options.before, input),
         ),

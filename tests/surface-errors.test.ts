@@ -1,28 +1,26 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
   HttpClient,
+  HttpClientError,
   HttpClientRequest,
   HttpServerRequest,
+  HttpServerResponse,
 } from "effect/unstable/http";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { httpClient, serve } from "../src/Testing.js";
+import { httpClient, mcpCall, serve } from "./serve.js";
+import { post } from "./requests.js";
 import { cliServices, logged } from "./cli-services.js";
 
 class Principal extends Context.Service<Principal, string>()("surface-errors/Principal") {}
-
-class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
-  "Unauthenticated",
-  { message: Schema.String },
-  { httpApiStatus: 401 },
-) {}
 
 const WhoAmI = Action.make("whoAmI", {
   description: "Name the authenticated principal",
@@ -32,106 +30,191 @@ const WhoAmI = Action.make("whoAmI", {
 
 const app = Action.implement(WhoAmI, () => Principal);
 
-/** The surface answers 401 itself, so the contract declares it on every endpoint. */
-const Guarded = ActionHttp.make([WhoAmI], { errors: [Unauthenticated] });
+const Http = ActionHttp.make([WhoAmI]);
 
-/** The same contract without that declaration, for contrast. */
-const Bare = ActionHttp.make([WhoAmI]);
-
-// The middleware answers with the declared error, encoded as the binding declares it.
+// Each refusal is a built-in error, answered as the JSON every endpoint declares; any
+// other answer is a response of the host's own.
 const authentication = Authentication.middleware(
   Principal,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
 
-    if (request.headers.authorization !== "Bearer ada") {
-      return yield* new Unauthenticated({ message: "A bearer token is required." });
+    switch (request.headers.authorization) {
+      case "Bearer ada":
+        return "ada";
+      case "Bearer banned":
+        return yield* new Action.Forbidden({ message: "This account is suspended." });
+      case "Bearer eager":
+        return yield* Effect.fail(HttpServerResponse.text("Slow down", { status: 429 }));
+      default:
+        return yield* new Action.Unauthenticated({ message: "A bearer token is required." });
     }
-
-    return "ada";
   }),
-  { errors: [Unauthenticated], headers: { "www-authenticate": "Bearer" } },
 );
 
-/** Each binding is served on its own: their layers differ in the errors they declare. */
-const authenticated = (http: typeof Guarded | typeof Bare) => {
-  const web = serve(ActionHttp.layer(http, app).pipe(Layer.provide(authentication.layer)));
+/** A refusal's JSON, as every surface sends it. */
+const wire = Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]));
+
+const authenticated = () => {
+  const web = serve(ActionHttp.layer(Http, app).pipe(Layer.provide(authentication.layer)));
   onTestFinished(() => web.dispose());
 
   return web;
 };
 
-const guarded = () => authenticated(Guarded);
-
-const bare = () => authenticated(Bare);
-
 const bearer = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
 });
 
-it("declares surface errors on every endpoint so a typed client decodes them", async () => {
-  const web = guarded();
+const withToken = (token: string) => {
+  const request = post("/api/whoAmI");
+  request.headers.set("authorization", `Bearer ${token}`);
 
-  const accepted = await Effect.runPromise(
-    Effect.flatMap(httpClient(Guarded, web.handler, bearer("ada")), (client) => client.whoAmI()),
+  return request;
+};
+
+it("answers authentication refusals with the built-in errors' JSON", async () => {
+  const web = authenticated();
+
+  const unauthenticated = await web.handler(post("/api/whoAmI"));
+  expect(unauthenticated.status).toBe(401);
+  expect(unauthenticated.headers.get("www-authenticate")).toBe("Bearer");
+  expect(unauthenticated.headers.get("cache-control")).toBe("no-store");
+  expect(await unauthenticated.json()).toEqual(
+    wire(new Action.Unauthenticated({ message: "A bearer token is required." })),
   );
 
-  expect(accepted).toBe("ada");
-
-  // `catchTag` compiles only because the binding declares the failure.
-  const refused = await Effect.runPromise(
-    Effect.flatMap(httpClient(Guarded, web.handler, bearer("nobody")), (client) =>
-      client.whoAmI(),
-    ).pipe(Effect.catchTag("Unauthenticated", (failure) => Effect.succeed(failure))),
+  const forbidden = await web.handler(withToken("banned"));
+  expect(forbidden.status).toBe(403);
+  // A 403 is no challenge: the caller is known, and new credentials would not help.
+  expect(forbidden.headers.has("www-authenticate")).toBe(false);
+  expect(forbidden.headers.get("cache-control")).toBe("no-store");
+  expect(await forbidden.json()).toEqual(
+    wire(new Action.Forbidden({ message: "This account is suspended." })),
   );
 
-  expect(refused).toBeInstanceOf(Unauthenticated);
-  expect(refused).toHaveProperty("message", "A bearer token is required.");
+  const own = await web.handler(withToken("eager"));
+  expect(own.status).toBe(429);
+  expect(await own.text()).toBe("Slow down");
 });
 
-it("leaves an undeclared surface error as a decoding failure", async () => {
-  const web = bare();
+it("decodes authentication refusals as typed failures of the client", async () => {
+  const web = authenticated();
 
-  const refused = await Effect.runPromise(
-    Effect.flip(
-      Effect.flatMap(httpClient(Bare, web.handler, bearer("nobody")), (client) => client.whoAmI()),
-    ),
+  const call = (token: string) =>
+    Effect.flatMap(httpClient(Http, web, bearer(token)), (client) => client.whoAmI());
+
+  expect(await Effect.runPromise(call("ada"))).toBe("ada");
+
+  // `catchTag` compiles only because every endpoint declares the refusals.
+  const unauthenticated = await call("nobody").pipe(
+    Effect.catchTag("Unauthenticated", (failure) => Effect.succeed(failure)),
+    Effect.runPromise,
   );
 
-  expect(refused).not.toBeInstanceOf(Unauthenticated);
-  expect(String(refused)).toContain("Decode error (401");
-});
-
-it("publishes surface errors in the OpenAPI document", () => {
-  const responses = OpenApi.fromApi(Guarded.api).paths?.["/api/whoAmI"]?.post?.responses;
-
-  expect(responses).toHaveProperty("200");
-  expect(responses).toHaveProperty("401");
-  expect(OpenApi.fromApi(Bare.api).paths?.["/api/whoAmI"]?.post?.responses).not.toHaveProperty(
-    "401",
+  expect(unauthenticated).toEqual(
+    new Action.Unauthenticated({ message: "A bearer token is required." }),
   );
+
+  const forbidden = await call("banned").pipe(
+    Effect.catchTag("Forbidden", (failure) => Effect.succeed(failure)),
+    Effect.runPromise,
+  );
+
+  expect(forbidden).toEqual(new Action.Forbidden({ message: "This account is suspended." }));
+
+  // A response of the host's own is not in the contract: Effect's own error.
+  const own = await Effect.runPromise(Effect.flip(call("eager")));
+  expect(HttpClientError.isHttpClientError(own) && own.response?.status).toBe(429);
 });
 
-it("does not repeat a schema an action already declares", () => {
+const Rename = Action.make("rename", {
+  description: "Rename a note",
+  access: "write",
+  input: { name: Schema.String },
+  success: Schema.String,
+});
+
+const rename = Action.implement(Rename, ({ name }) => Effect.succeed(name));
+
+/** A `before` hook refusing every call with `refusal`. */
+const refusing = (refusal: Action.Refusal) => ({ before: () => Effect.fail(refusal) });
+
+const refusals = [
+  [new Action.Unauthenticated(), 401],
+  [new Action.Forbidden({ message: "Requires notes:write." }), 403],
+] as const;
+
+it.each(refusals)(
+  "answers a before hook's %s over HTTP with its status",
+  async (refusal, status) => {
+    const Notes = ActionHttp.make([Rename]);
+    const web = serve(ActionHttp.layer(Notes, rename, refusing(refusal)));
+
+    onTestFinished(() => web.dispose());
+
+    const response = await web.handler(post("/api/rename", { name: "draft" }));
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual(wire(refusal));
+    // A 401 carries a challenge, as the authentication middleware's does.
+    expect(response.headers.get("www-authenticate")).toBe(status === 401 ? "Bearer" : null);
+
+    const refused = await Effect.runPromise(
+      Effect.flip(Effect.flatMap(httpClient(Notes, web), (client) => client.rename({ name: "x" }))),
+    );
+
+    expect(refused).toEqual(refusal);
+  },
+);
+
+it.each(refusals)("returns a before hook's %s as an MCP tool's error", async (refusal) => {
+  const web = serve(
+    ActionMcp.layerHttp(rename, { name: "test", version: "0", ...refusing(refusal) }),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  expect(await mcpCall(web, { name: "rename", arguments: { name: "draft" } })).toEqual({
+    isError: true,
+    error: wire(refusal),
+  });
+});
+
+it.each(refusals)("returns a before hook's %s as a native tool's failure", async (refusal) => {
+  const { toolkit, layer } = ActionToolkit.make(rename, refusing(refusal));
+
+  const results = await Effect.gen(function* () {
+    const tools = yield* toolkit;
+
+    return yield* Stream.runCollect(yield* tools.handle("rename", { name: "draft" }));
+  }).pipe(Effect.provide(layer), Effect.scoped, Effect.runPromise);
+
+  expect(results).toMatchObject([{ isFailure: true, result: refusal }]);
+});
+
+it("does not repeat a built-in error an action already declares", () => {
   const Declared = Action.make("whoAmI", {
     description: "Name the authenticated principal",
     access: "read",
     success: Schema.String,
-    errors: [Unauthenticated],
+    errors: [Action.Forbidden],
   });
 
-  const app = Action.implement(Declared, () => Effect.succeed("ada"));
-  const binding = ActionToolkit.make(app, { errors: [Unauthenticated, Unauthenticated] });
-  expect(binding.toolkit.tools.whoAmI.failureSchema.members).toEqual([Unauthenticated]);
+  const declared = Action.implement(Declared, () => Effect.succeed("ada"));
+  const { toolkit } = ActionToolkit.make(declared);
+  expect(toolkit.tools.whoAmI.failureSchema.members).toEqual([
+    Action.Forbidden,
+    Action.Unauthenticated,
+  ]);
 
-  const both = ActionHttp.make([Declared], { errors: [Unauthenticated] });
-  const responses = OpenApi.fromApi(both.api).paths?.["/api/whoAmI"]?.post?.responses;
+  const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths?.["/api/whoAmI"]?.post
+    ?.responses;
 
-  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "401"]);
+  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
 });
 
-it("decodes a surface error through a remote ActionCli command", async () => {
-  const web = guarded();
+it("decodes a refusal through a remote ActionCli command", async () => {
+  const web = authenticated();
 
   const fetchLayer = FetchHttpClient.layer.pipe(
     Layer.provide(
@@ -139,49 +222,51 @@ it("decodes a surface error through a remote ActionCli command", async () => {
     ),
   );
 
-  const command = ActionCli.command(Guarded, WhoAmI, { baseUrl: "http://localhost" });
+  const command = ActionCli.command(Http, WhoAmI, { baseUrl: "http://localhost" });
 
-  // The surface error is a typed failure of the command, not a decode error.
+  // The refusal is a typed failure of the command, not a decode error.
   const [failure, output] = await logged(
     Command.runWith(command, { version: "0" })([]).pipe(Effect.flip),
   ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
 
-  expect(failure).toBeInstanceOf(Unauthenticated);
-  expect(failure).toHaveProperty("message", "A bearer token is required.");
+  expect(failure).toEqual(new Action.Unauthenticated({ message: "A bearer token is required." }));
   expect(output).toEqual([]);
 });
 
 it("decodes two errors that share a status by their tag", async () => {
-  class Throttled extends Schema.TaggedError<Throttled>()(
-    "Throttled",
-    { retryAfter: Schema.Finite },
-    { httpApiStatus: 403 },
-  ) {}
-
   class Rejected extends Schema.TaggedError<Rejected>()(
     "Rejected",
     { reason: Schema.String },
     { httpApiStatus: 403 },
   ) {}
 
-  // The action declares one 403; the surface declares another, and the hook raises it.
+  // Each action declares its own 403 beside the built-in `Forbidden` the hook raises.
   const Refuse = Action.make("refuse", {
-    description: "Refuse in two different ways",
+    description: "Refused by the hook",
     access: "write",
-    input: { byHandler: Schema.Boolean },
     success: Schema.String,
     errors: [Rejected],
   });
 
-  const binding = ActionHttp.make([Refuse], { errors: [Throttled] });
+  const Reject = Action.make("reject", {
+    description: "Rejected by the handler",
+    access: "read",
+    success: Schema.String,
+    errors: [Rejected],
+  });
+
+  const binding = ActionHttp.make([Refuse, Reject]);
 
   const web = serve(
     ActionHttp.layer(
       binding,
-      Action.implement(Refuse, () => Effect.fail(new Rejected({ reason: "closed" }))),
+      Action.implement([Refuse, Reject], {
+        refuse: () => Effect.succeed("unreachable"),
+        reject: () => Effect.fail(new Rejected({ reason: "closed" })),
+      }),
       {
         before: (action) =>
-          action.access === "read" ? Effect.void : Effect.fail(new Throttled({ retryAfter: 30 })),
+          action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
       },
     ),
   );
@@ -189,17 +274,14 @@ it("decodes two errors that share a status by their tag", async () => {
   onTestFinished(() => web.dispose());
 
   const refused = await Effect.runPromise(
-    Effect.flip(
-      Effect.flatMap(httpClient(binding, web.handler), (client) =>
-        client.refuse({ byHandler: true }),
-      ),
+    Effect.flatMap(httpClient(binding, web), (client) =>
+      Effect.all([Effect.flip(client.refuse()), Effect.flip(client.reject())]),
     ),
   );
 
-  // Both are reachable from this endpoint under 403; the tag selects the decoder.
-  expect(refused).toBeInstanceOf(Throttled);
-  expect(refused).toHaveProperty("retryAfter", 30);
+  // Both are reachable from each endpoint under 403; the tag selects the decoder.
+  expect(refused).toEqual([new Action.Forbidden(), new Rejected({ reason: "closed" })]);
 
   const responses = OpenApi.fromApi(binding.api).paths?.["/api/refuse"]?.post?.responses;
-  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "403"]);
+  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
 });

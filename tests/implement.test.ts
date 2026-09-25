@@ -11,7 +11,7 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import { httpClient, mcpCall, serve as serveRoutes } from "../src/Testing.js";
+import { httpClient, mcpCall, serve as serveRoutes } from "./serve.js";
 import { mcpRequest } from "../src/internal/mcp-request.js";
 import { post, rawToolCall } from "./requests.js";
 
@@ -422,17 +422,24 @@ describe("HTTP bindings", () => {
     ).toEqual(["/api/whoAmI", "/api/invoice", "/api/audit"]);
   });
 
-  it("tags its group with the mount path's segments, or the name it is given", () => {
-    const tagsOf = (binding: { readonly api: typeof Http.api }) => {
+  it("tags its group with the mount path, or `actions` at the root", () => {
+    const tagsOf = (binding: { readonly prefix: string; readonly api: typeof Http.api }) => {
       const document = OpenApi.fromApi(binding.api);
 
-      return [document.tags.map((tag) => tag.name), document.paths["/api/whoAmI"]?.post?.tags];
+      return [
+        document.tags.map((tag) => tag.name),
+        document.paths[`${binding.prefix}/whoAmI`]?.post?.tags,
+      ];
     };
 
     expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit]))).toEqual([["api"], ["api"]]);
-    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { name: "Billing" }))).toEqual([
-      ["Billing"],
-      ["Billing"],
+    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix: "/v2/api" }))).toEqual([
+      ["v2/api"],
+      ["v2/api"],
+    ]);
+    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix: "/" }))).toEqual([
+      ["actions"],
+      ["actions"],
     ]);
   });
 

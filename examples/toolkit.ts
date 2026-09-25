@@ -12,13 +12,13 @@ const Double = Action.make("double", {
 
 const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
 
-const binding = ActionToolkit.make(double);
+const { toolkit, layer } = ActionToolkit.make(double);
 
 const program = Effect.gen(function* () {
-  const tools = yield* binding.toolkit;
+  const tools = yield* toolkit;
   const calls = yield* tools.handle("double", { value: "21" });
   const results = yield* Stream.runCollect(calls);
   yield* Console.log(results);
-}).pipe(Effect.provide(binding.layer));
+}).pipe(Effect.provide(layer));
 
 program.pipe(NodeRuntime.runMain);

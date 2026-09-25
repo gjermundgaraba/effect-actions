@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
 import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
@@ -9,15 +9,9 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { cliServices, logged } from "./cli-services.js";
 import { post, rawToolCall } from "./requests.js";
-import { serve } from "../src/Testing.js";
+import { serve } from "./serve.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
-
-class InsufficientScope extends Schema.TaggedError<InsufficientScope>()(
-  "InsufficientScope",
-  { required: Schema.String },
-  { httpApiStatus: 403 },
-) {}
 
 const Read = Action.make("read", {
   description: "Read the resource",
@@ -32,21 +26,28 @@ const Write = Action.make("write", {
   success: Schema.String,
 });
 
-// The hook answers instead of a handler, so its failure is a surface error of
-// each binding rather than an error the actions declare.
-const Http = ActionHttp.make([Read, Write], { errors: [InsufficientScope] });
+// The hook answers instead of a handler with a built-in refusal, which every endpoint
+// declares, so the binding needs no errors of its own.
+const Http = ActionHttp.make([Read, Write]);
 
-/** One rule for a whole surface, read from the contract rather than from a name list. */
+/**
+ * One rule for a whole surface, read from the contract rather than from a name list. No
+ * scopes at all is unauthenticated; a read-only grant is forbidden to write.
+ */
 const authorize =
   (seen: Array<string>) =>
-  (action: Action.Any): Effect.Effect<void, InsufficientScope, Scopes> =>
+  (action: Action.Any): Effect.Effect<void, Action.Refusal, Scopes> =>
     Effect.gen(function* () {
       seen.push(action.name);
-
-      if (action.access === "read") return;
       const granted = yield* Scopes;
 
-      if (!granted.includes("write")) return yield* new InsufficientScope({ required: "write" });
+      if (granted.length === 0) return yield* new Action.Unauthenticated({ message: "Sign in." });
+
+      if (action.access === "read") return;
+
+      if (!granted.includes("write")) {
+        return yield* new Action.Forbidden({ message: "Requires write." });
+      }
     });
 
 /** A fresh implementation per test, with the hook and handler invocations it recorded. */
@@ -79,8 +80,8 @@ describe("action access", () => {
     const write: "write" = Write.access;
 
     expect([read, write]).toEqual(["read", "write"]);
-    expect(Read.mcp).toMatchObject({ readOnly: true, destructive: false });
-    expect(Write.mcp).toMatchObject({ readOnly: false, destructive: true });
+    expect(Read.hints).toMatchObject({ readOnly: true, destructive: false });
+    expect(Write.hints).toMatchObject({ readOnly: false, destructive: true });
   });
 
   it("keeps an explicit hint that disagrees with access", () => {
@@ -88,11 +89,11 @@ describe("action access", () => {
       description: "A write the model may call without approval",
       access: "write",
       success: Schema.String,
-      mcp: { readOnly: true },
+      hints: { readOnly: true },
     });
 
     expect(advertised.access).toBe("write");
-    expect(advertised.mcp).toMatchObject({ readOnly: true, destructive: false });
+    expect(advertised.hints).toMatchObject({ readOnly: true, destructive: false });
   });
 
   it("refuses a value the contract does not define, so plain JavaScript cannot skip a rule", () => {
@@ -108,7 +109,7 @@ describe("action access", () => {
 });
 
 describe("the pre-handler hook", () => {
-  it("runs once before each handler over HTTP and answers as a declared error", async () => {
+  it("runs once before each handler over HTTP and answers as a built-in refusal", async () => {
     const { app, hooks, handlers } = make();
     const web = serveHttp(app, authorize(hooks), readOnly);
     onTestFinished(() => web.dispose());
@@ -119,13 +120,42 @@ describe("the pre-handler hook", () => {
 
     const refused = await web.handler(post("/api/write", { value: "x" }));
     expect(refused.status).toBe(403);
-    // The body is the hook's error, encoded by its own schema like a handler's.
-    expect(Schema.decodeUnknownSync(InsufficientScope)(await refused.json()).required).toBe(
-      "write",
+    // The body is the refusal, encoded by its own schema like a handler's error.
+    expect(await refused.json()).toEqual(
+      Schema.encodeSync(Action.Forbidden)(new Action.Forbidden({ message: "Requires write." })),
     );
 
     expect(hooks).toEqual(["read", "write"]);
     expect(handlers).toEqual(["read"]);
+  });
+
+  it("answers an unauthenticated refusal with 401", async () => {
+    const { app, hooks, handlers } = make();
+    const web = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, []));
+    onTestFinished(() => web.dispose());
+
+    const refused = await web.handler(post("/api/read"));
+    expect(refused.status).toBe(401);
+    expect(await refused.json()).toEqual(
+      Schema.encodeSync(Action.Unauthenticated)(
+        new Action.Unauthenticated({ message: "Sign in." }),
+      ),
+    );
+    expect(hooks).toEqual(["read"]);
+    expect(handlers).toEqual([]);
+  });
+
+  it("may fail only with a refusal", () => {
+    const { app } = make();
+
+    class Other extends Schema.TaggedError<Other>()("Other", {}) {}
+
+    const before = () => Effect.fail(new Other());
+
+    // @ts-expect-error A hook answers only with a built-in refusal, which every surface declares.
+    ActionHttp.layer(Http, app, { before });
+    // @ts-expect-error The same rule holds for every surface.
+    ActionToolkit.make(app, { before });
   });
 
   it("decodes HTTP input before running either the hook or handler", async () => {
@@ -151,7 +181,6 @@ describe("the pre-handler hook", () => {
       ActionMcp.layerHttp(app, {
         name: "test",
         version: "0",
-        errors: [InsufficientScope],
         before: authorize(hooks),
       }).pipe(HttpRouter.provideRequest(readOnly)),
     );
@@ -164,7 +193,7 @@ describe("the pre-handler hook", () => {
     expect(await (await mcp.handler(rawToolCall("write", { value: "x" }))).json()).toMatchObject({
       result: {
         isError: true,
-        content: [{ type: "text", text: '{"_tag":"InsufficientScope","required":"write"}' }],
+        content: [{ type: "text", text: '{"_tag":"Forbidden","message":"Requires write."}' }],
       },
     });
 
@@ -175,10 +204,7 @@ describe("the pre-handler hook", () => {
   it("runs over the native Toolkit", async () => {
     const { app, hooks, handlers } = make();
 
-    const binding = ActionToolkit.make(app, {
-      errors: [InsufficientScope],
-      before: authorize(hooks),
-    });
+    const binding = ActionToolkit.make(app, { before: authorize(hooks) });
 
     const call = (name: "read" | "write") =>
       Effect.runPromise(
@@ -196,8 +222,8 @@ describe("the pre-handler hook", () => {
     expect(await call("read")).toMatchObject([{ isFailure: false, result: "read ok" }]);
 
     const refused = await call("write");
-    expect(refused).toMatchObject([{ isFailure: true, result: { required: "write" } }]);
-    expect(refused[0]?.result).toBeInstanceOf(InsufficientScope);
+    expect(refused).toMatchObject([{ isFailure: true, result: { message: "Requires write." } }]);
+    expect(refused[0]?.result).toBeInstanceOf(Action.Forbidden);
 
     expect(hooks).toEqual(["read", "write"]);
     expect(handlers).toEqual(["read"]);
@@ -205,7 +231,7 @@ describe("the pre-handler hook", () => {
 
   it("runs over the CLI, so a local caller supplies its services too", async () => {
     const { app, hooks, handlers } = make();
-    const guard = { errors: [InsufficientScope], before: authorize(hooks) };
+    const guard = { before: authorize(hooks) };
 
     const run = <Name extends string, Input, Services, E>(
       command: Command.Command<Name, Input, Services, E, Scope.Scope | Scopes>,
@@ -224,9 +250,11 @@ describe("the pre-handler hook", () => {
     expect(read._tag).toBe("Success");
     expect(output).toEqual(['"read ok"']);
 
-    const [refused] = await run(ActionCli.command(app, Write, guard), ["--input", '{"value":"x"}']);
+    const [refused] = await run(ActionCli.command(app, Write, guard), ["--value", "x"]);
 
-    expect(refused._tag).toBe("Failure");
+    expect(Exit.isFailure(refused) ? Cause.squash(refused.cause) : undefined).toBeInstanceOf(
+      Action.Forbidden,
+    );
 
     expect(hooks).toEqual(["read", "write"]);
     expect(handlers).toEqual(["read"]);
