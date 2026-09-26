@@ -54,8 +54,11 @@ cannot disagree. For the same reason only a write may state `destructive`: a rea
 destructive, and `hints.destructive` on one is a type error. A surface serves
 the implementations passed to it, so an action stays off MCP by leaving its implementation out
 of the MCP layer; implement it on its own if it shared a builder with served actions. Action
-names are at most 128 characters, the MCP limit. `make` has one type parameter per option, so a
-misspelled key is reported as `Object literal may only specify known properties`.
+names are at most 128 characters, the MCP limit. `make` refuses a misspelled key at compile
+time. Its options, and `implement`'s, are given or omitted, never a value that may be
+`undefined`: omitted, an option takes its default at run time, which its type would not say,
+so `success: enabled ? Schema.String : undefined`, or a conditional spread, is a compile error.
+Branch around the call instead.
 
 - Migrate: rename `mcp:` to `hints:` and `action.mcp` to `action.hints`. Rename an action whose
   `mcp.name` differed (`get_user` becomes the tool `getUser`), or keep the old name as the action
@@ -69,7 +72,8 @@ served at `POST <prefix>/<action>` with operation ID `<action>`, so names are un
 an API that reused names across groups uses one binding per area, each with its own `prefix`,
 served side by side; bindings that repeat a name cannot be combined into one `HttpApi`, whose
 operation IDs are the action names.
-The OpenAPI tag is the mount path's segments (`api`, `api/users`), or `actions` at the root.
+The OpenAPI tag is the mount path's segments (`api`, `api/users`), or `/` at the root, so a root
+binding and an `/actions` binding combine without one replacing the other.
 The binding is `{ actions, prefix, api }`, plain data, so a copy of it, or one made by another
 installed copy of the package, serves the same. `ActionHttp.layer(Http, implementations)` serves every
 action of the implementations it receives, matched to the binding's actions by identity;
@@ -202,17 +206,19 @@ whose effect the command's error type could not follow.
 
 **CLI flags are derived from the input.** A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`), parsed as the field's encoded value
-and described by the field's description: a string, a number (`Schema.Number` included), a
-boolean switch, a choice for a union of string literals, or JSON for anything else. A
+and described by the field's description: a string, a boolean switch, a choice for a union of
+string literals, or, for anything else, numbers included, JSON or the text when it is not JSON
+(`--count 2`, `--limit auto`, `--scale Infinity`). A
 required field's flag is required, so the parser refuses a missing one with its help, as any
 native CLI does; a required boolean is a switch, `false` when omitted. An optional field's flag takes its plain value without the `null` `Schema.optional` encodes:
 `--name x` for `Schema.optional(Schema.String)`; a field that declares `null` itself keeps it.
-An input that is not a struct gets one `--input <json>` flag.
+An input that is not a struct gets one `--input <value>` flag, JSON or text alike.
 Commands and subcommands are named after the action in kebab case (`getUser` is `get-user`);
 two actions whose kebab names collide are refused with `Duplicate command: get-user, claimed by
 action getUser and action get_user`, and two flags of one command, such as fields `userId` and
 `user_id`, with `Duplicate flag: --user-id, claimed by field userId and field user_id`, both
-when the command is built.
+when the command is built. `command` refuses only its own action implemented twice, with
+`Duplicate command: <name>`, rather than run the first.
 `parameters`, the `input` mapper, `--input-file`, and their types (`JsonOptions`,
 `ParametersOptions`, `InputMapper`, `IsInput`) are gone.
 

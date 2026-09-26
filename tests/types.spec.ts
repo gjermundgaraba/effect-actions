@@ -12,6 +12,7 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/authorization.js";
@@ -726,4 +727,62 @@ export const mcpCallTypes = () => {
     Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
     Effect.catchTag("Unauthenticated", () => Effect.succeed(undefined)),
   );
+};
+
+export const maybeAbsentOptionTypes = (enabled: boolean) => {
+  // Omitted, an option takes its default at run time, so one that may be undefined would
+  // give its type while running with its default: each is refused, however it is written.
+  // @ts-expect-error A success that may be undefined would drop the handler's result.
+  Action.make("conditional", {
+    description: "Returns data only sometimes",
+    access: "read",
+    success: enabled ? Schema.String : undefined,
+  });
+  // @ts-expect-error Spread in, it is optional, which is the same.
+  Action.make("spread", {
+    description: "Returns data only sometimes",
+    access: "read",
+    ...(enabled ? { success: Schema.String } : {}),
+  });
+
+  class Identity extends Context.Service<Identity, string>()("types-spec/Identity") {}
+
+  const Who = Action.make("who", { description: "Who", access: "read", success: Schema.String });
+  const who = () => Effect.map(Identity, (id) => id);
+  const auth = Authentication.make(Identity, Effect.succeed("alice"));
+
+  // @ts-expect-error An authenticator that may be undefined would hide the identity it owes.
+  Action.implement(Who, who, { authenticate: enabled ? auth : undefined });
+
+  // Branched instead, the public implementation owes the identity: a union keeps both.
+  const branched = enabled
+    ? Action.implement(Who, who, { authenticate: auth })
+    : Action.implement(Who, who);
+
+  type Owed<L> =
+    L extends Layer.Layer<infer _A, infer _E, infer R>
+      ? Extract<R, HttpRouter.Request.From<"Requires", any>>
+      : never;
+
+  const Http = ActionHttp.make([Who]);
+
+  const owed: [
+    Equal<
+      Owed<ReturnType<typeof ActionHttp.layer<typeof Http, typeof branched>>>,
+      HttpRouter.Request.From<"Requires", Identity>
+    >,
+    Equal<
+      Owed<
+        ReturnType<
+          typeof ActionHttp.layer<
+            typeof Http,
+            Action.Implementation<typeof Who, { readonly who: Identity }, never, never, typeof auth>
+          >
+        >
+      >,
+      never
+    >,
+  ] = [true, true];
+
+  void owed;
 };

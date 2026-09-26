@@ -94,10 +94,16 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
     ),
   ) as Local<App, A>;
 
+/**
+ * The one implementation of `action` among `apps`. One implemented twice is refused rather
+ * than the first run; other actions' names are not this command's to check.
+ */
 const select = (apps: ReadonlyArray<AnyImplementation>, action: Action.Any): AnyImplementation => {
-  const app = apps.find((candidate) => candidate.actions.includes(action));
+  const [app, ...others] = apps.filter((candidate) => candidate.actions.includes(action));
 
   if (app === undefined) throw new Error(`Action "${action.name}" has no implementation here`);
+
+  if (others.length > 0) throw new Error(`Duplicate command: ${kebab(action.name)}`);
 
   return app;
 };
@@ -148,12 +154,7 @@ export function command(
 ): Command.Command<string, never, {}, unknown, unknown> {
   if (isHttp(target)) return remote(target, action, options);
 
-  const apps = toList(target);
-
-  // Refuse an action implemented twice, as every surface does, rather than run the first.
-  servedActions("command", apps);
-
-  const app = select(apps, action);
+  const app = select(toList(target), action);
 
   return makeCommand(action, (input) => local(app, action, input), options);
 }

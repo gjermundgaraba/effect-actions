@@ -11,7 +11,7 @@ import {
   type AuthenticatedContext,
   type AuthenticatorContext,
   type AuthenticatorError,
-  byAuthenticator,
+  authenticatorOf,
   type Member,
   type RequestContext,
   type Served,
@@ -77,7 +77,7 @@ export function layerHttp<const Apps extends Served>(
 >;
 export function layerHttp(served: Served, options: Options) {
   const apps = toList(served);
-  const [authenticate, ...others] = byAuthenticator(apps).keys();
+  const [authenticate, ...others] = new Set(apps.map(authenticatorOf));
 
   if (others.length > 0) {
     throw new Error(

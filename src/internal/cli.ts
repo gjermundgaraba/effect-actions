@@ -28,8 +28,11 @@ const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print machine-readable JSON"),
 );
 
-/** Any JSON value, as one flag's text. */
-const jsonValue = Schema.fromJsonString(Schema.Json);
+/**
+ * A flag's text as JSON, or as itself when it is not JSON: `21`, `true` and `["x"]` parse,
+ * while `auto` and `Infinity` stay text for the action's schema to decode.
+ */
+const jsonOrText = Schema.Union([Schema.fromJsonString(Schema.Json), Schema.String]);
 
 /** The values a literal or an enum accepts; nothing else has a fixed set. */
 const values = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
@@ -46,28 +49,10 @@ const choices = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
   return accepted.every(Predicate.isString) ? accepted : undefined;
 };
 
-/** How JSON encodes `Schema.Number`'s non-finite values, which a number flag does not take. */
-const nonFinite = new Set(["Infinity", "-Infinity", "NaN"]);
-
 /**
- * A number, alone, as `Schema.Number` encodes it, or a numeric enum. A number beside any
- * other string, such as `"auto"`, is not: a number flag would refuse the string.
- */
-const numeric = (ast: SchemaAST.AST): boolean =>
-  SchemaAST.isNumber(ast) ||
-  (SchemaAST.isEnum(ast) && values(ast).every(Predicate.isNumber)) ||
-  (SchemaAST.isUnion(ast) &&
-    ast.types.some(SchemaAST.isNumber) &&
-    ast.types.every(
-      (member) =>
-        SchemaAST.isNumber(member) ||
-        (choices(member)?.every((literal) => nonFinite.has(literal)) ?? false),
-    ));
-
-/**
- * The native flag parsing one field's encoded JSON value: a string, number or boolean
- * flag for those, a choice for string literals and string enums, and a JSON flag for
- * anything else. A template literal is a string; the action's schema checks its pattern.
+ * The native flag parsing one field's encoded JSON value: a string or boolean flag for
+ * those, a choice for string literals and string enums, and JSON or text for anything else,
+ * numbers included. A template literal is a string; the action's schema checks its pattern.
  */
 const valueFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<unknown> => {
   const literals = choices(encoded);
@@ -78,11 +63,9 @@ const valueFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<unknown> => 
     return Flag.String(name);
   }
 
-  if (numeric(encoded)) return Flag.Finite(name);
-
   if (SchemaAST.isBoolean(encoded)) return Flag.Boolean(name);
 
-  return Flag.String(name).pipe(Flag.withSchema(jsonValue), Flag.withMetavar("json"));
+  return Flag.String(name).pipe(Flag.withSchema(jsonOrText), Flag.withMetavar("value"));
 };
 
 /**
@@ -178,9 +161,9 @@ const fromFields = (parsed: Parsed) =>
     ),
   );
 
-/** The whole encoded input as JSON, for an input that is not a struct of fields. */
+/** The whole encoded input as JSON, or text, for an input that is not a struct of fields. */
 const inputFlag = Flag.String("input").pipe(
-  Flag.withSchema(jsonValue),
+  Flag.withSchema(jsonOrText),
   Flag.optional,
   Flag.withDescription("Whole action input as JSON"),
 );

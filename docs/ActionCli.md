@@ -30,16 +30,18 @@ value:
 | Encoded field                            | Flag                                                      |
 | ---------------------------------------- | --------------------------------------------------------- |
 | string or template literal               | `--name <string>`; the action's schema checks a template  |
-| number or numeric enum                   | `--count <number>`, a finite number                       |
 | boolean                                  | `--on`, a switch; omitted is `false` for a required field |
 | union of string literals, or string enum | `--kind <choice>`, one of the values                      |
-| anything else                            | `--tags <json>`, the encoded value as JSON: `'["x"]'`     |
+| anything else, numbers included          | `--tags <value>`: JSON, or the text when it is not JSON   |
 
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
-`--input <json>` flag carrying the whole encoded input. An action without input gets no flags.
+`--input <value>` flag carrying the whole encoded input. An action without input gets no flags.
+A value flag parses its text as JSON (`--count 2`, `--tags '["x"]'`), or keeps the text
+when it is not JSON (`--limit auto`, `--scale Infinity` for `Schema.Number`); the action's
+schema decodes either.
 A field's description is its flag's help text, whatever its encoding. An optional field's
 flag is optional and takes its value without the `null` that `Schema.optional` encodes
-(`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes JSON.
+(`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
 
 A local command retains handler, builder and hook requirements/failures, plus
 `SchemaError`, and the invocation owns its scope. A command over HTTP fails with exactly
@@ -100,7 +102,7 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 
 - `command(apps, action)` selects the implementation of `action` among `apps` (one implementation or a list) by contract identity, not by name: two contracts that share a name select their own implementations. The action must be one of the implementations' actions: the types refuse an action of another shape, and the runtime check refuses an equal-looking one.
 - `make(apps, { name })` puts every implemented action under one command named `name`, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). That includes actions no HTTP binding or MCP endpoint serves. Subcommand names must be distinct after kebab-casing; two actions whose names collide are refused.
-- Flags are values in their encoded form: `double --value 21` for a `FiniteFromString` field, which is string-encoded; a JSON flag takes the encoded JSON. The action's schema then decodes the assembled input before dispatch.
+- Flags are values in their encoded form: `double --value 21` for a `FiniteFromString` field, which is string-encoded; a value flag takes the encoded JSON, or text. The action's schema then decodes the assembled input before dispatch.
 - A field that is required once encoded has a required flag: omitted, the parser refuses the command with `Required flag missing` and shows its help, and the implementation is not built. A required boolean is the exception: omitted, its switch is `false`. An optional field's flag is optional, and omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
 - The flags follow the schema: renaming a field renames its flag. For a fixed syntax, build the command with native `Command.make`, `Flag` and `Argument`, and call the handler or client in it.
 - Output is validated and encoded before printing. Default output is JSON. An action whose `success` is `Schema.Void` prints nothing. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. Rendering cannot bypass validation.
@@ -115,12 +117,13 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 ## Failure modes
 
 - Native `CliError.ShowHelp` containing `MissingOption` (`Required flag missing: <flag>`): a required field's flag was not given. Pass it.
-- `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`; or, for a `--input` or JSON flag, the JSON is not the field's encoding.
-- Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a number flag given text, a choice outside its values, or malformed JSON.
+- `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`; or, for `--input` or a value flag, the JSON or text is not the field's encoding, including malformed JSON, taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
+- Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values.
 - `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name, such as two input fields with the same kebab-case name (`userId`, `user_id`), or a `json` field beside `render`'s `--json`. Rename the field, or drop `render`. A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `apps`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
 - `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). Connection refused: `baseUrl` is absent or wrong; it has no default. 401 `Unauthenticated`: add `transformClient`; the command adds no headers of its own.
 - `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Aggregate them under separate `make` commands, or compose `command` results with a `name` override.
+- `Duplicate command: <name>` thrown by `command`: the selected action is implemented by more than one implementation passed. Other actions' names are not checked.
 - Handler cannot find a service: provide its Layer to the runtime (`Effect.provide`) before `runMain`. The command does not supply services.
 - A command requires a request-identity tag no handler yields: the implementation's `before` hook yields it. Provide a trusted identity around the invocation; do not remove the authorization hook just to satisfy the service requirement.

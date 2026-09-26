@@ -46,37 +46,75 @@ interface Hints {
   readonly openWorld?: boolean;
 }
 
-/** The hints an action may set: a read is never destructive, as MCP defines it for writes. */
-type HintsFor<Acc extends Access> = Acc extends "write"
-  ? Hints
-  : Omit<Hints, "destructive"> & { readonly destructive?: never };
-
 /** The refusals every surface answers with; see `internal/errors`. */
 export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./internal/errors.js";
 
 /** What `make` needs to define an action. */
-interface Options<
-  Input extends Codec | Fields,
-  Output extends Codec | Fields,
-  Errors extends ReadonlyArray<Codec>,
-  Acc extends Access,
-> {
+interface Options {
   readonly description: string;
   /** A schema or struct fields. Omit for an action without arguments. */
-  readonly input?: Input;
+  readonly input?: Codec | Fields;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
-  readonly success?: Output;
+  readonly success?: Codec | Fields;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
-  readonly errors?: Errors;
+  readonly errors?: ReadonlyArray<Codec>;
   /**
    * What the action does to its resource. Required: an action nobody classified
    * is the one a reviewer must check. Read by an implementation's `before` hook; the
    * library itself authorizes nothing.
    */
-  readonly access: Acc;
-  /** Tool hints, for MCP and native Toolkit tools. The tool is named after the action. */
-  readonly hints?: HintsFor<Acc>;
+  readonly access: Access;
+  /**
+   * Tool hints, for MCP and native Toolkit tools. The tool is named after the action. Only
+   * a write may state `destructive`, as MCP defines it for writes.
+   */
+  readonly hints?: Hints;
 }
+
+/** What an option `K` that may be undefined must be instead: nothing is, and its error names the rule. */
+interface MaybeAbsent<K extends string> {
+  readonly "Give this option or omit it: a value that may be undefined is neither": K;
+}
+
+/**
+ * The options of `O` whose absence changes a type, refused when they may be absent: its
+ * default would then hold at run time while the type says otherwise. Branch around the
+ * call instead.
+ */
+type Present<O, K extends string> = {
+  readonly [
+    P in Extract<keyof O, K> as {} extends Pick<O, P> ? P : undefined extends O[P] ? P : never
+  ]: MaybeAbsent<P & string>;
+};
+
+/**
+ * No key beyond `Known`, so a misspelled option is refused rather than ignored. Checked
+ * after inference, as `Exact` is.
+ */
+type Known<O, Keys> = { readonly [K in Exclude<keyof O, keyof Keys>]: never };
+
+/**
+ * The rules `make` checks beyond `Options`: every option known and present, and a read
+ * never destructive. Options that fail `Options` itself infer as `Options`, whose error the
+ * compiler already reports, so they are not checked again.
+ */
+type Rules<O> = Options extends O
+  ? unknown
+  : Known<O, Options> &
+      Present<O, "input" | "success" | "errors"> &
+      (O extends { readonly access: "read" }
+        ? { readonly hints?: { readonly destructive?: never } }
+        : unknown);
+
+/** The schema option `K` of `O`, or `Default` when it is omitted. */
+type SchemaOf<O, K extends "input" | "success", Default> = O extends {
+  readonly [P in K]: infer S extends Codec | Fields;
+}
+  ? CodecOf<S>
+  : Default;
+
+/** The declared errors of `O`, none when omitted. */
+type ErrorsOf<O> = O extends { readonly errors: infer E extends ReadonlyArray<Codec> } ? E : [];
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
 export interface Action<
@@ -108,8 +146,6 @@ export type Handler<A extends Any, R = never> = (
 /** An empty object schema that also produces the object root MCP requires. */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
-type AnyOptions = Options<Codec | Fields, Codec | Fields, ReadonlyArray<Codec>, Access>;
-
 const codecOf = (schema: Codec | Fields): Codec =>
   Schema.isSchema(schema) ? schema : Schema.Struct(schema);
 
@@ -117,17 +153,17 @@ const codecOf = (schema: Codec | Fields): Codec =>
  * Define an action contract. Names are `[A-Za-z0-9_-]{1,128}`, other than `then`: the name
  * is also the route segment, the client method and the tool name.
  */
-export function make<
-  const Name extends string,
-  Input extends Codec | Fields = typeof NoInput,
-  Output extends Codec | Fields = typeof Schema.Void,
-  const Errors extends ReadonlyArray<Codec> = [],
-  const Acc extends Access = Access,
->(
+export function make<const Name extends string, const O extends Options>(
   name: Name,
-  options: Options<Input, Output, Errors, Acc>,
-): Action<Name, CodecOf<Input>, CodecOf<Output>, Errors, Acc>;
-export function make(name: string, options: AnyOptions): Any {
+  options: O & NoInfer<Rules<O>>,
+): Action<
+  Name,
+  SchemaOf<O, "input", typeof NoInput>,
+  SchemaOf<O, "success", typeof Schema.Void>,
+  ErrorsOf<O>,
+  O["access"]
+>;
+export function make(name: string, options: Options): Any {
   assertName("action name", name);
 
   const { access } = options;
@@ -221,6 +257,25 @@ type ReturnsNothing<T extends Target, H> =
         : unknown
       : unknown;
 
+/** The services of `G`'s `before` hook. */
+type HookContext<G> = G extends {
+  readonly before: (action: never) => Effect.Effect<infer _A, infer _E, infer R>;
+}
+  ? R
+  : never;
+
+/** The authenticator of `G`, `undefined` without one. */
+type AuthenticatorOf<G> = G extends { readonly authenticate: infer Auth } ? Auth : undefined;
+
+/**
+ * The rules `implement` checks beyond `Guard`: every option known, and neither present only
+ * maybe, as `make` checks its own.
+ */
+type Policy<A extends Any, G> =
+  Guard<A, any, Authenticator> extends G
+    ? unknown
+    : Known<G, Guard<A, any, Authenticator>> & Present<G, "authenticate" | "before">;
+
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
 
@@ -239,20 +294,19 @@ const isList = (target: Target): target is ReadonlyArray<Any> => Array.isArray(t
 export function implement<
   const T extends Target,
   H extends HandlersFor<T>,
+  const G extends Guard<ActionsOf<T>, any, Authenticator>,
   EX = never,
   RX = never,
-  RB = never,
-  Auth extends Authenticator = never,
 >(
   target: T,
   build: Exact<T, H> | Effect.Effect<Exact<T, H>, EX, RX>,
-  options?: Guard<ActionsOf<T>, RB, Auth>,
+  options?: G & NoInfer<Policy<ActionsOf<T>, G>>,
 ): Implementation<
   ActionsOf<T>,
-  RequestsOf<T, H, RB>,
+  RequestsOf<T, H, HookContext<G>>,
   NoInfer<EX>,
   NoInfer<Exclude<RX, Scope.Scope>>,
-  NoInfer<Auth>
+  NoInfer<AuthenticatorOf<G>>
 >;
 export function implement(
   target: Target,

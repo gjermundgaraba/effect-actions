@@ -28,7 +28,7 @@ Exported types: `Http`, and `Client`, a client's type: `Client<typeof Http>`.
 | `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
 
 Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action>`. The
-OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `actions` at the root. Every
+OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `/` at the root. Every
 endpoint declares its action's errors plus the built-in `InvalidInput` (400),
 `Unauthenticated` (401) and `Forbidden` (403).
 

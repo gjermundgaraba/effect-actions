@@ -165,18 +165,34 @@ it("derives each field's flag from its encoded JSON value", async () => {
 
   const required = ["--count", "1", "--mode", "fast", "--owner", '{"id":"a"}'];
 
-  // A choice, a number and a JSON flag are parsed natively: a bad value shows help.
+  // A choice is parsed natively: another value shows help.
+  const slow = failure(
+    await runExit(command, [
+      "--tenant-id",
+      "acme",
+      "--count",
+      "1",
+      "--mode",
+      "slow",
+      "--tags",
+      "[]",
+      "--owner",
+      "{}",
+    ]),
+  );
+
+  expect(slow).toBeInstanceOf(CliError.ShowHelp);
+
+  if (slow instanceof CliError.ShowHelp) {
+    expect(slow.errors[0]).toBeInstanceOf(CliError.InvalidValue);
+  }
+
+  // Any other flag takes JSON, or its text when it is not JSON, for the schema to decode.
   for (const args of [
-    ["--tenant-id", "acme", "--count", "1", "--mode", "slow", "--tags", "[]", "--owner", "{}"],
-    ["--tenant-id", "acme", "--count", "many", "--mode", "fast", "--tags", "[]"],
+    ["--tenant-id", "acme", "--count", "many", "--mode", "fast", "--tags", "[]", "--owner", "{}"],
     ["--tenant-id", "acme", "--tags", "[", ...required],
   ]) {
-    const error = failure(await runExit(command, args));
-    expect(error).toBeInstanceOf(CliError.ShowHelp);
-
-    if (error instanceof CliError.ShowHelp) {
-      expect(error.errors[0]).toBeInstanceOf(CliError.InvalidValue);
-    }
+    expect(failure(await runExit(command, args))).toBeInstanceOf(Schema.SchemaError);
   }
 
   // A required field's flag is required by the parser, which shows help without it.
@@ -329,12 +345,12 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
   await run(ActionCli.command(app, Shape), ["--input", '{"kind":"square","side":2}']);
   await run(ActionCli.command(app, Scores), ["--input", '{"a":1,"b":2}']);
 
-  const malformed = failure(await runExit(ActionCli.command(app, Shape), ["--input", "{"]));
-  expect(malformed).toBeInstanceOf(CliError.ShowHelp);
+  // Text that is not JSON is taken as a string: the scalar's plain text, or a shape's error.
+  await run(ActionCli.command(app, Scalar), ["--input", "plain"]);
 
-  if (malformed instanceof CliError.ShowHelp) {
-    expect(malformed.errors[0]).toBeInstanceOf(CliError.InvalidValue);
-  }
+  expect(failure(await runExit(ActionCli.command(app, Shape), ["--input", "{"]))).toBeInstanceOf(
+    Schema.SchemaError,
+  );
 
   // No field of a union member is a flag of its own.
   expect(
@@ -345,7 +361,7 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
     Schema.SchemaError,
   );
 
-  expect(values).toEqual(["text", { kind: "square", side: 2 }, { a: 1, b: 2 }]);
+  expect(values).toEqual(["text", { kind: "square", side: 2 }, { a: 1, b: 2 }, "plain"]);
 });
 
 it("keeps custom renderer JSON output and validates success before rendering", async () => {
@@ -455,7 +471,7 @@ it("takes flags from a class input's fields, described by their schemas", async 
   // Encoding drops a transformed field's description; the flag keeps the declared one.
   const help = (await lines(command, ["--help"])).join("\n");
   expect(help).toMatch(/--user-id string\s+Whose record to read/);
-  expect(help).toMatch(/--attempts number\s+How many times to try/);
+  expect(help).toMatch(/--attempts value\s+How many times to try/);
 });
 
 it("takes an optional field's plain value, and leaves it out when its flag is omitted", async () => {
@@ -484,7 +500,7 @@ it("takes an optional field's plain value, and leaves it out when its flag is om
   // whether the optional field or its value carries it.
   const help = (await lines(command, ["--help"])).join("\n");
   expect(help).toMatch(/--query string/);
-  expect(help).toMatch(/--limit number\s+How many to return/);
+  expect(help).toMatch(/--limit value\s+How many to return/);
   expect(help).toMatch(/--exact\s+Match whole words/);
 });
 
@@ -510,22 +526,33 @@ it("keeps the null an optional field declares itself, so the flag can send it", 
   expect(await lines(command, [])).toEqual([JSON.stringify("{}")]);
 });
 
-it("gives a number beside other strings a JSON flag, so the strings stay reachable", async () => {
+it("takes a number, a non-finite number or a string beside it as JSON or plain text", async () => {
   const Page = Action.make("page", {
     description: "Reads a page",
     access: "read",
-    input: { limit: Schema.Union([Schema.Finite, Schema.Literal("auto")]) },
+    input: {
+      limit: Schema.Union([Schema.Finite, Schema.Literal("auto")]),
+      scale: Schema.optionalKey(Schema.Number),
+      level: Schema.optionalKey(Schema.Enum({ Low: 1, High: 2 })),
+    },
     success: Schema.String,
   });
 
   const command = ActionCli.command(
-    Action.implement(Page, ({ limit }) => Effect.succeed(String(limit))),
+    Action.implement(Page, ({ limit, scale, level }) =>
+      Effect.succeed([limit, scale, level].map(String).join(" ")),
+    ),
     Page,
   );
 
-  expect(await lines(command, ["--limit", "3"])).toEqual(['"3"']);
-  expect(await lines(command, ["--limit", '"auto"'])).toEqual(['"auto"']);
-  expect((await lines(command, ["--help"])).join("\n")).toMatch(/--limit json/);
+  expect(await lines(command, ["--limit", "3"])).toEqual(['"3 undefined undefined"']);
+  expect(await lines(command, ["--limit", "auto"])).toEqual(['"auto undefined undefined"']);
+  expect(await lines(command, ["--limit", '"auto"'])).toEqual(['"auto undefined undefined"']);
+  // `Schema.Number` encodes a non-finite value as text, which its flag takes as it is.
+  expect(await lines(command, ["--limit", "1", "--scale", "Infinity", "--level", "2"])).toEqual([
+    '"1 Infinity 2"',
+  ]);
+  expect((await lines(command, ["--help"])).join("\n")).toMatch(/--limit value/);
 });
 
 it("lets a field shadow a global flag, and refuses a clash within a command when it is built", async () => {
@@ -719,6 +746,9 @@ it("aggregates implementations under one named command and refuses duplicate com
   });
 
   expect(() => ActionCli.command([one, guarded], One)).toThrow("Duplicate command: one");
+
+  // A single command checks only its own action: other names may repeat.
+  expect(await lines(ActionCli.command([one, two, again], Two), [])).toEqual(['"two"']);
 });
 
 it("names commands and flags in kebab case, unless a name is given", async () => {

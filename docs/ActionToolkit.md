@@ -51,7 +51,7 @@ With a model: pass `toolkit` as `toolkit` to `LanguageModel.generateText` and pr
 
 ## Rules
 
-- Every action of the implementations passed becomes a tool, named after the action, with its `hints`. `make(apps, options?)` accepts one implementation or a list, such as `[userActions, double]`; options may be omitted.
+- Every action of the implementations passed becomes a tool, named after the action, with its `hints`. `make(apps)` accepts one implementation or a list, such as `[userActions, double]`.
 - Successes are the action's native values. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes encoded arguments and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - `layer` runs builders as [guarantees.md](guarantees.md#dependency-lifetimes) describes.

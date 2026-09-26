@@ -422,7 +422,7 @@ describe("HTTP bindings", () => {
     ).toEqual(["/api/whoAmI", "/api/invoice", "/api/audit"]);
   });
 
-  it("tags its group with the mount path, or `actions` at the root", () => {
+  it("tags its group with the mount path, or `/` at the root", () => {
     const tagsOf = (binding: { readonly prefix: string; readonly api: typeof Http.api }) => {
       const document = OpenApi.fromApi(binding.api);
 
@@ -438,8 +438,8 @@ describe("HTTP bindings", () => {
       ["v2/api"],
     ]);
     expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix: "/" }))).toEqual([
-      ["actions"],
-      ["actions"],
+      ["/"],
+      ["/"],
     ]);
   });
 
@@ -453,6 +453,13 @@ describe("HTTP bindings", () => {
       "/admin/invoice",
       "/admin/audit",
     ]);
+
+    // The root's group is not the `/actions` binding's, although both would read `actions`.
+    const rooted = HttpApi.make("host")
+      .addHttpApi(ActionHttp.make([WhoAmI], { prefix: "/" }).api)
+      .addHttpApi(ActionHttp.make([Invoice], { prefix: "/actions" }).api);
+
+    expect(Object.keys(OpenApi.fromApi(rooted).paths)).toEqual(["/whoAmI", "/actions/invoice"]);
   });
 
   const Alpha = Action.make("alpha", {

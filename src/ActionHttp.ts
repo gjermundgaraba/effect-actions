@@ -37,7 +37,7 @@ import {
   type BuildError,
   type AuthenticatorContext,
   type AuthenticatorError,
-  byAuthenticator,
+  authenticatorOf,
   type ErasedValue,
   type Member,
   provideHandlers,
@@ -72,8 +72,8 @@ type Endpoint<A extends Action.Any> = A extends Action.Any
 
 /**
  * The native `HttpApi` of `Actions`: one top-level group, so native client methods are
- * not nested, named after the binding's mount path so bindings composed into one host
- * API keep their own groups.
+ * not nested, named after the binding's mount path, `/` at the root, so bindings composed
+ * into one host API keep their own groups.
  */
 type Api<Actions extends ReadonlyArray<Action.Any>> = HttpApi.HttpApi<
   "actions",
@@ -236,9 +236,9 @@ export function make(
 
   // The one native group is top level, so its client methods are not nested. Its name
   // is its OpenAPI tag, and `HttpApi.addHttpApi` keys groups by it, so it is the mount
-  // path: two bindings on different prefixes combine side by side, when no action name,
-  // and so no operation ID, repeats across them.
-  const api = apiOf(mount.join("/") || "actions", endpoints);
+  // path, `/` at the root, which no segment contains: two bindings on different prefixes
+  // combine side by side, when no action name, and so no operation ID, repeats across them.
+  const api = apiOf(mount.join("/") || "/", endpoints);
 
   return { actions, prefix, api };
 }
@@ -265,7 +265,7 @@ export function layer(http: AnyBinding, served: Served): Layer.Layer<never, unkn
 
   // Router middleware covers the routes of the layer it is provided to, so each
   // authenticator's implementations are served by a layer of their own.
-  const [first, ...rest] = [...byAuthenticator(apps)].map(([authenticate, guarded]) =>
+  const [first, ...rest] = [...Map.groupBy(apps, authenticatorOf)].map(([authenticate, guarded]) =>
     authenticate === undefined
       ? routes(http, guarded)
       : routes(http, guarded).pipe(Layer.provide(authenticate.layer)),

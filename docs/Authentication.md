@@ -79,6 +79,7 @@ export const authenticate = Authentication.make(
 - Local surfaces, the CLI, the Toolkit and MCP over stdio, have no remote caller: they never run `authenticate`, and the host provides the identity service itself, as `Effect.provideService(CurrentActor, actor)`. The `before` hook still runs.
 - The result is native `HttpRouter.middleware`: combine with `.combine(...)`, and provide its `.layer` to routes of the host's own that need the identity.
 - Services `authenticate` yields other than the request are request requirements, like a handler's, which every HTTP surface serving the implementation owes as `HttpRouter.Request.From<"Requires", R>`. `HttpRouter.provideRequest(layer)` builds a layer once and provides it to every request, as a token verifier needs; router middleware provides a service resolved per request, such as a tenant. Local surfaces never run `authenticate` and do not require them.
+- `authenticate` is given or omitted, never a value that may be `undefined`: branch around `implement` to authenticate conditionally. A surface serving either branch owes the identity, since the public one does not provide it.
 - `authenticate` takes any native router middleware providing the identity, such as one combined with the middleware its requirements need: everything it provides is provided to the handler.
 - Resources it acquires in the request scope live until that scope closes, including while the handler runs.
 - Every response through the authentication carries `Cache-Control: no-store`, including failures serialized by enclosing middleware.
@@ -91,7 +92,8 @@ export const authenticate = Authentication.make(
 ## Failure modes
 
 - Handler sees a stale or wrong actor: an identity tag was provided at startup. Remove it from every startup layer; provide it only through the authentication.
-- Type error `HttpRouter.Request.From<"Requires", CurrentActor>` unsatisfied: the implementation has no `authenticate`. Give it one.
+- Type error `HttpRouter.Request.From<"Requires", CurrentActor>` unsatisfied: the implementation has no `authenticate`, or is one branch of a conditional one. Give it one, or provide the identity for the public branch.
+- Type error naming `Give this option or omit it` at `implement`: `authenticate` may be `undefined`, as `enabled ? auth : undefined`. Branch around the call.
 - Type error at `make`: `authenticate` may fail with an error that is neither a refusal nor an `HttpServerResponse`.
 - `HttpRouter.Request.From<"Requires", Verifier>` unsatisfied on an HTTP surface: `authenticate` yields it. Provide it per request, as `HttpRouter.provideRequest(Verifier.layer)`, which builds it once; `Layer.provide` does not satisfy a request requirement.
 - `"Need to .combine(middleware) that satisfy the missing request dependencies"` where a host route uses `.layer`: the authentication yields a service. Combine it with middleware providing that service first.

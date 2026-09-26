@@ -82,14 +82,15 @@ let implementations = 0;
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
  * `R` maps each action name to its per-request requirements, its handler's and its hook's;
- * `EX` and `RX` are the failures and services of the builder; `Auth` is its authenticator.
+ * `EX` and `RX` are the failures and services of the builder; `Auth` is its authenticator,
+ * `undefined` without one.
  */
 export class Implementation<
   A extends Action.Any,
   R extends { readonly [name: string]: unknown },
   EX,
   RX,
-  Auth = never,
+  Auth = undefined,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
   /** Type-only: each action's per-request requirements, by action name. */
@@ -98,7 +99,11 @@ export class Implementation<
   declare readonly "~buildError": EX;
   /** Type-only: what building its handlers needs. */
   declare readonly "~buildContext": RX;
-  /** Type-only: its authenticator. */
+  /**
+   * Type-only: its authenticator, `undefined` without one. Not `never`: an implementation
+   * that owes an identity would then be a subtype of one that provides it, and a union of
+   * both would keep only the one that provides it.
+   */
   declare readonly "~authenticate": Auth;
 
   readonly #key: HandlersKey;
@@ -204,23 +209,22 @@ export type AuthenticatedContext<App> = App extends unknown
   ? Exclude<RequestContext<App>, Identity<AuthenticatorOf<App>>>
   : never;
 
-// Each checks `App` itself, so a generic `App` resolves through its constraint.
+/** What the authenticators of `App` declare. */
+type AuthenticatorConfig<App> = ConfigOf<AuthenticatorOf<App>>;
+
 /** What building the authenticators of `App` fails with, on the HTTP surfaces that run them. */
-export type AuthenticatorError<App> = App extends { readonly "~authenticate": infer Auth }
-  ? ConfigOf<Auth>["layerError"]
-  : never;
+export type AuthenticatorError<App> = AuthenticatorConfig<App>["layerError"];
 
 /**
  * What the authenticators of `App` need, on the HTTP surfaces that run them: what the
  * native layer of each would require, their request requirements included.
  */
-export type AuthenticatorContext<App> = App extends { readonly "~authenticate": infer Auth }
-  ?
-      | ConfigOf<Auth>["layerRequires"]
-      | HttpRouter.Request.From<"Requires", ConfigOf<Auth>["requires"]>
-      | HttpRouter.Request.From<"Error", ConfigOf<Auth>["error"]>
-  : never;
+export type AuthenticatorContext<App> =
+  | AuthenticatorConfig<App>["layerRequires"]
+  | HttpRouter.Request.From<"Requires", AuthenticatorConfig<App>["requires"]>
+  | HttpRouter.Request.From<"Error", AuthenticatorConfig<App>["error"]>;
 
+// Checks `App` itself, so a generic `App` resolves through its constraint.
 /** The authenticator of each of `App`. */
 type AuthenticatorOf<App> = App extends { readonly "~authenticate": infer Auth } ? Auth : never;
 
@@ -323,19 +327,6 @@ const dispatch = (
   };
 };
 
-/**
- * The distinct authenticators of `apps`, each with the implementations it guards; those
- * with none under `undefined`.
- */
-export const byAuthenticator = (
-  apps: ReadonlyArray<AnyImplementation>,
-): ReadonlyMap<ErasedAuthenticator | undefined, ReadonlyArray<AnyImplementation>> => {
-  const groups = new Map<ErasedAuthenticator | undefined, Array<AnyImplementation>>();
-
-  for (const app of apps) {
-    const authenticate = Implementation.guardOf(app).authenticate;
-    groups.set(authenticate, [...(groups.get(authenticate) ?? []), app]);
-  }
-
-  return groups;
-};
+/** The authenticator `app` was implemented with, if any. */
+export const authenticatorOf = (app: AnyImplementation): ErasedAuthenticator | undefined =>
+  Implementation.guardOf(app).authenticate;
