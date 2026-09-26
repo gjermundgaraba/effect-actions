@@ -1,10 +1,15 @@
 import { Effect } from "effect";
 import * as Action from "../src/Action.js";
-import { CurrentActor } from "./authorization.js";
+import { authenticate } from "./authentication.js";
+import { authorize, CurrentActor } from "./authorization.js";
 import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
-// No request requirement at all, so this action can be served without authentication.
+// Who may call, for every surface that serves an implementation: HTTP surfaces run
+// `authenticate`, and every surface runs `authorize` before each handler.
+const guarded = { authenticate, before: authorize };
+
+// No policy and no request requirement: public on every surface.
 export const status = Action.implement(
   Status,
   Effect.gen(function* () {
@@ -14,9 +19,8 @@ export const status = Action.implement(
   }),
 );
 
-// Capture Users at startup; resolve CurrentActor per request. Each surface binds
-// the `before` hook, which has already refused an actor without the permission
-// the action's access needs.
+// Capture Users at startup; resolve CurrentActor per request. The hook has already
+// refused an actor without the permission the action's access needs.
 export const userActions = Action.implement(
   [GetUser, RenameUser, WhoAmI],
   Effect.gen(function* () {
@@ -29,10 +33,11 @@ export const userActions = Action.implement(
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
     };
   }),
+  guarded,
 );
 
-// Pure: no builder and no services, so any surface can serve it on its own.
-export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
+// Pure: no builder and no services, only the policy.
+export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), guarded);
 
 export const listChanges = Action.implement(
   ListChanges,
@@ -46,4 +51,5 @@ export const listChanges = Action.implement(
         return { changes: yield* users.changes(actor.tenantId) };
       });
   }),
+  guarded,
 );

@@ -204,7 +204,7 @@ describe("one implementation, both transports", () => {
       expect(response.headers.get("www-authenticate")).toBe("Bearer");
       expect(await response.json()).toEqual(
         Schema.encodeSync(Action.Unauthenticated)(
-          new Action.Unauthenticated({ message: "A demo bearer token is required." }),
+          new Action.Unauthenticated({ message: "A bearer token is required." }),
         ),
       );
     }
@@ -361,7 +361,7 @@ describe("actions under their own middleware", () => {
     expect(result.status.users).toBe(2);
     expect(result.identity).toEqual({ id: "alice", tenantId: "acme" });
     expect(result.unauthenticated).toBeInstanceOf(Action.Unauthenticated);
-    expect(result.unauthenticated).toMatchObject({ message: "A demo bearer token is required." });
+    expect(result.unauthenticated).toMatchObject({ message: "A bearer token is required." });
     expect(result.forbidden).toBeInstanceOf(Action.Forbidden);
     expect(result.forbidden).toMatchObject({ message: "Requires users:write." });
 
@@ -484,7 +484,7 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
 
   let authentications = 0;
 
-  const authentication = Authentication.middleware(
+  const authentication = Authentication.make(
     Identity,
     Effect.gen(function* () {
       authentications++;
@@ -534,7 +534,6 @@ it("supplies the native request context to handlers without a router requirement
     description: "The connected client's declared name",
     access: "write",
     success: Schema.String,
-    hints: { readOnly: true },
   });
 
   const app = Action.implement(ClientName, () =>

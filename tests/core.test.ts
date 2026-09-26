@@ -14,15 +14,19 @@ describe("contracts", () => {
     expect(Double.errors).toEqual([]);
   });
 
-  it("derives tool hints: destructive follows readOnly unless stated", () => {
+  it("defaults an omitted success to Schema.Void", () => {
+    const Reset = Action.make("reset", { description: "Reset", access: "write" });
+
+    expect(Reset.success).toBe(Schema.Void);
+  });
+
+  it("derives tool hints: destructive follows access, and only a write may state it", () => {
     expect(GetUser.hints).toEqual({
-      readOnly: true,
       destructive: false,
       idempotent: false,
       openWorld: true,
     });
     expect(RenameUser.hints).toEqual({
-      readOnly: false,
       destructive: false,
       idempotent: false,
       openWorld: true,
@@ -35,11 +39,20 @@ describe("contracts", () => {
     });
 
     expect(Write.hints).toEqual({
-      readOnly: false,
       destructive: true,
       idempotent: false,
       openWorld: true,
     });
+
+    const Read = Action.make("read", {
+      description: "A read stating destructive",
+      access: "read",
+      success: Schema.String,
+      // @ts-expect-error A read is never destructive; plain JavaScript can still say so.
+      hints: { destructive: true },
+    });
+
+    expect(Read.hints.destructive).toBe(false);
   });
 
   it("owns the built-in failures, each with a default message", () => {

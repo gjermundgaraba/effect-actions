@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Deferred, Effect, Layer, Option, Schema } from "effect";
+import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -10,9 +10,11 @@ import {
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { httpClient, mcpCall, serve } from "./serve.js";
-import { rawToolCall } from "./requests.js";
+import * as Testing from "../src/Testing.js";
+import { against, httpClient, serve } from "./serve.js";
+import { post, rawToolCall } from "./requests.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
@@ -38,11 +40,11 @@ const authenticateToken = Effect.gen(function* () {
   return { id: token };
 });
 
-describe("Authentication.middleware", () => {
+describe("Authentication.make", () => {
   it("answers a refusal as its JSON: a 401 with a Bearer challenge, or a 403 without one", async () => {
     let calls = 0;
 
-    const auth = Authentication.middleware(Identity, authenticateToken);
+    const auth = Authentication.make(Identity, authenticateToken);
 
     const web = serve(
       HttpRouter.add(
@@ -90,7 +92,7 @@ describe("Authentication.middleware", () => {
   });
 
   it("answers a default refusal with its default message", async () => {
-    const auth = Authentication.middleware(Identity, Effect.fail(new Action.Unauthenticated()));
+    const auth = Authentication.make(Identity, Effect.fail(new Action.Unauthenticated()));
 
     const web = serve(
       HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
@@ -109,7 +111,7 @@ describe("Authentication.middleware", () => {
   });
 
   it("sends the host's own response instead, with its status and headers", async () => {
-    const auth = Authentication.middleware(
+    const auth = Authentication.make(
       Identity,
       Effect.gen(function* () {
         const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
@@ -146,7 +148,7 @@ describe("Authentication.middleware", () => {
   });
 
   it("challenges only its own refusals, leaving every other 401 as it is", async () => {
-    const auth = Authentication.middleware(
+    const auth = Authentication.make(
       Identity,
       Effect.gen(function* () {
         const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
@@ -175,7 +177,7 @@ describe("Authentication.middleware", () => {
   });
 
   it("rejects any other failure in the types, and answers it with an empty 500", async () => {
-    const auth = Authentication.middleware(
+    const auth = Authentication.make(
       Identity,
       // @ts-expect-error Only a refusal or a response may fail authentication; plain JavaScript can still fail with anything.
       Effect.fail(new Private({ message: "Undeclared" })),
@@ -201,14 +203,18 @@ describe("Authentication.middleware", () => {
       success: Schema.String,
     });
 
-    const app = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id));
+    const app = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id), {
+      authenticate: Authentication.make(Identity, authenticateToken),
+    });
+
     const Http = ActionHttp.make([Identify]);
 
+    // Each surface applies the implementation's authentication; the host provides nothing.
     const web = serve(
       Layer.mergeAll(
         ActionHttp.layer(Http, app),
         ActionMcp.layerHttp(app, { name: "refusal-test", version: "0" }),
-      ).pipe(Layer.provide(Authentication.middleware(Identity, authenticateToken).layer)),
+      ),
     );
 
     onTestFinished(() => web.dispose());
@@ -236,20 +242,20 @@ describe("Authentication.middleware", () => {
     expect(denied).toBeInstanceOf(Action.Forbidden);
     expect(denied).toMatchObject({ message: "Denied token" });
 
-    // The MCP endpoint is refused before any tool runs: the HTTP 401 itself.
-    await expect(mcpCall(web, { name: "identify" })).rejects.toThrow(
-      /answered 401: .*"Missing token"/,
+    // The MCP endpoint is refused before any tool runs, with the HTTP 401 itself, which
+    // decodes as the same refusal.
+    expect(await against(web, Effect.flip(Testing.mcpCall(Identify)))).toEqual(
+      new Action.Unauthenticated({ message: "Missing token" }),
     );
-    expect(await mcpCall(web, { name: "identify", headers: { authorization: "alice" } })).toEqual({
-      isError: false,
-      value: "alice",
-    });
+    expect(
+      await against(web, Testing.mcpCall(Identify, {}, { headers: { authorization: "alice" } })),
+    ).toBe("alice");
   });
 
   it("keeps resources acquired by authentication alive for the handler and releases on handler failure", async () => {
     const events: string[] = [];
 
-    const auth = Authentication.middleware(
+    const auth = Authentication.make(
       Identity,
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -286,7 +292,7 @@ describe("Authentication.middleware", () => {
   });
 
   it("protects private errors serialized by enclosing middleware", async () => {
-    const auth = Authentication.middleware(Identity, Effect.succeed({ id: "alice" }));
+    const auth = Authentication.make(Identity, Effect.succeed({ id: "alice" }));
 
     const outer = HttpRouter.middleware<{ handles: Private }>()((effect) =>
       Effect.catch(effect, (error) =>
@@ -320,8 +326,8 @@ describe("Authentication.middleware", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("tracks and resolves authentication dependencies using native middleware composition", async () => {
-    const auth = Authentication.middleware(
+  it("owes its services per request, which native middleware composition provides", async () => {
+    const auth = Authentication.make(
       Identity,
       Effect.gen(function* () {
         const tokens = yield* Tokens;
@@ -359,7 +365,7 @@ describe("Authentication.middleware", () => {
       const allowRelease = Effect.runSync(Deferred.make<void>());
       const released = Effect.runSync(Deferred.make<void>());
 
-      const auth = Authentication.middleware(
+      const auth = Authentication.make(
         Identity,
         Effect.acquireRelease(
           Effect.sync(() => {
@@ -383,21 +389,23 @@ describe("Authentication.middleware", () => {
         success: Schema.String,
       });
 
-      const app = Action.implement(Identify, () =>
-        Effect.gen(function* () {
-          expect(events).toEqual(["acquire"]);
-          events.push("handler");
+      const app = Action.implement(
+        Identify,
+        () =>
+          Effect.gen(function* () {
+            expect(events).toEqual(["acquire"]);
+            events.push("handler");
 
-          return (yield* Identity).id;
-        }),
+            return (yield* Identity).id;
+          }),
+        { authenticate: auth },
       );
 
-      const routes =
+      const web = serve(
         transport === "http"
           ? ActionHttp.layer(ActionHttp.make([Identify]), app)
-          : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" });
-
-      const web = serve(routes.pipe(Layer.provide(auth.layer)));
+          : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" }),
+      );
 
       onTestFinished(async () => {
         await Effect.runPromise(Deferred.succeed(allowRelease, undefined));
@@ -428,18 +436,19 @@ describe("Authentication.middleware", () => {
 });
 
 describe("Authentication.bearerToken", () => {
-  const tokenOf = (authorization?: string) =>
-    Effect.runSync(
-      Effect.provideService(
-        Authentication.bearerToken,
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(
-          new Request("http://localhost/", {
-            headers: authorization === undefined ? {} : { authorization },
-          }),
-        ),
+  const withAuthorization = (authorization?: string) =>
+    Effect.provideService(
+      Authentication.bearerToken,
+      HttpServerRequest.HttpServerRequest,
+      HttpServerRequest.fromWeb(
+        new Request("http://localhost/", {
+          headers: authorization === undefined ? {} : { authorization },
+        }),
       ),
     );
+
+  const tokenOf = (authorization?: string) =>
+    Effect.runSync(Effect.option(withAuthorization(authorization)));
 
   it("reads the token of a Bearer authorization, whatever the scheme's case", () => {
     expect(tokenOf("Bearer alice")).toEqual(Option.some("alice"));
@@ -447,11 +456,228 @@ describe("Authentication.bearerToken", () => {
     expect(tokenOf("BEARER alice")).toEqual(Option.some("alice"));
   });
 
-  it("is absent without an authorization, with another scheme, or without a token", () => {
+  it("fails without an authorization, with another scheme, or without a token", () => {
     expect(tokenOf()).toEqual(Option.none());
     expect(tokenOf("Basic YWxpY2U6c2VjcmV0")).toEqual(Option.none());
     expect(tokenOf("Bearer")).toEqual(Option.none());
     expect(tokenOf("Bearer ")).toEqual(Option.none());
     expect(tokenOf("Bearer two tokens")).toEqual(Option.none());
+  });
+
+  it("fails with the built-in 401, so authentication needs no branch of its own", () => {
+    expect(Effect.runSync(Effect.flip(withAuthorization()))).toEqual(
+      new Action.Unauthenticated({ message: "A bearer token is required." }),
+    );
+  });
+});
+
+describe("an implementation's authentication", () => {
+  const Public = Action.make("public", {
+    description: "Answer anyone",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Secret = Action.make("secret", {
+    description: "Answer the authenticated identity",
+    access: "read",
+    input: { note: Schema.String },
+    success: Schema.String,
+  });
+
+  const Http = ActionHttp.make([Public, Secret]);
+  const authenticate = Authentication.make(Identity, authenticateToken);
+
+  const open = Action.implement(Public, () => Effect.succeed("anyone"));
+
+  const guarded = Action.implement(
+    Secret,
+    ({ note }) => Effect.map(Identity, ({ id }) => `${id}: ${note}`),
+    { authenticate },
+  );
+
+  const call = (path: string, body: Schema.Json, token?: string) => {
+    const request = post(`/api/${path}`, body);
+
+    if (token !== undefined) request.headers.set("authorization", token);
+
+    return request;
+  };
+
+  it("owes its authenticator's services per request, on every HTTP surface", async () => {
+    let built = 0;
+
+    const verified = Action.implement(
+      Secret,
+      ({ note }) => Effect.map(Identity, ({ id }) => `${id}: ${note}`),
+      {
+        authenticate: Authentication.make(
+          Identity,
+          Effect.gen(function* () {
+            const { prefix } = yield* Tokens;
+
+            return { id: `${prefix}${yield* Authentication.bearerToken}` };
+          }),
+        ),
+      },
+    );
+
+    const routes = Layer.mergeAll(
+      ActionHttp.layer(Http, verified),
+      ActionMcp.layerHttp(verified, { name: "test", version: "0" }),
+    );
+
+    const owesTokens: HttpRouter.Request<"Requires", Tokens> extends Layer.Services<typeof routes>
+      ? true
+      : false = true;
+
+    void owesTokens;
+
+    // `provideRequest` builds its layer once and provides it to every request.
+    const tokens = Layer.effect(
+      Tokens,
+      Effect.sync(() => {
+        built++;
+
+        return { prefix: "actor:" };
+      }),
+    );
+
+    const web = serve(routes.pipe(HttpRouter.provideRequest(tokens)));
+    onTestFinished(() => web.dispose());
+
+    const response = await web.handler(call("secret", { note: "hi" }, "Bearer alice"));
+    expect(await response.json()).toBe("actor:alice: hi");
+
+    const called = Testing.mcpCall(
+      Secret,
+      { note: "hi" },
+      { headers: { authorization: "Bearer alice" } },
+    );
+
+    expect(await against(web, called)).toBe("actor:alice: hi");
+    expect(built).toBe(1);
+  });
+
+  it("takes any native middleware providing the identity, a combined one included", async () => {
+    class Tenant extends Context.Service<Tenant, string>()("test/Tenant") {}
+
+    // The identity needs the tenant another middleware resolves for the request.
+    const identify = HttpRouter.middleware<{ provides: Identity }>()((effect) =>
+      Effect.flatMap(Tenant, (tenant) => Effect.provideService(effect, Identity, { id: tenant })),
+    );
+
+    const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((effect) =>
+      Effect.provideService(effect, Tenant, "acme"),
+    );
+
+    const tenanted = Action.implement(
+      Secret,
+      ({ note }) =>
+        Effect.flatMap(Tenant, (tenant) =>
+          Effect.map(Identity, ({ id }) => `${id}@${tenant}: ${note}`),
+        ),
+      { authenticate: identify.combine(resolveTenant) },
+    );
+
+    // Everything the combined middleware provides is provided, so nothing is owed.
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Http, tenanted),
+        ActionMcp.layerHttp(tenanted, { name: "test", version: "0" }),
+      ),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    expect(await (await web.handler(call("secret", { note: "hi" }))).json()).toBe("acme@acme: hi");
+    expect(await against(web, Testing.mcpCall(Secret, { note: "hi" }))).toBe("acme@acme: hi");
+  });
+
+  // A local surface never runs `authenticate`, so it owes none of its services.
+  it("leaves an authenticator's services off the local surfaces", () => {
+    const { layer } = ActionToolkit.make(
+      Action.implement(Secret, ({ note }) => Effect.succeed(note), {
+        authenticate: Authentication.make(
+          Identity,
+          Effect.map(Tokens, ({ prefix }) => ({ id: prefix })),
+        ),
+      }),
+    );
+
+    const owesNothing: Tokens extends Layer.Services<typeof layer> ? false : true = true;
+    void owesNothing;
+  });
+
+  it("guards only its own routes, so one layer serves public and private actions", async () => {
+    const web = serve(ActionHttp.layer(Http, [open, guarded]));
+    onTestFinished(() => web.dispose());
+
+    const anyone = await web.handler(call("public", {}));
+    expect(anyone.status).toBe(200);
+    expect(anyone.headers.has("cache-control")).toBe(false);
+
+    const refused = await web.handler(call("secret", { note: "hi" }));
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get("www-authenticate")).toBe("Bearer");
+
+    expect(await (await web.handler(call("secret", { note: "hi" }, "alice"))).json()).toBe(
+      "alice: hi",
+    );
+  });
+
+  it("runs before decoding, so an unauthenticated caller learns nothing of the input", async () => {
+    const web = serve(ActionHttp.layer(Http, guarded));
+    onTestFinished(() => web.dispose());
+
+    expect((await web.handler(call("secret", { note: 42 }))).status).toBe(401);
+    expect((await web.handler(call("secret", { note: 42 }, "alice"))).status).toBe(400);
+  });
+
+  it("authenticates an MCP endpoint as a whole, refusing to mix authentications", async () => {
+    const web = serve(ActionMcp.layerHttp(guarded, { name: "test", version: "0" }));
+    onTestFinished(() => web.dispose());
+
+    // One route: tool listing is authenticated too.
+    expect(await against(web, Effect.flip(Testing.mcpCall(Secret, { note: "hi" })))).toBeInstanceOf(
+      Action.Unauthenticated,
+    );
+    expect(
+      await against(
+        web,
+        Testing.mcpCall(Secret, { note: "hi" }, { headers: { authorization: "alice" } }),
+      ),
+    ).toBe("alice: hi");
+
+    const other = Action.implement(Public, () => Effect.succeed("anyone"), {
+      authenticate: Authentication.make(Identity, Effect.succeed({ id: "other" })),
+    });
+
+    // A public implementation stays public: it is refused beside an authenticated one.
+    for (const mixed of [
+      [open, guarded],
+      [other, guarded],
+    ]) {
+      expect(() => ActionMcp.layerHttp(mixed, { name: "test", version: "0" })).toThrow(
+        "An MCP endpoint authenticates once",
+      );
+    }
+  });
+
+  it("leaves identity to the host on a local surface", async () => {
+    const { toolkit, layer } = ActionToolkit.make(guarded);
+
+    const results = await Effect.gen(function* () {
+      const tools = yield* toolkit;
+
+      return yield* Stream.runCollect(yield* tools.handle("secret", { note: "hi" }));
+    }).pipe(
+      Effect.provideService(Identity, { id: "host" }),
+      Effect.provide(layer),
+      Effect.scoped,
+      Effect.runPromise,
+    );
+
+    expect(results).toMatchObject([{ isFailure: false, result: "host: hi" }]);
   });
 });

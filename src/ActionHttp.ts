@@ -1,4 +1,5 @@
 import { Effect, Layer, type Schema } from "effect";
+import type { HttpClient } from "effect/unstable/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
 import {
@@ -19,24 +20,34 @@ import {
 } from "effect/unstable/httpapi";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
-import type { AnyHttp } from "./internal/client.js";
+import {
+  type AnyHttp,
+  client as makeClient,
+  type Client,
+  type ErasedMethod,
+  type Options as ClientOptions,
+} from "./internal/client.js";
 import { httpErrors, type HttpErrors, InvalidInput } from "./internal/errors.js";
 import { challenge } from "./internal/respond.js";
 import {
   acquire,
+  type AuthenticatedContext,
   type AnyImplementation,
   type BuildContext,
   type BuildError,
-  dispatch,
+  type AuthenticatorContext,
+  type AuthenticatorError,
+  byAuthenticator,
   type ErasedValue,
-  type Hook,
   type Member,
   provideHandlers,
-  type RequestContext,
   type Served,
   servedActions,
   toList,
 } from "./internal/implementation.js";
+
+/** A client's methods, one per action of the binding. */
+export type { Client } from "./internal/client.js";
 
 /** Contract-level configuration: servers and clients must agree on it. */
 interface Options {
@@ -71,15 +82,16 @@ type Api<Actions extends ReadonlyArray<Action.Any>> = HttpApi.HttpApi<
 
 /**
  * What `layer` builds: failures, build services and request services are unions over
- * precisely the implementations `App` and the hook's services `RB`, joined by the router
- * and platform services `HttpApiBuilder.layer` needs.
+ * precisely the implementations `App`, less the identities their authenticators provide,
+ * joined by the router and platform services `HttpApiBuilder.layer` needs.
  */
-type HttpLayer<App, RB> = Layer.Layer<
+type HttpLayer<App> = Layer.Layer<
   never,
-  BuildError<App>,
+  BuildError<App> | AuthenticatorError<App>,
   | BuildContext<App>
+  | AuthenticatorContext<App>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<App> | RB>
+  | HttpRouter.Request.From<"Requires", AuthenticatedContext<App>>
   | Etag.Generator
   | FileSystem
   | HttpPlatform.HttpPlatform
@@ -87,9 +99,9 @@ type HttpLayer<App, RB> = Layer.Layer<
 >;
 
 /**
- * An HTTP binding: actions and where they are mounted. Plain data, so a client importing
- * it bundles no server code, and a copy of it, or one made by another installed copy of
- * this package, serves the same; `layer` serves it.
+ * An HTTP binding: actions and where they are mounted. Plain data, so a copy of it, or
+ * one made by another installed copy of this package, serves the same; `layer` serves it
+ * and `client` calls it.
  */
 export interface Http<Actions extends ReadonlyArray<Action.Any>> {
   /** The exact actions bound to this binding. */
@@ -209,10 +221,7 @@ export function make(
   actions: ReadonlyArray<Action.Any>,
   options: Options = {},
 ): Http<ReadonlyArray<Action.Any>> {
-  assertDistinct(
-    "action",
-    actions.map((action) => action.name),
-  );
+  assertDistinct("action", actions, (action) => action.name);
 
   const mount = mountSegments(options.prefix);
   const prefix = mount.length === 0 ? "" : route(mount);
@@ -227,17 +236,19 @@ export function make(
 
   // The one native group is top level, so its client methods are not nested. Its name
   // is its OpenAPI tag, and `HttpApi.addHttpApi` keys groups by it, so it is the mount
-  // path: two bindings on different prefixes compose side by side.
+  // path: two bindings on different prefixes combine side by side, when no action name,
+  // and so no operation ID, repeats across them.
   const api = apiOf(mount.join("/") || "actions", endpoints);
 
   return { actions, prefix, api };
 }
 
 /**
- * Serve implementations of a binding's actions in one layer, with one pre-handler hook
- * around every request they answer. Each call mounts only the routes of the actions it
- * serves, so actions with different middleware are served by separate calls. Each
- * implementation's builder runs once however many layers serve it.
+ * Serve implementations of a binding's actions in one layer. Each implementation's
+ * `authenticate` runs before decoding, around the routes of its own actions, and its
+ * `before` hook after decoding, before each handler. Each call mounts only the routes of
+ * the actions it serves; each implementation's builder runs once however many layers
+ * serve it.
  */
 export function layer<
   const H extends AnyBinding,
@@ -246,15 +257,30 @@ export function layer<
       | AnyImplementation<H["actions"][number]>
       | ReadonlyArray<AnyImplementation<H["actions"][number]>>
     ),
-  RB = never,
->(http: H, apps: Apps, options?: Hook<RB>): HttpLayer<Member<Apps>, RB>;
-export function layer(
-  http: AnyBinding,
-  served: Served,
-  options: Hook<unknown> = {},
-): Layer.Layer<never, unknown, unknown> {
+>(http: H, apps: Apps): HttpLayer<Member<Apps>>;
+export function layer(http: AnyBinding, served: Served): Layer.Layer<never, unknown, unknown> {
   const apps = toList(served);
-  const actions = servedActions("served action", apps);
+  // Refuse an action served twice before splitting by authenticator.
+  servedActions("served action", apps);
+
+  // Router middleware covers the routes of the layer it is provided to, so each
+  // authenticator's implementations are served by a layer of their own.
+  const [first, ...rest] = [...byAuthenticator(apps)].map(([authenticate, guarded]) =>
+    authenticate === undefined
+      ? routes(http, guarded)
+      : routes(http, guarded).pipe(Layer.provide(authenticate.layer)),
+  );
+
+  return Layer.mergeAll(first ?? Layer.empty, ...rest);
+}
+
+/** The routes of `apps`' actions, each run through its implementation's hook. */
+const routes = (
+  http: AnyBinding,
+  apps: ReadonlyArray<AnyImplementation>,
+): Layer.Layer<never, unknown, unknown> => {
+  // `layer` has refused an action served twice.
+  const actions = apps.flatMap((app) => app.actions);
   const name = groupOf(http.api).identifier;
 
   const api = apiOf(
@@ -267,16 +293,12 @@ export function layer(
       HttpApiBuilder.group(api, name, (builder) =>
         builder.handleAll(
           // SAFETY: the native router selects the endpoint, and so the action, before
-          // `dispatch` calls its handler; `layer`'s signature restores every channel.
+          // its handler runs; `layer`'s signature restores every channel.
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary.
           Object.fromEntries(
             // Own properties, so an action named `__proto__` is a route, not a prototype.
             actions.map((action) => {
-              const run = dispatch<Action.Any, ErasedValue, unknown>(
-                action,
-                handlerOf(action),
-                options.before,
-              );
+              const run = handlerOf(action);
 
               // Whoever answers a 401, a hook or the handler itself, it carries a challenge.
               return [
@@ -292,6 +314,30 @@ export function layer(
   ).pipe(provideHandlers(apps));
 
   return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
+};
+
+/**
+ * Effect's native `HttpApiClient` for a binding, one method per action taking the
+ * action's input directly: `client.greet({ name })`. The argument may be omitted when `{}`
+ * is a valid input. Requires the native `HttpClient`, as `HttpApiClient.make` does.
+ * The options are the native ones, `baseUrl` and `transformClient`. The native client
+ * itself stays available: `HttpApiClient.make(Http.api)`.
+ *
+ * A call fails with a declared error value (the action's own, or a built-in
+ * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` when the
+ * server could not be reached or answered with a status or body the contract does not
+ * declare, or a `SchemaError` when the input does not encode or the success does not
+ * decode.
+ */
+export function client<const H extends AnyHttp>(
+  http: H,
+  options?: ClientOptions,
+): Effect.Effect<Client<H>, never, HttpClient.HttpClient>;
+export function client(
+  http: AnyHttp,
+  options?: ClientOptions,
+): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
+  return makeClient(http, options);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { Console, Effect, Option, Predicate, Schema, SchemaAST } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as Action from "../Action.js";
+import { assertDistinct } from "./actions.js";
 
 /** How one command is named and prints its result. */
 export interface Options<Output> {
@@ -30,26 +31,31 @@ const jsonFlag = Flag.Boolean("json").pipe(
 /** Any JSON value, as one flag's text. */
 const jsonValue = Schema.fromJsonString(Schema.Json);
 
-/** The strings a union of string literals accepts, if it is one. */
+/** The values a literal or an enum accepts; nothing else has a fixed set. */
+const values = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
+  SchemaAST.isLiteral(ast)
+    ? [ast.literal]
+    : SchemaAST.isEnum(ast)
+      ? ast.enums.map(([, value]) => value)
+      : [undefined];
+
+/** The strings a union of string literals or a string enum accepts, if it is one. */
 const choices = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
-  const members = SchemaAST.isUnion(ast) ? ast.types : [ast];
+  const accepted = (SchemaAST.isUnion(ast) ? ast.types : [ast]).flatMap(values);
 
-  const literals = members.flatMap((member) =>
-    SchemaAST.isLiteral(member) && Predicate.isString(member.literal) ? [member.literal] : [],
-  );
-
-  return literals.length === members.length ? literals : undefined;
+  return accepted.every(Predicate.isString) ? accepted : undefined;
 };
 
 /** How JSON encodes `Schema.Number`'s non-finite values, which a number flag does not take. */
 const nonFinite = new Set(["Infinity", "-Infinity", "NaN"]);
 
 /**
- * A number, alone or as `Schema.Number` encodes it. A number beside any other string, such
- * as `"auto"`, is not: a number flag would refuse the string.
+ * A number, alone, as `Schema.Number` encodes it, or a numeric enum. A number beside any
+ * other string, such as `"auto"`, is not: a number flag would refuse the string.
  */
 const numeric = (ast: SchemaAST.AST): boolean =>
   SchemaAST.isNumber(ast) ||
+  (SchemaAST.isEnum(ast) && values(ast).every(Predicate.isNumber)) ||
   (SchemaAST.isUnion(ast) &&
     ast.types.some(SchemaAST.isNumber) &&
     ast.types.every(
@@ -60,14 +66,17 @@ const numeric = (ast: SchemaAST.AST): boolean =>
 
 /**
  * The native flag parsing one field's encoded JSON value: a string, number or boolean
- * flag for those, a choice for string literals, and a JSON flag for anything else.
+ * flag for those, a choice for string literals and string enums, and a JSON flag for
+ * anything else. A template literal is a string; the action's schema checks its pattern.
  */
 const valueFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<unknown> => {
   const literals = choices(encoded);
 
   if (literals !== undefined) return Flag.Literals(name, literals);
 
-  if (SchemaAST.isString(encoded)) return Flag.String(name);
+  if (SchemaAST.isString(encoded) || SchemaAST.isTemplateLiteral(encoded)) {
+    return Flag.String(name);
+  }
 
   if (numeric(encoded)) return Flag.Finite(name);
 
@@ -79,7 +88,8 @@ const valueFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<unknown> => 
 /**
  * An optional field's value without the absence `Schema.optional` adds to it: `undefined`
  * declared, `null` encoded. Omitting the flag already leaves the field out, so
- * `optional(Schema.String)` takes a plain string.
+ * `optional(Schema.String)` takes a plain string. A field that declares `null` itself keeps
+ * it, as `optionalKey(NullOr(Schema.String))` does.
  */
 const present = (ast: SchemaAST.AST): SchemaAST.AST => {
   const members = SchemaAST.isUnion(ast)
@@ -89,16 +99,27 @@ const present = (ast: SchemaAST.AST): SchemaAST.AST => {
   return members.length === 1 && members[0] !== undefined ? members[0] : ast;
 };
 
+/** Whether a declared value may be `null`. */
+const nullable = (ast: SchemaAST.AST): boolean =>
+  SchemaAST.isNull(ast) || (SchemaAST.isUnion(ast) && ast.types.some(nullable));
+
 /**
- * A field's flag, `None` when omitted. A required boolean is a switch: omitted, it is
- * `false`, as a switch reads.
+ * A field's flag, `None` when omitted. A required field's flag is required, so the parser
+ * reports it missing; a required boolean is a switch instead: omitted, it is `false`, as a
+ * switch reads.
  */
-const fieldFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<Option.Option<unknown>> =>
+const fieldFlag = (
+  name: string,
+  encoded: SchemaAST.AST,
+  declared: SchemaAST.AST | undefined,
+): Flag.Flag<Option.Option<unknown>> =>
   !SchemaAST.isOptional(encoded)
     ? SchemaAST.isBoolean(encoded)
       ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
-      : Flag.optional(valueFlag(name, encoded))
-    : Flag.optional(valueFlag(name, present(encoded)));
+      : valueFlag(name, encoded).pipe(Flag.map(Option.some))
+    : Flag.optional(
+        valueFlag(name, declared !== undefined && nullable(declared) ? encoded : present(encoded)),
+      );
 
 /** One flag per input field, parsed as the field's encoded value, `None` when omitted. */
 type FieldFlags = Readonly<Record<string, Flag.Flag<Option.Option<unknown>>>>;
@@ -124,22 +145,22 @@ const declaredFields = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.
 
 /**
  * One flag per top-level field of a struct input, named after the field in kebab case,
- * parsed as its encoded value and described by its declared schema. Every flag is optional
- * to the parser: the action's schema decides what is required, so a missing field is
- * reported exactly as any other invalid input.
+ * parsed as its encoded value and described by its declared schema. A field required once
+ * encoded has a required flag; the action's schema still decodes what they parse.
  */
 const fieldFlags = (encoded: SchemaAST.Objects, declared: SchemaAST.AST): FieldFlags => {
   const described = declaredFields(declared);
 
   return Object.fromEntries(
     encoded.propertySignatures.map((property) => {
-      const flag = fieldFlag(kebab(String(property.name)), property.type);
-
-      const declared = described.get(property.name) ?? property.type;
+      const field = described.get(property.name);
+      const flag = fieldFlag(kebab(String(property.name)), property.type, field);
+      const documented = field ?? property.type;
 
       // Described as a whole, as `optional(X).annotate(...)`, or as its value.
       const description =
-        SchemaAST.resolveDescription(declared) ?? SchemaAST.resolveDescription(present(declared));
+        SchemaAST.resolveDescription(documented) ??
+        SchemaAST.resolveDescription(present(documented));
 
       return [
         String(property.name),
@@ -175,6 +196,9 @@ const output = <A extends Action.Any, E, R>(
     // Validate and encode before rendering, so human output cannot conceal an
     // invalid action success value.
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.success))(value);
+
+    // An action that returns nothing prints nothing, rather than its encoding, `null`.
+    if (render === undefined && SchemaAST.isVoid(action.success.ast)) return;
 
     yield* Console.log(render === undefined ? JSON.stringify(encoded, null, 2) : render(value));
   });
@@ -215,9 +239,8 @@ const inputConfig = <A extends Action.Any>(action: A): InputConfig<A> => {
 
 /**
  * One native command around an action-bound operation, its flags derived from the
- * action's input. A field's flag shadows a global flag of the same name; two flags of one
- * command with the same name, such as a `json` field beside a renderer's `--json`, are the
- * native parser's `Duplicate flag name` on every run.
+ * action's input. A field's flag shadows a global flag of the same name; two flags of the
+ * command itself with one name are refused when it is built.
  */
 export const command = <A extends Action.Any, E, R>(
   action: A,
@@ -227,6 +250,18 @@ export const command = <A extends Action.Any, E, R>(
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;
   const { config, decode } = inputConfig(action);
+
+  // Two fields of one kebab-case name, or a `json` field beside a renderer's `--json`.
+  // Global flags are not claimed: a field's flag shadows one on its command.
+  assertDistinct(
+    "flag",
+    [
+      ...Object.keys(config).map((field) => [`--${kebab(field)}`, `field ${field}`] as const),
+      ...(render === undefined ? [] : [["--json", "render's --json"] as const]),
+    ],
+    ([flag]) => flag,
+    ([, claimant]) => claimant,
+  );
 
   const command =
     render === undefined

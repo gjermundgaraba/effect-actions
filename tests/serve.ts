@@ -1,9 +1,8 @@
 import { Effect, Layer, Predicate } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
+import { type HttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import * as ActionHttp from "../src/ActionHttp.js";
 import type { AnyHttp, Client } from "../src/internal/client.js";
 import { clientOf, type Served } from "../src/internal/memory.js";
-import * as Testing from "../src/Testing.js";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
 export type Handler = (request: Request) => Promise<Response>;
@@ -30,17 +29,16 @@ export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
 const handlerOf = (target: Server | Handler): Handler =>
   Predicate.isFunction(target) ? target : target.handler;
 
-/** `ActionHttpClient.make` for the binding, calling `server` in memory. */
+/** `ActionHttp.client` for the binding, calling `server` in memory. */
 export const httpClient = <const H extends AnyHttp>(
   http: H,
   server: Server | Handler,
-  options?: Parameters<typeof ActionHttpClient.make>[1],
+  options?: Parameters<typeof ActionHttp.client>[1],
 ): Effect.Effect<Client<H>> =>
-  ActionHttpClient.make(http, options).pipe(Effect.provide(clientOf(handlerOf(server))));
+  ActionHttp.client(http, options).pipe(Effect.provide(clientOf(handlerOf(server))));
 
-/** `Testing.mcpCall` against `server`, as a Promise that rejects with its failure. */
-export const mcpCall = (
+/** `effect`, such as a `Testing.mcpCall`, on an `HttpClient` answered by `server` in memory. */
+export const against = <A, E>(
   server: Server | Handler,
-  options: Parameters<typeof Testing.mcpCall>[0],
-): Promise<Testing.McpCallResult> =>
-  Effect.runPromise(Testing.mcpCall(options).pipe(Effect.provide(clientOf(handlerOf(server)))));
+  effect: Effect.Effect<A, E, HttpClient.HttpClient>,
+): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(clientOf(handlerOf(server)))));

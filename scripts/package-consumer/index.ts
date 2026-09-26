@@ -1,12 +1,11 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import type { HttpApiClient } from "effect/unstable/httpapi";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { Greet, Http, routes } from "./quickstart.js";
 
@@ -37,7 +36,7 @@ void checkTypes;
 
 const served = await Effect.gen(function* () {
   // `Testing.layer` resolves the relative URL, so the client needs no `baseUrl`.
-  const client = yield* ActionHttpClient.make(Http);
+  const client = yield* ActionHttp.client(Http);
 
   const checkClientTypes = () => {
     // @ts-expect-error Published declarations must type the client's input.
@@ -52,15 +51,14 @@ const served = await Effect.gen(function* () {
   void checkClientTypes;
 
   const greeting = yield* client.greet({ name: "Ada" });
-  const called = yield* Testing.mcpCall({ name: "greet", arguments: { name: "Ada" } });
+  const called = yield* Testing.mcpCall(Greet, { name: "Ada" });
 
   return { greeting, called };
 }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
 if (served.greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${served.greeting}`);
 
-if (served.called.isError || served.called.value !== "Hello, Ada!")
-  throw new Error("MCP tool call failed");
+if (served.called !== "Hello, Ada!") throw new Error("MCP tool call failed");
 
 /** The status of a GET to `url`, answered in memory by `Testing.layer`. */
 const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>
@@ -141,10 +139,22 @@ if (Read.access !== "read" || Write.access !== "write")
 
 class Identity extends Context.Service<Identity, string>()("consumer/Identity") {}
 
-const guarded = Action.implement([Read, Write], {
-  read: () => Effect.map(Identity, (identity) => identity),
-  write: () => Effect.succeed("write"),
-});
+const authenticate = Authentication.make(Identity, Authentication.bearerToken);
+
+const guarded = Action.implement(
+  [Read, Write],
+  {
+    read: () => Effect.map(Identity, (identity) => identity),
+    write: () => Effect.succeed("write"),
+  },
+  {
+    authenticate,
+    before: (action) =>
+      action.access === "read"
+        ? Effect.void
+        : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+  },
+);
 
 const GuardedHttp = ActionHttp.make([Read, Write]);
 
@@ -152,32 +162,18 @@ class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
 
 const checkHookTypes = () => {
   // @ts-expect-error A published hook refuses only with a built-in refusal.
-  ActionHttp.layer(GuardedHttp, guarded, { before: () => Effect.fail(new Denied()) });
+  Action.implement(Read, () => Effect.succeed("read"), { before: () => Effect.fail(new Denied()) });
 };
 
 void checkHookTypes;
 
-const authentication = Authentication.middleware(
-  Identity,
-  Effect.flatMap(Authentication.bearerToken, (token) =>
-    Option.match(token, {
-      onNone: () => Effect.fail(new Action.Unauthenticated({ message: "Sign in." })),
-      onSome: Effect.succeed,
-    }),
-  ),
-);
-
-const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded, {
-  before: (action) =>
-    action.access === "read"
-      ? Effect.void
-      : Effect.fail(new Action.Forbidden({ message: "Read only." })),
-}).pipe(Layer.provide(authentication.layer));
+// The implementation brings its authentication: the layer owes no identity.
+const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded);
 
 const refusals = await Effect.gen(function* () {
-  const anonymous = yield* ActionHttpClient.make(GuardedHttp);
+  const anonymous = yield* ActionHttp.client(GuardedHttp);
 
-  const client = yield* ActionHttpClient.make(GuardedHttp, {
+  const client = yield* ActionHttp.client(GuardedHttp, {
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("ada")),
   });
 
@@ -199,10 +195,10 @@ const refusals = await Effect.gen(function* () {
   };
 }).pipe(Effect.provide(Testing.layer(guardedRoutes)), Effect.runPromise);
 
-if (refusals.identity !== "ada") throw new Error("Published middleware lost the identity");
+if (refusals.identity !== "ada") throw new Error("Published authentication lost the identity");
 
 if (!(refusals.unauthenticated instanceof Action.Unauthenticated))
-  throw new Error("Published middleware allowed an anonymous read");
+  throw new Error("Published authentication allowed an anonymous read");
 
 if (
   !(refusals.forbidden instanceof Action.Forbidden) ||

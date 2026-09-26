@@ -3,6 +3,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vite-plus/test";
 
 describe("MCP stdio example", () => {
+  // A real subprocess compiles TypeScript at startup, which can outlast the default timeout
+  // under load.
   it("serves list/call over a real subprocess and keeps logs off protocol stdout", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -38,5 +40,5 @@ describe("MCP stdio example", () => {
     }
 
     expect(stderr).toContain("status called");
-  });
+  }, 30_000);
 });

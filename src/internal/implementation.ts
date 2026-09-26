@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
+import type { HttpRouter } from "effect/unstable/http";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
 import type { Refusal } from "./errors.js";
@@ -18,22 +19,49 @@ export type ErasedHandler<R> = {
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
 /**
- * What every surface binds around the implementations it serves. `E` is the refusals the
- * hook fails with: the CLI infers it for its command's error type, where the other surfaces
- * declare every refusal.
+ * An implementation's policy: how callers prove who they are, and whether they may call.
+ * `A` is its actions, `RB` the hook's services.
  */
-export interface Hook<R, E extends Refusal = Refusal> {
+export interface Guard<A extends Action.Any, RB, Auth> {
   /**
-   * Runs once per call, after the input is decoded and before the selected handler, with
-   * its action contract, so a policy reads `access` rather than the action name. It fails
-   * with a refusal, answered exactly as a declared error. Its services are request-time
-   * requirements, like a handler's.
+   * `Authentication.make`'s middleware, or any native router middleware providing the
+   * identity: how a remote caller proves who they are. HTTP surfaces run it before
+   * decoding, around the routes that serve this implementation, and owe its request
+   * requirements; local surfaces (CLI, Toolkit, MCP on stdio) leave identity to the host.
    */
-  readonly before?: ((action: Action.Any) => Effect.Effect<void, E, R>) | undefined;
+  readonly authenticate?: Auth | undefined;
+  /**
+   * Runs once per call on every surface, after the input is decoded and before the
+   * selected handler, with its action contract, so a policy reads `access` rather than
+   * the action name. It fails with a refusal, answered exactly as a declared error. Its
+   * services are request-time requirements, like a handler's.
+   */
+  readonly before?: ((action: A) => Effect.Effect<void, Refusal, RB>) | undefined;
 }
 
-/** A surface's hook, erased. */
-type Before<R> = (action: Action.Any) => Effect.Effect<void, unknown, R>;
+/**
+ * Native router middleware providing an identity per request, as `Authentication.make`
+ * returns. Its own requirements stay per request, like a handler's: an HTTP surface
+ * serving it owes them.
+ */
+export type Authenticator = HttpRouter.Middleware<any>;
+
+/**
+ * Any authenticator, as a surface runs it. Native middleware has its layer at run time
+ * even while its type still asks for request requirements; the surface owes those.
+ */
+export interface ErasedAuthenticator {
+  readonly layer: Layer.Layer<never, unknown, unknown>;
+}
+
+/** What an authenticator declares: what it provides and requires, per request and to build. */
+type ConfigOf<Auth> = Auth extends HttpRouter.Middleware<infer Config> ? Config : never;
+
+/** The identity services an authenticator provides. */
+type Identity<Auth> = ConfigOf<Auth>["provides"];
+
+/** An implementation's hook, erased. */
+type Before = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
 
 /** Per-request requirements of one handler. */
 export type HandlerContext<H> = H extends (
@@ -48,30 +76,42 @@ type HandlersKey = Context.Key<Handlers<unknown>, Handlers<unknown>>;
 let implementations = 0;
 
 /**
- * Actions bound to their handlers: everything one `Action.implement` call binds.
+ * Actions bound to their handlers and their policy: everything one `Action.implement` call
+ * binds.
  *
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
- * `R` maps each action name to its handler's per-request requirements; `EX` and
- * `RX` are the failures and services of the builder.
+ * `R` maps each action name to its per-request requirements, its handler's and its hook's;
+ * `EX` and `RX` are the failures and services of the builder; `Auth` is its authenticator.
  */
 export class Implementation<
   A extends Action.Any,
   R extends { readonly [name: string]: unknown },
   EX,
   RX,
+  Auth = never,
 > {
-  /** Type-only: each handler's per-request requirements, by action name. */
+  // Type-only fields, one per type parameter, so a type reads each by name.
+  /** Type-only: each action's per-request requirements, by action name. */
   declare readonly "~request": R;
+  /** Type-only: what building its handlers fails with. */
+  declare readonly "~buildError": EX;
+  /** Type-only: what building its handlers needs. */
+  declare readonly "~buildContext": RX;
+  /** Type-only: its authenticator. */
+  declare readonly "~authenticate": Auth;
 
   readonly #key: HandlersKey;
   readonly #layer: Layer.Layer<Handlers<unknown>, EX, RX>;
+  readonly #guard: Guard<Action.Any, unknown, ErasedAuthenticator>;
 
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
     build: Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope>,
+    guard: Guard<Action.Any, unknown, ErasedAuthenticator> = {},
   ) {
+    this.#guard = guard;
     // A string key is a service's identity, so it is unique to this implementation
     // even across copies of this module.
     this.#key = Context.Service<Handlers<unknown>>(
@@ -86,7 +126,7 @@ export class Implementation<
    * so it stays off the public instance type.
    */
   static layerOf<EX, RX>(
-    app: Implementation<any, any, EX, RX>,
+    app: Implementation<any, any, EX, RX, any>,
   ): Layer.Layer<Handlers<unknown>, EX, RX> {
     return Implementation.own(app).#layer;
   }
@@ -96,6 +136,11 @@ export class Implementation<
     app: AnyImplementation,
   ): Effect.Effect<Handlers<unknown>, never, Handlers<unknown>> {
     return Implementation.own(app).#key;
+  }
+
+  /** The policy `app` was implemented with. */
+  static guardOf(app: AnyImplementation): Guard<Action.Any, unknown, ErasedAuthenticator> {
+    return Implementation.own(app).#guard;
   }
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
@@ -110,9 +155,16 @@ export class Implementation<
   }
 }
 
-// `any` is a wildcard in these inference positions; `unknown` would fail to match.
+// The one place listing every parameter: `any` admits each implementation's, where
+// `unknown` would not. Types read a parameter from its type-only field.
 /** Any implementation, with its actions and channels erased. */
-export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<A, any, any, any>;
+export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<
+  A,
+  any,
+  any,
+  any,
+  any
+>;
 
 /** What a surface serves: one implementation, or a list of them. */
 export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
@@ -128,7 +180,7 @@ const isList = (served: Served): served is ReadonlyArray<AnyImplementation> =>
   Array.isArray(served);
 
 /** The actions of the implementations a surface serves. */
-export type ActionOf<App> = App extends Implementation<infer A, any, any, any> ? A : never;
+export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
 
 /** Per-request requirements of `App`'s handler for each `A` it implements. */
 export type RequestOf<App, A extends Action.Any> = App extends {
@@ -142,16 +194,43 @@ export type RequestOf<App, A extends Action.Any> = App extends {
   : never;
 
 /** Per-request requirements of the implementations a surface can invoke. */
-export type RequestContext<App> =
-  App extends Implementation<any, infer R, any, any> ? R[keyof R] : never;
+export type RequestContext<App> = App extends { readonly "~request": infer R } ? R[keyof R] : never;
+
+/**
+ * Per-request requirements of the implementations an HTTP surface serves: each one's
+ * own, less the identity its authenticator provides.
+ */
+export type AuthenticatedContext<App> = App extends unknown
+  ? Exclude<RequestContext<App>, Identity<AuthenticatorOf<App>>>
+  : never;
+
+// Each checks `App` itself, so a generic `App` resolves through its constraint.
+/** What building the authenticators of `App` fails with, on the HTTP surfaces that run them. */
+export type AuthenticatorError<App> = App extends { readonly "~authenticate": infer Auth }
+  ? ConfigOf<Auth>["layerError"]
+  : never;
+
+/**
+ * What the authenticators of `App` need, on the HTTP surfaces that run them: what the
+ * native layer of each would require, their request requirements included.
+ */
+export type AuthenticatorContext<App> = App extends { readonly "~authenticate": infer Auth }
+  ?
+      | ConfigOf<Auth>["layerRequires"]
+      | HttpRouter.Request.From<"Requires", ConfigOf<Auth>["requires"]>
+      | HttpRouter.Request.From<"Error", ConfigOf<Auth>["error"]>
+  : never;
+
+/** The authenticator of each of `App`. */
+type AuthenticatorOf<App> = App extends { readonly "~authenticate": infer Auth } ? Auth : never;
 
 /** Builder failures of the implementations a surface builds. */
-export type BuildError<App> = App extends Implementation<any, any, infer EX, any> ? EX : never;
+export type BuildError<App> = App extends { readonly "~buildError": infer EX } ? EX : never;
 
 /** Builder requirements of the implementations a surface builds. */
-export type BuildContext<App> = App extends Implementation<any, any, any, infer RX> ? RX : never;
+export type BuildContext<App> = App extends { readonly "~buildContext": infer RX } ? RX : never;
 
-/** An adapter's view of the acquired handler of one served action. */
+/** An adapter's view of the acquired handler of one served action, behind its hook. */
 export type HandlerOf = (action: Action.Any) => ErasedHandler<unknown>;
 
 /** Every action `apps` serve, each once: a name served twice is refused. */
@@ -161,10 +240,7 @@ export const servedActions = (
 ): ReadonlyArray<Action.Any> => {
   const actions = apps.flatMap((app) => app.actions);
 
-  assertDistinct(
-    what,
-    actions.map((action) => action.name),
-  );
+  assertDistinct(what, actions, (action) => action.name);
 
   return actions;
 };
@@ -183,7 +259,8 @@ export const provideHandlers =
 
 /**
  * Look up the handler of any action `apps` serve, from the handlers `provideHandlers`
- * built. Every record is complete: `Action.implement` checks it.
+ * built, behind its implementation's hook. Every record is complete: `Action.implement`
+ * checks it.
  */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
@@ -193,7 +270,16 @@ export const acquire = (
     (records) => {
       const handlers = new Map(
         apps.flatMap((app, index) =>
-          app.actions.map((action) => [action, records[index]?.[action.name]] as const),
+          app.actions.map((action) => {
+            const handle = records[index]?.[action.name];
+
+            return [
+              action,
+              handle === undefined
+                ? undefined
+                : dispatch(action, handle, Implementation.guardOf(app).before),
+            ] as const;
+          }),
         ),
       );
 
@@ -208,16 +294,14 @@ export const acquire = (
   );
 
 /**
- * Invoke one action's handler. The surface's pre-handler hook runs first, outside the
- * action's span, so a refusal is attributed to the surface rather than to a handler that
- * never ran. `R` remains in the returned effect so transport layers cannot erase
- * required per-request services while assembling routes.
+ * One action's handler behind its hook. The hook runs first, outside the action's span,
+ * so a refusal is attributed to the surface rather than to a handler that never ran.
  */
-export const dispatch = <A extends Action.Any, EB, R>(
-  action: A,
+const dispatch = (
+  action: Action.Any,
   handle: ErasedHandler<unknown>,
-  before: Before<R> | undefined,
-) => {
+  before: Before | undefined,
+): ErasedHandler<unknown> => {
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
   const attributes = {
@@ -225,9 +309,7 @@ export const dispatch = <A extends Action.Any, EB, R>(
     "action.access": action.access,
   };
 
-  return (
-    input: A["input"]["Type"],
-  ): Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R> => {
+  return (input) => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
         Effect.suspend(() => handle(input)),
@@ -237,13 +319,23 @@ export const dispatch = <A extends Action.Any, EB, R>(
       { captureStackTrace: false, attributes },
     );
 
-    const invoked = before === undefined ? handled : Effect.flatMap(before(action), () => handled);
-
-    // SAFETY: the selected action identifies the only handler invoked, whose
-    // contract fixes this input, success and failure schema, and whose requirements
-    // the adapter's public signature restores. The hook fails only with the surface
-    // errors the adapter declares on `EB`.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- See invariant above.
-    return invoked as Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | EB, R>;
+    return before === undefined ? handled : Effect.flatMap(before(action), () => handled);
   };
+};
+
+/**
+ * The distinct authenticators of `apps`, each with the implementations it guards; those
+ * with none under `undefined`.
+ */
+export const byAuthenticator = (
+  apps: ReadonlyArray<AnyImplementation>,
+): ReadonlyMap<ErasedAuthenticator | undefined, ReadonlyArray<AnyImplementation>> => {
+  const groups = new Map<ErasedAuthenticator | undefined, Array<AnyImplementation>>();
+
+  for (const app of apps) {
+    const authenticate = Implementation.guardOf(app).authenticate;
+    groups.set(authenticate, [...(groups.get(authenticate) ?? []), app]);
+  }
+
+  return groups;
 };

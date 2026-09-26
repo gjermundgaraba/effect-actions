@@ -1,17 +1,22 @@
 import { McpProtocol, McpSchema, Tool } from "effect/unstable/ai";
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
 import { Context, Effect, Layer, Schema, type Stdio } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import {
+  type HttpClient,
+  type HttpClientError,
+  HttpRouter,
+  HttpServer,
+} from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/authorization.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
-import { userActions as App } from "../examples/handlers.js";
+import { userActions } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
 import type { Equal } from "./equal.js";
 
@@ -23,6 +28,21 @@ const Http = ActionHttp.make(Actions);
 type RequestServices<L extends Layer.Any> = HttpRouter.Request.Only<"Requires", Layer.Services<L>>;
 
 const services = Layer.provide(HttpServer.layerServices);
+
+/** The example's user actions without their policy: each surface owes their identity. */
+const App = Action.implement(
+  [GetUser, RenameUser, WhoAmI],
+  Effect.gen(function* () {
+    const users = yield* Users;
+
+    return {
+      getUser: ({ id }) => Effect.flatMap(CurrentActor, (actor) => users.get(actor.tenantId, id)),
+      renameUser: ({ id, name }) =>
+        Effect.flatMap(CurrentActor, (actor) => users.rename(actor, id, name)),
+      whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
+    };
+  }),
+);
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
@@ -287,7 +307,7 @@ export const implementTypes = () => {
 };
 
 export const clientTypes = Effect.gen(function* () {
-  const client = yield* ActionHttpClient.make(Http);
+  const client = yield* ActionHttp.client(Http);
   const doubled: number = yield* client.double({ value: 21 });
   void doubled;
   // No-input actions take no argument.
@@ -337,7 +357,7 @@ export const builtInErrorTypes = Effect.gen(function* () {
   ActionHttp.make([Echo], { errors: [Unrelated] });
 
   // Every built-in error reaches every client method as a typed failure.
-  const client = yield* ActionHttpClient.make(bound);
+  const client = yield* ActionHttp.client(bound);
   yield* client.echo({ value: 1 }).pipe(
     Effect.catchTag("InvalidInput", () => Effect.succeed(0)),
     Effect.catchTag("Unauthenticated", () => Effect.succeed(0)),
@@ -529,63 +549,109 @@ export const beforeTypes = () => {
     success: Schema.String,
   });
 
-  const app = Action.implement(Read, () => Effect.succeed("ok"));
+  const read = () => Effect.succeed("ok");
 
   const binding = ActionHttp.make([Read]);
 
   // The hook may fail with either refusal, which every endpoint declares.
-  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Action.Forbidden()) });
-  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Action.Unauthenticated()) });
+  Action.implement(Read, read, { before: () => Effect.fail(new Action.Forbidden()) });
+  Action.implement(Read, read, { before: () => Effect.fail(new Action.Unauthenticated()) });
 
   // @ts-expect-error A hook may not fail with anything but a refusal, even a 403 of its own.
-  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Denied()) });
+  Action.implement(Read, read, { before: () => Effect.fail(new Denied()) });
   // @ts-expect-error Bad input is answered before the hook runs, not by it.
-  ActionHttp.layer(binding, app, { before: () => Effect.fail(new Action.InvalidInput()) });
+  Action.implement(Read, read, { before: () => Effect.fail(new Action.InvalidInput()) });
 
-  // One hook binds to every surface; there is no `errors` to declare alongside it.
-  const guard = {
-    before: (action: Action.Any) =>
-      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
-  };
-
-  ActionHttp.layer(binding, app, guard);
-  ActionMcp.layerHttp(app, { name: "t", version: "0", ...guard });
-  ActionToolkit.make(app, guard);
-
-  // @ts-expect-error Surfaces take no `errors`: the refusals are built in.
-  ActionHttp.layer(binding, app, { errors: [Denied], ...guard });
-
-  // The hook reads the contract it is about to run, including its access.
-  ActionHttp.layer(binding, app, {
+  // One hook, bound once: every surface runs it, and none takes a hook of its own.
+  const guarded = Action.implement(Read, read, {
     before: (action) =>
+      // The hook reads the contract it is about to run: here, exactly `Read`.
       action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
   });
 
+  ActionHttp.layer(binding, guarded);
+  ActionMcp.layerHttp(guarded, { name: "t", version: "0" });
+  ActionToolkit.make(guarded);
+
   // Hook services are request-time requirements, exactly like a handler's.
-  const timed = HttpRouter.toWebHandler(
-    ActionHttp.layer(binding, app, { before: () => Effect.asVoid(Clock) }).pipe(services),
-  );
+  const clocked = Action.implement(Read, read, { before: () => Effect.asVoid(Clock) });
+
+  const timed = HttpRouter.toWebHandler(ActionHttp.layer(binding, clocked).pipe(services));
 
   // @ts-expect-error The hook's services must be supplied per request, not erased.
   void timed.handler(new Request("http://localhost"), Context.empty());
   void timed.handler(new Request("http://localhost"), Context.make(Clock, 0));
 
-  // MCP types its hook the same way.
-  const stdio = ActionMcp.layerStdio(app, {
-    name: "t",
-    version: "0",
-    before: () => Effect.asVoid(Clock),
-  });
-
   // The hook's services join what the stdio host owes, since nothing else supplies them.
+  const stdio = ActionMcp.layerStdio(clocked, { name: "t", version: "0" });
   stdio satisfies Layer.Layer<never, unknown, Stdio.Stdio | Clock>;
+};
 
-  ActionMcp.layerStdio(app, {
-    name: "t",
-    version: "0",
-    // @ts-expect-error An MCP hook may not fail with anything but a refusal.
-    before: () => Effect.fail(new Denied()),
+export const authenticationTypes = () => {
+  // HTTP surfaces run the implementation's authentication, which provides the identity.
+  const http = HttpRouter.toWebHandler(
+    ActionHttp.layer(Http, userActions).pipe(Layer.provide(Users.layerMemory), services),
+  );
+
+  void http.handler(new Request("http://localhost"), Context.empty());
+
+  const mcp = HttpRouter.toWebHandler(
+    ActionMcp.layerHttp(userActions, { name: "t", version: "0" }).pipe(
+      Layer.provide(Users.layerMemory),
+      services,
+    ),
+  );
+
+  void mcp.handler(new Request("http://localhost/mcp"), Context.empty());
+
+  // A local surface leaves the identity to its host.
+  const stdio = ActionMcp.layerStdio(userActions, { name: "t", version: "0" });
+  const owed: Equal<Layer.Services<typeof stdio>, Users | Stdio.Stdio | CurrentActor> = true;
+  void owed;
+
+  const tools = ActionToolkit.make(userActions).toolkit.tools;
+  const toolOwed: Equal<Tool.HandlerServices<typeof tools.getUser>, CurrentActor> = true;
+  void toolOwed;
+};
+
+export const voidSuccessTypes = () => {
+  const Reset = Action.make("reset", { description: "Reset", access: "write" });
+
+  const Explicit = Action.make("explicit", {
+    description: "Explicit",
+    access: "write",
+    success: Schema.Void,
   });
+
+  // An omitted success is `Schema.Void`, so the handler returns nothing.
+  const success: Equal<(typeof Reset)["success"], typeof Schema.Void> = true;
+
+  Action.implement(Reset, () => Effect.void);
+  Action.implement(Reset, () => Effect.succeed(undefined));
+  Action.implement([Reset], { reset: () => Effect.void });
+  Action.implement(
+    Reset,
+    Effect.succeed(() => Effect.void),
+  );
+
+  // `Effect<string>` is assignable to `Effect<void>`, so `implement` refuses a void
+  // action's handler that returns data its encoding would drop, in every form.
+  // @ts-expect-error A handler that returns data needs a success schema to return it.
+  Action.implement(Reset, () => Effect.succeed("done"));
+  Action.implement([Reset, Double], {
+    // @ts-expect-error In a record too.
+    reset: () => Effect.succeed("done"),
+    double: ({ value }) => Effect.succeed(value * 2),
+  });
+  Action.implement(
+    Reset,
+    // @ts-expect-error And from a builder.
+    Effect.succeed(() => Effect.succeed("done")),
+  );
+  // @ts-expect-error An explicit `Schema.Void` is the same contract.
+  Action.implement(Explicit, () => Effect.succeed(1));
+
+  void success;
 };
 
 export const servedRequirementTypes = () => {
@@ -614,7 +680,7 @@ export const servedRequirementTypes = () => {
   // Every hint is resolved on the contract.
   const resolved: Equal<
     (typeof hintsApp)["actions"][number]["hints"],
-    Required<Action.Hints>
+    { readonly destructive: boolean; readonly idempotent: boolean; readonly openWorld: boolean }
   > = true;
 
   void resolved;
@@ -630,4 +696,34 @@ export const servedRequirementTypes = () => {
   ] = [true, true, true];
 
   void toolAssertions;
+};
+
+export const mcpCallTypes = () => {
+  // A tool call is typed by its action, as a client method is.
+  const call = Testing.mcpCall(Double, { value: 2 });
+
+  const doubled: Equal<
+    typeof call,
+    Effect.Effect<
+      number,
+      Action.Refusal | Schema.SchemaError | HttpClientError.HttpClientError | Error,
+      HttpClient.HttpClient
+    >
+  > = true;
+
+  void doubled;
+
+  // @ts-expect-error The input is the action's decoded input.
+  void Testing.mcpCall(Double, { value: "2" });
+  // @ts-expect-error An action with input takes it.
+  void Testing.mcpCall(Double);
+  // An action without input may leave it out.
+  void Testing.mcpCall(WhoAmI);
+
+  // Its declared errors and the refusals are typed failures.
+  void Testing.mcpCall(GetUser, { id: "1" }).pipe(
+    Effect.catchTag("UserNotFound", () => Effect.succeed(undefined)),
+    Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
+    Effect.catchTag("Unauthenticated", () => Effect.succeed(undefined)),
+  );
 };

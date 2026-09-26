@@ -9,7 +9,6 @@ import {
 import { HttpApiClient } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import { httpClient, serve } from "./serve.js";
 
 class NotFound extends Schema.TaggedError<NotFound>()(
@@ -42,27 +41,29 @@ const Http = ActionHttp.make([Get, Count, Remove]);
 
 const at = new Date("2026-09-23T00:00:00.000Z");
 
-const apps = Action.implement([Get, Count, Remove], {
-  get: ({ id }) =>
-    id === "missing"
-      ? Effect.fail(new NotFound({ id }))
-      : Effect.succeed({
-          id,
-          at: Schema.decodeSync(Schema.DateTimeUtcFromString)(at.toISOString()),
-        }),
-  count: () => Effect.succeed(Infinity),
-  remove: () => Effect.succeed(null),
-});
+const apps = Action.implement(
+  [Get, Count, Remove],
+  {
+    get: ({ id }) =>
+      id === "missing"
+        ? Effect.fail(new NotFound({ id }))
+        : Effect.succeed({
+            id,
+            at: Schema.decodeSync(Schema.DateTimeUtcFromString)(at.toISOString()),
+          }),
+    count: () => Effect.succeed(Infinity),
+    remove: () => Effect.succeed(null),
+  },
+  {
+    before: (action) =>
+      action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
+  },
+);
 
 const serveNotes = () => {
   const requests: Array<Request> = [];
 
-  const web = serve(
-    ActionHttp.layer(Http, apps, {
-      before: (action) =>
-        action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
-    }),
-  );
+  const web = serve(ActionHttp.layer(Http, apps));
 
   onTestFinished(() => web.dispose());
 
@@ -78,10 +79,10 @@ const serveNotes = () => {
 
 /** The Effect client over `fetch`, as a program's own `HttpClient` would carry it. */
 const effectClient =
-  (fetch: typeof globalThis.fetch, options?: Parameters<typeof ActionHttpClient.make>[1]) =>
-  <A, E>(use: (client: ActionHttpClient.Client<typeof Http>) => Effect.Effect<A, E>) =>
+  (fetch: typeof globalThis.fetch, options?: Parameters<typeof ActionHttp.client>[1]) =>
+  <A, E>(use: (client: ActionHttp.Client<typeof Http>) => Effect.Effect<A, E>) =>
     Effect.flatMap(
-      ActionHttpClient.make(Http, { baseUrl: "https://notes.example", ...options }),
+      ActionHttp.client(Http, { baseUrl: "https://notes.example", ...options }),
       use,
     ).pipe(
       Effect.provide(FetchHttpClient.layer),
@@ -125,7 +126,7 @@ it("gives the Effect client each action's success and every declared failure", a
   expect(invalid).toBeInstanceOf(Action.InvalidInput);
 
   // An action declared without `input` takes no argument, not even `undefined`.
-  const checkTypes = (client: ActionHttpClient.Client<typeof Http>) => {
+  const checkTypes = (client: ActionHttp.Client<typeof Http>) => {
     // @ts-expect-error `count` takes no argument.
     void client.count(undefined);
   };

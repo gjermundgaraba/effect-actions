@@ -12,7 +12,6 @@ describe("ActionToolkit", () => {
       access: "write",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Finite,
-      hints: { readOnly: true },
     });
 
     const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
@@ -57,17 +56,21 @@ describe("ActionToolkit", () => {
         return name;
       });
 
-    const app = Action.implement([Read, Write], {
-      read: () => run("read"),
-      write: () => run("write"),
-    });
+    const app = Action.implement(
+      [Read, Write],
+      {
+        read: () => run("read"),
+        write: () => run("write"),
+      },
+      {
+        before: (action) =>
+          action.access === "read"
+            ? Effect.void
+            : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+      },
+    );
 
-    const binding = ActionToolkit.make(app, {
-      before: (action) =>
-        action.access === "read"
-          ? Effect.void
-          : Effect.fail(new Action.Forbidden({ message: "Read only." })),
-    });
+    const binding = ActionToolkit.make(app);
 
     const [read, write] = await Effect.runPromise(
       Effect.scoped(

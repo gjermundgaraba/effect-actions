@@ -1,14 +1,14 @@
 import { Effect } from "effect";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import * as Testing from "../src/Testing.js";
-import { Http, routes } from "./quickstart.js";
+import { Greet, Http, routes } from "./quickstart.js";
 
 const program = Effect.gen(function* () {
-  const client = yield* ActionHttpClient.make(Http);
+  const client = yield* ActionHttp.client(Http);
   const greeting = yield* client.greet({ name: "Ada" });
 
-  // One tool call to `/mcp`, answered as `{ isError: false, value: "Hello, Ada!" }`.
-  const called = yield* Testing.mcpCall({ name: "greet", arguments: { name: "Ada" } });
+  // The same action as one tool call to `/mcp`, typed like the client's method.
+  const called = yield* Testing.mcpCall(Greet, { name: "Ada" });
 
   return { greeting, called };
 });

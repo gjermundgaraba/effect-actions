@@ -27,8 +27,6 @@ class TwoRequest extends Context.Service<TwoRequest, number>()("cli-types/TwoReq
 
 class Hooked extends Context.Service<Hooked, string>()("cli-types/Hooked") {}
 
-class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
-
 const One = Action.make("one", {
   description: "One",
   access: "write",
@@ -82,19 +80,17 @@ const localGroupErrorIsKnown: Equal<
 > = true;
 
 // A selected command is typed like the aggregate one: its failures are the
-// action's, the surface hook's and the CLI's own encoding error, never `unknown`.
+// action's, the implementation hook's and the CLI's own encoding error, never `unknown`.
 const localOneErrorIsKnown: Equal<
   unknown extends CommandError<typeof localOne> ? true : false,
   false
 > = true;
 
-// The hook's refusals are inferred: the command fails with exactly those it fails with,
-// beside the action's own failures and invalid input.
+// Any implementation may refuse: every local command fails with `Refusal`, beside the
+// action's own failures and invalid input, whatever its hook.
 const forbid = () => Effect.fail(new Action.Forbidden());
 
-const guarded = ActionCli.command(local, One, { before: forbid });
-
-const guardedGroup = ActionCli.make(local, { name: "local", before: forbid });
+const forbidding = Action.implement(One, ({ value }) => Effect.succeed(value), { before: forbid });
 
 const refuse = Effect.fn(function* (action: Action.Any) {
   yield* Hooked;
@@ -104,26 +100,22 @@ const refuse = Effect.fn(function* (action: Action.Any) {
   return yield* new Action.Forbidden();
 });
 
-const refusing = ActionCli.command(local, One, { before: refuse });
+const refusing = ActionCli.command(
+  Action.implement(One, ({ value }) => Effect.succeed(value), { before: refuse }),
+  One,
+  { render: (output) => output.toUpperCase() },
+);
 
 const refusalErrors: [
-  Equal<CommandError<typeof localOne>, Schema.SchemaError>,
-  Equal<CommandError<typeof guarded>, Action.Forbidden | Schema.SchemaError>,
-  Equal<CommandError<typeof guardedGroup>, Action.Forbidden | Schema.SchemaError>,
+  Equal<CommandError<typeof localOne>, Action.Refusal | Schema.SchemaError>,
   Equal<CommandError<typeof refusing>, Action.Refusal | Schema.SchemaError>,
-] = [true, true, true, true];
+] = [true, true];
 
 // The hook's services are the command's too.
 const refusingHooked: Includes<CommandServices<typeof refusing>, Hooked> = true;
 
-// @ts-expect-error A hook fails only with a refusal.
-ActionCli.command(local, One, { before: () => Effect.fail(new Refused()) });
-
-// @ts-expect-error The aggregate's hook too.
-ActionCli.make(local, { name: "local", before: () => Effect.fail(new Refused()) });
-
-// @ts-expect-error Nor with any other error.
-ActionCli.command(local, One, { before: () => Effect.fail(new Error("no")) });
+// @ts-expect-error A contract it does not implement is refused.
+ActionCli.command(forbidding, Two);
 
 void localOneBuild;
 
@@ -340,13 +332,6 @@ const remoteErrors: [
 ] = [true, true, true];
 
 void remoteErrors;
-
-// The server owns authorization: a command from a binding binds no hook.
-// @ts-expect-error A remote command binds no hook.
-ActionCli.command(Bound, Plain, { before: () => Effect.void });
-
-// @ts-expect-error Nor does a remote aggregate.
-ActionCli.make(Bound, { name: "remote", before: () => Effect.void });
 
 const transformResponse = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
 

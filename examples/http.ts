@@ -1,20 +1,12 @@
 import { Layer } from "effect";
 import { HttpApiSwagger } from "effect/unstable/httpapi";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { authentication } from "./authentication.js";
-import { authorize } from "./authorization.js";
 import { Http } from "./binding.js";
 import { double, status, userActions } from "./handlers.js";
 
-// One layer per access rule: middleware provided to a layer applies to the routes of
-// the actions it serves, and to no others. Status needs no credentials, so it binds no
-// hook; every user action is authorized after decoding, before its handler runs.
-const routes = Layer.mergeAll(
-  ActionHttp.layer(Http, status),
-  ActionHttp.layer(Http, [userActions, double], { before: authorize }).pipe(
-    Layer.provide(authentication.layer),
-  ),
-);
+// One layer for every action: each implementation brings its own policy, so `status`
+// stays public while the others authenticate and authorize.
+const routes = ActionHttp.layer(Http, [status, userActions, double]);
 
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI JSON at
 // `GET /api/openapi.json`, and a Swagger UI reading the same contract.

@@ -7,7 +7,6 @@ import {
   type ActionOf,
   type BuildContext,
   type BuildError,
-  type Hook,
   type Member,
   type RequestOf,
   type Served,
@@ -26,17 +25,17 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
   R
 >;
 
-/** A tool needs what its handler needs, plus what the `before` hook needs. */
-type ToolFor<App, RB> = App extends unknown
+/** A tool needs what its handler and its implementation's `before` hook need. */
+type ToolFor<App> = App extends unknown
   ? ActionOf<App> extends infer A extends Action.Any
     ? A extends Action.Any
-      ? NativeTool<A, RequestOf<App, A> | RB>
+      ? NativeTool<A, RequestOf<App, A>>
       : never
     : never
   : never;
 
-type ToolkitTools<App, RB> = {
-  readonly [T in ToolFor<App, RB> as T["name"]]: T;
+type ToolkitTools<App> = {
+  readonly [T in ToolFor<App> as T["name"]]: T;
 };
 
 /** Native tools and the layer that binds their action implementations. */
@@ -57,14 +56,14 @@ interface ErasedTools {
  *
  * Unlike MCP, calls return the action's native success/failure values directly.
  * Build services are needed to construct `layer`; request services are needed
- * when the resulting toolkit handles a call.
+ * when the resulting toolkit handles a call. Each implementation's `before` hook runs;
+ * its `authenticate` does not, so the caller provides the identity.
  */
-export function make<const Apps extends Served, RB = never>(
+export function make<const Apps extends Served>(
   apps: Apps,
-  options?: Hook<RB>,
-): Tools<ToolkitTools<Member<Apps>, RB>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
-export function make(apps: Served, options: Hook<unknown> = {}): ErasedTools {
-  const { toolkit, layer, handlers } = bindTools(toList(apps), "native", options);
+): Tools<ToolkitTools<Member<Apps>>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
+export function make(apps: Served): ErasedTools {
+  const { toolkit, layer, handlers } = bindTools(toList(apps), "native");
 
   return { toolkit, layer: handlers(layer) };
 }

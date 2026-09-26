@@ -1,10 +1,10 @@
 import { Console, Effect } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import { Http } from "./binding.js";
 
 const lookup = Effect.gen(function* () {
-  const client = yield* ActionHttpClient.make(Http, {
+  const client = yield* ActionHttp.client(Http, {
     baseUrl: "http://127.0.0.1:3000",
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
   });
@@ -17,9 +17,9 @@ const lookup = Effect.gen(function* () {
 });
 
 // Every endpoint declares the built-in refusals, so the 401 the authentication
-// middleware renders arrives as a typed `Unauthenticated`, not a decode error.
+// renders arrives as a typed `Unauthenticated`, not a decode error.
 const refused = Effect.gen(function* () {
-  const client = yield* ActionHttpClient.make(Http, { baseUrl: "http://127.0.0.1:3000" });
+  const client = yield* ActionHttp.client(Http, { baseUrl: "http://127.0.0.1:3000" });
 
   return yield* Effect.flip(client.whoAmI());
 });

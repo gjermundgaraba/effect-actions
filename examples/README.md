@@ -13,10 +13,11 @@ The example listens on 127.0.0.1:3000. It uses an in-memory repository and delib
 
 Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
-Every action declares `access: "read"` or `access: "write"`. The guarded HTTP layer, the
-guarded MCP endpoint and the CLI each bind the same `before` hook, which maps that to
-`users:read` / `users:write` and refuses with the built-in `Action.Forbidden`, so no handler contains
-authorization code and the same rule applies over every surface.
+Every action declares `access: "read"` or `access: "write"`. The guarded implementations name
+their policy once, `{ authenticate, before: authorize }`: HTTP and MCP authenticate the bearer
+token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
+`access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`. No
+handler contains authorization code, and no surface can leave the rule out.
 
 The application serves its implementations under three access rules:
 
@@ -27,10 +28,11 @@ The application serves its implementations under three access rules:
 | `double`       | `double`                          | bearer token   | `/mcp`, bearer token          |
 | `listChanges`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
 
-Every HTTP action is in one binding, `Http`: one mount path, one document, one client. The
-two `ActionHttp.layer` calls differ only by middleware. The `Users` builder runs once, though
-HTTP and MCP both serve `userActions`. An MCP endpoint is a single
-route, so its middleware covers every tool. That is why the public tool has its own endpoint.
+Every HTTP action is in one binding, `Http`: one mount path, one document, one client, and one
+`ActionHttp.layer` call serving public and guarded implementations side by side. The `Users`
+builder runs once, though HTTP and MCP both serve `userActions`. An MCP endpoint is a single
+route, so it authenticates every tool when any of them authenticates. That is why the public
+tool has its own endpoint.
 The OpenAPI document (`/api/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`.
 
@@ -79,22 +81,22 @@ curl -s http://127.0.0.1:3000/mcp/public \
 curl -s http://127.0.0.1:3000/api/openapi.json
 ```
 
-For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The HTTP surface binds the same authorization hook, so it enforces the same check before the handler.
+For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The implementation carries that hook, so HTTP runs the same check before the handler.
 
-Without a valid token, a guarded route or the `/mcp` endpoint answers 401
-`{"_tag":"Unauthenticated","message":"A demo bearer token is required."}` with
-`WWW-Authenticate: Bearer`. An MCP client then finds the authorization server at
+Without a token, a guarded route or the `/mcp` endpoint answers 401
+`{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
+`WWW-Authenticate: Bearer`; with an unknown one, the message is `Unknown demo token.`. An MCP client then finds the authorization server at
 `/.well-known/oauth-protected-resource/mcp`, which is public.
 
 ## Application structure
 
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
 - [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
-- [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook every guarded surface binds.
+- [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the guarded implementations name.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
-- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies and no authorization code.
-- [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.middleware` answering a missing or unknown token with the built-in 401 and its `Bearer` challenge.
-- [http.ts](http.ts): the HTTP layers, public and guarded, plus the OpenAPI document and Swagger UI.
+- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the policy of the guarded ones.
+- [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.make` answering a missing or unknown token with the built-in 401 and its `Bearer` challenge.
+- [http.ts](http.ts): one HTTP layer for public and guarded implementations, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the guarded MCP endpoints.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
 - [app.ts](app.ts): every surface of the host, under that policy.
@@ -105,7 +107,7 @@ Without a valid token, a guarded route or the `/mcp` endpoint answers 401
 
 ```text
 HTTP /api/getUser / MCP tool getUser
-  → authentication middleware provides CurrentActor
+  → the implementation's authentication provides CurrentActor
   → the surface decodes input (invalid input is a 400 InvalidInput; the hook and handler never run)
   → before hook reads access: "read" and checks users:read
   → handler calls Users.get(actor.tenantId, id)
@@ -114,9 +116,9 @@ HTTP /api/getUser / MCP tool getUser
 
 `UserNotFound` uses HTTP 404 and is declared on the actions that can raise it. `Forbidden`
 (403) and `Unauthenticated` (401) are built in: every endpoint and tool declares them, because
-the hook and the authentication middleware produce them rather than a handler. That is what
+the hook and the authentication produce them rather than a handler. That is what
 lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
-authentication middleware carry `cache-control: no-store`; other routes use the host's cache policy. MCP returns an `isError` tool
+authentication carry `cache-control: no-store`; other routes use the host's cache policy. MCP returns an `isError` tool
 result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
 
 A write through `renameUser` is visible through both transports, and through the MCP-only

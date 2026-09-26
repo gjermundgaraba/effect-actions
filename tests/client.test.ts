@@ -9,7 +9,6 @@ import {
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import { httpClient, serve } from "./serve.js";
 
 const Double = Action.make("double", {
@@ -56,7 +55,7 @@ it("keeps the client, routes and document on one configuration", async () => {
         ),
     };
 
-    const client = yield* ActionHttpClient.make(Http, connection);
+    const client = yield* ActionHttp.client(Http, connection);
 
     expect(Object.keys(client).sort()).toEqual(["double", "optional", "ping"]);
     expect(yield* client.double({ value: 21 })).toBe(42);
@@ -160,7 +159,7 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
     return web.handler(request);
   };
 
-  const calls = (client: ActionHttpClient.Client<typeof Inputs>) =>
+  const calls = (client: ActionHttp.Client<typeof Inputs>) =>
     Effect.all([
       client.ping(),
       client.nullable(null),
@@ -170,7 +169,7 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
     ]);
 
   const viaMake = await Effect.flatMap(
-    ActionHttpClient.make(Inputs, { baseUrl: "http://localhost" }),
+    ActionHttp.client(Inputs, { baseUrl: "http://localhost" }),
     calls,
   ).pipe(
     Effect.provide(FetchHttpClient.layer),

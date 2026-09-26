@@ -11,7 +11,8 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import { httpClient, mcpCall, serve as serveRoutes } from "./serve.js";
+import * as Testing from "../src/Testing.js";
+import { against, httpClient, serve as serveRoutes } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 
 class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") {}
@@ -304,7 +305,7 @@ describe("builder acquisition", () => {
           ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
         );
 
-        expect(await mcpCall(handler, { name: "one" })).toEqual({ isError: false, value: 1 });
+        expect(await against(handler, Testing.mcpCall(One))).toBe(1);
       },
     },
     {
@@ -637,10 +638,7 @@ describe("MCP registration", () => {
       "whoAmI",
     ]);
 
-    expect(await mcpCall(handler, { name: "whoAmI" })).toEqual({
-      isError: false,
-      value: "ada@acme",
-    });
+    expect(await against(handler, Testing.mcpCall(WhoAmI))).toBe("ada@acme");
   });
 
   it("names each tool after its action, and checks names where tools are served", () => {

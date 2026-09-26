@@ -3,8 +3,8 @@ import { HttpRouter, HttpServer } from "effect/unstable/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import {
+  type AuthenticatedContext,
   type Member,
-  type RequestContext,
   type Served,
   toList,
 } from "../src/internal/implementation.js";
@@ -39,7 +39,7 @@ export const serveWithContext = <A, E, R extends Routable>(routes: Layer.Layer<A
  */
 export const makeTestHttp = <const Apps extends Served>(
   apps: Apps,
-  request: Layer.Layer<NoInfer<RequestContext<Member<Apps>>>>,
+  request: Layer.Layer<NoInfer<AuthenticatedContext<Member<Apps>>>>,
   options?: Parameters<typeof ActionHttp.make>[1],
 ) =>
   serve(
@@ -55,7 +55,7 @@ export const makeTestHttp = <const Apps extends Served>(
 /** Serve implementations over MCP at `/mcp`; `request` supplies their per-request services. */
 export const makeTestMcp = <const Apps extends Served>(
   apps: Apps,
-  request: Layer.Layer<NoInfer<RequestContext<Member<Apps>>>>,
+  request: Layer.Layer<NoInfer<AuthenticatedContext<Member<Apps>>>>,
 ) =>
   serve(
     ActionMcp.layerHttp(apps, { name: "test", version: "0" }).pipe(

@@ -1,4 +1,4 @@
-import { type Context, Effect, Option } from "effect";
+import { type Context, Effect } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
   HttpEffect,
@@ -6,40 +6,44 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import type { Refusal } from "./internal/errors.js";
+import { type Refusal, Unauthenticated } from "./internal/errors.js";
 import { refuse } from "./internal/respond.js";
 
 /**
- * The bearer token of the request's `Authorization` header, if it has one. The scheme
- * is matched case-insensitively, as RFC 9110 requires.
+ * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
+ * when it has none. The scheme is matched case-insensitively, as RFC 9110 requires. Where
+ * a token is optional, `Effect.option(bearerToken)`.
  */
 export const bearerToken: Effect.Effect<
-  Option.Option<string>,
-  never,
+  string,
+  Unauthenticated,
   HttpServerRequest.HttpServerRequest
-> = Effect.map(HttpServerRequest.HttpServerRequest, (request) => {
-  const match = /^Bearer +(\S+) *$/i.exec(request.headers.authorization ?? "");
+> = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+  const token = /^Bearer +(\S+) *$/i.exec(request.headers.authorization ?? "")?.[1];
 
-  return Option.fromNullishOr(match?.[1]);
+  return token === undefined
+    ? Effect.fail(new Unauthenticated({ message: "A bearer token is required." }))
+    : Effect.succeed(token);
 });
 
 /**
- * Authenticate each request and provide its identity to the downstream handler.
- * `authenticate` fails with `Unauthenticated` (a 401 with a `Bearer` challenge) or
- * `Forbidden` (a 403), each sent as the JSON every client decodes, or with the response
- * to send instead. Dependencies remain native router request requirements. Acquired
- * resources live until the request scope closes, including while the handler is running.
- * Every response is marked `Cache-Control: no-store`, including private failures
- * serialized by enclosing middleware.
+ * How a remote caller proves who they are: authenticate each request and provide its
+ * identity to the handler. Pass it to `Action.implement` as `authenticate`, and every
+ * HTTP surface serving the implementation runs it, before decoding. `authenticate` fails
+ * with `Unauthenticated` (a 401 with a `Bearer` challenge) or `Forbidden` (a 403), each
+ * sent as the JSON every client decodes, or with the response to send instead.
+ * The services it yields are request requirements, like a handler's, which every HTTP
+ * surface serving the implementation owes; `HttpRouter.provideRequest` builds one once,
+ * such as a token verifier. Acquired resources live until the request scope closes,
+ * including while the handler is running. Every response is marked
+ * `Cache-Control: no-store`, including private failures serialized by enclosing middleware.
+ *
+ * It is native router middleware: its `layer` also authenticates any route of the host's
+ * own it is provided to.
  */
-export const middleware = <I, A, R>(
+export const make = <I, A, R>(
   service: Context.Key<I, A>,
   authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
-) => router<I, R>(service, authenticate);
-
-const router = <I, R>(
-  service: Context.Key<I, unknown>,
-  authenticate: Effect.Effect<unknown, HttpServerResponse.HttpServerResponse | Refusal, R>,
 ) =>
   HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
     authenticate.pipe(

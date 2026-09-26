@@ -179,11 +179,13 @@ it("derives each field's flag from its encoded JSON value", async () => {
     }
   }
 
-  // The action's schema, not the parser, decides what is required.
+  // A required field's flag is required by the parser, which shows help without it.
   const missing = failure(await runExit(command, ["--tags", "[]", ...required]));
-  expect(missing).toBeInstanceOf(Schema.SchemaError);
-  expect(String(missing)).toContain("Missing key");
-  expect(String(missing)).toContain("tenantId");
+  expect(missing).toBeInstanceOf(CliError.ShowHelp);
+
+  if (missing instanceof CliError.ShowHelp) {
+    expect(missing.errors).toEqual([new CliError.MissingOption({ option: "tenant-id" })]);
+  }
 
   // A JSON flag holding JSON of the wrong shape is invalid input as well.
   expect(
@@ -191,6 +193,40 @@ it("derives each field's flag from its encoded JSON value", async () => {
   ).toBeInstanceOf(Schema.SchemaError);
 
   expect(inputs).toHaveLength(2);
+});
+
+it("takes an enum's value and a template literal's text as they are, not as JSON", async () => {
+  const inputs: unknown[] = [];
+
+  const Enums = Action.make("enums", {
+    description: "Enum and template-literal fields",
+    access: "write",
+    input: {
+      color: Schema.Enum({ Red: "red", Blue: "blue" }),
+      level: Schema.Enum({ Low: 1, High: 2 }),
+      id: Schema.TemplateLiteral(["id-", Schema.Number]),
+    },
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Enums, (input) => Effect.sync(() => void inputs.push(input))),
+    Enums,
+  );
+
+  await run(command, ["--color", "red", "--level", "2", "--id", "id-7"]);
+  expect(inputs).toStrictEqual([{ color: "red", level: 2, id: "id-7" }]);
+
+  // A string enum is a choice, parsed natively: another value shows help.
+  const error = failure(
+    await runExit(command, ["--color", "green", "--level", "2", "--id", "id-7"]),
+  );
+
+  expect(error).toBeInstanceOf(CliError.ShowHelp);
+
+  // The template's pattern is the action's schema's to check.
+  expect(
+    failure(await runExit(command, ["--color", "red", "--level", "2", "--id", "seven"])),
+  ).toBeInstanceOf(Schema.SchemaError);
 });
 
 it("maps flag strings to codecs whose original encoding is not JSON", async () => {
@@ -352,6 +388,24 @@ it("keeps custom renderer JSON output and validates success before rendering", a
   expect(invalidRenderer).not.toHaveBeenCalled();
 });
 
+it("prints nothing for an action that returns nothing, but prints a declared null", async () => {
+  const Reset = Action.make("reset", { description: "Reset", access: "write" });
+
+  const Clear = Action.make("clear", {
+    description: "Clear",
+    access: "write",
+    success: Schema.Null,
+  });
+
+  const app = Action.implement([Reset, Clear], {
+    reset: () => Effect.void,
+    clear: () => Effect.succeed(null),
+  });
+
+  expect(await lines(ActionCli.command(app, Reset), [])).toEqual([]);
+  expect(await lines(ActionCli.command(app, Clear), [])).toEqual(["null"]);
+});
+
 it("keeps an input field's flags apart from the renderer's --json", async () => {
   const inputs: string[] = [];
 
@@ -434,6 +488,28 @@ it("takes an optional field's plain value, and leaves it out when its flag is om
   expect(help).toMatch(/--exact\s+Match whole words/);
 });
 
+it("keeps the null an optional field declares itself, so the flag can send it", async () => {
+  const Note = Action.make("note", {
+    description: "Sets or clears a note",
+    access: "write",
+    input: { note: Schema.optionalKey(Schema.NullOr(Schema.String)) },
+    success: Schema.String,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Note, (input) => Effect.succeed(JSON.stringify(input))),
+    Note,
+  );
+
+  expect(await lines(command, ["--note", "null"])).toEqual([
+    JSON.stringify(JSON.stringify({ note: null })),
+  ]);
+  expect(await lines(command, ["--note", '"x"'])).toEqual([
+    JSON.stringify(JSON.stringify({ note: "x" })),
+  ]);
+  expect(await lines(command, [])).toEqual([JSON.stringify("{}")]);
+});
+
 it("gives a number beside other strings a JSON flag, so the strings stay reachable", async () => {
   const Page = Action.make("page", {
     description: "Reads a page",
@@ -452,7 +528,7 @@ it("gives a number beside other strings a JSON flag, so the strings stay reachab
   expect((await lines(command, ["--help"])).join("\n")).toMatch(/--limit json/);
 });
 
-it("lets a field shadow a global flag, and leaves a clash within a command to the parser", async () => {
+it("lets a field shadow a global flag, and refuses a clash within a command when it is built", async () => {
   const Settings = Action.make("settings", {
     description: "Has fields named like global flags and like the renderer's flag",
     access: "read",
@@ -469,14 +545,12 @@ it("lets a field shadow a global flag, and leaves a clash within a command to th
   // A field's flag wins over the global flag of the same name.
   expect(await lines(ActionCli.command(app, Settings), args)).toEqual(['"a b c"']);
 
-  // Beside a renderer's own `--json`, the native parser refuses the command on every run.
-  const rendered = await runExit(ActionCli.command(app, Settings, { render: String }), args);
-
-  expect(Exit.isFailure(rendered) && Cause.pretty(rendered.cause)).toContain(
-    'Duplicate flag name "json" in command definition',
+  // Beside a renderer's own `--json`, the command is refused before it ever runs.
+  expect(() => ActionCli.command(app, Settings, { render: String })).toThrow(
+    "Duplicate flag: --json, claimed by field json and render's --json",
   );
 
-  // So it does two fields of one kebab-case name.
+  // So are two fields of one kebab-case name, in a command or an aggregate.
   const Twice = Action.make("twice", {
     description: "Names one field twice",
     access: "read",
@@ -484,17 +558,11 @@ it("lets a field shadow a global flag, and leaves a clash within a command to th
     success: Schema.String,
   });
 
-  const twice = await runExit(
-    ActionCli.command(
-      Action.implement(Twice, () => Effect.succeed("")),
-      Twice,
-    ),
-    [],
-  );
+  const twice = Action.implement(Twice, () => Effect.succeed(""));
+  const clash = "Duplicate flag: --user-id, claimed by field userId and field user_id";
 
-  expect(Exit.isFailure(twice) && Cause.pretty(twice.cause)).toContain(
-    'Duplicate flag name "user-id" in command definition',
-  );
+  expect(() => ActionCli.command(twice, Twice)).toThrow(clash);
+  expect(() => ActionCli.make(twice, { name: "tool" })).toThrow(clash);
 });
 
 it("runs any action locally, scopes every invocation, and exposes aggregate subcommands", async () => {
@@ -644,6 +712,13 @@ it("aggregates implementations under one named command and refuses duplicate com
   const again = Action.implement(Again, () => Effect.succeed("again"));
 
   expect(() => ActionCli.make([one, again], { name: "tool" })).toThrow("Duplicate command: one");
+
+  // One action implemented twice is refused too, rather than the first one run.
+  const guarded = Action.implement(One, () => Effect.succeed("guarded"), {
+    before: () => Effect.fail(new Action.Forbidden()),
+  });
+
+  expect(() => ActionCli.command([one, guarded], One)).toThrow("Duplicate command: one");
 });
 
 it("names commands and flags in kebab case, unless a name is given", async () => {
@@ -687,11 +762,11 @@ it("names commands and flags in kebab case, unless a name is given", async () =>
   const snake = Action.implement(Snake, () => Effect.succeed("snake"));
 
   expect(() => ActionCli.make([app, snake], { name: "users" })).toThrow(
-    "Duplicate command: get-user",
+    "Duplicate command: get-user, claimed by action getUser and action get_user",
   );
 });
 
-it("runs the before hook first, and its refusal is the command's typed failure", async () => {
+it("runs the implementation's before hook first, and its refusal is the command's typed failure", async () => {
   const seen: string[] = [];
   let calls = 0;
 
@@ -703,11 +778,6 @@ it("runs the before hook first, and its refusal is the command's typed failure",
     success: Schema.String,
   });
 
-  const app = Action.implement([Read, Write], {
-    read: () => Effect.sync(() => `read ${++calls}`),
-    write: () => Effect.sync(() => `write ${++calls}`),
-  });
-
   const before = (action: Action.Any) =>
     Effect.andThen(
       Effect.sync(() => seen.push(action.name)),
@@ -717,13 +787,22 @@ it("runs the before hook first, and its refusal is the command's typed failure",
           : Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
     );
 
-  await run(ActionCli.command(app, Read, { before }), []);
+  const app = Action.implement(
+    [Read, Write],
+    {
+      read: () => Effect.sync(() => `read ${++calls}`),
+      write: () => Effect.sync(() => `write ${++calls}`),
+    },
+    { before },
+  );
 
-  const refused = failure(await runExit(ActionCli.command(app, Write, { before }), []));
+  await run(ActionCli.command(app, Read), []);
+
+  const refused = failure(await runExit(ActionCli.command(app, Write), []));
   expect(refused).toBeInstanceOf(Action.Forbidden);
   expect(refused).toEqual(new Action.Forbidden({ message: "Requires users:write." }));
 
-  const aggregate = ActionCli.make(app, { name: "tool", before });
+  const aggregate = ActionCli.make(app, { name: "tool" });
   await run(aggregate, ["read"]);
   expect(failure(await runExit(aggregate, ["write"]))).toBeInstanceOf(Action.Forbidden);
 

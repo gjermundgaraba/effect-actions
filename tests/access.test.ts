@@ -1,6 +1,7 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
+import { Tool } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -31,7 +32,7 @@ const Write = Action.make("write", {
 const Http = ActionHttp.make([Read, Write]);
 
 /**
- * One rule for a whole surface, read from the contract rather than from a name list. No
+ * One rule for a whole implementation, read from the contract rather than from a name list. No
  * scopes at all is unauthenticated; a read-only grant is forbidden to write.
  */
 const authorize =
@@ -59,10 +60,14 @@ const make = () => {
   return {
     hooks,
     handlers,
-    app: Action.implement([Read, Write], {
-      read: () => record("read"),
-      write: () => record("write"),
-    }),
+    app: Action.implement(
+      [Read, Write],
+      {
+        read: () => record("read"),
+        write: () => record("write"),
+      },
+      { before: authorize(hooks) },
+    ),
   };
 };
 
@@ -70,30 +75,30 @@ const readOnly = Layer.succeed(Scopes, ["read"]);
 
 type App = ReturnType<typeof make>["app"];
 
-/** Serve the actions over HTTP with the hook bound to that surface. */
-const serveHttp = (app: App, before: ReturnType<typeof authorize>, granted: Layer.Layer<Scopes>) =>
-  serve(ActionHttp.layer(Http, app, { before }).pipe(HttpRouter.provideRequest(granted)));
+/** Serve the actions over HTTP, granting `granted` to every request. */
+const serveHttp = (app: App, granted: Layer.Layer<Scopes>) =>
+  serve(ActionHttp.layer(Http, app).pipe(HttpRouter.provideRequest(granted)));
 
 describe("action access", () => {
-  it("is declared by every action and derives the MCP read-only hint from it", () => {
+  it("is declared by every action, and is the only source of a tool's read-only hint", () => {
     const read: "read" = Read.access;
     const write: "write" = Write.access;
 
     expect([read, write]).toEqual(["read", "write"]);
-    expect(Read.hints).toMatchObject({ readOnly: true, destructive: false });
-    expect(Write.hints).toMatchObject({ readOnly: false, destructive: true });
-  });
+    expect(Read.hints).toMatchObject({ destructive: false });
+    expect(Write.hints).toMatchObject({ destructive: true });
 
-  it("keeps an explicit hint that disagrees with access", () => {
-    const advertised = Action.make("advertised", {
+    const { tools } = ActionToolkit.make(make().app).toolkit;
+    expect(Context.get(tools.read.annotations, Tool.Readonly)).toBe(true);
+    expect(Context.get(tools.write.annotations, Tool.Readonly)).toBe(false);
+
+    Action.make("advertised", {
       description: "A write the model may call without approval",
       access: "write",
       success: Schema.String,
+      // @ts-expect-error A tool is read-only exactly when its action reads.
       hints: { readOnly: true },
     });
-
-    expect(advertised.access).toBe("write");
-    expect(advertised.hints).toMatchObject({ readOnly: true, destructive: false });
   });
 
   it("refuses a value the contract does not define, so plain JavaScript cannot skip a rule", () => {
@@ -111,7 +116,7 @@ describe("action access", () => {
 describe("the pre-handler hook", () => {
   it("runs once before each handler over HTTP and answers as a built-in refusal", async () => {
     const { app, hooks, handlers } = make();
-    const web = serveHttp(app, authorize(hooks), readOnly);
+    const web = serveHttp(app, readOnly);
     onTestFinished(() => web.dispose());
 
     const allowed = await web.handler(post("/api/read"));
@@ -131,7 +136,7 @@ describe("the pre-handler hook", () => {
 
   it("answers an unauthenticated refusal with 401", async () => {
     const { app, hooks, handlers } = make();
-    const web = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, []));
+    const web = serveHttp(app, Layer.succeed(Scopes, []));
     onTestFinished(() => web.dispose());
 
     const refused = await web.handler(post("/api/read"));
@@ -145,22 +150,9 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual([]);
   });
 
-  it("may fail only with a refusal", () => {
-    const { app } = make();
-
-    class Other extends Schema.TaggedError<Other>()("Other", {}) {}
-
-    const before = () => Effect.fail(new Other());
-
-    // @ts-expect-error A hook answers only with a built-in refusal, which every surface declares.
-    ActionHttp.layer(Http, app, { before });
-    // @ts-expect-error The same rule holds for every surface.
-    ActionToolkit.make(app, { before });
-  });
-
   it("decodes HTTP input before running either the hook or handler", async () => {
     const { app, hooks, handlers } = make();
-    const web = serveHttp(app, authorize(hooks), readOnly);
+    const web = serveHttp(app, readOnly);
     onTestFinished(() => web.dispose());
 
     const invalid = await web.handler(post("/api/write", { value: 42 }));
@@ -178,11 +170,9 @@ describe("the pre-handler hook", () => {
     const { app, hooks, handlers } = make();
 
     const mcp = serve(
-      ActionMcp.layerHttp(app, {
-        name: "test",
-        version: "0",
-        before: authorize(hooks),
-      }).pipe(HttpRouter.provideRequest(readOnly)),
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
+        HttpRouter.provideRequest(readOnly),
+      ),
     );
 
     onTestFinished(() => mcp.dispose());
@@ -204,7 +194,7 @@ describe("the pre-handler hook", () => {
   it("runs over the native Toolkit", async () => {
     const { app, hooks, handlers } = make();
 
-    const binding = ActionToolkit.make(app, { before: authorize(hooks) });
+    const binding = ActionToolkit.make(app);
 
     const call = (name: "read" | "write") =>
       Effect.runPromise(
@@ -231,7 +221,6 @@ describe("the pre-handler hook", () => {
 
   it("runs over the CLI, so a local caller supplies its services too", async () => {
     const { app, hooks, handlers } = make();
-    const guard = { before: authorize(hooks) };
 
     const run = <Name extends string, Input, Services, E>(
       command: Command.Command<Name, Input, Services, E, Scope.Scope | Scopes>,
@@ -246,11 +235,11 @@ describe("the pre-handler hook", () => {
         ),
       );
 
-    const [read, output] = await run(ActionCli.command(app, Read, guard), []);
+    const [read, output] = await run(ActionCli.command(app, Read), []);
     expect(read._tag).toBe("Success");
     expect(output).toEqual(['"read ok"']);
 
-    const [refused] = await run(ActionCli.command(app, Write, guard), ["--value", "x"]);
+    const [refused] = await run(ActionCli.command(app, Write), ["--value", "x"]);
 
     expect(Exit.isFailure(refused) ? Cause.squash(refused.cause) : undefined).toBeInstanceOf(
       Action.Forbidden,
@@ -260,28 +249,25 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("is skipped by no action of the surface it is bound to", async () => {
+  it("is skipped by no action of its implementation", async () => {
     const { app, hooks } = make();
-    const web = serveHttp(app, authorize(hooks), Layer.succeed(Scopes, ["read", "write"]));
+    const web = serveHttp(app, Layer.succeed(Scopes, ["read", "write"]));
     onTestFinished(() => web.dispose());
 
     expect((await web.handler(post("/api/write", { value: "x" }))).status).toBe(200);
     expect(hooks).toEqual(["write"]);
   });
 
-  it("is bound per HTTP layer, so actions served without it skip it", async () => {
+  it("is bound per implementation, so implementations without it skip it", async () => {
     const hooks: Array<string> = [];
     const handlers: Array<string> = [];
     const record = (name: string) => Effect.sync(() => (handlers.push(name), `${name} ok`));
     const read = Action.implement(Read, () => record("read"));
-    const write = Action.implement(Write, () => record("write"));
+    const write = Action.implement(Write, () => record("write"), { before: authorize(hooks) });
 
-    // One binding, two layers: only the write layer binds the hook.
+    // One layer: only the write implementation has the hook.
     const web = serve(
-      Layer.merge(
-        ActionHttp.layer(Http, read),
-        ActionHttp.layer(Http, write, { before: authorize(hooks) }),
-      ).pipe(HttpRouter.provideRequest(readOnly)),
+      ActionHttp.layer(Http, [read, write]).pipe(HttpRouter.provideRequest(readOnly)),
     );
 
     onTestFinished(() => web.dispose());

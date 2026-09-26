@@ -7,18 +7,18 @@ with `LanguageModel` or by hand. No server, no MCP envelope.
 
 Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 
-| API                    | Purpose                                                                                        |
-| ---------------------- | ---------------------------------------------------------------------------------------------- |
-| `make(apps, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                             |
-| `toolkit`              | Native `Toolkit` with typed tool names, schemas and per-tool request requirements.             |
-| `layer`                | The handler layer: acquires handlers in its scope; requires build-time services, not identity. |
+| API          | Purpose                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `make(apps)` | Project an implementation or a list; returns `{ toolkit, layer }`.                             |
+| `toolkit`    | Native `Toolkit` with typed tool names, schemas and per-tool request requirements.             |
+| `layer`      | The handler layer: acquires handlers in its scope; requires build-time services, not identity. |
 
-Option: `before`, a hook receiving the selected `Action.Any`, failing only with
-`Action.Refusal`. Optional.
+Each implementation's `before` hook runs before its handlers. Its `authenticate` does not: an
+in-process caller has no remote credentials, so the caller provides the identity.
 
 Each tool keeps the action's native input/success codecs, combines the action's errors with
 the built-in `Unauthenticated` and `Forbidden` in a native union, and uses
-`failureMode: "return"`. Its request requirements are its handler's plus the hook's; build
+`failureMode: "return"`. Its request requirements are its handler's plus its hook's, identity included; build
 failures and services belong to the handler layer.
 
 ## Canonical
@@ -27,12 +27,12 @@ failures and services belong to the handler layer.
 import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, Stream } from "effect";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import { actors, authorize, CurrentActor } from "./authorization.js";
+import { actors, CurrentActor } from "./authorization.js";
 import { double, userActions } from "./handlers.js";
 import { Users } from "./users.js";
 
-// The in-process caller binds the same hook as the guarded servers.
-const { toolkit, layer } = ActionToolkit.make([userActions, double], { before: authorize });
+// The implementations' hook runs for the in-process caller as for the servers.
+const { toolkit, layer } = ActionToolkit.make([userActions, double]);
 
 const program = Effect.gen(function* () {
   const tools = yield* toolkit;
@@ -59,12 +59,11 @@ With a model: pass `toolkit` as `toolkit` to `LanguageModel.generateText` and pr
 - Supply identity at invocation, never when building the layer. Native context capture is not a security boundary.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
 - `Unauthenticated` and `Forbidden` join every tool's declared failures, so a `before` refusal is an ordinary returned tool failure. A schema an action already declares is not repeated.
-- `before` follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes). Its services join each tool's requirements, supplied by the caller.
+- An implementation's `before` follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes). Its services join each tool's requirements, supplied by the caller.
 
 ## Failure modes
 
 - Tool missing from the toolkit: its implementation was not passed to `make`.
-- Type error on `before`: it fails with something other than `Action.Unauthenticated` or `Action.Forbidden`. Map the failure to a refusal.
 - `Duplicate tool: <name>` thrown at `make`: two implementations serve actions of the same name.
 - `Service not found` for a request tag at call time: it was provided only to the stream, or only to the layer. Provide it around the whole call effect.
 - Type error on `layer` requirements: a build-time service is missing. Provide its Layer before `layer`.

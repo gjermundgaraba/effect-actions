@@ -11,10 +11,16 @@ import {
 } from "effect/unstable/http";
 import { layer as host } from "../examples/app.js";
 import { Http } from "../examples/binding.js";
-import { UserNotFound } from "../examples/contracts.js";
+import {
+  Double,
+  GetUser,
+  RenameUser,
+  Status,
+  UserNotFound,
+  WhoAmI,
+} from "../examples/contracts.js";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { mcpRequest } from "./requests.js";
 import * as Testing from "../src/Testing.js";
@@ -84,58 +90,41 @@ it("preserves malformed tool names without inventing a routing header", async ()
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
   program.pipe(Effect.provide(Testing.layer(host)), Effect.runPromise);
 
-type Arguments = NonNullable<Parameters<typeof Testing.mcpCall>[0]["arguments"]>;
-
-/** One tool call to the example host's `/mcp`, as the actor `token` names. */
-const call = (name: string, input?: Arguments, token = "alice") =>
-  Testing.mcpCall({
-    name,
-    ...(input === undefined ? {} : { arguments: input }),
-    headers: { authorization: `Bearer ${token}` },
-  });
+/** Headers carrying `token`, a demo actor's name, as its bearer token. */
+const as = (token = "alice") => ({ headers: { authorization: `Bearer ${token}` } });
 
 describe("mcpCall", () => {
-  it("returns a success without the `{ value }` envelope", async () => {
-    const results = await againstHost(
-      Effect.all([call("getUser", { id: "1" }), call("double", { value: "21" }), call("whoAmI")]),
-    );
-
-    expect(results).toEqual([
-      { isError: false, value: { id: "1", name: "Ada" } },
-      { isError: false, value: 42 },
-      { isError: false, value: { id: "alice", tenantId: "acme" } },
-    ]);
-  });
-
-  it("returns a declared or refused error as its decoded JSON", async () => {
+  it("encodes the input and decodes the success, without the `{ value }` envelope", async () => {
     const results = await againstHost(
       Effect.all([
-        call("getUser", { id: "404" }),
-        call("renameUser", { id: "1", name: "Grace" }, "reader"),
+        Testing.mcpCall(GetUser, { id: "1" }, as()),
+        // Decoded input: `Double` encodes its number as a string on the wire.
+        Testing.mcpCall(Double, { value: 21 }, as()),
+        Testing.mcpCall(WhoAmI, {}, as()),
+      ]),
+    );
+
+    expect(results).toEqual([{ id: "1", name: "Ada" }, 42, { id: "alice", tenantId: "acme" }]);
+  });
+
+  it("fails with a declared error or a refusal as its decoded value", async () => {
+    const results = await againstHost(
+      Effect.all([
+        Effect.flip(Testing.mcpCall(GetUser, { id: "404" }, as())),
+        Effect.flip(Testing.mcpCall(RenameUser, { id: "1", name: "Grace" }, as("reader"))),
+        // The endpoint's authentication answers before any tool, with the same JSON.
+        Effect.flip(Testing.mcpCall(GetUser, { id: "1" }, as("nobody"))),
       ]),
     );
 
     expect(results).toEqual([
-      { isError: true, error: Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "404" })) },
-      {
-        isError: true,
-        error: Schema.encodeSync(Action.Forbidden)(
-          new Action.Forbidden({ message: "Requires users:write." }),
-        ),
-      },
+      new UserNotFound({ id: "404" }),
+      new Action.Forbidden({ message: "Requires users:write." }),
+      new Action.Unauthenticated({ message: "Unknown demo token." }),
     ]);
   });
 
-  it("returns the native message of an error that is not JSON", async () => {
-    const result = await againstHost(call("getUser", { id: 1 }));
-
-    expect(result.isError).toBe(true);
-    expect(result.isError && result.error).toEqual(
-      expect.stringContaining("Invalid parameters for tool 'getUser'"),
-    );
-  });
-
-  it("returns a declared error of any shape as its decoded JSON, a string included", async () => {
+  it("decodes a declared error of any shape, a string included", async () => {
     const Fail = Action.make("fail", {
       description: "Fails with a string",
       access: "write",
@@ -148,39 +137,84 @@ describe("mcpCall", () => {
       { name: "test", version: "0" },
     );
 
-    const result = await Testing.mcpCall({ name: "fail" }).pipe(
+    const result = await Testing.mcpCall(Fail).pipe(
+      Effect.flip,
       Effect.provide(Testing.layer(routes)),
       Effect.runPromise,
     );
 
-    expect(result).toEqual({ isError: true, error: "failure" });
+    expect(result).toBe("failure");
+
+    // A tool's error is a tool result: in any other answer's body, it is that answer.
+    const other = await Testing.mcpCall(Fail, {}, { url: "/broken" }).pipe(
+      Effect.flip,
+      Effect.provide(
+        Testing.layer(
+          HttpRouter.add("POST", "/broken", HttpServerResponse.text('"failure"', { status: 500 })),
+        ),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(String(other)).toContain('answered 500: "failure"');
   });
 
-  it("fails with the status and body of an answer that is not a tool result", async () => {
-    const [refused, missing] = await againstHost(
+  it("returns nothing for an action that returns nothing, over HTTP and MCP alike", async () => {
+    const Reset = Action.make("reset", { description: "Reset", access: "write" });
+    const Http = ActionHttp.make([Reset]);
+    const reset = Action.implement(Reset, () => Effect.void);
+
+    const routes = Layer.mergeAll(
+      ActionHttp.layer(Http, reset),
+      ActionMcp.layerHttp(reset, { name: "test", version: "0" }),
+    );
+
+    const results = await Effect.gen(function* () {
+      const client = yield* ActionHttp.client(Http);
+
+      return [yield* client.reset(), yield* Testing.mcpCall(Reset)];
+    }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
+
+    expect(results).toEqual([undefined, undefined]);
+  });
+
+  it("fails with an Error holding any other answer", async () => {
+    // Contracts the host does not serve as declared here: other input, and no such tool.
+    const Loose = Action.make("getUser", {
+      description: "The host's getUser, with an input it refuses",
+      access: "read",
+      input: { id: Schema.Finite },
+      success: Schema.String,
+    });
+
+    const Missing = Action.make("missing_tool", {
+      description: "Not served",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const [invalid, missing, nowhere] = await againstHost(
       Effect.all([
-        Effect.flip(call("getUser", { id: "1" }, "nobody")),
-        Effect.flip(call("missing_tool", {})),
+        Effect.flip(Testing.mcpCall(Loose, { id: 1 }, as())),
+        Effect.flip(Testing.mcpCall(Missing, {}, as())),
+        Effect.flip(Testing.mcpCall(Missing, {}, { url: "/nowhere" })),
       ]),
     );
 
-    expect(refused).toBeInstanceOf(Error);
-    expect(refused.message).toContain('MCP tools/call "getUser" answered 401');
-    expect(refused.message).toContain(
-      '{"_tag":"Unauthenticated","message":"A demo bearer token is required."}',
-    );
-    expect(missing.message).toContain('MCP tools/call "missing_tool"');
+    expect(String(invalid)).toContain("Invalid parameters for tool 'getUser'");
+    expect(String(missing)).toContain('MCP tools/call "missing_tool" failed with');
+    expect(String(nowhere)).toContain('MCP tools/call "missing_tool" answered 404');
   });
 
   it("calls the endpoint its url names", async () => {
     // The example's public endpoint needs no credentials.
-    const result = await againstHost(Testing.mcpCall({ name: "status", url: "/mcp/public" }));
+    const result = await againstHost(Testing.mcpCall(Status, {}, { url: "/mcp/public" }));
 
-    expect(result).toEqual({ isError: false, value: { service: "effect-actions", users: 2 } });
+    expect(result).toEqual({ service: "effect-actions", users: 2 });
   });
 
   it("resolves a relative url only under layer", async () => {
-    const failure = await Testing.mcpCall({ name: "status" }).pipe(
+    const failure = await Testing.mcpCall(Status).pipe(
       Effect.flip,
       Effect.provide(FetchHttpClient.layer),
       Effect.runPromise,
@@ -191,26 +225,42 @@ describe("mcpCall", () => {
     );
   });
 
+  const Listed = Action.make("listed", {
+    description: "Lists numbers",
+    access: "read",
+    success: Schema.Array(Schema.Finite),
+  });
+
+  const reply = {
+    jsonrpc: "2.0",
+    id: 1,
+    result: { content: [], structuredContent: { value: [1, 2] } },
+  };
+
+  /** `Listed` against a route answering `body` with `contentType`. */
+  const listed = (body: string, contentType: string) =>
+    Testing.mcpCall(Listed, {}, { url: "/events" }).pipe(
+      Effect.provide(
+        Testing.layer(
+          HttpRouter.add("POST", "/events", HttpServerResponse.text(body, { contentType })),
+        ),
+      ),
+      Effect.runPromise,
+    );
+
   it("reads the reply from an event stream that carries notifications first", async () => {
     const stream = [
       { jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: "x" } },
-      { jsonrpc: "2.0", id: 1, result: { content: [], structuredContent: { value: [1, 2] } } },
+      reply,
     ]
       .map((message) => `data: ${JSON.stringify(message)}\n\n`)
       .join("");
 
-    const routes = HttpRouter.add(
-      "POST",
-      "/events",
-      HttpServerResponse.text(stream, { contentType: "text/event-stream" }),
-    );
+    expect(await listed(stream, "text/event-stream")).toEqual([1, 2]);
+  });
 
-    const result = await Testing.mcpCall({ name: "listed", url: "/events" }).pipe(
-      Effect.provide(Testing.layer(routes)),
-      Effect.runPromise,
-    );
-
-    expect(result).toEqual({ isError: false, value: [1, 2] });
+  it("reads a JSON reply however it is laid out", async () => {
+    expect(await listed(JSON.stringify(reply, null, 2), "application/json")).toEqual([1, 2]);
   });
 });
 
@@ -220,7 +270,7 @@ describe("layer", () => {
   it("answers a client made without a base URL, and every tool call, in memory", async () => {
     const result = await againstHost(
       Effect.gen(function* () {
-        const client = yield* ActionHttpClient.make(Http, {
+        const client = yield* ActionHttp.client(Http, {
           transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
         });
 
@@ -228,7 +278,7 @@ describe("layer", () => {
           user: yield* client.getUser({ id: "1" }),
           missing: yield* Effect.flip(client.getUser({ id: "404" })),
           status: yield* client.status(),
-          doubled: yield* call("double", { value: "2" }),
+          doubled: yield* Testing.mcpCall(Double, { value: 2 }, as()),
         };
       }),
     );
@@ -236,7 +286,7 @@ describe("layer", () => {
     expect(result.user).toEqual({ id: "1", name: "Ada" });
     expect(result.missing).toEqual(new UserNotFound({ id: "404" }));
     expect(result.status).toEqual({ service: "effect-actions", users: 2 });
-    expect(result.doubled).toEqual({ isError: false, value: 4 });
+    expect(result.doubled).toBe(4);
   });
 
   it("resolves a relative URL against http://localhost, and answers any origin in memory", async () => {

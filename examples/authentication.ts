@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
 import { actors, CurrentActor } from "./authorization.js";
@@ -15,13 +15,14 @@ export const discovery = Authentication.protectedResource({
 // server's library instead.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
-// Provides CurrentActor per request. A refusal is the built-in `Unauthenticated`: a 401
-// every client decodes, with a `Bearer` challenge.
-export const authentication = Authentication.middleware(
+// Provides CurrentActor per request, to every implementation that names it. A missing
+// or unknown token is the built-in `Unauthenticated`: a 401 every client decodes, with a
+// `Bearer` challenge.
+export const authenticate = Authentication.make(
   CurrentActor,
   Effect.flatMap(Authentication.bearerToken, (token) =>
-    Option.isSome(token) && isActorToken(token.value)
-      ? Effect.succeed(actors[token.value])
-      : Effect.fail(new Action.Unauthenticated({ message: "A demo bearer token is required." })),
+    isActorToken(token)
+      ? Effect.succeed(actors[token])
+      : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." })),
   ),
 );

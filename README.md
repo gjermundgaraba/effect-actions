@@ -52,7 +52,7 @@ And the client is Effect's own `HttpApiClient`, typed from the same contract, on
 
 ```ts
 const greeting = Effect.gen(function* () {
-  const client = yield* ActionHttpClient.make(Http, { baseUrl });
+  const client = yield* ActionHttp.client(Http, { baseUrl });
 
   return yield* client.greet({ name: "Ada" });
 });
@@ -62,9 +62,9 @@ const greeting = Effect.gen(function* () {
 
 - Input, success and errors are declared once. Routes, tools, CLI flags, clients and the OpenAPI document are derived from that declaration, so they cannot disagree.
 - A handler can fail only with the errors its action declares, and every client decodes them as typed values. Bad input, a missing credential and a refusal come back as three built-in errors (400, 401, 403) that every client decodes too, never as an unreadable body.
-- One authorization rule covers every surface. The same `before` function binds to HTTP, MCP, the Toolkit and the CLI and runs before every handler, so no action can skip it and no handler contains authorization code.
+- Security is written once, on the implementation: `Action.implement(actions, handlers, { authenticate, before })`. Every surface that serves it applies it, HTTP and MCP authenticating the caller and every surface running the authorization rule before each handler, so no surface can leave it out and no handler contains authorization code.
 - Every action states whether it reads or writes (`access`), so that rule reads the contract instead of a hand-maintained list of mutation names.
-- A handler that needs a request identity can't be served without the middleware that provides it: it is a type error. Public and authenticated actions still share one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.
+- A handler that needs a request identity can't be served without authentication that provides it: it is a type error. Public and authenticated implementations are served in one call and share one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency.
 - Tests run in memory. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpCall`, without opening a port.
 
@@ -101,7 +101,7 @@ in `node_modules/@gjermundgaraba/effect-actions/docs`) gives the same content.
 
 The `effect` peer accepts any Effect 4.0 release candidate from `4.0.0-rc.116` on; the package
 is built and tested against the release candidate in its `devDependencies` (see [docs/setup.md](docs/setup.md)). Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
-Token verification and the authorization rule belong to the application; the library supplies the middleware, the hook and the refusals. See [docs/setup.md](docs/setup.md).
+Token verification and the authorization rule belong to the application; the library supplies the authentication seam, the hook and the refusals. See [docs/setup.md](docs/setup.md).
 
 ## Acknowledgements
 

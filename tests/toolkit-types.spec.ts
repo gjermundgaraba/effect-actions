@@ -11,7 +11,6 @@ const Named = Action.make("named", {
   description: "A read-only tool.",
   access: "write",
   success: Schema.String,
-  hints: { readOnly: true },
 });
 
 const Guarded = Action.make("guarded", {
@@ -73,15 +72,12 @@ void toolFailures;
 
 class Clock extends Context.Service<Clock, number>()("toolkit-types/Clock") {}
 
-class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
-
-// The hook fails only with a refusal, and its services are owed by every call.
-const hooked = ActionToolkit.make(app, {
-  before: (action) =>
-    Effect.flatMap(Clock, () =>
-      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
-    ),
-});
+// A hook's services are owed by every call.
+const hooked = ActionToolkit.make(
+  Action.implement(ServiceFree, () => Effect.succeed("free"), {
+    before: () => Effect.flatMap(Clock, () => Effect.void),
+  }),
+);
 
 const hookedServices: Equal<
   Tool.HandlerServices<typeof hooked.toolkit.tools.service_free>,
@@ -89,9 +85,6 @@ const hookedServices: Equal<
 > = true;
 
 void hookedServices;
-
-// @ts-expect-error A hook may not fail with anything but a refusal.
-ActionToolkit.make(app, { before: () => Effect.fail(new Unrelated()) });
 
 export const toolkitTypes = Effect.gen(function* () {
   const tools = yield* binding.toolkit;

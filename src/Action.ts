@@ -2,7 +2,10 @@ import { Effect, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import { assertDistinct, assertName } from "./internal/actions.js";
 import {
+  type Authenticator,
+  type ErasedAuthenticator,
   type ErasedHandler,
+  type Guard,
   type HandlerContext,
   type Handlers,
   Implementation,
@@ -12,7 +15,7 @@ import {
 export type { Implementation } from "./internal/implementation.js";
 
 /** Any service-free schema. Only handlers may require services. */
-export type Codec = Schema.Codec<unknown, unknown, never, never>;
+type Codec = Schema.Codec<unknown, unknown, never, never>;
 
 /** Struct fields, accepted wherever a struct schema is: `{ name: Schema.String }`. */
 type Fields = { readonly [key: string]: Codec };
@@ -30,17 +33,23 @@ type CodecOf<S extends Codec | Fields> = S extends Codec
  */
 export type Access = "read" | "write";
 
-/** Tool hints; every field has a default derived from the action. */
-export interface Hints {
-  /** `readOnlyHint`; defaults to `access === "read"`. */
-  readonly readOnly?: boolean;
-  /** `destructiveHint`; defaults to `!readOnly`, as MCP only defines it for writes. */
+/**
+ * Tool hints; every field has a default derived from the action. `readOnlyHint` is not
+ * one: it is always `access === "read"`, so a tool cannot say otherwise than its contract.
+ */
+interface Hints {
+  /** `destructiveHint`, a write's only; defaults to `true`. A read is never destructive. */
   readonly destructive?: boolean;
   /** `idempotentHint`; defaults to `false`. */
   readonly idempotent?: boolean;
   /** `openWorldHint`; defaults to `true`. */
   readonly openWorld?: boolean;
 }
+
+/** The hints an action may set: a read is never destructive, as MCP defines it for writes. */
+type HintsFor<Acc extends Access> = Acc extends "write"
+  ? Hints
+  : Omit<Hints, "destructive"> & { readonly destructive?: never };
 
 /** The refusals every surface answers with; see `internal/errors`. */
 export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./internal/errors.js";
@@ -55,18 +64,18 @@ interface Options<
   readonly description: string;
   /** A schema or struct fields. Omit for an action without arguments. */
   readonly input?: Input;
-  /** A schema or struct fields. */
-  readonly success: Output;
+  /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
+  readonly success?: Output;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
   readonly errors?: Errors;
   /**
    * What the action does to its resource. Required: an action nobody classified
-   * is the one a reviewer must check. Read by a surface's `before` hook; the
+   * is the one a reviewer must check. Read by an implementation's `before` hook; the
    * library itself authorizes nothing.
    */
   readonly access: Acc;
   /** Tool hints, for MCP and native Toolkit tools. The tool is named after the action. */
-  readonly hints?: Hints;
+  readonly hints?: HintsFor<Acc>;
 }
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
@@ -111,7 +120,7 @@ const codecOf = (schema: Codec | Fields): Codec =>
 export function make<
   const Name extends string,
   Input extends Codec | Fields = typeof NoInput,
-  Output extends Codec | Fields = never,
+  Output extends Codec | Fields = typeof Schema.Void,
   const Errors extends ReadonlyArray<Codec> = [],
   const Acc extends Access = Access,
 >(
@@ -127,13 +136,9 @@ export function make(name: string, options: AnyOptions): Any {
   // caller has none: an unclassified action must not reach a hook that reads it.
   if (access !== "read" && access !== "write") throw new Error(`Invalid access: ${String(access)}`);
 
-  // One contract states the fact once: a read action is a read-only tool unless
-  // the contract says otherwise.
-  const readOnly = options.hints?.readOnly ?? access === "read";
-
   const hints = {
-    readOnly,
-    destructive: options.hints?.destructive ?? !readOnly,
+    // Plain JavaScript can pass `destructive` for a read too; it is still not one.
+    destructive: access === "write" && (options.hints?.destructive ?? true),
     idempotent: options.hints?.idempotent ?? false,
     openWorld: options.hints?.openWorld ?? true,
   };
@@ -142,7 +147,7 @@ export function make(name: string, options: AnyOptions): Any {
     name,
     description: options.description,
     input: options.input === undefined ? NoInput : codecOf(options.input),
-    success: codecOf(options.success),
+    success: options.success === undefined ? Schema.Void : codecOf(options.success),
     errors: options.errors ?? [],
     access,
     hints,
@@ -163,11 +168,14 @@ type HandlersFor<T extends Target> =
       ? Handler<T, any>
       : never;
 
-/** Each action's per-request requirements, by name: its entry of `H`, or `H` itself. */
-type RequestsOf<T extends Target, H> = {
-  readonly [A in ActionsOf<T> as A["name"]]: HandlerContext<
-    T extends ReadonlyArray<Any> ? H[A["name"] & keyof H] : H
-  >;
+/**
+ * Each action's per-request requirements, by name: its entry of `H`, or `H` itself, and
+ * the hook's `RB`.
+ */
+type RequestsOf<T extends Target, H, RB> = {
+  readonly [A in ActionsOf<T> as A["name"]]:
+    | HandlerContext<T extends ReadonlyArray<Any> ? H[A["name"] & keyof H] : H>
+    | RB;
 };
 
 /** The names a handlers record may have: none for a single action's handler. */
@@ -179,7 +187,39 @@ type Names<T extends Target> = T extends ReadonlyArray<Any> ? T[number]["name"] 
  * `Effect.succeed` is still inferred; the check does not take part in inference.
  */
 type Exact<T extends Target, H> = H &
-  NoInfer<{ readonly [K in Exclude<keyof H, Names<T>>]: never }>;
+  NoInfer<{ readonly [K in Exclude<keyof H, Names<T>>]: never } & ReturnsNothing<T, H>>;
+
+/** What a handler succeeds with. */
+type SuccessOf<F> = F extends (...args: any) => Effect.Effect<infer S, any, any> ? S : never;
+
+/**
+ * Whether `F` returns data its action cannot: `Effect<A>` is assignable to `Effect<void>`,
+ * so without this check a void action's handler could return a value its encoding drops.
+ */
+type Drops<A extends Any, F> = [A["success"]["Type"]] extends [void]
+  ? [SuccessOf<F>] extends [void]
+    ? false
+    : true
+  : false;
+
+/** What a handler that drops its value lacks, so the error names the rule. */
+interface Discarding {
+  readonly "Its action returns nothing: declare a success schema to return data": never;
+}
+
+/** A handler of a void action must return nothing. */
+type ReturnsNothing<T extends Target, H> =
+  T extends ReadonlyArray<Any>
+    ? {
+        readonly [
+          A in T[number] as Drops<A, H[A["name"] & keyof H]> extends true ? A["name"] : never
+        ]: Discarding;
+      }
+    : T extends Any
+      ? Drops<T, H> extends true
+        ? Discarding
+        : unknown
+      : unknown;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
@@ -191,19 +231,38 @@ const isList = (target: Target): target is ReadonlyArray<Any> => Array.isArray(t
  * a record of handlers keyed by action name. Either may instead be an Effect that builds
  * them: its services are startup requirements, resolved once however many surfaces serve
  * the result, while services a handler yields are per-request requirements.
+ *
+ * The options are the implementation's policy, which every surface serving it applies:
+ * `authenticate`, how a remote caller proves who they are, and `before`, whether they may
+ * call. Omit both for a public implementation.
  */
-export function implement<const T extends Target, H extends HandlersFor<T>, EX = never, RX = never>(
+export function implement<
+  const T extends Target,
+  H extends HandlersFor<T>,
+  EX = never,
+  RX = never,
+  RB = never,
+  Auth extends Authenticator = never,
+>(
   target: T,
   build: Exact<T, H> | Effect.Effect<Exact<T, H>, EX, RX>,
-): Implementation<ActionsOf<T>, RequestsOf<T, H>, NoInfer<EX>, NoInfer<Exclude<RX, Scope.Scope>>>;
+  options?: Guard<ActionsOf<T>, RB, Auth>,
+): Implementation<
+  ActionsOf<T>,
+  RequestsOf<T, H, RB>,
+  NoInfer<EX>,
+  NoInfer<Exclude<RX, Scope.Scope>>,
+  NoInfer<Auth>
+>;
 export function implement(
   target: Target,
   build: Built | Effect.Effect<Built, unknown, unknown>,
+  options?: Guard<Any, unknown, ErasedAuthenticator>,
 ): Implementation<Any, {}, unknown, unknown> {
   const actions = isList(target) ? target : [target];
   const names = actions.map((action) => action.name);
 
-  assertDistinct("action", names);
+  assertDistinct("action", actions, (action) => action.name);
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so
@@ -233,5 +292,5 @@ export function implement(
     ? Effect.map(build, record)
     : Effect.succeed(record(build));
 
-  return new Implementation(actions, handlers);
+  return new Implementation(actions, handlers, options);
 }

@@ -17,14 +17,14 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   { httpApiStatus: statuses.InvalidInput },
 ) {}
 
-/** The caller is not authenticated: authentication middleware or a `before` hook refuses. */
+/** The caller is not authenticated: an implementation's `authenticate` or `before` hook refuses. */
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   "Unauthenticated",
   { message: message("Authentication is required.") },
   { httpApiStatus: statuses.Unauthenticated },
 ) {}
 
-/** The caller may not run this action: a `before` hook refuses. */
+/** The caller may not run this action: an implementation's `before` hook refuses. */
 export class Forbidden extends Schema.TaggedError<Forbidden>()(
   "Forbidden",
   { message: message("Not allowed.") },

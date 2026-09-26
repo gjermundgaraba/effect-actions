@@ -13,7 +13,6 @@ export default defineConfig({
     entry: {
       Action: "src/Action.ts",
       ActionHttp: "src/ActionHttp.ts",
-      ActionHttpClient: "src/ActionHttpClient.ts",
       ActionMcp: "src/ActionMcp.ts",
       ActionToolkit: "src/ActionToolkit.ts",
       ActionCli: "src/ActionCli.ts",

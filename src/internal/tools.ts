@@ -6,9 +6,7 @@ import { refusals } from "./errors.js";
 import {
   acquire,
   type AnyImplementation,
-  dispatch,
   type ErasedValue,
-  type Hook,
   provideHandlers,
   servedActions,
 } from "./implementation.js";
@@ -21,9 +19,10 @@ interface BoundTools {
   readonly handlers: <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.Layer<A, unknown, unknown>;
 }
 
-const annotate = (tool: Tool.Any, hints: Action.Any["hints"]) =>
+/** A tool's hints: read-only exactly when its action reads, and the contract's others. */
+const annotate = (tool: Tool.Any, { access, hints }: Action.Any) =>
   tool
-    .annotate(Tool.Readonly, hints.readOnly)
+    .annotate(Tool.Readonly, access === "read")
     .annotate(Tool.Destructive, hints.destructive)
     .annotate(Tool.Idempotent, hints.idempotent)
     .annotate(Tool.OpenWorld, hints.openWorld);
@@ -32,7 +31,7 @@ const annotate = (tool: Tool.Any, hints: Action.Any["hints"]) =>
  * A native Effect AI tool. Its schemas retain action transforms and its result
  * is the action result itself, rather than an MCP response envelope.
  */
-const nativeTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): Tool.Any =>
+const nativeTool = (action: Action.Any, errors: Action.Any["errors"]): Tool.Any =>
   annotate(
     Tool.make(action.name, {
       description: action.description,
@@ -41,7 +40,7 @@ const nativeTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): To
       failure: Schema.Union(errors),
       failureMode: "return",
     }),
-    action.hints,
+    action,
   );
 
 /**
@@ -50,7 +49,7 @@ const nativeTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): To
  * server refuses undeclared arguments, publishes closed input schemas, and rejects any
  * input whose JSON Schema root is not an object.
  */
-const mcpTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): Tool.Any =>
+const mcpTool = (action: Action.Any, errors: Action.Any["errors"]): Tool.Any =>
   annotate(
     Tool.make(action.name, {
       description: action.description,
@@ -59,14 +58,14 @@ const mcpTool = (action: Action.Any, errors: ReadonlyArray<Action.Codec>): Tool.
       failure: Schema.toCodecJson(Schema.Union(errors)),
       failureMode: "return",
     }),
-    action.hints,
+    action,
   ).annotate(Tool.Strict, true);
 
 /** The two concrete wire projections that share handler binding and lifetime ownership. */
 type Projection = "native" | "mcp";
 
 const project = (projection: Projection, action: Action.Any): Tool.Any => {
-  // A hook refusal is the surface's failure, so every tool declares the refusals
+  // A hook refusal is the implementation's failure, so every tool declares the refusals
   // alongside the action's own errors and returns them exactly as a handler failure.
   const errors = projectedErrors(action, refusals);
 
@@ -81,7 +80,6 @@ const project = (projection: Projection, action: Action.Any): Tool.Any => {
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
   projection: Projection,
-  options: Hook<unknown>,
 ): BoundTools => {
   // Fail before building handlers when two tools share a name.
   const actions = servedActions(projection === "mcp" ? "MCP tool" : "tool", apps);
@@ -91,11 +89,7 @@ export const bindTools = (
     Effect.map(acquire(apps), (handlerOf) =>
       Object.fromEntries(
         actions.map((action) => {
-          const run = dispatch<Action.Any, ErasedValue, unknown>(
-            action,
-            handlerOf(action),
-            options.before,
-          );
+          const run = handlerOf(action);
 
           return [
             action.name,

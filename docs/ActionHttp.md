@@ -1,29 +1,31 @@
 # ActionHttp
 
 JSON `POST` routes on Effect's `HttpApi`. `ActionHttp.make` binds actions to a mount path; the
-binding is shared by the server, every client, and the OpenAPI document. It is data, so a
-browser client importing it bundles no server code; servers mount it with
-`ActionHttp.layer(Http, implementations)`.
+binding is shared by the server, every client, and the OpenAPI document. Servers mount it with
+`ActionHttp.layer(Http, implementations)`, applying each implementation's own authentication and
+hook; clients call it with `ActionHttp.client(Http)`.
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/ActionHttp`.
 
-| API                           | Purpose                                                                          |
-| ----------------------------- | -------------------------------------------------------------------------------- |
-| `make(actions, options?)`     | Bind a list of actions; returns `Http`.                                          |
-| `Http.actions`                | The exact bound actions.                                                         |
-| `Http.prefix`                 | The mount path: `/api` by default, empty at the root.                            |
-| `Http.api`                    | Native Effect `HttpApi` for clients and OpenAPI.                                 |
-| `layer(Http, apps, options?)` | Mount the routes of these implementations, with an optional `before` hook.       |
-| `openApi(Http, path?)`        | Serve the OpenAPI document with `GET path`; defaults to `<prefix>/openapi.json`. |
+| API                       | Purpose                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| `make(actions, options?)` | Bind a list of actions; returns `Http`.                                                      |
+| `Http.actions`            | The exact bound actions.                                                                     |
+| `Http.prefix`             | The mount path: `/api` by default, empty at the root.                                        |
+| `Http.api`                | Native Effect `HttpApi` for clients and OpenAPI.                                             |
+| `layer(Http, apps)`       | Mount the routes of these implementations, each behind its `authenticate` and `before`.      |
+| `openApi(Http, path?)`    | Serve the OpenAPI document with `GET path`; defaults to `<prefix>/openapi.json`.             |
+| `client(Http, options?)`  | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
 
-Exported type: `Http`.
+Exported types: `Http`, and `Client`, a client's type: `Client<typeof Http>`.
 
-| Option            | Meaning                                                                                                                 |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `make`: `prefix`  | Mount path of every route; defaults to `/api`. `/` mounts at the root; a trailing slash is dropped.                     |
-| `layer`: `before` | Hook receiving the selected `Action.Any`, after successful input decoding and before its handler. Fails with a refusal. |
+| Option                      | Meaning                                                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `make`: `prefix`            | Mount path of every route; defaults to `/api`. `/` mounts at the root; a trailing slash is dropped.                             |
+| `client`: `baseUrl`         | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
+| `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
 
 Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action>`. The
 OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `actions` at the root. Every
@@ -31,8 +33,9 @@ endpoint declares its action's errors plus the built-in `InvalidInput` (400),
 `Unauthenticated` (401) and `Forbidden` (403).
 
 Layer failures and startup requirements come from the builders of the supplied
-implementations. Every handler's and the hook's request services remain router request
-requirements; router/platform services are also required. No request identity is supplied at startup.
+implementations. Every handler's and hook's request services remain router request
+requirements, less the identity each implementation's `authenticate` provides; router/platform
+services are also required. No request identity is supplied at startup.
 
 ## Canonical
 
@@ -42,12 +45,11 @@ The binding, shared by the server and every client:
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 
-// Contract-level: the server and its clients share it, and it is plain data, so a
-// browser client importing it bundles no server code. Every endpoint also declares the
-// built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so a typed client decodes
-// a malformed request, the authentication middleware's 401 and the authorization hook's
-// 403 instead of reporting a decode error. `ListChanges` is a tool for agents reviewing
-// what happened, so HTTP leaves it out.
+// Contract-level: the server and its clients share it, and it is plain data. Every
+// endpoint also declares the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`,
+// so a typed client decodes a malformed request, the authentication's 401 and the
+// authorization hook's 403 instead of reporting a decode error. `ListChanges` is a tool
+// for agents reviewing what happened, so HTTP leaves it out.
 export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI]);
 ```
 
@@ -57,20 +59,12 @@ export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI
 import { Layer } from "effect";
 import { HttpApiSwagger } from "effect/unstable/httpapi";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import { authentication } from "./authentication.js";
-import { authorize } from "./authorization.js";
 import { Http } from "./binding.js";
 import { double, status, userActions } from "./handlers.js";
 
-// One layer per access rule: middleware provided to a layer applies to the routes of
-// the actions it serves, and to no others. Status needs no credentials, so it binds no
-// hook; every user action is authorized after decoding, before its handler runs.
-const routes = Layer.mergeAll(
-  ActionHttp.layer(Http, status),
-  ActionHttp.layer(Http, [userActions, double], { before: authorize }).pipe(
-    Layer.provide(authentication.layer),
-  ),
-);
+// One layer for every action: each implementation brings its own policy, so `status`
+// stays public while the others authenticate and authorize.
+const routes = ActionHttp.layer(Http, [status, userActions, double]);
 
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI JSON at
 // `GET /api/openapi.json`, and a Swagger UI reading the same contract.
@@ -85,7 +79,7 @@ export const layer = Layer.mergeAll(routes, documentation);
 Serve with `HttpRouter.serve(layer).pipe(Layer.provide(NodeHttpServer.layer(createServer, { port })), Layer.launch)`.
 
 A large API, or two actions that would share a name, gets one binding per area, each with its
-own `prefix` and client, composed into one host:
+own `prefix` and client, served by one host:
 
 ```ts
 export const Billing = ActionHttp.make([Invoice, Refund], { prefix: "/api/billing" });
@@ -96,48 +90,92 @@ const routes = Layer.mergeAll(
   ActionHttp.layer(Accounts, accounts),
 );
 
-// One document for both: HttpApi.make("app").addHttpApi(Billing.api).addHttpApi(Accounts.api)
+// One document for both, when no action name repeats across them:
+// HttpApi.make("app").addHttpApi(Billing.api).addHttpApi(Accounts.api)
 ```
 
 ### Client
 
-`ActionHttpClient.make(Http)` is Effect's native `HttpApiClient` with one method per action
-taking its input directly (see [ActionHttpClient.md](ActionHttpClient.md)).
+`client(Http)` is Effect's native `HttpApiClient` with one method per action, taking the
+action's input directly and answering with its decoded success: `client.<action>(input)`.
 
 ```ts
-import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
-import { Http } from "./quickstart.js";
+import { Console, Effect } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import { Http } from "./binding.js";
 
-export const greeting = Effect.gen(function* () {
-  const client = yield* ActionHttpClient.make(Http, { baseUrl: "http://127.0.0.1:3000" });
+const lookup = Effect.gen(function* () {
+  const client = yield* ActionHttp.client(Http, {
+    baseUrl: "http://127.0.0.1:3000",
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
+  });
 
-  return yield* client.greet({ name: "Ada" });
-}).pipe(Effect.provide(FetchHttpClient.layer));
+  const status = yield* client.status();
+  const user = yield* client.getUser({ id: "1" });
+  const identity = yield* client.whoAmI();
+
+  return { status, user, identity };
+});
+
+// Every endpoint declares the built-in refusals, so the 401 the authentication
+// renders arrives as a typed `Unauthenticated`, not a decode error.
+const refused = Effect.gen(function* () {
+  const client = yield* ActionHttp.client(Http, { baseUrl: "http://127.0.0.1:3000" });
+
+  return yield* Effect.flip(client.whoAmI());
+});
+
+await Effect.runPromise(
+  Effect.all([lookup, refused]).pipe(
+    Effect.tap(Console.log),
+    Effect.provide(FetchHttpClient.layer),
+  ),
+);
 ```
+
+The argument may be omitted when `{}` is a valid input, such as for an action declared without
+`input` (`client.whoAmI()`) or one whose fields are all optional; omitting it sends `{}`. Other
+headers also go through `transformClient`
+(`HttpClient.mapRequest(HttpClientRequest.setHeader("x-agent", agent))`). The options are the
+native `HttpApiClient.make` options except `transformResponse`, which may change a call's
+success, failure or required services, which the method types cannot follow; use
+`transformClient`, or the native client. Code that does not run Effects runs the program with
+`Effect.runPromise`, as above.
 
 ## Rules
 
 - HTTP serves exactly the actions passed to `make`; an action has no HTTP switch. To keep an action off HTTP, leave it out of the list and serve it elsewhere (MCP, Toolkit, CLI).
-- Action names are unique within a binding. Two bindings with different prefixes may reuse a name.
-- `layer(Http, apps, options?)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape. An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
+- Action names are unique within a binding. Two bindings with different prefixes may reuse a name and be served side by side, but not combined into one `HttpApi`.
+- `layer(Http, apps)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape. An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
 - The binding is plain data: `layer` and `openApi` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
-- Middleware and the hook are per layer call. Actions that need different middleware go in separate `layer` calls, merged with `Layer.mergeAll`; they still share one binding, one document and one client. A builder runs once for the host however many calls serve its implementation.
-- `before` follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes). It fails only with `Action.Refusal`; anything else is a type error. Admission that must precede decoding belongs in outer native HTTP middleware.
-- `ActionHttp` sets no response headers of its own. The host owns cache policy; `Authentication.middleware` marks its responses `cache-control: no-store`.
-- Request-time handler services are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`Authentication.middleware`, `HttpRouter.middleware`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
-- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`. The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`, and bindings on different prefixes compose into one host API with `HttpApi.addHttpApi`. Two bindings on the same prefix have the same group name: composed, one binding's group replaces the other's even when their actions differ. Serving several bindings with `layer` is unaffected.
+- Each implementation's `authenticate` runs around the routes of its own actions, before decoding, so one `layer` call serves public and authenticated implementations side by side. Its `before` hook runs after decoding, before each handler; it follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes).
+- Other middleware is per layer call. Actions that need different middleware go in separate `layer` calls, merged with `Layer.mergeAll`; they still share one binding, one document and one client. A builder runs once for the host however many calls serve its implementation.
+- `ActionHttp` sets one header of its own: `WWW-Authenticate: Bearer` on every 401 a hook or handler answers. The host owns cache policy; an implementation's `authenticate` marks its routes' responses `cache-control: no-store`.
+- Request-time handler services other than the authenticated identity are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`HttpRouter.middleware`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
+- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`. The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`. Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them: an operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
 - `openApi(Http, path?)` is `OpenApi.fromApi(Http.api)` as one `GET` route, `<prefix>/openapi.json` unless a path is given. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Wire format: success is the encoded body, a declared error is its JSON encoding with its `httpApiStatus`, a defect is an empty 500. Full table in [guarantees.md](guarantees.md#wire-behavior).
-- Each handler runs in a span named after its action, a child of the request span, attributed with `action.name` and `action.access`; its log lines carry the same annotations. The hook, decoding and encoding are outside it, in the request span.
+- Each handler runs in a span named after its action, a child of the request span, attributed with `action.name` and `action.access`; its log lines carry the same annotations. Authentication, the hook, decoding and encoding are outside it, in the request span.
+
+### Client methods
+
+- A method fails with exactly what the native client fails with. Declared errors arrive as their decoded values: the action's own and the three built-in errors every endpoint declares. Match them with `Effect.catchTag`.
+- Anything the contract does not account for is Effect's own error. `HttpClientError`: the server could not be reached (`response` is `undefined`); or answered with a status no schema declares (`reason._tag` `DecodeError`), such as the empty 500 of a defect; or with a declared status whose body did not decode (`StatusCodeError`). `SchemaError`: the input did not encode, or the success body did not decode.
+- The library interprets no status. Which failures mean "signed out" or "try again" is the caller's decision.
+- Nothing is retried. A failed write may or may not have happened; only a declared error says what the server did.
+- Every action of the binding has a method, whether or not a server serves it. An unserved action answers 404 with no body, so its method fails with `HttpClientError`: `DecodeError`, or `StatusCodeError` when the action declares a 404 error, whose body the empty response is not.
+- A given argument is sent as given: `null` or `undefined` is the input itself, for a schema that accepts it.
+- The client holds no connections or timers. `client` builds the native client once from the `HttpClient` in context.
+- The native client stays available: `HttpApiClient.make(Http.api)` has the same routes, with methods taking `{ payload }`.
+- In tests, provide `Testing.layer(routes)` instead of a network client; `baseUrl` may be left out ([Testing.md](Testing.md)).
 
 ### Built-in errors
 
-- Every endpoint declares `InvalidInput`, `Unauthenticated` and `Forbidden` beyond the action's own errors, so `ActionHttpClient`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
+- Every endpoint declares `InvalidInput`, `Unauthenticated` and `Forbidden` beyond the action's own errors, so `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
 - Input that does not decode, malformed JSON included, is answered **400** `InvalidInput` whose `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`. The hook and handler never run. A wrong content type is Effect's own 415.
 - A result that does not encode is a server bug: a defect, answered with an empty **500**. A typed client fails with `HttpClientError` (`DecodeError`, status 500).
-- A `before` refusal is its JSON with 401 or 403. Every 401 a served route answers, a hook's or a handler's own, carries `WWW-Authenticate: Bearer`, as `Authentication.middleware`'s does ([Authentication.md](Authentication.md)).
+- A refusal, from `authenticate` or `before`, is its JSON with 401 or 403. Every 401 refusal, and every 401 a hook or handler answers, carries `WWW-Authenticate: Bearer`. An `HttpServerResponse` that `authenticate` fails with is sent as it is, its challenge the host's ([Authentication.md](Authentication.md)).
 - Schemas reachable from one endpoint must have distinct `_tag`s: the client decodes a response by trying the schemas declared for its status. An application error must not reuse a built-in tag (`InvalidInput`, `Unauthenticated`, `Forbidden`); list the built-in error itself instead.
 - MCP is unaffected: the native `McpServer` answers invalid arguments itself ([ActionMcp.md](ActionMcp.md)).
 
@@ -148,9 +186,19 @@ export const greeting = Effect.gen(function* () {
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same action.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action. Serve each action in one call.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.
-- Type error listing `HttpRouter.Request.From<"Requires", CurrentActor>` as unsatisfied: a handler or the hook yields a request service and no middleware provides it. Wrap that `layer` call with the middleware's `.layer`.
-- Client method missing for an action: the action is not in the binding.
+- `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
+- A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.
+- Type error listing `HttpRouter.Request.From<"Requires", CurrentActor>` as unsatisfied: a handler or the hook yields a request service that no `authenticate` provides. Give the implementation `authenticate` ([Authentication.md](Authentication.md)), or provide the service with router middleware.
 - 400 `InvalidInput` on a valid-looking request: its `message` names each field that did not decode. Check it, and `Content-Type: application/json`.
 - 415: wrong or missing content type.
 - Empty 500: a defect, or a handler result that does not match the success schema. The cause is in the server's logs.
-- Type error at `layer` naming `before`: the hook fails with something other than `Action.Unauthenticated` or `Action.Forbidden`. Map the failure to a refusal, or declare it on the action and fail in the handler.
+
+### Client methods
+
+- Fails with `HttpClientError` whose `reason._tag` is `DecodeError` for a status such as 429: the server answered with a status no schema declares. Declare that error on the action, or handle the native error. The built-in 400, 401 and 403 always decode, as long as their body is the built-in error's JSON.
+- Fails with `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: `baseUrl` is omitted, and there is no page to resolve relative routes against. Set `baseUrl`.
+- Type error listing `HttpClient` as an unsatisfied requirement of `client`: provide one, such as `FetchHttpClient.layer`.
+- Property does not exist on the client: the action is not in the binding.
+- `Expected 1 arguments`: `{}` is not a valid input for the action, so it needs its input.
+- Type error passing `undefined` to a method whose argument may be omitted: leave the argument out instead.
+- Type error passing `{ payload: ... }`: that is the native client's shape. These methods take the input itself.

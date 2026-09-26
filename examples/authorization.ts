@@ -21,8 +21,8 @@ export class CurrentActor extends Context.Service<CurrentActor, Actor>()("exampl
 
 /**
  * One authorization rule for every guarded surface, derived from each contract's own
- * `access`. Each surface binds it as its `before` hook, so it runs before every handler
- * and no handler contains authorization code. Its `Forbidden` is built in: every
+ * `access`. An implementation binds it as its `before` hook, so every surface serving it
+ * runs it before every handler and no handler contains authorization code. Its `Forbidden` is built in: every
  * endpoint and tool declares it, and every client decodes it.
  */
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {

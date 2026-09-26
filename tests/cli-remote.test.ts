@@ -32,16 +32,16 @@ const Http = ActionHttp.make([Remote]);
 
 const decodedInputs: number[] = [];
 
-const app = Action.implement([Remote], {
-  remote: ({ value }) =>
-    Effect.andThen(
-      Effect.sync(() => decodedInputs.push(value)),
-      () =>
-        value === 0
-          ? Effect.fail(new Domain({ message: "zero" }))
-          : Effect.succeed(value === 13 ? Infinity : value * 2),
-    ),
-});
+const remote = ({ value }: { readonly value: number }) =>
+  Effect.andThen(
+    Effect.sync(() => decodedInputs.push(value)),
+    () =>
+      value === 0
+        ? Effect.fail(new Domain({ message: "zero" }))
+        : Effect.succeed(value === 13 ? Infinity : value * 2),
+  );
+
+const app = Action.implement([Remote], { remote });
 
 it("projects commands through the HTTP client without a local fallback", async () => {
   const web = serve(ActionHttp.layer(Http, app));
@@ -187,9 +187,14 @@ const failed = <A, E>(exit: Exit.Exit<A, E>): E =>
 
 it("propagates domain, refusal, encoding and transport failures as typed failures", async () => {
   const refusing = serve(
-    ActionHttp.layer(Http, app, {
-      before: () => Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
-    }),
+    ActionHttp.layer(
+      Http,
+      Action.implement(
+        [Remote],
+        { remote },
+        { before: () => Effect.fail(new Action.Forbidden({ message: "Requires users:write." })) },
+      ),
+    ),
   );
 
   const open = serve(ActionHttp.layer(Http, app));

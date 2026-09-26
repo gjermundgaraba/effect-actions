@@ -21,10 +21,9 @@ export const frontmatter = `---
 name: effect-actions
 description: >
   Reference for @gjermundgaraba/effect-actions. Use when defining Effect action contracts
-  and implementations (Action), serving them over HTTP or MCP, projecting them into an
-  Effect AI Toolkit or a CLI, authorizing them with a before hook, wiring Authentication
-  middleware, calling an ActionHttp binding with ActionHttpClient, or testing those surfaces
-  in memory.
+  and implementations (Action), authenticating and authorizing them, serving them over HTTP
+  or MCP, projecting them into an Effect AI Toolkit or a CLI, calling an ActionHttp binding
+  with its client, or testing those surfaces in memory.
 ---
 
 `;

@@ -4,7 +4,6 @@ import type { HttpClient } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import { assertDistinct } from "./internal/actions.js";
 import { kebab, command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
-import type { Refusal } from "./internal/errors.js";
 import {
   type AnyHttp,
   type MethodError,
@@ -18,8 +17,6 @@ import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
-  dispatch,
-  type Hook,
   type Member,
   type RequestOf,
   type Served,
@@ -27,18 +24,11 @@ import {
   toList,
 } from "./internal/implementation.js";
 
-/**
- * How a local command is named and prints its result, and its hook. A CLI serializes no
- * failure, so a refusal is a typed failure of the command effect: the refusals the hook
- * fails with, `EB`.
- */
-interface Options<Output, EB extends Refusal, R> extends CommandOptions<Output>, Hook<R, EB> {}
-
 /** How a remote command is named and prints its result, and its native client options. */
 interface RemoteOptions<Output> extends CommandOptions<Output>, ClientOptions {}
 
-/** The name of an aggregate local command, and its hook. */
-interface MakeOptions<EB extends Refusal, R> extends Hook<R, EB> {
+/** The name of an aggregate local command. */
+interface MakeOptions {
   /** The aggregate command's name. */
   readonly name: string;
 }
@@ -50,7 +40,7 @@ interface RemoteMakeOptions extends ClientOptions {
 }
 
 /** Every option, erased: the public signatures restore them. */
-type ErasedOptions = CommandOptions<Action.Any["success"]["Type"]> & Hook<unknown> & ClientOptions;
+type ErasedOptions = CommandOptions<Action.Any["success"]["Type"]> & ClientOptions;
 
 /** The implementation of `A` among `App`. */
 type Selected<App, A extends Action.Any> = App extends unknown
@@ -59,20 +49,23 @@ type Selected<App, A extends Action.Any> = App extends unknown
     : never
   : never;
 
-/** What one local command of `A` runs: its hook, then its handler. */
-type Local<App, A extends Action.Any, EB, RB> = Effect.Effect<
+/**
+ * What one local command of `A` runs: its implementation's hook, then its handler. A CLI
+ * serializes no failure, so a refusal is a typed failure of the command effect.
+ */
+type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
-  A["errors"][number]["Type"] | BuildError<App> | EB,
-  Exclude<RequestOf<App, A> | BuildContext<App> | RB, Scope.Scope>
+  A["errors"][number]["Type"] | BuildError<App> | Action.Refusal,
+  Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
 >;
 
 /** A native command running `Local`, or subcommands running it for each `A`. */
-type LocalCommand<App, A extends Action.Any, EB, RB, Subcommands = never> = Command.Command<
+type LocalCommand<App, A extends Action.Any, Subcommands = never> = Command.Command<
   string,
   Subcommands,
   {},
-  A["errors"][number]["Type"] | BuildError<App> | EB | Schema.SchemaError,
-  Exclude<RequestOf<App, A> | BuildContext<App> | RB, Scope.Scope>
+  A["errors"][number]["Type"] | BuildError<App> | Action.Refusal | Schema.SchemaError,
+  Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
 >;
 
 /** A native command calling `A` over HTTP, failing as its client method. */
@@ -85,24 +78,21 @@ type RemoteCommand<A extends Action.Any, Subcommands = never> = Command.Command<
 >;
 
 /**
- * Build the implementation's handlers in a scope of their own, run one action through the
+ * Build the implementation's handlers in a scope of their own, run one action through its
  * hook and its handler, and release them: every local command, selected or aggregated.
  */
-const local = <App extends AnyImplementation, A extends Action.Any, EB, RB>(
+const local = <App extends AnyImplementation, A extends Action.Any>(
   app: App,
   action: A,
-  // Typed as the option itself, not as the erased `Before`, so the hook's failure
-  // type reaches this effect instead of being inferred as `unknown`.
-  before: ((action: Action.Any) => Effect.Effect<void, EB, RB>) | undefined,
   input: A["input"]["Type"],
-): Local<App, A, EB, RB> =>
+): Local<App, A> =>
   // SAFETY: the builder's failures and services are the implementation's `EX` and `RX`,
-  // and the handler's are its entry of `R`; `dispatch` keeps the action's own channels.
+  // the handler's and the hook's are its entry of `R`, and the hook refuses with a `Refusal`.
   Effect.scoped(
-    Effect.flatMap(acquire([app]), (handlerOf) =>
-      dispatch<A, EB, RB>(action, handlerOf(action), before)(input),
-    ).pipe(Effect.provide(Implementation.layerOf(app))),
-  ) as Local<App, A, EB, RB>;
+    Effect.flatMap(acquire([app]), (handlerOf) => handlerOf(action)(input)).pipe(
+      Effect.provide(Implementation.layerOf(app)),
+    ),
+  ) as Local<App, A>;
 
 const select = (apps: ReadonlyArray<AnyImplementation>, action: Action.Any): AnyImplementation => {
   const app = apps.find((candidate) => candidate.actions.includes(action));
@@ -137,24 +127,20 @@ const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasPrope
  * Project one action into a native Effect CLI command, named after it in kebab case with
  * one flag per field of its input (`--user-id`), or `--input` taking the whole input as
  * JSON when it is not a struct. From an HTTP binding, the command calls the action over
- * HTTP through its `ActionHttpClient` method, on the host's `HttpClient`. From
- * implementations, it runs the handler in process.
+ * HTTP through its `ActionHttp.client` method, on the host's `HttpClient`. From
+ * implementations, it runs the handler in process, behind its implementation's `before`
+ * hook; the host provides the identity.
  */
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
   options?: RemoteOptions<A["success"]["Type"]>,
 ): RemoteCommand<A>;
-export function command<
-  const Apps extends Served,
-  A extends ActionOf<Member<Apps>>,
-  EB extends Refusal = never,
-  RB = never,
->(
+export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
   apps: Apps,
   action: A,
-  options?: Options<A["success"]["Type"], EB, RB>,
-): LocalCommand<Selected<Member<Apps>, A>, A, EB, RB>;
+  options?: CommandOptions<A["success"]["Type"]>,
+): LocalCommand<Selected<Member<Apps>, A>, A>;
 export function command(
   target: AnyHttp | Served,
   action: Action.Any,
@@ -162,9 +148,14 @@ export function command(
 ): Command.Command<string, never, {}, unknown, unknown> {
   if (isHttp(target)) return remote(target, action, options);
 
-  const app = select(toList(target), action);
+  const apps = toList(target);
 
-  return makeCommand(action, (input) => local(app, action, options?.before, input), options);
+  // Refuse an action implemented twice, as every surface does, rather than run the first.
+  servedActions("command", apps);
+
+  const app = select(apps, action);
+
+  return makeCommand(action, (input) => local(app, action, input), options);
 }
 
 /**
@@ -176,10 +167,10 @@ export function make<const H extends AnyHttp>(
   http: H,
   options: RemoteMakeOptions,
 ): RemoteCommand<H["actions"][number], {}>;
-export function make<const Apps extends Served, EB extends Refusal = never, RB = never>(
+export function make<const Apps extends Served>(
   apps: Apps,
-  options: MakeOptions<EB, RB>,
-): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, EB, RB, {}>;
+  options: MakeOptions,
+): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, {}>;
 export function make(
   target: AnyHttp | Served,
   options: ErasedOptions & { readonly name: string },
@@ -190,15 +181,15 @@ export function make(
 
   assertDistinct(
     "command",
-    actions.map((action) => kebab(action.name)),
+    actions,
+    (action) => kebab(action.name),
+    (action) => `action ${action.name}`,
   );
 
   const commands = isHttp(target)
     ? actions.map((action) => remote(target, action, { baseUrl, transformClient }))
     : actions.map((action) =>
-        makeCommand(action, (input) =>
-          local(select(toList(target), action), action, options.before, input),
-        ),
+        makeCommand(action, (input) => local(select(toList(target), action), action, input)),
       );
 
   // SAFETY: every subcommand runs or calls one action, so the aggregate's channels are

@@ -16,12 +16,17 @@ export type Options = Omit<
 >;
 
 /**
- * A call of `A` answering `R`. The argument may be omitted when `{}` is a valid input,
- * such as for an action declared without `input`; omitting it sends `{}`.
+ * Whether a call of `A` may leave its input out: when `{}` is a valid input, such as for an
+ * action declared without `input`. Omitting it sends `{}`. The client and `Testing.mcpCall`
+ * share this rule.
  */
-export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
-  ? (...input: [] | [input: A["input"]["Type"]]) => R
-  : (input: A["input"]["Type"]) => R;
+export type OmittableInput<A extends Action.Any> = {} extends A["input"]["Type"] ? true : false;
+
+/** A call of `A` answering `R`, whose argument follows `OmittableInput`. */
+export type Call<A extends Action.Any, R> =
+  OmittableInput<A> extends true
+    ? (...input: [] | [input: A["input"]["Type"]]) => R
+    : (input: A["input"]["Type"]) => R;
 
 /**
  * What one call of `A` fails with: a declared error value (the action's own, or a built-in

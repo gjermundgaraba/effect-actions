@@ -16,7 +16,8 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { httpClient, mcpCall, serve } from "./serve.js";
+import * as Testing from "../src/Testing.js";
+import { against, httpClient, serve } from "./serve.js";
 import { post } from "./requests.js";
 import { cliServices, logged } from "./cli-services.js";
 
@@ -28,13 +29,11 @@ const WhoAmI = Action.make("whoAmI", {
   success: Schema.String,
 });
 
-const app = Action.implement(WhoAmI, () => Principal);
-
 const Http = ActionHttp.make([WhoAmI]);
 
 // Each refusal is a built-in error, answered as the JSON every endpoint declares; any
 // other answer is a response of the host's own.
-const authentication = Authentication.middleware(
+const authenticate = Authentication.make(
   Principal,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -52,11 +51,13 @@ const authentication = Authentication.middleware(
   }),
 );
 
+const app = Action.implement(WhoAmI, () => Principal, { authenticate });
+
 /** A refusal's JSON, as every surface sends it. */
 const wire = Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]));
 
 const authenticated = () => {
-  const web = serve(ActionHttp.layer(Http, app).pipe(Layer.provide(authentication.layer)));
+  const web = serve(ActionHttp.layer(Http, app));
   onTestFinished(() => web.dispose());
 
   return web;
@@ -135,10 +136,11 @@ const Rename = Action.make("rename", {
   success: Schema.String,
 });
 
-const rename = Action.implement(Rename, ({ name }) => Effect.succeed(name));
-
-/** A `before` hook refusing every call with `refusal`. */
-const refusing = (refusal: Action.Refusal) => ({ before: () => Effect.fail(refusal) });
+/** `Rename`, implemented behind a `before` hook refusing every call with `refusal`. */
+const refusing = (refusal: Action.Refusal) =>
+  Action.implement(Rename, ({ name }) => Effect.succeed(name), {
+    before: () => Effect.fail(refusal),
+  });
 
 const refusals = [
   [new Action.Unauthenticated(), 401],
@@ -149,7 +151,7 @@ it.each(refusals)(
   "answers a before hook's %s over HTTP with its status",
   async (refusal, status) => {
     const Notes = ActionHttp.make([Rename]);
-    const web = serve(ActionHttp.layer(Notes, rename, refusing(refusal)));
+    const web = serve(ActionHttp.layer(Notes, refusing(refusal)));
 
     onTestFinished(() => web.dispose());
 
@@ -192,20 +194,18 @@ it("challenges a handler's own 401, with no hook bound", async () => {
 });
 
 it.each(refusals)("returns a before hook's %s as an MCP tool's error", async (refusal) => {
-  const web = serve(
-    ActionMcp.layerHttp(rename, { name: "test", version: "0", ...refusing(refusal) }),
-  );
+  const web = serve(ActionMcp.layerHttp(refusing(refusal), { name: "test", version: "0" }));
 
   onTestFinished(() => web.dispose());
 
-  expect(await mcpCall(web, { name: "rename", arguments: { name: "draft" } })).toEqual({
-    isError: true,
-    error: wire(refusal),
-  });
+  // A refusal is decoded, exactly as the HTTP client decodes it.
+  expect(await against(web, Effect.flip(Testing.mcpCall(Rename, { name: "draft" })))).toEqual(
+    refusal,
+  );
 });
 
 it.each(refusals)("returns a before hook's %s as a native tool's failure", async (refusal) => {
-  const { toolkit, layer } = ActionToolkit.make(rename, refusing(refusal));
+  const { toolkit, layer } = ActionToolkit.make(refusing(refusal));
 
   const results = await Effect.gen(function* () {
     const tools = yield* toolkit;
@@ -284,14 +284,17 @@ it("decodes two errors that share a status by their tag", async () => {
   const web = serve(
     ActionHttp.layer(
       binding,
-      Action.implement([Refuse, Reject], {
-        refuse: () => Effect.succeed("unreachable"),
-        reject: () => Effect.fail(new Rejected({ reason: "closed" })),
-      }),
-      {
-        before: (action) =>
-          action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
-      },
+      Action.implement(
+        [Refuse, Reject],
+        {
+          refuse: () => Effect.succeed("unreachable"),
+          reject: () => Effect.fail(new Rejected({ reason: "closed" })),
+        },
+        {
+          before: (action) =>
+            action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
+        },
+      ),
     ),
   );
 

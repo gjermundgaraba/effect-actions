@@ -3,7 +3,6 @@ import { type DateTime, Effect, Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import type { Equal } from "./equal.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
@@ -40,7 +39,7 @@ type BuiltIn =
   | Schema.SchemaError;
 
 // The Effect client: one method per action, input directly, the native `HttpClient` required.
-const made = ActionHttpClient.make(ActionHttp.make(Notes), { baseUrl: "http://localhost" });
+const made = ActionHttp.client(ActionHttp.make(Notes), { baseUrl: "http://localhost" });
 
 export const effectClientRequires: Equal<
   Effect.Services<typeof made>,
@@ -107,7 +106,7 @@ export const effectClientTypes = Effect.gen(function* () {
   methods.get({ payload: { id: "a" } });
 });
 
-ActionHttpClient.make(ActionHttp.make(Notes), {
+ActionHttp.client(ActionHttp.make(Notes), {
   // @ts-expect-error A response transform could change what a method returns.
   transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
 });
