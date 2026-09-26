@@ -20,7 +20,8 @@ import {
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import type { AnyHttp } from "./internal/client.js";
-import { httpErrors, InvalidInput } from "./internal/errors.js";
+import { httpErrors, type HttpErrors, InvalidInput } from "./internal/errors.js";
+import { challenge } from "./internal/respond.js";
 import {
   acquire,
   type AnyImplementation,
@@ -43,9 +44,6 @@ interface Options {
   readonly prefix?: `/${string}`;
 }
 
-/** What every endpoint declares beyond its action's own errors. */
-type BuiltIn = (typeof httpErrors)[number];
-
 type Endpoint<A extends Action.Any> = A extends Action.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       A["name"],
@@ -56,7 +54,7 @@ type Endpoint<A extends Action.Any> = A extends Action.Any
       Schema.toCodecJson<A["input"]>,
       never,
       Schema.toCodecJson<A["success"]>,
-      Schema.toCodecJson<A["errors"][number] | BuiltIn>,
+      Schema.toCodecJson<A["errors"][number] | HttpErrors>,
       never
     >
   : never;
@@ -120,17 +118,6 @@ const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> 
 
 /** An absolute route from path segments. */
 const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
-
-/**
- * A 401 carries a challenge, as RFC 9110 requires: a hook's `Unauthenticated` is sent with
- * the same plain `Bearer` the authentication middleware sends.
- */
-const challenge: HttpEffect.PreResponseHandler = (_request, response) =>
-  Effect.succeed(
-    response.status === 401 && response.headers["www-authenticate"] === undefined
-      ? HttpServerResponse.setHeader(response, "www-authenticate", "Bearer")
-      : response,
-  );
 
 /**
  * `HttpApiBuilder` reports these kinds while encoding the handler's answer, after the
@@ -291,12 +278,11 @@ export function layer(
                 options.before,
               );
 
+              // Whoever answers a 401, a hook or the handler itself, it carries a challenge.
               return [
                 action.name,
                 (request: Request) =>
-                  options.before === undefined
-                    ? run(request.payload)
-                    : HttpEffect.withPreResponseHandler(run(request.payload), challenge),
+                  HttpEffect.withPreResponseHandler(run(request.payload), challenge),
               ];
             }),
           ) as never,

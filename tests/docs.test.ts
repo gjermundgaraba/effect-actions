@@ -7,7 +7,7 @@ import { routes } from "../examples/quickstart.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
 import { docsDirectory } from "../scripts/skill.ts";
-import { mcpRequest } from "../src/internal/mcp-request.js";
+import { mcpRequest } from "./requests.js";
 import { serve } from "./serve.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");

@@ -25,6 +25,17 @@ const runExit = <Name extends string, Input, Context, E>(
     ),
   );
 
+/** Every line a successful run logs. */
+const lines = <Name extends string, Input, Context, E>(
+  command: Command.Command<Name, Input, Context, E, Scope.Scope>,
+  args: ReadonlyArray<string>,
+) =>
+  Effect.runPromise(
+    Effect.scoped(
+      logged(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices)),
+    ),
+  ).then(([, output]) => output);
+
 /** The typed failure of a failed run: the command's own, or the native parser's. */
 const failure = <A, E>(exit: Exit.Exit<A, E>): E | undefined =>
   Option.getOrUndefined(Exit.findErrorOption(exit));
@@ -318,16 +329,8 @@ it("keeps custom renderer JSON output and validates success before rendering", a
     render: (value) => `${++rendered}:${value}`,
   });
 
-  const [, output] = await Effect.runPromise(
-    Effect.scoped(
-      logged(Command.runWith(command, { version: "0" })(["--json"])).pipe(
-        Effect.provide(cliServices),
-      ),
-    ),
-  );
-
+  expect(await lines(command, ["--json"])).toEqual(['"value"']);
   expect(rendered).toBe(0);
-  expect(output).toEqual(['"value"']);
 
   const invalidRenderer = vi.fn((value: number) => String(value));
 
@@ -369,42 +372,129 @@ it("keeps an input field's flags apart from the renderer's --json", async () => 
 
   const command = ActionCli.command(app, Configured, { render: (value) => `rendered ${value}` });
 
-  const lines = (args: ReadonlyArray<string>) =>
-    Effect.runPromise(
-      Effect.scoped(
-        logged(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices)),
-      ),
-    ).then(([, output]) => output);
-
-  expect(await lines(["--payload-json", "value", "--json"])).toEqual(['"value"']);
-  expect(await lines(["--payload-json", "value"])).toEqual(["rendered value"]);
+  expect(await lines(command, ["--payload-json", "value", "--json"])).toEqual(['"value"']);
+  expect(await lines(command, ["--payload-json", "value"])).toEqual(["rendered value"]);
   expect(inputs).toEqual(["value", "value"]);
 });
 
-it("refuses a field whose flag the parser or a renderer claims", () => {
-  const Claimed = Action.make("claimed", {
-    description: "Has fields named like built-in flags",
+it("takes flags from a class input's fields, described by their schemas", async () => {
+  class Lookup extends Schema.Class<Lookup>("Lookup")({
+    userId: Schema.String.annotate({ description: "Whose record to read" }),
+    attempts: Schema.Number.annotate({ description: "How many times to try" }),
+  }) {}
+
+  const Read = Action.make("readUser", {
+    description: "Read a user",
     access: "read",
-    input: { json: Schema.String },
+    input: Lookup,
     success: Schema.String,
   });
 
-  const Help = Action.make("help", {
-    description: "Has a help field",
-    access: "read",
-    input: { help: Schema.String },
-    success: Schema.String,
-  });
-
-  const claimed = Action.implement(Claimed, ({ json }) => Effect.succeed(json));
-  const help = Action.implement(Help, ({ help }) => Effect.succeed(help));
-
-  // `--json` is claimed only by a renderer.
-  expect(ActionCli.command(claimed, Claimed).name).toBe("claimed");
-  expect(() => ActionCli.command(claimed, Claimed, { render: String })).toThrow(
-    "Reserved flag of claimed: --json",
+  const app = Action.implement(Read, (lookup) =>
+    Effect.succeed(`${lookup.userId} ${lookup.attempts} ${lookup instanceof Lookup}`),
   );
-  expect(() => ActionCli.command(help, Help)).toThrow("Reserved flag of help: --help");
+
+  const command = ActionCli.command(app, Read);
+
+  expect(await lines(command, ["--user-id", "u1", "--attempts", "2"])).toEqual(['"u1 2 true"']);
+
+  // Encoding drops a transformed field's description; the flag keeps the declared one.
+  const help = (await lines(command, ["--help"])).join("\n");
+  expect(help).toMatch(/--user-id string\s+Whose record to read/);
+  expect(help).toMatch(/--attempts number\s+How many times to try/);
+});
+
+it("takes an optional field's plain value, and leaves it out when its flag is omitted", async () => {
+  const Search = Action.make("search", {
+    description: "Searches",
+    access: "read",
+    input: {
+      query: Schema.optional(Schema.String),
+      limit: Schema.optional(Schema.Number.annotate({ description: "How many to return" })),
+      exact: Schema.optional(Schema.Boolean).annotate({ description: "Match whole words" }),
+    },
+    success: Schema.String,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Search, (input) => Effect.succeed(JSON.stringify(input))),
+    Search,
+  );
+
+  expect(await lines(command, ["--query", "x", "--limit", "3", "--exact"])).toEqual([
+    JSON.stringify(JSON.stringify({ query: "x", limit: 3, exact: true })),
+  ]);
+  expect(await lines(command, [])).toEqual([JSON.stringify("{}")]);
+
+  // A struct field keeps its declared description through encoding, as a class field does,
+  // whether the optional field or its value carries it.
+  const help = (await lines(command, ["--help"])).join("\n");
+  expect(help).toMatch(/--query string/);
+  expect(help).toMatch(/--limit number\s+How many to return/);
+  expect(help).toMatch(/--exact\s+Match whole words/);
+});
+
+it("gives a number beside other strings a JSON flag, so the strings stay reachable", async () => {
+  const Page = Action.make("page", {
+    description: "Reads a page",
+    access: "read",
+    input: { limit: Schema.Union([Schema.Finite, Schema.Literal("auto")]) },
+    success: Schema.String,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Page, ({ limit }) => Effect.succeed(String(limit))),
+    Page,
+  );
+
+  expect(await lines(command, ["--limit", "3"])).toEqual(['"3"']);
+  expect(await lines(command, ["--limit", '"auto"'])).toEqual(['"auto"']);
+  expect((await lines(command, ["--help"])).join("\n")).toMatch(/--limit json/);
+});
+
+it("lets a field shadow a global flag, and leaves a clash within a command to the parser", async () => {
+  const Settings = Action.make("settings", {
+    description: "Has fields named like global flags and like the renderer's flag",
+    access: "read",
+    input: { help: Schema.String, logLevel: Schema.String, json: Schema.String },
+    success: Schema.String,
+  });
+
+  const app = Action.implement(Settings, ({ help, logLevel, json }) =>
+    Effect.succeed(`${help} ${logLevel} ${json}`),
+  );
+
+  const args = ["--help", "a", "--log-level", "b", "--json", "c"];
+
+  // A field's flag wins over the global flag of the same name.
+  expect(await lines(ActionCli.command(app, Settings), args)).toEqual(['"a b c"']);
+
+  // Beside a renderer's own `--json`, the native parser refuses the command on every run.
+  const rendered = await runExit(ActionCli.command(app, Settings, { render: String }), args);
+
+  expect(Exit.isFailure(rendered) && Cause.pretty(rendered.cause)).toContain(
+    'Duplicate flag name "json" in command definition',
+  );
+
+  // So it does two fields of one kebab-case name.
+  const Twice = Action.make("twice", {
+    description: "Names one field twice",
+    access: "read",
+    input: { userId: Schema.String, user_id: Schema.String },
+    success: Schema.String,
+  });
+
+  const twice = await runExit(
+    ActionCli.command(
+      Action.implement(Twice, () => Effect.succeed("")),
+      Twice,
+    ),
+    [],
+  );
+
+  expect(Exit.isFailure(twice) && Cause.pretty(twice.cause)).toContain(
+    'Duplicate flag name "user-id" in command definition',
+  );
 });
 
 it("runs any action locally, scopes every invocation, and exposes aggregate subcommands", async () => {
@@ -474,16 +564,6 @@ it("adds --json only to a command with a renderer, without contesting a host's o
     pretty: () => Effect.succeed("pretty"),
   });
 
-  const lines = <Name extends string, Input, Context, E>(
-    command: Command.Command<Name, Input, Context, E, Scope.Scope>,
-    args: ReadonlyArray<string>,
-  ) =>
-    Effect.runPromise(
-      Effect.scoped(
-        logged(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices)),
-      ),
-    ).then(([, output]) => output);
-
   const pretty = ActionCli.command(app, Pretty, { render: (value) => `rendered ${value}` });
   expect(await lines(pretty, [])).toEqual(["rendered pretty"]);
   expect(await lines(pretty, ["--json"])).toEqual(['"pretty"']);
@@ -523,20 +603,8 @@ it("selects a command's implementation by contract identity, not by name", async
   const first = Action.implement(First, () => Effect.succeed("first"));
   const second = Action.implement(Second, () => Effect.succeed("second"));
 
-  const lines = async (app: typeof first, action: typeof First) => {
-    const [, output] = await Effect.runPromise(
-      Effect.scoped(
-        logged(Command.runWith(ActionCli.command([app], action), { version: "0" })([])).pipe(
-          Effect.provide(cliServices),
-        ),
-      ),
-    );
-
-    return output;
-  };
-
-  expect(await lines(first, First)).toEqual(['"first"']);
-  expect(await lines(second, Second)).toEqual(['"second"']);
+  expect(await lines(ActionCli.command([first], First), [])).toEqual(['"first"']);
+  expect(await lines(ActionCli.command([second], Second), [])).toEqual(['"second"']);
 
   // A contract of the same name is not the implemented one.
   expect(() => ActionCli.command([first], Second)).toThrow(
@@ -565,13 +633,7 @@ it("aggregates implementations under one named command and refuses duplicate com
   const tool = ActionCli.make([one, two], { name: "tool" });
   expect(tool.name).toBe("tool");
 
-  const [, output] = await Effect.runPromise(
-    Effect.scoped(
-      logged(Command.runWith(tool, { version: "0" })(["two"])).pipe(Effect.provide(cliServices)),
-    ),
-  );
-
-  expect(output).toEqual(['"two"']);
+  expect(await lines(tool, ["two"])).toEqual(['"two"']);
 
   const Again = Action.make("one", {
     description: "Again",

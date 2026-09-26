@@ -2,7 +2,7 @@ import { Effect, type Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/unstable/http";
 import { type HttpApi, HttpApiClient } from "effect/unstable/httpapi";
 import type * as Action from "../Action.js";
-import type { httpErrors } from "./errors.js";
+import type { HttpErrors } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 
 /**
@@ -31,7 +31,7 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
  */
 export type MethodError<A extends Action.Any> =
   | A["errors"][number]["Type"]
-  | InstanceType<(typeof httpErrors)[number]>
+  | HttpErrors["Type"]
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 

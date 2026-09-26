@@ -1,15 +1,7 @@
 import { Predicate } from "effect";
 
-/** Where an MCP request is sent: `path` against `baseUrl`. */
-export interface McpEndpoint {
-  /** Defaults to `/mcp`, the default `ActionMcp.layerHttp` path. */
-  readonly path?: string;
-  /** Defaults to `http://localhost`. */
-  readonly baseUrl?: string | URL;
-}
-
 /** A stateless 2026-07-28 request. */
-export interface McpRequestOptions extends McpEndpoint {
+export interface McpMessageOptions {
   readonly method: string;
   readonly params?: McpRequestParams;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
@@ -28,7 +20,7 @@ export type McpRequestValue =
   | ReadonlyArray<McpRequestValue>
   | { readonly [key: string]: McpRequestValue };
 
-/** JSON-RPC `params`; `_meta` is merged shallowly over the defaults `mcpRequest` supplies. */
+/** JSON-RPC `params`; `_meta` is merged shallowly over the defaults `mcpMessage` supplies. */
 export interface McpRequestParams {
   readonly _meta?: { readonly [key: string]: McpRequestValue };
   readonly [key: string]: McpRequestValue;
@@ -45,7 +37,7 @@ export const mcpMessage = ({
   method,
   params = {},
   headers: init,
-}: Omit<McpRequestOptions, keyof McpEndpoint>): McpMessage => {
+}: McpMessageOptions): McpMessage => {
   const headers = new Headers(init);
   headers.set("content-type", "application/json");
   headers.set("accept", "application/json, text/event-stream");
@@ -72,15 +64,4 @@ export const mcpMessage = ({
   });
 
   return { headers, body };
-};
-
-/** Build one stateless 2026-07-28 JSON-RPC request, with client metadata defaulted. */
-export const mcpRequest = ({
-  path = "/mcp",
-  baseUrl = "http://localhost",
-  ...message
-}: McpRequestOptions): Request => {
-  const { headers, body } = mcpMessage(message);
-
-  return new Request(new URL(path, baseUrl), { method: "POST", headers, body });
 };

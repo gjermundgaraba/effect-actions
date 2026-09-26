@@ -335,8 +335,6 @@ export const builtInErrorTypes = Effect.gen(function* () {
   Action.implement(Echo, () => Effect.fail(new Action.InvalidInput()));
   // @ts-expect-error Surface errors are built in, not declared on the binding.
   ActionHttp.make([Echo], { errors: [Unrelated] });
-  // @ts-expect-error Bad input is always answered with `InvalidInput`; there is no policy.
-  ActionHttp.make([Echo], { schemaError: {} });
 
   // Every built-in error reaches every client method as a typed failure.
   const client = yield* ActionHttpClient.make(bound);
@@ -611,13 +609,6 @@ export const servedRequirementTypes = () => {
     success: Schema.String,
     // @ts-expect-error A misspelled option is an unknown property, not silently ignored.
     hint: { idempotent: true },
-  });
-  Action.make("renamed", {
-    description: "Renamed",
-    access: "read",
-    success: Schema.String,
-    // @ts-expect-error Tool hints are `hints`; there is no `mcp` option.
-    mcp: { idempotent: true },
   });
 
   // Every hint is resolved on the contract.

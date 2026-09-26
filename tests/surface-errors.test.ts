@@ -167,6 +167,30 @@ it.each(refusals)(
   },
 );
 
+it("challenges a handler's own 401, with no hook bound", async () => {
+  const Guarded = Action.make("guarded", {
+    description: "Refuses by itself",
+    access: "read",
+    success: Schema.String,
+    errors: [Action.Unauthenticated],
+  });
+
+  const Notes = ActionHttp.make([Guarded]);
+
+  const web = serve(
+    ActionHttp.layer(
+      Notes,
+      Action.implement(Guarded, () => Effect.fail(new Action.Unauthenticated())),
+    ),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const response = await web.handler(post("/api/guarded"));
+  expect(response.status).toBe(401);
+  expect(response.headers.get("www-authenticate")).toBe("Bearer");
+});
+
 it.each(refusals)("returns a before hook's %s as an MCP tool's error", async (refusal) => {
   const web = serve(
     ActionMcp.layerHttp(rename, { name: "test", version: "0", ...refusing(refusal) }),

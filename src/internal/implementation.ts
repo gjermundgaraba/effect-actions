@@ -17,15 +17,19 @@ export type ErasedHandler<R> = {
 /** An adapter's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
-/** What every surface binds around the implementations it serves. */
-export interface Hook<R> {
+/**
+ * What every surface binds around the implementations it serves. `E` is the refusals the
+ * hook fails with: the CLI infers it for its command's error type, where the other surfaces
+ * declare every refusal.
+ */
+export interface Hook<R, E extends Refusal = Refusal> {
   /**
    * Runs once per call, after the input is decoded and before the selected handler, with
    * its action contract, so a policy reads `access` rather than the action name. It fails
    * with a refusal, answered exactly as a declared error. Its services are request-time
    * requirements, like a handler's.
    */
-  readonly before?: ((action: Action.Any) => Effect.Effect<void, Refusal, R>) | undefined;
+  readonly before?: ((action: Action.Any) => Effect.Effect<void, E, R>) | undefined;
 }
 
 /** A surface's hook, erased. */

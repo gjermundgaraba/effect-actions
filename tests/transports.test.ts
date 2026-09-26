@@ -16,7 +16,7 @@ import { makeTestApp } from "./server.js";
 import { Http } from "../examples/binding.js";
 import { UserNotFound } from "../examples/contracts.js";
 import { httpClient, serve } from "./serve.js";
-import { mcpRequest } from "../src/internal/mcp-request.js";
+import { mcpRequest } from "./requests.js";
 import { withMcpClient } from "./mcp-client.js";
 
 let app: ReturnType<typeof makeTestApp>;

@@ -145,6 +145,35 @@ describe("Authentication.middleware", () => {
     expect(await (await web.handler(request("alice"))).text()).toBe("alice");
   });
 
+  it("challenges only its own refusals, leaving every other 401 as it is", async () => {
+    const auth = Authentication.middleware(
+      Identity,
+      Effect.gen(function* () {
+        const token = (yield* HttpServerRequest.HttpServerRequest).headers.authorization;
+
+        return token === undefined
+          ? yield* Effect.fail(HttpServerResponse.text("Sign in first", { status: 401 }))
+          : { id: token };
+      }),
+    );
+
+    const web = serve(
+      HttpRouter.add(
+        "GET",
+        "/identity",
+        Effect.succeed(HttpServerResponse.text("Not this one", { status: 401 })),
+      ).pipe(Layer.provide(auth.layer)),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    // The host's own response, and a route's own 401 behind the middleware.
+    for (const response of [await web.handler(request()), await web.handler(request("alice"))]) {
+      expect(response.status).toBe(401);
+      expect(response.headers.has("www-authenticate")).toBe(false);
+    }
+  });
+
   it("rejects any other failure in the types, and answers it with an empty 500", async () => {
     const auth = Authentication.middleware(
       Identity,

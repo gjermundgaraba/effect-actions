@@ -7,8 +7,7 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
-import { mcpRequest } from "../src/internal/mcp-request.js";
-import { post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only and passes the native server options through", async () => {

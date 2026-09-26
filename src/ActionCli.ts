@@ -19,6 +19,7 @@ import {
   type BuildContext,
   type BuildError,
   dispatch,
+  type Hook,
   type Member,
   type RequestOf,
   type Served,
@@ -27,22 +28,17 @@ import {
 } from "./internal/implementation.js";
 
 /**
- * The hook a local command runs before the selected handler. A CLI does not serialize
- * failures, so a refusal is a typed failure of the command effect: the refusals the hook
+ * How a local command is named and prints its result, and its hook. A CLI serializes no
+ * failure, so a refusal is a typed failure of the command effect: the refusals the hook
  * fails with, `EB`.
  */
-interface LocalHook<EB extends Refusal, R> {
-  readonly before?: (action: Action.Any) => Effect.Effect<void, EB, R>;
-}
-
-/** How a local command is named and prints its result, and its hook. */
-interface Options<Output, EB extends Refusal, R> extends CommandOptions<Output>, LocalHook<EB, R> {}
+interface Options<Output, EB extends Refusal, R> extends CommandOptions<Output>, Hook<R, EB> {}
 
 /** How a remote command is named and prints its result, and its native client options. */
 interface RemoteOptions<Output> extends CommandOptions<Output>, ClientOptions {}
 
 /** The name of an aggregate local command, and its hook. */
-interface MakeOptions<EB extends Refusal, R> extends LocalHook<EB, R> {
+interface MakeOptions<EB extends Refusal, R> extends Hook<R, EB> {
   /** The aggregate command's name. */
   readonly name: string;
 }
@@ -54,9 +50,7 @@ interface RemoteMakeOptions extends ClientOptions {
 }
 
 /** Every option, erased: the public signatures restore them. */
-type ErasedOptions = CommandOptions<Action.Any["success"]["Type"]> &
-  LocalHook<Refusal, unknown> &
-  ClientOptions;
+type ErasedOptions = CommandOptions<Action.Any["success"]["Type"]> & Hook<unknown> & ClientOptions;
 
 /** The implementation of `A` among `App`. */
 type Selected<App, A extends Action.Any> = App extends unknown

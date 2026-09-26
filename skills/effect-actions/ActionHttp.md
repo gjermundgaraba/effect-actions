@@ -137,7 +137,7 @@ export const greeting = Effect.gen(function* () {
 - Every endpoint declares `InvalidInput`, `Unauthenticated` and `Forbidden` beyond the action's own errors, so `ActionHttpClient`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
 - Input that does not decode, malformed JSON included, is answered **400** `InvalidInput` whose `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`. The hook and handler never run. A wrong content type is Effect's own 415.
 - A result that does not encode is a server bug: a defect, answered with an empty **500**. A typed client fails with `HttpClientError` (`DecodeError`, status 500).
-- A `before` refusal is its JSON with 401 or 403. A 401 carries `WWW-Authenticate: Bearer`, as `Authentication.middleware`'s does ([Authentication.md](Authentication.md)).
+- A `before` refusal is its JSON with 401 or 403. Every 401 a served route answers, a hook's or a handler's own, carries `WWW-Authenticate: Bearer`, as `Authentication.middleware`'s does ([Authentication.md](Authentication.md)).
 - Schemas reachable from one endpoint must have distinct `_tag`s: the client decodes a response by trying the schemas declared for its status. An application error must not reuse a built-in tag (`InvalidInput`, `Unauthenticated`, `Forbidden`); list the built-in error itself instead.
 - MCP is unaffected: the native `McpServer` answers invalid arguments itself ([ActionMcp.md](ActionMcp.md)).
 

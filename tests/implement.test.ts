@@ -12,8 +12,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { httpClient, mcpCall, serve as serveRoutes } from "./serve.js";
-import { mcpRequest } from "../src/internal/mcp-request.js";
-import { post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall } from "./requests.js";
 
 class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") {}
 

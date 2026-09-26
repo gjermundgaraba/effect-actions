@@ -1,4 +1,4 @@
-import { type Context, Effect, Option, Schema } from "effect";
+import { type Context, Effect, Option } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
   HttpEffect,
@@ -6,20 +6,8 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { Forbidden, type Refusal, Unauthenticated } from "./internal/errors.js";
-
-/**
- * The response to a refusal: its JSON with its status. A 401 carries the plain
- * `WWW-Authenticate: Bearer` challenge; an MCP client then finds the authorization server
- * at the well-known URL `protectedResource` serves.
- */
-const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-  Schema.is(Unauthenticated)(error)
-    ? HttpServerResponse.schemaJson(Unauthenticated)(error, {
-        status: 401,
-        headers: { "www-authenticate": "Bearer" },
-      }).pipe(Effect.orDie)
-    : HttpServerResponse.schemaJson(Forbidden)(error, { status: 403 }).pipe(Effect.orDie);
+import type { Refusal } from "./internal/errors.js";
+import { refuse } from "./internal/respond.js";
 
 /**
  * The bearer token of the request's `Authorization` header, if it has one. The scheme

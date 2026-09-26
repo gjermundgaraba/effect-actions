@@ -24,8 +24,9 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `render`                     | `command` only: decoded success to human-readable string; adds `--json`.                                               |
 | `baseUrl`, `transformClient` | Over HTTP only: the native client's options, as `ActionHttpClient.make` takes them.                                    |
 
-Flags come from the action's input. A struct input gets one flag per top-level field, named
-in kebab case (`tenantId` is `--tenant-id`), parsing the field's encoded JSON value:
+Flags come from the action's input. A struct or class input gets one flag per top-level
+field, named in kebab case (`tenantId` is `--tenant-id`), parsing the field's encoded JSON
+value:
 
 | Encoded field            | Flag                                                      |
 | ------------------------ | --------------------------------------------------------- |
@@ -37,7 +38,9 @@ in kebab case (`tenantId` is `--tenant-id`), parsing the field's encoded JSON va
 
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
 `--input <json>` flag carrying the whole encoded input. An action without input gets no flags.
-A field's description is its flag's help text.
+A field's description is its flag's help text, whatever its encoding. An optional field's
+flag is optional and takes its value without the `null` that `Schema.optional` encodes
+(`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes JSON.
 
 A local command retains handler, builder and hook requirements/failures, plus
 `SchemaError`, and the invocation owns its scope. A command over HTTP fails with exactly
@@ -116,8 +119,7 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - `SchemaError` with `Missing key` at `["field"]`: a required field's flag was not given. Pass it; the parser does not report it.
 - `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`; or, for a `--input` or JSON flag, the JSON is not the field's encoding.
 - Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a number flag given text, a choice outside the literals, or malformed JSON.
-- `Duplicate flag: <name>` thrown at `command`: two input fields have the same kebab-case name (`userId`, `user_id`). Rename one.
-- `Reserved flag of <command>: --<flag>` when the command is built: an input field's flag is one the parser claims (`--help`, `--version`, `--wizard`, `--completions`, `--log-level`), or `--json` with `render`. Rename the field, or drop `render`.
+- `Duplicate flag name "<name>" in command definition`, a defect on every run: two flags of one command share a name, such as two input fields with the same kebab-case name (`userId`, `user_id`), or a `json` field beside `render`'s `--json`. Rename the field, or drop `render`. A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `apps`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
 - `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). Connection refused: `baseUrl` is absent or wrong; it has no default. 401 `Unauthenticated`: add `transformClient`; the command adds no headers of its own.

@@ -101,6 +101,8 @@ defect: an empty 500, which a client sees as an `HttpClientError`. The `ActionHt
 `ActionToolkit.make(apps, { before })`, `ActionCli.command(apps, Action, { before })`.
 `before: (action: Action.Any) => Effect<void, Action.Refusal, R>`: failing with anything else is
 a type error. The CLI infers which refusals the hook fails with for the command's error channel.
+Every 401 an `ActionHttp` route answers, the hook's or a handler's own, carries
+`WWW-Authenticate: Bearer`.
 
 - Migrate: a shared `{ errors, before }` guard becomes its `before` alone; pass
   `{ before: authorize }` instead of `guarded` or `...guarded`. A hook that failed with an
@@ -136,11 +138,13 @@ and `ActionCli.make(Http, { name })` replace the remote string selectors and
 remote command calls through `ActionHttpClient`, so it no longer accepts `transformResponse`,
 whose effect the command's error type could not follow.
 
-**CLI flags are derived from the input.** A struct input gets one flag per top-level field,
-named in kebab case (`tenantId` is `--tenant-id`) and parsed as the field's encoded value: a
-string, a finite number, a boolean switch, a choice for a union of string literals, or JSON
-for anything else. Every flag is optional to the parser; a missing required field fails with a
-`SchemaError` (`Missing key`). An input that is not a struct gets one `--input <json>` flag.
+**CLI flags are derived from the input.** A struct or class input gets one flag per top-level
+field, named in kebab case (`tenantId` is `--tenant-id`), parsed as the field's encoded value
+and described by the field's description: a string, a number (`Schema.Number` included), a
+boolean switch, a choice for a union of string literals, or JSON for anything else. Every flag
+is optional to the parser; a missing required field fails with a `SchemaError` (`Missing key`).
+An optional field's flag takes its plain value, never `null`: `--name x` for
+`Schema.optional(Schema.String)`. An input that is not a struct gets one `--input <json>` flag.
 Commands and subcommands are named after the action in kebab case (`getUser` is `get-user`);
 two actions whose kebab names collide are refused with `Duplicate command: <name>`.
 `parameters`, the `input` mapper, `--input-file`, and their types (`JsonOptions`,
@@ -169,10 +173,11 @@ given argument is sent as given, where 0.7.0 sent `{}` for an `undefined` or `nu
 package no longer has the optional `@modelcontextprotocol/client` peer. `Testing.layer(routes)`
 is a `Layer<HttpClient>` answering requests with the routes in memory, built and released
 with the layer; a relative URL resolves against `http://localhost`, so
-`ActionHttpClient.make(Http)` needs no `baseUrl`. `Testing.mcpCall({ name, arguments?, path?,
-headers? })` is an Effect on that `HttpClient`, failing with an `Error` holding the status and
-body for a non-200 answer, no reply, or a JSON-RPC error. `Testing.serve`,
-`Testing.httpClient`, `Handler` and `Server` are gone.
+`ActionHttpClient.make(Http)` needs no `baseUrl`. `Testing.mcpCall({ name, arguments?, url?,
+headers? })` is an Effect on that `HttpClient`; `url` defaults to `/mcp`, which is relative and
+so resolves only under `layer`. It fails with an `Error` holding the status and body for a
+non-200 answer, no reply, or a JSON-RPC error. `Testing.serve`, `Testing.httpClient`, `Handler`
+and `Server` are gone.
 
 - Migrate:
 

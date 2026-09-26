@@ -1,25 +1,13 @@
 import { Effect, Layer, Option, Schema } from "effect";
 import {
-  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpEffect,
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
+import { clientOf, type Served } from "./internal/memory.js";
 import { mcpMessage, type McpRequestValue } from "./internal/mcp-request.js";
-
-/** What `layer` provides or leaves to routes: the router, the platform, nothing per request. */
-type Served =
-  | HttpRouter.HttpRouter
-  | HttpRouter.Request<"Requires", never>
-  | HttpRouter.Request<"GlobalRequires", never>
-  | HttpRouter.Request<"Error", any>
-  | HttpRouter.Request<"GlobalError", any>
-  | Layer.Success<typeof HttpServer.layerServices>;
-
-/** Where relative request URLs resolve, so a client needs no `baseUrl`. */
-const origin = "http://localhost";
 
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
@@ -34,26 +22,11 @@ export function layer<A, E, R extends Served>(
 export function layer(
   routes: Layer.Layer<unknown, unknown, Served>,
 ): Layer.Layer<HttpClient.HttpClient, unknown> {
-  return Layer.effect(
-    HttpClient.HttpClient,
-    Effect.gen(function* () {
-      const app = yield* HttpRouter.toHttpEffect(
-        routes.pipe(Layer.provide(HttpServer.layerServices)),
-      );
-
-      const handler = HttpEffect.toWebHandler(app);
-
-      const fetch: typeof globalThis.fetch = (input, init) => handler(new Request(input, init));
-
-      const client = yield* Effect.provide(HttpClient.HttpClient, FetchHttpClient.layer);
-
-      return client.pipe(
-        HttpClient.mapRequest((request) =>
-          request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, origin) : request,
-        ),
-        HttpClient.transformResponse(Effect.provideService(FetchHttpClient.Fetch, fetch)),
-      );
-    }),
+  return Layer.unwrap(
+    Effect.map(
+      HttpRouter.toHttpEffect(routes.pipe(Layer.provide(HttpServer.layerServices))),
+      (app) => clientOf(HttpEffect.toWebHandler(app)),
+    ),
   );
 }
 
@@ -63,8 +36,11 @@ interface McpCallOptions {
   readonly name: string;
   /** Defaults to `{}`. It may be malformed on purpose. */
   readonly arguments?: { readonly [key: string]: McpRequestValue };
-  /** The endpoint's path; defaults to `/mcp`, the default `ActionMcp.layerHttp` path. */
-  readonly path?: string;
+  /**
+   * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
+   * the default `ActionMcp.layerHttp` path.
+   */
+  readonly url?: string;
   readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
@@ -106,7 +82,7 @@ export const mcpCall = ({
   name,
   headers: init,
   arguments: args = {},
-  path = "/mcp",
+  url = "/mcp",
 }: McpCallOptions): Effect.Effect<McpCallResult, Error, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const { headers, body } = mcpMessage({
@@ -116,7 +92,7 @@ export const mcpCall = ({
     });
 
     const response = yield* HttpClient.execute(
-      HttpClientRequest.post(path).pipe(
+      HttpClientRequest.post(url).pipe(
         HttpClientRequest.setHeaders(Object.fromEntries(headers)),
         HttpClientRequest.bodyText(body, "application/json"),
       ),

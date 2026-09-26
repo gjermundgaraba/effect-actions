@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
 import {
+  FetchHttpClient,
   HttpClient,
+  HttpClientError,
   HttpClientRequest,
   HttpRouter,
   HttpServerRequest,
@@ -14,18 +16,8 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { mcpRequest } from "../src/internal/mcp-request.js";
+import { mcpRequest } from "./requests.js";
 import * as Testing from "../src/Testing.js";
-
-it("sends to /mcp on http://localhost unless told otherwise", () => {
-  expect(mcpRequest({ method: "tools/list" }).url).toBe("http://localhost/mcp");
-  expect(mcpRequest({ method: "tools/list", path: "/mcp/public" }).url).toBe(
-    "http://localhost/mcp/public",
-  );
-  expect(
-    mcpRequest({ method: "tools/list", path: "/tools", baseUrl: "https://api.example" }).url,
-  ).toBe("https://api.example/tools");
-});
 
 it("supplies consistent stateless protocol defaults", async () => {
   const request = mcpRequest({ method: "tools/list" });
@@ -180,11 +172,23 @@ describe("mcpCall", () => {
     expect(missing.message).toContain('MCP tools/call "missing_tool"');
   });
 
-  it("calls the endpoint its path names", async () => {
+  it("calls the endpoint its url names", async () => {
     // The example's public endpoint needs no credentials.
-    const result = await againstHost(Testing.mcpCall({ name: "status", path: "/mcp/public" }));
+    const result = await againstHost(Testing.mcpCall({ name: "status", url: "/mcp/public" }));
 
     expect(result).toEqual({ isError: false, value: { service: "effect-actions", users: 2 } });
+  });
+
+  it("resolves a relative url only under layer", async () => {
+    const failure = await Testing.mcpCall({ name: "status" }).pipe(
+      Effect.flip,
+      Effect.provide(FetchHttpClient.layer),
+      Effect.runPromise,
+    );
+
+    expect(HttpClientError.isHttpClientError(failure) && failure.reason._tag).toBe(
+      "InvalidUrlError",
+    );
   });
 
   it("reads the reply from an event stream that carries notifications first", async () => {
@@ -201,7 +205,7 @@ describe("mcpCall", () => {
       HttpServerResponse.text(stream, { contentType: "text/event-stream" }),
     );
 
-    const result = await Testing.mcpCall({ name: "listed", path: "/events" }).pipe(
+    const result = await Testing.mcpCall({ name: "listed", url: "/events" }).pipe(
       Effect.provide(Testing.layer(routes)),
       Effect.runPromise,
     );

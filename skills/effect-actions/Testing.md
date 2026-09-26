@@ -13,12 +13,12 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 | `mcpCall(options)` | One tool call on the `HttpClient`, returning its outcome without the wire envelope. |
 | `McpCallResult`    | `{ isError: false, value }` or `{ isError: true, error }`.                          |
 
-| `mcpCall` option | Meaning                                                                 |
-| ---------------- | ----------------------------------------------------------------------- |
-| `name`           | Required tool name: its action's name.                                  |
-| `arguments`      | Tool arguments; default `{}`.                                           |
-| `path`           | The endpoint's path; default `/mcp`, the `ActionMcp.layerHttp` default. |
-| `headers`        | Request headers.                                                        |
+| `mcpCall` option | Meaning                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `name`           | Required tool name: its action's name.                                                                                  |
+| `arguments`      | Tool arguments; default `{}`.                                                                                           |
+| `url`            | The endpoint, resolved by the `HttpClient` (relative under `layer`); default `/mcp`, the `ActionMcp.layerHttp` default. |
+| `headers`        | Request headers.                                                                                                        |
 
 `mcpCall` is `Effect<McpCallResult, Error, HttpClient>`.
 
@@ -59,4 +59,5 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 - `MCP tools/call "<name>" answered 401`: the call reached authentication without a credential. Pass `headers: { authorization: "Bearer ..." }`.
 - 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
 - Type error at `layer` naming `HttpRouter.Request<"Requires", ...>`: a route owes a per-request service, such as an identity no middleware provides. Provide the middleware's layer to it.
-- `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `path`.
+- `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
+- An `HttpClientError` whose reason is `InvalidUrlError`, from `mcpCall` on an `HttpClient` other than `layer`'s: a relative `url` resolves only under `layer`. Pass an absolute `url`.

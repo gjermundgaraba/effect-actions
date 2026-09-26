@@ -1,7 +1,7 @@
 import { Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "./Action.js";
-import type { refusals } from "./internal/errors.js";
+import type { ToolErrors } from "./internal/errors.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type ActionOf,
@@ -14,16 +14,13 @@ import {
   toList,
 } from "./internal/implementation.js";
 
-/** What every tool declares beyond its action's own errors. */
-type BuiltIn = (typeof refusals)[number];
-
 /** A native tool named after its action. */
 type NativeTool<A extends Action.Any, R> = Tool.Tool<
   A["name"],
   {
     readonly parameters: A["input"];
     readonly success: A["success"];
-    readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | BuiltIn>>;
+    readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | ToolErrors>>;
     readonly failureMode: "return";
   },
   R
