@@ -32,13 +32,15 @@ value:
 | string or template literal               | `--name <string>`; the action's schema checks a template  |
 | boolean                                  | `--on`, a switch; omitted is `false` for a required field |
 | union of string literals, or string enum | `--kind <choice>`, one of the values                      |
-| anything else, numbers included          | `--tags <value>`: JSON, or the text when it is not JSON   |
+| anything else, numbers included          | `--tags <value>`: JSON the field accepts, or the text     |
 
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
 `--input <value>` flag carrying the whole encoded input. An action without input gets no flags.
-A value flag parses its text as JSON (`--count 2`, `--tags '["x"]'`), or keeps the text
-when it is not JSON (`--limit auto`, `--scale Infinity` for `Schema.Number`); the action's
-schema decodes either.
+A value flag parses its text as JSON when the field's encoding accepts the value
+(`--count 2`, `--tags '["x"]'`), or else keeps the text (`--limit auto`, `--scale Infinity`
+for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
+Choices may be nested unions: `Schema.Union([Schema.Literals(["a", "b"]), Schema.Literal("c")])`
+is one choice of three.
 A field's description is its flag's help text, whatever its encoding. An optional field's
 flag is optional and takes its value without the `null` that `Schema.optional` encodes
 (`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).

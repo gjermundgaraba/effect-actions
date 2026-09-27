@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, SchemaGetter } from "effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -95,6 +95,39 @@ describe("mcpCall", () => {
     );
 
     expect(String(other)).toContain('answered 500: "failure"');
+  });
+
+  it("decodes a declared error whose schema decodes asynchronously", async () => {
+    const Later = Schema.String.pipe(
+      Schema.decodeTo(Schema.String, {
+        decode: SchemaGetter.transformEffect((reason: string) =>
+          Effect.as(Effect.sleep(1), reason),
+        ),
+        encode: SchemaGetter.passthrough(),
+      }),
+    );
+
+    class Late extends Schema.TaggedError<Late>()("Late", { reason: Later }) {}
+
+    const Slow = Action.make("slow", {
+      description: "Fails late",
+      access: "read",
+      success: Schema.String,
+      errors: [Late],
+    });
+
+    const routes = ActionMcp.layerHttp(
+      Action.implement(Slow, () => Effect.fail(new Late({ reason: "busy" }))),
+      { name: "test", version: "0" },
+    );
+
+    const failure = await Testing.mcpCall(Slow).pipe(
+      Effect.flip,
+      Effect.provide(Testing.layer(routes)),
+      Effect.runPromise,
+    );
+
+    expect(failure).toEqual(new Late({ reason: "busy" }));
   });
 
   it("returns nothing for an action that returns nothing, over HTTP and MCP alike", async () => {
@@ -239,7 +272,13 @@ describe("layer", () => {
     const get = (url: string) => Effect.flatMap(HttpClient.get(url), (response) => response.text);
 
     const urls = await Effect.all([
-      ...["/where", "http://localhost/where", "https://api.example/where"].map(get),
+      ...[
+        "/where",
+        "where",
+        "./where?x=1",
+        "http://localhost/where",
+        "https://api.example/where",
+      ].map(get),
       // A client's own base URL is applied first: only a URL still relative is resolved.
       get("/where").pipe(
         Effect.provideServiceEffect(
@@ -255,9 +294,20 @@ describe("layer", () => {
     expect(urls).toEqual([
       "http://localhost/where",
       "http://localhost/where",
+      "http://localhost/where?x=1",
+      "http://localhost/where",
       "https://api.example/where",
       "https://api.example/where",
     ]);
+
+    // A URL that resolves to nothing fails as the native client's typed error, not a defect.
+    const invalid = await Effect.all(
+      ["http://", "http://[invalid"].map((url) => Effect.flip(get(url))),
+    ).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
+
+    expect(
+      invalid.map((error) => HttpClientError.isHttpClientError(error) && error.reason._tag),
+    ).toEqual(["InvalidUrlError", "InvalidUrlError"]);
   });
 
   it("serves routes with the services their middleware provides, until its scope closes", async () => {

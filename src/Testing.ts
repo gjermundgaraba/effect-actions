@@ -59,11 +59,14 @@ type McpCallError<A extends Action.Any> =
   | HttpClientError.HttpClientError
   | Error;
 
-/** The arguments after the action: its input, left out as a client's may be, then options. */
+/**
+ * The arguments after the action: its input, then options. As for a client's method, the input
+ * may be left out when `{}` is valid, sending `{}`, and a given input is sent as given; with
+ * options, it is given.
+ */
 type McpCallArguments<A extends Action.Any> =
-  OmittableInput<A> extends true
-    ? [input?: A["input"]["Type"], options?: McpCallOptions]
-    : [input: A["input"]["Type"], options?: McpCallOptions];
+  | (OmittableInput<A> extends true ? [] : never)
+  | [input: A["input"]["Type"], options?: McpCallOptions];
 
 /** The JSON-RPC response to a `tools/call`: a tool result or a protocol error. */
 const ToolReply = Schema.Union([
@@ -96,9 +99,14 @@ const replyOf = (text: string) =>
     ),
   );
 
-/** A value of one of `errors` from its JSON text, if the text is one. */
-const failureOf = (errors: Action.Any["errors"], text: string) =>
-  Schema.decodeUnknownOption(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(text);
+/** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
+const failWith = (errors: Action.Any["errors"], text: string, otherwise: Error) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
+    text,
+  ).pipe(
+    Effect.mapError(() => otherwise),
+    Effect.flatMap(Effect.fail),
+  );
 
 /**
  * Call one action's tool with a stateless 2026-07-28 request on the `HttpClient`, such as
@@ -113,10 +121,10 @@ export function mcpCall<const A extends Action.Any>(
 ): Effect.Effect<A["success"]["Type"], McpCallError<A>, HttpClient.HttpClient>;
 export function mcpCall(
   action: Action.Any,
-  input: Action.Any["input"]["Type"] = {},
-  { headers = {}, url = "/mcp" }: McpCallOptions = {},
+  ...args: [] | [input: Action.Any["input"]["Type"], options?: McpCallOptions]
 ): Effect.Effect<unknown, unknown, HttpClient.HttpClient> {
   const { name } = action;
+  const [input, { headers = {}, url = "/mcp" } = {}] = args.length === 0 ? [{}] : args;
 
   const other = (answer: string) => new Error(`MCP tools/call "${name}" ${answer}`);
 
@@ -153,13 +161,9 @@ export function mcpCall(
 
     const text = yield* response.text;
 
+    // Only the endpoint's authentication answers otherwise, and only with a refusal.
     if (response.status !== 200) {
-      // Only the endpoint's authentication answers otherwise, and only with a refusal.
-      const refusal = failureOf(refusals, text);
-
-      return yield* Option.isSome(refusal)
-        ? Effect.fail(refusal.value)
-        : Effect.fail(other(`answered ${response.status}: ${text}`));
+      return yield* failWith(refusals, text, other(`answered ${response.status}: ${text}`));
     }
 
     const reply = replyOf(text);
@@ -176,11 +180,12 @@ export function mcpCall(
 
     if (result.isError === true) {
       const error = result.content.find((content) => content.type === "text")?.text ?? "";
-      const declared = failureOf(projectedErrors(action, refusals), error);
 
-      return yield* Option.isSome(declared)
-        ? Effect.fail(declared.value)
-        : Effect.fail(other(`returned an error: ${error}`));
+      return yield* failWith(
+        projectedErrors(action, refusals),
+        error,
+        other(`returned an error: ${error}`),
+      );
     }
 
     if (result.structuredContent === undefined) {

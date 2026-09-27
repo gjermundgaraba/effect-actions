@@ -543,6 +543,70 @@ it("takes a number, a non-finite number or a string beside it as JSON or plain t
   expect((await lines(command, ["--help"])).join("\n")).toMatch(/--limit value/);
 });
 
+it("takes JSON only as a value the field accepts, and nested literal unions as one choice", async () => {
+  const Tune = Action.make("tune", {
+    description: "Tunes a setting",
+    access: "write",
+    input: {
+      mode: Schema.Union([Schema.Literals(["true", "false"]), Schema.Literal("auto")]),
+      label: Schema.optionalKey(Schema.Union([Schema.Literal("auto"), Schema.String])),
+      extra: Schema.optionalKey(Schema.Json),
+    },
+    success: Schema.String,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Tune, ({ mode, label, extra }) =>
+      Effect.succeed(JSON.stringify([mode, label, extra])),
+    ),
+    Tune,
+  );
+
+  // `true` is JSON, but neither field accepts a boolean: each takes the text.
+  expect(await lines(command, ["--mode", "true", "--label", "true"])).toEqual([
+    JSON.stringify(JSON.stringify(["true", "true", undefined])),
+  ]);
+  // A field that accepts any JSON still takes it as JSON.
+  expect(await lines(command, ["--mode", "auto", "--extra", '{"a":[1]}'])).toEqual([
+    JSON.stringify(JSON.stringify(["auto", undefined, { a: [1] }])),
+  ]);
+  expect(failure(await runExit(command, ["--mode", "maybe"]))).toBeInstanceOf(CliError.ShowHelp);
+});
+
+it("hands the action's schema all of the JSON, keys a first union member lacks included", async () => {
+  // The first member's encoding accepts `{ a: "bad", b: "keep" }` without `b`; only the second
+  // decodes it.
+  const Pair = Schema.Union([
+    Schema.Struct({ a: Schema.FiniteFromString }),
+    Schema.Struct({ a: Schema.String, b: Schema.String }),
+  ]);
+
+  const Whole = Action.make("whole", {
+    description: "Takes a pair",
+    access: "read",
+    input: Pair,
+    success: Schema.String,
+  });
+
+  const Nested = Action.make("nested", {
+    description: "Takes a pair as a field",
+    access: "read",
+    input: { pair: Pair },
+    success: Schema.String,
+  });
+
+  const app = Action.implement([Whole, Nested], {
+    whole: (input) => Effect.succeed(JSON.stringify(input)),
+    nested: ({ pair }) => Effect.succeed(JSON.stringify(pair)),
+  });
+
+  const pair = '{"a":"bad","b":"keep"}';
+  const printed = [JSON.stringify(pair)];
+
+  expect(await lines(ActionCli.command(app, Whole), ["--input", pair])).toEqual(printed);
+  expect(await lines(ActionCli.command(app, Nested), ["--pair", pair])).toEqual(printed);
+});
+
 it("lets a field shadow a global flag, and refuses a clash within a command when it is built", async () => {
   const Settings = Action.make("settings", {
     description: "Has fields named like global flags and like the renderer's flag",

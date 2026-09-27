@@ -21,7 +21,7 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 action's declared errors and the refusals as decoded values, `SchemaError`,
 `HttpClientError`, or an `Error` for any other answer. Only a tool result carries the
 action's own errors; any other response decodes only as a refusal, as authentication sends. It requires an `HttpClient`. The input
-may be left out when `{}` is a valid input.
+may be left out when `{}` is a valid input, sending `{}`, and a given input is sent as given, as for a client's method. To pass options for an action without input, give `{}`: `mcpCall(WhoAmI, {}, { headers })`.
 
 ## Canonical
 

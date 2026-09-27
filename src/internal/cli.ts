@@ -29,10 +29,19 @@ const jsonFlag = Flag.Boolean("json").pipe(
 );
 
 /**
- * A flag's text as JSON, or as itself when it is not JSON: `21`, `true` and `["x"]` parse,
- * while `auto` and `Infinity` stay text for the action's schema to decode.
+ * A flag's text as the JSON it holds when the field's `encoded` type accepts that value, or
+ * else as itself, for the action's schema to decode: for a number `21` parses, while for
+ * `"auto" | string` the text `true` stays text. The JSON is only checked, never decoded
+ * here, so no key another union member needs is dropped before the action's schema sees it.
  */
-const jsonOrText = Schema.Union([Schema.fromJsonString(Schema.Json), Schema.String]);
+const jsonOrText = (encoded: SchemaAST.AST) => {
+  const accepts = Schema.is(Schema.make<Schema.Codec<unknown>>(encoded));
+
+  return Schema.Union([
+    Schema.fromJsonString(Schema.Json).check(Schema.makeFilter(accepts)),
+    Schema.String,
+  ]);
+};
 
 /** The values a literal or an enum accepts; nothing else has a fixed set. */
 const values = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
@@ -42,9 +51,13 @@ const values = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
       ? ast.enums.map(([, value]) => value)
       : [undefined];
 
+/** The members of a union, those of nested unions included, or the one type otherwise. */
+const members = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> =>
+  SchemaAST.isUnion(ast) ? ast.types.flatMap(members) : [ast];
+
 /** The strings a union of string literals or a string enum accepts, if it is one. */
 const choices = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
-  const accepted = (SchemaAST.isUnion(ast) ? ast.types : [ast]).flatMap(values);
+  const accepted = members(ast).flatMap(values);
 
   return accepted.every(Predicate.isString) ? accepted : undefined;
 };
@@ -65,7 +78,7 @@ const valueFlag = (name: string, encoded: SchemaAST.AST): Flag.Flag<unknown> => 
 
   if (SchemaAST.isBoolean(encoded)) return Flag.Boolean(name);
 
-  return Flag.String(name).pipe(Flag.withSchema(jsonOrText), Flag.withMetavar("value"));
+  return Flag.String(name).pipe(Flag.withSchema(jsonOrText(encoded)), Flag.withMetavar("value"));
 };
 
 /**
@@ -162,11 +175,12 @@ const fromFields = (parsed: Parsed) =>
   );
 
 /** The whole encoded input as JSON, or text, for an input that is not a struct of fields. */
-const inputFlag = Flag.String("input").pipe(
-  Flag.withSchema(jsonOrText),
-  Flag.optional,
-  Flag.withDescription("Whole action input as JSON"),
-);
+const inputFlag = (encoded: SchemaAST.AST) =>
+  Flag.String("input").pipe(
+    Flag.withSchema(jsonOrText(encoded)),
+    Flag.optional,
+    Flag.withDescription("Whole action input as JSON"),
+  );
 
 const output = <A extends Action.Any, E, R>(
   action: A,
@@ -214,7 +228,7 @@ const inputConfig = <A extends Action.Any>(action: A): InputConfig<A> => {
   }
 
   return {
-    config: { input: inputFlag },
+    config: { input: inputFlag(encoded) },
     // With no input, `{}` is decoded afresh each run so invocations never share a value.
     decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
   };

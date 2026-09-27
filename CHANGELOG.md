@@ -58,7 +58,8 @@ names are at most 128 characters, the MCP limit. `make` refuses a misspelled key
 time. Its options are given or omitted, never a value that may be
 `undefined`: omitted, an option takes its default at run time, which its type would not say,
 so `success: enabled ? Schema.String : undefined`, or a conditional spread, is a compile error.
-Branch around the call instead.
+Branch around the call instead. Options typed as a whole, as `Parameters<typeof Action.make>[1]`,
+give an action whose schemas are as wide as what may run: its success is `unknown`, not `void`.
 
 - Migrate: rename `mcp:` to `hints:` and `action.mcp` to `action.hints`. Rename an action whose
   `mcp.name` differed (`get_user` becomes the tool `getUser`), or keep the old name as the action
@@ -195,8 +196,8 @@ whose effect the command's error type could not follow.
 **CLI flags are derived from the input.** A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`), parsed as the field's encoded value
 and described by the field's description: a string, a boolean switch, a choice for a union of
-string literals, or, for anything else, numbers included, JSON or the text when it is not JSON
-(`--count 2`, `--limit auto`, `--scale Infinity`). A
+string literals, or, for anything else, numbers included, JSON when the field accepts the value,
+or else the text (`--count 2`, `--limit auto`, `--scale Infinity`). A
 required field's flag is required, so the parser refuses a missing one with its help, as any
 native CLI does; a required boolean is a switch, `false` when omitted. An optional field's flag takes its plain value without the `null` `Schema.optional` encodes:
 `--name x` for `Schema.optional(Schema.String)`; a field that declares `null` itself keeps it.
@@ -234,8 +235,8 @@ package no longer has the optional `@modelcontextprotocol/client` peer. `Testing
 is a `Layer<HttpClient>` answering requests with the routes in memory, built and released
 with the layer; a relative URL resolves against `http://localhost`, once any `baseUrl` a client
 adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl`. `Testing.mcpCall(action, input?, { url?,
-headers? })` is an Effect on that `HttpClient`, typed by the action like a client method: it
-encodes the input, succeeds with the decoded success, and fails with the action's declared
+headers? })` is an Effect on that `HttpClient`, typed by the action like a client method,
+whose rule for leaving the input out it shares: it encodes the input, succeeds with the decoded success, and fails with the action's declared
 errors and the refusals as decoded values, whether the tool or the endpoint's authentication
 answered them, or with an `Error` holding any other answer. `url` defaults to `/mcp`, which is
 relative and so resolves only under `layer`. `McpCallResult`, `Testing.serve`,

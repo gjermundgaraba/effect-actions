@@ -104,15 +104,24 @@ type Rules<O> = Options extends O
         ? { readonly hints?: { readonly destructive?: never } }
         : unknown);
 
+/**
+ * Option `K` of `O` as given, or `Default` wherever it may be omitted, as at run time, for
+ * each member of a union of options: only options widened to `Options` itself, which `Rules`
+ * leaves unchecked, may be both in one member.
+ */
+type OptionOf<O, K extends keyof Options, Default> = O extends unknown
+  ?
+      | (K extends keyof O ? Exclude<O[K], undefined> : never)
+      | ({} extends Pick<O, K & keyof O> ? Default : never)
+  : never;
+
 /** The schema option `K` of `O`, or `Default` when it is omitted. */
-type SchemaOf<O, K extends "input" | "success", Default> = O extends {
-  readonly [P in K]: infer S extends Codec | Fields;
-}
-  ? CodecOf<S>
-  : Default;
+type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf<
+  Extract<OptionOf<O, K, Default>, Codec | Fields>
+>;
 
 /** The declared errors of `O`, none when omitted. */
-type ErrorsOf<O> = O extends { readonly errors: infer E extends ReadonlyArray<Codec> } ? E : [];
+type ErrorsOf<O> = Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>;
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
 export interface Action<

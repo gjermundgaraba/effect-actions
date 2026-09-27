@@ -716,8 +716,11 @@ export const mcpCallTypes = () => {
   void Testing.mcpCall(Double, { value: "2" });
   // @ts-expect-error An action with input takes it.
   void Testing.mcpCall(Double);
-  // An action without input may leave it out.
+  // An action without input may leave it out, and gives `{}` beside options.
   void Testing.mcpCall(WhoAmI);
+  void Testing.mcpCall(WhoAmI, {}, { url: "/mcp" });
+  // @ts-expect-error As for a client's method, a given input is sent as given.
+  void Testing.mcpCall(WhoAmI, undefined, { url: "/mcp" });
 
   // Its declared errors and the refusals are typed failures.
   void Testing.mcpCall(GetUser, { id: "1" }).pipe(
@@ -765,4 +768,53 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
   > = true;
 
   void owed;
+};
+
+export const widenedOptionTypes = () => {
+  // Widened to the options type, every schema may have been left out: the action's types
+  // are then as wide as what may run, rather than the defaults.
+  const options: Parameters<typeof Action.make>[1] = {
+    description: "Returns data",
+    access: "read",
+    success: Schema.String,
+  };
+
+  const Widened = Action.make("widened", options);
+
+  const widened: [
+    Equal<(typeof Widened)["success"]["Type"], unknown>,
+    Equal<(typeof Widened)["input"]["Type"], unknown>,
+    Equal<(typeof Widened)["errors"], ReadonlyArray<Schema.Codec<unknown, unknown>> | []>,
+  ] = [true, true, true];
+
+  void widened;
+};
+
+export const unionOptionTypes = (
+  options:
+    | { readonly description: string; readonly access: "read" }
+    | {
+        readonly description: string;
+        readonly access: "read";
+        readonly input: { readonly id: typeof Schema.String };
+        readonly success: typeof Schema.String;
+        readonly errors: [typeof Schema.Number];
+      },
+) => {
+  // A union of options, each member complete, gives each member's schemas.
+  const Either = Action.make("either", options);
+
+  const union: [
+    Equal<(typeof Either)["success"]["Type"], string | void>,
+    Equal<
+      (typeof Either)["input"]["Type"],
+      { readonly id: string } | { readonly [x: string]: never }
+    >,
+    Equal<(typeof Either)["errors"], [] | [typeof Schema.Number]>,
+  ] = [true, true, true];
+
+  // A handler may return what either member's success accepts.
+  void Action.implement(Either, () => Effect.succeed("x"));
+
+  void union;
 };
