@@ -188,16 +188,19 @@ describe("projection boundaries", () => {
     },
   );
 
-  it("keeps each declared error's own HTTP status", async () => {
-    const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
-    const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
+  const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
+  const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
 
+  it.each([
+    ["listed", [Missing, Conflict]],
+    ["in a union", [Schema.Union([Missing, Conflict])]],
+  ])("keeps each declared error's own HTTP status, %s", async (_, errors) => {
     const Fail = Action.make("fail", {
       description: "Two failures",
       access: "write",
       input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
       success: Schema.String,
-      errors: [Missing, Conflict],
+      errors,
     });
 
     const apps = Action.implement([Fail], {
@@ -205,12 +208,10 @@ describe("projection boundaries", () => {
         which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
     });
 
-    const responses = OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post
-      ?.responses;
+    const Http = ActionHttp.make([Fail]);
+    const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
 
-    expect(responses).toHaveProperty("404");
-    expect(responses).toHaveProperty("409");
-    expect(responses).not.toHaveProperty("500");
+    expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403", "404", "409"]);
     const web = makeTestHttp(apps);
     onTestFinished(() => web.dispose());
     const mcp = makeTestMcp(apps);
@@ -218,10 +219,45 @@ describe("projection boundaries", () => {
     expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
     expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
     expect(
+      await against(
+        web,
+        Effect.flatMap(ActionHttp.client(Http), (client) =>
+          Effect.flip(client.fail({ which: "conflict" })),
+        ),
+      ),
+    ).toEqual(Conflict.make({}));
+    expect(
       await (await mcp.handler(rawToolCall("fail", { which: "conflict" }))).json(),
     ).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
+  });
+
+  it("sends a union with a status of its own at that status, and a member without one as 422", () => {
+    const Late = Schema.TaggedStruct("Late", {});
+
+    const statuses = (errors: ReadonlyArray<Schema.Codec<unknown, unknown>>) =>
+      Object.keys(
+        OpenApi.fromApi(
+          ActionHttp.make([Action.make("fail", { description: "", access: "write", errors })]).api,
+        ).paths["/api/fail"]?.post?.responses ?? {},
+      ).sort();
+
+    expect(statuses([Schema.Union([Missing, Conflict]).annotate({ httpApiStatus: 410 })])).toEqual([
+      "200",
+      "400",
+      "401",
+      "403",
+      "410",
+    ]);
+    expect(statuses([Schema.Union([Missing, Late])])).toEqual([
+      "200",
+      "400",
+      "401",
+      "403",
+      "404",
+      "422",
+    ]);
   });
 
   it("reports a declared error as its encoding over MCP, message field included", async () => {
@@ -246,28 +282,6 @@ describe("projection boundaries", () => {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"Denied","message":"Owner access required"}' }],
       },
-    });
-  });
-
-  it("accepts a union of errors for MCP", async () => {
-    const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
-    const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
-
-    const Fail = Action.make("fail", {
-      description: "Union failure",
-      access: "write",
-      success: Schema.String,
-      errors: [Schema.Union([Missing, Conflict])],
-    });
-
-    const apps = Action.implement([Fail], {
-      fail: () => Effect.fail(Conflict.make({})),
-    });
-
-    const mcp = makeTestMcp(apps);
-    onTestFinished(() => mcp.dispose());
-    expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
-      result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
     });
   });
 

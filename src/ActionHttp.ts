@@ -1,11 +1,12 @@
-import { Effect, Layer, type Schema } from "effect";
-import { resolveAt } from "effect/SchemaAST";
+import { Effect, Layer, Schema } from "effect";
+import { isUnion, resolveAt } from "effect/SchemaAST";
 import type { HttpClient } from "effect/unstable/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
 import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
-// Its own module rather than the barrel's namespace, which esbuild keeps whole in a client.
+// Their own modules rather than the barrel's namespaces, which esbuild keeps whole in a client.
+import { status } from "effect/unstable/httpapi/HttpApiSchema";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
@@ -172,18 +173,31 @@ const endpointsOf = (
 /** The status an error schema states, as `HttpApi` reads it. */
 const statusOf = resolveAt<number>("httpApiStatus");
 
+type Declared = Action.Any["errors"][number];
+
 /**
- * A declared error is an outcome the action expects, not a server fault: without a status
- * of its own it is sent as 422, rather than `HttpApi`'s 500, which clients and proxies
- * read as the server failing.
+ * The schemas an endpoint declares for one error, each with the status it is sent with.
+ * `HttpApi` reads a status off each declared schema, never off a union's members, so a
+ * plain union without a status of its own declares each member. An error without a status
+ * is an outcome the action expects, not a server fault: it is sent as 422, rather than
+ * `HttpApi`'s 500, which clients and proxies read as the server failing.
  */
-const withStatus = (error: Action.Any["errors"][number]): Action.Any["errors"][number] =>
-  statusOf(error.ast) === undefined ? error.annotate({ httpApiStatus: 422 }) : error;
+const declared = (error: Declared): ReadonlyArray<Declared> => {
+  const { ast } = error;
+
+  if (statusOf(ast) !== undefined) return [error];
+
+  if (isUnion(ast) && ast.checks === undefined && ast.encoding === undefined) {
+    return ast.types.flatMap((member) => declared(Schema.make<Declared>(member)));
+  }
+
+  return [status(422)(error)];
+};
 
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
- * Every endpoint declares its action's errors, 422 unless a schema states its own status,
- * and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode
+ * Every endpoint declares its action's errors, each member of a union at its own status,
+ * 422 unless a schema states one, and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode
  * each as a typed failure.
  */
 export function make<const Actions extends ReadonlyArray<Action.Any>>(
@@ -203,7 +217,7 @@ export function make(
     HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
       payload: action.input,
       success: action.success,
-      error: projectedErrors(action, httpErrors).map(withStatus),
+      error: projectedErrors(action, httpErrors).flatMap(declared),
     }).annotate(OpenApi.Description, action.description),
   );
 

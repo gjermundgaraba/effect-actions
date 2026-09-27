@@ -312,8 +312,9 @@ hints, and `typeof Http.api` for the native API.
 **A declared error without a status is a 422, not a 500.** An error schema in an action's
 `errors` without its own `httpApiStatus` is sent over HTTP as 422: it is an outcome the action
 expects, and a 5xx reads as the server failing to clients, proxies and retry policies. A status
-the schema states is kept, and the binding carries the 422, so clients decode the error as
-before. Defects are still an empty 500.
+the schema states is kept, and so is each member's of a union without one of its own, where
+`HttpApi` sent the whole union at one status. The binding carries the statuses, so clients
+decode the error as before. Defects are still an empty 500.
 
 - Migrate: annotate an error `{ httpApiStatus: 500 }` to keep the old status, and update
   monitoring or retry rules that matched a declared error's 500.
