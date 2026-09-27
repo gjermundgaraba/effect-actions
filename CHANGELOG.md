@@ -83,13 +83,15 @@ installed copy of the package, serves the same. `ActionHttp.layer(Http, implemen
 action of the implementations it receives, matched to the binding's actions by identity;
 middleware provided to it covers only those actions. An implementation of an action outside the
 binding is refused, and a bound action no layer serves answers 404.
-`ActionHttp.openApi(Http, path?)` defaults to `<prefix>/openapi.json`.
+There is no `openApi`: `Http.api` is a native `HttpApi`, so Effect's `OpenApi.fromApi(Http.api)`
+is the document, served as any route.
 
 - Migrate: `ActionHttp.make({ apiPath: "/api", errors }, Users)` becomes
   `ActionHttp.make([GetUser, RenameUser])` for `/api/getUser`, or
   `ActionHttp.make([GetUser, RenameUser], { prefix: "/api/users" })` to keep the
   `/api/users/getUser` routes; its OpenAPI tag is then `api/users`. `Http.layer(apps)` becomes
-  `ActionHttp.layer(Http, apps)` and `Http.openApi()` becomes `ActionHttp.openApi(Http)`.
+  `ActionHttp.layer(Http, apps)`, and `Http.openApi()` becomes the native route
+  `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`.
   Callers of the native client follow the route change.
 
 **Built-in errors replace surface `errors` and `schemaError`.** `Action.InvalidInput` (400),
@@ -288,23 +290,33 @@ status and challenge, a call `mcpCall`'s types refuse. It no longer builds a web
 **`ActionCatalog` is removed.** The module, its subpath and the catalog JSON are gone.
 
 - Migrate: for a machine-readable contract, publish the OpenAPI document of an HTTP binding
-  (`ActionHttp.openApi(Http)` or `OpenApi.fromApi(Http.api)`), or an MCP endpoint's
+  (`OpenApi.fromApi(Http.api)`), or an MCP endpoint's
   `tools/list`.
 
 **Exported types follow one rule.** Each module exports `Options` for its main function,
 `<Function>Options` for another's, and `Any` for its erased value: `Action.Options`,
 `Action.Hints`, `Action.Before` (the hook) and `Action.AnyImplementation`; `ActionHttp.Options`,
 `ActionHttp.ClientOptions` and `ActionHttp.Any`; `ActionMcp.HttpOptions` (was `Options`) and
-`ActionMcp.StdioOptions`; `ActionCli.Options`, `RemoteOptions`, `MakeOptions` and
-`RemoteMakeOptions`; `ActionToolkit.Tools`, what `make` returns, `{ toolkit, layer }`;
+`ActionMcp.StdioOptions`; `ActionCli.Options<typeof Action>` and `MakeOptions`, each joined
+with `ActionHttp.ClientOptions` for a command over HTTP; `ActionToolkit.Tools`, what `make`
+returns, `{ toolkit, layer }`, and `ActionToolkit.Options`, what it takes;
 `Authentication.Options` and `ProtectedResourceOptions`; `Testing.McpCallOptions` and
 `Testing.McpCallError`. `Action.Codec`, `Action.CodecOf`, `Action.Fields`, `ActionHttp.Api`,
 `ActionHttp.LayerOptions`, `ActionHttpClient.Method`, `ActionHttpClient.PromiseMethod`,
-`ActionToolkit.Options`, `ActionToolkit.Binding` and the MCP request types of `Testing` are
+`ActionToolkit.Binding` and the MCP request types of `Testing` are
 gone: use `Action.Any["input"]` for a service-free schema, `Action.Any["hints"]` for resolved
 hints, and `typeof Http.api` for the native API.
 
 **`ActionMcp.layerHttp`'s `path` defaults to `/mcp`.**
+
+**A declared error without a status is a 422, not a 500.** An error schema in an action's
+`errors` without its own `httpApiStatus` is sent over HTTP as 422: it is an outcome the action
+expects, and a 5xx reads as the server failing to clients, proxies and retry policies. A status
+the schema states is kept, and the binding carries the 422, so clients decode the error as
+before. Defects are still an empty 500.
+
+- Migrate: annotate an error `{ httpApiStatus: 500 }` to keep the old status, and update
+  monitoring or retry rules that matched a declared error's 500.
 
 **Spans are named after the action.** The handler span is `<action>`, not `<group>.<action>`,
 and `action.group` is no longer an attribute or log annotation. Action names are unique per
@@ -334,6 +346,13 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the
   native `HttpApiClient`, a remote `ActionCli` command, and `Testing.mcpCall`.
 - A CLI flag's help text is its field's schema description.
+- `ActionCli.command(apps, Action, { positional: ["path"] })` takes the listed fields of a
+  struct input as positional arguments, in that order: `inspect README.md --lines 10`. They are
+  typed to the input's own fields, parsed as their flags, optional for an optional field, and
+  work over HTTP too.
+- `ActionToolkit.make(apps, { needsApproval: (action) => action.access === "write" })` sets
+  Effect's native `Tool.needsApproval`, so `LanguageModel` asks for approval before running
+  those tools. MCP has no such field, and `ActionMcp` takes no such option.
 - The package declares `"sideEffects": false`, and no client-path module builds server code
   when it loads, so a browser bundle of `ActionHttp.client` keeps the contracts, the binding
   and the client alone. Keep contracts and bindings in modules that import no server code, as
