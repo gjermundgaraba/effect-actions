@@ -306,9 +306,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       () => Effect.withSpan(Effect.void, "hook"),
     );
 
-    // The hook runs before the call is read, under the HTTP request's span on both
-    // transports: over MCP, before the native server opens its own.
-    expect(parents.get("hook")).toMatch(/^http\.server POST$/);
+    expect(parents.get("hook")).toMatch(requestSpan);
     expect(parents.get("identity")).toMatch(requestSpan);
   });
 

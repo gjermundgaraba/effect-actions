@@ -3,6 +3,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
 import { refusals } from "./errors.js";
+import { recordStepUp } from "./refusal.js";
 import {
   acquire,
   type AnyImplementation,
@@ -90,7 +91,7 @@ export const bindTools = (
           action.name,
           projection === "native"
             ? run
-            : (input: ErasedValue) => Effect.map(run(input), (value) => ({ value })),
+            : (input: ErasedValue) => Effect.map(recordStepUp(run(input)), (value) => ({ value })),
         ]),
       ),
     ),

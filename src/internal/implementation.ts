@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
@@ -19,10 +19,10 @@ export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
 /**
  * An implementation's hook: whether a caller may call. It runs once per call on every
- * surface, before the selected handler, with its action contract, so a policy reads
- * `access` rather than the action name. The HTTP surfaces run it before decoding the input,
- * and answer its refusal with its HTTP status; the others after, as a declared error. Its
- * services `RB` are request-time requirements, like a handler's.
+ * surface, after the input is decoded and before the selected handler, with its action
+ * contract, so a policy reads `access` rather than the action name. It fails with a
+ * refusal, answered as a declared error, or over HTTP as its status when an OAuth client
+ * steps up on it. Its services `RB` are request-time requirements, like a handler's.
  */
 export type Before<A extends Action.Any, RB> = (action: A) => Effect.Effect<void, Refusal, RB>;
 
@@ -36,25 +36,8 @@ export type HandlerContext<H> = H extends (
   ? R
   : never;
 
-/** Each action of an implementation paired with its handler, as its record binds them. */
-export type Handled = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
-
-/**
- * Each action of an implementation with its handler, behind the implementation's hook, and
- * the hook itself, for a surface that runs it before the handler is selected.
- */
-export type Bound = ReadonlyArray<
-  readonly [Action.Any, ErasedHandler<unknown>, Effect.Effect<void, unknown, unknown>]
->;
-
-/**
- * The action a request's hook already allowed, provided by a surface that runs the hook
- * before its handler is selected: that action's handler then skips it, so the hook runs once
- * per call, and a call no surface authorized still runs it.
- */
-export class Authorized extends Context.Service<Authorized, Action.Any>()(
-  "effect-actions/Authorized",
-) {}
+/** Each action of an implementation with its handler, behind the implementation's hook. */
+export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
 
 /** The bound handlers of one implementation, under a key private to it. */
 type BoundKey = Context.Key<Bound, Bound>;
@@ -91,7 +74,7 @@ export class Implementation<
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
     /** Each action paired with its handler. */
-    build: Effect.Effect<Handled, EX, RX | Scope.Scope>,
+    build: Effect.Effect<Bound, EX, RX | Scope.Scope>,
     before: ErasedBefore | undefined,
   ) {
     // A string key is a service's identity, so it is unique to this implementation
@@ -103,12 +86,7 @@ export class Implementation<
     this.#layer = Layer.effect(
       this.#key,
       Effect.map(build, (bound) =>
-        bound.map(([action, handle]) => {
-          const authorize =
-            before === undefined ? Effect.void : Effect.suspend(() => before(action));
-
-          return [action, dispatch(action, handle, authorize), authorize] as const;
-        }),
+        bound.map(([action, handle]) => [action, dispatch(action, handle, before)] as const),
       ),
     );
   }
@@ -215,13 +193,12 @@ export const acquire = (
 
 /**
  * One action's handler behind its hook. The hook runs first, outside the action's span,
- * so a refusal is attributed to the surface rather than to a handler that never ran, unless
- * the surface already ran it for this action.
+ * so a refusal is attributed to the surface rather than to a handler that never ran.
  */
 const dispatch = (
   action: Action.Any,
   handle: ErasedHandler<unknown>,
-  authorize: Effect.Effect<void, unknown, unknown>,
+  before: ErasedBefore | undefined,
 ): ErasedHandler<unknown> => {
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -240,8 +217,6 @@ const dispatch = (
       { captureStackTrace: false, attributes },
     );
 
-    return Effect.flatMap(Effect.serviceOption(Authorized), (authorized) =>
-      Option.contains(authorized, action) ? handled : Effect.flatMap(authorize, () => handled),
-    );
+    return before === undefined ? handled : Effect.flatMap(before(action), () => handled);
   };
 };

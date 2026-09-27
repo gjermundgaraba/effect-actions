@@ -82,7 +82,7 @@ curl -s http://127.0.0.1:3000/mcp/public \
 curl -s http://127.0.0.1:3000/api/openapi.json
 ```
 
-For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope, before the call is read. The implementation carries that hook, so HTTP runs the same check before the handler.
+For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope. The implementation carries that hook, so HTTP runs the same check before the handler.
 
 Without a token, a protected route or the `/mcp` endpoint answers 401
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with

@@ -119,17 +119,16 @@ in`. An
 surface serving the implementation runs the hook, so no surface can leave it out.
 `before: (action) => Effect<void, Action.Refusal, R>` receives the selected action, typed as the
 implementation's own, before its handler, on every surface; failing with anything but a refusal
-is a type error. The HTTP surfaces run it before decoding the request, so a refused caller
-never sees a schema error: an unauthorized call with bad input is a 401 or 403, not a 400.
-Over MCP on HTTP a refusal is its HTTP status with its JSON, not an `isError` tool result, as
-MCP authorization defines, so an MCP client handles it; the hook runs once per call, before the
-native server reads the call, selected by its `Mcp-Name` header. Over stdio and in the Toolkit
-it runs after decoding and is a tool failure, as before. It may be a value that may be `undefined`, as
+is a type error. It runs after decoding, as before, and a refusal is answered like a declared
+error, but for a step-up refusal: `Unauthenticated`, or a `Forbidden` naming `scopes`, is
+answered on MCP over HTTP with its HTTP status and JSON, not an `isError` tool result, as MCP
+authorization defines, so an MCP client authenticates or re-authorizes on it, whether the hook
+or a handler fails with it. Over stdio and in the Toolkit every refusal is a tool failure. It may be a value that may be `undefined`, as
 `enabled ? authorize : undefined`: its services are required either way. The `before` option of
 `ActionHttp.layer`, `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, and
 `ActionCli.command` and `make` is gone, and so is `ActionToolkit.make`'s second argument. Every
 local command's error channel includes `Action.Refusal`, as every endpoint and tool declares
-both refusals. The HTTP surfaces set one header of their own, on a refusal naming scopes (see
+both refusals. The HTTP surfaces set one header of their own, on a `Forbidden` naming scopes (see
 the additions); the authentication around a route challenges its 401s.
 
 - Migrate:
@@ -325,8 +324,8 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
 - `Action.InvalidInput`, `Action.Unauthenticated`, `Action.Forbidden` and `Action.Refusal`:
   the built-in errors every surface declares.
 - `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`, each an
-  OAuth scope token, decoded by every client. A hook's or authentication's refusal naming them
-  is answered on HTTP and MCP over HTTP with
+  OAuth scope token, decoded by every client. A refusal naming them, authentication's, a hook's
+  or a handler's, is answered on HTTP and MCP over HTTP with a 403 and
   `WWW-Authenticate: Bearer error="insufficient_scope", scope="users:write"`, plus the
   protected resource's `resource_metadata` and an `error_description`, on which an MCP client
   re-authorizes with those scopes and retries, as MCP authorization specifies.

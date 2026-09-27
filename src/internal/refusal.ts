@@ -1,8 +1,7 @@
 // Server-only, and a module of its own: a client bundle, which never serves, drops it whole.
-import { Context, Effect, Option, Predicate, Schema, type Types } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { Context, Effect, Option, Predicate, Ref, Schema } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { type Refusal, refusals, statuses } from "./errors.js";
-import { acquire, type AnyImplementation, Authorized, type Bound } from "./implementation.js";
 
 /**
  * The RFC 9728 metadata URL of the protected resource a request is authenticated for,
@@ -56,49 +55,38 @@ export const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpSer
     );
   });
 
-/** Which bound action, if any, a request calls: known from its route and headers alone. */
-export type Select = (
-  request: HttpServerRequest.HttpServerRequest,
-  route: HttpRouter.Route<unknown, unknown>,
-) => Bound[number] | undefined;
+const isRefusal = Schema.is(Refusals);
+
+/** The step-up refusal a call under `stepUp` failed with, which answers its request. */
+class SteppedUp extends Context.Service<SteppedUp, Ref.Ref<Option.Option<Refusal>>>()(
+  "effect-actions/SteppedUp",
+) {}
 
 /**
- * Route middleware running the hook of the action a request calls before the route decodes
- * anything: a refusal is answered with its status, and an allowed call marks its action
- * `Authorized`, so its handler does not run the hook again. A request it cannot attribute
- * to an action passes, and its handler runs the hook itself. It needs the handlers of
- * `apps`, which `provideHandlers` provides.
+ * `call`, whose failure, when an OAuth client acts on it (`Unauthenticated`, or `Forbidden`
+ * naming scopes), answers the request under `stepUp`. Elsewhere, such as over stdio, it is
+ * `call` as it is.
  */
-export const preflight = (
-  apps: ReadonlyArray<AnyImplementation>,
-  selectOf: (bound: Bound) => Select,
-) =>
-  HttpRouter.middleware(
-    Effect.map(acquire(apps), (bound) => {
-      const select = selectOf(bound);
+export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.tapError(call, (error) =>
+    isRefusal(error) && (!Predicate.isTagged(error, "Forbidden") || error.scopes !== undefined)
+      ? Effect.flatMap(Effect.serviceOption(SteppedUp), (slot) =>
+          Option.isSome(slot) ? Ref.set(slot.value, Option.some(error)) : Effect.void,
+        )
+      : Effect.void,
+  );
 
-      return (httpEffect: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>) =>
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const { route } = yield* HttpRouter.RouteContext;
-          const called = select(request, route);
+/**
+ * Route middleware answering a request whose call failed with a step-up refusal with the
+ * refusal's status and challenge, whatever the route answered: 401 or 403 as MCP
+ * authorization requires, where MCP would answer a tool result.
+ */
+export const stepUp = HttpRouter.middleware((httpEffect) =>
+  Effect.gen(function* () {
+    const slot = yield* Ref.make(Option.none<Refusal>());
+    const response = yield* Effect.provideService(httpEffect, SteppedUp, slot);
+    const refused = yield* Ref.get(slot);
 
-          if (called === undefined) return yield* httpEffect;
-
-          const [action, , hook] = called;
-
-          // SAFETY: a hook fails only with a refusal, as `Before` types it, and its services
-          // are request requirements of the routes this covers, which each surface's
-          // signature states.
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased hook boundary.
-          const authorize = hook as Effect.Effect<void, Refusal>;
-
-          return yield* authorize.pipe(
-            Effect.matchEffect({
-              onFailure: refuse,
-              onSuccess: () => Effect.provideService(httpEffect, Authorized, action),
-            }),
-          );
-        });
-    }),
-  ).layer;
+    return Option.isSome(refused) ? yield* refuse(refused.value) : response;
+  }),
+).layer;

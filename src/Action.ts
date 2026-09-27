@@ -3,9 +3,9 @@ import type { Scope } from "effect";
 import { assertDistinct, assertName, assertOwnTags } from "./internal/actions.js";
 import {
   type Before,
+  type Bound,
   type ErasedHandler,
   type HandlerContext,
-  type Handled,
   type Handlers,
   Implementation,
 } from "./internal/implementation.js";
@@ -298,7 +298,7 @@ export function implement(
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so
   // is an action without a handler. The result pairs each action with its handler.
-  const record = (built: Built): Handled => {
+  const record = (built: Built): Bound => {
     const handlers: Handlers<unknown> = Predicate.isFunction(built)
       ? isList(target)
         ? {}
