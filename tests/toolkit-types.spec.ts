@@ -74,9 +74,11 @@ class Clock extends Context.Service<Clock, number>()("toolkit-types/Clock") {}
 
 // A hook's services are owed by every call.
 const hooked = ActionToolkit.make(
-  Action.implement(ServiceFree, () => Effect.succeed("free"), {
-    before: () => Effect.flatMap(Clock, () => Effect.void),
-  }),
+  Action.implement(
+    ServiceFree,
+    () => Effect.succeed("free"),
+    () => Effect.flatMap(Clock, () => Effect.void),
+  ),
 );
 
 const hookedServices: Equal<

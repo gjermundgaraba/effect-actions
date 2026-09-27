@@ -17,7 +17,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   { httpApiStatus: statuses.InvalidInput },
 ) {}
 
-/** The caller is not authenticated: an implementation's `authenticate` or `before` hook refuses. */
+/** The caller is not authenticated: authentication or an implementation's `before` hook refuses. */
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   "Unauthenticated",
   { message: message("Authentication is required.") },

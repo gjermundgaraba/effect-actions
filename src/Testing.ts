@@ -1,5 +1,6 @@
 import { Effect, Layer, Option, Schema } from "effect";
 import {
+  type Headers,
   HttpClient,
   type HttpClientError,
   HttpClientRequest,
@@ -12,7 +13,6 @@ import { projectedErrors } from "./internal/actions.js";
 import type { OmittableInput } from "./internal/client.js";
 import { type Refusal, refusals } from "./internal/errors.js";
 import { clientOf, type Served } from "./internal/memory.js";
-import { mcpMessage } from "./internal/mcp-request.js";
 
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
@@ -42,7 +42,7 @@ interface McpCallOptions {
    * the default `ActionMcp.layerHttp` path.
    */
   readonly url?: string;
-  readonly headers?: ConstructorParameters<typeof Headers>[0];
+  readonly headers?: Headers.Input;
 }
 
 /**
@@ -114,7 +114,7 @@ export function mcpCall<const A extends Action.Any>(
 export function mcpCall(
   action: Action.Any,
   input: Action.Any["input"]["Type"] = {},
-  { headers: init, url = "/mcp" }: McpCallOptions = {},
+  { headers = {}, url = "/mcp" }: McpCallOptions = {},
 ): Effect.Effect<unknown, unknown, HttpClient.HttpClient> {
   const { name } = action;
 
@@ -123,16 +123,31 @@ export function mcpCall(
   return Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
-    const { headers, body } = mcpMessage({
-      method: "tools/call",
-      params: { name, arguments: encoded },
-      ...(init === undefined ? {} : { headers: init }),
-    });
-
+    // One stateless 2026-07-28 request: its routing headers, over any the caller sets,
+    // repeat what its body says.
     const response = yield* HttpClient.execute(
       HttpClientRequest.post(url).pipe(
-        HttpClientRequest.setHeaders(Object.fromEntries(headers)),
-        HttpClientRequest.bodyText(body, "application/json"),
+        HttpClientRequest.setHeaders(headers),
+        HttpClientRequest.setHeaders({
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2026-07-28",
+          "mcp-method": "tools/call",
+          "mcp-name": name,
+        }),
+        HttpClientRequest.bodyJsonUnsafe({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name,
+            arguments: encoded,
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+              "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
+            },
+          },
+        }),
       ),
     );
 

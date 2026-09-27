@@ -1,23 +1,11 @@
 // Compile-only public CLI API assertions.
-import { Context, Effect, Schema, Scope } from "effect";
+import { Context, Effect, Schema } from "effect";
 import { HttpClient, type HttpClientError } from "effect/unstable/http";
 import type { Command } from "effect/unstable/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { Equal } from "./equal.js";
-
-type CommandError<C> =
-  C extends Command.Command<infer _Name, infer _Input, infer _ContextInput, infer E, infer _R>
-    ? E
-    : never;
-
-type CommandServices<C> =
-  C extends Command.Command<infer _Name, infer _Input, infer _ContextInput, infer _E, infer R>
-    ? R
-    : never;
-
-type Includes<Whole, Part> = Part extends Whole ? true : false;
 
 class Build extends Context.Service<Build, string>()("cli-types/Build") {}
 
@@ -60,37 +48,18 @@ const localTwo = ActionCli.command(local, Two, {
 
 const localGroup = ActionCli.make(local, { name: "local" });
 
-const localOneBuild: Includes<CommandServices<typeof localOne>, Build> = true;
-
-const localOneRequest: Includes<CommandServices<typeof localOne>, OneRequest> = true;
-
-const localOneNotTwo: Includes<CommandServices<typeof localOne>, TwoRequest> = false;
-
-const localTwoRequest: Includes<CommandServices<typeof localTwo>, TwoRequest> = true;
-
-const localGroupBuild: Includes<CommandServices<typeof localGroup>, Build> = true;
-
-const localGroupOne: Includes<CommandServices<typeof localGroup>, OneRequest> = true;
-
-const localGroupTwo: Includes<CommandServices<typeof localGroup>, TwoRequest> = true;
-
-const localGroupErrorIsKnown: Equal<
-  unknown extends CommandError<typeof localGroup> ? true : false,
-  false
-> = true;
-
-// A selected command is typed like the aggregate one: its failures are the
-// action's, the implementation hook's and the CLI's own encoding error, never `unknown`.
-const localOneErrorIsKnown: Equal<
-  unknown extends CommandError<typeof localOne> ? true : false,
-  false
-> = true;
+// Each command owes exactly its action's services and the builder's.
+const localServices: [
+  Equal<Command.Services<typeof localOne>, Build | OneRequest>,
+  Equal<Command.Services<typeof localTwo>, Build | TwoRequest>,
+  Equal<Command.Services<typeof localGroup>, Build | OneRequest | TwoRequest>,
+] = [true, true, true];
 
 // Any implementation may refuse: every local command fails with `Refusal`, beside the
 // action's own failures and invalid input, whatever its hook.
 const forbid = () => Effect.fail(new Action.Forbidden());
 
-const forbidding = Action.implement(One, ({ value }) => Effect.succeed(value), { before: forbid });
+const forbidding = Action.implement(One, ({ value }) => Effect.succeed(value), forbid);
 
 const refuse = Effect.fn(function* (action: Action.Any) {
   yield* Hooked;
@@ -101,39 +70,25 @@ const refuse = Effect.fn(function* (action: Action.Any) {
 });
 
 const refusing = ActionCli.command(
-  Action.implement(One, ({ value }) => Effect.succeed(value), { before: refuse }),
+  Action.implement(One, ({ value }) => Effect.succeed(value), refuse),
   One,
   { render: (output) => output.toUpperCase() },
 );
 
+// Failures are the action's, the implementation hook's and the CLI's own encoding error.
 const refusalErrors: [
-  Equal<CommandError<typeof localOne>, Action.Refusal | Schema.SchemaError>,
-  Equal<CommandError<typeof refusing>, Action.Refusal | Schema.SchemaError>,
-] = [true, true];
+  Equal<Command.Error<typeof localOne>, Action.Refusal | Schema.SchemaError>,
+  Equal<Command.Error<typeof localGroup>, Action.Refusal | Schema.SchemaError>,
+  Equal<Command.Error<typeof refusing>, Action.Refusal | Schema.SchemaError>,
+] = [true, true, true];
 
 // The hook's services are the command's too.
-const refusingHooked: Includes<CommandServices<typeof refusing>, Hooked> = true;
+const refusingHooked: Equal<Command.Services<typeof refusing>, Hooked> = true;
 
 // @ts-expect-error A contract it does not implement is refused.
 ActionCli.command(forbidding, Two);
 
-void localOneBuild;
-
-void localOneRequest;
-
-void localOneNotTwo;
-
-void localTwoRequest;
-
-void localGroupBuild;
-
-void localGroupOne;
-
-void localGroupTwo;
-
-void localGroupErrorIsKnown;
-
-void localOneErrorIsKnown;
+void localServices;
 
 void refusalErrors;
 
@@ -151,19 +106,12 @@ const plainCommand = ActionCli.command(noService, Plain);
 
 const plainGroup = ActionCli.make(noService, { name: "plain" });
 
-const noUnknown: Equal<
-  unknown extends CommandServices<typeof plainCommand> ? true : false,
-  false
-> = true;
+const plainServices: [
+  Equal<Command.Services<typeof plainCommand>, never>,
+  Equal<Command.Services<typeof plainGroup>, never>,
+] = [true, true];
 
-void noUnknown;
-
-const plainGroupNoUnknown: Equal<
-  unknown extends CommandServices<typeof plainGroup> ? true : false,
-  false
-> = true;
-
-void plainGroupNoUnknown;
+void plainServices;
 
 const Scoped = Action.make("scoped", {
   description: "Scoped",
@@ -183,13 +131,13 @@ const scopedCommand = ActionCli.command(scoped, Scoped);
 
 const scopedGroup = ActionCli.make(scoped, { name: "scoped" });
 
-const scopedCommandHasNoScope: Includes<CommandServices<typeof scopedCommand>, Scope.Scope> = false;
+// A builder's scope is the command's own, not a service it owes.
+const scopedServices: [
+  Equal<Command.Services<typeof scopedCommand>, never>,
+  Equal<Command.Services<typeof scopedGroup>, never>,
+] = [true, true];
 
-const scopedGroupHasNoScope: Includes<CommandServices<typeof scopedGroup>, Scope.Scope> = false;
-
-void scopedCommandHasNoScope;
-
-void scopedGroupHasNoScope;
+void scopedServices;
 
 const ScopedHandler = Action.make("scopedHandler", {
   description: "Scoped handler",
@@ -205,19 +153,13 @@ const scopedHandlerCommand = ActionCli.command(scopedHandler, ScopedHandler);
 
 const scopedHandlerGroup = ActionCli.make(scopedHandler, { name: "scoped-handler" });
 
-const scopedHandlerCommandHasNoScope: Includes<
-  CommandServices<typeof scopedHandlerCommand>,
-  Scope.Scope
-> = false;
+// So is a handler's.
+const scopedHandlerServices: [
+  Equal<Command.Services<typeof scopedHandlerCommand>, never>,
+  Equal<Command.Services<typeof scopedHandlerGroup>, never>,
+] = [true, true];
 
-const scopedHandlerGroupHasNoScope: Includes<
-  CommandServices<typeof scopedHandlerGroup>,
-  Scope.Scope
-> = false;
-
-void scopedHandlerCommandHasNoScope;
-
-void scopedHandlerGroupHasNoScope;
+void scopedHandlerServices;
 
 // @ts-expect-error A local command selects an action implemented by `apps`.
 ActionCli.command(local, Plain);
@@ -259,40 +201,13 @@ const remoteCount = ActionCli.command(http, Count, {
 
 const remoteGroup = ActionCli.make(http, { name: "remote" });
 
-const remoteHttpClient: Includes<CommandServices<typeof remote>, HttpClient.HttpClient> = true;
+// A remote command owes only the client; its failures are checked below.
+const remoteServices: [
+  Equal<Command.Services<typeof remote>, HttpClient.HttpClient>,
+  Equal<Command.Services<typeof remoteGroup>, HttpClient.HttpClient>,
+] = [true, true];
 
-const remoteDomain: Includes<CommandError<typeof remote>, Domain> = true;
-
-// Every endpoint declares bad input and both refusals, and the client decodes them.
-const remoteBuiltIns: [
-  Includes<CommandError<typeof remote>, Action.InvalidInput>,
-  Includes<CommandError<typeof remote>, Action.Unauthenticated>,
-  Includes<CommandError<typeof remote>, Action.Forbidden>,
-] = [true, true, true];
-
-const remoteClientError: Includes<
-  CommandError<typeof remote>,
-  HttpClientError.HttpClientError
-> = true;
-
-const remoteSchema: Includes<CommandError<typeof remote>, Schema.SchemaError> = true;
-
-const remoteGroupErrorIsKnown: Equal<
-  unknown extends CommandError<typeof remoteGroup> ? true : false,
-  false
-> = true;
-
-void remoteHttpClient;
-
-void remoteDomain;
-
-void remoteBuiltIns;
-
-void remoteClientError;
-
-void remoteSchema;
-
-void remoteGroupErrorIsKnown;
+void remoteServices;
 
 void remoteCount;
 

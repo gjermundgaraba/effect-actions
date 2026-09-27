@@ -13,7 +13,7 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 | `toolkit`    | Native `Toolkit` with typed tool names, schemas and per-tool request requirements.             |
 | `layer`      | The handler layer: acquires handlers in its scope; requires build-time services, not identity. |
 
-Each implementation's `before` hook runs before its handlers. Its `authenticate` does not: an
+Each implementation's `before` hook runs before its handlers. Nothing authenticates: an
 in-process caller has no remote credentials, so the caller provides the identity.
 
 Each tool keeps the action's native input/success codecs, combines the action's errors with

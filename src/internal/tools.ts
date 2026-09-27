@@ -7,16 +7,14 @@ import {
   acquire,
   type AnyImplementation,
   type ErasedValue,
-  provideHandlers,
   servedActions,
 } from "./implementation.js";
 
 /** Native tools and their acquired action handlers, with dynamic names erased. */
 interface BoundTools {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>;
-  /** The tool handlers; they need the implementations' handlers, which `handlers` provides. */
+  /** The tool handlers; they need the implementations' handlers, which `provideHandlers` provides. */
   readonly layer: Layer.Layer<Tool.HandlersFor<Record<string, Tool.Any>>, unknown, unknown>;
-  readonly handlers: <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.Layer<A, unknown, unknown>;
 }
 
 /** A tool's hints: read-only exactly when its action reads, and the contract's others. */
@@ -104,5 +102,5 @@ export const bindTools = (
 
   // SAFETY: Tool names are dynamic contract values, so Toolkit's precisely keyed
   // handler context is erased only inside this internal projection boundary.
-  return { toolkit, layer, handlers: provideHandlers(apps) } as BoundTools;
+  return { toolkit, layer } as BoundTools;
 };

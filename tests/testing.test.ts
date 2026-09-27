@@ -22,69 +22,7 @@ import {
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { mcpRequest } from "./requests.js";
 import * as Testing from "../src/Testing.js";
-
-it("supplies consistent stateless protocol defaults", async () => {
-  const request = mcpRequest({ method: "tools/list" });
-  const body = await request.json();
-  expect(body).toMatchObject({
-    params: {
-      _meta: {
-        "io.modelcontextprotocol/protocolVersion": request.headers.get("mcp-protocol-version"),
-        "io.modelcontextprotocol/clientCapabilities": {},
-        "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
-      },
-    },
-  });
-});
-
-it("preserves caller metadata and capabilities while pinning the wire protocol", async () => {
-  const metadata = {
-    "example.com/context": { actor: "alice" },
-    "io.modelcontextprotocol/clientCapabilities": { experimental: { feature: true } },
-    "io.modelcontextprotocol/clientInfo": { name: "consumer", version: "2" },
-    "io.modelcontextprotocol/protocolVersion": "2025-11-25",
-  };
-
-  const request = mcpRequest({
-    method: "tools/call",
-    params: { name: "inspect", arguments: {}, _meta: metadata },
-  });
-
-  expect(await request.json()).toMatchObject({
-    params: {
-      name: "inspect",
-      arguments: {},
-      _meta: { ...metadata, "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
-    },
-  });
-  expect(request.headers.get("mcp-protocol-version")).toBe("2026-07-28");
-  expect(metadata["io.modelcontextprotocol/protocolVersion"]).toBe("2025-11-25");
-});
-
-it("accepts undefined parameter fields and drops them from the request body", async () => {
-  const owner: string | undefined = undefined;
-
-  const request = mcpRequest({
-    method: "tools/call",
-    params: { name: "inspect", arguments: { owner, nested: [{ owner }] } },
-  });
-
-  expect(await request.json()).toMatchObject({
-    params: { name: "inspect", arguments: { nested: [{}] } },
-  });
-});
-
-it("preserves malformed tool names without inventing a routing header", async () => {
-  const request = mcpRequest({
-    method: "tools/call",
-    params: { name: 123, arguments: {} },
-  });
-
-  expect(request.headers.has("mcp-name")).toBe(false);
-  expect(await request.json()).toMatchObject({ params: { name: 123, arguments: {} } });
-});
 
 /** Run `program` against the example host, answered in memory with fresh example state. */
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
@@ -298,14 +236,26 @@ describe("layer", () => {
       ),
     );
 
-    const urls = await Effect.forEach(
-      ["/where", "http://localhost/where", "https://api.example/where"],
-      (url) => Effect.flatMap(HttpClient.get(url), (response) => response.text),
-    ).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
+    const get = (url: string) => Effect.flatMap(HttpClient.get(url), (response) => response.text);
+
+    const urls = await Effect.all([
+      ...["/where", "http://localhost/where", "https://api.example/where"].map(get),
+      // A client's own base URL is applied first: only a URL still relative is resolved.
+      get("/where").pipe(
+        Effect.provideServiceEffect(
+          HttpClient.HttpClient,
+          Effect.map(
+            HttpClient.HttpClient,
+            HttpClient.mapRequest(HttpClientRequest.prependUrl("https://api.example")),
+          ),
+        ),
+      ),
+    ]).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
     expect(urls).toEqual([
       "http://localhost/where",
       "http://localhost/where",
+      "https://api.example/where",
       "https://api.example/where",
     ]);
   });

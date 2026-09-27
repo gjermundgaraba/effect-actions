@@ -62,9 +62,9 @@ const greeting = Effect.gen(function* () {
 
 - Input, success and errors are declared once. Routes, tools, CLI flags, clients and the OpenAPI document are derived from that declaration, so they cannot disagree.
 - A handler can fail only with the errors its action declares, and every client decodes them as typed values. Bad input, a missing credential and a refusal come back as three built-in errors (400, 401, 403) that every client decodes too, never as an unreadable body.
-- Security is written once, on the implementation: `Action.implement(actions, handlers, { authenticate, before })`. Every surface that serves it applies it, HTTP and MCP authenticating the caller and every surface running the authorization rule before each handler, so no surface can leave it out and no handler contains authorization code.
+- Authorization is written once, on the implementation: `Action.implement(actions, handlers, before)`. Every surface that serves it runs the rule before each handler, so no surface can leave it out and no handler contains authorization code. Authentication is native router middleware, provided around the HTTP and MCP layers like any other.
 - Every action states whether it reads or writes (`access`), so that rule reads the contract instead of a hand-maintained list of mutation names.
-- A handler that needs a request identity can't be served without authentication that provides it: it is a type error. Public and authenticated implementations are served in one call and share one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.
+- A handler or rule that needs a request identity can't be served without authentication that provides it: it is a type error. Public and authenticated routes share one binding, one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency.
 - Tests run in memory. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpCall`, without opening a port.
 

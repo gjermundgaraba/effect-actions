@@ -1,4 +1,4 @@
-import { type Context, Effect } from "effect";
+import { type Context, Effect, type Layer } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
   HttpEffect,
@@ -27,24 +27,32 @@ export const bearerToken: Effect.Effect<
 });
 
 /**
- * How a remote caller proves who they are: authenticate each request and provide its
- * identity to the handler. Pass it to `Action.implement` as `authenticate`, and every
- * HTTP surface serving the implementation runs it, before decoding. `authenticate` fails
- * with `Unauthenticated` (a 401 with a `Bearer` challenge) or `Forbidden` (a 403), each
- * sent as the JSON every client decodes, or with the response to send instead.
- * The services it yields are request requirements, like a handler's, which every HTTP
- * surface serving the implementation owes; `HttpRouter.provideRequest` builds one once,
- * such as a token verifier. Acquired resources live until the request scope closes,
- * including while the handler is running. Every response is marked
- * `Cache-Control: no-store`, including private failures serialized by enclosing middleware.
+ * How a remote caller proves who they are: router middleware that authenticates each
+ * request and provides its identity to the handler. Provide it to the HTTP surfaces
+ * serving guarded implementations, `ActionHttp.layer` and `ActionMcp.layerHttp`, as to
+ * any native route: it covers the routes of the layer it is provided to, before decoding,
+ * and removes the identity from that layer's request requirements.
  *
- * It is native router middleware: its `layer` also authenticates any route of the host's
- * own it is provided to.
+ * `authenticate` fails with `Unauthenticated` (a 401 with a `Bearer` challenge) or
+ * `Forbidden` (a 403), each sent as the JSON every client decodes, or with the response to
+ * send instead. The services it yields are request requirements, like a handler's, which
+ * the layer keeps; `HttpRouter.provideRequest` builds one once, such as a token verifier.
+ * Acquired resources live until the request scope closes, including while the handler is
+ * running. Every response is marked `Cache-Control: no-store`, including private failures
+ * serialized by enclosing middleware.
  */
 export const make = <I, A, R>(
   service: Context.Key<I, A>,
   authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
-) =>
+): Layer.Layer<
+  HttpRouter.Request.From<"Requires", I>,
+  never,
+  HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+> =>
+  // SAFETY: native middleware types its layer only once no request requirement is left,
+  // asking for another middleware to provide them. The layer is the same at run time, and
+  // they stay requirements of the routes it covers, as the type states.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native middleware boundary.
   HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
     authenticate.pipe(
       Effect.matchEffect({
@@ -56,7 +64,11 @@ export const make = <I, A, R>(
         Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
       ),
     ),
-  );
+  ).layer as Layer.Layer<
+    HttpRouter.Request.From<"Requires", I>,
+    never,
+    HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+  >;
 
 /** RFC 9728 metadata to publish; the host is responsible for these being valid OAuth URLs. */
 interface ProtectedResourceOptions {

@@ -35,10 +35,14 @@ export const httpClient = <const H extends AnyHttp>(
   server: Server | Handler,
   options?: Parameters<typeof ActionHttp.client>[1],
 ): Effect.Effect<Client<H>> =>
-  ActionHttp.client(http, options).pipe(Effect.provide(clientOf(handlerOf(server))));
+  ActionHttp.client(http, options).pipe(Effect.provide(clientLayer(server)));
+
+/** The native `HttpClient`, answered by `server` in memory, as `Testing.layer` answers it. */
+export const clientLayer = (server: Server | Handler): Layer.Layer<HttpClient.HttpClient> =>
+  clientOf(handlerOf(server));
 
 /** `effect`, such as a `Testing.mcpCall`, on an `HttpClient` answered by `server` in memory. */
 export const against = <A, E>(
   server: Server | Handler,
   effect: Effect.Effect<A, E, HttpClient.HttpClient>,
-): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(clientOf(handlerOf(server)))));
+): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(clientLayer(server))));

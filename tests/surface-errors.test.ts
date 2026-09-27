@@ -1,8 +1,7 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
 import {
-  FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
@@ -13,11 +12,9 @@ import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import * as Testing from "../src/Testing.js";
-import { against, httpClient, serve } from "./serve.js";
+import { clientLayer, httpClient, serve } from "./serve.js";
 import { post } from "./requests.js";
 import { cliServices, logged } from "./cli-services.js";
 
@@ -51,13 +48,13 @@ const authenticate = Authentication.make(
   }),
 );
 
-const app = Action.implement(WhoAmI, () => Principal, { authenticate });
+const app = Action.implement(WhoAmI, () => Principal);
 
 /** A refusal's JSON, as every surface sends it. */
 const wire = Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]));
 
 const authenticated = () => {
-  const web = serve(ActionHttp.layer(Http, app));
+  const web = serve(ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate)));
   onTestFinished(() => web.dispose());
 
   return web;
@@ -138,9 +135,11 @@ const Rename = Action.make("rename", {
 
 /** `Rename`, implemented behind a `before` hook refusing every call with `refusal`. */
 const refusing = (refusal: Action.Refusal) =>
-  Action.implement(Rename, ({ name }) => Effect.succeed(name), {
-    before: () => Effect.fail(refusal),
-  });
+  Action.implement(
+    Rename,
+    ({ name }) => Effect.succeed(name),
+    () => Effect.fail(refusal),
+  );
 
 const refusals = [
   [new Action.Unauthenticated(), 401],
@@ -193,29 +192,6 @@ it("challenges a handler's own 401, with no hook bound", async () => {
   expect(response.headers.get("www-authenticate")).toBe("Bearer");
 });
 
-it.each(refusals)("returns a before hook's %s as an MCP tool's error", async (refusal) => {
-  const web = serve(ActionMcp.layerHttp(refusing(refusal), { name: "test", version: "0" }));
-
-  onTestFinished(() => web.dispose());
-
-  // A refusal is decoded, exactly as the HTTP client decodes it.
-  expect(await against(web, Effect.flip(Testing.mcpCall(Rename, { name: "draft" })))).toEqual(
-    refusal,
-  );
-});
-
-it.each(refusals)("returns a before hook's %s as a native tool's failure", async (refusal) => {
-  const { toolkit, layer } = ActionToolkit.make(refusing(refusal));
-
-  const results = await Effect.gen(function* () {
-    const tools = yield* toolkit;
-
-    return yield* Stream.runCollect(yield* tools.handle("rename", { name: "draft" }));
-  }).pipe(Effect.provide(layer), Effect.scoped, Effect.runPromise);
-
-  expect(results).toMatchObject([{ isFailure: true, result: refusal }]);
-});
-
 it("does not repeat a built-in error an action already declares", () => {
   const Declared = Action.make("whoAmI", {
     description: "Name the authenticated principal",
@@ -240,18 +216,12 @@ it("does not repeat a built-in error an action already declares", () => {
 it("decodes a refusal through a remote ActionCli command", async () => {
   const web = authenticated();
 
-  const fetchLayer = FetchHttpClient.layer.pipe(
-    Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) => web.handler(new Request(input, init))),
-    ),
-  );
-
   const command = ActionCli.command(Http, WhoAmI, { baseUrl: "http://localhost" });
 
   // The refusal is a typed failure of the command, not a decode error.
   const [failure, output] = await logged(
     Command.runWith(command, { version: "0" })([]).pipe(Effect.flip),
-  ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
+  ).pipe(Effect.provide(clientLayer(web)), Effect.provide(cliServices), Effect.runPromise);
 
   expect(failure).toEqual(new Action.Unauthenticated({ message: "A bearer token is required." }));
   expect(output).toEqual([]);
@@ -290,10 +260,7 @@ it("decodes two errors that share a status by their tag", async () => {
           refuse: () => Effect.succeed("unreachable"),
           reject: () => Effect.fail(new Rejected({ reason: "closed" })),
         },
-        {
-          before: (action) =>
-            action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
-        },
+        (action) => (action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden())),
       ),
     ),
   );

@@ -28,10 +28,19 @@ export const clientOf = (
 ): Layer.Layer<HttpClient.HttpClient> =>
   Layer.effect(
     HttpClient.HttpClient,
-    Effect.map(
-      HttpClient.HttpClient,
-      HttpClient.mapRequest((request) =>
-        request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, origin) : request,
+    Effect.map(HttpClient.HttpClient, (fetch) =>
+      // Resolved once every mapping of the request has run, a client's `baseUrl` included,
+      // so only a URL still relative takes the origin.
+      HttpClient.makeWith(
+        (request) =>
+          fetch.postprocess(
+            Effect.map(request, (resolved) =>
+              resolved.url.startsWith("/")
+                ? HttpClientRequest.prependUrl(resolved, origin)
+                : resolved,
+            ),
+          ),
+        fetch.preprocess,
       ),
     ),
   ).pipe(

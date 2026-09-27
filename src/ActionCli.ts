@@ -20,7 +20,6 @@ import {
   type Member,
   type RequestOf,
   type Served,
-  servedActions,
   toList,
 } from "./internal/implementation.js";
 
@@ -178,23 +177,31 @@ export function make(
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const { baseUrl, transformClient } = options;
 
-  const actions = isHttp(target) ? target.actions : servedActions("command", toList(target));
+  // One subcommand per action: called over HTTP, or run by its own implementation.
+  const subcommands = isHttp(target)
+    ? target.actions.map((action) => ({
+        action,
+        command: remote(target, action, { baseUrl, transformClient }),
+      }))
+    : toList(target).flatMap((app) =>
+        app.actions.map((action) => ({
+          action,
+          command: makeCommand(action, (input) => local(app, action, input)),
+        })),
+      );
 
+  // An action served twice has one kebab-case name twice, so this refuses it too.
   assertDistinct(
     "command",
-    actions,
-    (action) => kebab(action.name),
-    (action) => `action ${action.name}`,
+    subcommands,
+    ({ action }) => kebab(action.name),
+    ({ action }) => `action ${action.name}`,
   );
-
-  const commands = isHttp(target)
-    ? actions.map((action) => remote(target, action, { baseUrl, transformClient }))
-    : actions.map((action) =>
-        makeCommand(action, (input) => local(select(toList(target), action), action, input)),
-      );
 
   // SAFETY: every subcommand runs or calls one action, so the aggregate's channels are
   // the unions `Local` and `RemoteCommand` state over them.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list.
-  return Command.make(options.name).pipe(Command.withSubcommands(commands)) as never;
+  return Command.make(options.name).pipe(
+    Command.withSubcommands(subcommands.map(({ command }) => command)),
+  ) as never;
 }

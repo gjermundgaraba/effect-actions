@@ -22,25 +22,22 @@ import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import {
   type AnyHttp,
-  client as makeClient,
   type Client,
   type ErasedMethod,
+  methods,
   type Options as ClientOptions,
 } from "./internal/client.js";
 import { httpErrors, type HttpErrors, InvalidInput } from "./internal/errors.js";
 import { challenge } from "./internal/respond.js";
 import {
   acquire,
-  type AuthenticatedContext,
   type AnyImplementation,
   type BuildContext,
   type BuildError,
-  type AuthenticatorContext,
-  type AuthenticatorError,
-  authenticatorOf,
   type ErasedValue,
   type Member,
   provideHandlers,
+  type RequestContext,
   type Served,
   servedActions,
   toList,
@@ -82,16 +79,16 @@ type Api<Actions extends ReadonlyArray<Action.Any>> = HttpApi.HttpApi<
 
 /**
  * What `layer` builds: failures, build services and request services are unions over
- * precisely the implementations `App`, less the identities their authenticators provide,
- * joined by the router and platform services `HttpApiBuilder.layer` needs.
+ * precisely the implementations `App`, joined by the router and platform services
+ * `HttpApiBuilder.layer` needs. Middleware provided around it, such as authentication,
+ * removes the request services it provides.
  */
 type HttpLayer<App> = Layer.Layer<
   never,
-  BuildError<App> | AuthenticatorError<App>,
+  BuildError<App>,
   | BuildContext<App>
-  | AuthenticatorContext<App>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", AuthenticatedContext<App>>
+  | HttpRouter.Request.From<"Requires", RequestContext<App>>
   | Etag.Generator
   | FileSystem
   | HttpPlatform.HttpPlatform
@@ -244,11 +241,11 @@ export function make(
 }
 
 /**
- * Serve implementations of a binding's actions in one layer. Each implementation's
- * `authenticate` runs before decoding, around the routes of its own actions, and its
- * `before` hook after decoding, before each handler. Each call mounts only the routes of
- * the actions it serves; each implementation's builder runs once however many layers
- * serve it.
+ * Serve implementations of a binding's actions in one layer, each implementation's `before`
+ * hook running after decoding, before each handler. It mounts only the routes of the
+ * actions it serves, so one binding may be served by several layers, such as public
+ * routes beside authenticated ones: middleware provided to a layer covers its routes
+ * only. Each implementation's builder runs once however many layers serve it.
  */
 export function layer<
   const H extends AnyBinding,
@@ -260,27 +257,7 @@ export function layer<
 >(http: H, apps: Apps): HttpLayer<Member<Apps>>;
 export function layer(http: AnyBinding, served: Served): Layer.Layer<never, unknown, unknown> {
   const apps = toList(served);
-  // Refuse an action served twice before splitting by authenticator.
-  servedActions("served action", apps);
-
-  // Router middleware covers the routes of the layer it is provided to, so each
-  // authenticator's implementations are served by a layer of their own.
-  const [first, ...rest] = [...Map.groupBy(apps, authenticatorOf)].map(([authenticate, guarded]) =>
-    authenticate === undefined
-      ? routes(http, guarded)
-      : routes(http, guarded).pipe(Layer.provide(authenticate.layer)),
-  );
-
-  return Layer.mergeAll(first ?? Layer.empty, ...rest);
-}
-
-/** The routes of `apps`' actions, each run through its implementation's hook. */
-const routes = (
-  http: AnyBinding,
-  apps: ReadonlyArray<AnyImplementation>,
-): Layer.Layer<never, unknown, unknown> => {
-  // `layer` has refused an action served twice.
-  const actions = apps.flatMap((app) => app.actions);
+  const actions = servedActions("served action", apps);
   const name = groupOf(http.api).identifier;
 
   const api = apiOf(
@@ -314,7 +291,7 @@ const routes = (
   ).pipe(provideHandlers(apps));
 
   return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
-};
+}
 
 /**
  * Effect's native `HttpApiClient` for a binding, one method per action taking the
@@ -337,7 +314,9 @@ export function client(
   http: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
-  return makeClient(http, options);
+  return Effect.map(methods(http, options), (methodOf) =>
+    Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
+  );
 }
 
 /**

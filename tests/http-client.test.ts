@@ -54,10 +54,7 @@ const apps = Action.implement(
     count: () => Effect.succeed(Infinity),
     remove: () => Effect.succeed(null),
   },
-  {
-    before: (action) =>
-      action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
-  },
+  (action) => (action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void),
 );
 
 const serveNotes = () => {

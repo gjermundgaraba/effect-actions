@@ -2,10 +2,8 @@ import { Effect, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import { assertDistinct, assertName } from "./internal/actions.js";
 import {
-  type Authenticator,
-  type ErasedAuthenticator,
+  type Before,
   type ErasedHandler,
-  type Guard,
   type HandlerContext,
   type Handlers,
   Implementation,
@@ -257,25 +255,6 @@ type ReturnsNothing<T extends Target, H> =
         : unknown
       : unknown;
 
-/** The services of `G`'s `before` hook. */
-type HookContext<G> = G extends {
-  readonly before: (action: never) => Effect.Effect<infer _A, infer _E, infer R>;
-}
-  ? R
-  : never;
-
-/** The authenticator of `G`, `undefined` without one. */
-type AuthenticatorOf<G> = G extends { readonly authenticate: infer Auth } ? Auth : undefined;
-
-/**
- * The rules `implement` checks beyond `Guard`: every option known, and neither present only
- * maybe, as `make` checks its own.
- */
-type Policy<A extends Any, G> =
-  Guard<A, any, Authenticator> extends G
-    ? unknown
-    : Known<G, Guard<A, any, Authenticator>> & Present<G, "authenticate" | "before">;
-
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
 
@@ -287,31 +266,29 @@ const isList = (target: Target): target is ReadonlyArray<Any> => Array.isArray(t
  * them: its services are startup requirements, resolved once however many surfaces serve
  * the result, while services a handler yields are per-request requirements.
  *
- * The options are the implementation's policy, which every surface serving it applies:
- * `authenticate`, how a remote caller proves who they are, and `before`, whether they may
- * call. Omit both for a public implementation.
+ * `before` is the implementation's hook, which every surface serving it runs before each
+ * handler: whether the caller may call. Omit it for a public implementation.
  */
 export function implement<
   const T extends Target,
   H extends HandlersFor<T>,
-  const G extends Guard<ActionsOf<T>, any, Authenticator>,
   EX = never,
   RX = never,
+  RB = never,
 >(
   target: T,
   build: Exact<T, H> | Effect.Effect<Exact<T, H>, EX, RX>,
-  options?: G & NoInfer<Policy<ActionsOf<T>, G>>,
+  before?: Before<ActionsOf<T>, RB>,
 ): Implementation<
   ActionsOf<T>,
-  RequestsOf<T, H, HookContext<G>>,
+  RequestsOf<T, H, RB>,
   NoInfer<EX>,
-  NoInfer<Exclude<RX, Scope.Scope>>,
-  NoInfer<AuthenticatorOf<G>>
+  NoInfer<Exclude<RX, Scope.Scope>>
 >;
 export function implement(
   target: Target,
   build: Built | Effect.Effect<Built, unknown, unknown>,
-  options?: Guard<Any, unknown, ErasedAuthenticator>,
+  before?: Before<Any, unknown>,
 ): Implementation<Any, {}, unknown, unknown> {
   const actions = isList(target) ? target : [target];
   const names = actions.map((action) => action.name);
@@ -346,5 +323,5 @@ export function implement(
     ? Effect.map(build, record)
     : Effect.succeed(record(build));
 
-  return new Implementation(actions, handlers, options);
+  return new Implementation(actions, handlers, before);
 }

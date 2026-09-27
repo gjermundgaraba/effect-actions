@@ -8,6 +8,7 @@ import {
   type BuildContext,
   type BuildError,
   type Member,
+  provideHandlers,
   type RequestOf,
   type Served,
   toList,
@@ -56,14 +57,15 @@ interface ErasedTools {
  *
  * Unlike MCP, calls return the action's native success/failure values directly.
  * Build services are needed to construct `layer`; request services are needed
- * when the resulting toolkit handles a call. Each implementation's `before` hook runs;
- * its `authenticate` does not, so the caller provides the identity.
+ * when the resulting toolkit handles a call, the identity an implementation's `before` hook
+ * reads included: the caller provides it.
  */
 export function make<const Apps extends Served>(
   apps: Apps,
 ): Tools<ToolkitTools<Member<Apps>>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
 export function make(apps: Served): ErasedTools {
-  const { toolkit, layer, handlers } = bindTools(toList(apps), "native");
+  const served = toList(apps);
+  const { toolkit, layer } = bindTools(served, "native");
 
-  return { toolkit, layer: handlers(layer) };
+  return { toolkit, layer: layer.pipe(provideHandlers(served)) };
 }

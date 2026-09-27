@@ -1,15 +1,10 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Schema, SchemaTransformation } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-} from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { httpClient, serve } from "./serve.js";
+import { clientLayer, serve } from "./serve.js";
 
 const Double = Action.make("double", {
   description: "Transform in both directions",
@@ -81,17 +76,17 @@ it("keeps the client, routes and document on one configuration", async () => {
     expect(value).toBe(true);
     expect(response.status).toBe(200);
   }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
-      const request = new Request(input, init);
-      sent.push({
-        url: request.url,
-        body: await request.clone().json(),
-        token: request.headers.get("authorization"),
-      });
+    Effect.provide(
+      clientLayer(async (request) => {
+        sent.push({
+          url: request.url,
+          body: await request.clone().json(),
+          token: request.headers.get("authorization"),
+        });
 
-      return web.handler(request);
-    }),
+        return web.handler(request);
+      }),
+    ),
     Effect.runPromise,
   );
   expect(sent[0]).toEqual({
@@ -102,7 +97,7 @@ it("keeps the client, routes and document on one configuration", async () => {
   expect(sent.slice(1, 3).map((request) => request.body)).toEqual([{}, {}]);
 });
 
-it("sends a no-input call as {}, and any given input as given, through every Effect client", async () => {
+it("sends a no-input call as {}, and any given input as given, through the client", async () => {
   const undefinedFromString = Schema.Literal("absent").pipe(
     Schema.decodeTo(
       Schema.Undefined,
@@ -168,22 +163,11 @@ it("sends a no-input call as {}, and any given input as given, through every Eff
       client.emptyRecord(),
     ]);
 
-  const viaMake = await Effect.flatMap(
+  const results = await Effect.flatMap(
     ActionHttp.client(Inputs, { baseUrl: "http://localhost" }),
     calls,
-  ).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-      handler(new Request(input, init)),
-    ),
-    Effect.runPromise,
-  );
+  ).pipe(Effect.provide(clientLayer(handler)), Effect.runPromise);
 
-  const viaHelper = await Effect.flatMap(httpClient(Inputs, handler), calls).pipe(
-    Effect.runPromise,
-  );
-
-  expect(viaMake).toEqual([true, "null", "object", "undefined", true]);
-  expect(viaHelper).toEqual(viaMake);
-  expect(bodies).toEqual([{}, null, {}, "absent", {}, {}, null, {}, "absent", {}]);
+  expect(results).toEqual([true, "null", "object", "undefined", true]);
+  expect(bodies).toEqual([{}, null, {}, "absent", {}]);
 });

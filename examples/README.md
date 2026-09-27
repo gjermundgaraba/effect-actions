@@ -14,7 +14,7 @@ The example listens on 127.0.0.1:3000. It uses an in-memory repository and delib
 Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
 Every action declares `access: "read"` or `access: "write"`. The guarded implementations name
-their policy once, `{ authenticate, before: authorize }`: HTTP and MCP authenticate the bearer
+their hook once, `authorize`: the HTTP and MCP layers serving them authenticate the bearer
 token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
 `access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`. No
 handler contains authorization code, and no surface can leave the rule out.
@@ -28,11 +28,11 @@ The application serves its implementations under three access rules:
 | `double`       | `double`                          | bearer token   | `/mcp`, bearer token          |
 | `listChanges`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
 
-Every HTTP action is in one binding, `Http`: one mount path, one document, one client, and one
-`ActionHttp.layer` call serving public and guarded implementations side by side. The `Users`
+Every HTTP action is in one binding, `Http`: one mount path, one document, one client, served
+by two `ActionHttp.layer` calls, the guarded one with the authentication around it. The `Users`
 builder runs once, though HTTP and MCP both serve `userActions`. An MCP endpoint is a single
-route, so it authenticates every tool when any of them authenticates. That is why the public
-tool has its own endpoint.
+route, so authentication around it covers every tool. That is why the public tool has its own
+endpoint.
 The OpenAPI document (`/api/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`.
 
@@ -94,9 +94,9 @@ Without a token, a guarded route or the `/mcp` endpoint answers 401
 - [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
 - [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the guarded implementations name.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
-- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the policy of the guarded ones.
+- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the guarded ones.
 - [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.make` answering a missing or unknown token with the built-in 401 and its `Bearer` challenge.
-- [http.ts](http.ts): one HTTP layer for public and guarded implementations, plus the OpenAPI document and Swagger UI.
+- [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the guarded MCP endpoints.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
 - [app.ts](app.ts): every surface of the host, under that policy.

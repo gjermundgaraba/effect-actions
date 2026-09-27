@@ -2,7 +2,8 @@
 
 MCP tools from implementations, on Effect's native `McpServer`. One `Tool` per served action,
 named after it. Two transports: a Streamable HTTP endpoint mounted on the router, or newline-delimited
-JSON-RPC on standard I/O for a subprocess. Both speak MCP 2026-07-28 only.
+JSON-RPC on standard I/O for a subprocess. HTTP speaks MCP 2026-07-28 only; stdio also speaks
+2025-11-25 and 2025-06-18, as the host negotiates.
 
 ## API
 
@@ -15,7 +16,8 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
 The options are the native `McpServer.layerHttp` / `McpServer.layerStdio` options, except
 `protocols`. They pass through unchanged; `path` gains a default. Each implementation brings its
-own policy ([Action.md](Action.md#implementations)).
+hook ([Action.md](Action.md#implementations)); authentication is middleware the host provides
+around `layerHttp` ([Authentication.md](Authentication.md)).
 
 | Option                               | Meaning                                                                        |
 | ------------------------------------ | ------------------------------------------------------------------------------ |
@@ -30,8 +32,8 @@ own policy ([Action.md](Action.md#implementations)).
 built-in `Unauthenticated` and `Forbidden`. Both layers retain the build failures and
 requirements of their builders, plus native
 `IllegalArgumentError`. HTTP needs the router and wraps handler and hook services as request
-requirements, less the identity the implementations' `authenticate` provides. stdio needs
-`Stdio` and the caller's request services, identity included. Native `McpRequestContext`
+requirements until middleware provided around it, such as authentication, provides them. stdio
+needs `Stdio` and the caller's request services, identity included. Native `McpRequestContext`
 is supplied by the server, not owed by the host.
 
 ## Canonical
@@ -39,12 +41,13 @@ is supplied by the server, not owed by the host.
 ```ts
 import { Layer } from "effect";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { authenticate } from "./authentication.js";
 import { double, listChanges, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-// An MCP endpoint is one route, so it authenticates as a whole: a public tool gets an
-// endpoint of its own.
+// An MCP endpoint is one route, so authentication covers all of its tools: a public
+// tool gets an endpoint of its own.
 const publicMcp = ActionMcp.layerHttp(status, {
   name: "effect-actions-public",
   version: "0.0.0",
@@ -57,7 +60,7 @@ const mcp = ActionMcp.layerHttp([userActions, double, listChanges], {
   name: "effect-actions",
   version: "0.0.0",
   allowedOrigins,
-});
+}).pipe(Layer.provide(authenticate));
 
 export const layer = Layer.mergeAll(publicMcp, mcp);
 ```
@@ -133,11 +136,12 @@ Layer.launch(layer).pipe(
 
 ## Rules
 
-- Both transports serve MCP 2026-07-28 and no other revision; there is no `protocols` option. Over HTTP the endpoint is stateless: no initialize handshake, no session, and every request stands alone. Effect owns version checks and rejects any other revision. Stdio has no sessions, so it could serve an older host, but it refuses one deliberately, for uniformity: a client that works over one transport works over the other.
+- HTTP serves MCP 2026-07-28 and no other revision: the endpoint is stateless, with no initialize handshake and no session, so every request stands alone and authentication runs on each. Stdio serves 2026-07-28, 2025-11-25 and 2025-06-18, whichever the host negotiates. There is no `protocols` option; Effect owns version checks and negotiation.
+- Earlier revisions are refused on both transports: they have no `structuredContent`, so a success would lose its shape. Over stdio, invalid arguments are a tool error from 2025-11-25 on, and a JSON-RPC error on 2025-06-18, as that revision specifies.
 - `path` defaults to `/mcp`. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form.
 - Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
-- An endpoint is one route, so it authenticates as a whole: the implementations it serves share one `authenticate` (the same value), which every request to the endpoint runs, tool listing included, or none has one. A public implementation stays public: `layerHttp` refuses it beside an authenticated one. Middleware provided to `layerHttp` likewise covers all of its tools. To serve tools under different authentication or middleware, or without any, mount them on different paths with separate `layerHttp` calls.
+- An endpoint is one route, so middleware provided around `layerHttp`, authentication included, covers every request to it, tool listing included, and every tool it serves, public ones too. To serve tools under different authentication or middleware, or without any, mount them on different paths with separate `layerHttp` calls.
 - Every action of the implementations passed becomes a tool, named after the action, with the action's `hints`. To keep an action off MCP, leave its implementation out; implement it on its own if it shares a builder with served actions, which then runs once per `implement` call; keep what the pieces must share in a Layer, which Effect builds once.
 - Builders run as [guarantees.md](guarantees.md#dependency-lifetimes) describes: once per host, shared with every other surface serving the same implementation. Only the tool registry is fresh per endpoint.
 - Every served action must have object-root input; the native server refuses anything else when the layer is built. Omit `input` for a tool with no arguments.
@@ -147,7 +151,7 @@ Layer.launch(layer).pipe(
 - Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in each implementation's `before`.
 - Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing; a tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
-- stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. An implementation's `authenticate` does not run; its `before` does. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
+- stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 - `Unauthenticated` and `Forbidden` join every tool's declared failures, so a `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error. A schema an action already declares is not repeated.
 - `before` follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes). Here input is the tool's arguments, decoded by the native server.
@@ -157,12 +161,13 @@ Layer.launch(layer).pipe(
 
 - Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: a served action has scalar, array, or empty-struct input, which the native server refuses. It is not in the layer's error channel, so it cannot be caught by tag. Wrap the input in a struct with at least one field, omit `input` for no arguments, or leave the action off MCP.
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `layerStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
-- Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler yields a request service that no implementation's `authenticate` provides. Give the implementation `authenticate`, or provide the service with `Layer.provide(middleware.layer)` on that `layerHttp`.
-- `An MCP endpoint authenticates once` thrown at `layerHttp`: its implementations authenticate differently, or some are public and some authenticated. Serve the public ones and each authentication on paths of their own. Two `Authentication.make` calls are two authentications: share one value.
+- Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler or hook yields a request service that no middleware around the endpoint provides. Provide the authentication, `Layer.provide(authenticate)`, or other middleware (`Layer.provide(middleware.layer)`) on that `layerHttp`.
+- A public tool demands credentials: it shares an endpoint with authenticated ones, and the authentication covers the whole endpoint. Serve it on an endpoint of its own.
 - Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.
-- Older MCP client cannot connect: over HTTP a request answers `400` with JSON-RPC error `-32020`, over stdio `initialize` answers JSON-RPC error `-32022`. The client speaks a 2025 revision, which opens with `initialize`. Only 2026-07-28 is served; pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`).
+- Older MCP client cannot connect over HTTP: a request answers `400` with JSON-RPC error `-32020`. The client speaks a 2025 revision, which opens with `initialize`. Only 2026-07-28 is served over HTTP; pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
+- Client disconnects right after `initialize` over stdio: it speaks a revision older than 2025-06-18, so the server counter-offered 2025-11-25, which it does not support. Upgrade the client.
 - An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.
 - A disallowed Origin receives 401 instead: wrapping authentication rejected it before the native Origin check. Put any required pre-authentication Host/Origin policy in outer host middleware.
 - Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.
-- `Object literal may only specify known properties, and 'protocols'`: the revision is fixed. Delete the option.
+- `Object literal may only specify known properties, and 'protocols'`: the revisions are fixed. Delete the option.
 - `Object literal may only specify known properties, and 'before'`: surfaces take no hook. Pass it to `Action.implement`.

@@ -153,7 +153,7 @@ describe("implementations", () => {
     const app = Action.implement(Hello, ({ name }) => Effect.succeed(`hi ${name}`));
     expect(Object.keys(app)).toEqual(["actions"]);
     expect(app.actions).toEqual([Hello]);
-    const web = makeTestHttp(app, Layer.empty);
+    const web = makeTestHttp(app);
     onTestFinished(() => web.dispose());
     expect(await (await web.handler(request("/api/hello"))).json()).toBe("hi Ada");
   });
@@ -187,7 +187,7 @@ describe("implementations", () => {
       make: () => Action.implement([Proto], { ["__proto__"]: () => Effect.succeed("safe") }),
     },
   ])("routes prototype-sensitive action names through native HTTP: $form", async ({ make }) => {
-    const web = makeTestHttp(make(), Layer.empty);
+    const web = makeTestHttp(make());
     onTestFinished(() => web.dispose());
 
     const response = await web.handler(

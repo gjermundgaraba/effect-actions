@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-One contract, one `implement`, one binding, one policy. `ActionGroup` is gone: actions are
+One contract, one `implement`, one binding, one hook. `ActionGroup` is gone: actions are
 implemented directly, HTTP binds a flat list of actions, every client calls an action with its
 input, and a builder runs once however many surfaces serve it. An implementation carries its
-own policy, `{ authenticate, before }`, which every surface applies, so surfaces take only their
-transport's options. The library now owns the failures a surface answers with instead of a
+own `before` hook, which every surface runs, so surfaces take only their transport's options;
+authentication stays native router middleware around the HTTP surfaces. The library now owns the failures a surface answers with instead of a
 handler: bad input is a 400 `InvalidInput`, and authentication or a `before` hook refuses with
 `Unauthenticated` (401) or `Forbidden` (403), which every endpoint and tool declares. CLI flags
 are derived from each action's input. Clients and `Testing` are Effect-only, the HTTP client is
@@ -55,7 +55,7 @@ destructive, and `hints.destructive` on one is a type error. A surface serves
 the implementations passed to it, so an action stays off MCP by leaving its implementation out
 of the MCP layer; implement it on its own if it shared a builder with served actions. Action
 names are at most 128 characters, the MCP limit. `make` refuses a misspelled key at compile
-time. Its options, and `implement`'s, are given or omitted, never a value that may be
+time. Its options are given or omitted, never a value that may be
 `undefined`: omitted, an option takes its default at run time, which its type would not say,
 so `success: enabled ? Schema.String : undefined`, or a conditional spread, is a compile error.
 Branch around the call instead.
@@ -108,43 +108,31 @@ defect: an empty 500, which a client sees as an `HttpClientError`. The `ActionHt
   `Forbidden`: two schemas with one tag and status are indistinguishable to a client. An
   `internal` answer for unencodable results has no replacement: the result is a server bug.
 
-**An implementation carries its policy; surfaces take no hook.**
-`Action.implement(actions, handlers, { authenticate, before })` binds how remote callers prove
-who they are and whether they may call, and every surface serving the implementation applies
-both, so no surface can leave them out. `before: (action) => Effect<void, Action.Refusal, R>`
-receives the selected action, typed as the implementation's own, after input decoding and
-before its handler, on every surface; failing with anything but a refusal is a type error.
-`authenticate` is `Authentication.make(service, authenticate)`: `ActionHttp.layer` runs it
-before decoding around the routes of that implementation's actions only, so one call serves
-public and authenticated implementations side by side, and its identity is no longer a request
-requirement of the layer. `ActionMcp.layerHttp` runs it for the whole endpoint, one route, so
-the implementations on one endpoint share one `authenticate` or none has one: public and
-authenticated implementations, or two authentications, are refused together. The CLI, the Toolkit and MCP over stdio never run it: their host provides the
-identity, and the hook still runs. The `before` option of `ActionHttp.layer`,
-`ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, and `ActionCli.command` and
-`make` is gone, and so is `ActionToolkit.make`'s second argument. A hook is typed
-`(action) => Effect<void, Action.Refusal, R>`, and every local command's error channel includes
-`Action.Refusal`, as every endpoint and tool declares both. Every 401 an `ActionHttp`
-route answers, the authentication's, a hook's or a handler's own, carries
-`WWW-Authenticate: Bearer`.
+**An implementation carries its hook; surfaces take none.**
+`Action.implement(actions, handlers, before)` binds whether a caller may call, and every
+surface serving the implementation runs the hook, so no surface can leave it out.
+`before: (action) => Effect<void, Action.Refusal, R>` receives the selected action, typed as the
+implementation's own, after input decoding and before its handler, on every surface; failing
+with anything but a refusal is a type error. It may be a value that may be `undefined`, as
+`enabled ? authorize : undefined`: its services are owed either way. The `before` option of
+`ActionHttp.layer`, `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, and
+`ActionCli.command` and `make` is gone, and so is `ActionToolkit.make`'s second argument. Every
+local command's error channel includes `Action.Refusal`, as every endpoint and tool declares
+both refusals. Every 401 an `ActionHttp` route answers, the authentication's, a hook's or a
+handler's own, carries `WWW-Authenticate: Bearer`.
 
 - Migrate:
 
   ```ts
   // before
   export const users = Action.implement([GetUser, RenameUser], build);
-  ActionHttp.layer(Http, users, { before: authorize }).pipe(Layer.provide(authentication.layer));
-  ActionMcp.layerHttp(users, { name, version, before: authorize }).pipe(
-    Layer.provide(authentication.layer),
-  );
+  ActionHttp.layer(Http, users, { before: authorize });
+  ActionMcp.layerHttp(users, { name, version, before: authorize });
   ActionCli.command(users, GetUser, { before: authorize });
 
   // after
-  export const users = Action.implement([GetUser, RenameUser], build, {
-    authenticate,
-    before: authorize,
-  });
-  ActionHttp.layer(Http, [status, users]);
+  export const users = Action.implement([GetUser, RenameUser], build, authorize);
+  ActionHttp.layer(Http, users);
   ActionMcp.layerHttp(users, { name, version });
   ActionCli.command(users, GetUser);
   ```
@@ -154,28 +142,28 @@ route answers, the authentication's, a hook's or a handler's own, carries
   implementation of the same handlers with that hook: a second `implement` call over the same
   builder.
 
-**`Authentication.middleware` is `Authentication.make`, and takes no options.** Its result goes
-to `Action.implement` as `authenticate`; it is still native router middleware, so its `.layer`
-also authenticates routes of the host's own. `authenticate` fails with `Action.Unauthenticated`,
-answered 401 with its JSON and `WWW-Authenticate: Bearer`, `Action.Forbidden`, answered 403
-with no challenge, or an `HttpServerResponse` to send instead. Services `authenticate` yields
-remain request requirements: every HTTP surface serving the implementation owes them, and
-`HttpRouter.provideRequest` builds one once, such as a token verifier. `authenticate` takes any
-native router middleware providing the identity, including one combined with the middleware
-providing its requirements. Every response still carries
-`cache-control: no-store`. `MiddlewareOptions` is gone. `Authentication.bearerToken` fails with
-`Unauthenticated` (`A bearer token is required.`) instead of returning an `Option`.
+**`Authentication.middleware` is `Authentication.make`, which returns the middleware's layer.**
+Provide it around the layers whose routes it authenticates, as before:
+`ActionHttp.layer(Http, users).pipe(Layer.provide(authenticate))`, or around an
+`ActionMcp.layerHttp` endpoint, which it covers whole. Public and authenticated actions of one
+binding go in separate `ActionHttp.layer` calls. `make` takes no options. `authenticate` fails
+with `Action.Unauthenticated`, answered 401 with its JSON and `WWW-Authenticate: Bearer`,
+`Action.Forbidden`, answered 403 with no challenge, or an `HttpServerResponse` to send instead.
+Services `authenticate` yields remain request requirements of the layer, and so of every layer
+it covers, where native middleware would ask to be combined first;
+`HttpRouter.provideRequest` builds one once, such as a token verifier. Every response still
+carries `cache-control: no-store`. `MiddlewareOptions` is gone. `Authentication.bearerToken`
+fails with `Unauthenticated` (`A bearer token is required.`) instead of returning an `Option`.
 `Authentication.protectedResource(options)` returns the router layer itself instead of
 `{ layer, metadataUrl, challenge }`; `challenge()` and `BearerChallengeOptions` are gone. The
 challenge names no metadata URL: an MCP client then probes the well-known URL
 `protectedResource` serves, as the MCP authorization spec requires of clients.
 
 - Migrate: rename `middleware` to `make`, drop its third argument, fail with the built-in
-  refusals, and pass the result to `Action.implement` as `authenticate` instead of providing its
-  `.layer`. Replace `Option.isSome(token) && valid(token.value)` on `bearerToken` with
-  `valid(token)`; where a token is optional, `Effect.option(Authentication.bearerToken)`.
-  Services `authenticate` yields are still provided per request: combine middleware providing
-  them into `authenticate`, or apply `HttpRouter.provideRequest(layer)` to the surface layers.
+  refusals, and provide the result itself instead of its `.layer`:
+  `Layer.provide(authentication.layer)` becomes `Layer.provide(authenticate)`. Replace
+  `Option.isSome(token) && valid(token.value)` on `bearerToken` with `valid(token)`; where a
+  token is optional, `Effect.option(Authentication.bearerToken)`.
   `Layer.mergeAll(routes, discovery.layer)` becomes `Layer.mergeAll(routes, discovery)`. For a
   custom challenge (`resource_metadata`, `scope`, `error`), fail with an `HttpServerResponse`
   carrying your own header.
@@ -244,8 +232,8 @@ given argument is sent as given, where 0.7.0 sent `{}` for an `undefined` or `nu
 **`Testing` is Effect-only; `TestingClient` and `Testing.mcpRequest` are removed.** The
 package no longer has the optional `@modelcontextprotocol/client` peer. `Testing.layer(routes)`
 is a `Layer<HttpClient>` answering requests with the routes in memory, built and released
-with the layer; a relative URL resolves against `http://localhost`, so
-`ActionHttp.client(Http)` needs no `baseUrl`. `Testing.mcpCall(action, input?, { url?,
+with the layer; a relative URL resolves against `http://localhost`, once any `baseUrl` a client
+adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl`. `Testing.mcpCall(action, input?, { url?,
 headers? })` is an Effect on that `HttpClient`, typed by the action like a client method: it
 encodes the input, succeeds with the decoded success, and fails with the action's declared
 errors and the refusals as decoded values, whether the tool or the endpoint's authentication
@@ -314,6 +302,9 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the
   native `HttpApiClient`, a remote `ActionCli` command, and `Testing.mcpCall`.
 - A CLI flag's help text is its field's schema description.
+- `ActionMcp.layerStdio` serves MCP 2025-11-25 and 2025-06-18 again, beside 2026-07-28, as the
+  host negotiates: a subprocess host need not speak 2026-07-28. Earlier revisions stay refused,
+  having no `structuredContent`. HTTP still serves 2026-07-28 only.
 
 ## 0.7.0
 

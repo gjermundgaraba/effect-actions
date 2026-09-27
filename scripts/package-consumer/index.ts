@@ -147,13 +147,10 @@ const guarded = Action.implement(
     read: () => Effect.map(Identity, (identity) => identity),
     write: () => Effect.succeed("write"),
   },
-  {
-    authenticate,
-    before: (action) =>
-      action.access === "read"
-        ? Effect.void
-        : Effect.fail(new Action.Forbidden({ message: "Read only." })),
-  },
+  (action) =>
+    action.access === "read"
+      ? Effect.void
+      : Effect.fail(new Action.Forbidden({ message: "Read only." })),
 );
 
 const GuardedHttp = ActionHttp.make([Read, Write]);
@@ -161,14 +158,18 @@ const GuardedHttp = ActionHttp.make([Read, Write]);
 class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
 
 const checkHookTypes = () => {
-  // @ts-expect-error A published hook refuses only with a built-in refusal.
-  Action.implement(Read, () => Effect.succeed("read"), { before: () => Effect.fail(new Denied()) });
+  Action.implement(
+    Read,
+    () => Effect.succeed("read"),
+    // @ts-expect-error A published hook refuses only with a built-in refusal.
+    () => Effect.fail(new Denied()),
+  );
 };
 
 void checkHookTypes;
 
-// The implementation brings its authentication: the layer owes no identity.
-const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded);
+// Authentication provided around the layer: it owes no identity.
+const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(authenticate));
 
 const refusals = await Effect.gen(function* () {
   const anonymous = yield* ActionHttp.client(GuardedHttp);

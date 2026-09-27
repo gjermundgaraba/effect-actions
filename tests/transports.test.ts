@@ -503,7 +503,7 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
       name: "origin-order",
       version: "0",
       allowedOrigins: ["https://allowed.example"],
-    }).pipe(Layer.provide(authentication.layer)),
+    }).pipe(Layer.provide(authentication)),
   );
 
   onTestFinished(() => web.dispose());

@@ -12,11 +12,11 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/authorization.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
+import { authenticate } from "../examples/authentication.js";
 import { userActions } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
 import type { Equal } from "./equal.js";
@@ -130,23 +130,15 @@ export const typeAssertions = () => {
 
   void stdio;
 
-  const requestActor = Layer.succeed(CurrentActor, actor);
-
   const requestOnly = Action.implement(Actions, {
     ...ok,
     whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
   });
 
-  // @ts-expect-error Test helpers require an explicit request Layer.
+  // @ts-expect-error Test helpers must not erase missing request services.
   makeTestHttp([requestOnly]);
   // @ts-expect-error Test helpers must not erase missing request services.
-  makeTestHttp([requestOnly], Layer.empty);
-  // @ts-expect-error Test helpers require an explicit request Layer.
   makeTestMcp([requestOnly]);
-  // @ts-expect-error Test helpers must not erase missing request services.
-  makeTestMcp([requestOnly], Layer.empty);
-  makeTestHttp([requestOnly], requestActor);
-  makeTestMcp([requestOnly], requestActor);
 
   const fallible = Action.implement(
     Actions,
@@ -335,8 +327,6 @@ export const clientTypes = Effect.gen(function* () {
 });
 
 export const builtInErrorTypes = Effect.gen(function* () {
-  class Unrelated extends Schema.TaggedError<Unrelated>()("Unrelated", {}) {}
-
   const Echo = Action.make("echo", {
     description: "Echo",
     access: "write",
@@ -354,8 +344,6 @@ export const builtInErrorTypes = Effect.gen(function* () {
   Action.implement(Echo, () => Effect.fail(new Action.Forbidden()));
   // @ts-expect-error Bad input is answered before a handler runs, not by it.
   Action.implement(Echo, () => Effect.fail(new Action.InvalidInput()));
-  // @ts-expect-error Surface errors are built in, not declared on the binding.
-  ActionHttp.make([Echo], { errors: [Unrelated] });
 
   // Every built-in error reaches every client method as a typed failure.
   const client = yield* ActionHttp.client(bound);
@@ -405,8 +393,6 @@ export const configuredAdapterTypes = () => {
   });
   // Both mount paths have defaults: `/api` and `/mcp`.
   ActionHttp.make(Actions);
-  // @ts-expect-error The group name, which is the OpenAPI tag, is the mount path.
-  ActionHttp.make(Actions, { prefix: "/users", name: "users" });
   // The document is served from the binding, not from a layer of it.
   ActionHttp.openApi(Bound) satisfies Layer.Layer<never, never, HttpRouter.HttpRouter>;
   ActionHttp.openApi(Bound, "/openapi.json");
@@ -555,27 +541,26 @@ export const beforeTypes = () => {
   const binding = ActionHttp.make([Read]);
 
   // The hook may fail with either refusal, which every endpoint declares.
-  Action.implement(Read, read, { before: () => Effect.fail(new Action.Forbidden()) });
-  Action.implement(Read, read, { before: () => Effect.fail(new Action.Unauthenticated()) });
+  Action.implement(Read, read, () => Effect.fail(new Action.Forbidden()));
+  Action.implement(Read, read, () => Effect.fail(new Action.Unauthenticated()));
 
   // @ts-expect-error A hook may not fail with anything but a refusal, even a 403 of its own.
-  Action.implement(Read, read, { before: () => Effect.fail(new Denied()) });
+  Action.implement(Read, read, () => Effect.fail(new Denied()));
   // @ts-expect-error Bad input is answered before the hook runs, not by it.
-  Action.implement(Read, read, { before: () => Effect.fail(new Action.InvalidInput()) });
+  Action.implement(Read, read, () => Effect.fail(new Action.InvalidInput()));
 
   // One hook, bound once: every surface runs it, and none takes a hook of its own.
-  const guarded = Action.implement(Read, read, {
-    before: (action) =>
-      // The hook reads the contract it is about to run: here, exactly `Read`.
-      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
-  });
+  const guarded = Action.implement(Read, read, (action) =>
+    // The hook reads the contract it is about to run: here, exactly `Read`.
+    action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
+  );
 
   ActionHttp.layer(binding, guarded);
   ActionMcp.layerHttp(guarded, { name: "t", version: "0" });
   ActionToolkit.make(guarded);
 
   // Hook services are request-time requirements, exactly like a handler's.
-  const clocked = Action.implement(Read, read, { before: () => Effect.asVoid(Clock) });
+  const clocked = Action.implement(Read, read, () => Effect.asVoid(Clock));
 
   const timed = HttpRouter.toWebHandler(ActionHttp.layer(binding, clocked).pipe(services));
 
@@ -589,15 +574,28 @@ export const beforeTypes = () => {
 };
 
 export const authenticationTypes = () => {
-  // HTTP surfaces run the implementation's authentication, which provides the identity.
-  const http = HttpRouter.toWebHandler(
+  // Without authentication around it, a surface owes the identity per request.
+  const bare = HttpRouter.toWebHandler(
     ActionHttp.layer(Http, userActions).pipe(Layer.provide(Users.layerMemory), services),
+  );
+
+  // @ts-expect-error The identity must be supplied per request, not erased.
+  void bare.handler(new Request("http://localhost"), Context.empty());
+
+  // Authentication provided around the surfaces provides it.
+  const http = HttpRouter.toWebHandler(
+    ActionHttp.layer(Http, userActions).pipe(
+      Layer.provide(authenticate),
+      Layer.provide(Users.layerMemory),
+      services,
+    ),
   );
 
   void http.handler(new Request("http://localhost"), Context.empty());
 
   const mcp = HttpRouter.toWebHandler(
     ActionMcp.layerHttp(userActions, { name: "t", version: "0" }).pipe(
+      Layer.provide(authenticate),
       Layer.provide(Users.layerMemory),
       services,
     ),
@@ -748,16 +746,11 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
   class Identity extends Context.Service<Identity, string>()("types-spec/Identity") {}
 
   const Who = Action.make("who", { description: "Who", access: "read", success: Schema.String });
-  const who = () => Effect.map(Identity, (id) => id);
-  const auth = Authentication.make(Identity, Effect.succeed("alice"));
+  const who = () => Effect.succeed("anyone");
+  const hook = () => Effect.asVoid(Identity);
 
-  // @ts-expect-error An authenticator that may be undefined would hide the identity it owes.
-  Action.implement(Who, who, { authenticate: enabled ? auth : undefined });
-
-  // Branched instead, the public implementation owes the identity: a union keeps both.
-  const branched = enabled
-    ? Action.implement(Who, who, { authenticate: auth })
-    : Action.implement(Who, who);
+  // A hook that may be undefined is accepted: its services are owed either way.
+  const maybe = Action.implement(Who, who, enabled ? hook : undefined);
 
   type Owed<L> =
     L extends Layer.Layer<infer _A, infer _E, infer R>
@@ -766,23 +759,10 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
 
   const Http = ActionHttp.make([Who]);
 
-  const owed: [
-    Equal<
-      Owed<ReturnType<typeof ActionHttp.layer<typeof Http, typeof branched>>>,
-      HttpRouter.Request.From<"Requires", Identity>
-    >,
-    Equal<
-      Owed<
-        ReturnType<
-          typeof ActionHttp.layer<
-            typeof Http,
-            Action.Implementation<typeof Who, { readonly who: Identity }, never, never, typeof auth>
-          >
-        >
-      >,
-      never
-    >,
-  ] = [true, true];
+  const owed: Equal<
+    Owed<ReturnType<typeof ActionHttp.layer<typeof Http, typeof maybe>>>,
+    HttpRouter.Request.From<"Requires", Identity>
+  > = true;
 
   void owed;
 };

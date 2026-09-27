@@ -15,9 +15,9 @@ export const discovery = Authentication.protectedResource({
 // server's library instead.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
-// Provides CurrentActor per request, to every implementation that names it. A missing
-// or unknown token is the built-in `Unauthenticated`: a 401 every client decodes, with a
-// `Bearer` challenge.
+// Provides CurrentActor per request, to the routes of every layer it is provided to. A
+// missing or unknown token is the built-in `Unauthenticated`: a 401 every client decodes,
+// with a `Bearer` challenge.
 export const authenticate = Authentication.make(
   CurrentActor,
   Effect.flatMap(Authentication.bearerToken, (token) =>

@@ -48,7 +48,7 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 ## Rules
 
 - `layer(routes)` builds the routes with `HttpServer.layerServices` provided and request logging off, and releases them with the layer's scope. Routes must satisfy their own per-request requirements, with their middleware; a route still owing one is a type error. Each `layer` builds the routes anew, builders included.
-- A relative URL resolves against `http://localhost`, so `ActionHttp.client(Http)` needs no `baseUrl` under `layer`. Every request on this client is answered by the routes, whatever its host, so the native `HttpApiClient` and a remote `ActionCli` command work in memory too.
+- A relative URL resolves against `http://localhost`, once any `baseUrl` a client adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl` under `layer`, and one given is kept. Every request on this client is answered by the routes, whatever its host, so the native `HttpApiClient` and a remote `ActionCli` command work in memory too.
 - `mcpCall` sends one stateless `tools/call` for the action's tool, pinned to protocol version 2026-07-28 in both the header and `_meta`. It encodes the input with the action's schema, and decodes the success from `structuredContent.value`, as `ActionHttp.client` does for a route. It reads a JSON or an event-stream response.
 - A declared error, the action's own or a refusal, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
 - Any other answer fails with an `Error` whose message holds it: another status, the native server's own text (invalid arguments, a defect), no reply, or a JSON-RPC error (an unknown tool).
@@ -61,6 +61,6 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 - Fails with `Action.Unauthenticated`: the call reached authentication without a valid credential. Pass `headers: { authorization: "Bearer ..." }`.
 - `MCP tools/call "<name>" returned an error: Invalid parameters for tool ...`: the endpoint serves a different contract under that name than the one passed. Call it with the served contract value.
 - 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
-- Type error at `layer` naming `HttpRouter.Request<"Requires", ...>`: a route owes a per-request service, such as an identity no `authenticate` provides. Give the implementation `authenticate`, or provide middleware for the service.
+- Type error at `layer` naming `HttpRouter.Request<"Requires", ...>`: a route owes a per-request service, such as an identity no authentication around it provides. Provide the authentication, or other middleware for the service, around the routes.
 - `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
 - An `HttpClientError` whose reason is `InvalidUrlError`, from `mcpCall` on an `HttpClient` other than `layer`'s: a relative `url` resolves only under `layer`. Pass an absolute `url`.

@@ -1,17 +1,12 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Exit, Layer, Option, Schema } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-} from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { cliServices, logged } from "./cli-services.js";
-import { serve } from "./serve.js";
+import { clientLayer, serve } from "./serve.js";
 
 class Domain extends Schema.TaggedError<Domain>()(
   "Domain",
@@ -60,20 +55,15 @@ it("projects commands through the HTTP client without a local fallback", async (
       ),
   });
 
-  const fetchLayer = FetchHttpClient.layer.pipe(
-    Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
-        const request = new Request(input, init);
-        requests.push({
-          url: request.url,
-          authorization: request.headers.get("authorization"),
-          body: await request.clone().json(),
-        });
+  const fetchLayer = clientLayer(async (request) => {
+    requests.push({
+      url: request.url,
+      authorization: request.headers.get("authorization"),
+      body: await request.clone().json(),
+    });
 
-        return web.handler(request);
-      }),
-    ),
-  );
+    return web.handler(request);
+  });
 
   const [, output] = await logged(
     Command.runWith(command, { version: "0" })(["remote", "--value", "21"]),
@@ -122,16 +112,11 @@ it("projects a flat binding as one kebab-case subcommand per action", async () =
 
   const urls: string[] = [];
 
-  const fetchLayer = FetchHttpClient.layer.pipe(
-    Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
-        const request = new Request(input, init);
-        urls.push(request.url);
+  const fetchLayer = clientLayer((request) => {
+    urls.push(request.url);
 
-        return web.handler(request);
-      }),
-    ),
-  );
+    return web.handler(request);
+  });
 
   const command = ActionCli.make(Flat, {
     name: "cli",
@@ -189,10 +174,8 @@ it("propagates domain, refusal, encoding and transport failures as typed failure
   const refusing = serve(
     ActionHttp.layer(
       Http,
-      Action.implement(
-        [Remote],
-        { remote },
-        { before: () => Effect.fail(new Action.Forbidden({ message: "Requires users:write." })) },
+      Action.implement([Remote], { remote }, () =>
+        Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
       ),
     ),
   );
@@ -202,20 +185,11 @@ it("propagates domain, refusal, encoding and transport failures as typed failure
   onTestFinished(() => refusing.dispose());
   onTestFinished(() => open.dispose());
 
-  const through = (server: typeof refusing) =>
-    FetchHttpClient.layer.pipe(
-      Layer.provide(
-        Layer.succeed(FetchHttpClient.Fetch, (input, init) =>
-          server.handler(new Request(input, init)),
-        ),
-      ),
-    );
-
   const command = ActionCli.command(Http, Remote, { baseUrl: "http://localhost" });
 
   const run = (server: typeof refusing, value: string) =>
     Command.runWith(command, { version: "0" })(["--value", value]).pipe(
-      Effect.provide(through(server)),
+      Effect.provide(clientLayer(server)),
       Effect.provide(cliServices),
       Effect.runPromiseExit,
     );
@@ -242,14 +216,10 @@ it("propagates domain, refusal, encoding and transport failures as typed failure
 
   let transportAttempts = 0;
 
-  const unavailableLayer = FetchHttpClient.layer.pipe(
-    Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, async () => {
-        transportAttempts++;
-        throw new Error("offline");
-      }),
-    ),
-  );
+  const unavailableLayer = clientLayer(async () => {
+    transportAttempts++;
+    throw new Error("offline");
+  });
 
   const unavailable = await Command.runWith(command, { version: "0" })(["--value", "21"]).pipe(
     Effect.provide(unavailableLayer),

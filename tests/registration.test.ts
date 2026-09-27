@@ -10,7 +10,7 @@ import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { serve } from "./serve.js";
 
-it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
+it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
   const web = serve(
     ActionMcp.layerHttp([], {
       name: "configured",
@@ -141,9 +141,9 @@ describe("projection boundaries", () => {
       "/rpc/echo",
       "/rpc/tool",
     ]);
-    const web = makeTestHttp([echo, tool], Layer.empty, options);
+    const web = makeTestHttp([echo, tool], options);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(tool, Layer.empty);
+    const mcp = makeTestMcp(tool);
     onTestFinished(() => mcp.dispose());
     const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
@@ -170,7 +170,7 @@ describe("projection boundaries", () => {
       expect(
         OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
       ).toHaveProperty(String(status ?? 500));
-      const web = makeTestHttp(apps, Layer.empty);
+      const web = makeTestHttp(apps);
       onTestFinished(() => web.dispose());
       const response = await web.handler(post("/api/fail"));
       expect(response.status).toBe(status ?? 500);
@@ -201,9 +201,9 @@ describe("projection boundaries", () => {
     expect(responses).toHaveProperty("404");
     expect(responses).toHaveProperty("409");
     expect(responses).not.toHaveProperty("500");
-    const web = makeTestHttp(apps, Layer.empty);
+    const web = makeTestHttp(apps);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(apps, Layer.empty);
+    const mcp = makeTestMcp(apps);
     onTestFinished(() => mcp.dispose());
     expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
     expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
@@ -228,7 +228,6 @@ describe("projection boundaries", () => {
       Action.implement([Fail], {
         fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
       }),
-      Layer.empty,
     );
 
     onTestFinished(() => mcp.dispose());
@@ -255,7 +254,7 @@ describe("projection boundaries", () => {
       fail: () => Effect.fail(Conflict.make({})),
     });
 
-    const mcp = makeTestMcp(apps, Layer.empty);
+    const mcp = makeTestMcp(apps);
     onTestFinished(() => mcp.dispose());
     expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
@@ -297,7 +296,7 @@ describe("projection boundaries", () => {
         success: Node,
       });
 
-      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }), Layer.empty);
+      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }));
 
       onTestFinished(() => web.dispose());
       const tools = await listTools(web.handler);
@@ -337,7 +336,6 @@ describe("projection boundaries", () => {
       Action.implement([Nested], {
         nested: ({ item }) => Effect.succeed({ first: item, second: item }),
       }),
-      Layer.empty,
     );
 
     onTestFinished(() => web.dispose());
@@ -393,9 +391,9 @@ describe("projection boundaries", () => {
       scalar: () => Effect.fail("failure"),
     });
 
-    const web = makeTestHttp(apps, Layer.empty);
+    const web = makeTestHttp(apps);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(apps, Layer.empty);
+    const mcp = makeTestMcp(apps);
     onTestFinished(() => mcp.dispose());
     const response = await web.handler(post("/api/scalar"));
     expect(response.status).toBe(500);
@@ -417,7 +415,6 @@ describe("projection boundaries", () => {
       Action.implement([Encode], {
         encode: ({ value }) => Effect.succeed(value ?? 42),
       }),
-      Layer.empty,
     );
 
     onTestFinished(() => web.dispose());
@@ -437,7 +434,6 @@ describe("projection boundaries", () => {
       Action.implement([Echo], {
         echo: ({ value }) => Effect.succeed(value),
       }),
-      Layer.empty,
     );
 
     onTestFinished(() => web.dispose());
@@ -465,7 +461,6 @@ describe("projection boundaries", () => {
           name,
         ),
       ),
-      Layer.empty,
     );
 
     onTestFinished(() => web.dispose());
@@ -497,9 +492,9 @@ describe("projection boundaries", () => {
       boom: () => Effect.die(new Error("secret database password")),
     });
 
-    const web = makeTestHttp(apps, Layer.empty);
+    const web = makeTestHttp(apps);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(apps, Layer.empty);
+    const mcp = makeTestMcp(apps);
     onTestFinished(() => mcp.dispose());
 
     // A result that does not encode is a defect, like any other: HTTP answers both with an
@@ -525,9 +520,9 @@ describe("projection boundaries", () => {
 
     const apps = Action.implement([Stamp], { stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
-    const web = makeTestHttp(apps, Layer.empty);
+    const web = makeTestHttp(apps);
     onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(apps, Layer.empty);
+    const mcp = makeTestMcp(apps);
     onTestFinished(() => mcp.dispose());
     const tools = await listTools(mcp.handler);
     expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
@@ -557,7 +552,7 @@ describe("projection boundaries", () => {
         ),
     });
 
-    const web = makeTestHttp(apps, Layer.empty);
+    const web = makeTestHttp(apps);
     onTestFinished(() => web.dispose());
     const abort = new AbortController();
 

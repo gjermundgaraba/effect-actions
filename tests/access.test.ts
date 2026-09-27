@@ -66,7 +66,7 @@ const make = () => {
         read: () => record("read"),
         write: () => record("write"),
       },
-      { before: authorize(hooks) },
+      authorize(hooks),
     ),
   };
 };
@@ -134,22 +134,6 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("answers an unauthenticated refusal with 401", async () => {
-    const { app, hooks, handlers } = make();
-    const web = serveHttp(app, Layer.succeed(Scopes, []));
-    onTestFinished(() => web.dispose());
-
-    const refused = await web.handler(post("/api/read"));
-    expect(refused.status).toBe(401);
-    expect(await refused.json()).toEqual(
-      Schema.encodeSync(Action.Unauthenticated)(
-        new Action.Unauthenticated({ message: "Sign in." }),
-      ),
-    );
-    expect(hooks).toEqual(["read"]);
-    expect(handlers).toEqual([]);
-  });
-
   it("decodes HTTP input before running either the hook or handler", async () => {
     const { app, hooks, handlers } = make();
     const web = serveHttp(app, readOnly);
@@ -212,7 +196,16 @@ describe("the pre-handler hook", () => {
     expect(await call("read")).toMatchObject([{ isFailure: false, result: "read ok" }]);
 
     const refused = await call("write");
-    expect(refused).toMatchObject([{ isFailure: true, result: { message: "Requires write." } }]);
+    const refusal = new Action.Forbidden({ message: "Requires write." });
+
+    // The refusal itself, encoded like a declared error.
+    expect(refused).toMatchObject([
+      {
+        isFailure: true,
+        result: refusal,
+        encodedResult: Schema.encodeSync(Action.Forbidden)(refusal),
+      },
+    ]);
     expect(refused[0]?.result).toBeInstanceOf(Action.Forbidden);
 
     expect(hooks).toEqual(["read", "write"]);
@@ -263,7 +256,7 @@ describe("the pre-handler hook", () => {
     const handlers: Array<string> = [];
     const record = (name: string) => Effect.sync(() => (handlers.push(name), `${name} ok`));
     const read = Action.implement(Read, () => record("read"));
-    const write = Action.implement(Write, () => record("write"), { before: authorize(hooks) });
+    const write = Action.implement(Write, () => record("write"), authorize(hooks));
 
     // One layer: only the write implementation has the hook.
     const web = serve(

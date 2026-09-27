@@ -1,40 +1,29 @@
 import { expect, it, vi } from "vite-plus/test";
-import { Cause, Effect, Exit, Option, Schema, type Scope } from "effect";
+import { Cause, Effect, Exit, flow, Option, Schema, type Scope } from "effect";
+import { TestConsole } from "effect/testing";
 import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
-import { cliServices, logged } from "./cli-services.js";
+import { cliServices } from "./cli-services.js";
 
-const run = <Name extends string, Input, Context, E>(
+/** Run `command` with `args` on the test CLI services. */
+const exec = <Name extends string, Input, Context, E>(
   command: Command.Command<Name, Input, Context, E, Scope.Scope>,
   args: ReadonlyArray<string>,
 ) =>
-  Effect.runPromise(
-    Effect.scoped(
-      Command.runWith(command, { version: "0" })(args).pipe(Effect.provide(cliServices)),
-    ),
-  );
+  Effect.scoped(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices));
 
-const runExit = <Name extends string, Input, Context, E>(
-  command: Command.Command<Name, Input, Context, E, Scope.Scope>,
-  args: ReadonlyArray<string>,
-) =>
-  Effect.runPromiseExit(
-    Effect.scoped(
-      Command.runWith(command, { version: "0" })(args).pipe(Effect.provide(cliServices)),
-    ),
-  );
+const run = flow(exec, Effect.runPromise);
+
+const runExit = flow(exec, Effect.runPromiseExit);
 
 /** Every line a successful run logs. */
-const lines = <Name extends string, Input, Context, E>(
-  command: Command.Command<Name, Input, Context, E, Scope.Scope>,
-  args: ReadonlyArray<string>,
-) =>
-  Effect.runPromise(
-    Effect.scoped(
-      logged(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices)),
-    ),
-  ).then(([, output]) => output);
+const lines = flow(
+  exec,
+  Effect.andThen(TestConsole.logLines),
+  Effect.provide(TestConsole.layer),
+  Effect.runPromise,
+);
 
 /** The typed failure of a failed run: the command's own, or the native parser's. */
 const failure = <A, E>(exit: Exit.Exit<A, E>): E | undefined =>
@@ -396,11 +385,10 @@ it("keeps custom renderer JSON output and validates success before rendering", a
     invalid: () => Effect.succeed(Infinity),
   });
 
-  expect(
-    Exit.isFailure(
-      await runExit(ActionCli.command(invalid, Invalid, { render: invalidRenderer }), []),
-    ),
-  ).toBe(true);
+  const exit = await runExit(ActionCli.command(invalid, Invalid, { render: invalidRenderer }), []);
+
+  // A success its schema does not encode fails the command, before anything renders it.
+  expect(Schema.isSchemaError(failure(exit))).toBe(true);
   expect(invalidRenderer).not.toHaveBeenCalled();
 });
 
@@ -741,9 +729,11 @@ it("aggregates implementations under one named command and refuses duplicate com
   expect(() => ActionCli.make([one, again], { name: "tool" })).toThrow("Duplicate command: one");
 
   // One action implemented twice is refused too, rather than the first one run.
-  const guarded = Action.implement(One, () => Effect.succeed("guarded"), {
-    before: () => Effect.fail(new Action.Forbidden()),
-  });
+  const guarded = Action.implement(
+    One,
+    () => Effect.succeed("guarded"),
+    () => Effect.fail(new Action.Forbidden()),
+  );
 
   expect(() => ActionCli.command([one, guarded], One)).toThrow("Duplicate command: one");
 
@@ -823,7 +813,7 @@ it("runs the implementation's before hook first, and its refusal is the command'
       read: () => Effect.sync(() => `read ${++calls}`),
       write: () => Effect.sync(() => `write ${++calls}`),
     },
-    { before },
+    before,
   );
 
   await run(ActionCli.command(app, Read), []);

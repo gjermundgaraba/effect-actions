@@ -1,6 +1,5 @@
 import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
-import type { HttpRouter } from "effect/unstable/http";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
 import type { Refusal } from "./errors.js";
@@ -19,49 +18,16 @@ export type ErasedHandler<R> = {
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
 /**
- * An implementation's policy: how callers prove who they are, and whether they may call.
- * `A` is its actions, `RB` the hook's services.
+ * An implementation's hook: whether a caller may call. It runs once per call on every
+ * surface, after the input is decoded and before the selected handler, with its action
+ * contract, so a policy reads `access` rather than the action name. It fails with a
+ * refusal, answered exactly as a declared error. Its services `RB` are request-time
+ * requirements, like a handler's.
  */
-export interface Guard<A extends Action.Any, RB, Auth> {
-  /**
-   * `Authentication.make`'s middleware, or any native router middleware providing the
-   * identity: how a remote caller proves who they are. HTTP surfaces run it before
-   * decoding, around the routes that serve this implementation, and owe its request
-   * requirements; local surfaces (CLI, Toolkit, MCP on stdio) leave identity to the host.
-   */
-  readonly authenticate?: Auth | undefined;
-  /**
-   * Runs once per call on every surface, after the input is decoded and before the
-   * selected handler, with its action contract, so a policy reads `access` rather than
-   * the action name. It fails with a refusal, answered exactly as a declared error. Its
-   * services are request-time requirements, like a handler's.
-   */
-  readonly before?: ((action: A) => Effect.Effect<void, Refusal, RB>) | undefined;
-}
-
-/**
- * Native router middleware providing an identity per request, as `Authentication.make`
- * returns. Its own requirements stay per request, like a handler's: an HTTP surface
- * serving it owes them.
- */
-export type Authenticator = HttpRouter.Middleware<any>;
-
-/**
- * Any authenticator, as a surface runs it. Native middleware has its layer at run time
- * even while its type still asks for request requirements; the surface owes those.
- */
-export interface ErasedAuthenticator {
-  readonly layer: Layer.Layer<never, unknown, unknown>;
-}
-
-/** What an authenticator declares: what it provides and requires, per request and to build. */
-type ConfigOf<Auth> = Auth extends HttpRouter.Middleware<infer Config> ? Config : never;
-
-/** The identity services an authenticator provides. */
-type Identity<Auth> = ConfigOf<Auth>["provides"];
+export type Before<A extends Action.Any, RB> = (action: A) => Effect.Effect<void, Refusal, RB>;
 
 /** An implementation's hook, erased. */
-type Before = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
+type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
 
 /** Per-request requirements of one handler. */
 export type HandlerContext<H> = H extends (
@@ -76,21 +42,19 @@ type HandlersKey = Context.Key<Handlers<unknown>, Handlers<unknown>>;
 let implementations = 0;
 
 /**
- * Actions bound to their handlers and their policy: everything one `Action.implement` call
+ * Actions bound to their handlers and their hook: everything one `Action.implement` call
  * binds.
  *
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
  * `R` maps each action name to its per-request requirements, its handler's and its hook's;
- * `EX` and `RX` are the failures and services of the builder; `Auth` is its authenticator,
- * `undefined` without one.
+ * `EX` and `RX` are the failures and services of the builder.
  */
 export class Implementation<
   A extends Action.Any,
   R extends { readonly [name: string]: unknown },
   EX,
   RX,
-  Auth = undefined,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
   /** Type-only: each action's per-request requirements, by action name. */
@@ -99,24 +63,18 @@ export class Implementation<
   declare readonly "~buildError": EX;
   /** Type-only: what building its handlers needs. */
   declare readonly "~buildContext": RX;
-  /**
-   * Type-only: its authenticator, `undefined` without one. Not `never`: an implementation
-   * that owes an identity would then be a subtype of one that provides it, and a union of
-   * both would keep only the one that provides it.
-   */
-  declare readonly "~authenticate": Auth;
 
   readonly #key: HandlersKey;
   readonly #layer: Layer.Layer<Handlers<unknown>, EX, RX>;
-  readonly #guard: Guard<Action.Any, unknown, ErasedAuthenticator>;
+  readonly #before: ErasedBefore | undefined;
 
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
     build: Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope>,
-    guard: Guard<Action.Any, unknown, ErasedAuthenticator> = {},
+    before: ErasedBefore | undefined,
   ) {
-    this.#guard = guard;
+    this.#before = before;
     // A string key is a service's identity, so it is unique to this implementation
     // even across copies of this module.
     this.#key = Context.Service<Handlers<unknown>>(
@@ -131,7 +89,7 @@ export class Implementation<
    * so it stays off the public instance type.
    */
   static layerOf<EX, RX>(
-    app: Implementation<any, any, EX, RX, any>,
+    app: Implementation<any, any, EX, RX>,
   ): Layer.Layer<Handlers<unknown>, EX, RX> {
     return Implementation.own(app).#layer;
   }
@@ -143,9 +101,9 @@ export class Implementation<
     return Implementation.own(app).#key;
   }
 
-  /** The policy `app` was implemented with. */
-  static guardOf(app: AnyImplementation): Guard<Action.Any, unknown, ErasedAuthenticator> {
-    return Implementation.own(app).#guard;
+  /** The hook `app` was implemented with, if any. */
+  static beforeOf(app: AnyImplementation): ErasedBefore | undefined {
+    return Implementation.own(app).#before;
   }
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
@@ -163,13 +121,7 @@ export class Implementation<
 // The one place listing every parameter: `any` admits each implementation's, where
 // `unknown` would not. Types read a parameter from its type-only field.
 /** Any implementation, with its actions and channels erased. */
-export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<
-  A,
-  any,
-  any,
-  any,
-  any
->;
+export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<A, any, any, any>;
 
 /** What a surface serves: one implementation, or a list of them. */
 export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
@@ -200,33 +152,6 @@ export type RequestOf<App, A extends Action.Any> = App extends {
 
 /** Per-request requirements of the implementations a surface can invoke. */
 export type RequestContext<App> = App extends { readonly "~request": infer R } ? R[keyof R] : never;
-
-/**
- * Per-request requirements of the implementations an HTTP surface serves: each one's
- * own, less the identity its authenticator provides.
- */
-export type AuthenticatedContext<App> = App extends unknown
-  ? Exclude<RequestContext<App>, Identity<AuthenticatorOf<App>>>
-  : never;
-
-/** What the authenticators of `App` declare. */
-type AuthenticatorConfig<App> = ConfigOf<AuthenticatorOf<App>>;
-
-/** What building the authenticators of `App` fails with, on the HTTP surfaces that run them. */
-export type AuthenticatorError<App> = AuthenticatorConfig<App>["layerError"];
-
-/**
- * What the authenticators of `App` need, on the HTTP surfaces that run them: what the
- * native layer of each would require, their request requirements included.
- */
-export type AuthenticatorContext<App> =
-  | AuthenticatorConfig<App>["layerRequires"]
-  | HttpRouter.Request.From<"Requires", AuthenticatorConfig<App>["requires"]>
-  | HttpRouter.Request.From<"Error", AuthenticatorConfig<App>["error"]>;
-
-// Checks `App` itself, so a generic `App` resolves through its constraint.
-/** The authenticator of each of `App`. */
-type AuthenticatorOf<App> = App extends { readonly "~authenticate": infer Auth } ? Auth : never;
 
 /** Builder failures of the implementations a surface builds. */
 export type BuildError<App> = App extends { readonly "~buildError": infer EX } ? EX : never;
@@ -281,7 +206,7 @@ export const acquire = (
               action,
               handle === undefined
                 ? undefined
-                : dispatch(action, handle, Implementation.guardOf(app).before),
+                : dispatch(action, handle, Implementation.beforeOf(app)),
             ] as const;
           }),
         ),
@@ -304,7 +229,7 @@ export const acquire = (
 const dispatch = (
   action: Action.Any,
   handle: ErasedHandler<unknown>,
-  before: Before | undefined,
+  before: ErasedBefore | undefined,
 ): ErasedHandler<unknown> => {
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -326,7 +251,3 @@ const dispatch = (
     return before === undefined ? handled : Effect.flatMap(before(action), () => handled);
   };
 };
-
-/** The authenticator `app` was implemented with, if any. */
-export const authenticatorOf = (app: AnyImplementation): ErasedAuthenticator | undefined =>
-  Implementation.guardOf(app).authenticate;

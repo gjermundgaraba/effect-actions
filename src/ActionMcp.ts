@@ -8,11 +8,8 @@ import {
   type AnyImplementation,
   type BuildContext,
   type BuildError,
-  type AuthenticatedContext,
-  type AuthenticatorContext,
-  type AuthenticatorError,
-  authenticatorOf,
   type Member,
+  provideHandlers,
   type RequestContext,
   type Served,
   toList,
@@ -32,10 +29,21 @@ interface Options extends Omit<Parameters<typeof McpServer.layerHttp>[0], "proto
 type StdioOptions = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
 
 /**
- * The one protocol revision served. 2026-07-28 is stateless over HTTP: no
- * initialize handshake and no session, so every request stands alone.
+ * The one protocol revision served over HTTP. 2026-07-28 is stateless: no initialize
+ * handshake and no session, so every request stands alone.
  */
-const protocols = [McpProtocol.v2026_07_28] as const;
+const httpProtocols = [McpProtocol.v2026_07_28] as const;
+
+/**
+ * The revisions served over stdio: 2026-07-28 and the stateful revisions a host
+ * negotiates with `initialize`, newest first. Each carries `structuredContent`, so a
+ * success has one shape on every revision; older ones do not, and are refused.
+ */
+const stdioProtocols = [
+  McpProtocol.v2026_07_28,
+  McpProtocol.v2025_11_25,
+  McpProtocol.v2025_06_18,
+] as const;
 
 /** The native server supplies its own request context to every tool call. */
 type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext>;
@@ -52,55 +60,42 @@ const server = <Out, R>(
     // The native registry is mutable; every endpoint/subprocess gets its own one. Only
     // the registry: handlers are provided outside it, so builders stay shared.
     Layer.fresh,
-    binding.handlers,
+    provideHandlers(apps),
   );
 };
 
 /**
  * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28 only.
  *
- * An endpoint is one route, so it authenticates as a whole: its implementations share one
- * `authenticate`, or none has one. Public tools go on an endpoint of their own. Middleware
- * provided around this layer has the normal HTTP lifetime. Native context capture applies:
- * never provide request-identity tags at startup.
+ * An endpoint is one route: middleware provided around this layer, such as
+ * authentication, covers every tool of it, tool listing included, with the normal HTTP
+ * lifetime. Tools under different middleware go on endpoints of their own. Native
+ * context capture applies: never provide request-identity tags at startup.
  */
 export function layerHttp<const Apps extends Served>(
   apps: Apps,
   options: Options,
 ): Layer.Layer<
   never,
-  BuildError<Member<Apps>> | AuthenticatorError<Member<Apps>> | Cause.IllegalArgumentError,
+  BuildError<Member<Apps>> | Cause.IllegalArgumentError,
   | BuildContext<Member<Apps>>
-  | AuthenticatorContext<Member<Apps>>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", ToolRequestContext<AuthenticatedContext<Member<Apps>>>>
+  | HttpRouter.Request.From<"Requires", ToolRequestContext<RequestContext<Member<Apps>>>>
 >;
-export function layerHttp(served: Served, options: Options) {
-  const apps = toList(served);
-  const [authenticate, ...others] = new Set(apps.map(authenticatorOf));
-
-  if (others.length > 0) {
-    throw new Error(
-      "An MCP endpoint authenticates once: serve public tools and each authentication on endpoints of their own",
-    );
-  }
-
-  const endpoint = server(
-    apps,
-    McpServer.layerHttp({ ...options, path: options.path ?? "/mcp", protocols }),
+export function layerHttp(apps: Served, options: Options) {
+  return server(
+    toList(apps),
+    McpServer.layerHttp({ ...options, path: options.path ?? "/mcp", protocols: httpProtocols }),
   );
-
-  return authenticate === undefined ? endpoint : endpoint.pipe(Layer.provide(authenticate.layer));
 }
 
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
- * 2026-07-28 only. An older host is refused deliberately, for uniformity with HTTP,
- * even though stdio has no sessions.
+ * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates.
  *
- * The host supplies the `Stdio` service. Arguments are tool input only and
- * never establish request identity or authority: an implementation's `authenticate` does
- * not run, and the host provides the identity, while its `before` hook does.
+ * The host supplies the `Stdio` service and the identity. Arguments are tool input only
+ * and never establish request identity or authority; each implementation's `before` hook
+ * runs.
  */
 export function layerStdio<const Apps extends Served>(
   apps: Apps,
@@ -111,5 +106,5 @@ export function layerStdio<const Apps extends Served>(
   BuildContext<Member<Apps>> | StdioService | ToolRequestContext<RequestContext<Member<Apps>>>
 >;
 export function layerStdio(apps: Served, options: StdioOptions) {
-  return server(toList(apps), McpServer.layerStdio({ ...options, protocols }));
+  return server(toList(apps), McpServer.layerStdio({ ...options, protocols: stdioProtocols }));
 }

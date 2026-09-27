@@ -17,12 +17,12 @@ Package facts that apply everywhere:
 | Read                                   | When you need to                                                                                          |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | [setup.md](setup.md)                   | install, pin versions, pick entry points, know what the package does not do                               |
-| [Action.md](Action.md)                 | define a contract (input, success, errors, access, hints), bind its handler and policy, built-in errors   |
+| [Action.md](Action.md)                 | define a contract (input, success, errors, access, hints), bind its handler and hook, built-in errors     |
 | [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP 2026-07-28 tools over Streamable HTTP or stdio                                                  |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP (2026-07-28) or stdio (2026-07-28, 2025-11-25, 2025-06-18)           |
 | [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                              |
 | [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                          |
-| [Authentication.md](Authentication.md) | authenticate an implementation's callers, refuse with 401/403, publish RFC 9728 discovery                 |
+| [Authentication.md](Authentication.md) | authenticate the callers of HTTP surfaces, refuse with 401/403, publish RFC 9728 discovery                |
 | [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`                                                      |
 | [guarantees.md](guarantees.md)         | cross-cutting rules: builder lifetimes, wire formats, spans, request context, scope                       |
 
@@ -33,7 +33,7 @@ Package facts that apply everywhere:
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
 - Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
 
-Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own policy, `{ authenticate, before }`, which every surface applies; surfaces take only their transport's options.
+Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own `before` hook, which every surface runs; surfaces take only their transport's options. Authentication is router middleware the host provides around the HTTP surfaces.
 
 ## Minimal program
 

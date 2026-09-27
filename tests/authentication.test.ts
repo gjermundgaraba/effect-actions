@@ -55,7 +55,7 @@ describe("Authentication.make", () => {
 
           return HttpServerResponse.text((yield* Identity).id);
         }),
-      ).pipe(Layer.provide(auth.layer)),
+      ).pipe(Layer.provide(auth)),
     );
 
     onTestFinished(() => web.dispose());
@@ -96,7 +96,7 @@ describe("Authentication.make", () => {
 
     const web = serve(
       HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
-        Layer.provide(auth.layer),
+        Layer.provide(auth),
       ),
     );
 
@@ -134,7 +134,7 @@ describe("Authentication.make", () => {
         "GET",
         "/identity",
         Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
-      ).pipe(Layer.provide(auth.layer)),
+      ).pipe(Layer.provide(auth)),
     );
 
     onTestFinished(() => web.dispose());
@@ -164,7 +164,7 @@ describe("Authentication.make", () => {
         "GET",
         "/identity",
         Effect.succeed(HttpServerResponse.text("Not this one", { status: 401 })),
-      ).pipe(Layer.provide(auth.layer)),
+      ).pipe(Layer.provide(auth)),
     );
 
     onTestFinished(() => web.dispose());
@@ -185,7 +185,7 @@ describe("Authentication.make", () => {
 
     const web = serve(
       HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
-        Layer.provide(auth.layer),
+        Layer.provide(auth),
       ),
     );
 
@@ -203,18 +203,16 @@ describe("Authentication.make", () => {
       success: Schema.String,
     });
 
-    const app = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id), {
-      authenticate: Authentication.make(Identity, authenticateToken),
-    });
+    const app = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id));
 
     const Http = ActionHttp.make([Identify]);
 
-    // Each surface applies the implementation's authentication; the host provides nothing.
+    // Provided around both surfaces, the authentication covers each of their routes.
     const web = serve(
       Layer.mergeAll(
         ActionHttp.layer(Http, app),
         ActionMcp.layerHttp(app, { name: "refusal-test", version: "0" }),
-      ),
+      ).pipe(Layer.provide(Authentication.make(Identity, authenticateToken))),
     );
 
     onTestFinished(() => web.dispose());
@@ -281,7 +279,7 @@ describe("Authentication.make", () => {
 
           return yield* Effect.die(new Error("handler failed"));
         }),
-      ).pipe(Layer.provide(auth.layer)),
+      ).pipe(Layer.provide(auth)),
     );
 
     onTestFinished(() => web.dispose());
@@ -316,7 +314,7 @@ describe("Authentication.make", () => {
 
           return yield* new Private({ message: `private data for ${identity.id}` });
         }),
-      ).pipe(Layer.provide(auth.combine(outer).layer)),
+      ).pipe(Layer.provide(auth), Layer.provide(outer.layer)),
     );
 
     onTestFinished(() => web.dispose());
@@ -326,7 +324,7 @@ describe("Authentication.make", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("owes its services per request, which native middleware composition provides", async () => {
+  it("owes its services per request, which middleware around it provides", async () => {
     const auth = Authentication.make(
       Identity,
       Effect.gen(function* () {
@@ -337,9 +335,11 @@ describe("Authentication.make", () => {
       }),
     );
 
-    // Native middleware requires composition before its layer becomes available.
-    const missing: string = auth.layer;
-    void missing;
+    const owesTokens: HttpRouter.Request<"Requires", Tokens> extends Layer.Services<typeof auth>
+      ? true
+      : false = true;
+
+    void owesTokens;
 
     const tokens = HttpRouter.middleware<{ provides: Tokens }>()((effect) =>
       Effect.provideService(effect, Tokens, { prefix: "actor:" }),
@@ -350,7 +350,7 @@ describe("Authentication.make", () => {
         "GET",
         "/identity",
         Effect.map(Identity, (actor) => HttpServerResponse.text(actor.id)),
-      ).pipe(Layer.provide(auth.combine(tokens).layer)),
+      ).pipe(Layer.provide(auth), Layer.provide(tokens.layer)),
     );
 
     onTestFinished(() => web.dispose());
@@ -389,22 +389,21 @@ describe("Authentication.make", () => {
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        Identify,
-        () =>
-          Effect.gen(function* () {
-            expect(events).toEqual(["acquire"]);
-            events.push("handler");
+      const app = Action.implement(Identify, () =>
+        Effect.gen(function* () {
+          expect(events).toEqual(["acquire"]);
+          events.push("handler");
 
-            return (yield* Identity).id;
-          }),
-        { authenticate: auth },
+          return (yield* Identity).id;
+        }),
       );
 
       const web = serve(
         transport === "http"
-          ? ActionHttp.layer(ActionHttp.make([Identify]), app)
-          : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" }),
+          ? ActionHttp.layer(ActionHttp.make([Identify]), app).pipe(Layer.provide(auth))
+          : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" }).pipe(
+              Layer.provide(auth),
+            ),
       );
 
       onTestFinished(async () => {
@@ -471,7 +470,7 @@ describe("Authentication.bearerToken", () => {
   });
 });
 
-describe("an implementation's authentication", () => {
+describe("authentication around a surface", () => {
   const Public = Action.make("public", {
     description: "Answer anyone",
     access: "read",
@@ -490,10 +489,8 @@ describe("an implementation's authentication", () => {
 
   const open = Action.implement(Public, () => Effect.succeed("anyone"));
 
-  const guarded = Action.implement(
-    Secret,
-    ({ note }) => Effect.map(Identity, ({ id }) => `${id}: ${note}`),
-    { authenticate },
+  const guarded = Action.implement(Secret, ({ note }) =>
+    Effect.map(Identity, ({ id }) => `${id}: ${note}`),
   );
 
   const call = (path: string, body: Schema.Json, token?: string) => {
@@ -504,28 +501,22 @@ describe("an implementation's authentication", () => {
     return request;
   };
 
-  it("owes its authenticator's services per request, on every HTTP surface", async () => {
+  it("owes its services per request, on every HTTP surface it covers", async () => {
     let built = 0;
 
-    const verified = Action.implement(
-      Secret,
-      ({ note }) => Effect.map(Identity, ({ id }) => `${id}: ${note}`),
-      {
-        authenticate: Authentication.make(
-          Identity,
-          Effect.gen(function* () {
-            const { prefix } = yield* Tokens;
+    const verify = Authentication.make(
+      Identity,
+      Effect.gen(function* () {
+        const { prefix } = yield* Tokens;
 
-            return { id: `${prefix}${yield* Authentication.bearerToken}` };
-          }),
-        ),
-      },
+        return { id: `${prefix}${yield* Authentication.bearerToken}` };
+      }),
     );
 
     const routes = Layer.mergeAll(
-      ActionHttp.layer(Http, verified),
-      ActionMcp.layerHttp(verified, { name: "test", version: "0" }),
-    );
+      ActionHttp.layer(Http, guarded),
+      ActionMcp.layerHttp(guarded, { name: "test", version: "0" }),
+    ).pipe(Layer.provide(verify));
 
     const owesTokens: HttpRouter.Request<"Requires", Tokens> extends Layer.Services<typeof routes>
       ? true
@@ -559,7 +550,7 @@ describe("an implementation's authentication", () => {
     expect(built).toBe(1);
   });
 
-  it("takes any native middleware providing the identity, a combined one included", async () => {
+  it("may be any native middleware providing the identity, a combined one included", async () => {
     class Tenant extends Context.Service<Tenant, string>()("test/Tenant") {}
 
     // The identity needs the tenant another middleware resolves for the request.
@@ -571,13 +562,10 @@ describe("an implementation's authentication", () => {
       Effect.provideService(effect, Tenant, "acme"),
     );
 
-    const tenanted = Action.implement(
-      Secret,
-      ({ note }) =>
-        Effect.flatMap(Tenant, (tenant) =>
-          Effect.map(Identity, ({ id }) => `${id}@${tenant}: ${note}`),
-        ),
-      { authenticate: identify.combine(resolveTenant) },
+    const tenanted = Action.implement(Secret, ({ note }) =>
+      Effect.flatMap(Tenant, (tenant) =>
+        Effect.map(Identity, ({ id }) => `${id}@${tenant}: ${note}`),
+      ),
     );
 
     // Everything the combined middleware provides is provided, so nothing is owed.
@@ -585,7 +573,7 @@ describe("an implementation's authentication", () => {
       Layer.mergeAll(
         ActionHttp.layer(Http, tenanted),
         ActionMcp.layerHttp(tenanted, { name: "test", version: "0" }),
-      ),
+      ).pipe(Layer.provide(identify.combine(resolveTenant).layer)),
     );
 
     onTestFinished(() => web.dispose());
@@ -594,23 +582,14 @@ describe("an implementation's authentication", () => {
     expect(await against(web, Testing.mcpCall(Secret, { note: "hi" }))).toBe("acme@acme: hi");
   });
 
-  // A local surface never runs `authenticate`, so it owes none of its services.
-  it("leaves an authenticator's services off the local surfaces", () => {
-    const { layer } = ActionToolkit.make(
-      Action.implement(Secret, ({ note }) => Effect.succeed(note), {
-        authenticate: Authentication.make(
-          Identity,
-          Effect.map(Tokens, ({ prefix }) => ({ id: prefix })),
-        ),
-      }),
+  it("covers only the layer it is provided to, so one binding serves public and private actions", async () => {
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Http, open),
+        ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate)),
+      ),
     );
 
-    const owesNothing: Tokens extends Layer.Services<typeof layer> ? false : true = true;
-    void owesNothing;
-  });
-
-  it("guards only its own routes, so one layer serves public and private actions", async () => {
-    const web = serve(ActionHttp.layer(Http, [open, guarded]));
     onTestFinished(() => web.dispose());
 
     const anyone = await web.handler(call("public", {}));
@@ -627,41 +606,33 @@ describe("an implementation's authentication", () => {
   });
 
   it("runs before decoding, so an unauthenticated caller learns nothing of the input", async () => {
-    const web = serve(ActionHttp.layer(Http, guarded));
+    const web = serve(ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate)));
     onTestFinished(() => web.dispose());
 
     expect((await web.handler(call("secret", { note: 42 }))).status).toBe(401);
     expect((await web.handler(call("secret", { note: 42 }, "alice"))).status).toBe(400);
   });
 
-  it("authenticates an MCP endpoint as a whole, refusing to mix authentications", async () => {
-    const web = serve(ActionMcp.layerHttp(guarded, { name: "test", version: "0" }));
+  it("authenticates an MCP endpoint as a whole, public tools included", async () => {
+    const web = serve(
+      ActionMcp.layerHttp([open, guarded], { name: "test", version: "0" }).pipe(
+        Layer.provide(authenticate),
+      ),
+    );
+
     onTestFinished(() => web.dispose());
 
-    // One route: tool listing is authenticated too.
-    expect(await against(web, Effect.flip(Testing.mcpCall(Secret, { note: "hi" })))).toBeInstanceOf(
-      Action.Unauthenticated,
-    );
+    // One route: every tool of it is authenticated.
+    for (const refused of [Testing.mcpCall(Secret, { note: "hi" }), Testing.mcpCall(Public)]) {
+      expect(await against(web, Effect.flip(refused))).toBeInstanceOf(Action.Unauthenticated);
+    }
+
     expect(
       await against(
         web,
         Testing.mcpCall(Secret, { note: "hi" }, { headers: { authorization: "alice" } }),
       ),
     ).toBe("alice: hi");
-
-    const other = Action.implement(Public, () => Effect.succeed("anyone"), {
-      authenticate: Authentication.make(Identity, Effect.succeed({ id: "other" })),
-    });
-
-    // A public implementation stays public: it is refused beside an authenticated one.
-    for (const mixed of [
-      [open, guarded],
-      [other, guarded],
-    ]) {
-      expect(() => ActionMcp.layerHttp(mixed, { name: "test", version: "0" })).toThrow(
-        "An MCP endpoint authenticates once",
-      );
-    }
   });
 
   it("leaves identity to the host on a local surface", async () => {

@@ -70,11 +70,6 @@ type NativeMethod = (request: {
 /** A native client, erased: one method per endpoint of the top-level group. */
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
-// SAFETY: every binding API is one top-level group whose endpoints take `{ payload }`;
-// only the static endpoint map is erased.
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native client boundary.
-const erase = <C>(native: C): NativeClient => native as NativeClient;
-
 /**
  * Build the native client of a binding once and look up each action's method, taking the
  * action's input directly. Every binding API is a native `HttpApi` of one top-level
@@ -85,11 +80,12 @@ export const methods = (
   options: Options = {},
 ): Effect.Effect<(action: Action.Any) => ErasedMethod, never, HttpClient.HttpClient> =>
   Effect.map(
-    // SAFETY: see above; only the invariant static group map is dropped.
+    // SAFETY: every binding API is one top-level group whose endpoints take `{ payload }`;
+    // only the invariant static group map is dropped.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary.
     HttpApiClient.make(http.api as HttpApi.HttpApi<string>, options),
     (client) => {
-      const native = erase(client);
+      const native: NativeClient = client;
 
       return (action) => {
         const method = native[action.name];
@@ -101,13 +97,4 @@ export const methods = (
         return (...input) => method({ payload: input.length === 0 ? {} : input[0] });
       };
     },
-  );
-
-/** Every method of a binding's client, keyed by action name. */
-export const client = (
-  http: AnyHttp,
-  options?: Options,
-): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> =>
-  Effect.map(methods(http, options), (methodOf) =>
-    Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
   );
