@@ -153,9 +153,9 @@ Layer.launch(layer).pipe(
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
-- `Unauthenticated` and `Forbidden` join every tool's declared failures, so a `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error. A schema an action already declares is not repeated.
-- The hook runs after the native server decodes the tool's arguments.
-- Authentication refuses before the MCP handler: an HTTP 401 or 403, not a tool result. An MCP client reads the 401's `WWW-Authenticate` challenge and finds its authorization server through `Authentication.protectedResource` ([Authentication.md](Authentication.md)).
+- Over HTTP, a call's `before` hook runs before the native server reads it: the endpoint selects the tool by the call's `Mcp-Name` header, which the native server then checks against the body. A refusal is an HTTP 401 or 403 with the refusal's JSON, not a tool result, as MCP authorization defines; a `Forbidden` naming `scopes` carries the `insufficient_scope` challenge, on which an MCP client re-authorizes with those scopes and retries ([Authentication.md](Authentication.md#rules)). A call whose header the endpoint cannot attribute, such as a base64-encoded one, runs the hook in the tool instead, and is refused with a tool result.
+- Over stdio, the hook runs after the native server decodes the tool's arguments. `Unauthenticated` and `Forbidden` join every tool's declared failures, so a refusal there is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error. A schema an action already declares is not repeated.
+- Authentication refuses before the MCP handler too: an HTTP 401 or 403. An MCP client reads the 401's `WWW-Authenticate` challenge and finds its authorization server through the discovery `Authentication.make` publishes for a protected resource ([Authentication.md](Authentication.md)).
 
 ## Failure modes
 

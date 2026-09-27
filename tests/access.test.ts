@@ -134,23 +134,25 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("decodes HTTP input before running either the hook or handler", async () => {
+  it("runs the HTTP hook before decoding, so a refused caller learns nothing of the input", async () => {
     const { app, hooks, handlers } = make();
     const web = serveHttp(app, readOnly);
     onTestFinished(() => web.dispose());
 
-    const invalid = await web.handler(post("/api/write", { value: 42 }));
-    expect(invalid.status).toBe(400);
-    expect(hooks).toEqual([]);
-    expect(handlers).toEqual([]);
-
-    const refused = await web.handler(post("/api/write", { value: "x" }));
+    const refused = await web.handler(post("/api/write", { value: 42 }));
     expect(refused.status).toBe(403);
     expect(hooks).toEqual(["write"]);
+
+    const writer = serveHttp(app, Layer.succeed(Scopes, ["read", "write"]));
+    onTestFinished(() => writer.dispose());
+
+    const invalid = await writer.handler(post("/api/write", { value: 42 }));
+    expect(invalid.status).toBe(400);
+    expect(hooks).toEqual(["write", "write"]);
     expect(handlers).toEqual([]);
   });
 
-  it("runs over MCP, where a refusal is the tool's declared failure", async () => {
+  it("runs over MCP before the call is read, answering a refusal with its HTTP status", async () => {
     const { app, hooks, handlers } = make();
 
     const mcp = serve(
@@ -164,15 +166,51 @@ describe("the pre-handler hook", () => {
     expect(await (await mcp.handler(rawToolCall("read"))).json()).toMatchObject({
       result: { isError: false, structuredContent: { value: "read ok" } },
     });
-    expect(await (await mcp.handler(rawToolCall("write", { value: "x" }))).json()).toMatchObject({
+
+    // A refusal is the status MCP authorization defines, not a tool result: a client
+    // re-authorizes on it.
+    const refused = await mcp.handler(rawToolCall("write", { value: 42 }));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual(
+      Schema.encodeSync(Action.Forbidden)(new Action.Forbidden({ message: "Requires write." })),
+    );
+
+    expect(hooks).toEqual(["read", "write"]);
+    expect(handlers).toEqual(["read"]);
+  });
+
+  it("still runs the hook once over MCP for a call whose headers it cannot attribute", async () => {
+    const { app, hooks, handlers } = make();
+
+    const mcp = serve(
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
+        HttpRouter.provideRequest(readOnly),
+      ),
+    );
+
+    onTestFinished(() => mcp.dispose());
+
+    // The routing header encoded as MCP allows: the native server accepts it, and the
+    // handler runs the hook the preflight could not.
+    const encoded = rawToolCall("write", { value: "x" });
+    encoded.headers.set("mcp-name", `=?base64?${btoa("write")}?=`);
+    const reply = await mcp.handler(encoded);
+
+    expect(reply.status).toBe(200);
+    expect(await reply.json()).toMatchObject({
       result: {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"Forbidden","message":"Requires write."}' }],
       },
     });
+    // A header naming another tool than the body is refused before any tool runs, so a
+    // call cannot pass one tool's hook and run another.
+    const disguised = rawToolCall("write", { value: "x" });
+    disguised.headers.set("mcp-name", "read");
+    expect((await mcp.handler(disguised)).status).toBe(400);
 
-    expect(hooks).toEqual(["read", "write"]);
-    expect(handlers).toEqual(["read"]);
+    expect(hooks).toEqual(["write", "read"]);
+    expect(handlers).toEqual([]);
   });
 
   it("runs over the native Toolkit", async () => {

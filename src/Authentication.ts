@@ -1,4 +1,4 @@
-import { type Context, Effect, type Layer, Schema } from "effect";
+import { type Context, Effect, Layer } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
   HttpEffect,
@@ -6,7 +6,8 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { type Refusal, refusals, statuses, Unauthenticated } from "./internal/errors.js";
+import { type Refusal, Unauthenticated } from "./internal/errors.js";
+import { bearer, refuse, ResourceMetadata } from "./internal/refusal.js";
 
 /**
  * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
@@ -25,93 +26,40 @@ export const bearerToken: Effect.Effect<
     : Effect.succeed(token);
 });
 
-/** How `make` answers what it covers. */
-export interface Options {
-  /**
-   * The `WWW-Authenticate` challenge of every 401 without one, whether authentication, a
-   * hook or a handler answers it; defaults to `Bearer`.
-   */
-  readonly challenge?: string;
-}
-
-const Refusals = Schema.Union(refusals);
-
-/** A refusal as its JSON with its status, as every endpoint declares it. */
-const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-  HttpServerResponse.schemaJson(Refusals)(error, { status: statuses[error._tag] }).pipe(
-    Effect.orDie,
-  );
-
-/**
- * How a remote caller proves who they are: router middleware that authenticates each
- * request and provides its identity to the handler. Provide it to the HTTP surfaces
- * serving guarded implementations, `ActionHttp.layer` and `ActionMcp.layerHttp`, as to
- * any native route: it covers the routes of the layer it is provided to, before decoding,
- * and removes the identity from that layer's request requirements.
- *
- * `authenticate` fails with `Unauthenticated` (a 401) or `Forbidden` (a 403), each sent as
- * the JSON every client decodes, or with the response to send instead. The services it
- * yields are request requirements, like a handler's, which the layer keeps;
- * `HttpRouter.provideRequest` builds one once, such as a token verifier. Acquired
- * resources live until the request scope closes, including while the handler is running.
- *
- * Every response of the routes it covers is marked `Cache-Control: no-store`, and every
- * 401 among them without a challenge gets `options.challenge`, including failures
- * serialized by enclosing middleware.
- */
-export const make = <I, A, R>(
-  service: Context.Key<I, A>,
-  authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
-  options: Options = {},
-): Layer.Layer<
-  HttpRouter.Request.From<"Requires", I>,
-  never,
-  HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
-> =>
-  // SAFETY: native middleware types its layer only once no request requirement is left,
-  // asking for another middleware to provide them. The layer is the same at run time, and
-  // they stay requirements of the routes it covers, as the type states.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native middleware boundary.
-  HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
-    authenticate.pipe(
-      Effect.matchEffect({
-        onFailure: (error) =>
-          HttpServerResponse.isHttpServerResponse(error) ? Effect.succeed(error) : refuse(error),
-        onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
-      }),
-      HttpEffect.withPreResponseHandler((_request, response) =>
-        Effect.succeed(
-          HttpServerResponse.setHeaders(response, {
-            "cache-control": "no-store",
-            ...(response.status === 401 && response.headers["www-authenticate"] === undefined
-              ? { "www-authenticate": options.challenge ?? "Bearer" }
-              : {}),
-          }),
-        ),
-      ),
-    ),
-  ).layer as Layer.Layer<
-    HttpRouter.Request.From<"Requires", I>,
-    never,
-    HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
-  >;
-
-/** RFC 9728 metadata to publish; the host is responsible for these being valid OAuth URLs. */
-export interface ProtectedResourceOptions {
+/** An OAuth protected resource (RFC 9728), as `make` publishes it. */
+interface ProtectedResource {
   /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
+  /** Where clients get tokens: nonempty. */
   readonly authorizationServers: NonEmptyReadonlyArray<string>;
+  /** Every scope the resource accepts, which a client requests when a 401 names none. */
   readonly scopesSupported?: ReadonlyArray<string>;
   readonly resourceName?: string;
+  readonly challenge?: never;
+}
+
+/** A fixed challenge, for a scheme other than an OAuth protected resource's. */
+interface Challenge {
+  /** The `WWW-Authenticate` of every covered 401 without one; defaults to `Bearer`. */
+  readonly challenge?: string;
+  readonly resource?: never;
 }
 
 /**
- * Publish RFC 9728 discovery at `/.well-known/oauth-protected-resource` followed by the
- * resource's path, where MCP clients look when a 401 names no metadata URL. It answers
- * before routing, so no route middleware, authentication included, ever covers it; the
- * host still verifies access tokens.
+ * How `make` answers what it covers: as an OAuth protected resource, which it publishes and
+ * names in every challenge, or with a fixed `challenge`.
  */
-export const protectedResource = (options: ProtectedResourceOptions) => {
+export type Options = ProtectedResource | Challenge;
+
+const isProtectedResource = (options: Options): options is ProtectedResource =>
+  options.resource !== undefined;
+
+/**
+ * RFC 9728 discovery of `options` at `/.well-known/oauth-protected-resource` followed by the
+ * resource's path, where MCP clients look when a 401 names no metadata URL, and that URL. It
+ * answers before routing, so no route middleware, authentication included, ever covers it.
+ */
+const discovery = (options: ProtectedResource) => {
   const resource = new URL(options.resource);
 
   const discoveryUrl = new URL(resource);
@@ -129,7 +77,7 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
 
   // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
   // to the host, including other discovery documents on the same router.
-  return HttpRouter.middleware(
+  const layer = HttpRouter.middleware(
     (next) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -145,4 +93,83 @@ export const protectedResource = (options: ProtectedResourceOptions) => {
       }),
     { global: true },
   );
+
+  return { url: discoveryUrl.href, layer };
+};
+
+/**
+ * How a remote caller proves who they are: router middleware that authenticates each
+ * request and provides its identity to the handler. Provide it to the HTTP surfaces
+ * serving guarded implementations, `ActionHttp.layer` and `ActionMcp.layerHttp`, as to
+ * any native route: it covers the routes of the layer it is provided to, before decoding,
+ * and removes the identity from that layer's request requirements.
+ *
+ * `authenticate` fails with `Unauthenticated` (a 401) or `Forbidden` (a 403), each sent as
+ * the JSON every client decodes, or with the response to send instead. The services it
+ * yields are request requirements, like a handler's, which the layer keeps;
+ * `HttpRouter.provideRequest` builds one once, such as a token verifier. Acquired
+ * resources live until the request scope closes, including while the handler is running.
+ *
+ * Every response of the routes it covers is marked `Cache-Control: no-store`, and every
+ * 401 among them without a challenge gets one, including failures serialized by enclosing
+ * middleware. Given an OAuth protected resource, it also publishes the resource's RFC 9728
+ * discovery, once however many layers it covers, public and before routing, and every
+ * challenge names its metadata URL: a 401's, `invalid_token` when the request carried
+ * credentials, and the `insufficient_scope` challenge of a refusal naming scopes. Otherwise
+ * a 401's challenge is `options.challenge`, `Bearer` by default.
+ */
+export const make = <I, A, R>(
+  service: Context.Key<I, A>,
+  authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
+  options: Options = {},
+): Layer.Layer<
+  HttpRouter.Request.From<"Requires", I>,
+  never,
+  HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+> => {
+  const published = isProtectedResource(options) ? discovery(options) : undefined;
+
+  const challenge = (request: HttpServerRequest.HttpServerRequest): string =>
+    published === undefined
+      ? (options.challenge ?? "Bearer")
+      : bearer([
+          // RFC 6750 §3.1: a request that carried no credentials gets no error code.
+          ["error", request.headers.authorization === undefined ? undefined : "invalid_token"],
+          ["resource_metadata", published.url],
+        ]);
+
+  // SAFETY: native middleware types its layer only once no request requirement is left,
+  // asking for another middleware to provide them. The layer is the same at run time, and
+  // they stay requirements of the routes it covers, as the type states.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native middleware boundary.
+  const middleware = HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
+    authenticate.pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          HttpServerResponse.isHttpServerResponse(error) ? Effect.succeed(error) : refuse(error),
+        onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
+      }),
+      // Every refusal under it, its own, a hook's, names the resource's metadata URL.
+      (answered) =>
+        published === undefined
+          ? answered
+          : Effect.provideService(answered, ResourceMetadata, published.url),
+      HttpEffect.withPreResponseHandler((request, response) =>
+        Effect.succeed(
+          HttpServerResponse.setHeaders(response, {
+            "cache-control": "no-store",
+            ...(response.status === 401 && response.headers["www-authenticate"] === undefined
+              ? { "www-authenticate": challenge(request) }
+              : {}),
+          }),
+        ),
+      ),
+    ),
+  ).layer as Layer.Layer<
+    HttpRouter.Request.From<"Requires", I>,
+    never,
+    HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+  >;
+
+  return published === undefined ? middleware : Layer.merge(middleware, published.layer);
 };

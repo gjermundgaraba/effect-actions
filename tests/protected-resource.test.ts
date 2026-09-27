@@ -9,38 +9,89 @@ const prefix = "/.well-known/oauth-protected-resource";
 
 class Caller extends Context.Service<Caller, string>()("protected-resource/Caller") {}
 
-it("answers before routing, so authentication provided around it never covers it", async () => {
-  const web = serve(
-    Layer.mergeAll(
-      Authentication.protectedResource({
-        resource: "https://api.example.com/mcp",
+let routes = 0;
+
+/**
+ * A route of its own authenticated as the protected resource `resource`, which publishes
+ * the resource's discovery.
+ */
+const published = (
+  resource: string,
+  options: {
+    readonly scopesSupported?: ReadonlyArray<string>;
+    readonly resourceName?: string;
+  } = {},
+) =>
+  HttpRouter.add("GET", `/private/${(routes += 1)}`, HttpServerResponse.text("private")).pipe(
+    Layer.provide(
+      Authentication.make(Caller, Effect.succeed("caller"), {
+        resource,
         authorizationServers: ["https://auth.example.com"],
+        ...options,
       }),
-      HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)),
-    ).pipe(Layer.provide(Authentication.make(Caller, Effect.fail(new Action.Unauthenticated())))),
+    ),
+  );
+
+it("answers before routing, so the authentication publishing it never covers it", async () => {
+  const web = serve(
+    HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)).pipe(
+      Layer.provide(
+        Authentication.make(Caller, Effect.fail(new Action.Unauthenticated()), {
+          resource: "https://api.example.com/mcp",
+          authorizationServers: ["https://auth.example.com"],
+        }),
+      ),
+    ),
   );
 
   onTestFinished(() => web.dispose());
 
   expect((await web.handler(new Request(`https://api.example.com${prefix}/mcp`))).status).toBe(200);
-  expect((await web.handler(new Request("https://api.example.com/private"))).status).toBe(401);
+
+  const refused = await web.handler(new Request("https://api.example.com/private"));
+  expect(refused.status).toBe(401);
+  // The challenge names the metadata URL, and no error code: the request had no credentials.
+  expect(refused.headers.get("www-authenticate")).toBe(
+    `Bearer resource_metadata="https://api.example.com${prefix}/mcp"`,
+  );
+
+  const invalid = await web.handler(
+    new Request("https://api.example.com/private", { headers: { authorization: "Bearer x" } }),
+  );
+
+  expect(invalid.headers.get("www-authenticate")).toBe(
+    `Bearer error="invalid_token", resource_metadata="https://api.example.com${prefix}/mcp"`,
+  );
 });
 
-it("publishes standalone metadata at the resource's well-known URL", async () => {
+it("publishes discovery for every layer it authenticates, which may share it", async () => {
+  const authenticate = Authentication.make(Caller, Effect.succeed("caller"), {
+    resource: "https://api.example.com/mcp",
+    authorizationServers: ["https://auth.example.com"],
+  });
+
+  const web = serve(
+    Layer.mergeAll(
+      HttpRouter.add("GET", "/a", HttpServerResponse.text("a")).pipe(Layer.provide(authenticate)),
+      HttpRouter.add("GET", "/b", HttpServerResponse.text("b")).pipe(Layer.provide(authenticate)),
+    ),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const response = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
+  expect(await (await web.handler(new Request("https://api.example.com/b"))).text()).toBe("b");
+});
+
+it("publishes metadata at the resource's well-known URL", async () => {
   const resource = "https://api.example.com/mcp?tenant=alice";
 
   const web = serve(
     Layer.mergeAll(
-      Authentication.protectedResource({
-        resource,
-        authorizationServers: ["https://auth.example.com"],
-        scopesSupported: ["admin:read", "admin:write"],
-      }),
-      Authentication.protectedResource({
-        resource: "https://api.example.com",
-        authorizationServers: ["https://auth.example.com"],
-        resourceName: "Root",
-      }),
+      published(resource, { scopesSupported: ["admin:read", "admin:write"] }),
+      published("https://api.example.com", { resourceName: "Root" }),
     ),
   );
 
@@ -87,12 +138,7 @@ it("matches literal resource paths exactly and delegates other requests to the h
     Layer.mergeAll(
       HttpRouter.add("GET", `${prefix}/mcp/unrelated`, HttpServerResponse.text("host route")),
       HttpRouter.add("POST", `${prefix}/mcp/*`, HttpServerResponse.text("host post")),
-      ...paths.map((path) =>
-        Authentication.protectedResource({
-          resource: `https://api.example.com${path}`,
-          authorizationServers: ["https://auth.example.com"],
-        }),
-      ),
+      ...paths.map((path) => published(`https://api.example.com${path}`)),
     ),
   );
 

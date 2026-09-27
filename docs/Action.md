@@ -194,7 +194,7 @@ export const listChanges = Action.implement(
 - MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but the native MCP server refuses it when an `ActionMcp` layer is built. Success and error schemas may be any shape.
 - Hint defaults: `destructive: access === "write"`, `idempotent: false`, `openWorld: true`; `readOnlyHint` is always `access === "read"`. Only a write may state `destructive`: a read is never destructive, as MCP defines the hint for writes only. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
 - `InvalidInput`, `Unauthenticated` and `Forbidden` are built in and declared everywhere ([guarantees.md](guarantees.md#wire-behavior)), so do not list them in `errors`. A handler fails with one only when its action lists it in `errors`, like any other error.
-- Build a refusal with or without a message: `new Action.Forbidden()` sends `"Not allowed."`, `new Action.Forbidden({ message: "Requires users:write." })` sends that.
+- Build a refusal with or without a message: `new Action.Forbidden()` sends `"Not allowed."`, `new Action.Forbidden({ message: "Requires users:write." })` sends that. A `Forbidden` may name the OAuth scopes the call lacks, `new Action.Forbidden({ scopes: ["users:write"] })`: a refused OAuth client then re-authorizes with them ([Authentication.md](Authentication.md#rules)).
 - Schemas must be service-free. Put service access in the handler.
 
 ### Implementations

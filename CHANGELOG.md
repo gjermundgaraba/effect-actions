@@ -6,9 +6,12 @@ One contract, one `implement`, one binding, one hook. `ActionGroup` is gone: act
 implemented directly, HTTP binds a flat list of actions, every client calls an action with its
 input, and a builder runs once however many surfaces serve it. An implementation carries its
 own `before` hook, which every surface runs, so surfaces take only their transport's options;
-authentication stays native router middleware around the HTTP surfaces. The library now owns the failures a surface answers with instead of a
-handler: bad input is a 400 `InvalidInput`, and authentication or a `before` hook refuses with
-`Unauthenticated` (401) or `Forbidden` (403), which every endpoint and tool declares. CLI flags
+authentication stays native router middleware around the HTTP surfaces, and publishes an OAuth
+protected resource's discovery itself. The library now owns the failures a surface answers with
+instead of a handler: bad input is a 400 `InvalidInput`, and authentication or a `before` hook
+refuses with `Unauthenticated` (401) or `Forbidden` (403), which every endpoint and tool
+declares, and which over HTTP is the status MCP authorization defines: a refusal naming the
+scopes a call lacks is the `insufficient_scope` challenge an OAuth client steps up on. CLI flags
 are derived from each action's input. Clients and `Testing` are Effect-only, the HTTP client is
 part of `ActionHttp`, and `ActionCatalog` is removed.
 
@@ -113,14 +116,19 @@ defect: an empty 500, which a client sees as an `HttpClientError`. The `ActionHt
 `Action.implement(actions, handlers, before)` binds whether a caller may call, and every
 surface serving the implementation runs the hook, so no surface can leave it out.
 `before: (action) => Effect<void, Action.Refusal, R>` receives the selected action, typed as the
-implementation's own, after input decoding and before its handler, on every surface; failing
-with anything but a refusal is a type error. It may be a value that may be `undefined`, as
+implementation's own, before its handler, on every surface; failing with anything but a refusal
+is a type error. The HTTP surfaces run it before decoding the request, so a refused caller
+never sees a schema error: an unauthorized call with bad input is a 401 or 403, not a 400.
+Over MCP on HTTP a refusal is its HTTP status with its JSON, not an `isError` tool result, as
+MCP authorization defines, so an MCP client handles it; the hook runs once per call, before the
+native server reads the call, selected by its `Mcp-Name` header. Over stdio and in the Toolkit
+it runs after decoding and is a tool failure, as before. It may be a value that may be `undefined`, as
 `enabled ? authorize : undefined`: its services are required either way. The `before` option of
 `ActionHttp.layer`, `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, and
 `ActionCli.command` and `make` is gone, and so is `ActionToolkit.make`'s second argument. Every
 local command's error channel includes `Action.Refusal`, as every endpoint and tool declares
-both refusals. `ActionHttp` sets no header of its own: the authentication around a route
-challenges its 401s.
+both refusals. The HTTP surfaces set one header of their own, on a refusal naming scopes (see
+the additions); the authentication around a route challenges its 401s.
 
 - Migrate:
 
@@ -148,29 +156,34 @@ Provide it around the layers whose routes it authenticates, as before:
 `ActionHttp.layer(Http, users).pipe(Layer.provide(authenticate))`, or around an
 `ActionMcp.layerHttp` endpoint, which it covers whole. Public and authenticated actions of one
 binding go in separate `ActionHttp.layer` calls. `authenticate` fails with
-`Action.Unauthenticated`, answered 401 with its JSON, `Action.Forbidden`, answered 403 with no
-challenge, or an `HttpServerResponse` to send instead. `make`'s one option, `challenge`, is the
-`WWW-Authenticate` of every 401 of the routes it covers that has none, `Bearer` by default,
-whether authentication, a hook or a handler answers it; a 401 outside authentication carries
-no challenge.
+`Action.Unauthenticated`, answered 401 with its JSON, `Action.Forbidden`, answered 403, or an
+`HttpServerResponse` to send instead. Every 401 of the routes it covers that has no challenge
+gets one, whether authentication, a hook or a handler answers it; a 401 outside authentication
+carries none. `make`'s options are an OAuth protected resource or a fixed `challenge`, `Bearer`
+by default, such as `Basic realm="app"`.
 Services `authenticate` yields remain request requirements of the layer, and so of every layer
 it covers, where native middleware would ask to be combined first;
 `HttpRouter.provideRequest` builds one once, such as a token verifier. Every response still
 carries `cache-control: no-store`. `MiddlewareOptions` is gone. `Authentication.bearerToken`
 fails with `Unauthenticated` (`A bearer token is required.`) instead of returning an `Option`.
-`Authentication.protectedResource(options)` returns the router layer itself instead of
-`{ layer, metadataUrl, challenge }`; `challenge()` and `BearerChallengeOptions` are gone. The
-challenge names no metadata URL: an MCP client then probes the well-known URL
-`protectedResource` serves, as the MCP authorization spec requires of clients.
+`Authentication.protectedResource` is gone, with `challenge()`, `BearerChallengeOptions` and
+`ProtectedResourceOptions`: `make` takes the protected resource's options itself (`resource`,
+`authorizationServers`, `scopesSupported`, `resourceName`), publishes its RFC 9728 discovery,
+public and before routing, once however many layers it covers, and names the metadata URL in
+every challenge: a 401's `Bearer resource_metadata="..."`, with `error="invalid_token"` when
+the request carried credentials, and a scope refusal's `insufficient_scope` challenge. The
+discovery and the challenges cannot disagree, and the discovery cannot be left unmounted.
 
 - Migrate: rename `middleware` to `make`, drop its third argument, fail with the built-in
   refusals, and provide the result itself instead of its `.layer`:
   `Layer.provide(authentication.layer)` becomes `Layer.provide(authenticate)`. Replace
   `Option.isSome(token) && valid(token.value)` on `bearerToken` with `valid(token)`; where a
   token is optional, `Effect.option(Authentication.bearerToken)`.
-  `Layer.mergeAll(routes, discovery.layer)` becomes `Layer.mergeAll(routes, discovery)`. For a
-  custom challenge (`resource_metadata`, `scope`, `error`), fail with an `HttpServerResponse`
-  carrying your own header.
+  Move `protectedResource`'s options into `make`'s, and drop the discovery layer:
+  `Layer.mergeAll(routes, discovery.layer)` becomes `routes`, with the authentication provided
+  around them. A scope refusal is `new Action.Forbidden({ message, scopes: [scope] })`, which
+  replaces an `InsufficientScope` error and a hand-built `insufficient_scope` challenge. For any
+  other custom challenge, fail with an `HttpServerResponse` carrying your own header.
 
 **`ActionHttpClient` is merged into `ActionHttp`.** `ActionHttp.client(Http, options?)` and
 `ActionHttp.Client<typeof Http>` replace `ActionHttpClient.make` and `ActionHttpClient.Client`;
@@ -304,6 +317,12 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
   annotations, and a generic handler such as `Effect.succeed` is inferred as itself.
 - `Action.InvalidInput`, `Action.Unauthenticated`, `Action.Forbidden` and `Action.Refusal`:
   the built-in errors every surface declares.
+- `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`, each an
+  OAuth scope token, decoded by every client. A hook's or authentication's refusal naming them
+  is answered on HTTP and MCP over HTTP with
+  `WWW-Authenticate: Bearer error="insufficient_scope", scope="users:write"`, plus the
+  protected resource's `resource_metadata` and an `error_description`, on which an MCP client
+  re-authorizes with those scopes and retries, as MCP authorization specifies.
 - `Authentication.bearerToken` reads the request's bearer token, failing with
   `Unauthenticated` without one.
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the

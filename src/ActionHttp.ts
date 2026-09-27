@@ -17,6 +17,7 @@ import {
   type Prefix,
 } from "./internal/client.js";
 import { httpErrors, type HttpErrors } from "./internal/errors.js";
+import { preflight } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
@@ -204,7 +205,8 @@ export function make(
 
 /**
  * Serve implementations of a binding's actions in one layer, each implementation's `before`
- * hook running after decoding, before each handler. It mounts only the routes of the
+ * hook running before the request is decoded, so a refused caller learns nothing of the
+ * input, and its refusal answered with its status. It mounts only the routes of the
  * actions it serves, so one binding may be served by several layers, such as public
  * routes beside authenticated ones: middleware provided to a layer covers its routes
  * only. Each implementation's builder runs once however many layers serve it.
@@ -241,9 +243,21 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
         ),
       ),
     ),
-  ).pipe(provideHandlers(apps));
+  );
 
-  return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
+  // Each served action's route, as the router matched it, selects its hook.
+  const hooks = preflight(apps, (bound) => {
+    const byRoute = new Map(bound.map((entry) => [`${http.prefix}/${entry[0].name}`, entry]));
+
+    return (_request, route) => (route.method === "POST" ? byRoute.get(route.path) : undefined);
+  });
+
+  return HttpApiBuilder.layer(api).pipe(
+    Layer.provide(handlers),
+    Layer.provide(schemaErrors),
+    Layer.provide(hooks),
+    provideHandlers(apps),
+  );
 }
 
 /**

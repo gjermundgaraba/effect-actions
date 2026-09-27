@@ -22,14 +22,18 @@ export class CurrentActor extends Context.Service<CurrentActor, Actor>()("exampl
 /**
  * One authorization rule for every guarded surface, derived from each contract's own
  * `access`. An implementation binds it as its `before` hook, so every surface serving it
- * runs it before every handler and no handler contains authorization code. Its `Forbidden` is built in: every
- * endpoint and tool declares it, and every client decodes it.
+ * runs it before every handler and no handler contains authorization code. Its `Forbidden` is
+ * built in: every endpoint and tool declares it, and every client decodes it. Naming the
+ * missing scope makes it the `insufficient_scope` challenge an OAuth client steps up on.
  */
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const permission: Permission = action.access === "read" ? "users:read" : "users:write";
   const actor = yield* CurrentActor;
 
   if (!actor.permissions.includes(permission)) {
-    return yield* new Action.Forbidden({ message: `Requires ${permission}.` });
+    return yield* new Action.Forbidden({
+      message: `Requires ${permission}.`,
+      scopes: [permission],
+    });
   }
 });

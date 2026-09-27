@@ -176,6 +176,100 @@ describe("Authentication.make", () => {
     }
   });
 
+  it("challenges a refusal naming scopes with insufficient_scope, its own or a hook's", async () => {
+    const Write = Action.make("write", { description: "Write", access: "write" });
+
+    const app = Action.implement(
+      Write,
+      () => Effect.void,
+      () =>
+        Effect.fail(new Action.Forbidden({ message: 'Needs "write".', scopes: ["a:write", "b"] })),
+    );
+
+    const resource = {
+      resource: "https://api.example.com/api",
+      authorizationServers: ["https://auth.example.com"],
+    } as const;
+
+    const metadata = "https://api.example.com/.well-known/oauth-protected-resource/api";
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Write]), app).pipe(
+          Layer.provide(Authentication.make(Identity, Effect.succeed({ id: "caller" }), resource)),
+        ),
+        HttpRouter.add("GET", "/scoped", HttpServerResponse.text("never")).pipe(
+          Layer.provide(
+            Authentication.make(
+              Identity,
+              Effect.fail(new Action.Forbidden({ message: "Read only.", scopes: ["read"] })),
+              resource,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    // A hook's refusal. Its message is no RFC 6750 error description, so it has none.
+    const hooked = await web.handler(post("/api/write"));
+    expect(hooked.status).toBe(403);
+    expect(hooked.headers.get("www-authenticate")).toBe(
+      `Bearer error="insufficient_scope", scope="a:write b", resource_metadata="${metadata}"`,
+    );
+    expect(await hooked.json()).toEqual(
+      Schema.encodeSync(Action.Forbidden)(
+        new Action.Forbidden({ message: 'Needs "write".', scopes: ["a:write", "b"] }),
+      ),
+    );
+
+    // Authentication's own.
+    const own = await web.handler(new Request("http://localhost/scoped"));
+    expect(own.status).toBe(403);
+    expect(own.headers.get("www-authenticate")).toBe(
+      `Bearer error="insufficient_scope", scope="read", resource_metadata="${metadata}", error_description="Read only."`,
+    );
+  });
+
+  it("challenges a hook's scopes without authentication too, naming no metadata", async () => {
+    const Write = Action.make("write", { description: "Write", access: "write" });
+
+    const app = Action.implement(
+      Write,
+      () => Effect.void,
+      () => Effect.fail(new Action.Forbidden({ scopes: ["write"] })),
+    );
+
+    const web = serve(ActionHttp.layer(ActionHttp.make([Write]), app));
+    onTestFinished(() => web.dispose());
+
+    const refused = await web.handler(post("/api/write"));
+    expect(refused.headers.get("www-authenticate")).toBe(
+      'Bearer error="insufficient_scope", scope="write", error_description="Not allowed."',
+    );
+
+    // A refusal naming no scope has no challenge: re-authorizing would not help.
+    const plain = serve(
+      ActionHttp.layer(
+        ActionHttp.make([Write]),
+        Action.implement(
+          Write,
+          () => Effect.void,
+          () => Effect.fail(new Action.Forbidden()),
+        ),
+      ),
+    );
+
+    onTestFinished(() => plain.dispose());
+
+    expect((await plain.handler(post("/api/write"))).headers.get("www-authenticate")).toBeNull();
+  });
+
+  it("refuses a scope that is no OAuth scope token", () => {
+    expect(() => new Action.Forbidden({ scopes: ["has space"] })).toThrow();
+  });
+
   it("rejects any other failure in the types, and answers it with an empty 500", async () => {
     const auth = Authentication.make(
       Identity,

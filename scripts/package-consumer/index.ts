@@ -72,14 +72,6 @@ const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>
 if ((await statusOf(Testing.layer(ActionHttp.openApi(Http)), "/api/openapi.json")) !== 200)
   throw new Error("The OpenAPI route failed");
 
-const discovery = Authentication.protectedResource({
-  resource: "http://localhost/mcp",
-  authorizationServers: ["https://example.com/auth"],
-});
-
-if ((await statusOf(Testing.layer(discovery), "/.well-known/oauth-protected-resource/mcp")) !== 200)
-  throw new Error("The discovery route failed");
-
 const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 const binding = ActionToolkit.make(greet);
@@ -171,6 +163,19 @@ void checkHookTypes;
 
 // Authentication provided around the layer: it owes no identity.
 const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(authenticate));
+
+// An OAuth protected resource's authentication publishes its discovery, public.
+const published = ActionHttp.layer(GuardedHttp, guarded).pipe(
+  Layer.provide(
+    Authentication.make(Identity, Authentication.bearerToken, {
+      resource: "http://localhost/mcp",
+      authorizationServers: ["https://example.com/auth"],
+    }),
+  ),
+);
+
+if ((await statusOf(Testing.layer(published), "/.well-known/oauth-protected-resource/mcp")) !== 200)
+  throw new Error("The discovery route failed");
 
 const refusals = await Effect.gen(function* () {
   const anonymous = yield* ActionHttp.client(GuardedHttp);

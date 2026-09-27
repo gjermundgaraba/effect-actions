@@ -24,10 +24,20 @@ export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   { httpApiStatus: statuses.Unauthenticated },
 ) {}
 
-/** The caller may not run this action: an implementation's `before` hook refuses. */
+/** An OAuth scope token (RFC 6749 §3.3): printable ASCII but space, `"` and `\`. */
+const ScopeToken = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5B\x5D-\x7E]+$/));
+
+/**
+ * The caller may not run this action: an implementation's `before` hook refuses. `scopes`,
+ * when given, are every OAuth scope the call needs: a refusal naming them is answered with
+ * the `insufficient_scope` challenge an OAuth client re-authorizes on.
+ */
 export class Forbidden extends Schema.TaggedError<Forbidden>()(
   "Forbidden",
-  { message: message("Not allowed.") },
+  {
+    message: message("Not allowed."),
+    scopes: Schema.optionalKey(Schema.NonEmptyArray(ScopeToken)),
+  },
   { httpApiStatus: statuses.Forbidden },
 ) {}
 

@@ -23,7 +23,7 @@ Exported type: `McpCallOptions`.
 `mcpCall(action, input)` succeeds with the action's decoded success. It fails with the
 action's declared errors and the refusals as decoded values, `SchemaError`,
 `HttpClientError`, or `McpCallError` for any other answer. Only a tool result carries the
-action's own errors; any other response decodes only as a refusal, as authentication sends. It requires an `HttpClient`. The input
+action's own errors; any other response decodes only as a refusal, as authentication and a hook send. It requires an `HttpClient`. The input
 may be left out when `{}` is a valid input, sending `{}`, and a given input is sent as given, as for a client's method. To pass options for an action without input, give `{}`: `mcpCall(WhoAmI, {}, { headers })`.
 
 ## Canonical
@@ -54,7 +54,7 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 - `layer(routes)` builds the routes with `HttpServer.layerServices` provided and request logging off, and releases them with the layer's scope. Routes must satisfy their own per-request requirements, with their middleware; a route still owing one is a type error. Each `layer` builds the routes anew, builders included.
 - A relative URL resolves against `http://localhost`, once any `baseUrl` a client adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl` under `layer`, and one given is kept. Every request on this client is answered by the routes, whatever its host, so the native `HttpApiClient` and a remote `ActionCli` command work in memory too.
 - `mcpCall` sends one stateless `tools/call` for the action's tool, at the protocol version `ActionMcp.layerHttp` serves, 2026-07-28, in both the header and `_meta`. It encodes the input with the action's schema, and decodes the success from `structuredContent.value`, as `ActionHttp.client` does for a route. It reads a JSON or an event-stream response.
-- A declared error, the action's own or a refusal, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
+- A declared error, the action's own or a refusal, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication or a hook, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
 - Any other answer fails with `McpCallError`, whose `message` holds it: another status, the native server's own text (invalid arguments, a defect), no reply, a result without `structuredContent`, or a JSON-RPC error (an unknown tool). Match it with `Effect.catchTag("McpCallError", ...)`.
 - The input is typed, so a malformed call cannot be sent through `mcpCall`. To assert on a malformed request or another MCP response, send the request with `HttpClient` yourself.
 - Add `Authorization` through `headers` in `mcpCall`, or through `transformClient` in `ActionHttp.client` options.

@@ -4,6 +4,7 @@ import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
 import { defaultPath, httpProtocol } from "./internal/mcp.js";
+import { preflight } from "./internal/refusal.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type AnyImplementation,
@@ -67,8 +68,10 @@ const server = <Out, R>(
  *
  * An endpoint is one route: middleware provided around this layer, such as
  * authentication, covers every tool of it, tool listing included, with the normal HTTP
- * lifetime. Tools under different middleware go on endpoints of their own. Native
- * context capture applies: never provide request-identity tags at startup.
+ * lifetime. Tools under different middleware go on endpoints of their own. Each call's
+ * `before` hook runs before its body is read, and a refusal is its HTTP status, 401 or 403,
+ * as MCP authorization requires. Native context capture applies: never provide
+ * request-identity tags at startup.
  */
 export function layerHttp<const Apps extends Served>(
   apps: Apps,
@@ -81,13 +84,27 @@ export function layerHttp<const Apps extends Served>(
   | HttpRouter.Request.From<"Requires", ToolRequestContext<RequestContext<Member<Apps>>>>
 >;
 export function layerHttp(apps: Served, options: HttpOptions) {
+  const served = toList(apps);
+
+  // A 2026-07-28 call names its tool in its headers, which the native server checks against
+  // its body, so the hook runs before the body is read, and a refusal is an HTTP status an
+  // OAuth client re-authorizes on rather than a tool result.
+  const hooks = preflight(served, (bound) => {
+    const tools = new Map(bound.map((entry) => [entry[0].name, entry]));
+
+    return (request) =>
+      request.headers["mcp-method"] === "tools/call"
+        ? tools.get(request.headers["mcp-name"] ?? "")
+        : undefined;
+  });
+
   return server(
-    toList(apps),
+    served,
     McpServer.layerHttp({
       ...options,
       path: options.path ?? defaultPath,
       protocols: [httpProtocol],
-    }),
+    }).pipe(Layer.provide(hooks)),
   );
 }
 

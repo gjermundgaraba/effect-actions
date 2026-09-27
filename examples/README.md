@@ -16,7 +16,8 @@ Do not deploy these credentials or this authentication implementation. State res
 Every action declares `access: "read"` or `access: "write"`. The protected implementations name
 their hook once, `authorize`: the HTTP and MCP layers serving them authenticate the bearer
 token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
-`access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`. No
+`access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`,
+naming the scope the caller lacks. No
 handler contains authorization code, and no surface can leave the rule out.
 
 The application serves its implementations under three access rules:
@@ -81,12 +82,14 @@ curl -s http://127.0.0.1:3000/mcp/public \
 curl -s http://127.0.0.1:3000/api/openapi.json
 ```
 
-For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The implementation carries that hook, so HTTP runs the same check before the handler.
+For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope, before the call is read. The implementation carries that hook, so HTTP runs the same check before the handler.
 
 Without a token, a protected route or the `/mcp` endpoint answers 401
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
-`WWW-Authenticate: Bearer`; with an unknown one, the message is `Unknown demo token.`. An MCP client then finds the authorization server at
-`/.well-known/oauth-protected-resource/mcp`, which is public.
+`WWW-Authenticate: Bearer resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"`;
+with an unknown one, the message is `Unknown demo token.` and the challenge adds
+`error="invalid_token"`. An MCP client then finds the authorization server at that URL, which
+is public.
 
 ## Application structure
 
@@ -96,7 +99,7 @@ Without a token, a protected route or the `/mcp` endpoint answers 401
 - [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the protected implementations name.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the protected ones.
-- [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.make` answering a missing or unknown token with the built-in 401 and its `Bearer` challenge.
+- [authentication.ts](authentication.ts): `Authentication.make` for an OAuth protected resource, publishing its RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
 - [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the protected MCP endpoints.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
@@ -119,8 +122,8 @@ HTTP /api/getUser / MCP tool getUser
 (403) and `Unauthenticated` (401) are built in: every endpoint and tool declares them, because
 the hook and the authentication produce them rather than a handler. That is what
 lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
-authentication carry `cache-control: no-store`; other routes use the host's cache policy. MCP returns an `isError` tool
-result whose text is the same encoding HTTP sends. Tool discovery is not filtered by actor.
+authentication carry `cache-control: no-store`; other routes use the host's cache policy. MCP over HTTP answers
+a refusal with the same status and body as HTTP. Tool discovery is not filtered by actor.
 
 A write through `renameUser` is visible through both transports, and through the MCP-only
 `listChanges` tool. `double`

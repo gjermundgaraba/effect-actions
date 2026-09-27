@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
-import type { Client } from "@modelcontextprotocol/client";
+import { type Client, InsufficientScopeError } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import {
@@ -20,6 +20,10 @@ import { mcpRequest } from "./requests.js";
 import { withMcpClient } from "./mcp-client.js";
 
 let app: ReturnType<typeof makeTestApp>;
+
+/** The example's 401 challenge: its resource's metadata URL, for a request without credentials. */
+const challenge =
+  'Bearer resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"';
 
 beforeEach(() => {
   app = makeTestApp();
@@ -129,20 +133,32 @@ describe("one implementation, both transports", () => {
     // Native McpServer registers tools once, so tools/list is the same for every actor.
     const reply = await withMcp((client) => client.listTools(), "reader");
     expect(reply.tools.map((tool) => tool.name)).toContain("renameUser");
-    const denied = await tool("renameUser", { id: "1", name: "unauthorized" }, "reader");
-    expect(denied.isError).toBe(true);
+
+    // The refusal names the scope it lacks, so the official client, which cannot
+    // re-authorize here, reports the step-up it would take.
+    const denied = tool("renameUser", { id: "1", name: "unauthorized" }, "reader");
+
+    await expect(denied).rejects.toBeInstanceOf(InsufficientScopeError);
+    await expect(denied).rejects.toMatchObject({
+      requiredScope: "users:write",
+      resourceMetadataUrl: new URL(
+        "http://localhost:3000/.well-known/oauth-protected-resource/mcp",
+      ),
+      errorDescription: "Requires users:write.",
+    });
 
     const forbiddenBody = Schema.encodeSync(Action.Forbidden)(
-      new Action.Forbidden({ message: "Requires users:write." }),
+      new Action.Forbidden({ message: "Requires users:write.", scopes: ["users:write"] }),
     );
-
-    expect(denied.content).toEqual([{ type: "text", text: JSON.stringify(forbiddenBody) }]);
 
     const forbidden = await app.handler(
       request("/api/renameUser", "reader", { id: "1", name: "unauthorized" }),
     );
 
     expect(forbidden.status).toBe(403);
+    expect(forbidden.headers.get("www-authenticate")).toBe(
+      'Bearer error="insufficient_scope", scope="users:write", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp", error_description="Requires users:write."',
+    );
     expect(await forbidden.json()).toEqual(forbiddenBody);
     expect(await (await app.handler(request("/api/getUser", "alice", { id: "1" }))).json()).toEqual(
       {
@@ -199,7 +215,8 @@ describe("one implementation, both transports", () => {
       );
 
       expect(response.status).toBe(401);
-      expect(response.headers.get("www-authenticate")).toBe("Bearer");
+      // The example authenticates as an OAuth protected resource, named in its challenge.
+      expect(response.headers.get("www-authenticate")).toBe(challenge);
       expect(await response.json()).toEqual(
         Schema.encodeSync(Action.Unauthenticated)(
           new Action.Unauthenticated({ message: "A bearer token is required." }),
@@ -338,7 +355,7 @@ describe("actions under their own middleware", () => {
 
     const unauthenticated = await app.handler(anonymous("/api/whoAmI", {}));
     expect(unauthenticated.status).toBe(401);
-    expect(unauthenticated.headers.get("www-authenticate")).toBe("Bearer");
+    expect(unauthenticated.headers.get("www-authenticate")).toBe(challenge);
     expect((await app.handler(request("/api/whoAmI", "alice", {}))).status).toBe(200);
   });
 

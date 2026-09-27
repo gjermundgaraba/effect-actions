@@ -60,7 +60,7 @@ describe("mcpCall", () => {
 
     expect(results).toEqual([
       new UserNotFound({ id: "404" }),
-      new Action.Forbidden({ message: "Requires users:write." }),
+      new Action.Forbidden({ message: "Requires users:write.", scopes: ["users:write"] }),
       new Action.Unauthenticated({ message: "Unknown demo token." }),
     ]);
   });
