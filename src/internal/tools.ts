@@ -33,7 +33,7 @@ const annotate = (tool: Tool.Any, { access, hints }: Action.Any) =>
 const nativeTool = (
   action: Action.Any,
   errors: Action.Any["errors"],
-  needsApproval: boolean,
+  needsApproval: Tool.NeedsApproval<Action.Any["input"]>,
 ): Tool.Any =>
   annotate(
     Tool.make(action.name, {
@@ -70,7 +70,10 @@ const mcpTool = (action: Action.Any, errors: Action.Any["errors"]): Tool.Any =>
  * Only a native tool may need approval: `LanguageModel` asks for it, and MCP has no such field.
  */
 type Projection =
-  | { readonly kind: "native"; readonly needsApproval: (action: Action.Any) => boolean }
+  | {
+      readonly kind: "native";
+      readonly needsApproval: (action: Action.Any) => Tool.NeedsApproval<Action.Any["input"]>;
+    }
   | { readonly kind: "mcp" };
 
 const project = (projection: Projection, action: Action.Any): Tool.Any => {

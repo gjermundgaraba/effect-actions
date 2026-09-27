@@ -187,8 +187,11 @@ ActionToolkit.make(app, {
   },
 });
 
-// @ts-expect-error It decides from the action alone, as a boolean.
+// @ts-expect-error It is a boolean, or a function of the call's input.
 ActionToolkit.make(app, { needsApproval: () => "yes" });
+
+// A function of each call's input and context is the native form, and may be an Effect.
+ActionToolkit.make(app, { needsApproval: () => () => Effect.succeed(true) });
 
 // Approval changes no tool's type or requirements.
 const approved = ActionToolkit.make(app, { needsApproval: () => true });

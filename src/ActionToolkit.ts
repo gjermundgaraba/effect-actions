@@ -50,10 +50,11 @@ export interface Tools<T extends Record<string, Tool.Any>, E, R> {
 export interface Options<A extends Action.Any> {
   /**
    * Whether an action's tool needs approval before it runs: Effect's native
-   * `Tool.needsApproval`, which `LanguageModel` honors by asking for approval instead of
-   * calling the tool. Read once per action when `make` runs. Defaults to none.
+   * `Tool.needsApproval`, a boolean or a function of each call's input, which
+   * `LanguageModel` honors by asking for approval instead of calling the tool. Read once
+   * per action when `make` runs. Defaults to none.
    */
-  readonly needsApproval?: (action: A) => boolean;
+  readonly needsApproval?: (action: A) => Tool.NeedsApproval<A["input"]>;
 }
 
 /** `Tools`, erased: the public signature restores its tools and channels. */

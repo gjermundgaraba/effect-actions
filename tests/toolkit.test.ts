@@ -10,38 +10,43 @@ describe("ActionToolkit", () => {
   it("marks the tools a model needs approval for, which LanguageModel asks for instead of calling", async () => {
     const calls: string[] = [];
 
+    const input = { id: Schema.String };
+
     const Read = Action.make("read", {
       description: "Read",
       access: "read",
+      input,
       success: Schema.String,
     });
 
     const Erase = Action.make("erase", {
       description: "Erase",
       access: "write",
+      input,
       success: Schema.String,
     });
 
     const app = Action.implement([Read, Erase], {
-      read: () => Effect.sync(() => (calls.push("read"), "read")),
-      erase: () => Effect.sync(() => (calls.push("erase"), "erased")),
+      read: ({ id }) => Effect.sync(() => (calls.push(`read ${id}`), "read")),
+      erase: ({ id }) => Effect.sync(() => (calls.push(`erase ${id}`), "erased")),
     });
 
+    // A write needs approval, except of a draft: the native function of each call's input.
     const binding = ActionToolkit.make(app, {
-      needsApproval: (action) => action.access === "write",
+      needsApproval: (action) => action.access === "write" && (({ id }) => id !== "draft"),
     });
 
     expect(binding.toolkit.tools.read.needsApproval).toBe(false);
-    expect(binding.toolkit.tools.erase.needsApproval).toBe(true);
     // No tool needs approval unless the host says so.
     expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBe(false);
 
-    // A model that calls both tools at once.
+    // A model that calls the tools at once.
     const model = LanguageModel.make({
       generateText: () =>
         Effect.succeed([
-          { type: "tool-call", id: "1", name: "read", params: {} },
-          { type: "tool-call", id: "2", name: "erase", params: {} },
+          { type: "tool-call", id: "1", name: "read", params: { id: "a" } },
+          { type: "tool-call", id: "2", name: "erase", params: { id: "draft" } },
+          { type: "tool-call", id: "3", name: "erase", params: { id: "final" } },
         ] as const),
       streamText: () => Stream.empty,
     });
@@ -56,10 +61,13 @@ describe("ActionToolkit", () => {
     );
 
     expect(response.content.filter((part) => part.type === "tool-approval-request")).toMatchObject([
-      { toolCallId: "2" },
+      { toolCallId: "3" },
     ]);
-    expect(response.toolResults).toMatchObject([{ name: "read", result: "read" }]);
-    expect(calls).toEqual(["read"]);
+    expect(response.toolResults).toMatchObject([
+      { name: "read", result: "read" },
+      { name: "erase", result: "erased" },
+    ]);
+    expect(calls).toEqual(["read a", "erase draft"]);
   });
 
   it("uses native action schemas/results, and names tools after actions", async () => {

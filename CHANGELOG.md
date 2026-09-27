@@ -352,8 +352,9 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
   typed to the input's own fields, parsed as their flags, optional for an optional field, and
   work over HTTP too.
 - `ActionToolkit.make(apps, { needsApproval: (action) => action.access === "write" })` sets
-  Effect's native `Tool.needsApproval`, so `LanguageModel` asks for approval before running
-  those tools. MCP has no such field, and `ActionMcp` takes no such option.
+  Effect's native `Tool.needsApproval` of each action's tool, a boolean or a function of each
+  call's input, so `LanguageModel` asks for approval before running those calls. MCP has no
+  such field, and `ActionMcp` takes no such option.
 - The package declares `"sideEffects": false`, and no client-path module builds server code
   when it loads, so a browser bundle of `ActionHttp.client` keeps the contracts, the binding
   and the client alone. Keep contracts and bindings in modules that import no server code, as

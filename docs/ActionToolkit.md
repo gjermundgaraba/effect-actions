@@ -13,9 +13,9 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 | `toolkit`              | Native `Toolkit` with typed tool names, schemas and per-tool request requirements.             |
 | `layer`                | The handler layer: acquires handlers in its scope; requires build-time services, not identity. |
 
-| Option          | Meaning                                                                                                 |
-| --------------- | ------------------------------------------------------------------------------------------------------- |
-| `needsApproval` | `(action) => boolean`: the tools whose calls `LanguageModel` asks approval for instead of running them. |
+| Option          | Meaning                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `needsApproval` | `(action) =>` a boolean, or a function of the call's input: the calls `LanguageModel` asks approval for instead of running them. |
 
 Exported types: `Tools`, what `make` returns, and `Options`, what it takes.
 
@@ -72,7 +72,7 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 - `tools.handle(name, encodedInput)` takes encoded arguments and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - Builders, the hook and identity follow [guarantees.md](guarantees.md#dependency-lifetimes): `layer` builds, and identity is supplied at invocation, never when building the layer.
 - Each tool carries only its own handler's request requirements, plus the hook's, not those of sibling actions.
-- `needsApproval` receives each action, typed as the implementations' own, once when `make` runs, and sets Effect's native `Tool.needsApproval`. `LanguageModel` enforces it; `tools.handle` ignores it, like any caller that is not a model's turn. It is not authorization, which stays the `before` hook's, and MCP has no such field, so `ActionMcp` takes no such option. Default: no tool needs approval.
+- `needsApproval` receives each action, typed as the implementations' own, once when `make` runs, and returns Effect's native `Tool.needsApproval` for its tool: a boolean, or a function of each call's decoded input and context returning a boolean or an `Effect` of one. `LanguageModel` enforces it; `tools.handle` ignores it, like any caller that is not a model's turn. It is not authorization, which stays the `before` hook's, and MCP has no such field, so `ActionMcp` takes no such option. Default: no tool needs approval.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
 - `Unauthenticated` and `Forbidden` join every tool's declared failures, so a `before` refusal is an ordinary returned tool failure. A schema an action already declares is not repeated.
 
