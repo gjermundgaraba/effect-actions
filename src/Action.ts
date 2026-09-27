@@ -3,6 +3,7 @@ import type { Scope } from "effect";
 import { assertDistinct, assertName } from "./internal/actions.js";
 import {
   type Before,
+  type Bound,
   type ErasedHandler,
   type HandlerContext,
   type Handlers,
@@ -293,8 +294,8 @@ export function implement(
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so
-  // is an action without a handler. The result is one handler per action, in order.
-  const record = (built: Built): ReadonlyArray<ErasedHandler<unknown>> => {
+  // is an action without a handler. The result pairs each action with its handler.
+  const record = (built: Built): Bound => {
     const handlers: Handlers<unknown> = Predicate.isFunction(built)
       ? isList(target)
         ? {}
@@ -305,17 +306,18 @@ export function implement(
 
     if (unknown.length > 0) throw new Error(`Unknown handlers: ${unknown.join(", ")}`);
 
-    const missing = names.filter(
-      (name) => !Object.hasOwn(handlers, name) || !Predicate.isFunction(handlers[name]),
-    );
+    // Own-property functions only: an inherited method is not a handler.
+    const bound = actions.flatMap((action) => {
+      const handle = Object.hasOwn(handlers, action.name) ? handlers[action.name] : undefined;
+
+      return Predicate.isFunction(handle) ? [[action, handle] as const] : [];
+    });
+
+    const missing = names.filter((name) => !bound.some(([action]) => action.name === name));
 
     if (missing.length > 0) throw new Error(`Missing handlers: ${missing.join(", ")}`);
 
-    return names.flatMap((name) => {
-      const handle = handlers[name];
-
-      return handle === undefined ? [] : [handle];
-    });
+    return bound;
   };
 
   // Plain handlers are checked here; a builder's record when it is built.

@@ -1,4 +1,4 @@
-import { Array as Arr, Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
@@ -73,8 +73,8 @@ export class Implementation<
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
-    /** One handler per action, in the order of `actions`. */
-    build: Effect.Effect<ReadonlyArray<ErasedHandler<unknown>>, EX, RX | Scope.Scope>,
+    /** Each action paired with its handler. */
+    build: Effect.Effect<Bound, EX, RX | Scope.Scope>,
     before: ErasedBefore | undefined,
   ) {
     // A string key is a service's identity, so it is unique to this implementation
@@ -85,12 +85,8 @@ export class Implementation<
     // Each handler goes behind the hook once, when the handlers are built.
     this.#layer = Layer.effect(
       this.#key,
-      Effect.map(build, (handlers) =>
-        Arr.zipWith(
-          actions,
-          handlers,
-          (action, handle) => [action, dispatch(action, handle, before)] as const,
-        ),
+      Effect.map(build, (bound) =>
+        bound.map(([action, handle]) => [action, dispatch(action, handle, before)] as const),
       ),
     );
   }
