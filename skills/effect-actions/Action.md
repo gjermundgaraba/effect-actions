@@ -224,4 +224,4 @@ export const listChanges = Action.implement(
 - `Type '...' is not assignable to type 'never'` on a key at `make`: an option it does not take, or a misspelled one.
 - Type error naming `Give this option or omit it: a value that may be undefined is neither`: an option of `make` may be `undefined`, directly or through a conditional spread. Branch around the call.
 - `Object literal may only specify known properties, and 'before' does not exist` at `implement`: the hook is the third argument itself, not an option of an object.
-- `implement` throws `Action "<name>": error _tag "Forbidden" is built in; use Action.Forbidden`: an error in the action's `errors` encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Use the built-in error, or another tag.
+- `implement` throws `Action "<name>": error _tag "Forbidden" is built in; declare Action.Forbidden itself`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`, and is not the built-in error itself, an annotated copy included. Use the built-in error, or another tag.

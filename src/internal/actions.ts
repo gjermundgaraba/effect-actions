@@ -2,7 +2,7 @@
 import { isString } from "effect/Predicate";
 import { type AST, isLiteral, isObjects, isUnion, toEncoded } from "effect/SchemaAST";
 import type * as Action from "../Action.js";
-import { httpErrors } from "./errors.js";
+import { httpErrors, statuses } from "./errors.js";
 
 /**
  * An action's own failures plus the ones its surface answers with, which is what
@@ -48,38 +48,40 @@ export const assertDistinct = <T>(
   }
 };
 
-/** The `_tag` strings a schema's encoding may carry: one per tagged member. */
-const encodedTags = (ast: AST): ReadonlyArray<string> => {
+/**
+ * The built-in error's `_tag` a schema's encoding may carry, of a member of a union
+ * included; the built-in errors themselves, which an action may declare, carry none.
+ */
+const builtInTag = (ast: AST): string | undefined => {
+  if (httpErrors.some((builtIn) => builtIn.ast === ast)) return undefined;
+
+  if (isUnion(ast)) return ast.types.map(builtInTag).find(isString);
+
   const encoded = toEncoded(ast);
 
-  if (isUnion(encoded)) return encoded.types.flatMap(encodedTags);
+  const tag = isObjects(encoded)
+    ? encoded.propertySignatures.find((property) => property.name === "_tag")?.type
+    : undefined;
 
-  if (!isObjects(encoded)) return [];
-
-  return encoded.propertySignatures.flatMap((property) =>
-    property.name === "_tag" && isLiteral(property.type) && isString(property.type.literal)
-      ? [property.type.literal]
-      : [],
-  );
+  return tag !== undefined &&
+    isLiteral(tag) &&
+    isString(tag.literal) &&
+    Object.hasOwn(statuses, tag.literal)
+    ? tag.literal
+    : undefined;
 };
 
 /**
  * Refuse an application error that encodes with a built-in error's `_tag`: every endpoint
  * declares the built-in one at the same status, and a client decoding the answer could not
- * tell them apart. The built-in errors themselves are allowed, and declared once.
+ * tell them apart.
  */
 export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
-  // Computed per call, not when the module loads, so a client bundle, which never calls
-  // it, drops it.
-  const builtInTags = new Set(httpErrors.flatMap(({ ast }) => encodedTags(ast)));
-
   for (const error of errors) {
-    if (httpErrors.some((builtIn) => builtIn === error)) continue;
-
-    const tag = encodedTags(error.ast).find((candidate) => builtInTags.has(candidate));
+    const tag = builtInTag(error.ast);
 
     if (tag !== undefined) {
-      throw new Error(`${what}: error _tag "${tag}" is built in; use Action.${tag}`);
+      throw new Error(`${what}: error _tag "${tag}" is built in; declare Action.${tag} itself`);
     }
   }
 };

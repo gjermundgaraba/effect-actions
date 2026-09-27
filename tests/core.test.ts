@@ -98,15 +98,19 @@ describe("contracts", () => {
       const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
 
       expect(() => Action.implement(Guarded, () => Effect.void)).toThrow(
-        `Action "guarded": error _tag "${tag}" is built in; use Action.${tag}`,
+        `Action "guarded": error _tag "${tag}" is built in; declare Action.${tag} itself`,
       );
     }
 
-    // The built-in errors themselves, and other tags, are fine.
+    // The built-in errors themselves, in a union too, and other tags, are fine.
     const Allowed = Action.make("allowed", {
       description: "",
       access: "write",
-      errors: [Action.Forbidden, Schema.TaggedStruct("Busy", {})],
+      errors: [
+        Action.Forbidden,
+        Schema.TaggedStruct("Busy", {}),
+        Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]),
+      ],
     });
 
     expect(Action.implement(Allowed, () => Effect.void).actions).toEqual([Allowed]);
