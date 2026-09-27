@@ -15,25 +15,26 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                         |
 | `implement(action, handler)`                   | Bind one handler; returns one `Implementation`.                                      |
 | `implement([actions], handlers)`               | Bind a record of handlers keyed by action name; returns one `Implementation` of all. |
-| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host.         |
+| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.   |
 | `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                   |
 | `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.        |
 | `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.   |
 | `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                            |
-| `Handler`, `Access`                            | Typed handlers, and `"read"` / `"write"`.                                            |
+| `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                              |
+| `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`. |
+| `Options`, `Hints`                             | What `make` takes, and its tool hints.                                               |
 
 | Option                  | Meaning                                                          |
 | ----------------------- | ---------------------------------------------------------------- |
 | `description`, `access` | Required description and `"read"` / `"write"`.                   |
-| `input`                 | Optional schema or fields; omission means an empty object.       |
+| `input`                 | Optional schema or fields; omitted or `{}`, an empty object.     |
 | `success`               | Optional schema or fields; omission means `Schema.Void`.         |
 | `errors`                | Declared error codecs; defaults to none.                         |
 | `hints`                 | Tool hints for MCP and the Toolkit; each defaults from `access`. |
 
-`before` receives the selected action, after successful input decoding and before its
-handler, on every surface, and fails with a `Refusal`. Authentication is not part of an
-implementation: the host provides it around the HTTP surfaces
-([Authentication.md](Authentication.md)).
+`before` receives the selected action and fails with a `Refusal`; every surface runs it
+([guarantees.md](guarantees.md#dependency-lifetimes)). Authentication is the host's, not
+the implementation's ([Authentication.md](Authentication.md)).
 
 `input` and `success` take a schema or plain fields: `{ id: Schema.String }` is
 `Schema.Struct({ id: Schema.String })`. A tool is read-only exactly when `access` is
@@ -181,18 +182,18 @@ export const listChanges = Action.implement(
 ### Contracts
 
 - Names are 1 to 128 characters of `[A-Za-z0-9_-]`. `then` is rejected: it would make a client thenable. The name is also the HTTP route segment, the client method and the MCP tool name.
-- Omit `input` for a no-argument action. The default is an empty object schema, which satisfies MCP's object-root requirement. Its client method may be called without an argument.
-- Omit `success` for an action that returns nothing. The default is `Schema.Void`: the handler returns `Effect.void`, the client method and `Testing.mcpCall` return `void`, HTTP answers with no content, and a CLI command prints nothing. A handler that returns data needs a `success` schema: `Effect<string>` is assignable to `Effect<void>`, so `implement` refuses such a handler rather than let its value be dropped.
-- `input` and `success` take a schema or fields. Fields become `Schema.Struct(fields)`; each field must be service-free, like every schema here.
+- Omit `input`, or give `{}`, for a no-argument action. Its input is an empty object that accepts only `{}`: over HTTP, extra fields and a missing body are a 400. It is MCP's object root. Its client method may be called without an argument.
+- Omit `success` for an action that returns nothing. The default is `Schema.Void`: the client method and `Testing.mcpCall` return `void`, HTTP answers with no content, and a CLI command prints nothing. As for a function returning `void`, its handler may still return a value; the encoding drops it. Declare `success` to return data.
+- `input` and `success` take a schema or fields. Fields become `Schema.Struct(fields)`, and no fields the empty object above; each field must be service-free, like every schema here.
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation; an unannotated error is served as HTTP 500. To share errors across actions, spread one constant array into each action's `errors`.
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level. An implementation's `before` hook reads it (see [guarantees.md](guarantees.md)); the library itself authorizes nothing. Its only built-in uses are default hints and span/log annotations.
 - `access` is also the tool's read-only hint, which no option overrides, so authorization and what MCP clients are told cannot disagree. Derive authorization from `access`, never from a tool hint.
-- A contract says nothing about where it is served. A surface serves the implementations passed to it: to keep an action off HTTP, leave it out of `ActionHttp.make`; to keep it off MCP, leave its implementation out of the MCP layer (implement it on its own if it shares a builder with served actions, which then runs once per `implement` call; keep what the pieces must share in a Layer, which Effect builds once). `ActionCli` runs any action locally.
+- A contract says nothing about where it is served. A surface serves the implementations passed to it: to keep an action off HTTP, leave it out of `ActionHttp.make`; to keep it off MCP, leave its implementation out of the MCP layer. An action that shares a builder with served ones then needs an `implement` call of its own, whose builder runs separately; keep what the two must share in a Layer, which Effect builds once.
 - `make` accepts only the keys listed above. An unknown key is a compile error.
 - An option is given or omitted, never a value that may be `undefined`: omitted, it takes its default at run time, so its type would claim what the default does not do. `success: enabled ? Schema.String : undefined`, or the same through a conditional spread, is a compile error, as it is for `input` and `errors`. Branch around the call instead. Options typed as a whole (`Parameters<typeof Action.make>[1]`) are not checked; their action's schemas are as wide as what may run, so its success is `unknown`.
 - MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but the native MCP server refuses it when an `ActionMcp` layer is built. Success and error schemas may be any shape.
 - Hint defaults: `destructive: access === "write"`, `idempotent: false`, `openWorld: true`; `readOnlyHint` is always `access === "read"`. Only a write may state `destructive`: a read is never destructive, as MCP defines the hint for writes only. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
-- `InvalidInput`, `Unauthenticated` and `Forbidden` are built in. Every HTTP endpoint declares all three and every tool the two refusals, so do not list them in `errors`. The surface produces them: `InvalidInput` for input that does not decode, a refusal from authentication or an implementation's `before` hook. A handler fails with one only when its action lists it in `errors`, like any other error.
+- `InvalidInput`, `Unauthenticated` and `Forbidden` are built in and declared everywhere ([guarantees.md](guarantees.md#wire-behavior)), so do not list them in `errors`. A handler fails with one only when its action lists it in `errors`, like any other error.
 - Build a refusal with or without a message: `new Action.Forbidden()` sends `"Not allowed."`, `new Action.Forbidden({ message: "Requires users:write." })` sends that.
 - Schemas must be service-free. Put service access in the handler.
 
@@ -201,11 +202,9 @@ export const listChanges = Action.implement(
 - `implement` returns one `Implementation` of everything it binds: `implement(action, handler)` one action, `implement([a, b], { a: ..., b: ... })` every listed action. Either may take an Effect that builds the handler or the record instead. Every surface takes one implementation or a list: `[userActions, double]`. A surface serves every action of each implementation it receives.
 - A record has exactly one own-property function per action, keyed by its name. Missing and extra keys are compile errors, for a plain record and for a builder's. An inherited method does not count. Handlers are called without a receiver. Duplicate action names in one call throw at `implement`.
 - A plain handler or record is checked at `implement`; a builder's record when it is built. A record that slips past the types (plain JavaScript, a cast) throws `Unknown handlers` for a key no action names and `Missing handlers` for an action without a function; from a builder, the layer build dies with the same message. Nothing is served with a handler missing.
-- A builder runs once per host, however many surfaces serve its implementation, so its startup services are provided once, above every surface: [guarantees.md](guarantees.md#dependency-lifetimes).
-- `before` is the implementation's hook, which every surface serving it runs ([guarantees.md](guarantees.md#dependency-lifetimes)), after decoding, with `action` typed as the implementation's own actions. The same handlers under another hook, such as a trusted admin CLI, are a second `implement` call over the same builder.
-- `before` may be a value that may be `undefined`, as `enabled ? authorize : undefined`: its services are owed either way.
-- Authentication is the host's, not the implementation's: native router middleware such as `Authentication.make`, provided around the HTTP surfaces that serve the implementation. A handler or hook that reads the identity makes each surface owe it until then; one that reads none is public wherever authentication is not provided ([Authentication.md](Authentication.md)).
-- Services yielded in the builder are build-time requirements. Services yielded in a handler are request-time requirements of that handler alone. Surfaces keep these separate in their types, per action. Use distinct tags for each kind; never provide a request-identity tag at startup (see [guarantees.md](guarantees.md)).
+- Builder lifetime, the hook, authentication, and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Surfaces keep the two kinds of services separate in their types, per action.
+- `before` sees `action` typed as the implementation's own actions. The same handlers under another hook, such as a trusted admin CLI, are a second `implement` call over the same builder.
+- `before` may be a value that may be `undefined`, as `enabled ? authorize : undefined`: its services are required either way.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
 - Test a handler directly by calling the function you passed to `implement`, or through `ActionToolkit` in process. Keep at least one test per surface: direct calls bypass decoding, encoding, middleware and the hook.
 
@@ -220,7 +219,6 @@ export const listChanges = Action.implement(
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
 - `Property 'access' is missing` at `make`: every action declares `"read"` or `"write"`. There is no default.
 - A service is resolved once and shared across requests when it should be per request: it was yielded in the builder. Move the `yield*` into the handler.
-- Type error at `implement` naming `Its action returns nothing: declare a success schema to return data`: the handler returns a value, but the action has no `success` (or `Schema.Void`), whose encoding would drop it. Declare the `success` schema, or return `Effect.void`.
 - `'readOnly' does not exist in type 'Hints'` at `make`: a tool's read-only hint is its `access`. Set `access` instead.
 - Type error on `hints.destructive` of a read action: a read is never destructive. Drop the hint, or make the action a write.
 - `Type '...' is not assignable to type 'never'` on a key at `make`: an option it does not take, or a misspelled one.

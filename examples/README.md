@@ -13,7 +13,7 @@ The example listens on 127.0.0.1:3000. It uses an in-memory repository and delib
 
 Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
-Every action declares `access: "read"` or `access: "write"`. The guarded implementations name
+Every action declares `access: "read"` or `access: "write"`. The protected implementations name
 their hook once, `authorize`: the HTTP and MCP layers serving them authenticate the bearer
 token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
 `access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`. No
@@ -29,7 +29,7 @@ The application serves its implementations under three access rules:
 | `listChanges`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
 
 Every HTTP action is in one binding, `Http`: one mount path, one document, one client, served
-by two `ActionHttp.layer` calls, the guarded one with the authentication around it. The `Users`
+by two `ActionHttp.layer` calls, the protected one with the authentication around it. The `Users`
 builder runs once, though HTTP and MCP both serve `userActions`. An MCP endpoint is a single
 route, so authentication around it covers every tool. That is why the public tool has its own
 endpoint.
@@ -83,21 +83,22 @@ curl -s http://127.0.0.1:3000/api/openapi.json
 
 For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects returns an `isError` result. The implementation carries that hook, so HTTP runs the same check before the handler.
 
-Without a token, a guarded route or the `/mcp` endpoint answers 401
+Without a token, a protected route or the `/mcp` endpoint answers 401
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
 `WWW-Authenticate: Bearer`; with an unknown one, the message is `Unknown demo token.`. An MCP client then finds the authorization server at
 `/.well-known/oauth-protected-resource/mcp`, which is public.
 
 ## Application structure
 
+- [quickstart.ts](quickstart.ts), [quickstart-server.ts](quickstart-server.ts), [quickstart-client.ts](quickstart-client.ts): the minimal program's contract and binding, its server, and its typed client.
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
 - [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
-- [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the guarded implementations name.
+- [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the protected implementations name.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
-- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the guarded ones.
+- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the protected ones.
 - [authentication.ts](authentication.ts): RFC 9728 discovery, and `Authentication.make` answering a missing or unknown token with the built-in 401 and its `Bearer` challenge.
 - [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
-- [mcp.ts](mcp.ts): the public and the guarded MCP endpoints.
+- [mcp.ts](mcp.ts): the public and the protected MCP endpoints.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
 - [app.ts](app.ts): every surface of the host, under that policy.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
@@ -107,7 +108,7 @@ Without a token, a guarded route or the `/mcp` endpoint answers 401
 
 ```text
 HTTP /api/getUser / MCP tool getUser
-  → the implementation's authentication provides CurrentActor
+  → the authentication around the route provides CurrentActor
   → the surface decodes input (invalid input is a 400 InvalidInput; the hook and handler never run)
   → before hook reads access: "read" and checks users:read
   → handler calls Users.get(actor.tenantId, id)
@@ -154,8 +155,10 @@ use `--help` for their options. [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
 stdout for JSON-RPC and routes Effect logs to stderr.
 
+[toolkit.ts](toolkit.ts) prints a native Toolkit result.
 [mcp-browser.ts](mcp-browser.ts) exports public stateless MCP routes with an explicit Origin
 allowlist and separate router CORS configuration; mount them with a platform server.
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
 authorization hook and a per-invocation principal.
-Run `node --import tsx examples/testing.ts` for in-memory HTTP and MCP calls with cleanup.
+Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-memory HTTP and
+MCP calls with cleanup.

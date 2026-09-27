@@ -799,7 +799,9 @@ it("aggregates implementations under one named command and refuses duplicate com
     () => Effect.fail(new Action.Forbidden()),
   );
 
-  expect(() => ActionCli.command([one, guarded], One)).toThrow("Duplicate command: one");
+  expect(() => ActionCli.command([one, guarded], One)).toThrow(
+    'Action "one" is implemented twice here',
+  );
 
   // A single command checks only its own action: other names may repeat.
   expect(await lines(ActionCli.command([one, two, again], Two), [])).toEqual(['"two"']);
@@ -825,6 +827,16 @@ it("names commands and flags in kebab case, unless a name is given", async () =>
   const command = ActionCli.command(app, GetUser);
   expect(command.name).toBe("get-user");
   expect(ActionCli.command(app, GetUser, { name: "whois" }).name).toBe("whois");
+
+  // An acronym is one word.
+  const GetHTTPUser = Action.make("getHTTPUser", {
+    description: "Reads a user over HTTP",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const http = Action.implement(GetHTTPUser, () => Effect.succeed("http"));
+  expect(ActionCli.command(http, GetHTTPUser).name).toBe("get-http-user");
 
   await run(command, ["--user-id", "alice"]);
   await run(ActionCli.make(app, { name: "users" }), ["get-user", "--user-id", "bob"]);

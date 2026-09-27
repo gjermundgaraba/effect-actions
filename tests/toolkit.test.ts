@@ -34,6 +34,39 @@ describe("ActionToolkit", () => {
     expect(result).toMatchObject([{ result: 42, encodedResult: 42, isFailure: false }]);
   });
 
+  it("returns a declared error as the tool's failure, its own value", async () => {
+    class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { id: Schema.String }) {}
+
+    const Find = Action.make("find", {
+      description: "Find a note.",
+      access: "read",
+      input: { id: Schema.String },
+      success: Schema.String,
+      errors: [NotFound],
+    });
+
+    const binding = ActionToolkit.make(
+      Action.implement(Find, ({ id }) => Effect.fail(new NotFound({ id }))),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* binding.toolkit;
+
+          return yield* Stream.runCollect(yield* tools.handle("find", { id: "n1" }));
+        }).pipe(Effect.provide(binding.layer)),
+      ),
+    );
+
+    const notFound = new NotFound({ id: "n1" });
+
+    expect(result).toMatchObject([
+      { result: notFound, encodedResult: Schema.encodeSync(NotFound)(notFound) },
+    ]);
+    expect(result[0]?.isFailure).toBe(true);
+  });
+
   it("releases a builder's resources with the layer", async () => {
     let acquired = 0;
     let released = 0;

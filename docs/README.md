@@ -75,11 +75,6 @@ Serve `routes` with `HttpRouter.serve` and a platform server layer. Result: `POS
 
 ## Runnable examples
 
-Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/effect-actions/tree/main/examples)):
-
-- `quickstart.ts`, `quickstart-server.ts`, `quickstart-client.ts`: the minimal program's contract and binding, its server, and its typed client.
-- `contracts.ts`, `binding.ts`, `handlers.ts`, `authorization.ts`, `authentication.ts`, `http.ts`, `mcp.ts`, `request-policy.ts`, `app.ts`, `server.ts`: an authenticated application with public and protected implementations served side by side, one policy on every surface, two MCP endpoints, OpenAPI and Swagger.
-- `toolkit.ts`, `cli.ts`, `cli-remote.ts`, `mcp-stdio.ts`: one file per other surface.
-- `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
-- `toolkit-authorized.ts`: native Toolkit invocation with authorization and correctly scoped identity.
-- `testing.ts`: in-memory HTTP and MCP calls with cleanup.
+Repository directory `examples/`: the minimal program, an authenticated application served on
+every surface, and one file per other surface, each listed in its
+[README](https://github.com/gjermundgaraba/effect-actions/tree/main/examples#readme).

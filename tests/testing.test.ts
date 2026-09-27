@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaGetter } from "effect";
+import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
   HttpClient,
@@ -21,8 +22,10 @@ import {
 } from "../examples/contracts.js";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Testing from "../src/Testing.js";
+import { cliServices, logged } from "./cli-services.js";
 
 /** Run `program` against the example host, answered in memory with fresh example state. */
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
@@ -149,7 +152,7 @@ describe("mcpCall", () => {
     expect(results).toEqual([undefined, undefined]);
   });
 
-  it("fails with an Error holding any other answer", async () => {
+  it("fails with an McpCallError holding any other answer", async () => {
     // Contracts the host does not serve as declared here: other input, and no such tool.
     const Loose = Action.make("getUser", {
       description: "The host's getUser, with an input it refuses",
@@ -164,7 +167,7 @@ describe("mcpCall", () => {
       success: Schema.String,
     });
 
-    const [invalid, missing, nowhere] = await againstHost(
+    const failures = await againstHost(
       Effect.all([
         Effect.flip(Testing.mcpCall(Loose, { id: 1 }, as())),
         Effect.flip(Testing.mcpCall(Missing, {}, as())),
@@ -172,9 +175,37 @@ describe("mcpCall", () => {
       ]),
     );
 
-    expect(String(invalid)).toContain("Invalid parameters for tool 'getUser'");
-    expect(String(missing)).toContain('MCP tools/call "missing_tool" failed with');
-    expect(String(nowhere)).toContain('MCP tools/call "missing_tool" answered 404');
+    // Answers no MCP server gives: no JSON-RPC reply, and a result without its structure.
+    const odd = await Effect.all([
+      Effect.flip(Testing.mcpCall(Missing, {}, { url: "/garbled" })),
+      Effect.flip(Testing.mcpCall(Missing, {}, { url: "/bare" })),
+    ]).pipe(
+      Effect.provide(
+        Testing.layer(
+          Layer.mergeAll(
+            HttpRouter.add("POST", "/garbled", HttpServerResponse.text("not json")),
+            HttpRouter.add(
+              "POST",
+              "/bare",
+              HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id: 1, result: { content: [] } }),
+            ),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+
+    expect([...failures, ...odd].map((failure) => failure._tag)).toEqual(
+      Array(5).fill("McpCallError"),
+    );
+
+    expect([...failures, ...odd].map(String)).toEqual([
+      expect.stringContaining("Invalid parameters for tool 'getUser'"),
+      expect.stringContaining('MCP tools/call "missing_tool" failed with'),
+      expect.stringContaining('MCP tools/call "missing_tool" answered 404'),
+      expect.stringContaining('MCP tools/call "missing_tool" had no reply: not json'),
+      expect.stringContaining('MCP tools/call "missing_tool" returned no structured content'),
+    ]);
   });
 
   it("calls the endpoint its url names", async () => {
@@ -258,6 +289,17 @@ describe("layer", () => {
     expect(result.missing).toEqual(new UserNotFound({ id: "404" }));
     expect(result.status).toEqual({ service: "effect-actions", users: 2 });
     expect(result.doubled).toBe(4);
+  });
+
+  it("answers a remote ActionCli command in memory", async () => {
+    const command = ActionCli.command(Http, Status);
+
+    const [, output] = await logged(Command.runWith(command, { version: "0" })([])).pipe(
+      Effect.provide(cliServices),
+      againstHost,
+    );
+
+    expect(JSON.parse(output.join("\n"))).toEqual({ service: "effect-actions", users: 2 });
   });
 
   it("resolves a relative URL against http://localhost, and answers any origin in memory", async () => {

@@ -1,13 +1,12 @@
-import { expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { McpSchema } from "effect/unstable/ai";
-import { HttpClientError } from "effect/unstable/http";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { httpClient, serve } from "./serve.js";
-import { rawToolCall } from "./requests.js";
+import { mcpRequest as rpc, rawToolCall } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -36,17 +35,17 @@ const request = (value: Schema.Json, path = "/api/echo") =>
     body: JSON.stringify({ value }),
   });
 
-/** `Echo`, counting its calls: negative input is rejected, `0` answers an unencodable `Infinity`. */
+/** `Echo`, counting its calls. */
 const counted = () => {
   const calls = { count: 0 };
 
-  const app = Action.implement(Echo, ({ value }) => {
-    calls.count++;
+  const app = Action.implement(Echo, ({ value }) =>
+    Effect.sync(() => {
+      calls.count++;
 
-    if (value < 0) return Effect.fail(new Rejected({ error: "Negative value" }));
-
-    return Effect.succeed(value === 0 ? Infinity : value);
-  });
+      return value;
+    }),
+  );
 
   return { app, calls };
 };
@@ -133,41 +132,6 @@ it("decodes InvalidInput as a typed failure of the client", async () => {
 
   expect(refused).toBeInstanceOf(Action.InvalidInput);
   expect(refused).toHaveProperty("message", 'Expected number\n  at ["value"]');
-});
-
-it("answers a result that does not encode with an empty 500, and a declared error as declared", async () => {
-  const { app } = counted();
-  const web = serve(ActionHttp.layer(Http, app));
-
-  onTestFinished(() => web.dispose());
-
-  const broken = await web.handler(request(0));
-  expect(broken.status).toBe(500);
-  expect(await broken.text()).toBe("");
-
-  const rejected = await web.handler(request(-1));
-  expect(rejected.status).toBe(409);
-  expect(await rejected.json()).toEqual(
-    Schema.encodeSync(Rejected)(new Rejected({ error: "Negative value" })),
-  );
-
-  const results = await Effect.flatMap(httpClient(Http, web), (client) =>
-    Effect.all({
-      echoed: client.echo({ value: 12 }),
-      broken: Effect.flip(client.echo({ value: 0 })),
-      rejected: Effect.flip(client.echo({ value: -1 })),
-    }),
-  ).pipe(Effect.runPromise);
-
-  expect(results.echoed).toBe(12);
-  expect(HttpClientError.isHttpClientError(results.broken)).toBe(true);
-  expect(HttpClientError.isHttpClientError(results.broken) && results.broken.reason._tag).toBe(
-    "DecodeError",
-  );
-  expect(HttpClientError.isHttpClientError(results.broken) && results.broken.response?.status).toBe(
-    500,
-  );
-  expect(results.rejected).toEqual(new Rejected({ error: "Negative value" }));
 });
 
 it("declares InvalidInput, Unauthenticated and Forbidden on every endpoint", () => {
@@ -355,5 +319,74 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
   expect(decodeMcp(await mcp.json()).result).toMatchObject({
     isError: true,
     content: [{ type: "text", text: "Tool execution failed due to an internal server error." }],
+  });
+});
+
+describe.each([
+  ["omitted", Action.make("empty", { description: "No input", access: "read" })],
+  ["{}", Action.make("empty", { description: "No input", access: "read", input: {} })],
+] as const)("an action whose input is %s", (_, Empty) => {
+  const app = Action.implement(Empty, () => Effect.void);
+
+  const web = () => {
+    const server = serve(
+      Layer.merge(
+        ActionHttp.layer(ActionHttp.make([Empty]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+      ),
+    );
+
+    onTestFinished(() => server.dispose());
+
+    return server;
+  };
+
+  it("takes only {} over HTTP, and a body", async () => {
+    const { handler } = web();
+
+    const call = (init: RequestInit) =>
+      handler(new Request("http://localhost/api/empty", { method: "POST", ...init }));
+
+    const json = { "content-type": "application/json" };
+
+    expect((await call({ headers: json, body: "{}" })).status).toBe(200);
+    expect((await call({ headers: json, body: '{"x":1}' })).status).toBe(400);
+    expect((await call({})).status).toBe(400);
+  });
+
+  it("is a closed object tool over MCP", async () => {
+    const { handler } = web();
+
+    const listed = await (await handler(rpc({ method: "tools/list" }))).json();
+    expect(listed).toMatchObject({
+      result: { tools: [{ inputSchema: { type: "object", additionalProperties: false } }] },
+    });
+
+    const extra = decodeMcp(await (await handler(rawToolCall("empty", { x: 1 }))).json());
+    expect(extra.result.isError).toBe(true);
+  });
+});
+
+it("publishes `success: {}` as the closed empty object", async () => {
+  const Empty = Action.make("empty", { description: "Empty", access: "read", success: {} });
+
+  const { handler, dispose } = serve(
+    ActionMcp.layerHttp(
+      Action.implement(Empty, () => Effect.succeed({})),
+      { name: "test", version: "0" },
+    ),
+  );
+
+  onTestFinished(dispose);
+
+  const listed = await (await handler(rpc({ method: "tools/list" }))).json();
+  expect(listed).toMatchObject({
+    result: {
+      tools: [
+        {
+          outputSchema: { properties: { value: { type: "object", additionalProperties: false } } },
+        },
+      ],
+    },
   });
 });

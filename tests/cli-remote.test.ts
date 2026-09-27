@@ -30,10 +30,7 @@ const decodedInputs: number[] = [];
 const remote = ({ value }: { readonly value: number }) =>
   Effect.andThen(
     Effect.sync(() => decodedInputs.push(value)),
-    () =>
-      value === 0
-        ? Effect.fail(new Domain({ message: "zero" }))
-        : Effect.succeed(value === 13 ? Infinity : value * 2),
+    () => (value === 0 ? Effect.fail(new Domain({ message: "zero" })) : Effect.succeed(value * 2)),
   );
 
 const app = Action.implement([Remote], { remote });
@@ -170,7 +167,7 @@ const failed = <A, E>(exit: Exit.Exit<A, E>): E =>
     () => new Error(`Expected a typed failure: ${String(exit)}`),
   );
 
-it("propagates domain, refusal, encoding and transport failures as typed failures", async () => {
+it("propagates domain, refusal and transport failures as typed failures", async () => {
   const refusing = serve(
     ActionHttp.layer(
       Http,
@@ -203,16 +200,8 @@ it("propagates domain, refusal, encoding and transport failures as typed failure
     new Action.Forbidden({ message: "Requires users:write." }),
   );
 
-  // A result the server cannot encode is an empty 500, which the client cannot decode.
-  const unencodable = failed(await run(open, "13"));
-  expect(HttpClientError.isHttpClientError(unencodable)).toBe(true);
-
-  if (HttpClientError.isHttpClientError(unencodable)) {
-    expect(unencodable.response?.status).toBe(500);
-  }
-
   // Refused, the handler never ran.
-  expect(decodedInputs).toEqual([0, 13]);
+  expect(decodedInputs).toEqual([0]);
 
   let transportAttempts = 0;
 

@@ -13,8 +13,10 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 | `toolkit`    | Native `Toolkit` with typed tool names, schemas and per-tool request requirements.             |
 | `layer`      | The handler layer: acquires handlers in its scope; requires build-time services, not identity. |
 
-Each implementation's `before` hook runs before its handlers. Nothing authenticates: an
-in-process caller has no remote credentials, so the caller provides the identity.
+Exported type: `Tools`, what `make` returns.
+
+A local surface: each implementation's `before` hook runs before its handlers, and the caller
+provides the identity.
 
 Each tool keeps the action's native input/success codecs, combines the action's errors with
 the built-in `Unauthenticated` and `Forbidden` in a native union, and uses
@@ -54,12 +56,10 @@ With a model: pass `toolkit` as `toolkit` to `LanguageModel.generateText` and pr
 - Every action of the implementations passed becomes a tool, named after the action, with its `hints`. `make(apps)` accepts one implementation or a list, such as `[userActions, double]`.
 - Successes are the action's native values. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes encoded arguments and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
-- `layer` runs builders as [guarantees.md](guarantees.md#dependency-lifetimes) describes.
+- Builders, the hook and identity follow [guarantees.md](guarantees.md#dependency-lifetimes): `layer` builds, and identity is supplied at invocation, never when building the layer.
 - Each tool carries only its own handler's request requirements, plus the hook's, not those of sibling actions.
-- Supply identity at invocation, never when building the layer. Native context capture is not a security boundary.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
 - `Unauthenticated` and `Forbidden` join every tool's declared failures, so a `before` refusal is an ordinary returned tool failure. A schema an action already declares is not repeated.
-- An implementation's `before` follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes). Its services join each tool's requirements, supplied by the caller.
 
 ## Failure modes
 

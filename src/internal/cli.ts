@@ -11,9 +11,10 @@ export interface Options<Output> {
   readonly render?: (output: Output) => string;
 }
 
-/** `getUser` as a command or flag name: `get-user`. */
+/** `getUser` as a command or flag name: `get-user`; `getHTTPUser`: `get-http-user`. */
 export const kebab = (name: string): string =>
   name
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/_/g, "-")
     .toLowerCase();

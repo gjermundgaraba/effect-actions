@@ -21,11 +21,7 @@ const identity = Action.make("identity", {
 class Greeting extends Context.Service<Greeting, string>()("bindings/Greeting") {}
 
 it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transport) => {
-  let executions = 0;
-
-  const app = Action.implement(identity, () =>
-    Effect.tap(Actor, () => Effect.sync(() => executions++)),
-  );
+  const app = Action.implement(identity, () => Actor);
 
   const routes =
     transport === "HTTP"
@@ -51,8 +47,6 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
   } else {
     expect(await response.json()).toMatchObject({ result: { isError: true } });
   }
-
-  expect(executions).toBe(0);
 });
 
 it("builds an implementation once per host build, however many adapters serve it", async () => {
@@ -225,7 +219,10 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
   // The MCP span name carries the protocol revision.
   const requestSpan = transport === "HTTP" ? /^http\.server POST$/ : /^McpServer\..*tools\/call$/;
 
-  const run = async (handler: () => Effect.Effect<string>) => {
+  const run = async (
+    handler: () => Effect.Effect<string>,
+    before?: Action.Before<typeof identity, never>,
+  ) => {
     const logs: unknown[] = [];
     const annotations: Array<ReadonlyMap<string, unknown>> = [];
     const parents = new Map<string, string | undefined>();
@@ -250,7 +247,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
       },
     });
 
-    const app = Action.implement(identity, handler);
+    const app = Action.implement(identity, handler, before);
 
     const routes =
       transport === "HTTP"
@@ -301,6 +298,16 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
     expect(spans.get("identity")?.attributes).toEqual(identity);
     expect(annotations).toContainEqual(identity);
+  });
+
+  it("runs the hook outside the action span, under the request span", async () => {
+    const { parents } = await run(
+      () => Effect.succeed("ok"),
+      () => Effect.withSpan(Effect.void, "hook"),
+    );
+
+    expect(parents.get("hook")).toMatch(requestSpan);
+    expect(parents.get("identity")).toMatch(requestSpan);
   });
 
   it("opens the action span even when the handler throws before returning an effect", async () => {

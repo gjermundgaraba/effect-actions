@@ -12,17 +12,35 @@ import {
 /** An action bound to its handler; opaque, see `implement`. */
 export type { Implementation } from "./internal/implementation.js";
 
+/**
+ * An implementation's hook: whether a caller may call. It receives the selected action and
+ * fails only with a refusal; its services are request-time requirements, like a handler's.
+ */
+export type { Before } from "./internal/implementation.js";
+
+/** Any implementation, with its actions and channels erased: what every surface accepts. */
+export type { AnyImplementation } from "./internal/implementation.js";
+
 /** Any service-free schema. Only handlers may require services. */
 type Codec = Schema.Codec<unknown, unknown, never, never>;
 
 /** Struct fields, accepted wherever a struct schema is: `{ name: Schema.String }`. */
 type Fields = { readonly [key: string]: Codec };
 
-/** The schema a `Codec | Fields` option stands for. */
+/**
+ * An object without fields: an action without arguments, `{}` given or not. Strict, unlike
+ * `Schema.Struct({})`, which accepts any value but `null`; its JSON Schema is the object
+ * root MCP requires.
+ */
+const NoInput = Schema.Record(Schema.String, Schema.Never);
+
+/** The schema a `Codec | Fields` option stands for: `NoInput` for no fields. */
 type CodecOf<S extends Codec | Fields> = S extends Codec
   ? S
   : S extends Schema.Struct.Fields
-    ? Extract<Schema.Struct<S>, Codec>
+    ? keyof S extends never
+      ? typeof NoInput
+      : Extract<Schema.Struct<S>, Codec>
     : never;
 
 /**
@@ -35,7 +53,7 @@ export type Access = "read" | "write";
  * Tool hints; every field has a default derived from the action. `readOnlyHint` is not
  * one: it is always `access === "read"`, so a tool cannot say otherwise than its contract.
  */
-interface Hints {
+export interface Hints {
   /** `destructiveHint`, a write's only; defaults to `true`. A read is never destructive. */
   readonly destructive?: boolean;
   /** `idempotentHint`; defaults to `false`. */
@@ -48,9 +66,9 @@ interface Hints {
 export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./internal/errors.js";
 
 /** What `make` needs to define an action. */
-interface Options {
+export interface Options {
   readonly description: string;
-  /** A schema or struct fields. Omit for an action without arguments. */
+  /** A schema or struct fields. Omit for an action without arguments: `{}`. */
   readonly input?: Codec | Fields;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields;
@@ -150,11 +168,12 @@ export type Handler<A extends Any, R = never> = (
   input: A["input"]["Type"],
 ) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R>;
 
-/** An empty object schema that also produces the object root MCP requires. */
-const NoInput = Schema.Record(Schema.String, Schema.Never);
-
 const codecOf = (schema: Codec | Fields): Codec =>
-  Schema.isSchema(schema) ? schema : Schema.Struct(schema);
+  Schema.isSchema(schema)
+    ? schema
+    : Object.keys(schema).length === 0
+      ? NoInput
+      : Schema.Struct(schema);
 
 /**
  * Define an action contract. Names are `[A-Za-z0-9_-]{1,128}`, other than `then`: the name
@@ -189,7 +208,7 @@ export function make(name: string, options: Options): Any {
   return {
     name,
     description: options.description,
-    input: options.input === undefined ? NoInput : codecOf(options.input),
+    input: codecOf(options.input ?? {}),
     success: options.success === undefined ? Schema.Void : codecOf(options.success),
     errors: options.errors ?? [],
     access,
@@ -230,39 +249,7 @@ type Names<T extends Target> = T extends ReadonlyArray<Any> ? T[number]["name"] 
  * `Effect.succeed` is still inferred; the check does not take part in inference.
  */
 type Exact<T extends Target, H> = H &
-  NoInfer<{ readonly [K in Exclude<keyof H, Names<T>>]: never } & ReturnsNothing<T, H>>;
-
-/** What a handler succeeds with. */
-type SuccessOf<F> = F extends (...args: any) => Effect.Effect<infer S, any, any> ? S : never;
-
-/**
- * Whether `F` returns data its action cannot: `Effect<A>` is assignable to `Effect<void>`,
- * so without this check a void action's handler could return a value its encoding drops.
- */
-type Drops<A extends Any, F> = [A["success"]["Type"]] extends [void]
-  ? [SuccessOf<F>] extends [void]
-    ? false
-    : true
-  : false;
-
-/** What a handler that drops its value lacks, so the error names the rule. */
-interface Discarding {
-  readonly "Its action returns nothing: declare a success schema to return data": never;
-}
-
-/** A handler of a void action must return nothing. */
-type ReturnsNothing<T extends Target, H> =
-  T extends ReadonlyArray<Any>
-    ? {
-        readonly [
-          A in T[number] as Drops<A, H[A["name"] & keyof H]> extends true ? A["name"] : never
-        ]: Discarding;
-      }
-    : T extends Any
-      ? Drops<T, H> extends true
-        ? Discarding
-        : unknown
-      : unknown;
+  NoInfer<{ readonly [K in Exclude<keyof H, Names<T>>]: never }>;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;

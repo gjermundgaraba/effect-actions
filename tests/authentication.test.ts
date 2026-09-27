@@ -147,7 +147,7 @@ describe("Authentication.make", () => {
     expect(await (await web.handler(request("alice"))).text()).toBe("alice");
   });
 
-  it("challenges only its own refusals, leaving every other 401 as it is", async () => {
+  it("challenges every 401 it covers that has no challenge of its own", async () => {
     const auth = Authentication.make(
       Identity,
       Effect.gen(function* () {
@@ -172,7 +172,7 @@ describe("Authentication.make", () => {
     // The host's own response, and a route's own 401 behind the middleware.
     for (const response of [await web.handler(request()), await web.handler(request("alice"))]) {
       expect(response.status).toBe(401);
-      expect(response.headers.has("www-authenticate")).toBe(false);
+      expect(response.headers.get("www-authenticate")).toBe("Bearer");
     }
   });
 

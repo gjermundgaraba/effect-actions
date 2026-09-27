@@ -1,10 +1,30 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
 import { serve } from "./serve.js";
 
 const prefix = "/.well-known/oauth-protected-resource";
+
+class Caller extends Context.Service<Caller, string>()("protected-resource/Caller") {}
+
+it("answers before routing, so authentication provided around it never covers it", async () => {
+  const web = serve(
+    Layer.mergeAll(
+      Authentication.protectedResource({
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+      }),
+      HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)),
+    ).pipe(Layer.provide(Authentication.make(Caller, Effect.fail(new Action.Unauthenticated())))),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  expect((await web.handler(new Request(`https://api.example.com${prefix}/mcp`))).status).toBe(200);
+  expect((await web.handler(new Request("https://api.example.com/private"))).status).toBe(401);
+});
 
 it("publishes standalone metadata at the resource's well-known URL", async () => {
   const resource = "https://api.example.com/mcp?tenant=alice";

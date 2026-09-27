@@ -181,7 +181,7 @@ export const servedActions = (
 export const provideHandlers =
   (apps: ReadonlyArray<AnyImplementation>) =>
   <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, unknown, unknown> => {
-    const [first, ...rest] = [...new Set(apps.map((app) => Implementation.layerOf(app)))];
+    const [first, ...rest] = apps.map((app) => Implementation.layerOf(app));
 
     return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
@@ -189,36 +189,23 @@ export const provideHandlers =
 /**
  * Look up the handler of any action `apps` serve, from the handlers `provideHandlers`
  * built, behind its implementation's hook. Every record is complete: `Action.implement`
- * checks it.
+ * checks it, and a surface looks up only the actions it serves.
  */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
 ): Effect.Effect<HandlerOf, never, unknown> =>
   Effect.map(
     Effect.forEach(apps, (app) => Implementation.handlersOf(app)),
-    (records) => {
-      const handlers = new Map(
-        apps.flatMap((app, index) =>
-          app.actions.map((action) => {
-            const handle = records[index]?.[action.name];
+    (records) => (action) => {
+      const index = apps.findIndex((app) => app.actions.includes(action));
+      const app = apps[index];
+      const handle = records[index]?.[action.name];
 
-            return [
-              action,
-              handle === undefined
-                ? undefined
-                : dispatch(action, handle, Implementation.beforeOf(app)),
-            ] as const;
-          }),
-        ),
-      );
+      if (app === undefined || handle === undefined) {
+        throw new Error(`No handler for ${action.name}`);
+      }
 
-      return (action) => {
-        const handle = handlers.get(action);
-
-        if (handle === undefined) throw new Error(`No handler for ${action.name}`);
-
-        return handle;
-      };
+      return dispatch(action, handle, Implementation.beforeOf(app));
     },
   );
 

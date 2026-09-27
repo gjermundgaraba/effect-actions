@@ -115,12 +115,12 @@ surface serving the implementation runs the hook, so no surface can leave it out
 `before: (action) => Effect<void, Action.Refusal, R>` receives the selected action, typed as the
 implementation's own, after input decoding and before its handler, on every surface; failing
 with anything but a refusal is a type error. It may be a value that may be `undefined`, as
-`enabled ? authorize : undefined`: its services are owed either way. The `before` option of
+`enabled ? authorize : undefined`: its services are required either way. The `before` option of
 `ActionHttp.layer`, `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, and
 `ActionCli.command` and `make` is gone, and so is `ActionToolkit.make`'s second argument. Every
 local command's error channel includes `Action.Refusal`, as every endpoint and tool declares
-both refusals. Every 401 an `ActionHttp` route answers, the authentication's, a hook's or a
-handler's own, carries `WWW-Authenticate: Bearer`.
+both refusals. `ActionHttp` sets no header of its own: the authentication around a route
+challenges its 401s.
 
 - Migrate:
 
@@ -147,9 +147,12 @@ handler's own, carries `WWW-Authenticate: Bearer`.
 Provide it around the layers whose routes it authenticates, as before:
 `ActionHttp.layer(Http, users).pipe(Layer.provide(authenticate))`, or around an
 `ActionMcp.layerHttp` endpoint, which it covers whole. Public and authenticated actions of one
-binding go in separate `ActionHttp.layer` calls. `make` takes no options. `authenticate` fails
-with `Action.Unauthenticated`, answered 401 with its JSON and `WWW-Authenticate: Bearer`,
-`Action.Forbidden`, answered 403 with no challenge, or an `HttpServerResponse` to send instead.
+binding go in separate `ActionHttp.layer` calls. `authenticate` fails with
+`Action.Unauthenticated`, answered 401 with its JSON, `Action.Forbidden`, answered 403 with no
+challenge, or an `HttpServerResponse` to send instead. `make`'s one option, `challenge`, is the
+`WWW-Authenticate` of every 401 of the routes it covers that has none, `Bearer` by default,
+whether authentication, a hook or a handler answers it; a 401 outside authentication carries
+no challenge.
 Services `authenticate` yields remain request requirements of the layer, and so of every layer
 it covers, where native middleware would ask to be combined first;
 `HttpRouter.provideRequest` builds one once, such as a token verifier. Every response still
@@ -194,7 +197,8 @@ remote command calls through `ActionHttp.client`, so it no longer accepts `trans
 whose effect the command's error type could not follow.
 
 **CLI flags are derived from the input.** A struct or class input gets one flag per top-level
-field, named in kebab case (`tenantId` is `--tenant-id`), parsed as the field's encoded value
+field, named in kebab case (`tenantId` is `--tenant-id`, an acronym one word:
+`getHTTPUser` is `get-http-user`), parsed as the field's encoded value
 and described by the field's description: a string, a boolean switch, a choice for a union of
 string literals, or, for anything else, numbers included, JSON when the field accepts the value,
 or else the text (`--count 2`, `--limit auto`, `--scale Infinity`). A
@@ -207,7 +211,7 @@ two actions whose kebab names collide are refused with `Duplicate command: get-u
 action getUser and action get_user`, and two flags of one command, such as fields `userId` and
 `user_id`, with `Duplicate flag: --user-id, claimed by field userId and field user_id`, both
 when the command is built. `command` refuses only its own action implemented twice, with
-`Duplicate command: <name>`, rather than run the first.
+`Action "<name>" is implemented twice here`, rather than run the first.
 `parameters`, the `input` mapper, `--input-file`, and their types (`JsonOptions`,
 `ParametersOptions`, `InputMapper`, `IsInput`) are gone.
 
@@ -238,7 +242,7 @@ adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl`. `Testing.mcpCa
 headers? })` is an Effect on that `HttpClient`, typed by the action like a client method,
 whose rule for leaving the input out it shares: it encodes the input, succeeds with the decoded success, and fails with the action's declared
 errors and the refusals as decoded values, whether the tool or the endpoint's authentication
-answered them, or with an `Error` holding any other answer. `url` defaults to `/mcp`, which is
+answered them, or with a `Testing.McpCallError` holding any other answer. `url` defaults to `/mcp`, which is
 relative and so resolves only under `layer`. `McpCallResult`, `Testing.serve`,
 `Testing.httpClient`, `Handler` and `Server` are gone; a malformed call is a raw request on
 the `HttpClient`.
@@ -268,17 +272,18 @@ the `HttpClient`.
   (`ActionHttp.openApi(Http)` or `OpenApi.fromApi(Http.api)`), or an MCP endpoint's
   `tools/list`.
 
-**Fewer exported types.** `Action.Codec`, `Action.CodecOf`, `Action.Options`, `Action.Fields`,
-`Action.Hints`,
-`ActionHttp.Api`, `ActionHttp.Options`, `ActionHttp.LayerOptions`, `ActionHttpClient.Method`,
-`ActionHttpClient.PromiseMethod`, `ActionHttpClient.Options`, `ActionMcp.Options`,
-`ActionMcp.StdioOptions`, `ActionToolkit.Options`, `ActionToolkit.Binding`, `ActionCli.Options`,
-`ActionCli.RemoteOptions`, `ActionCli.MakeOptions`, `ActionCli.RemoteMakeOptions`,
-`Authentication.ProtectedResourceOptions`, and the MCP request types of `Testing` are no longer
-exported. Use `Action.Any["input"]` for a service-free schema, `Action.Any["hints"]` for resolved
-hints, `Client<typeof Http>` for clients, `typeof Http.api` for the native API, and
-`Parameters<typeof ActionMcp.layerHttp>[1]` for an options type.
-`ActionToolkit.make` returns `{ toolkit, layer }`.
+**Exported types follow one rule.** Each module exports `Options` for its main function,
+`<Function>Options` for another's, and `Any` for its erased value: `Action.Options`,
+`Action.Hints`, `Action.Before` (the hook) and `Action.AnyImplementation`; `ActionHttp.Options`,
+`ActionHttp.ClientOptions` and `ActionHttp.Any`; `ActionMcp.HttpOptions` (was `Options`) and
+`ActionMcp.StdioOptions`; `ActionCli.Options`, `RemoteOptions`, `MakeOptions` and
+`RemoteMakeOptions`; `ActionToolkit.Tools`, what `make` returns, `{ toolkit, layer }`;
+`Authentication.Options` and `ProtectedResourceOptions`; `Testing.McpCallOptions` and
+`Testing.McpCallError`. `Action.Codec`, `Action.CodecOf`, `Action.Fields`, `ActionHttp.Api`,
+`ActionHttp.LayerOptions`, `ActionHttpClient.Method`, `ActionHttpClient.PromiseMethod`,
+`ActionToolkit.Options`, `ActionToolkit.Binding` and the MCP request types of `Testing` are
+gone: use `Action.Any["input"]` for a service-free schema, `Action.Any["hints"]` for resolved
+hints, and `typeof Http.api` for the native API.
 
 **`ActionMcp.layerHttp`'s `path` defaults to `/mcp`.**
 
@@ -289,11 +294,12 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
 ### Additions
 
 - `input` and `success` take plain fields: `input: { id: Schema.String }` is
-  `Schema.Struct({ id: Schema.String })`.
+  `Schema.Struct({ id: Schema.String })`. `{}` as `input` or `success` is the empty object,
+  which accepts only `{}`: `input: {}` is an action without input.
 - `success` is optional: an action that returns nothing omits it, and its success is
   `Schema.Void`. A CLI command of a `Schema.Void` action prints nothing; it printed `null`.
-  `implement` refuses a handler of a `Schema.Void` action that returns data, which the
-  encoding dropped: declare its `success` schema.
+  As for a function returning `void`, its handler may still return a value, which the
+  encoding drops: declare `success` to return data.
 - Handler parameters are typed from the contract in every `implement` form, without
   annotations, and a generic handler such as `Effect.succeed` is inferred as itself.
 - `Action.InvalidInput`, `Action.Unauthenticated`, `Action.Forbidden` and `Action.Refusal`:

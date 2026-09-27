@@ -2,13 +2,7 @@ import { Effect, Layer, type Schema } from "effect";
 import type { HttpClient } from "effect/unstable/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import {
-  type Etag,
-  HttpEffect,
-  type HttpPlatform,
-  HttpRouter,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { type Etag, type HttpPlatform, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 // Its own module rather than the barrel's namespace, which esbuild keeps whole in a client.
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
@@ -20,9 +14,9 @@ import {
   type ErasedMethod,
   methods,
   type Options as ClientOptions,
+  type Prefix,
 } from "./internal/client.js";
 import { httpErrors, type HttpErrors } from "./internal/errors.js";
-import { challenge } from "./internal/respond.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
@@ -41,8 +35,16 @@ import {
 /** A client's methods, one per action of the binding. */
 export type { Client } from "./internal/client.js";
 
+/** Any HTTP binding, with its actions erased: what `layer`, `client` and `openApi` read. */
+export type { AnyHttp as Any } from "./internal/client.js";
+
+/**
+ * The native `HttpApiClient.make` options `client` takes: `baseUrl` and `transformClient`.
+ */
+export type { Options as ClientOptions } from "./internal/client.js";
+
 /** Contract-level configuration: servers and clients must agree on it. */
-interface Options {
+export interface Options {
   /** Mount path of every route; defaults to `/api`. `/` mounts at the root. */
   readonly prefix?: `/${string}`;
 }
@@ -101,14 +103,6 @@ export interface Http<Actions extends ReadonlyArray<Action.Any>> {
   /** Mount path of every route: `/api` by default, empty at the root. */
   readonly prefix: Prefix;
   readonly api: Api<Actions>;
-}
-
-/** A mount path as routes are joined to it: empty at the root. */
-type Prefix = "" | `/${string}`;
-
-/** What `layer` and `openApi` read of a binding. */
-interface AnyBinding extends AnyHttp {
-  readonly prefix: Prefix;
 }
 
 /** A native request, as `HttpApiBuilder.handleAll` passes it to a handler. */
@@ -216,14 +210,14 @@ export function make(
  * only. Each implementation's builder runs once however many layers serve it.
  */
 export function layer<
-  const H extends AnyBinding,
+  const H extends AnyHttp,
   const Apps extends Served &
     (
       | AnyImplementation<H["actions"][number]>
       | ReadonlyArray<AnyImplementation<H["actions"][number]>>
     ),
 >(http: H, apps: Apps): HttpLayer<Member<Apps>>;
-export function layer(http: AnyBinding, served: Served): Layer.Layer<never, unknown, unknown> {
+export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
   const apps = toList(served);
   const actions = servedActions("served action", apps);
   const name = groupOf(http.api).identifier;
@@ -245,12 +239,7 @@ export function layer(http: AnyBinding, served: Served): Layer.Layer<never, unkn
             actions.map((action) => {
               const run = handlerOf(action);
 
-              // Whoever answers a 401, a hook or the handler itself, it carries a challenge.
-              return [
-                action.name,
-                (request: Request) =>
-                  HttpEffect.withPreResponseHandler(run(request.payload), challenge),
-              ];
+              return [action.name, (request: Request) => run(request.payload)];
             }),
           ) as never,
         ),
@@ -293,7 +282,7 @@ export function client(
  * covers it, and none is applied otherwise.
  */
 export const openApi = (
-  http: AnyBinding,
+  http: AnyHttp,
   path: HttpRouter.PathInput = `${http.prefix}/openapi.json`,
 ): Layer.Layer<never, never, HttpRouter.HttpRouter> =>
   HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(native(http.api))));

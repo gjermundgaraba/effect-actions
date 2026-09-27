@@ -7,6 +7,7 @@ import { gzipSync } from "node:zlib";
 import * as esbuild from "esbuild";
 import { build } from "vite";
 import manifest from "../package.json" with { type: "json" };
+import { published } from "./published.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -117,10 +118,7 @@ try {
   for (const file of ["quickstart.ts", "quickstart-server.ts"]) {
     writeFileSync(
       join(consumer, file),
-      readFileSync(join(root, "examples", file), "utf8").replace(
-        /"\.\.\/src\/(\w+)\.js"/g,
-        `"${manifest.name}/$1"`,
-      ),
+      published(readFileSync(join(root, "examples", file), "utf8")),
     );
   }
 

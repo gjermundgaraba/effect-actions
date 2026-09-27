@@ -23,8 +23,10 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `render`                     | `command` only: decoded success to human-readable string; adds `--json`.                                               |
 | `baseUrl`, `transformClient` | Over HTTP only: the native client's options, as `ActionHttp.client` takes them.                                        |
 
+Exported types: `Options` and `RemoteOptions` of `command`, `MakeOptions` and `RemoteMakeOptions` of `make`.
+
 Flags come from the action's input. A struct or class input gets one flag per top-level
-field, named in kebab case (`tenantId` is `--tenant-id`), parsing the field's encoded JSON
+field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`), parsing the field's encoded JSON
 value:
 
 | Encoded field                            | Flag                                                      |
@@ -110,7 +112,7 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - Output is validated and encoded before printing. Default output is JSON. An action whose `success` is `Schema.Void` prints nothing. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. Rendering cannot bypass validation.
 - `--json` is a regular flag of the rendered command only. A command without `render` has no such flag: its output is JSON already. Nothing is declared tree-wide, so a host CLI may declare its own `--json`, global or not.
 - Each invocation builds the selected implementation's builder in a scope of its own and releases it after the call. Only that implementation's builder runs: other implementations passed alongside it, on `command` or `make`, are not built. Domain services and authority come from the host's provided layers. There is no HTTP fallback.
-- The implementation's `before` runs before the selected handler, on `command` and on every subcommand of `make`. Nothing authenticates: there is no remote caller, so the host provides the identity the hook reads, as `Effect.provideService(CurrentActor, actor)`. A CLI is not a trusted bypass; a trusted admin CLI implements the same handlers without `before`.
+- A local command is a local surface: the implementation's `before` runs before the selected handler, on `command` and on every subcommand of `make`, and the host provides the identity the hook reads, as `Effect.provideService(CurrentActor, actor)`. A CLI is not a trusted bypass; a trusted admin CLI implements the same handlers without `before`.
 - The CLI does not serialize a refusal: it is a typed failure of the command effect. Every local command's error channel includes `Action.Refusal`, whatever its implementation's hook. Invalid input fails decoding before the hook, so it skips the hook and handler.
 - From a binding, `command(http, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `make(http, { name })` projects every action of the binding, the same tree `make` builds locally. Nothing in the options selects another endpoint.
 - A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient` and its configuration; credentials are the host's, and nothing is inferred from action arguments. Input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. Errors are the client's: the action's declared errors, the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, `SchemaError`, and `HttpClientError`.
@@ -124,8 +126,8 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name, such as two input fields with the same kebab-case name (`userId`, `user_id`), or a `json` field beside `render`'s `--json`. Rename the field, or drop `render`. A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `apps`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
-- `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). Connection refused: `baseUrl` is absent or wrong; it has no default. 401 `Unauthenticated`: add `transformClient`; the command adds no headers of its own.
+- `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: `baseUrl` is omitted, and it has no default outside `Testing.layer`. Connection refused: `baseUrl` is wrong. 401 `Unauthenticated`: add `transformClient`; the command adds no headers of its own.
 - `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Aggregate them under separate `make` commands, or compose `command` results with a `name` override.
-- `Duplicate command: <name>` thrown by `command`: the selected action is implemented by more than one implementation passed. Other actions' names are not checked.
+- `Action "x" is implemented twice here` thrown by `command`: more than one implementation passed implements the selected action. Pass one. Other actions' names are not checked.
 - Handler cannot find a service: provide its Layer to the runtime (`Effect.provide`) before `runMain`. The command does not supply services.
 - A command requires a request-identity tag no handler yields: the implementation's `before` hook yields it. Provide a trusted identity around the invocation; do not remove the authorization hook just to satisfy the service requirement.

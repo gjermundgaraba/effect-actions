@@ -28,9 +28,9 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 ```
 
-Every module imports from the `effect` package only. `ActionMcp` and `ActionToolkit` are the
-only modules that import `effect/unstable/ai`; because there is no package root, importing a
-contract module never pulls in an MCP server.
+Every module imports from the `effect` package only. There is no package root, so importing
+`Action` or `ActionHttp` never pulls in an MCP server or the AI toolkit; `test:package` bounds
+what a client adds to a browser bundle.
 
 ## Browser
 
@@ -42,9 +42,9 @@ module. Keep the contracts and the binding in modules that import no server code
 those alone from the page, as the minimal program does:
 
 ```text
-src/contracts.ts    Action.make(...) and ActionHttp.make([...]): imports effect only
-src/handlers.ts     Action.implement(...): services, database, @effect/platform-node
-src/server.ts       ActionHttp.layer, ActionMcp, Authentication
+contracts.ts    Action.make(...) and ActionHttp.make([...]): imports effect only
+handlers.ts     Action.implement(...): services, database, @effect/platform-node
+server.ts       ActionHttp.layer, ActionMcp, Authentication
 ```
 
 A module that calls `Action.implement` beside its contracts brings its handlers, and every

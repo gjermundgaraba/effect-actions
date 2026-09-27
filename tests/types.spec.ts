@@ -12,6 +12,7 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/authorization.js";
@@ -633,21 +634,9 @@ export const voidSuccessTypes = () => {
     Effect.succeed(() => Effect.void),
   );
 
-  // `Effect<string>` is assignable to `Effect<void>`, so `implement` refuses a void
-  // action's handler that returns data its encoding would drop, in every form.
-  // @ts-expect-error A handler that returns data needs a success schema to return it.
+  // As for a function returning `void`, a void action's handler may return a value, which
+  // its encoding drops.
   Action.implement(Reset, () => Effect.succeed("done"));
-  Action.implement([Reset, Double], {
-    // @ts-expect-error In a record too.
-    reset: () => Effect.succeed("done"),
-    double: ({ value }) => Effect.succeed(value * 2),
-  });
-  Action.implement(
-    Reset,
-    // @ts-expect-error And from a builder.
-    Effect.succeed(() => Effect.succeed("done")),
-  );
-  // @ts-expect-error An explicit `Schema.Void` is the same contract.
   Action.implement(Explicit, () => Effect.succeed(1));
 
   void success;
@@ -705,7 +694,7 @@ export const mcpCallTypes = () => {
     typeof call,
     Effect.Effect<
       number,
-      Action.Refusal | Schema.SchemaError | HttpClientError.HttpClientError | Error,
+      Action.Refusal | Schema.SchemaError | HttpClientError.HttpClientError | Testing.McpCallError,
       HttpClient.HttpClient
     >
   > = true;
@@ -817,4 +806,26 @@ export const unionOptionTypes = (
   void Action.implement(Either, () => Effect.succeed("x"));
 
   void union;
+};
+
+export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementation) => {
+  // Every option a module's functions take is its own named type.
+  const options = {
+    description: "Options built ahead of `make`",
+    access: "read",
+  } satisfies Action.Options;
+
+  const hook: Action.Before<typeof Double, never> = (action) =>
+    action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
+
+  const clientOptions: ActionHttp.ClientOptions = { baseUrl: "http://localhost" };
+  const httpOptions: ActionMcp.HttpOptions = { name: "test", version: "0" };
+  const call: Testing.McpCallOptions = { url: "/mcp" };
+  const auth: Authentication.Options = { challenge: "Bearer" };
+
+  // An action given `{}` has no input, as one without `input`.
+  const given = Action.make("given", { ...options, input: {} });
+  const noInput: Equal<(typeof given)["input"], (typeof WhoAmI)["input"]> = true;
+
+  void [binding, app, hook, clientOptions, httpOptions, call, auth, noInput];
 };

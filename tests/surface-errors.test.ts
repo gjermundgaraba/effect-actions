@@ -157,8 +157,8 @@ it.each(refusals)(
     const response = await web.handler(post("/api/rename", { name: "draft" }));
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual(wire(refusal));
-    // A 401 carries a challenge, as the authentication middleware's does.
-    expect(response.headers.get("www-authenticate")).toBe(status === 401 ? "Bearer" : null);
+    // Only authentication challenges, and none covers these routes.
+    expect(response.headers.has("www-authenticate")).toBe(false);
 
     const refused = await Effect.runPromise(
       Effect.flip(Effect.flatMap(httpClient(Notes, web), (client) => client.rename({ name: "x" }))),
@@ -168,7 +168,7 @@ it.each(refusals)(
   },
 );
 
-it("challenges a handler's own 401, with no hook bound", async () => {
+it("challenges every 401 of the routes authentication covers, a hook's or a handler's", async () => {
   const Guarded = Action.make("guarded", {
     description: "Refuses by itself",
     access: "read",
@@ -176,20 +176,26 @@ it("challenges a handler's own 401, with no hook bound", async () => {
     errors: [Action.Unauthenticated],
   });
 
-  const Notes = ActionHttp.make([Guarded]);
+  const Notes = ActionHttp.make([Rename, Guarded]);
 
   const web = serve(
-    ActionHttp.layer(
-      Notes,
+    ActionHttp.layer(Notes, [
+      refusing(new Action.Unauthenticated()),
       Action.implement(Guarded, () => Effect.fail(new Action.Unauthenticated())),
+    ]).pipe(
+      Layer.provide(
+        Authentication.make(Principal, Effect.succeed("ada"), { challenge: 'Basic realm="notes"' }),
+      ),
     ),
   );
 
   onTestFinished(() => web.dispose());
 
-  const response = await web.handler(post("/api/guarded"));
-  expect(response.status).toBe(401);
-  expect(response.headers.get("www-authenticate")).toBe("Bearer");
+  for (const request of [post("/api/rename", { name: "draft" }), post("/api/guarded")]) {
+    const response = await web.handler(request);
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe('Basic realm="notes"');
+  }
 });
 
 it("does not repeat a built-in error an action already declares", () => {

@@ -20,7 +20,7 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `openApi(Http, path?)`    | Serve the OpenAPI document with `GET path`; defaults to `<prefix>/openapi.json`.             |
 | `client(Http, options?)`  | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
 
-Exported types: `Http`, and `Client`, a client's type: `Client<typeof Http>`.
+Exported types: `Http`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make` and `ClientOptions` of `client`.
 
 | Option                      | Meaning                                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -154,14 +154,11 @@ success, failure or required services, which the method types cannot follow; use
 - Action names are unique within a binding. Two bindings with different prefixes may reuse a name and be served side by side, but not combined into one `HttpApi`.
 - `layer(Http, apps)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape. An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
 - The binding is plain data: `layer` and `openApi` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
-- Middleware, authentication included, is per layer call: provided to a `layer` call, it covers that call's routes, before decoding, and no others. Public and authenticated actions go in separate `layer` calls over the same binding, merged with `Layer.mergeAll`; they still share one binding, one document and one client. A builder runs once for the host however many calls serve its implementation.
-- Each implementation's `before` hook runs after decoding, before each handler; it follows the hook rules in [guarantees.md](guarantees.md#dependency-lifetimes).
-- `ActionHttp` sets one header of its own: `WWW-Authenticate: Bearer` on every 401 a hook or handler answers. The host owns cache policy; `Authentication.make` marks the responses of the routes it covers `cache-control: no-store`.
-- Request-time handler and hook services are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`HttpRouter.middleware`, `Authentication.make`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
+- Middleware, authentication included, is per layer call: provided to a `layer` call, it covers that call's routes, before decoding, and no others. Public and authenticated actions go in separate `layer` calls over the same binding, merged with `Layer.mergeAll`; they still share one binding, one document and one client.
+- The hook, builders, request-time services and headers follow [guarantees.md](guarantees.md): `ActionHttp` itself sets no header.
 - `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`. The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`. Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them: an operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
 - `openApi(Http, path?)` is `OpenApi.fromApi(Http.api)` as one `GET` route, `<prefix>/openapi.json` unless a path is given. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
-- Wire format: success is the encoded body, a declared error is its JSON encoding with its `httpApiStatus`, a defect is an empty 500. Full table in [guarantees.md](guarantees.md#wire-behavior).
-- Each handler runs in a span named after its action, a child of the request span, attributed with `action.name` and `action.access`; its log lines carry the same annotations. Authentication, the hook, decoding and encoding are outside it, in the request span.
+- Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
 
 ### Client methods
 
@@ -178,12 +175,9 @@ success, failure or required services, which the method types cannot follow; use
 
 ### Built-in errors
 
-- Every endpoint declares `InvalidInput`, `Unauthenticated` and `Forbidden` beyond the action's own errors, so `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
-- Input that does not decode, malformed JSON included, is answered **400** `InvalidInput` whose `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`. The hook and handler never run. A wrong content type is Effect's own 415.
-- A result that does not encode is a server bug: a defect, answered with an empty **500**. A typed client fails with `HttpClientError` (`DecodeError`, status 500).
-- A refusal, from authentication or `before`, is its JSON with 401 or 403. Every 401 refusal, and every 401 a hook or handler answers, carries `WWW-Authenticate: Bearer`. An `HttpServerResponse` that authentication fails with is sent as it is, its challenge the host's ([Authentication.md](Authentication.md)).
-- Schemas reachable from one endpoint must have distinct `_tag`s: the client decodes a response by trying the schemas declared for its status. An application error must not reuse a built-in tag (`InvalidInput`, `Unauthenticated`, `Forbidden`); list the built-in error itself instead.
-- MCP is unaffected: the native `McpServer` answers invalid arguments itself ([ActionMcp.md](ActionMcp.md)).
+- Every endpoint declares `InvalidInput`, `Unauthenticated` and `Forbidden` ([guarantees.md](guarantees.md#wire-behavior)), so `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
+- `InvalidInput`'s `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`.
+- An application error must not reuse a built-in tag (`InvalidInput`, `Unauthenticated`, `Forbidden`); list the built-in error itself instead.
 
 ## Failure modes
 
@@ -195,9 +189,8 @@ success, failure or required services, which the method types cannot follow; use
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.
 - Type error listing `HttpRouter.Request.From<"Requires", CurrentActor>` as unsatisfied: a handler or the hook yields a request service that no middleware around the layer provides. Provide the authentication around it, `layer.pipe(Layer.provide(authenticate))` ([Authentication.md](Authentication.md)), or other router middleware.
-- An action that should be authenticated answers without credentials: its layer has no authentication around it, and neither its handler nor its hook reads the identity, so nothing in the types asks for one. Provide the authentication around every layer serving it.
-- 400 `InvalidInput` on a valid-looking request: its `message` names each field that did not decode. Check it, and `Content-Type: application/json`.
-- 415: wrong or missing content type.
+- 400 `InvalidInput` on a valid-looking request: its `message` names each field that did not decode. An action without input takes only `{}`, and a body.
+- 415: a content type other than JSON, such as `fetch`'s default `text/plain` for a string body. A request without one is read as JSON.
 - Empty 500: a defect, or a handler result that does not match the success schema. The cause is in the server's logs.
 
 ### Client methods

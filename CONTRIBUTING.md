@@ -42,6 +42,14 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
 - `tests/docs.test.ts` compares the README showcase and selected executable examples with files in `examples/`, so those snippets stay type-checked. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
+- A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
+- Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Implementation rationale belongs in code comments or below.
+- Every file in `examples/` is listed in `examples/README.md`, which `tests/docs.test.ts` checks; `docs/README.md` links there rather than keeping a list of its own.
+
+## Design notes
+
+- HTTP input is not strict, and cannot be made strict without a hack: Effect merges one `HttpApi.ParseOptions` per endpoint and uses it for payload decoding _and_ error encoding, so `onExcessProperty: "error"` also rejects a `TaggedError` instance's own `message` and `stack`, turning a declared 409 into an empty 500. Making the payload schema strict would mean wrapping it in an open schema, which erases its OpenAPI shape. An action without input is strict anyway: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP, so it is `Schema.Record(Schema.String, Schema.Never)`.
+- MCP over HTTP serves 2026-07-28 only. The stateful revisions work over Effect's HTTP transport, and request identity stays per request, but each `initialize` registers a session that Effect's runtime never deletes, with no expiry and no `DELETE` termination, and any caller holding the session id may use it.
 
 ## Release
 

@@ -12,6 +12,7 @@ import type * as Action from "./Action.js";
 import { projectedErrors } from "./internal/actions.js";
 import type { OmittableInput } from "./internal/client.js";
 import { type Refusal, refusals } from "./internal/errors.js";
+import { defaultPath, httpProtocol } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
@@ -36,7 +37,7 @@ export function layer(
 }
 
 /** Where `mcpCall` sends its call, and with what headers. */
-interface McpCallOptions {
+export interface McpCallOptions {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
    * the default `ActionMcp.layerHttp` path.
@@ -46,18 +47,26 @@ interface McpCallOptions {
 }
 
 /**
+ * An answer `mcpCall` cannot decode as the action's success or a declared error, such as
+ * the native server's message for invalid arguments or an unknown tool. Its message holds
+ * the answer.
+ */
+export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
+  message: Schema.String,
+}) {}
+
+/**
  * What one call of `A` fails with: a declared error value (the action's own from the tool,
  * or a refusal from the tool or the endpoint's authentication), a `SchemaError` when the
  * input does not encode or the success does not decode, an `HttpClientError` when the
- * endpoint could not be reached, or an `Error` holding the answer for anything else, such as
- * the native server's message for invalid arguments or an unknown tool.
+ * endpoint could not be reached, or an `McpCallError` for any other answer.
  */
-type McpCallError<A extends Action.Any> =
+type CallError<A extends Action.Any> =
   | A["errors"][number]["Type"]
   | Refusal
   | Schema.SchemaError
   | HttpClientError.HttpClientError
-  | Error;
+  | McpCallError;
 
 /**
  * The arguments after the action: its input, then options. As for a client's method, the input
@@ -100,7 +109,7 @@ const replyOf = (text: string) =>
   );
 
 /** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
-const failWith = (errors: Action.Any["errors"], text: string, otherwise: Error) =>
+const failWith = (errors: Action.Any["errors"], text: string, otherwise: McpCallError) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
     text,
   ).pipe(
@@ -109,36 +118,38 @@ const failWith = (errors: Action.Any["errors"], text: string, otherwise: Error) 
   );
 
 /**
- * Call one action's tool with a stateless 2026-07-28 request on the `HttpClient`, such as
- * the one `layer` provides, as `ActionHttp.client` calls its route: the input is encoded
- * with the action's schema, and the success decoded. A declared error the tool returns, the
- * action's own or a refusal, is its decoded value, and so is a refusal the endpoint's
- * authentication answers with.
+ * Call one action's tool with one stateless request, as `ActionMcp.layerHttp` serves it,
+ * on the `HttpClient`, such as the one `layer` provides, as `ActionHttp.client` calls its
+ * route: the input is encoded with the action's schema, and the success decoded. A declared
+ * error the tool returns, the action's own or a refusal, is its decoded value, and so is a
+ * refusal the endpoint's authentication answers with.
  */
 export function mcpCall<const A extends Action.Any>(
   action: A,
   ...args: McpCallArguments<A>
-): Effect.Effect<A["success"]["Type"], McpCallError<A>, HttpClient.HttpClient>;
+): Effect.Effect<A["success"]["Type"], CallError<A>, HttpClient.HttpClient>;
 export function mcpCall(
   action: Action.Any,
   ...args: [] | [input: Action.Any["input"]["Type"], options?: McpCallOptions]
 ): Effect.Effect<unknown, unknown, HttpClient.HttpClient> {
   const { name } = action;
-  const [input, { headers = {}, url = "/mcp" } = {}] = args.length === 0 ? [{}] : args;
+  const [input, { headers = {}, url = defaultPath } = {}] = args.length === 0 ? [{}] : args;
+  const { protocolVersion } = httpProtocol;
 
-  const other = (answer: string) => new Error(`MCP tools/call "${name}" ${answer}`);
+  const other = (answer: string) =>
+    new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
 
   return Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
-    // One stateless 2026-07-28 request: its routing headers, over any the caller sets,
+    // One stateless request: its routing headers, over any the caller sets,
     // repeat what its body says.
     const response = yield* HttpClient.execute(
       HttpClientRequest.post(url).pipe(
         HttpClientRequest.setHeaders(headers),
         HttpClientRequest.setHeaders({
           accept: "application/json, text/event-stream",
-          "mcp-protocol-version": "2026-07-28",
+          "mcp-protocol-version": protocolVersion,
           "mcp-method": "tools/call",
           "mcp-name": name,
         }),
@@ -150,7 +161,7 @@ export function mcpCall(
             name,
             arguments: encoded,
             _meta: {
-              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/protocolVersion": protocolVersion,
               "io.modelcontextprotocol/clientCapabilities": {},
               "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
             },

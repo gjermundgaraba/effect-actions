@@ -40,7 +40,7 @@ type ToolkitTools<App> = {
 };
 
 /** Native tools and the layer that binds their action implementations. */
-interface Tools<T extends Record<string, Tool.Any>, E, R> {
+export interface Tools<T extends Record<string, Tool.Any>, E, R> {
   readonly toolkit: Toolkit.Toolkit<T>;
   /** Acquires handlers once in the layer scope; handler requirements remain at invocation. */
   readonly layer: Layer.Layer<Tool.HandlersFor<T>, E, R>;

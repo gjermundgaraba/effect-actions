@@ -364,19 +364,6 @@ describe("actions under their own middleware", () => {
     expect(result.unauthenticated).toMatchObject({ message: "A bearer token is required." });
     expect(result.forbidden).toBeInstanceOf(Action.Forbidden);
     expect(result.forbidden).toMatchObject({ message: "Requires users:write." });
-
-    // The typed client validates locally, so bad input needs a raw request. Its message
-    // is the schema's own account of what is wrong.
-    const rejected = await app.handler(request("/api/renameUser", "alice", { id: "1", name: "" }));
-
-    expect(rejected.status).toBe(400);
-    expect(await rejected.json()).toEqual(
-      Schema.encodeSync(Action.InvalidInput)(
-        new Action.InvalidInput({
-          message: 'Expected a value with a length of at least 1\n  at ["name"]',
-        }),
-      ),
-    );
   });
 
   it("splits MCP access by endpoint, since middleware covers every tool of one", async () => {

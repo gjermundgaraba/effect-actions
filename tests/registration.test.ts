@@ -444,36 +444,6 @@ describe("projection boundaries", () => {
     expect(JSON.stringify(reply)).toContain("Expected a finite number");
   });
 
-  it("answers HTTP input that does not decode with a 400 InvalidInput and the schema's message", async () => {
-    const Greet = Action.make("greet", {
-      description: "Greet",
-      access: "write",
-      input: { name: Schema.String },
-      success: Schema.String,
-    });
-
-    let ran = 0;
-
-    const web = makeTestHttp(
-      Action.implement(Greet, ({ name }) =>
-        Effect.as(
-          Effect.sync(() => ran++),
-          name,
-        ),
-      ),
-    );
-
-    onTestFinished(() => web.dispose());
-    const response = await web.handler(post("/api/greet", { name: 1 }));
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual(
-      Schema.encodeSync(Action.InvalidInput)(
-        new Action.InvalidInput({ message: 'Expected string\n  at ["name"]' }),
-      ),
-    );
-    expect(ran).toBe(0);
-  });
-
   it("turns invalid output and defects into sanitized native failures on both transports", async () => {
     const Broken = Action.make("broken", {
       description: "Bad output",

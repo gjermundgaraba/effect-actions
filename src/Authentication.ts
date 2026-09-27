@@ -1,4 +1,4 @@
-import { type Context, Effect, type Layer } from "effect";
+import { type Context, Effect, type Layer, Schema } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
   HttpEffect,
@@ -6,8 +6,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { type Refusal, Unauthenticated } from "./internal/errors.js";
-import { refuse } from "./internal/respond.js";
+import { type Refusal, refusals, statuses, Unauthenticated } from "./internal/errors.js";
 
 /**
  * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
@@ -26,6 +25,23 @@ export const bearerToken: Effect.Effect<
     : Effect.succeed(token);
 });
 
+/** How `make` answers what it covers. */
+export interface Options {
+  /**
+   * The `WWW-Authenticate` challenge of every 401 without one, whether authentication, a
+   * hook or a handler answers it; defaults to `Bearer`.
+   */
+  readonly challenge?: string;
+}
+
+const Refusals = Schema.Union(refusals);
+
+/** A refusal as its JSON with its status, as every endpoint declares it. */
+const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+  HttpServerResponse.schemaJson(Refusals)(error, { status: statuses[error._tag] }).pipe(
+    Effect.orDie,
+  );
+
 /**
  * How a remote caller proves who they are: router middleware that authenticates each
  * request and provides its identity to the handler. Provide it to the HTTP surfaces
@@ -33,17 +49,20 @@ export const bearerToken: Effect.Effect<
  * any native route: it covers the routes of the layer it is provided to, before decoding,
  * and removes the identity from that layer's request requirements.
  *
- * `authenticate` fails with `Unauthenticated` (a 401 with a `Bearer` challenge) or
- * `Forbidden` (a 403), each sent as the JSON every client decodes, or with the response to
- * send instead. The services it yields are request requirements, like a handler's, which
- * the layer keeps; `HttpRouter.provideRequest` builds one once, such as a token verifier.
- * Acquired resources live until the request scope closes, including while the handler is
- * running. Every response is marked `Cache-Control: no-store`, including private failures
+ * `authenticate` fails with `Unauthenticated` (a 401) or `Forbidden` (a 403), each sent as
+ * the JSON every client decodes, or with the response to send instead. The services it
+ * yields are request requirements, like a handler's, which the layer keeps;
+ * `HttpRouter.provideRequest` builds one once, such as a token verifier. Acquired
+ * resources live until the request scope closes, including while the handler is running.
+ *
+ * Every response of the routes it covers is marked `Cache-Control: no-store`, and every
+ * 401 among them without a challenge gets `options.challenge`, including failures
  * serialized by enclosing middleware.
  */
 export const make = <I, A, R>(
   service: Context.Key<I, A>,
   authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
+  options: Options = {},
 ): Layer.Layer<
   HttpRouter.Request.From<"Requires", I>,
   never,
@@ -61,7 +80,14 @@ export const make = <I, A, R>(
         onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
       }),
       HttpEffect.withPreResponseHandler((_request, response) =>
-        Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
+        Effect.succeed(
+          HttpServerResponse.setHeaders(response, {
+            "cache-control": "no-store",
+            ...(response.status === 401 && response.headers["www-authenticate"] === undefined
+              ? { "www-authenticate": options.challenge ?? "Bearer" }
+              : {}),
+          }),
+        ),
       ),
     ),
   ).layer as Layer.Layer<
@@ -71,7 +97,7 @@ export const make = <I, A, R>(
   >;
 
 /** RFC 9728 metadata to publish; the host is responsible for these being valid OAuth URLs. */
-interface ProtectedResourceOptions {
+export interface ProtectedResourceOptions {
   /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
   readonly authorizationServers: NonEmptyReadonlyArray<string>;
@@ -81,8 +107,9 @@ interface ProtectedResourceOptions {
 
 /**
  * Publish RFC 9728 discovery at `/.well-known/oauth-protected-resource` followed by the
- * resource's path, where MCP clients look when a 401 names no metadata URL. Serve it
- * independently from the authenticated routes; the host still verifies access tokens.
+ * resource's path, where MCP clients look when a 401 names no metadata URL. It answers
+ * before routing, so no route middleware, authentication included, ever covers it; the
+ * host still verifies access tokens.
  */
 export const protectedResource = (options: ProtectedResourceOptions) => {
   const resource = new URL(options.resource);

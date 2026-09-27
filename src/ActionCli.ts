@@ -23,17 +23,20 @@ import {
   toList,
 } from "./internal/implementation.js";
 
+/** How a command is named and prints its result. */
+export type { Options } from "./internal/cli.js";
+
 /** How a remote command is named and prints its result, and its native client options. */
-interface RemoteOptions<Output> extends CommandOptions<Output>, ClientOptions {}
+export interface RemoteOptions<Output> extends CommandOptions<Output>, ClientOptions {}
 
 /** The name of an aggregate local command. */
-interface MakeOptions {
+export interface MakeOptions {
   /** The aggregate command's name. */
   readonly name: string;
 }
 
 /** The name of an aggregate remote command, and its native client options. */
-interface RemoteMakeOptions extends ClientOptions {
+export interface RemoteMakeOptions extends ClientOptions {
   /** The aggregate command's name. */
   readonly name: string;
 }
@@ -102,7 +105,7 @@ const select = (apps: ReadonlyArray<AnyImplementation>, action: Action.Any): Any
 
   if (app === undefined) throw new Error(`Action "${action.name}" has no implementation here`);
 
-  if (others.length > 0) throw new Error(`Duplicate command: ${kebab(action.name)}`);
+  if (others.length > 0) throw new Error(`Action "${action.name}" is implemented twice here`);
 
   return app;
 };

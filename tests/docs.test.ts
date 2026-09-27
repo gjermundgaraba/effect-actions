@@ -6,6 +6,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { routes } from "../examples/quickstart-server.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
+import { published } from "../scripts/published.mjs";
 import { docsDirectory } from "../scripts/skill.ts";
 import { mcpRequest } from "./requests.js";
 import { serve } from "./serve.js";
@@ -33,10 +34,7 @@ const snippets = [
 ] as const;
 
 /** An example as a page shows it, importing the published package. */
-const documented = (file: string) =>
-  read(`examples/${file}`)
-    .trim()
-    .replace(/"\.\.\/src\/(\w+)\.js"/g, '"@gjermundgaraba/effect-actions/$1"');
+const documented = (file: string) => published(read(`examples/${file}`).trim());
 
 it.each(snippets)(
   "keeps %s %s aligned with its type-checked source",
@@ -63,6 +61,24 @@ it("pairs every canonical snippet with a type-checked example", () => {
   );
 
   expect(paired).toEqual(expect.arrayContaining(pages.map((page) => `docs/${page}`)));
+});
+
+// Docs describe behavior, and ship as the skill: no page names this repository's sources.
+it("names no source path in docs/", () => {
+  for (const page of readdirSync(docsDirectory)) {
+    expect(read(`docs/${page}`), page).not.toMatch(/\bsrc\//);
+  }
+});
+
+// The examples README is their one index.
+it("lists every example in examples/README.md", () => {
+  const index = read("examples/README.md");
+
+  const examples = readdirSync(new URL("../examples/", import.meta.url)).filter((name) =>
+    name.endsWith(".ts"),
+  );
+
+  for (const example of examples) expect(index, example).toContain(`](${example})`);
 });
 
 // The skill is a copy of docs/, so every relative link must resolve inside docs/.

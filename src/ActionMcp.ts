@@ -3,6 +3,7 @@ import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
+import { defaultPath, httpProtocol } from "./internal/mcp.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type AnyImplementation,
@@ -20,19 +21,16 @@ import {
  * `protocols` (server information, `allowedOrigins`, `instructions`, `extensions`, ...),
  * with `path` defaulting to `/mcp`.
  */
-interface Options extends Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
+export interface HttpOptions extends Omit<
+  Parameters<typeof McpServer.layerHttp>[0],
+  "protocols" | "path"
+> {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
 }
 
 /** An MCP subprocess on standard I/O: every native `McpServer.layerStdio` option except `protocols`. */
-type StdioOptions = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
-
-/**
- * The one protocol revision served over HTTP. 2026-07-28 is stateless: no initialize
- * handshake and no session, so every request stands alone.
- */
-const httpProtocols = [McpProtocol.v2026_07_28] as const;
+export type StdioOptions = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
 
 /**
  * The revisions served over stdio: 2026-07-28 and the stateful revisions a host
@@ -74,7 +72,7 @@ const server = <Out, R>(
  */
 export function layerHttp<const Apps extends Served>(
   apps: Apps,
-  options: Options,
+  options: HttpOptions,
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
@@ -82,10 +80,14 @@ export function layerHttp<const Apps extends Served>(
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", ToolRequestContext<RequestContext<Member<Apps>>>>
 >;
-export function layerHttp(apps: Served, options: Options) {
+export function layerHttp(apps: Served, options: HttpOptions) {
   return server(
     toList(apps),
-    McpServer.layerHttp({ ...options, path: options.path ?? "/mcp", protocols: httpProtocols }),
+    McpServer.layerHttp({
+      ...options,
+      path: options.path ?? defaultPath,
+      protocols: [httpProtocol],
+    }),
   );
 }
 
