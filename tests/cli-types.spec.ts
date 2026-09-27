@@ -259,3 +259,26 @@ ActionCli.make(Bound, { name: "r", transformResponse });
 
 // @ts-expect-error An aggregate remote command needs a name.
 ActionCli.make(Bound, {});
+
+// Client options are a remote command's only; a local command runs no client.
+ActionCli.command(Bound, Plain, { baseUrl: "http://localhost" });
+
+ActionCli.make(Bound, { name: "r", baseUrl: "http://localhost" });
+
+// @ts-expect-error A local command takes no client options.
+ActionCli.command(local, One, { baseUrl: "http://localhost" });
+
+// @ts-expect-error A local aggregate takes none either.
+ActionCli.make(local, { name: "l", baseUrl: "http://localhost" });
+
+// The options exported for each function, joined with the client's over HTTP.
+const remoteOptions: ActionCli.Options<string> & ActionHttp.ClientOptions = {
+  baseUrl: "http://localhost",
+  render: (output) => output,
+};
+
+const remoteMake: ActionCli.MakeOptions & ActionHttp.ClientOptions = { name: "r" };
+
+ActionCli.command(http, RemoteAction, remoteOptions);
+
+ActionCli.make(http, remoteMake);

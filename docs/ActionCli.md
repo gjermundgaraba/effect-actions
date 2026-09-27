@@ -23,7 +23,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `render`                     | `command` only: decoded success to human-readable string; adds `--json`.                                               |
 | `baseUrl`, `transformClient` | Over HTTP only: the native client's options, as `ActionHttp.client` takes them.                                        |
 
-Exported types: `Options` and `RemoteOptions` of `command`, `MakeOptions` and `RemoteMakeOptions` of `make`.
+Exported types: `Options` of `command` and `MakeOptions` of `make`. Over HTTP, either is joined with `ActionHttp.ClientOptions`.
 
 Flags come from the action's input. A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`), parsing the field's encoded JSON

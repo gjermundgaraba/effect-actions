@@ -23,20 +23,17 @@ import {
   toList,
 } from "./internal/implementation.js";
 
-/** How a command is named and prints its result. */
+/**
+ * How a command is named and prints its result. A command over HTTP also takes the
+ * client's options, `ActionHttp.ClientOptions`.
+ */
 export type { Options } from "./internal/cli.js";
 
-/** How a remote command is named and prints its result, and its native client options. */
-export interface RemoteOptions<Output> extends CommandOptions<Output>, ClientOptions {}
-
-/** The name of an aggregate local command. */
+/**
+ * The name of an aggregate command. One over HTTP also takes the client's options,
+ * `ActionHttp.ClientOptions`.
+ */
 export interface MakeOptions {
-  /** The aggregate command's name. */
-  readonly name: string;
-}
-
-/** The name of an aggregate remote command, and its native client options. */
-export interface RemoteMakeOptions extends ClientOptions {
   /** The aggregate command's name. */
   readonly name: string;
 }
@@ -144,7 +141,7 @@ const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasPrope
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
-  options?: RemoteOptions<A["success"]["Type"]>,
+  options?: CommandOptions<A["success"]["Type"]> & ClientOptions,
 ): RemoteCommand<A>;
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
   apps: Apps,
@@ -170,7 +167,7 @@ export function command(
  */
 export function make<const H extends AnyHttp>(
   http: H,
-  options: RemoteMakeOptions,
+  options: MakeOptions & ClientOptions,
 ): RemoteCommand<H["actions"][number], {}>;
 export function make<const Apps extends Served>(
   apps: Apps,
@@ -178,7 +175,7 @@ export function make<const Apps extends Served>(
 ): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, {}>;
 export function make(
   target: AnyHttp | Served,
-  options: ErasedOptions & { readonly name: string },
+  options: ErasedOptions & MakeOptions,
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const { baseUrl, transformClient } = options;
 
