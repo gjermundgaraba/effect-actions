@@ -116,10 +116,8 @@ describe("one implementation, both transports", () => {
   it("rejects malformed input with each protocol's native error", async () => {
     const invalid = await app.handler(request("/api/double", "alice", { value: "nope" }));
     expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toEqual(
-      Schema.encodeSync(Action.InvalidInput)(
-        new Action.InvalidInput({ message: 'Expected a finite number\n  at ["value"]' }),
-      ),
+    expect(Schema.decodeUnknownSync(Action.InvalidInput)(await invalid.json()).message).toContain(
+      'at ["value"]',
     );
     expect(await tool("double", { value: "nope" })).toMatchObject({ isError: true });
     expect(

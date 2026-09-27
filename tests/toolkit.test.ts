@@ -161,9 +161,7 @@ describe("ActionToolkit", () => {
     expect(Exit.isFailure(result.anonymous)).toBe(true);
 
     if (Exit.isFailure(result.anonymous)) {
-      expect(Cause.pretty(result.anonymous.cause)).toContain(
-        "Service not found: toolkit-test/Principal",
-      );
+      expect(Cause.pretty(result.anonymous.cause)).toContain("toolkit-test/Principal");
     }
   });
 });

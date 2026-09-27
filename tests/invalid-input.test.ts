@@ -25,8 +25,9 @@ const Echo = Action.make("echo", {
 const Http = ActionHttp.make([Echo]);
 
 /** The body of a 400: the built-in error, its message the schema's. */
-const invalidInput = (message: string) =>
-  Schema.encodeSync(Action.InvalidInput)(new Action.InvalidInput({ message }));
+/** The message of the `InvalidInput` a response carries: Effect's words, so assert on its path. */
+const invalidInput = async (response: Response) =>
+  Schema.decodeUnknownSync(Action.InvalidInput)(await response.json()).message;
 
 const request = (value: Schema.Json, path = "/api/echo") =>
   new Request(`http://localhost${path}`, {
@@ -58,8 +59,10 @@ it("answers a request that does not decode with InvalidInput and the schema's me
 
   const malformed = await web.handler(request("secret input"));
   expect(malformed.status).toBe(400);
-  // The schema's own words, which name the expected type and path but not the value sent.
-  expect(await malformed.json()).toEqual(invalidInput('Expected number\n  at ["value"]'));
+  // The schema's own words, which name the path but not the value sent.
+  const message = await invalidInput(malformed);
+  expect(message).toContain('at ["value"]');
+  expect(message).not.toContain("secret");
 
   const invalidJson = await web.handler(
     new Request("http://localhost/api/echo", {
@@ -70,7 +73,7 @@ it("answers a request that does not decode with InvalidInput and the schema's me
   );
 
   expect(invalidJson.status).toBe(400);
-  expect(await invalidJson.json()).toEqual(invalidInput("Expected a valid JSON body"));
+  expect(await invalidInput(invalidJson)).not.toContain("secret");
   // The handler never sees input that does not decode.
   expect(calls.count).toBe(0);
 });
@@ -131,7 +134,7 @@ it("decodes InvalidInput as a typed failure of the client", async () => {
   );
 
   expect(refused).toBeInstanceOf(Action.InvalidInput);
-  expect(refused).toHaveProperty("message", 'Expected number\n  at ["value"]');
+  expect(refused).toHaveProperty("message", expect.stringContaining('at ["value"]'));
 });
 
 it("declares InvalidInput, Unauthenticated and Forbidden on every endpoint", () => {
@@ -187,7 +190,7 @@ it("answers InvalidInput on every binding and every layer of one router", async 
     const response = await web.handler(request("not a number", path));
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual(invalidInput('Expected number\n  at ["value"]'));
+    expect(await invalidInput(response)).toContain('at ["value"]');
   }
 });
 

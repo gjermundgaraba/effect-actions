@@ -44,6 +44,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
 - A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
 - Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Implementation rationale belongs in code comments or below.
+- Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior: the 415, CORS preflight, the generic MCP defect text.
 - Every file in `examples/` is listed in `examples/README.md`, which `tests/docs.test.ts` checks; `docs/README.md` links there rather than keeping a list of its own.
 
 ## Design notes

@@ -536,7 +536,8 @@ describe("projection boundaries", () => {
     const running = web.handler(request);
     await Effect.runPromise(Deferred.await(started));
     abort.abort();
-    expect((await running).status).toBe(499);
+    await running;
+    // The handler's finalizer ran: the request's interruption reached it.
     await Effect.runPromise(Deferred.await(stopped));
   });
 });
