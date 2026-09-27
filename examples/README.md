@@ -87,8 +87,8 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 Without a token, a protected route or the `/mcp` endpoint answers 401
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
 `WWW-Authenticate: Bearer resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"`;
-with an unknown one, the message is `Unknown demo token.` and the challenge adds
-`error="invalid_token"`. An MCP client then finds the authorization server at that URL, which
+with an unknown one, the message is `Unknown demo token.`. An MCP client then finds the
+authorization server at that URL, which
 is public.
 
 ## Application structure

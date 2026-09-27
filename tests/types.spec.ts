@@ -821,7 +821,11 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   const clientOptions: ActionHttp.ClientOptions = { baseUrl: "http://localhost" };
   const httpOptions: ActionMcp.HttpOptions = { name: "test", version: "0" };
   const call: Testing.McpCallOptions = { url: "/mcp" };
-  const auth: Authentication.Options = { challenge: "Bearer" };
+
+  const auth: Authentication.Options = {
+    resource: "https://api.example.com/mcp",
+    authorizationServers: ["https://auth.example.com"],
+  };
 
   // An action given `{}` has no input, as one without `input`.
   const given = Action.make("given", { ...options, input: {} });

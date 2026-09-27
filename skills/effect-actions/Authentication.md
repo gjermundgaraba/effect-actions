@@ -13,10 +13,10 @@ module or the handlers.
 
 Import `@gjermundgaraba/effect-actions/Authentication`.
 
-| API                                     | Purpose                                                                                           |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `make(service, authenticate, options?)` | A router middleware layer providing an identity service per request, or answering with a refusal. |
-| `bearerToken`                           | The request's bearer token, failing with `Action.Unauthenticated` without one.                    |
+| API                                               | Purpose                                                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `make(service, authenticate, protectedResource?)` | A router middleware layer providing an identity service per request, or answering with a refusal. |
+| `bearerToken`                                     | The request's bearer token, failing with `Action.Unauthenticated` without one.                    |
 
 `authenticate` is an Effect producing the identity, or failing with `Action.Unauthenticated`,
 `Action.Forbidden`, or the `HttpServerResponse` to send instead. The services it yields, such
@@ -24,7 +24,8 @@ as a token verifier, are request requirements, like a handler's, which the layer
 result is the middleware's layer: provide it to the layers whose routes it authenticates,
 `ActionHttp.layer`, `ActionMcp.layerHttp` or routes of the host's own.
 
-`options` is either an OAuth protected resource or a fixed challenge. Exported type: `Options`.
+`protectedResource` is an OAuth protected resource, which `make` publishes and names in every
+challenge. Exported type: `Options`.
 
 | Protected resource option | Meaning                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------ |
@@ -32,10 +33,6 @@ result is the middleware's layer: provide it to the layers whose routes it authe
 | `authorizationServers`    | Required, nonempty: where clients get tokens.                                  |
 | `scopesSupported`         | Optional: every scope the resource accepts, which a client requests up front.  |
 | `resourceName`            | Optional human-readable name.                                                  |
-
-| Challenge option | Meaning                                                                                                           |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `challenge`      | The `WWW-Authenticate` value of every covered 401 without one; defaults to `Bearer`. Such as `Basic realm="app"`. |
 
 ## Canonical
 
@@ -77,9 +74,9 @@ export const authenticate = Authentication.make(
 
 - `authenticate` succeeds with the identity value or fails with a refusal. `Unauthenticated` is sent as its JSON with **401**; `Forbidden` as its JSON with **403**. Both are the bodies every endpoint declares, so typed clients decode them. An `HttpServerResponse` is sent with its own status and headers, for a status or header that varies per refusal.
 - Every response of the routes it covers gets `Cache-Control: no-store`, and every 401 among them without a challenge gets one, whether authentication, a hook or a handler answers it, including failures serialized by enclosing middleware.
-- As a protected resource, the 401 challenge is `Bearer resource_metadata="<metadata URL>"`, with `error="invalid_token"` when the request carried an `Authorization` header (RFC 6750). It names no scope: a client requests `scopesSupported` when a 401 names none. With `challenge`, the 401 challenge is that value, `Bearer` by default.
-- A `Forbidden` naming `scopes`, whether `authenticate` or a hook fails with it, is a **403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`, plus `resource_metadata` as a protected resource and `error_description` when the message is a valid one (printable ASCII without `"` or `\`). An OAuth client re-authorizes on it with those scopes added, as MCP authorization requires; the official MCP client does. A `Forbidden` naming no scope has no challenge. A handler's own `Forbidden` is its declared error, not a refusal: it has none either.
-- It authenticates any credential: `authenticate` is any Effect, reading a bearer token, a session cookie or an API key. Name another scheme in `challenge`. A 401 carries a challenge only under `make`.
+- The 401 challenge is `Bearer`, or as a protected resource `Bearer resource_metadata="<metadata URL>"`. It names no error code and no scope: a client re-authenticates on any 401, and requests `scopesSupported` when a 401 names none.
+- A `Forbidden` naming `scopes`, whether `authenticate`, a hook or a handler fails with it, is a **403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`, plus `resource_metadata` as a protected resource and `error_description` when the message is a valid one (printable ASCII without `"` or `\`). An OAuth client re-authorizes on it with those scopes added, as MCP authorization requires; the official MCP client does. A `Forbidden` naming no scope has no challenge.
+- It authenticates any credential: `authenticate` is any Effect, reading a bearer token, a session cookie or an API key. For another scheme, fail with an `HttpServerResponse` carrying its own challenge, which is kept; a 401 without one gets `Bearer`. A 401 carries a challenge only under `make`.
 - `authenticate` can fail with nothing else: any other error is a type error. Map a verifier's failure to a refusal.
 - `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. Verifying the token stays the host's.
 - Provided to a layer, it covers that layer's routes, before decoding, and no others: `ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate))` beside a public `ActionHttp.layer(Http, open)` keeps the public routes public. An MCP endpoint is one route: provided to `ActionMcp.layerHttp`, it covers every tool of it.
@@ -101,7 +98,7 @@ export const authenticate = Authentication.make(
 - Type error `HttpRouter.Request.From<"Requires", CurrentActor>` unsatisfied: no authentication is provided around the layer serving a handler or hook that reads the identity. Provide it, `Layer.provide(authenticate)`.
 - An action that must be authenticated answers without credentials: its layer has no authentication around it, and nothing it runs reads the identity, so no type asks for one. Provide the authentication around that layer too.
 - A public action demands credentials: it is served by a layer the authentication covers, such as one MCP endpoint with the protected tools. Serve it from a layer of its own.
-- Type error at `make`: `authenticate` may fail with an error that is neither a refusal nor an `HttpServerResponse`, or `options` gives both `resource` and `challenge`.
+- Type error at `make`: `authenticate` may fail with an error that is neither a refusal nor an `HttpServerResponse`.
 - `HttpRouter.Request.From<"Requires", Verifier>` unsatisfied on an HTTP surface: `authenticate` yields it. Provide it per request, as `HttpRouter.provideRequest(Verifier.layer)`, which builds it once; `Layer.provide` does not satisfy a request requirement.
 - `"Need to .combine(middleware) that satisfy the missing request dependencies"` on a native middleware's `.layer`: that middleware yields a service. Combine it with middleware providing that service first. `Authentication.make`'s layer keeps such services as requirements instead.
 - Discovery returns 404: the request path does not match `resource`'s path and query exactly, or the authentication is provided to no served layer.

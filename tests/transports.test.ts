@@ -21,7 +21,7 @@ import { withMcpClient } from "./mcp-client.js";
 
 let app: ReturnType<typeof makeTestApp>;
 
-/** The example's 401 challenge: its resource's metadata URL, for a request without credentials. */
+/** The example's 401 challenge: its resource's metadata URL. */
 const challenge =
   'Bearer resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"';
 

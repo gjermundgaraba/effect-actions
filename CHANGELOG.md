@@ -160,8 +160,8 @@ binding go in separate `ActionHttp.layer` calls. `authenticate` fails with
 `Action.Unauthenticated`, answered 401 with its JSON, `Action.Forbidden`, answered 403, or an
 `HttpServerResponse` to send instead. Every 401 of the routes it covers that has no challenge
 gets one, whether authentication, a hook or a handler answers it; a 401 outside authentication
-carries none. `make`'s options are an OAuth protected resource or a fixed `challenge`, `Bearer`
-by default, such as `Basic realm="app"`.
+carries none. The challenge is `Bearer`; for another scheme, fail with an `HttpServerResponse`
+carrying your own.
 Services `authenticate` yields remain request requirements of the layer, and so of every layer
 it covers, where native middleware would ask to be combined first;
 `HttpRouter.provideRequest` builds one once, such as a token verifier. Every response still
@@ -171,8 +171,8 @@ fails with `Unauthenticated` (`A bearer token is required.`) instead of returnin
 `ProtectedResourceOptions`: `make` takes the protected resource's options itself (`resource`,
 `authorizationServers`, `scopesSupported`, `resourceName`), publishes its RFC 9728 discovery,
 public and before routing, once however many layers it covers, and names the metadata URL in
-every challenge: a 401's `Bearer resource_metadata="..."`, with `error="invalid_token"` when
-the request carried credentials, and a scope refusal's `insufficient_scope` challenge. The
+every challenge: a 401's `Bearer resource_metadata="..."`, and a scope refusal's
+`insufficient_scope` challenge. The
 discovery and the challenges cannot disagree, and the discovery cannot be left unmounted.
 
 - Migrate: rename `middleware` to `make`, drop its third argument, fail with the built-in
@@ -180,7 +180,7 @@ discovery and the challenges cannot disagree, and the discovery cannot be left u
   `Layer.provide(authentication.layer)` becomes `Layer.provide(authenticate)`. Replace
   `Option.isSome(token) && valid(token.value)` on `bearerToken` with `valid(token)`; where a
   token is optional, `Effect.option(Authentication.bearerToken)`.
-  Move `protectedResource`'s options into `make`'s, and drop the discovery layer:
+  Pass `protectedResource`'s options to `make` as its third argument, and drop the discovery layer:
   `Layer.mergeAll(routes, discovery.layer)` becomes `routes`, with the authentication provided
   around them. A scope refusal is `new Action.Forbidden({ message, scopes: [scope] })`, which
   replaces an `InsufficientScope` error and a hand-built `insufficient_scope` challenge. For any

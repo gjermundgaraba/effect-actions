@@ -27,7 +27,7 @@ export const bearerToken: Effect.Effect<
 });
 
 /** An OAuth protected resource (RFC 9728), as `make` publishes it. */
-interface ProtectedResource {
+export interface Options {
   /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
   /** Where clients get tokens: nonempty. */
@@ -35,31 +35,14 @@ interface ProtectedResource {
   /** Every scope the resource accepts, which a client requests when a 401 names none. */
   readonly scopesSupported?: ReadonlyArray<string>;
   readonly resourceName?: string;
-  readonly challenge?: never;
 }
-
-/** A fixed challenge, for a scheme other than an OAuth protected resource's. */
-interface Challenge {
-  /** The `WWW-Authenticate` of every covered 401 without one; defaults to `Bearer`. */
-  readonly challenge?: string;
-  readonly resource?: never;
-}
-
-/**
- * How `make` answers what it covers: as an OAuth protected resource, which it publishes and
- * names in every challenge, or with a fixed `challenge`.
- */
-export type Options = ProtectedResource | Challenge;
-
-const isProtectedResource = (options: Options): options is ProtectedResource =>
-  options.resource !== undefined;
 
 /**
  * RFC 9728 discovery of `options` at `/.well-known/oauth-protected-resource` followed by the
  * resource's path, where MCP clients look when a 401 names no metadata URL, and that URL. It
  * answers before routing, so no route middleware, authentication included, ever covers it.
  */
-const discovery = (options: ProtectedResource) => {
+const discovery = (options: Options) => {
   const resource = new URL(options.resource);
 
   const discoveryUrl = new URL(resource);
@@ -112,31 +95,24 @@ const discovery = (options: ProtectedResource) => {
  *
  * Every response of the routes it covers is marked `Cache-Control: no-store`, and every
  * 401 among them without a challenge gets one, including failures serialized by enclosing
- * middleware. Given an OAuth protected resource, it also publishes the resource's RFC 9728
- * discovery, once however many layers it covers, public and before routing, and every
- * challenge names its metadata URL: a 401's, `invalid_token` when the request carried
- * credentials, and the `insufficient_scope` challenge of a refusal naming scopes. Otherwise
- * a 401's challenge is `options.challenge`, `Bearer` by default.
+ * middleware: `Bearer`. Given an OAuth protected resource, it also publishes the resource's
+ * RFC 9728 discovery, once however many layers it covers, public and before routing, and
+ * every challenge names its metadata URL, a 401's and the `insufficient_scope` challenge of a
+ * refusal naming scopes.
  */
 export const make = <I, A, R>(
   service: Context.Key<I, A>,
   authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
-  options: Options = {},
+  protectedResource?: Options,
 ): Layer.Layer<
   HttpRouter.Request.From<"Requires", I>,
   never,
   HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
 > => {
-  const published = isProtectedResource(options) ? discovery(options) : undefined;
+  const published = protectedResource === undefined ? undefined : discovery(protectedResource);
 
-  const challenge = (request: HttpServerRequest.HttpServerRequest): string =>
-    published === undefined
-      ? (options.challenge ?? "Bearer")
-      : bearer([
-          // RFC 6750 §3.1: a request that carried no credentials gets no error code.
-          ["error", request.headers.authorization === undefined ? undefined : "invalid_token"],
-          ["resource_metadata", published.url],
-        ]);
+  // No error code: RFC 6750 §3.1 makes one optional, and a client re-authenticates on any 401.
+  const challenge = bearer([["resource_metadata", published?.url]]);
 
   // SAFETY: native middleware types its layer only once no request requirement is left,
   // asking for another middleware to provide them. The layer is the same at run time, and
@@ -149,17 +125,17 @@ export const make = <I, A, R>(
           HttpServerResponse.isHttpServerResponse(error) ? Effect.succeed(error) : refuse(error),
         onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
       }),
-      // Every refusal under it, its own, a hook's, names the resource's metadata URL.
+      // Every refusal under it, its own, a hook's or a handler's, names the metadata URL.
       (answered) =>
         published === undefined
           ? answered
           : Effect.provideService(answered, ResourceMetadata, published.url),
-      HttpEffect.withPreResponseHandler((request, response) =>
+      HttpEffect.withPreResponseHandler((_request, response) =>
         Effect.succeed(
           HttpServerResponse.setHeaders(response, {
             "cache-control": "no-store",
             ...(response.status === 401 && response.headers["www-authenticate"] === undefined
-              ? { "www-authenticate": challenge(request) }
+              ? { "www-authenticate": challenge }
               : {}),
           }),
         ),

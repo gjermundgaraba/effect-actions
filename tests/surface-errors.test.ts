@@ -182,11 +182,7 @@ it("challenges every 401 of the routes authentication covers, a hook's or a hand
     ActionHttp.layer(Notes, [
       refusing(new Action.Unauthenticated()),
       Action.implement(Guarded, () => Effect.fail(new Action.Unauthenticated())),
-    ]).pipe(
-      Layer.provide(
-        Authentication.make(Principal, Effect.succeed("ada"), { challenge: 'Basic realm="notes"' }),
-      ),
-    ),
+    ]).pipe(Layer.provide(Authentication.make(Principal, Effect.succeed("ada")))),
   );
 
   onTestFinished(() => web.dispose());
@@ -194,7 +190,7 @@ it("challenges every 401 of the routes authentication covers, a hook's or a hand
   for (const request of [post("/api/rename", { name: "draft" }), post("/api/guarded")]) {
     const response = await web.handler(request);
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe('Basic realm="notes"');
+    expect(response.headers.get("www-authenticate")).toBe("Bearer");
   }
 });
 
