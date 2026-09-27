@@ -1,5 +1,6 @@
 import { Layer } from "effect";
-import { HttpApiSwagger } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { authenticate } from "./authentication.js";
 import { Http } from "./binding.js";
@@ -15,7 +16,11 @@ const routes = Layer.mergeAll(
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI JSON at
 // `GET /api/openapi.json`, and a Swagger UI reading the same contract.
 const documentation = Layer.mergeAll(
-  ActionHttp.openApi(Http),
+  HttpRouter.add(
+    "GET",
+    "/api/openapi.json",
+    HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)),
+  ),
   HttpApiSwagger.layer(Http.api, { path: "/docs" }),
 );
 

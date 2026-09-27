@@ -7,7 +7,7 @@ import {
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -394,9 +394,8 @@ export const configuredAdapterTypes = () => {
   });
   // Both mount paths have defaults: `/api` and `/mcp`.
   ActionHttp.make(Actions);
-  // The document is served from the binding, not from a layer of it.
-  ActionHttp.openApi(Bound) satisfies Layer.Layer<never, never, HttpRouter.HttpRouter>;
-  ActionHttp.openApi(Bound, "/openapi.json");
+  // `Http.api` is a native HttpApi: Effect's own OpenAPI generator reads it without a cast.
+  OpenApi.fromApi(Bound.api);
   ActionMcp.layerHttp(App, { name: "test", version: "0" });
   // @ts-expect-error MCP server information is required.
   ActionMcp.layerHttp(App, { path: "/mcp" });

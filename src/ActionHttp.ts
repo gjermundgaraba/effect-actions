@@ -2,7 +2,7 @@ import { Effect, Layer, type Schema } from "effect";
 import type { HttpClient } from "effect/unstable/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import { type Etag, type HttpPlatform, HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 // Its own module rather than the barrel's namespace, which esbuild keeps whole in a client.
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
@@ -36,7 +36,7 @@ import {
 /** A client's methods, one per action of the binding. */
 export type { Client } from "./internal/client.js";
 
-/** Any HTTP binding, with its actions erased: what `layer`, `client` and `openApi` read. */
+/** Any HTTP binding, with its actions erased: what `layer` and `client` read. */
 export type { AnyHttp as Any } from "./internal/client.js";
 
 /**
@@ -279,14 +279,3 @@ export function client(
     Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
   );
 }
-
-/**
- * Serve the OpenAPI document of a binding with `GET path`, by default
- * `<prefix>/openapi.json`. It is a plain route: middleware provided to this layer
- * covers it, and none is applied otherwise.
- */
-export const openApi = (
-  http: AnyHttp,
-  path: HttpRouter.PathInput = `${http.prefix}/openapi.json`,
-): Layer.Layer<never, never, HttpRouter.HttpRouter> =>
-  HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(native(http.api))));

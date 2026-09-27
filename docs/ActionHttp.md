@@ -17,7 +17,6 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `Http.prefix`             | The mount path: `/api` by default, empty at the root.                                        |
 | `Http.api`                | Native Effect `HttpApi` for clients and OpenAPI.                                             |
 | `layer(Http, apps)`       | Mount the routes of these implementations, each behind its `before` hook.                    |
-| `openApi(Http, path?)`    | Serve the OpenAPI document with `GET path`; defaults to `<prefix>/openapi.json`.             |
 | `client(Http, options?)`  | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
 
 Exported types: `Http`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make` and `ClientOptions` of `client`.
@@ -58,7 +57,8 @@ export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI
 
 ```ts
 import { Layer } from "effect";
-import { HttpApiSwagger } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { authenticate } from "./authentication.js";
 import { Http } from "./binding.js";
@@ -74,7 +74,11 @@ const routes = Layer.mergeAll(
 // `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI JSON at
 // `GET /api/openapi.json`, and a Swagger UI reading the same contract.
 const documentation = Layer.mergeAll(
-  ActionHttp.openApi(Http),
+  HttpRouter.add(
+    "GET",
+    "/api/openapi.json",
+    HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)),
+  ),
   HttpApiSwagger.layer(Http.api, { path: "/docs" }),
 );
 
@@ -153,11 +157,11 @@ success, failure or required services, which the method types cannot follow; use
 - HTTP serves exactly the actions passed to `make`; an action has no HTTP switch. To keep an action off HTTP, leave it out of the list and serve it elsewhere (MCP, Toolkit, CLI).
 - Action names are unique within a binding. Two bindings with different prefixes may reuse a name and be served side by side, but not combined into one `HttpApi`.
 - `layer(Http, apps)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape. An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
-- The binding is plain data: `layer` and `openApi` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
+- The binding is plain data: `layer` and `client` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
 - Middleware, authentication included, is per layer call: provided to a `layer` call, it covers that call's routes, before decoding, and no others. Public and authenticated actions go in separate `layer` calls over the same binding, merged with `Layer.mergeAll`; they still share one binding, one document and one client.
 - The hook, builders, request-time services and headers follow [guarantees.md](guarantees.md): `ActionHttp` itself sets no header.
 - `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`. The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`. Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them: an operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
-- `openApi(Http, path?)` is `OpenApi.fromApi(Http.api)` as one `GET` route, `<prefix>/openapi.json` unless a path is given. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
+- Serve the OpenAPI document as a native route: `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
 
 ### Client methods

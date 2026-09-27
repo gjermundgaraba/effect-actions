@@ -144,35 +144,25 @@ it("serves a copy of a binding like the binding itself", async () => {
   const Http = ActionHttp.make([identity], { prefix: "/v1" });
   const app = Action.implement(identity, () => Effect.succeed("copied"));
 
-  const web = serve(
-    Layer.mergeAll(ActionHttp.layer({ ...Http }, app), ActionHttp.openApi({ ...Http })),
-  );
+  const web = serve(ActionHttp.layer({ ...Http }, app));
 
   onTestFinished(() => web.dispose());
 
   expect(await (await web.handler(post("/v1/identity"))).json()).toBe("copied");
-  expect((await web.handler(new Request("http://localhost/v1/openapi.json"))).status).toBe(200);
 });
 
-it("mounts routes and the OpenAPI document under the binding's prefix, even with no actions", async () => {
+it("normalizes the binding's prefix, and serves a binding with no actions", async () => {
   expect(ActionHttp.make([identity]).prefix).toBe("/api");
   expect(ActionHttp.make([identity], { prefix: "/v1/" }).prefix).toBe("/v1");
   expect(ActionHttp.make([identity], { prefix: "/" }).prefix).toBe("");
 
   const Empty = ActionHttp.make([], { prefix: "/empty" });
 
-  const web = serve(
-    Layer.mergeAll(
-      ActionHttp.layer(Empty, []),
-      ActionHttp.openApi(Empty),
-      ActionHttp.openApi(ActionHttp.make([], { prefix: "/" })),
-    ),
-  );
+  const web = serve(ActionHttp.layer(Empty, []));
 
   onTestFinished(() => web.dispose());
 
-  expect((await web.handler(new Request("http://localhost/empty/openapi.json"))).status).toBe(200);
-  expect((await web.handler(new Request("http://localhost/openapi.json"))).status).toBe(200);
+  expect((await web.handler(post("/empty/identity"))).status).toBe(404);
 });
 
 it("refuses an object that only looks like an implementation", () => {

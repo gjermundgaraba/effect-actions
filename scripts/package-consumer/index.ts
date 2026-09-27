@@ -2,7 +2,7 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import type { HttpApiClient } from "effect/unstable/httpapi";
+import { type HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
@@ -72,8 +72,9 @@ const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>
     Effect.runPromise,
   );
 
-if ((await statusOf(Testing.layer(ActionHttp.openApi(Http)), "/api/openapi.json")) !== 200)
-  throw new Error("The OpenAPI route failed");
+// A consumer's binding is a native HttpApi: Effect's own generator documents it.
+if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))
+  throw new Error("The OpenAPI document lacks the greet route");
 
 const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 

@@ -1,11 +1,6 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, Stdio, Stream } from "effect";
-import {
-  HttpRouter,
-  HttpServer,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
 import { HttpApi, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -47,8 +42,6 @@ const billing = Action.implement([Invoice, Audit], {
 });
 
 const Http = ActionHttp.make([WhoAmI, Invoice, Audit]);
-
-const OpenApiPaths = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Json) });
 
 type Routes<E> = Layer.Layer<
   never,
@@ -365,10 +358,10 @@ describe("HTTP bindings", () => {
   });
 
   it.each([
-    { prefix: undefined, route: "/api/whoAmI", document: "/api/openapi.json" },
-    { prefix: "/", route: "/whoAmI", document: "/openapi.json" },
-    { prefix: "/v1/", route: "/v1/whoAmI", document: "/v1/openapi.json" },
-    { prefix: "/v1/internal", route: "/v1/internal/whoAmI", document: "/v1/internal/openapi.json" },
+    { prefix: undefined, route: "/api/whoAmI" },
+    { prefix: "/", route: "/whoAmI" },
+    { prefix: "/v1/", route: "/v1/whoAmI" },
+    { prefix: "/v1/internal", route: "/v1/internal/whoAmI" },
   ] as const)("mounts routes and the document under prefix $prefix", async (mount) => {
     const binding = ActionHttp.make(
       [WhoAmI],
@@ -376,50 +369,11 @@ describe("HTTP bindings", () => {
     );
 
     const handler = handlerOf(
-      Layer.mergeAll(ActionHttp.layer(binding, whoAmI), ActionHttp.openApi(binding)).pipe(
-        Layer.provide(Layer.succeed(Tenant, "acme")),
-      ),
+      ActionHttp.layer(binding, whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
     );
 
     expect(await (await handler(post(mount.route))).json()).toBe("ada@acme");
-
-    const document = await handler(new Request(`http://localhost${mount.document}`));
-    expect(document.status).toBe(200);
-    expect(
-      Object.keys(Schema.decodeUnknownSync(OpenApiPaths)(await document.json()).paths),
-    ).toEqual([mount.route]);
-  });
-
-  it("serves the binding's OpenAPI document under its prefix or a chosen path", async () => {
-    // A route like any other: the middleware provided to its layer covers it.
-    const refuseAnonymous = HttpRouter.middleware((httpEffect) =>
-      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-        request.headers.authorization === undefined
-          ? Effect.succeed(HttpServerResponse.empty({ status: 401 }))
-          : httpEffect,
-      ),
-    );
-
-    const handler = handlerOf(
-      Layer.mergeAll(
-        ActionHttp.openApi(Http),
-        ActionHttp.openApi(Http, "/openapi.json").pipe(Layer.provide(refuseAnonymous.layer)),
-      ),
-    );
-
-    const served = await handler(new Request("http://localhost/api/openapi.json"));
-    expect(served.status).toBe(200);
-    expect(served.headers.get("content-type")).toContain("application/json");
-    expect(await served.json()).toEqual(JSON.parse(JSON.stringify(OpenApi.fromApi(Http.api))));
-    expect((await handler(new Request("http://localhost/openapi.json"))).status).toBe(401);
-
-    const authorized = await handler(
-      new Request("http://localhost/openapi.json", { headers: { authorization: "Bearer any" } }),
-    );
-
-    expect(
-      Object.keys(Schema.decodeUnknownSync(OpenApiPaths)(await authorized.json()).paths),
-    ).toEqual(["/api/whoAmI", "/api/invoice", "/api/audit"]);
+    expect(Object.keys(OpenApi.fromApi(binding.api).paths)).toEqual([mount.route]);
   });
 
   it("tags its group with the mount path, or `/` at the root", () => {
@@ -540,30 +494,22 @@ describe("HTTP bindings", () => {
 
     const users = ActionHttp.layer(Http, whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme")));
     const invoices = ActionHttp.layer(Http, billing);
-    const document = ActionHttp.openApi(Http);
 
     const statuses = async (handler: (request: Request) => Promise<Response>) => [
-      (await handler(new Request("http://localhost/api/openapi.json"))).status,
       (await handler(post("/api/whoAmI"))).status,
       (await handler(post("/api/invoice", { amount: "2" }))).status,
     ];
 
     // Each layer registers its own routes, so a guard covers exactly what it is provided to.
     expect(
-      await statuses(
-        handlerOf(Layer.mergeAll(document.pipe(Layer.provide(blocked)), users, invoices)),
-      ),
-    ).toEqual([403, 200, 200]);
+      await statuses(handlerOf(Layer.mergeAll(users.pipe(Layer.provide(blocked)), invoices))),
+    ).toEqual([403, 200]);
     expect(
-      await statuses(
-        handlerOf(Layer.mergeAll(document, users.pipe(Layer.provide(blocked)), invoices)),
-      ),
-    ).toEqual([200, 403, 200]);
+      await statuses(handlerOf(Layer.mergeAll(users, invoices.pipe(Layer.provide(blocked))))),
+    ).toEqual([200, 403]);
     expect(
-      await statuses(
-        handlerOf(Layer.mergeAll(document, users, invoices).pipe(Layer.provide(blocked))),
-      ),
-    ).toEqual([403, 403, 403]);
+      await statuses(handlerOf(Layer.mergeAll(users, invoices).pipe(Layer.provide(blocked)))),
+    ).toEqual([403, 403]);
   });
 
   it("declares a shared error array on every action that spreads it, on both transports", async () => {
