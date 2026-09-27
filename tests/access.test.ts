@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Cause, Context, Effect, Exit, Layer, Schema, type Scope, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
-import { Tool } from "effect/unstable/ai";
+import { McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -9,7 +9,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { cliServices, logged } from "./cli-services.js";
-import { post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { serve } from "./serve.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
@@ -241,6 +241,50 @@ describe("the pre-handler hook", () => {
         new Action.Unauthenticated({ message: "Sign in." }),
       ),
     );
+  });
+
+  it("answers a handler's step-up refusal as a tool result once its call has streamed", async () => {
+    const Reporting = Action.make("reporting", {
+      description: "Reports progress, then refuses",
+      access: "write",
+      errors: [Action.Forbidden],
+    });
+
+    const app = Action.implement(Reporting, () =>
+      Effect.gen(function* () {
+        const server = yield* Effect.serviceOption(McpServer.McpServer);
+
+        if (Option.isSome(server)) {
+          yield* server.value.notifications["notifications/progress"]({
+            progressToken: "call",
+            progress: 1,
+          });
+        }
+
+        // Long enough for the notification to start the response.
+        yield* Effect.sleep("50 millis");
+
+        return yield* new Action.Forbidden({ scopes: ["write"] });
+      }),
+    );
+
+    const mcp = serve(ActionMcp.layerHttp(app, { name: "test", version: "0" }));
+    onTestFinished(() => mcp.dispose());
+
+    const reply = await mcp.handler(
+      mcpRequest({
+        method: "tools/call",
+        params: { name: "reporting", arguments: {}, _meta: { progressToken: "call" } },
+      }),
+    );
+
+    // The progress went out with a 200: the refusal can only follow it as the tool's result.
+    expect(reply.status).toBe(200);
+    expect(reply.headers.get("www-authenticate")).toBeNull();
+
+    const text = await reply.text();
+    expect(text).toContain('"method":"notifications/progress"');
+    expect(text).toContain('"isError":true');
   });
 
   it("runs over the native Toolkit", async () => {

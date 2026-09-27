@@ -123,7 +123,7 @@ is a type error. It runs after decoding, as before, and a refusal is answered li
 error, but for a step-up refusal: `Unauthenticated`, or a `Forbidden` naming `scopes`, is
 answered on MCP over HTTP with its HTTP status and JSON, not an `isError` tool result, as MCP
 authorization defines, so an MCP client authenticates or re-authorizes on it, whether the hook
-or a handler fails with it. Over stdio and in the Toolkit every refusal is a tool failure. It may be a value that may be `undefined`, as
+or a handler fails with it, unless a handler's notification already started the response. Over stdio and in the Toolkit every refusal is a tool failure. It may be a value that may be `undefined`, as
 `enabled ? authorize : undefined`: its services are required either way. The `before` option of
 `ActionHttp.layer`, `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, and
 `ActionCli.command` and `make` is gone, and so is `ActionToolkit.make`'s second argument. Every
