@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { makeTestHttp } from "./server.js";
@@ -89,11 +89,19 @@ describe("contracts", () => {
         Schema.TaggedStruct("Busy", {}),
         Schema.TaggedStruct("Unauthenticated", { reason: Schema.String }),
       ]),
+      // A union behind a transformation, which only its encoding shows.
+      Schema.Union([Forbidden, Schema.TaggedStruct("Busy", {})]).pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.transform(({ _tag }) => _tag),
+          encode: SchemaGetter.transform((_tag) => ({ _tag: "Busy" as const })),
+        }),
+      ),
     ];
 
     // The contract is plain data a client may hold; serving it is refused.
     for (const [error, tag] of errors.map(
-      (error, i) => [error, ["Forbidden", "InvalidInput", "Unauthenticated"][i]] as const,
+      (error, i) =>
+        [error, ["Forbidden", "InvalidInput", "Unauthenticated", "Forbidden"][i]] as const,
     )) {
       const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
 

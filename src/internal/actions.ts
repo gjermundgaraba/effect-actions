@@ -53,11 +53,11 @@ export const assertDistinct = <T>(
  * included; the built-in errors themselves, which an action may declare, carry none.
  */
 const builtInTag = (ast: AST): string | undefined => {
-  if (httpErrors.some((builtIn) => builtIn.ast === ast)) return undefined;
-
-  if (isUnion(ast)) return ast.types.map(builtInTag).find(isString);
-
   const encoded = toEncoded(ast);
+
+  if (httpErrors.some((builtIn) => toEncoded(builtIn.ast) === encoded)) return undefined;
+
+  if (isUnion(encoded)) return encoded.types.map(builtInTag).find(isString);
 
   const tag = isObjects(encoded)
     ? encoded.propertySignatures.find((property) => property.name === "_tag")?.type
