@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 One contract, one `implement`, one binding, one hook. `ActionGroup` is gone: actions are
 implemented directly, HTTP binds a flat list of actions, every client calls an action with its
