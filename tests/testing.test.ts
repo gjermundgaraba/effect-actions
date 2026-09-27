@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaGetter } from "effect";
-import { McpSchema } from "effect/unstable/ai";
 import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -301,33 +300,6 @@ describe("mcpRequest", () => {
     expect(refused.headers["www-authenticate"]).toContain('error="insufficient_scope"');
 
     expect(unknown.error.message).toContain("missing");
-  });
-
-  it("merges request metadata over the client's", async () => {
-    const Meta = Action.make("meta", {
-      description: "The client's name",
-      access: "read",
-      success: Schema.String,
-    });
-
-    const routes = ActionMcp.layerHttp(
-      Action.implement(Meta, () =>
-        Effect.map(McpSchema.McpRequestContext, ({ clientInfo }) => clientInfo?.name ?? "none"),
-      ),
-      { name: "test", version: "0" },
-    );
-
-    const reply = await Testing.mcpRequest("tools/call", {
-      name: "meta",
-      arguments: {},
-      _meta: { "io.modelcontextprotocol/clientInfo": { name: "probe", version: "1" } },
-    }).pipe(
-      Effect.flatMap((response) => response.json),
-      Effect.provide(Testing.layer(routes)),
-      Effect.runPromise,
-    );
-
-    expect(reply).toMatchObject({ result: { structuredContent: { value: "probe" } } });
   });
 });
 

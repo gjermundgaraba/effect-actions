@@ -183,31 +183,17 @@ export function mcpCall(
   });
 }
 
-/** A request's parameters: JSON, and request metadata merged over the client's. */
-interface McpParams {
-  readonly _meta?: { readonly [key: string]: Schema.Json };
-  readonly [key: string]: Schema.Json | undefined;
-}
-
-/** The parameter naming what a request of `method` routes to, as MCP 2026-07-28 defines it. */
-const routingKey = (method: string): string | undefined =>
-  method === "tools/call" || method === "prompts/get"
-    ? "name"
-    : method === "resources/read"
-      ? "uri"
-      : undefined;
-
 /**
  * Send one stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves
- * it, on the `HttpClient`: the JSON-RPC envelope, the 2026-07-28 headers, and the client
- * metadata in `_meta`, over which a `_meta` of `params` is merged, are filled in. It succeeds
- * with the response as the endpoint sent it, whatever its status: for a test asserting on
- * what `mcpCall` decodes away, such as `tools/list`, a refusal's challenge, or a call its
- * types would not send.
+ * it, on the `HttpClient`: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
+ * `params.name`, and the client metadata in `_meta` are filled in. It succeeds with the
+ * response as the endpoint sent it, whatever its status: for a test asserting on what
+ * `mcpCall` decodes away, such as `tools/list`, a refusal's challenge, or a call its types
+ * would not send.
  */
 export const mcpRequest = (
   method: string,
-  params: McpParams = {},
+  params: { readonly [key: string]: Schema.Json } = {},
   { headers = {}, url = defaultPath }: McpCallOptions = {},
 ): Effect.Effect<
   HttpClientResponse.HttpClientResponse,
@@ -215,9 +201,7 @@ export const mcpRequest = (
   HttpClient.HttpClient
 > => {
   const { protocolVersion } = httpProtocol;
-  const key = routingKey(method);
-  const routed = key === undefined ? undefined : params[key];
-  const { _meta: meta = {}, ...rest } = params;
+  const { name } = params;
 
   // One stateless request: its routing headers, over any the caller sets, repeat what its
   // body says.
@@ -228,19 +212,18 @@ export const mcpRequest = (
         accept: "application/json, text/event-stream",
         "mcp-protocol-version": protocolVersion,
         "mcp-method": method,
-        ...(Predicate.isString(routed) ? { "mcp-name": routed } : {}),
+        ...(Predicate.isString(name) ? { "mcp-name": name } : {}),
       }),
       HttpClientRequest.bodyJsonUnsafe({
         jsonrpc: "2.0",
         id: 1,
         method,
         params: {
-          ...rest,
+          ...params,
           _meta: {
             "io.modelcontextprotocol/protocolVersion": protocolVersion,
             "io.modelcontextprotocol/clientCapabilities": {},
             "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
-            ...meta,
           },
         },
       }),
