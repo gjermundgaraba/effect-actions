@@ -441,7 +441,7 @@ describe("projection boundaries", () => {
     const reply = await (await web.handler(rawToolCall("echo", { value: "nope" }))).json();
     expect(reply).toMatchObject({ result: { isError: true } });
     expect(reply).not.toHaveProperty("result.structuredContent");
-    expect(JSON.stringify(reply)).toContain("Expected a finite number");
+    expect(JSON.stringify(reply)).toContain('[\\"value\\"]');
   });
 
   it("turns invalid output and defects into sanitized native failures on both transports", async () => {
@@ -538,6 +538,6 @@ describe("projection boundaries", () => {
     abort.abort();
     await running;
     // The handler's finalizer ran: the request's interruption reached it.
-    await Effect.runPromise(Deferred.await(stopped));
+    await Effect.runPromise(Deferred.await(stopped).pipe(Effect.timeout("1 second")));
   });
 });

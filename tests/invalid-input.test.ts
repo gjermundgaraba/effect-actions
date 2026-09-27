@@ -24,7 +24,6 @@ const Echo = Action.make("echo", {
 
 const Http = ActionHttp.make([Echo]);
 
-/** The body of a 400: the built-in error, its message the schema's. */
 /** The message of the `InvalidInput` a response carries: Effect's words, so assert on its path. */
 const invalidInput = async (response: Response) =>
   Schema.decodeUnknownSync(Action.InvalidInput)(await response.json()).message;
@@ -354,7 +353,10 @@ describe.each([
 
     expect((await call({ headers: json, body: "{}" })).status).toBe(200);
     expect((await call({ headers: json, body: '{"x":1}' })).status).toBe(400);
-    expect((await call({})).status).toBe(400);
+    const missing = await call({});
+    expect(missing.status).toBe(400);
+    // The body decodes as the built-in `InvalidInput`, not any other 400.
+    await expect(invalidInput(missing)).resolves.not.toBe("");
   });
 
   it("is a closed object tool over MCP", async () => {

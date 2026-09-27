@@ -269,33 +269,46 @@ describe("one implementation, both transports", () => {
         requestBody: {
           content: { "application/json": { schema: { properties: { id: { type: "string" } } } } },
         },
-        responses: {
-          "200": {},
-          "400": {
-            content: {
-              "application/json": { schema: { $ref: "#/components/schemas/InvalidInputEncoded" } },
-            },
-          },
-          "401": {
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/UnauthenticatedEncoded" },
-              },
-            },
-          },
-          "403": {
-            content: {
-              "application/json": { schema: { $ref: "#/components/schemas/ForbiddenEncoded" } },
-            },
-          },
-          "404": {
-            content: {
-              "application/json": { schema: { $ref: "#/components/schemas/UserNotFoundEncoded" } },
-            },
-          },
-        },
+        responses: { "200": {} },
       },
     });
+
+    // Each error status refers to its schema's component; Effect names the components, so
+    // follow the reference to the `_tag` it declares.
+    const Operation = Schema.Struct({
+      post: Schema.Struct({ responses: Schema.Record(Schema.String, Schema.Unknown) }),
+    });
+
+    const Response = Schema.Struct({
+      content: Schema.Struct({
+        "application/json": Schema.Struct({ schema: Schema.Struct({ $ref: Schema.String }) }),
+      }),
+    });
+
+    const Component = Schema.Struct({
+      properties: Schema.Struct({ _tag: Schema.Struct({ enum: Schema.Tuple([Schema.String]) }) }),
+    });
+
+    const { responses } = Schema.decodeUnknownSync(Operation)(document.paths["/api/getUser"]).post;
+
+    const tags = Object.entries(responses).flatMap(([status, response]) => {
+      if (status === "200") return [];
+
+      const { $ref } =
+        Schema.decodeUnknownSync(Response)(response).content["application/json"].schema;
+
+      const component = document.components.schemas[$ref.replace("#/components/schemas/", "")];
+
+      return [[status, Schema.decodeUnknownSync(Component)(component).properties._tag.enum[0]]];
+    });
+
+    expect(Object.fromEntries(tags)).toEqual({
+      "400": "InvalidInput",
+      "401": "Unauthenticated",
+      "403": "Forbidden",
+      "404": "UserNotFound",
+    });
+
     expect(document.paths["/api/double"]).toMatchObject({
       post: {
         requestBody: {
@@ -310,7 +323,6 @@ describe("one implementation, both transports", () => {
 
     expect(doubleOperation?.operationId).toBe("double");
     expect(doubleOperation?.responses).not.toHaveProperty("404");
-    expect(Object.keys(document.components.schemas)).toContain("UserNotFoundEncoded");
   });
 });
 

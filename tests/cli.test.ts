@@ -717,7 +717,9 @@ it("adds --json only to a command with a renderer, without contesting a host's o
   // Without a renderer the output is JSON already, and the flag does not exist:
   // the native parser treats it as unknown and shows help.
   expect(await lines(ActionCli.command(app, Plain), [])).toEqual(['"plain"']);
-  await expect(lines(ActionCli.command(app, Plain), ["--json"])).rejects.toThrow("Help requested");
+  expect(failure(await runExit(ActionCli.command(app, Plain), ["--json"]))).toBeInstanceOf(
+    CliError.ShowHelp,
+  );
 
   // A regular flag: a host that declares `--json` itself, globally or on a
   // parent, still composes; the projected command keeps its own.

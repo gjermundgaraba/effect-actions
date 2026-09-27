@@ -71,9 +71,7 @@ describe("MCP stdio example", () => {
 
     try {
       // The server counter-offers its newest stateful revision, which the client does not speak.
-      await expect(connected).rejects.toThrow(
-        "Server's protocol version is not supported: 2025-11-25",
-      );
+      await expect(connected).rejects.toThrow("2025-11-25");
     } finally {
       await client.close();
     }
