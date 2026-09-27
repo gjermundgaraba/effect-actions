@@ -34,7 +34,8 @@ endpoint declares its action's errors plus the built-in `InvalidInput` (400),
 Layer failures and startup requirements come from the builders of the supplied
 implementations. Every handler's and hook's request services remain router request
 requirements until middleware provided around the layer, such as authentication, provides them;
-router/platform services are also required. No request identity is supplied at startup.
+router/platform services are also required. Never provide request identity at startup
+([guarantees.md](guarantees.md#dependency-lifetimes)).
 
 ## Canonical
 
@@ -155,18 +156,25 @@ success, failure or required services, which the method types cannot follow; use
 
 - HTTP serves exactly the actions passed to `make`; an action has no HTTP switch. To keep an action off HTTP, leave it out of the list and serve it elsewhere (MCP, Toolkit, CLI).
 - Action names are unique within a binding. Two bindings with different prefixes may reuse a name and be served side by side, but not combined into one `HttpApi`.
-- `layer(Http, apps)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape. An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
+- `layer(Http, apps)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape.
+- An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
 - The binding is plain data: `layer` and `client` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
 - Middleware, authentication included, is per layer call: provided to a `layer` call, it covers that call's routes, before decoding, and no others. Public and authenticated actions go in separate `layer` calls over the same binding, merged with `Layer.mergeAll`; they still share one binding, one document and one client.
 - The hook, builders, request-time services and headers follow [guarantees.md](guarantees.md): `ActionHttp` itself sets no header.
-- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`. The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`. Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them: an operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
+- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.
+- The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`.
+- Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them. An operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
 - Serve the OpenAPI document as a native route: `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
 
 ### Client methods
 
 - A method fails with exactly what the native client fails with. Declared errors arrive as their decoded values: the action's own and the three built-in errors every endpoint declares. Match them with `Effect.catchTag`.
-- Anything the contract does not account for is Effect's own error. `HttpClientError`: the server could not be reached (`response` is `undefined`); or answered with a status no schema declares (`reason._tag` `DecodeError`), such as the empty 500 of a defect; or with a declared status whose body did not decode (`StatusCodeError`). `SchemaError`: the input did not encode, or the success body did not decode.
+- Anything the contract does not account for is Effect's own error:
+  - `HttpClientError` with `response` `undefined`: the server could not be reached.
+  - `HttpClientError` with `reason._tag` `DecodeError`: the server answered with a status no schema declares, such as the empty 500 of a defect.
+  - `HttpClientError` with `StatusCodeError`: a declared status whose body did not decode.
+  - `SchemaError`: the input did not encode, or the success body did not decode.
 - The library interprets no status. Which failures mean "signed out" or "try again" is the caller's decision.
 - Nothing is retried. A failed write may or may not have happened; only a declared error says what the server did.
 - Every action of the binding has a method, whether or not a server serves it. An unserved action answers 404 with no body, so its method fails with `HttpClientError`: `DecodeError`, or `StatusCodeError` when the action declares a 404 error, whose body the empty response is not.
@@ -178,9 +186,8 @@ success, failure or required services, which the method types cannot follow; use
 
 ### Built-in errors
 
-- Every endpoint declares `InvalidInput`, `Unauthenticated` and `Forbidden` ([guarantees.md](guarantees.md#wire-behavior)), so `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
+- Every endpoint declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)). `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
 - `InvalidInput`'s `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`.
-- An application error must not reuse a built-in tag (`InvalidInput`, `Unauthenticated`, `Forbidden`); list the built-in error itself instead.
 
 ## Failure modes
 
