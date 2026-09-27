@@ -1,4 +1,4 @@
-import { Console, Effect, Option, Predicate, Schema, SchemaAST } from "effect";
+import { Console, Effect, Option, Predicate, Record, Schema, SchemaAST } from "effect";
 import { Command, Flag, Param } from "effect/unstable/cli";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
@@ -245,14 +245,6 @@ const positionalOrder = (
   return ordered;
 };
 
-/** The encoded input the parsed flags stand for: every given field, and no other. */
-const fromFields = (parsed: Parsed) =>
-  Object.fromEntries(
-    Object.entries(parsed).flatMap(([key, value]) =>
-      Option.toArray(Option.map(value, (v) => [key, v] as const)),
-    ),
-  );
-
 /** The whole encoded input as JSON, or text, for an input that is not a struct of fields. */
 const inputFlag = (encoded: SchemaAST.AST) =>
   Flag.String("input").pipe(
@@ -314,7 +306,7 @@ const inputConfig = <A extends Action.Any>(
         params.flatMap(({ field, param }) => (positional.includes(field) ? [] : [[field, param]])),
       ),
       positional: positionalOrder(params, positional),
-      decode: (parsed) => decode(fromFields(parsed)),
+      decode: (parsed) => decode(Record.getSomes(parsed)),
     };
   }
 

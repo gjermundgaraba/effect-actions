@@ -389,7 +389,7 @@ export const configuredAdapterTypes = () => {
   ActionMcp.layerStdio(App, {
     name: "test",
     version: "0",
-    // @ts-expect-error The protocol revision is fixed at 2026-07-28.
+    // @ts-expect-error Stdio negotiates its own revisions: it takes no `protocols` option.
     protocols: [McpProtocol.v2026_07_28],
   });
   // Both mount paths have defaults: `/api` and `/mcp`.
