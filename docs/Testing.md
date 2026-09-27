@@ -7,18 +7,19 @@ dependency and opens no port.
 
 Import `@gjermundgaraba/effect-actions/Testing`.
 
-| API                                 | Purpose                                                                       |
-| ----------------------------------- | ----------------------------------------------------------------------------- |
-| `layer(routes)`                     | A `Layer<HttpClient>` answering requests with `routes` in memory.             |
-| `mcpCall(action, input?, options?)` | One tool call on the `HttpClient`, typed by its action like a client call.    |
-| `McpCallError`                      | What `mcpCall` fails with for an answer it cannot decode; `message` holds it. |
+| API                                     | Purpose                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `layer(routes)`                         | A `Layer<HttpClient>` answering requests with `routes` in memory.             |
+| `mcpCall(action, input?, options?)`     | One tool call on the `HttpClient`, typed by its action like a client call.    |
+| `mcpRequest(method, params?, options?)` | Any one MCP request on the `HttpClient`, answering the response as sent.      |
+| `McpCallError`                          | What `mcpCall` fails with for an answer it cannot decode; `message` holds it. |
 
-| `mcpCall` option | Meaning                                                                                                                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `url`            | The endpoint, resolved by the `HttpClient` (relative under `layer`); default `/mcp`, the `ActionMcp.layerHttp` default. |
-| `headers`        | Request headers.                                                                                                        |
+| `mcpCall` and `mcpRequest` option | Meaning                                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `url`                             | The endpoint, resolved by the `HttpClient` (relative under `layer`); default `/mcp`, the `ActionMcp.layerHttp` default. |
+| `headers`                         | Request headers.                                                                                                        |
 
-Exported type: `McpCallOptions`.
+Exported type: `McpCallOptions`, of `mcpCall` and `mcpRequest` alike.
 
 `mcpCall(action, input)` succeeds with the action's decoded success. It fails with the
 action's declared errors and the refusals as decoded values, `SchemaError`,
@@ -56,7 +57,8 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 - `mcpCall` sends one stateless `tools/call` for the action's tool, at the protocol version `ActionMcp.layerHttp` serves, 2026-07-28, in both the header and `_meta`. It encodes the input with the action's schema, and decodes the success from `structuredContent.value`, as `ActionHttp.client` does for a route. It reads a JSON or an event-stream response.
 - A declared error, the action's own or a refusal, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication or a hook, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
 - Any other answer fails with `McpCallError`, whose `message` holds it: another status, the native server's own text (invalid arguments, a defect), no reply, a result without `structuredContent`, or a JSON-RPC error (an unknown tool). Match it with `Effect.catchTag("McpCallError", ...)`.
-- The input is typed, so a malformed call cannot be sent through `mcpCall`. To assert on a malformed request or another MCP response, send the request with `HttpClient` yourself.
+- The input is typed, so a malformed call cannot be sent through `mcpCall`. To assert on a malformed call, another MCP method or the response itself, such as a refusal's status and `WWW-Authenticate` challenge, use `mcpRequest(method, params, options)`: it sends one stateless request as `mcpCall` does, with `mcp-name` from `params.name` (`params.uri` for `resources/read`) and the client metadata in `_meta`, over which `params._meta` is merged, and succeeds with the response whatever its status.
+- A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `headers` in `mcpCall`, or through `transformClient` in `ActionHttp.client` options.
 - Direct handler tests call the function passed to `Action.implement`, but they bypass decoding, encoding, authentication and the hook. Keep at least one test per surface.
 

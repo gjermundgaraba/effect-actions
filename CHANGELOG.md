@@ -247,18 +247,23 @@ given argument is sent as given, where 0.7.0 sent `{}` for an `undefined` or `nu
   `Effect.runPromise(Effect.flatMap(ActionHttp.client(Http, options), (client) => client.getUser(input)).pipe(Effect.provide(FetchHttpClient.layer)))`.
   A custom `fetch` is `Effect.provideService(FetchHttpClient.Fetch, fetch)`.
 
-**`Testing` is Effect-only; `TestingClient` and `Testing.mcpRequest` are removed.** The
+**`Testing` is Effect-only; `TestingClient` is removed, and `Testing.mcpRequest` sends.** The
 package no longer has the optional `@modelcontextprotocol/client` peer. `Testing.layer(routes)`
 is a `Layer<HttpClient>` answering requests with the routes in memory, built and released
 with the layer; a relative URL resolves against `http://localhost`, once any `baseUrl` a client
-adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl`. `Testing.mcpCall(action, input?, { url?,
+adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl`, and a request carries the
+`Host` header of its URL, as over the network, so host-checking middleware sees one.
+`Testing.mcpCall(action, input?, { url?,
 headers? })` is an Effect on that `HttpClient`, typed by the action like a client method,
 whose rule for leaving the input out it shares: it encodes the input, succeeds with the decoded success, and fails with the action's declared
 errors and the refusals as decoded values, whether the tool or the endpoint's authentication
 answered them, or with a `Testing.McpCallError` holding any other answer. `url` defaults to `/mcp`, which is
-relative and so resolves only under `layer`. `McpCallResult`, `Testing.serve`,
-`Testing.httpClient`, `Handler` and `Server` are gone; a malformed call is a raw request on
-the `HttpClient`.
+relative and so resolves only under `layer`. `Testing.mcpRequest(method, params?, { url?,
+headers? })` sends any stateless request on the same `HttpClient`, the envelope, headers and
+client metadata filled in, and succeeds with the response as sent: `tools/list`, a refusal's
+status and challenge, a call `mcpCall`'s types refuse. It no longer builds a web `Request`.
+`McpCallResult`, `McpRequestParams`, `Testing.serve`, `Testing.httpClient`, `Handler` and
+`Server` are gone.
 
 - Migrate:
 

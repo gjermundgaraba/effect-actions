@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaGetter } from "effect";
+import { McpSchema } from "effect/unstable/ai";
 import { Command } from "effect/unstable/cli";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
+  HttpClientResponse,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
@@ -266,6 +268,69 @@ describe("mcpCall", () => {
   });
 });
 
+describe("mcpRequest", () => {
+  it("answers as the endpoint sent it, whatever its status", async () => {
+    const Listed = Schema.Struct({
+      result: Schema.Struct({ tools: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+    });
+
+    const Failed = Schema.Struct({ error: Schema.Struct({ message: Schema.String }) });
+
+    const [listed, refused, unknown] = await againstHost(
+      Effect.all([
+        Effect.flatMap(
+          Testing.mcpRequest("tools/list", {}, as()),
+          HttpClientResponse.schemaBodyJson(Listed),
+        ),
+        Testing.mcpRequest(
+          "tools/call",
+          { name: "renameUser", arguments: { id: "1", name: "Grace" } },
+          as("reader"),
+        ),
+        Effect.flatMap(
+          Testing.mcpRequest("tools/call", { name: "missing", arguments: {} }, as()),
+          HttpClientResponse.schemaBodyJson(Failed),
+        ),
+      ]),
+    );
+
+    expect(listed.result.tools.map(({ name }) => name)).toContain("getUser");
+
+    // A refusal's status and challenge, which `mcpCall` decodes away.
+    expect(refused.status).toBe(403);
+    expect(refused.headers["www-authenticate"]).toContain('error="insufficient_scope"');
+
+    expect(unknown.error.message).toContain("missing");
+  });
+
+  it("merges request metadata over the client's", async () => {
+    const Meta = Action.make("meta", {
+      description: "The client's name",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const routes = ActionMcp.layerHttp(
+      Action.implement(Meta, () =>
+        Effect.map(McpSchema.McpRequestContext, ({ clientInfo }) => clientInfo?.name ?? "none"),
+      ),
+      { name: "test", version: "0" },
+    );
+
+    const reply = await Testing.mcpRequest("tools/call", {
+      name: "meta",
+      arguments: {},
+      _meta: { "io.modelcontextprotocol/clientInfo": { name: "probe", version: "1" } },
+    }).pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.provide(Testing.layer(routes)),
+      Effect.runPromise,
+    );
+
+    expect(reply).toMatchObject({ result: { structuredContent: { value: "probe" } } });
+  });
+});
+
 describe("layer", () => {
   class Visits extends Context.Service<Visits, { count: number }>()("testing/Visits") {}
 
@@ -350,6 +415,27 @@ describe("layer", () => {
     expect(
       invalid.map((error) => HttpClientError.isHttpClientError(error) && error.reason._tag),
     ).toEqual(["InvalidUrlError", "InvalidUrlError"]);
+  });
+
+  it("sends the Host header of the request's URL, as the network does", async () => {
+    const routes = HttpRouter.add(
+      "GET",
+      "/host",
+      Effect.map(HttpServerRequest.HttpServerRequest, ({ headers }) =>
+        HttpServerResponse.text(headers.host ?? "none"),
+      ),
+    );
+
+    const text = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.flatMap(HttpClient.execute(request), (response) => response.text);
+
+    const hosts = await Effect.all([
+      text(HttpClientRequest.get("/host")),
+      text(HttpClientRequest.get("https://api.example.com:8443/host")),
+      text(HttpClientRequest.get("/host").pipe(HttpClientRequest.setHeader("host", "given"))),
+    ]).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
+
+    expect(hosts).toEqual(["localhost", "api.example.com:8443", "given"]);
   });
 
   it("serves routes with the services their middleware provides, until its scope closes", async () => {

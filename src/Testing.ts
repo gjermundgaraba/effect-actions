@@ -1,9 +1,10 @@
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Predicate, Schema } from "effect";
 import {
   type Headers,
   HttpClient,
   type HttpClientError,
   HttpClientRequest,
+  type HttpClientResponse,
   HttpEffect,
   HttpRouter,
   HttpServer,
@@ -36,7 +37,7 @@ export function layer(
   );
 }
 
-/** Where `mcpCall` sends its call, and with what headers. */
+/** Where `mcpCall` and `mcpRequest` send, and with what headers. */
 export interface McpCallOptions {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
@@ -133,8 +134,7 @@ export function mcpCall(
   ...args: [] | [input: Action.Any["input"]["Type"], options?: McpCallOptions]
 ): Effect.Effect<unknown, unknown, HttpClient.HttpClient> {
   const { name } = action;
-  const [input, { headers = {}, url = defaultPath } = {}] = args.length === 0 ? [{}] : args;
-  const { protocolVersion } = httpProtocol;
+  const [input, options] = args.length === 0 ? [{}] : args;
 
   const other = (answer: string) =>
     new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
@@ -142,33 +142,7 @@ export function mcpCall(
   return Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
-    // One stateless request: its routing headers, over any the caller sets,
-    // repeat what its body says.
-    const response = yield* HttpClient.execute(
-      HttpClientRequest.post(url).pipe(
-        HttpClientRequest.setHeaders(headers),
-        HttpClientRequest.setHeaders({
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": protocolVersion,
-          "mcp-method": "tools/call",
-          "mcp-name": name,
-        }),
-        HttpClientRequest.bodyJsonUnsafe({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            name,
-            arguments: encoded,
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": protocolVersion,
-              "io.modelcontextprotocol/clientCapabilities": {},
-              "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
-            },
-          },
-        }),
-      ),
-    );
+    const response = yield* mcpRequest("tools/call", { name, arguments: encoded }, options);
 
     const text = yield* response.text;
 
@@ -208,3 +182,68 @@ export function mcpCall(
     );
   });
 }
+
+/** A request's parameters: JSON, and request metadata merged over the client's. */
+interface McpParams {
+  readonly _meta?: { readonly [key: string]: Schema.Json };
+  readonly [key: string]: Schema.Json | undefined;
+}
+
+/** The parameter naming what a request of `method` routes to, as MCP 2026-07-28 defines it. */
+const routingKey = (method: string): string | undefined =>
+  method === "tools/call" || method === "prompts/get"
+    ? "name"
+    : method === "resources/read"
+      ? "uri"
+      : undefined;
+
+/**
+ * Send one stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves
+ * it, on the `HttpClient`: the JSON-RPC envelope, the 2026-07-28 headers, and the client
+ * metadata in `_meta`, over which a `_meta` of `params` is merged, are filled in. It succeeds
+ * with the response as the endpoint sent it, whatever its status: for a test asserting on
+ * what `mcpCall` decodes away, such as `tools/list`, a refusal's challenge, or a call its
+ * types would not send.
+ */
+export const mcpRequest = (
+  method: string,
+  params: McpParams = {},
+  { headers = {}, url = defaultPath }: McpCallOptions = {},
+): Effect.Effect<
+  HttpClientResponse.HttpClientResponse,
+  HttpClientError.HttpClientError,
+  HttpClient.HttpClient
+> => {
+  const { protocolVersion } = httpProtocol;
+  const key = routingKey(method);
+  const routed = key === undefined ? undefined : params[key];
+  const { _meta: meta = {}, ...rest } = params;
+
+  // One stateless request: its routing headers, over any the caller sets, repeat what its
+  // body says.
+  return HttpClient.execute(
+    HttpClientRequest.post(url).pipe(
+      HttpClientRequest.setHeaders(headers),
+      HttpClientRequest.setHeaders({
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": protocolVersion,
+        "mcp-method": method,
+        ...(Predicate.isString(routed) ? { "mcp-name": routed } : {}),
+      }),
+      HttpClientRequest.bodyJsonUnsafe({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params: {
+          ...rest,
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": protocolVersion,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
+            ...meta,
+          },
+        },
+      }),
+    ),
+  );
+};

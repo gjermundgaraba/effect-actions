@@ -21,7 +21,8 @@ const origin = "http://localhost/";
 
 /**
  * The native `HttpClient`, sending every request to `handler` instead of the network. A
- * relative URL resolves against `http://localhost/`, as a page there would resolve it.
+ * relative URL resolves against `http://localhost/`, as a page there would resolve it, and a
+ * request carries the `Host` header of its URL, as one over the network does.
  */
 export const clientOf = (
   handler: (request: Request) => Promise<Response>,
@@ -47,6 +48,14 @@ export const clientOf = (
   ).pipe(
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch, (input, init) => handler(new Request(input, init))),
+      Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
+        const request = new Request(input, init);
+
+        // The network sets it, so middleware checking the host, as against DNS rebinding,
+        // sees one in memory too; one the caller gives is kept.
+        if (!request.headers.has("host")) request.headers.set("host", new URL(request.url).host);
+
+        return handler(request);
+      }),
     ),
   );

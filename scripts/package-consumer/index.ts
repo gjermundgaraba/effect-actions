@@ -53,13 +53,16 @@ const served = await Effect.gen(function* () {
 
   const greeting = yield* client.greet({ name: "Ada" });
   const called = yield* Testing.mcpCall(Greet, { name: "Ada" });
+  const listed = yield* Testing.mcpRequest("tools/list");
 
-  return { greeting, called };
+  return { greeting, called, listed: listed.status };
 }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
 if (served.greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${served.greeting}`);
 
 if (served.called !== "Hello, Ada!") throw new Error("MCP tool call failed");
+
+if (served.listed !== 200) throw new Error("MCP request failed");
 
 /** The status of a GET to `url`, answered in memory by `Testing.layer`. */
 const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>
