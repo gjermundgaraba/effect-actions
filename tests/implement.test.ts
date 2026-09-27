@@ -376,25 +376,15 @@ describe("HTTP bindings", () => {
     expect(Object.keys(OpenApi.fromApi(binding.api).paths)).toEqual([mount.route]);
   });
 
-  it("tags its group with the mount path, or `/` at the root", () => {
-    const tagsOf = (binding: { readonly prefix: string; readonly api: typeof Http.api }) => {
-      const document = OpenApi.fromApi(binding.api);
+  it.each([
+    ["/api", "/api/whoAmI", "api"],
+    ["/v2/api", "/v2/api/whoAmI", "v2/api"],
+    ["/", "/whoAmI", "/"],
+  ] as const)("tags the group under prefix %s with its mount path", (prefix, route, tag) => {
+    const document = OpenApi.fromApi(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix }).api);
 
-      return [
-        document.tags.map((tag) => tag.name),
-        document.paths[`${binding.prefix}/whoAmI`]?.post?.tags,
-      ];
-    };
-
-    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit]))).toEqual([["api"], ["api"]]);
-    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix: "/v2/api" }))).toEqual([
-      ["v2/api"],
-      ["v2/api"],
-    ]);
-    expect(tagsOf(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix: "/" }))).toEqual([
-      ["/"],
-      ["/"],
-    ]);
+    expect(document.tags.map(({ name }) => name)).toEqual([tag]);
+    expect(document.paths[route]?.post?.tags).toEqual([tag]);
   });
 
   it("preserves action APIs composed into a native host API", () => {

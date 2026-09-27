@@ -151,14 +151,8 @@ it("serves a copy of a binding like the binding itself", async () => {
   expect(await (await web.handler(post("/v1/identity"))).json()).toBe("copied");
 });
 
-it("normalizes the binding's prefix, and serves a binding with no actions", async () => {
-  expect(ActionHttp.make([identity]).prefix).toBe("/api");
-  expect(ActionHttp.make([identity], { prefix: "/v1/" }).prefix).toBe("/v1");
-  expect(ActionHttp.make([identity], { prefix: "/" }).prefix).toBe("");
-
-  const Empty = ActionHttp.make([], { prefix: "/empty" });
-
-  const web = serve(ActionHttp.layer(Empty, []));
+it("serves a binding with no actions", async () => {
+  const web = serve(ActionHttp.layer(ActionHttp.make([], { prefix: "/empty" }), []));
 
   onTestFinished(() => web.dispose());
 

@@ -16,7 +16,6 @@ import {
   type ErasedMethod,
   methods,
   type Options as ClientOptions,
-  type Prefix,
 } from "./internal/client.js";
 import { httpErrors, type HttpErrors } from "./internal/errors.js";
 import { recordStepUp, stepUp } from "./internal/refusal.js";
@@ -103,8 +102,6 @@ type HttpLayer<App> = Layer.Layer<
 export interface Http<Actions extends ReadonlyArray<Action.Any>> {
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
-  /** Mount path of every route: `/api` by default, empty at the root. */
-  readonly prefix: Prefix;
   readonly api: Api<Actions>;
 }
 
@@ -211,7 +208,6 @@ export function make(
   assertDistinct("action", actions, (action) => action.name);
 
   const mount = mountSegments(options.prefix);
-  const prefix = mount.length === 0 ? "" : route(mount);
 
   const endpoints = actions.map((action) =>
     HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
@@ -227,7 +223,7 @@ export function make(
   // combine side by side, when no action name, and so no operation ID, repeats across them.
   const api = apiOf(mount.join("/") || "/", endpoints);
 
-  return { actions, prefix, api };
+  return { actions, api };
 }
 
 /**

@@ -14,7 +14,6 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | ------------------------- | -------------------------------------------------------------------------------------------- |
 | `make(actions, options?)` | Bind a list of actions; returns `Http`.                                                      |
 | `Http.actions`            | The exact bound actions.                                                                     |
-| `Http.prefix`             | The mount path: `/api` by default, empty at the root.                                        |
 | `Http.api`                | Native Effect `HttpApi` for clients and OpenAPI.                                             |
 | `layer(Http, apps)`       | Mount the routes of these implementations, each behind its `before` hook.                    |
 | `client(Http, options?)`  | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |

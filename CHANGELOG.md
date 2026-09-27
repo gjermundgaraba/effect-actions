@@ -78,7 +78,7 @@ served side by side; bindings that repeat a name cannot be combined into one `Ht
 operation IDs are the action names.
 The OpenAPI tag is the mount path's segments (`api`, `api/users`), or `/` at the root, so a root
 binding and an `/actions` binding combine without one replacing the other.
-The binding is `{ actions, prefix, api }`, plain data, so a copy of it, or one made by another
+The binding is `{ actions, api }`, plain data, so a copy of it, or one made by another
 installed copy of the package, serves the same. `ActionHttp.layer(Http, implementations)` serves every
 action of the implementations it receives, matched to the binding's actions by identity;
 middleware provided to it covers only those actions. An implementation of an action outside the

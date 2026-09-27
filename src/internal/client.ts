@@ -43,17 +43,12 @@ export type MethodError<A extends Action.Any> =
 /** One action as an Effect of its decoded success, failing with `MethodError`. */
 type Method<A extends Action.Any> = Call<A, Effect.Effect<A["success"]["Type"], MethodError<A>>>;
 
-/** A mount path as routes are joined to it: empty at the root. */
-export type Prefix = "" | `/${string}`;
-
 /**
  * Any HTTP binding. The API is a native constraint here because native groups are
  * invariant in their endpoints; `actions` carries the types.
  */
 export interface AnyHttp {
   readonly actions: ReadonlyArray<Action.Any>;
-  /** Mount path of every route: `/api` by default, empty at the root. */
-  readonly prefix: Prefix;
   readonly api: HttpApi.Constraint;
 }
 
