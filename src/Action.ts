@@ -70,11 +70,11 @@ export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./intern
 export interface Options {
   readonly description: string;
   /** A schema or struct fields. Omit for an action without arguments: `{}`. */
-  readonly input?: Codec | Fields;
+  readonly input?: Codec | Fields | undefined;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
-  readonly success?: Codec | Fields;
+  readonly success?: Codec | Fields | undefined;
   /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
-  readonly errors?: ReadonlyArray<Codec>;
+  readonly errors?: ReadonlyArray<Codec> | undefined;
   /**
    * What the action does to its resource. Required: an action nobody classified
    * is the one a reviewer must check. Read by an implementation's `before` hook; the
@@ -88,22 +88,6 @@ export interface Options {
   readonly hints?: Hints;
 }
 
-/** What an option `K` that may be undefined must be instead: nothing is, and its error names the rule. */
-interface MaybeAbsent<K extends string> {
-  readonly "Give this option or omit it: a value that may be undefined is neither": K;
-}
-
-/**
- * The options of `O` whose absence changes a type, refused when they may be absent: its
- * default would then hold at run time while the type says otherwise. Branch around the
- * call instead.
- */
-type Present<O, K extends string> = {
-  readonly [
-    P in Extract<keyof O, K> as {} extends Pick<O, P> ? P : undefined extends O[P] ? P : never
-  ]: MaybeAbsent<P & string>;
-};
-
 /**
  * No key beyond `Known`, so a misspelled option is refused rather than ignored. Checked
  * after inference, as `Exact` is.
@@ -111,27 +95,27 @@ type Present<O, K extends string> = {
 type Known<O, Keys> = { readonly [K in Exclude<keyof O, keyof Keys>]: never };
 
 /**
- * The rules `make` checks beyond `Options`: every option known and present, and a read
- * never destructive. Options that fail `Options` itself infer as `Options`, whose error the
+ * The rules `make` checks beyond `Options`: every option known, and a read never
+ * destructive. Options that fail `Options` itself infer as `Options`, whose error the
  * compiler already reports, so they are not checked again.
  */
 type Rules<O> = Options extends O
   ? unknown
   : Known<O, Options> &
-      Present<O, "input" | "success" | "errors"> &
       (O extends { readonly access: "read" }
         ? { readonly hints?: { readonly destructive?: never } }
         : unknown);
 
 /**
- * Option `K` of `O` as given, or `Default` wherever it may be omitted, as at run time, for
- * each member of a union of options: only options widened to `Options` itself, which `Rules`
- * leaves unchecked, may be both in one member.
+ * Option `K` of `O` as given, or also `Default` wherever it may be omitted or undefined, as
+ * at run time, for each member of a union of options.
  */
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
-  ?
-      | (K extends keyof O ? Exclude<O[K], undefined> : never)
-      | ({} extends Pick<O, K & keyof O> ? Default : never)
+  ? K extends keyof O
+    ?
+        | Exclude<O[K], undefined>
+        | ({} extends Pick<O, K> ? Default : undefined extends O[K] ? Default : never)
+    : Default
   : never;
 
 /** The schema option `K` of `O`, or `Default` when it is omitted. */

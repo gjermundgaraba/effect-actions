@@ -20,6 +20,20 @@ describe("contracts", () => {
     expect(Reset.success).toBe(Schema.Void);
   });
 
+  it("takes an undefined option as an omitted one", () => {
+    const Reset = Action.make("reset", {
+      description: "Reset",
+      access: "write",
+      input: undefined,
+      success: undefined,
+      errors: undefined,
+    });
+
+    expect(Schema.is(Reset.input)({})).toBe(true);
+    expect(Reset.success).toBe(Schema.Void);
+    expect(Reset.errors).toEqual([]);
+  });
+
   it("derives tool hints: destructive follows access, and only a write may state it", () => {
     expect(GetUser.hints).toEqual({
       destructive: false,

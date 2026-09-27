@@ -721,20 +721,25 @@ export const mcpCallTypes = () => {
 };
 
 export const maybeAbsentOptionTypes = (enabled: boolean) => {
-  // Omitted, an option takes its default at run time, so one that may be undefined would
-  // give its type while running with its default: each is refused, however it is written.
-  // @ts-expect-error A success that may be undefined would drop the handler's result.
-  Action.make("conditional", {
+  // Omitted or undefined, an option takes its default at run time, so one that may be either
+  // is typed as the option or its default, however it is written.
+  const Conditional = Action.make("conditional", {
     description: "Returns data only sometimes",
     access: "read",
     success: enabled ? Schema.String : undefined,
   });
-  // @ts-expect-error Spread in, it is optional, which is the same.
-  Action.make("spread", {
+
+  const Spread = Action.make("spread", {
     description: "Returns data only sometimes",
     access: "read",
     ...(enabled ? { success: Schema.String } : {}),
   });
+
+  const conditional: Equal<(typeof Conditional)["success"]["Type"], string | void> = true;
+  const spread: Equal<(typeof Spread)["success"]["Type"], string | void> = true;
+
+  void conditional;
+  void spread;
 
   class Identity extends Context.Service<Identity, string>()("types-spec/Identity") {}
 

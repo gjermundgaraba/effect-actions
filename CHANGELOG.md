@@ -58,10 +58,9 @@ destructive, and `hints.destructive` on one is a type error. A surface serves
 the implementations passed to it, so an action stays off MCP by leaving its implementation out
 of the MCP layer; implement it on its own if it shared a builder with served actions. Action
 names are at most 128 characters, the MCP limit. `make` refuses a misspelled key at compile
-time. Its options are given or omitted, never a value that may be
-`undefined`: omitted, an option takes its default at run time, which its type would not say,
-so `success: enabled ? Schema.String : undefined`, or a conditional spread, is a compile error.
-Branch around the call instead. Options typed as a whole, as `Parameters<typeof Action.make>[1]`,
+time. An `undefined` option takes its default, as an omitted one does, and one that may be
+either is typed as either: `success: enabled ? Schema.String : undefined` gives a success of
+`string | void`. Options typed as a whole, as `Parameters<typeof Action.make>[1]`,
 give an action whose schemas are as wide as what may run: its success is `unknown`, not `void`.
 
 - Migrate: rename `mcp:` to `hints:` and `action.mcp` to `action.hints`. Rename an action whose
