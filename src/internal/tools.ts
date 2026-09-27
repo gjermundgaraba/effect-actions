@@ -84,18 +84,14 @@ export const bindTools = (
   const toolkit = Toolkit.make(...actions.map((action) => project(projection, action)));
 
   const layer = toolkit.toLayer(
-    Effect.map(acquire(apps), (handlerOf) =>
+    Effect.map(acquire(apps), (bound) =>
       Object.fromEntries(
-        actions.map((action) => {
-          const run = handlerOf(action);
-
-          return [
-            action.name,
-            projection === "native"
-              ? run
-              : (input: ErasedValue) => Effect.map(run(input), (value) => ({ value })),
-          ] as const;
-        }),
+        bound.map(([action, run]) => [
+          action.name,
+          projection === "native"
+            ? run
+            : (input: ErasedValue) => Effect.map(run(input), (value) => ({ value })),
+        ]),
       ),
     ),
   );

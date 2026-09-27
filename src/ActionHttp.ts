@@ -228,7 +228,7 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
   );
 
   const handlers = Layer.unwrap(
-    Effect.map(acquire(apps), (handlerOf) =>
+    Effect.map(acquire(apps), (bound) =>
       HttpApiBuilder.group(api, name, (builder) =>
         builder.handleAll(
           // SAFETY: the native router selects the endpoint, and so the action, before
@@ -236,11 +236,7 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary.
           Object.fromEntries(
             // Own properties, so an action named `__proto__` is a route, not a prototype.
-            actions.map((action) => {
-              const run = handlerOf(action);
-
-              return [action.name, (request: Request) => run(request.payload)];
-            }),
+            bound.map(([action, run]) => [action.name, (request: Request) => run(request.payload)]),
           ) as never,
         ),
       ),

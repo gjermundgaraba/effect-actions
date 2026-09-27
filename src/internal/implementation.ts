@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Array as Arr, Context, Effect, Layer } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
@@ -36,8 +36,11 @@ export type HandlerContext<H> = H extends (
   ? R
   : never;
 
-/** The acquired handlers of one implementation, under a key private to it. */
-type HandlersKey = Context.Key<Handlers<unknown>, Handlers<unknown>>;
+/** Each action of an implementation with its handler, behind the implementation's hook. */
+export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
+
+/** The bound handlers of one implementation, under a key private to it. */
+type BoundKey = Context.Key<Bound, Bound>;
 
 let implementations = 0;
 
@@ -64,23 +67,32 @@ export class Implementation<
   /** Type-only: what building its handlers needs. */
   declare readonly "~buildContext": RX;
 
-  readonly #key: HandlersKey;
-  readonly #layer: Layer.Layer<Handlers<unknown>, EX, RX>;
-  readonly #before: ErasedBefore | undefined;
+  readonly #key: BoundKey;
+  readonly #layer: Layer.Layer<Bound, EX, RX>;
 
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
-    build: Effect.Effect<Handlers<unknown>, EX, RX | Scope.Scope>,
+    /** One handler per action, in the order of `actions`. */
+    build: Effect.Effect<ReadonlyArray<ErasedHandler<unknown>>, EX, RX | Scope.Scope>,
     before: ErasedBefore | undefined,
   ) {
-    this.#before = before;
     // A string key is a service's identity, so it is unique to this implementation
     // even across copies of this module.
-    this.#key = Context.Service<Handlers<unknown>>(
+    this.#key = Context.Service<Bound>(
       `effect-actions/Implementation/${(implementations += 1)}/${Math.random().toString(36).slice(2)}`,
     );
-    this.#layer = Layer.effect(this.#key, build);
+    // Each handler goes behind the hook once, when the handlers are built.
+    this.#layer = Layer.effect(
+      this.#key,
+      Effect.map(build, (handlers) =>
+        Arr.zipWith(
+          actions,
+          handlers,
+          (action, handle) => [action, dispatch(action, handle, before)] as const,
+        ),
+      ),
+    );
   }
 
   /**
@@ -88,22 +100,13 @@ export class Implementation<
    * build of the host's layers, so every adapter serving `app` shares one run. Static,
    * so it stays off the public instance type.
    */
-  static layerOf<EX, RX>(
-    app: Implementation<any, any, EX, RX>,
-  ): Layer.Layer<Handlers<unknown>, EX, RX> {
+  static layerOf<EX, RX>(app: Implementation<any, any, EX, RX>): Layer.Layer<Bound, EX, RX> {
     return Implementation.own(app).#layer;
   }
 
-  /** The built handlers of `app`, from the context `layerOf(app)` provides. */
-  static handlersOf(
-    app: AnyImplementation,
-  ): Effect.Effect<Handlers<unknown>, never, Handlers<unknown>> {
+  /** The bound handlers of `app`, from the context `layerOf(app)` provides. */
+  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, Bound> {
     return Implementation.own(app).#key;
-  }
-
-  /** The hook `app` was implemented with, if any. */
-  static beforeOf(app: AnyImplementation): ErasedBefore | undefined {
-    return Implementation.own(app).#before;
   }
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
@@ -159,9 +162,6 @@ export type BuildError<App> = App extends { readonly "~buildError": infer EX } ?
 /** Builder requirements of the implementations a surface builds. */
 export type BuildContext<App> = App extends { readonly "~buildContext": infer RX } ? RX : never;
 
-/** An adapter's view of the acquired handler of one served action, behind its hook. */
-export type HandlerOf = (action: Action.Any) => ErasedHandler<unknown>;
-
 /** Every action `apps` serve, each once: a name served twice is refused. */
 export const servedActions = (
   what: string,
@@ -186,27 +186,13 @@ export const provideHandlers =
     return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
 
-/**
- * Look up the handler of any action `apps` serve, from the handlers `provideHandlers`
- * built, behind its implementation's hook. Every record is complete: `Action.implement`
- * checks it, and a surface looks up only the actions it serves.
- */
+/** Every action `apps` serve with its handler, behind its hook, as `provideHandlers` built them. */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
-): Effect.Effect<HandlerOf, never, unknown> =>
+): Effect.Effect<Bound, never, unknown> =>
   Effect.map(
-    Effect.forEach(apps, (app) => Implementation.handlersOf(app)),
-    (records) => (action) => {
-      const index = apps.findIndex((app) => app.actions.includes(action));
-      const app = apps[index];
-      const handle = records[index]?.[action.name];
-
-      if (app === undefined || handle === undefined) {
-        throw new Error(`No handler for ${action.name}`);
-      }
-
-      return dispatch(action, handle, Implementation.beforeOf(app));
-    },
+    Effect.forEach(apps, (app) => Implementation.boundOf(app)),
+    (bound) => bound.flat(),
   );
 
 /**

@@ -293,8 +293,8 @@ export function implement(
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so
-  // is an action without a handler.
-  const record = (built: Built): Handlers<unknown> => {
+  // is an action without a handler. The result is one handler per action, in order.
+  const record = (built: Built): ReadonlyArray<ErasedHandler<unknown>> => {
     const handlers: Handlers<unknown> = Predicate.isFunction(built)
       ? isList(target)
         ? {}
@@ -311,7 +311,11 @@ export function implement(
 
     if (missing.length > 0) throw new Error(`Missing handlers: ${missing.join(", ")}`);
 
-    return handlers;
+    return names.flatMap((name) => {
+      const handle = handlers[name];
+
+      return handle === undefined ? [] : [handle];
+    });
   };
 
   // Plain handlers are checked here; a builder's record when it is built.

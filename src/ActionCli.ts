@@ -91,9 +91,11 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
   // SAFETY: the builder's failures and services are the implementation's `EX` and `RX`,
   // the handler's and the hook's are its entry of `R`, and the hook refuses with a `Refusal`.
   Effect.scoped(
-    Effect.flatMap(acquire([app]), (handlerOf) => handlerOf(action)(input)).pipe(
-      Effect.provide(Implementation.layerOf(app)),
-    ),
+    Effect.flatMap(acquire([app]), (bound) => {
+      const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
+
+      return run === undefined ? Effect.die(`No handler for ${action.name}`) : run(input);
+    }).pipe(Effect.provide(Implementation.layerOf(app))),
   ) as Local<App, A>;
 
 /**
