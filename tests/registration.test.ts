@@ -1,11 +1,12 @@
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
-import { McpSchema } from "effect/unstable/ai";
+import { Context, Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
+import { McpSchema, Tool } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { against, serve } from "./serve.js";
@@ -258,6 +259,96 @@ describe("projection boundaries", () => {
       "404",
       "422",
     ]);
+  });
+
+  it("carries each action's hints to its MCP and native tools", async () => {
+    const Lookup = Action.make("lookup", {
+      description: "Look up",
+      access: "read",
+      hints: { idempotent: true, openWorld: false },
+    });
+
+    const Append = Action.make("append", {
+      description: "Append",
+      access: "write",
+      hints: { destructive: false },
+    });
+
+    const Wipe = Action.make("wipe", {
+      description: "Wipe",
+      access: "write",
+      hints: { idempotent: true },
+    });
+
+    const app = Action.implement([Lookup, Append, Wipe], {
+      lookup: () => Effect.void,
+      append: () => Effect.void,
+      wipe: () => Effect.void,
+    });
+
+    const hints = {
+      lookup: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      append: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      wipe: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    };
+
+    const mcp = makeTestMcp(app);
+    onTestFinished(() => mcp.dispose());
+    const listed = await listTools(mcp.handler);
+    expect(Object.fromEntries(listed.map((tool) => [tool.name, tool.annotations]))).toMatchObject(
+      hints,
+    );
+
+    const { tools } = ActionToolkit.make(app).toolkit;
+    expect(
+      Object.fromEntries(
+        Object.entries(tools).map(([name, { annotations }]) => [
+          name,
+          {
+            readOnlyHint: Context.get(annotations, Tool.Readonly),
+            destructiveHint: Context.get(annotations, Tool.Destructive),
+            idempotentHint: Context.get(annotations, Tool.Idempotent),
+            openWorldHint: Context.get(annotations, Tool.OpenWorld),
+          },
+        ]),
+      ),
+    ).toEqual(hints);
+  });
+
+  it("does not repeat a built-in error an action already declares", () => {
+    const Declared = Action.make("whoAmI", {
+      description: "Name the authenticated principal",
+      access: "read",
+      success: Schema.String,
+      errors: [Action.Forbidden],
+    });
+
+    const { toolkit } = ActionToolkit.make(Action.implement(Declared, () => Effect.succeed("ada")));
+
+    expect(toolkit.tools.whoAmI.failureSchema.members).toEqual([
+      Action.Forbidden,
+      Action.Unauthenticated,
+    ]);
+
+    const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths["/api/whoAmI"]?.post
+      ?.responses;
+
+    expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
   });
 
   it("reports a declared error as its encoding over MCP, message field included", async () => {

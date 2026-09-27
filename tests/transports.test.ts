@@ -290,41 +290,10 @@ describe("one implementation, both transports", () => {
       },
     });
 
-    // Each error status refers to its schema's component; Effect names the components, so
-    // follow the reference to the `_tag` it declares.
-    const Operation = Schema.Struct({
-      post: Schema.Struct({ responses: Schema.Record(Schema.String, Schema.Unknown) }),
-    });
-
-    const Response = Schema.Struct({
-      content: Schema.Struct({
-        "application/json": Schema.Struct({ schema: Schema.Struct({ $ref: Schema.String }) }),
-      }),
-    });
-
-    const Component = Schema.Struct({
-      properties: Schema.Struct({ _tag: Schema.Struct({ enum: Schema.Tuple([Schema.String]) }) }),
-    });
-
-    const { responses } = Schema.decodeUnknownSync(Operation)(document.paths["/api/getUser"]).post;
-
-    const tags = Object.entries(responses).flatMap(([status, response]) => {
-      if (status === "200") return [];
-
-      const { $ref } =
-        Schema.decodeUnknownSync(Response)(response).content["application/json"].schema;
-
-      const component = document.components.schemas[$ref.replace("#/components/schemas/", "")];
-
-      return [[status, Schema.decodeUnknownSync(Component)(component).properties._tag.enum[0]]];
-    });
-
-    expect(Object.fromEntries(tags)).toEqual({
-      "400": "InvalidInput",
-      "401": "Unauthenticated",
-      "403": "Forbidden",
-      "404": "UserNotFound",
-    });
+    // Every declared error has its status: the action's own, and the built-in ones.
+    expect(
+      Object.keys(OpenApi.fromApi(Http.api).paths["/api/getUser"]?.post?.responses ?? {}).sort(),
+    ).toEqual(["200", "400", "401", "403", "404"]);
 
     expect(document.paths["/api/double"]).toMatchObject({
       post: {

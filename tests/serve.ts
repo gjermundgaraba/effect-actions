@@ -13,15 +13,32 @@ export interface Server {
   readonly dispose: () => Promise<void>;
 }
 
+/** What routes may leave to `serveWithContext`: the router, the platform, request context. */
+type Routable =
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request<"Requires", any>
+  | HttpRouter.Request<"GlobalRequires", any>
+  | HttpRouter.Request<"Error", any>
+  | HttpRouter.Request<"GlobalError", any>
+  | Layer.Success<typeof HttpServer.layerServices>;
+
+/**
+ * Serve `routes` in memory, without a network or request logs, each request taking a
+ * context: for tests that supply request services per request, or deliberately leave them
+ * out, which `serve` refuses.
+ */
+export const serveWithContext = <A, E, R extends Routable>(routes: Layer.Layer<A, E, R>) =>
+  HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+    disableLogger: true,
+  });
+
 /**
  * Serve `routes` in memory, without a network or request logs, for tests that send raw
  * requests. `Testing.layer` is the public form, answering an `HttpClient` instead.
  */
 export function serve<A, E, R extends Served>(routes: Layer.Layer<A, E, R>): Server;
 export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
-  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+  const web = serveWithContext(routes);
 
   return { handler: (request) => web.handler(request), dispose: web.dispose };
 }

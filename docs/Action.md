@@ -210,7 +210,8 @@ export const listChanges = Action.implement(
 
 ## Failure modes
 
-- Throws at `make`: invalid name (empty, longer than 128 characters, or another character), name `then`, an `access` that is neither `"read"` nor `"write"`.
+- `Invalid action name: <name>` thrown by `make`: the name is empty, longer than 128 characters, `then`, or has another character.
+- `Invalid access: <value>` thrown by `make`: `access` is neither `"read"` nor `"write"`, which only a caller the compiler never sees can pass.
 - Type error `Effect<..., X, ...> is not assignable` at `implement`: the handler fails with an undeclared error `X`. Add it to the action's `errors` or handle it.
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - `Missing handlers: <names>` at `implement`, or when a builder's layer builds: the record has no own-property function for those actions. Add them to the record itself, not to a prototype.

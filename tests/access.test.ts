@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Option, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
-import { McpServer, Tool } from "effect/unstable/ai";
+import { McpServer } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -10,7 +10,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { cliServices, logged } from "./cli-services.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { serve } from "./serve.js";
+import { httpClient, serve } from "./serve.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
 
@@ -87,10 +87,6 @@ describe("action access", () => {
     expect([read, write]).toEqual(["read", "write"]);
     expect(Read.hints).toMatchObject({ destructive: false });
     expect(Write.hints).toMatchObject({ destructive: true });
-
-    const { tools } = ActionToolkit.make(make().app).toolkit;
-    expect(Context.get(tools.read.annotations, Tool.Readonly)).toBe(true);
-    expect(Context.get(tools.write.annotations, Tool.Readonly)).toBe(false);
 
     Action.make("advertised", {
       description: "A write the model may call without approval",
@@ -382,4 +378,41 @@ describe("the pre-handler hook", () => {
     expect(hooks).toEqual(["write"]);
     expect(handlers).toEqual(["read"]);
   });
+
+  it.each([
+    [new Action.Unauthenticated(), 401],
+    [new Action.Forbidden({ message: "Requires write." }), 403],
+  ] as const)(
+    "answers its %s over HTTP with its status, and to the client",
+    async (refusal, status) => {
+      const web = serve(
+        ActionHttp.layer(
+          Http,
+          Action.implement(
+            Write,
+            ({ value }) => Effect.succeed(value),
+            () => Effect.fail(refusal),
+          ),
+        ),
+      );
+
+      onTestFinished(() => web.dispose());
+
+      const response = await web.handler(post("/api/write", { value: "x" }));
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual(
+        Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]))(refusal),
+      );
+      // Only authentication challenges, and none covers these routes.
+      expect(response.headers.has("www-authenticate")).toBe(false);
+
+      const refused = await Effect.runPromise(
+        Effect.flip(
+          Effect.flatMap(httpClient(Http, web), (client) => client.write({ value: "x" })),
+        ),
+      );
+
+      expect(refused).toEqual(refusal);
+    },
+  );
 });

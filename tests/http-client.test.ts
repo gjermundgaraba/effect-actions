@@ -1,15 +1,15 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaTransformation } from "effect";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
 } from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { httpClient, serve } from "./serve.js";
+import { clientLayer, httpClient, serve } from "./serve.js";
 
 class NotFound extends Schema.TaggedError<NotFound>()(
   "NotFound",
@@ -201,4 +201,151 @@ it("keeps the native HttpApi usable with Effect's own client", async () => {
   );
 
   expect(note.id).toBe("a");
+});
+
+it("sends a no-input call as {}, and any given input encoded as given, through the client", async () => {
+  const Double = Action.make("double", {
+    description: "Transform in both directions",
+    access: "write",
+    input: { value: Schema.FiniteFromString },
+    success: Schema.FiniteFromString,
+  });
+
+  const Optional = Action.make("optional", {
+    description: "Optional input",
+    access: "write",
+    input: { value: Schema.optional(Schema.Number) },
+    success: Schema.Number,
+  });
+
+  const undefinedFromString = Schema.Literal("absent").pipe(
+    Schema.decodeTo(
+      Schema.Undefined,
+      SchemaTransformation.transform({
+        decode: () => undefined,
+        encode: () => "absent" as const,
+      }),
+    ),
+  );
+
+  const Nullable = Action.make("nullable", {
+    description: "Nullable object",
+    access: "write",
+    input: Schema.NullOr(Schema.Struct({ value: Schema.optional(Schema.Number) })),
+    success: Schema.String,
+  });
+
+  const UndefinedValue = Action.make("undefinedValue", {
+    description: "Undefined is real decoded data",
+    access: "write",
+    input: undefinedFromString,
+    success: Schema.String,
+  });
+
+  // Typed like an action without `input`, so it is called the same way.
+  const EmptyRecord = Action.make("emptyRecord", {
+    description: "A hand-written empty-record input",
+    access: "read",
+    input: Schema.Record(Schema.String, Schema.Never),
+    success: Schema.Boolean,
+  });
+
+  const Inputs = ActionHttp.make([Double, Optional, Nullable, UndefinedValue, EmptyRecord]);
+
+  const bodies: Array<unknown> = [];
+
+  const web = serve(
+    ActionHttp.layer(
+      Inputs,
+      Action.implement([Double, Optional, Nullable, UndefinedValue, EmptyRecord], {
+        double: ({ value }) => Effect.succeed(value * 2),
+        optional: ({ value }) => Effect.succeed(value ?? 7),
+        nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
+        undefinedValue: (input) => Effect.succeed(String(input)),
+        emptyRecord: () => Effect.succeed(true),
+      }),
+    ),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const handler = async (request: Request) => {
+    bodies.push(await request.clone().json());
+
+    return web.handler(request);
+  };
+
+  const calls = (client: ActionHttp.Client<typeof Inputs>) =>
+    Effect.all([
+      client.double({ value: 21 }),
+      // `{}` is a valid input, so the argument may be omitted, and omitting it sends `{}`.
+      client.optional(),
+      client.optional({}),
+      client.optional({ value: 3 }),
+      client.nullable(null),
+      client.nullable({}),
+      client.undefinedValue(undefined),
+      client.emptyRecord(),
+    ]);
+
+  const results = await Effect.flatMap(
+    ActionHttp.client(Inputs, { baseUrl: "http://localhost" }),
+    calls,
+  ).pipe(Effect.provide(clientLayer(handler)), Effect.runPromise);
+
+  expect(results).toEqual([42, 7, 7, 3, "null", "object", "undefined", true]);
+  expect(bodies).toEqual([{ value: "21" }, {}, {}, { value: 3 }, null, {}, "absent", {}]);
+});
+
+it("decodes two errors that share a status by their tag", async () => {
+  class Rejected extends Schema.TaggedError<Rejected>()(
+    "Rejected",
+    { reason: Schema.String },
+    { httpApiStatus: 403 },
+  ) {}
+
+  // Each action declares its own 403 beside the built-in `Forbidden` the hook raises.
+  const Refuse = Action.make("refuse", {
+    description: "Refused by the hook",
+    access: "write",
+    success: Schema.String,
+    errors: [Rejected],
+  });
+
+  const Reject = Action.make("reject", {
+    description: "Rejected by the handler",
+    access: "read",
+    success: Schema.String,
+    errors: [Rejected],
+  });
+
+  const binding = ActionHttp.make([Refuse, Reject]);
+
+  const web = serve(
+    ActionHttp.layer(
+      binding,
+      Action.implement(
+        [Refuse, Reject],
+        {
+          refuse: () => Effect.succeed("unreachable"),
+          reject: () => Effect.fail(new Rejected({ reason: "closed" })),
+        },
+        (action) => (action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden())),
+      ),
+    ),
+  );
+
+  onTestFinished(() => web.dispose());
+
+  const refused = await Effect.runPromise(
+    Effect.flatMap(httpClient(binding, web), (client) =>
+      Effect.all([Effect.flip(client.refuse()), Effect.flip(client.reject())]),
+    ),
+  );
+
+  // Both are reachable from each endpoint under 403; the tag selects the decoder.
+  expect(refused).toEqual([new Action.Forbidden(), new Rejected({ reason: "closed" })]);
+
+  const responses = OpenApi.fromApi(binding.api).paths?.["/api/refuse"]?.post?.responses;
+  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
 });

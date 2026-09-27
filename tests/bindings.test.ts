@@ -6,8 +6,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { withMcpClient } from "./mcp-client.js";
 import { post, rawToolCall } from "./requests.js";
-import { serveWithContext } from "./server.js";
-import { serve } from "./serve.js";
+import { serve, serveWithContext } from "./serve.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
