@@ -1,11 +1,67 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
+import { LanguageModel } from "effect/unstable/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-test/Principal") {}
 
 describe("ActionToolkit", () => {
+  it("marks the tools a model needs approval for, which LanguageModel asks for instead of calling", async () => {
+    const calls: string[] = [];
+
+    const Read = Action.make("read", {
+      description: "Read",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const Erase = Action.make("erase", {
+      description: "Erase",
+      access: "write",
+      success: Schema.String,
+    });
+
+    const app = Action.implement([Read, Erase], {
+      read: () => Effect.sync(() => (calls.push("read"), "read")),
+      erase: () => Effect.sync(() => (calls.push("erase"), "erased")),
+    });
+
+    const binding = ActionToolkit.make(app, {
+      needsApproval: (action) => action.access === "write",
+    });
+
+    expect(binding.toolkit.tools.read.needsApproval).toBe(false);
+    expect(binding.toolkit.tools.erase.needsApproval).toBe(true);
+    // No tool needs approval unless the host says so.
+    expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBe(false);
+
+    // A model that calls both tools at once.
+    const model = LanguageModel.make({
+      generateText: () =>
+        Effect.succeed([
+          { type: "tool-call", id: "1", name: "read", params: {} },
+          { type: "tool-call", id: "2", name: "erase", params: {} },
+        ] as const),
+      streamText: () => Stream.empty,
+    });
+
+    const response = await Effect.runPromise(
+      Effect.scoped(
+        LanguageModel.generateText({ prompt: "go", toolkit: binding.toolkit }).pipe(
+          Effect.provide(binding.layer),
+          Effect.provideServiceEffect(LanguageModel.LanguageModel, model),
+        ),
+      ),
+    );
+
+    expect(response.content.filter((part) => part.type === "tool-approval-request")).toMatchObject([
+      { toolCallId: "2" },
+    ]);
+    expect(response.toolResults).toMatchObject([{ name: "read", result: "read" }]);
+    expect(calls).toEqual(["read"]);
+  });
+
   it("uses native action schemas/results, and names tools after actions", async () => {
     const Double = Action.make("double", {
       description: "Double a number.",

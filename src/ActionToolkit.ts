@@ -46,6 +46,16 @@ export interface Tools<T extends Record<string, Tool.Any>, E, R> {
   readonly layer: Layer.Layer<Tool.HandlersFor<T>, E, R>;
 }
 
+/** How `make` projects its tools. */
+export interface Options<A extends Action.Any> {
+  /**
+   * Whether an action's tool needs approval before it runs: Effect's native
+   * `Tool.needsApproval`, which `LanguageModel` honors by asking for approval instead of
+   * calling the tool. Read once per action when `make` runs. Defaults to none.
+   */
+  readonly needsApproval?: (action: A) => boolean;
+}
+
 /** `Tools`, erased: the public signature restores its tools and channels. */
 interface ErasedTools {
   readonly toolkit: object;
@@ -58,14 +68,17 @@ interface ErasedTools {
  * Unlike MCP, calls return the action's native success/failure values directly.
  * Build services are needed to construct `layer`; request services are needed
  * when the resulting toolkit handles a call, the identity an implementation's `before` hook
- * reads included: the caller provides it.
+ * reads included: the caller provides it. `needsApproval` marks the tools a model's
+ * call must be approved for; it authorizes nothing, which stays the `before` hook's.
  */
 export function make<const Apps extends Served>(
   apps: Apps,
+  options?: Options<ActionOf<Member<Apps>>>,
 ): Tools<ToolkitTools<Member<Apps>>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
-export function make(apps: Served): ErasedTools {
+export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const served = toList(apps);
-  const { toolkit, layer } = bindTools(served, "native");
+  const needsApproval = options?.needsApproval ?? (() => false);
+  const { toolkit, layer } = bindTools(served, { kind: "native", needsApproval });
 
   return { toolkit, layer: layer.pipe(provideHandlers(served)) };
 }

@@ -51,7 +51,7 @@ const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
 ) => {
-  const binding = bindTools(apps, "mcp");
+  const binding = bindTools(apps, { kind: "mcp" });
 
   return Layer.effectDiscard(McpServer.registerToolkit(binding.toolkit)).pipe(
     Layer.provide(binding.layer),

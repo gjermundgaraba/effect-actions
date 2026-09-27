@@ -176,3 +176,23 @@ guardedCall satisfies Effect.Effect<unknown, unknown, Principal>;
 
 // @ts-expect-error The guarded tool keeps its principal.
 guardedCall satisfies Effect.Effect<unknown, unknown, never>;
+
+// `needsApproval` reads the implementations' own actions, as `before` does.
+ActionToolkit.make(app, {
+  needsApproval: (action) => {
+    const name: "named" | "service_free" | "guarded" = action.name;
+    const access: "write" = action.access;
+
+    return name === "guarded" && access === "write";
+  },
+});
+
+// @ts-expect-error It decides from the action alone, as a boolean.
+ActionToolkit.make(app, { needsApproval: () => "yes" });
+
+// Approval changes no tool's type or requirements.
+const approved = ActionToolkit.make(app, { needsApproval: () => true });
+
+const sameTools: Equal<typeof approved, typeof binding> = true;
+
+void sameTools;

@@ -30,7 +30,11 @@ const annotate = (tool: Tool.Any, { access, hints }: Action.Any) =>
  * A native Effect AI tool. Its schemas retain action transforms and its result
  * is the action result itself, rather than an MCP response envelope.
  */
-const nativeTool = (action: Action.Any, errors: Action.Any["errors"]): Tool.Any =>
+const nativeTool = (
+  action: Action.Any,
+  errors: Action.Any["errors"],
+  needsApproval: boolean,
+): Tool.Any =>
   annotate(
     Tool.make(action.name, {
       description: action.description,
@@ -38,6 +42,7 @@ const nativeTool = (action: Action.Any, errors: Action.Any["errors"]): Tool.Any 
       success: action.success,
       failure: Schema.Union(errors),
       failureMode: "return",
+      needsApproval,
     }),
     action,
   );
@@ -60,15 +65,22 @@ const mcpTool = (action: Action.Any, errors: Action.Any["errors"]): Tool.Any =>
     action,
   ).annotate(Tool.Strict, true);
 
-/** The two concrete wire projections that share handler binding and lifetime ownership. */
-type Projection = "native" | "mcp";
+/**
+ * The two concrete wire projections that share handler binding and lifetime ownership.
+ * Only a native tool may need approval: `LanguageModel` asks for it, and MCP has no such field.
+ */
+type Projection =
+  | { readonly kind: "native"; readonly needsApproval: (action: Action.Any) => boolean }
+  | { readonly kind: "mcp" };
 
 const project = (projection: Projection, action: Action.Any): Tool.Any => {
   // A hook refusal is the implementation's failure, so every tool declares the refusals
   // alongside the action's own errors and returns them exactly as a handler failure.
   const errors = projectedErrors(action, refusals);
 
-  return projection === "native" ? nativeTool(action, errors) : mcpTool(action, errors);
+  return projection.kind === "native"
+    ? nativeTool(action, errors, projection.needsApproval(action))
+    : mcpTool(action, errors);
 };
 
 /**
@@ -81,7 +93,7 @@ export const bindTools = (
   projection: Projection,
 ): BoundTools => {
   // Fail before building handlers when two tools share a name.
-  const actions = servedActions(projection === "mcp" ? "MCP tool" : "tool", apps);
+  const actions = servedActions(projection.kind === "mcp" ? "MCP tool" : "tool", apps);
   const toolkit = Toolkit.make(...actions.map((action) => project(projection, action)));
 
   const layer = toolkit.toLayer(
@@ -89,7 +101,7 @@ export const bindTools = (
       Object.fromEntries(
         bound.map(([action, run]) => [
           action.name,
-          projection === "native"
+          projection.kind === "native"
             ? run
             : (input: ErasedValue) => Effect.map(recordStepUp(run(input)), (value) => ({ value })),
         ]),
