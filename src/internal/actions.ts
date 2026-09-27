@@ -1,4 +1,8 @@
+// Its own modules rather than the barrel's namespaces, which esbuild keeps whole in a client.
+import { isString } from "effect/Predicate";
+import { type AST, isLiteral, isObjects, isUnion, toEncoded } from "effect/SchemaAST";
 import type * as Action from "../Action.js";
+import { httpErrors } from "./errors.js";
 
 /**
  * An action's own failures plus the ones its surface answers with, which is what
@@ -41,5 +45,41 @@ export const assertDistinct = <T>(
     }
 
     seen.set(name, claimant);
+  }
+};
+
+/** The `_tag` strings a schema's encoding may carry: one per tagged member. */
+const encodedTags = (ast: AST): ReadonlyArray<string> => {
+  const encoded = toEncoded(ast);
+
+  if (isUnion(encoded)) return encoded.types.flatMap(encodedTags);
+
+  if (!isObjects(encoded)) return [];
+
+  return encoded.propertySignatures.flatMap((property) =>
+    property.name === "_tag" && isLiteral(property.type) && isString(property.type.literal)
+      ? [property.type.literal]
+      : [],
+  );
+};
+
+/**
+ * Refuse an application error that encodes with a built-in error's `_tag`: every endpoint
+ * declares the built-in one at the same status, and a client decoding the answer could not
+ * tell them apart. The built-in errors themselves are allowed, and declared once.
+ */
+export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
+  // Computed per call, not when the module loads, so a client bundle, which never calls
+  // it, drops it.
+  const builtInTags = new Set(httpErrors.flatMap(({ ast }) => encodedTags(ast)));
+
+  for (const error of errors) {
+    if (httpErrors.some((builtIn) => builtIn === error)) continue;
+
+    const tag = encodedTags(error.ast).find((candidate) => builtInTags.has(candidate));
+
+    if (tag !== undefined) {
+      throw new Error(`${what}: error _tag "${tag}" is built in; use Action.${tag}`);
+    }
   }
 };

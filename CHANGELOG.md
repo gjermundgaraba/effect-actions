@@ -109,7 +109,9 @@ defect: an empty 500, which a client sees as an `HttpClientError`. The `ActionHt
   refusal or bad input (`Unauthenticated`, `Forbidden`, `InvalidRequest`) with the built-in
   ones: fail with `new Action.Forbidden({ message })`, and catch `"Forbidden"` by tag on the
   client. Delete an application error whose `_tag` is `InvalidInput`, `Unauthenticated` or
-  `Forbidden`: two schemas with one tag and status are indistinguishable to a client. An
+  `Forbidden`: two schemas with one tag and status are indistinguishable to a client, so
+  `Action.implement` refuses an action declaring one, throwing `error _tag "Forbidden" is built
+in`. An
   `internal` answer for unencodable results has no replacement: the result is a server bug.
 
 **An implementation carries its hook; surfaces take none.**

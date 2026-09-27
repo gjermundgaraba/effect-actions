@@ -77,6 +77,41 @@ describe("contracts", () => {
     ).toHaveLength(128);
   });
 
+  it("refuses an error sharing a built-in error's tag, which no client could tell apart", () => {
+    class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {
+      error: Schema.String,
+    }) {}
+
+    const errors = [
+      Forbidden,
+      Schema.TaggedStruct("InvalidInput", { issues: Schema.Array(Schema.String) }),
+      Schema.Union([
+        Schema.TaggedStruct("Busy", {}),
+        Schema.TaggedStruct("Unauthenticated", { reason: Schema.String }),
+      ]),
+    ];
+
+    // The contract is plain data a client may hold; serving it is refused.
+    for (const [error, tag] of errors.map(
+      (error, i) => [error, ["Forbidden", "InvalidInput", "Unauthenticated"][i]] as const,
+    )) {
+      const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
+
+      expect(() => Action.implement(Guarded, () => Effect.void)).toThrow(
+        `Action "guarded": error _tag "${tag}" is built in; use Action.${tag}`,
+      );
+    }
+
+    // The built-in errors themselves, and other tags, are fine.
+    const Allowed = Action.make("allowed", {
+      description: "",
+      access: "write",
+      errors: [Action.Forbidden, Schema.TaggedStruct("Busy", {})],
+    });
+
+    expect(Action.implement(Allowed, () => Effect.void).actions).toEqual([Allowed]);
+  });
+
   it("accepts names that start with a digit or an underscore", () => {
     expect(
       Action.make("1st", { description: "", access: "write", success: Schema.String }).name,
