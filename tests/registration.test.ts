@@ -8,7 +8,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { serve } from "./serve.js";
+import { against, serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
   const web = serve(
@@ -152,7 +152,7 @@ describe("projection boundaries", () => {
   });
 
   it.each([409, undefined])(
-    "uses schema HTTP status annotations and native defaults: %s",
+    "uses schema HTTP status annotations, and 422 for a declared error without one: %s",
     async (status) => {
       const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
 
@@ -169,12 +169,22 @@ describe("projection boundaries", () => {
 
       expect(
         OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
-      ).toHaveProperty(String(status ?? 500));
+      ).toHaveProperty(String(status ?? 422));
       const web = makeTestHttp(apps);
       onTestFinished(() => web.dispose());
       const response = await web.handler(post("/api/fail"));
-      expect(response.status).toBe(status ?? 500);
+      expect(response.status).toBe(status ?? 422);
       expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
+
+      // The client reads the status from the same binding, so it decodes the error either way.
+      const failure = await against(
+        web,
+        Effect.flip(
+          Effect.flatMap(ActionHttp.client(ActionHttp.make([Fail])), (client) => client.fail()),
+        ),
+      );
+
+      expect(failure).toEqual(Failure.make({ message: "Safe failure" }));
     },
   );
 
@@ -396,7 +406,7 @@ describe("projection boundaries", () => {
     const mcp = makeTestMcp(apps);
     onTestFinished(() => mcp.dispose());
     const response = await web.handler(post("/api/scalar"));
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(422);
     expect(await response.json()).toBe("failure");
     expect(await (await mcp.handler(rawToolCall("scalar"))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '"failure"' }] },

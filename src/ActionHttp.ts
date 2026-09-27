@@ -1,4 +1,5 @@
 import { Effect, Layer, type Schema } from "effect";
+import { resolveAt } from "effect/SchemaAST";
 import type { HttpClient } from "effect/unstable/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
@@ -168,10 +169,22 @@ const endpointsOf = (
     return endpoint;
   });
 
+/** The status an error schema states, as `HttpApi` reads it. */
+const statusOf = resolveAt<number>("httpApiStatus");
+
+/**
+ * A declared error is an outcome the action expects, not a server fault: without a status
+ * of its own it is sent as 422, rather than `HttpApi`'s 500, which clients and proxies
+ * read as the server failing.
+ */
+const withStatus = (error: Action.Any["errors"][number]): Action.Any["errors"][number] =>
+  statusOf(error.ast) === undefined ? error.annotate({ httpApiStatus: 422 }) : error;
+
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
- * Every endpoint declares its action's errors and the built-in `InvalidInput`,
- * `Unauthenticated` and `Forbidden`, so clients decode each as a typed failure.
+ * Every endpoint declares its action's errors, 422 unless a schema states its own status,
+ * and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode
+ * each as a typed failure.
  */
 export function make<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions,
@@ -190,7 +203,7 @@ export function make(
     HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
       payload: action.input,
       success: action.success,
-      error: projectedErrors(action, httpErrors),
+      error: projectedErrors(action, httpErrors).map(withStatus),
     }).annotate(OpenApi.Description, action.description),
   );
 
