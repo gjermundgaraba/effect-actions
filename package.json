@@ -16,6 +16,7 @@
     "docs"
   ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
     "./Action": "./dist/Action.mjs",
     "./ActionCli": "./dist/ActionCli.mjs",
@@ -45,6 +46,7 @@
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.6.2",
     "effect": "4.0.0-rc.117",
+    "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",

@@ -173,6 +173,7 @@ success, failure or required services, which the method types cannot follow; use
 - A given argument is sent as given: `null` or `undefined` is the input itself, for a schema that accepts it.
 - The client holds no connections or timers. `client` builds the native client once from the `HttpClient` in context.
 - The native client stays available: `HttpApiClient.make(Http.api)` has the same routes, with methods taking `{ payload }`.
+- In a browser, import the binding from a module with no server code, so the bundle keeps the client alone ([setup.md](setup.md#browser)).
 - In tests, provide `Testing.layer(routes)` instead of a network client; `baseUrl` may be left out ([Testing.md](Testing.md)).
 
 ### Built-in errors

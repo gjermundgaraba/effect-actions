@@ -303,6 +303,11 @@ binding; to tell two bindings' same-named actions apart, read the route on the r
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the
   native `HttpApiClient`, a remote `ActionCli` command, and `Testing.mcpCall`.
 - A CLI flag's help text is its field's schema description.
+- The package declares `"sideEffects": false`, and no client-path module builds server code
+  when it loads, so a browser bundle of `ActionHttp.client` keeps the contracts, the binding
+  and the client alone. Keep contracts and bindings in modules that import no server code, as
+  the quickstart now does: `quickstart.ts` holds the contract and binding, and
+  `quickstart-server.ts` the implementation and routes ([setup.md](docs/setup.md#browser)).
 - `ActionMcp.layerStdio` serves MCP 2025-11-25 and 2025-06-18 again, beside 2026-07-28, as the
   host negotiates: a subprocess host need not speak 2026-07-28. Earlier revisions stay refused,
   having no `structuredContent`. HTTP still serves 2026-07-28 only.

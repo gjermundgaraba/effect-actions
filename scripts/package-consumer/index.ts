@@ -7,7 +7,8 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { Greet, Http, routes } from "./quickstart.js";
+import { Greet, Http } from "./quickstart.js";
+import { routes } from "./quickstart-server.js";
 
 // Subpaths are the only entry points: one module each, so nothing loads the MCP
 // server by accident.

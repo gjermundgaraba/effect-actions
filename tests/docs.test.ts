@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { routes } from "../examples/quickstart.js";
+import { routes } from "../examples/quickstart-server.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
 import { docsDirectory } from "../scripts/skill.ts";
@@ -12,34 +12,45 @@ import { serve } from "./serve.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-// Documented snippets that must stay byte-identical to a type-checked example.
+// Documented snippets that must stay byte-identical to a type-checked example: the first
+// snippets under the heading, one per file, in order.
 const snippets = [
-  ["README.md", "## Looks like this", "quickstart.ts"],
-  ["docs/README.md", "## Minimal program", "quickstart.ts"],
-  ["docs/Action.md", "## Canonical", "contracts.ts"],
-  ["docs/Action.md", "### Implementations", "handlers.ts"],
-  ["docs/ActionHttp.md", "## Canonical", "binding.ts"],
-  ["docs/ActionHttp.md", "### Serving", "http.ts"],
-  ["docs/ActionHttp.md", "### Client", "client.ts"],
-  ["docs/Authentication.md", "## Canonical", "authentication.ts"],
-  ["docs/ActionMcp.md", "## Canonical", "mcp.ts"],
-  ["docs/ActionCli.md", "## Canonical", "cli.ts"],
-  ["docs/ActionCli.md", "### Over HTTP", "cli-remote.ts"],
-  ["docs/ActionToolkit.md", "## Canonical", "toolkit-authorized.ts"],
-  ["docs/Testing.md", "## Canonical", "testing.ts"],
-  ["docs/ActionMcp.md", "### Cross-origin browsers", "mcp-browser.ts"],
-  ["docs/ActionMcp.md", "### Subprocess", "mcp-stdio.ts"],
+  ["README.md", "## Looks like this", ["quickstart.ts", "quickstart-server.ts"]],
+  ["docs/README.md", "## Minimal program", ["quickstart.ts", "quickstart-server.ts"]],
+  ["docs/Action.md", "## Canonical", ["contracts.ts"]],
+  ["docs/Action.md", "### Implementations", ["handlers.ts"]],
+  ["docs/ActionHttp.md", "## Canonical", ["binding.ts"]],
+  ["docs/ActionHttp.md", "### Serving", ["http.ts"]],
+  ["docs/ActionHttp.md", "### Client", ["client.ts"]],
+  ["docs/Authentication.md", "## Canonical", ["authentication.ts"]],
+  ["docs/ActionMcp.md", "## Canonical", ["mcp.ts"]],
+  ["docs/ActionCli.md", "## Canonical", ["cli.ts"]],
+  ["docs/ActionCli.md", "### Over HTTP", ["cli-remote.ts"]],
+  ["docs/ActionToolkit.md", "## Canonical", ["toolkit-authorized.ts"]],
+  ["docs/Testing.md", "## Canonical", ["testing.ts"]],
+  ["docs/ActionMcp.md", "### Cross-origin browsers", ["mcp-browser.ts"]],
+  ["docs/ActionMcp.md", "### Subprocess", ["mcp-stdio.ts"]],
 ] as const;
 
-it.each(snippets)("keeps %s %s aligned with its type-checked source", (document, heading, file) => {
-  const source = read(`examples/${file}`)
+/** An example as a page shows it, importing the published package. */
+const documented = (file: string) =>
+  read(`examples/${file}`)
     .trim()
     .replace(/"\.\.\/src\/(\w+)\.js"/g, '"@gjermundgaraba/effect-actions/$1"');
 
-  const section = read(document).split(`\n${heading}\n`)[1];
-  const snippet = section?.match(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/)?.[1];
-  expect(snippet).toBe(source);
-});
+it.each(snippets)(
+  "keeps %s %s aligned with its type-checked source",
+  (document, heading, files) => {
+    const section = read(document).split(`\n${heading}\n`)[1] ?? "";
+
+    const blocks = Array.from(
+      section.matchAll(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/g),
+      ([, code]) => code,
+    );
+
+    expect(blocks.slice(0, files.length)).toEqual(files.map(documented));
+  },
+);
 
 // Code copied from a page's canonical example must compile, so every one is an example.
 it("pairs every canonical snippet with a type-checked example", () => {

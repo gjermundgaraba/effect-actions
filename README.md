@@ -7,11 +7,12 @@ underneath.
 ## Looks like this
 
 ```ts
-import { Effect, Layer, Schema } from "effect";
+import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
+// The contract and its HTTP binding import no server code, so any client can import them,
+// a browser page included.
 export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
@@ -20,6 +21,16 @@ export const Greet = Action.make("greet", {
 });
 
 export const Http = ActionHttp.make([Greet]);
+```
+
+and a server that implements it, in a module of its own:
+
+```ts
+import { Effect, Layer } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Greet, Http } from "./quickstart.js";
 
 const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 

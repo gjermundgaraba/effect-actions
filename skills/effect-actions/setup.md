@@ -32,6 +32,26 @@ Every module imports from the `effect` package only. `ActionMcp` and `ActionTool
 only modules that import `effect/unstable/ai`; because there is no package root, importing a
 contract module never pulls in an MCP server.
 
+## Browser
+
+A browser app calls the server with `ActionHttp.client`. It needs the contracts and the HTTP
+binding, and nothing else of the server. The package declares `"sideEffects": false`, so a
+bundle of a client keeps `Action`, `ActionHttp.make` and `ActionHttp.client`, under 2 KB
+gzipped beyond Effect's own `HttpApiClient` with Vite or esbuild, and drops every server
+module. Keep the contracts and the binding in modules that import no server code, and import
+those alone from the page, as the minimal program does:
+
+```text
+src/contracts.ts    Action.make(...) and ActionHttp.make([...]): imports effect only
+src/handlers.ts     Action.implement(...): services, database, @effect/platform-node
+src/server.ts       ActionHttp.layer, ActionMcp, Authentication
+```
+
+A module that calls `Action.implement` beside its contracts brings its handlers, and every
+module they import, into the browser bundle: bundlers keep the call as written, even unused.
+Split it. A page on another origin also needs CORS on the host, outside authentication: see
+the browser example in [ActionMcp.md](ActionMcp.md#cross-origin-browsers).
+
 Companion Effect modules you will import alongside: `effect/unstable/httpapi` (`HttpApiClient`, `OpenApi`, `HttpApiSwagger`, `HttpApiScalar`), `effect/unstable/http` (`HttpRouter`, `HttpServerResponse`, `FetchHttpClient`, `HttpClientError`), `effect/unstable/cli` (`Command`, `Flag`, `Argument`).
 
 ## Rules
@@ -47,4 +67,5 @@ What the package does and does not do: [guarantees.md](guarantees.md#scope).
 ## Failure modes
 
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath.
+- A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a module that also holds server code, such as a contract beside its `Action.implement`. Move the contracts and the binding to a module that imports no server code.
 - Type errors inside `effect/unstable/*` after install: `effect` version drift. Install one `effect` release candidate within the peer range for every package.

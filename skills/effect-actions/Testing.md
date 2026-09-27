@@ -29,7 +29,8 @@ may be left out when `{}` is a valid input, sending `{}`, and a given input is s
 import { Effect } from "effect";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { Greet, Http, routes } from "./quickstart.js";
+import { Greet, Http } from "./quickstart.js";
+import { routes } from "./quickstart-server.js";
 
 const program = Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http);

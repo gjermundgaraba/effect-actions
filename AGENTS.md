@@ -47,13 +47,14 @@ Maintainer guide, lint policy, and release notes: [CONTRIBUTING.md](CONTRIBUTING
 ```sh
 vp check            # format, type-aware lint, type check
 vp test             # all suites, including docs and skill sync
-vp run test:package # tarball type-checked in an isolated consumer
+vp run test:package # tarball type-checked in an isolated consumer; its browser client within budget
 vp run docs:sync    # regenerate the skill after editing anything in docs/
 ```
 
 ## Invariants
 
 - Contracts (`Action`) never import transport code. Each surface owns its own mapping and validates only the names it serves.
+- A browser client imports `Action` and `ActionHttp`: a module whose values the client uses builds nothing server-side when it loads. Build server-only values in modules of their own, such as `src/internal/schema-errors.ts`, which a client bundle drops whole. `test:package` bounds what the client adds to a browser bundle.
 - Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime.
 - Build-time and request-time requirements stay separate in the types. Never provide request identity at startup, in code or in docs.
 - Public behavior changes update the matching `docs/` page in the same commit, then `vp run docs:sync`.

@@ -9,15 +9,9 @@ import {
   HttpRouter,
   HttpServerResponse,
 } from "effect/unstable/http";
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  type HttpApiError,
-  HttpApiMiddleware,
-  HttpApiGroup,
-  OpenApi,
-} from "effect/unstable/httpapi";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+// Its own module rather than the barrel's namespace, which esbuild keeps whole in a client.
+import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import {
@@ -27,8 +21,9 @@ import {
   methods,
   type Options as ClientOptions,
 } from "./internal/client.js";
-import { httpErrors, type HttpErrors, InvalidInput } from "./internal/errors.js";
+import { httpErrors, type HttpErrors } from "./internal/errors.js";
 import { challenge } from "./internal/respond.js";
+import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
   type AnyImplementation,
@@ -127,33 +122,6 @@ const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> 
 
 /** An absolute route from path segments. */
 const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
-
-/**
- * `HttpApiBuilder` reports these kinds while encoding the handler's answer, after the
- * handler ran; every other kind (`Payload`, `Params`, `Headers`, `Query`) comes from
- * decoding the request before it.
- */
-const responseKinds: ReadonlySet<HttpApiError.HttpApiSchemaError["kind"]> = new Set([
-  "Body",
-  "ResponseHeaders",
-]);
-
-/**
- * The native middleware answering schema failures: a request that does not decode with
- * `InvalidInput` and the schema's own message, a result that does not encode as a defect,
- * the empty 500 of any other server bug.
- */
-class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
-  "effect-actions/http/SchemaErrors",
-  { error: [InvalidInput] },
-) {}
-
-const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
-  responseKinds.has(failure.kind)
-    ? // Its cause, not the native failure: the failure itself renders as a 400.
-      Effect.die(failure.cause)
-    : Effect.fail(new InvalidInput({ message: failure.cause.message })),
-);
 
 /** A native API of one top-level group of `endpoints`. */
 function apiOf(

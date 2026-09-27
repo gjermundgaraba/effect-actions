@@ -1,7 +1,8 @@
 import { Effect } from "effect";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as Testing from "../src/Testing.js";
-import { Greet, Http, routes } from "./quickstart.js";
+import { Greet, Http } from "./quickstart.js";
+import { routes } from "./quickstart-server.js";
 
 const program = Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http);

@@ -25,7 +25,7 @@ Package facts that apply everywhere:
 
 | Read                                   | When you need to                                                                                          |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                   | install, pin versions, pick entry points, know what the package does not do                               |
+| [setup.md](setup.md)                   | install, pin versions, pick entry points, bundle a browser client, know what the package does not do      |
 | [Action.md](Action.md)                 | define a contract (input, success, errors, access, hints), bind its handler and hook, built-in errors     |
 | [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action |
 | [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP (2026-07-28) or stdio (2026-07-28, 2025-11-25, 2025-06-18)           |
@@ -47,11 +47,12 @@ Every surface that runs handlers takes the same implementations (`Action.impleme
 ## Minimal program
 
 ```ts
-import { Effect, Layer, Schema } from "effect";
+import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
+// The contract and its HTTP binding import no server code, so any client can import them,
+// a browser page included.
 export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
@@ -60,6 +61,16 @@ export const Greet = Action.make("greet", {
 });
 
 export const Http = ActionHttp.make([Greet]);
+```
+
+The server, in its own module, so that a browser client imports the contract alone:
+
+```ts
+import { Effect, Layer } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Greet, Http } from "./quickstart.js";
 
 const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
@@ -75,7 +86,7 @@ Serve `routes` with `HttpRouter.serve` and a platform server layer. Result: `POS
 
 Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/effect-actions/tree/main/examples)):
 
-- `quickstart.ts`, `quickstart-client.ts`: the minimal program and its typed client.
+- `quickstart.ts`, `quickstart-server.ts`, `quickstart-client.ts`: the minimal program's contract and binding, its server, and its typed client.
 - `contracts.ts`, `binding.ts`, `handlers.ts`, `authorization.ts`, `authentication.ts`, `http.ts`, `mcp.ts`, `request-policy.ts`, `app.ts`, `server.ts`: an authenticated application with public and protected implementations served side by side, one policy on every surface, two MCP endpoints, OpenAPI and Swagger.
 - `toolkit.ts`, `cli.ts`, `cli-remote.ts`, `mcp-stdio.ts`: one file per other surface.
 - `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
