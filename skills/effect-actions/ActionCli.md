@@ -21,9 +21,10 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `name`                       | `command`: override the command name (default: the action name in kebab case). `make`: the aggregate's name, required. |
 | `render`                     | `command` only: decoded success to human-readable string; adds `--json`.                                               |
+| `positional`                 | `command` only: input fields taken as positional arguments instead of flags, in this order.                            |
 | `baseUrl`, `transformClient` | Over HTTP only: the native client's options, as `ActionHttp.client` takes them.                                        |
 
-Exported types: `Options` of `command` and `MakeOptions` of `make`. Over HTTP, either is joined with `ActionHttp.ClientOptions`.
+Exported types: `Options<typeof Action>` of `command` and `MakeOptions` of `make`. Over HTTP, either is joined with `ActionHttp.ClientOptions`.
 
 Flags come from the action's input. A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`), parsing the field's encoded JSON
@@ -46,6 +47,11 @@ is one choice of three.
 A field's description is its flag's help text, whatever its encoding. An optional field's
 flag is optional and takes its value without the `null` that `Schema.optional` encodes
 (`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
+
+A field listed in `positional` is an argument instead of a flag, parsed as its flag would
+be, a boolean taking `true` or `false`: `command(apps, Inspect, { positional: ["path"] })`
+reads `inspect README.md --lines 10`. Arguments are read in the listed order, not the
+input's. An optional field's argument is optional.
 
 A local command retains handler, builder and hook requirements/failures, plus
 `SchemaError`, and the invocation owns its scope. A command over HTTP fails with exactly
@@ -108,6 +114,7 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - `make(apps, { name })` puts every implemented action under one command named `name`, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). That includes actions no HTTP binding or MCP endpoint serves. Subcommand names must be distinct after kebab-casing; two actions whose names collide are refused.
 - Flags are values in their encoded form: `double --value 21` for a `FiniteFromString` field, which is string-encoded; a value flag takes the encoded JSON, or text. The action's schema then decodes the assembled input before dispatch.
 - A field that is required once encoded has a required flag: omitted, the parser refuses the command with `Required flag missing` and shows its help, and the implementation is not built. A required boolean is the exception: omitted, its switch is `false`. An optional field's flag is optional, and omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
+- `positional` names fields of a struct or class input, and the types offer none for any other input, a union included. Each is listed once, and every required field before any optional one, since a parser reads arguments in order. Remote commands take it too.
 - The flags follow the schema: renaming a field renames its flag. For a fixed syntax, build the command with native `Command.make`, `Flag` and `Argument`, and call the handler or client in it.
 - Output is validated and encoded before printing. Default output is JSON. An action whose `success` is `Schema.Void` prints nothing. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. Rendering cannot bypass validation.
 - `--json` is a regular flag of the rendered command only. A command without `render` has no such flag: its output is JSON already. Nothing is declared tree-wide, so a host CLI may declare its own `--json`, global or not.
@@ -123,6 +130,8 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - Native `CliError.ShowHelp` containing `MissingOption` (`Required flag missing: <flag>`): a required field's flag was not given. Pass it.
 - `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`; or, for `--input` or a value flag, the JSON or text is not the field's encoding, including malformed JSON, taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
 - Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values.
+- Native `CliError.ShowHelp` containing `MissingArgument`: a required positional argument was not given. A positional field has no flag, so `--<field>` does not supply it.
+- Thrown by `command`: `Duplicate positional argument: <field>` (listed twice), `Required positional argument after an optional one: <field>` (reorder the list, or make the earlier field required), `Not an input field: <field>`, or `Positional arguments need named input fields` for an input that is not a struct. The types refuse the last two; the first two are checked when the command is built.
 - `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name, such as two input fields with the same kebab-case name (`userId`, `user_id`), or a `json` field beside `render`'s `--json`. Rename the field, or drop `render`. A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `apps`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.

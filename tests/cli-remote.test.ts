@@ -91,6 +91,25 @@ it("projects commands through the HTTP client without a local fallback", async (
   );
 });
 
+it("takes positional arguments over HTTP as locally", async () => {
+  const web = serve(ActionHttp.layer(Http, app));
+
+  onTestFinished(() => web.dispose());
+
+  const command = ActionCli.command(Http, Remote, {
+    baseUrl: "http://localhost",
+    positional: ["value"],
+  });
+
+  const [, output] = await logged(Command.runWith(command, { version: "0" })(["21"])).pipe(
+    Effect.provide(clientLayer(web.handler)),
+    Effect.provide(cliServices),
+    Effect.runPromise,
+  );
+
+  expect(output).toEqual(['"42"']);
+});
+
 it("projects a flat binding as one kebab-case subcommand per action", async () => {
   const Echo = Action.make("echoText", {
     description: "Echoes its input",

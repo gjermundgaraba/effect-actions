@@ -39,7 +39,7 @@ export interface MakeOptions {
 }
 
 /** Every option, erased: the public signatures restore them. */
-type ErasedOptions = CommandOptions<Action.Any["success"]["Type"]> & ClientOptions;
+type ErasedOptions = CommandOptions<Action.Any> & ClientOptions;
 
 /** The implementation of `A` among `App`. */
 type Selected<App, A extends Action.Any> = App extends unknown
@@ -141,12 +141,12 @@ const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasPrope
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
-  options?: CommandOptions<A["success"]["Type"]> & ClientOptions,
+  options?: CommandOptions<A> & ClientOptions,
 ): RemoteCommand<A>;
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
   apps: Apps,
   action: A,
-  options?: CommandOptions<A["success"]["Type"]>,
+  options?: CommandOptions<A>,
 ): LocalCommand<Selected<Member<Apps>, A>, A>;
 export function command(
   target: AnyHttp | Served,

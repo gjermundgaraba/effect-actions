@@ -984,3 +984,86 @@ it("dies when the command runs if its builder's record lacks a handler, whicheve
     }
   }
 });
+
+it("takes the listed fields as positional arguments, in their order, parsed as their flags", async () => {
+  const inputs: unknown[] = [];
+
+  const Copy = Action.make("copy", {
+    description: "Copy a file",
+    access: "write",
+    input: {
+      from: Schema.String,
+      to: Schema.String,
+      count: Schema.Finite,
+      mode: Schema.Literals(["fast", "safe"]),
+      verbose: Schema.Boolean,
+      note: Schema.optional(Schema.String),
+      dryRun: Schema.Boolean,
+    },
+    success: Schema.String,
+  });
+
+  const app = Action.implement(Copy, (input) =>
+    Effect.andThen(
+      Effect.sync(() => inputs.push(input)),
+      () => Effect.succeed("copied"),
+    ),
+  );
+
+  const copy = ActionCli.command(app, Copy, {
+    positional: ["to", "from", "count", "mode", "verbose", "note"],
+  });
+
+  // Read in the listed order, not the input's; a field not listed keeps its flag.
+  await run(copy, ["b", "a", "3", "safe", "true"]);
+  await run(copy, ["--dry-run", "b", "a", "3", "fast", "false", "hi"]);
+
+  expect(inputs).toEqual([
+    { to: "b", from: "a", count: 3, mode: "safe", verbose: true, dryRun: false },
+    { to: "b", from: "a", count: 3, mode: "fast", verbose: false, note: "hi", dryRun: true },
+  ]);
+
+  // A positional field has no flag, and a missing or invalid argument shows help.
+  expect(failure(await runExit(copy, ["--from", "a", "b", "3", "safe", "true"]))).toBeInstanceOf(
+    CliError.ShowHelp,
+  );
+  expect(failure(await runExit(copy, ["b", "a", "3"]))).toBeInstanceOf(CliError.ShowHelp);
+  expect(failure(await runExit(copy, ["b", "a", "3", "slow", "true"]))).toBeInstanceOf(
+    CliError.ShowHelp,
+  );
+  expect(inputs).toHaveLength(2);
+});
+
+it("refuses positional arguments a parser could not read back", () => {
+  const Pair = Action.make("pair", {
+    description: "A required and an optional field",
+    access: "write",
+    input: { first: Schema.String, second: Schema.optional(Schema.String) },
+  });
+
+  const Scalar = Action.make("scalar", {
+    description: "Not a struct",
+    access: "write",
+    input: Schema.String,
+  });
+
+  const pair = Action.implement(Pair, () => Effect.void);
+  const scalar = Action.implement(Scalar, () => Effect.void);
+
+  expect(() => ActionCli.command(pair, Pair, { positional: ["first", "first"] })).toThrow(
+    "Duplicate positional argument: first",
+  );
+  expect(() => ActionCli.command(pair, Pair, { positional: ["second", "first"] })).toThrow(
+    "Required positional argument after an optional one: first",
+  );
+  // SAFETY: a plain-JavaScript caller, whom the types do not stop.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Untyped caller fixture.
+  expect(() => ActionCli.command(pair, Pair, { positional: ["third"] as never })).toThrow(
+    "Not an input field: third",
+  );
+  // SAFETY: the same untyped caller, for an input without named fields.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Untyped caller fixture.
+  expect(() => ActionCli.command(scalar, Scalar, { positional: ["length"] as never })).toThrow(
+    "Positional arguments need named input fields: length",
+  );
+});

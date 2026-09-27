@@ -272,7 +272,7 @@ ActionCli.command(local, One, { baseUrl: "http://localhost" });
 ActionCli.make(local, { name: "l", baseUrl: "http://localhost" });
 
 // The options exported for each function, joined with the client's over HTTP.
-const remoteOptions: ActionCli.Options<string> & ActionHttp.ClientOptions = {
+const remoteOptions: ActionCli.Options<typeof RemoteAction> & ActionHttp.ClientOptions = {
   baseUrl: "http://localhost",
   render: (output) => output,
 };
@@ -282,3 +282,41 @@ const remoteMake: ActionCli.MakeOptions & ActionHttp.ClientOptions = { name: "r"
 ActionCli.command(http, RemoteAction, remoteOptions);
 
 ActionCli.make(http, remoteMake);
+
+// Positional arguments name a struct input's own fields, locally and over HTTP.
+ActionCli.command(local, One, { positional: ["value"] });
+
+ActionCli.command(http, RemoteAction, { positional: ["value"] });
+
+// @ts-expect-error Not a field of the input.
+ActionCli.command(local, One, { positional: ["other"] });
+
+const ScalarInput = Action.make("scalarInput", {
+  description: "A scalar input",
+  access: "read",
+  input: Schema.String,
+});
+
+const UnionInput = Action.make("unionInput", {
+  description: "A union input",
+  access: "read",
+  input: Schema.Union([Schema.Struct({ a: Schema.String }), Schema.Struct({ a: Schema.Finite })]),
+});
+
+const shapes = Action.implement([ScalarInput, UnionInput, Other], {
+  scalarInput: () => Effect.void,
+  unionInput: () => Effect.void,
+  other: () => Effect.succeed("other"),
+});
+
+// Only named fields of one struct may be positional: none for a scalar, a union or no input.
+const noFields: [
+  Equal<ActionCli.Options<typeof ScalarInput>["positional"], ReadonlyArray<never> | undefined>,
+  Equal<ActionCli.Options<typeof UnionInput>["positional"], ReadonlyArray<never> | undefined>,
+  Equal<ActionCli.Options<typeof Other>["positional"], ReadonlyArray<never> | undefined>,
+] = [true, true, true];
+
+void noFields;
+
+// @ts-expect-error A union input has no positional fields, even shared ones.
+ActionCli.command(shapes, UnionInput, { positional: ["a"] });
