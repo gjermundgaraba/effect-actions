@@ -710,6 +710,8 @@ export const mcpCallTypes = () => {
   void Testing.mcpCall(WhoAmI, {}, { url: "/mcp" });
   // @ts-expect-error As for a client's method, a given input is sent as given.
   void Testing.mcpCall(WhoAmI, undefined, { url: "/mcp" });
+  // @ts-expect-error The client metadata is the request's own, never a parameter.
+  void Testing.mcpRequest("tools/list", { _meta: {} });
 
   // Its declared errors and the refusals are typed failures.
   void Testing.mcpCall(GetUser, { id: "1" }).pipe(

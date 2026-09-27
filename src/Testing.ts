@@ -193,7 +193,8 @@ export function mcpCall(
  */
 export const mcpRequest = (
   method: string,
-  params: { readonly [key: string]: Schema.Json } = {},
+  // The client metadata is the request's own: `_meta` would be dropped, so it is no parameter.
+  params: { readonly _meta?: never; readonly [key: string]: Schema.Json } = {},
   { headers = {}, url = defaultPath }: McpCallOptions = {},
 ): Effect.Effect<
   HttpClientResponse.HttpClientResponse,
