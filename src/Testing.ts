@@ -10,11 +10,12 @@ import {
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
+import { Sse } from "effect/unstable/encoding";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import type { Call } from "./internal/client.js";
 import { type Refusal, refusals } from "./internal/errors.js";
-import { defaultPath, httpProtocol } from "./internal/mcp.js";
+import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
@@ -103,19 +104,24 @@ const ToolReply = Schema.Union([
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply));
 
 /**
- * The reply in a response body: the body itself when it is one JSON message, or else the
- * last reply among an event stream's `data:` lines, which notifications may precede.
+ * The reply in a response: its body when it is one JSON message, or the last reply among an
+ * event stream's events, which notifications may precede.
  */
-const replyOf = (text: string) =>
-  Option.orElse(decodeReply(text), () =>
-    Option.fromNullishOr(
-      text
-        .split("\n")
-        .map((line) => line.replace(/^data:/, "").trim())
-        .flatMap((line) => Option.toArray(decodeReply(line)))
-        .at(-1),
-    ),
+const replyOf = (response: HttpClientResponse.HttpClientResponse, text: string) => {
+  if (!(response.headers["content-type"] ?? "").startsWith("text/event-stream")) {
+    return decodeReply(text);
+  }
+
+  const data: Array<string> = [];
+
+  Sse.makeParser((event) => {
+    if (Predicate.isTagged(event, "Event")) data.push(event.data);
+  }).feed(text);
+
+  return Option.fromNullishOr(
+    data.flatMap((message) => Option.toArray(decodeReply(message))).at(-1),
   );
+};
 
 /** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
 const failWith = (errors: Action.Any["errors"], text: string, otherwise: McpCallError) =>
@@ -152,7 +158,7 @@ const callTool = (
       return yield* failWith(refusals, text, other(`answered ${response.status}: ${text}`));
     }
 
-    const reply = replyOf(text);
+    const reply = replyOf(response, text);
 
     if (Option.isNone(reply)) return yield* Effect.fail(other(`had no reply: ${text}`));
 
@@ -233,44 +239,21 @@ export function mcpClient(
  */
 export const mcpRequest = (
   method: string,
-  params: {
-    readonly _meta?: { readonly [key: string]: Schema.Json };
-    readonly [key: string]: Schema.Json | undefined;
-  } = {},
+  params: Params = {},
   { headers = {}, url = defaultPath }: McpRequestOptions = {},
 ): Effect.Effect<
   HttpClientResponse.HttpClientResponse,
   HttpClientError.HttpClientError,
   HttpClient.HttpClient
 > => {
-  const { protocolVersion } = httpProtocol;
-  const { name } = params;
+  const { headers: routing, body } = statelessRequest(method, params);
 
-  // One stateless request: its routing headers, over any the caller sets, repeat what its
-  // body says.
+  // The routing headers go over any the caller sets.
   return HttpClient.execute(
     HttpClientRequest.post(url).pipe(
       HttpClientRequest.setHeaders(headers),
-      HttpClientRequest.setHeaders({
-        accept: "application/json, text/event-stream",
-        "mcp-protocol-version": protocolVersion,
-        "mcp-method": method,
-        ...(Predicate.isString(name) ? { "mcp-name": name } : {}),
-      }),
-      HttpClientRequest.bodyJsonUnsafe({
-        jsonrpc: "2.0",
-        id: 1,
-        method,
-        params: {
-          ...params,
-          _meta: {
-            "io.modelcontextprotocol/clientCapabilities": {},
-            "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
-            ...params._meta,
-            "io.modelcontextprotocol/protocolVersion": protocolVersion,
-          },
-        },
-      }),
+      HttpClientRequest.setHeaders(routing),
+      HttpClientRequest.bodyJsonUnsafe(body),
     ),
   );
 };

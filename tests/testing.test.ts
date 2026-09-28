@@ -291,6 +291,15 @@ describe("mcpClient", () => {
     expect(await listed(stream, "text/event-stream")).toEqual([1, 2]);
   });
 
+  it("reads an event whose data spans several lines", async () => {
+    const event = JSON.stringify(reply, null, 2)
+      .split("\n")
+      .map((line) => `data: ${line}\n`)
+      .join("");
+
+    expect(await listed(`${event}\n`, "text/event-stream")).toEqual([1, 2]);
+  });
+
   it("reads a JSON reply however it is laid out", async () => {
     expect(await listed(JSON.stringify(reply, null, 2), "application/json")).toEqual([1, 2]);
   });
