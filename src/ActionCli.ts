@@ -68,23 +68,29 @@ type RemoteCommand<H extends AnyHttp, A extends Action.Any, Subcommands = never>
 >;
 
 /**
- * Build the implementation's handlers in a scope of their own, run one action through its
- * hook and its handler, and release them: every local command, selected or aggregated.
+ * Build the implementation's handlers for this call alone, run one action through its hook
+ * and its handler, and release them: every local command, selected or aggregated. The call's
+ * own scope closes first, so its finalizers run while the builder's resources are still open;
+ * a local build never reuses one the host already made.
  */
 const local = <App extends AnyImplementation, A extends Action.Any>(
   app: App,
   action: A,
   input: A["input"]["Type"],
-): Local<App, A> =>
+): Local<App, A> => {
+  const call = Effect.flatMap(acquire([app]), (bound) => {
+    const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
+
+    return run === undefined ? Effect.die(`No handler for ${action.name}`) : run(input);
+  });
+
   // SAFETY: the builder's failures and services are the implementation's `EX` and `RX`,
   // the handler's and the hook's are its entry of `R`, and the hook refuses with a `Refusal`.
-  Effect.scoped(
-    Effect.flatMap(acquire([app]), (bound) => {
-      const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
-
-      return run === undefined ? Effect.die(`No handler for ${action.name}`) : run(input);
-    }).pipe(Effect.provide(Implementation.layerOf(app))),
+  return call.pipe(
+    Effect.scoped,
+    Effect.provide(Implementation.layerOf(app), { local: true }),
   ) as Local<App, A>;
+};
 
 /**
  * The one implementation of `action` among `apps`. One implemented twice is refused rather

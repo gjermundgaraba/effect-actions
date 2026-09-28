@@ -4,6 +4,7 @@ import { TestConsole } from "effect/testing";
 import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
 import { cliServices } from "./cli-services.js";
 
 /** Run `command` with `args` on the test CLI services. */
@@ -691,6 +692,77 @@ it("runs any action locally, scopes every invocation, and exposes aggregate subc
   expect(inputs).toEqual(["direct", "group"]);
   expect(acquired).toBe(2);
   expect(released).toBe(2);
+});
+
+it("releases a local call's own resources before its builder's", async () => {
+  const log: string[] = [];
+
+  const Scoped = Action.make("scoped", {
+    description: "Opens a resource of its own",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const app = Action.implement(
+    Scoped,
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        log.push("builder acquire");
+
+        return () =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              log.push("handler acquire");
+
+              return "done";
+            }),
+            () => Effect.sync(() => log.push("handler release")),
+          );
+      }),
+      () => Effect.sync(() => log.push("builder release")),
+    ),
+  );
+
+  await run(ActionCli.command(app, Scoped), []);
+
+  expect(log).toEqual(["builder acquire", "handler acquire", "handler release", "builder release"]);
+});
+
+it("builds a local command's implementation per invocation even where the host built it", async () => {
+  let acquired = 0;
+  let released = 0;
+
+  const Counted = Action.make("counted", {
+    description: "Counts builds",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const app = Action.implement(
+    Counted,
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        acquired++;
+
+        return () => Effect.succeed("done");
+      }),
+      () =>
+        Effect.sync(() => {
+          released++;
+        }),
+    ),
+  );
+
+  const inside = await Effect.gen(function* () {
+    yield* exec(ActionCli.command(app, Counted), []);
+    yield* exec(ActionCli.command(app, Counted), []);
+
+    return { acquired, released };
+  }).pipe(Effect.provide(ActionToolkit.make(app).layer), Effect.runPromise);
+
+  // The host's own build, and one per invocation, each released after its call.
+  expect(inside).toEqual({ acquired: 3, released: 2 });
+  expect(released).toBe(3);
 });
 
 it("adds --json only to a command with a renderer, without contesting a host's own --json", async () => {
