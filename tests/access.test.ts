@@ -1,5 +1,5 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Cause, Context, Effect, Exit, Layer, Option, Schema, type Scope, Stream } from "effect";
+import { describe, expect, it } from "vite-plus/test";
+import { Context, Effect, Exit, Latch, Layer, Option, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
 import { McpServer } from "effect/unstable/ai";
 import { HttpRouter } from "effect/unstable/http";
@@ -113,7 +113,6 @@ describe("the pre-handler hook", () => {
   it("runs once before each handler over HTTP and answers as a built-in refusal", async () => {
     const { app, hooks, handlers } = make();
     const web = serveHttp(app, readOnly);
-    onTestFinished(() => web.dispose());
 
     const allowed = await web.handler(post("/api/read"));
     expect(allowed.status).toBe(200);
@@ -133,7 +132,6 @@ describe("the pre-handler hook", () => {
   it("decodes HTTP input before running either the hook or handler", async () => {
     const { app, hooks, handlers } = make();
     const web = serveHttp(app, readOnly);
-    onTestFinished(() => web.dispose());
 
     const invalid = await web.handler(post("/api/write", { value: 42 }));
     expect(invalid.status).toBe(400);
@@ -154,8 +152,6 @@ describe("the pre-handler hook", () => {
         HttpRouter.provideRequest(readOnly),
       ),
     );
-
-    onTestFinished(() => mcp.dispose());
 
     expect(await (await mcp.handler(rawToolCall("read"))).json()).toMatchObject({
       result: { isError: false, structuredContent: { value: "read ok" } },
@@ -195,8 +191,6 @@ describe("the pre-handler hook", () => {
       ),
     );
 
-    onTestFinished(() => web.dispose());
-
     // The routing header encoded as MCP allows, which the native server accepts.
     const encoded = rawToolCall("hooked");
     encoded.headers.set("mcp-name", `=?base64?${btoa("hooked")}?=`);
@@ -228,8 +222,6 @@ describe("the pre-handler hook", () => {
       ),
     );
 
-    onTestFinished(() => anonymous.dispose());
-
     const unauthenticated = await anonymous.handler(rawToolCall("read"));
     expect(unauthenticated.status).toBe(401);
     expect(await unauthenticated.json()).toEqual(
@@ -246,6 +238,9 @@ describe("the pre-handler hook", () => {
       errors: [Action.Forbidden],
     });
 
+    // Opened once the test has the response: the refusal comes only after it has started.
+    const streamed = Latch.makeUnsafe();
+
     const app = Action.implement(Reporting, () =>
       Effect.gen(function* () {
         const server = yield* Effect.serviceOption(McpServer.McpServer);
@@ -257,15 +252,13 @@ describe("the pre-handler hook", () => {
           });
         }
 
-        // Long enough for the notification to start the response.
-        yield* Effect.sleep("50 millis");
+        yield* streamed.await;
 
         return yield* new Action.Forbidden({ scopes: ["write"] });
       }),
     );
 
     const mcp = serve(ActionMcp.layerHttp(app, { name: "test", version: "0" }));
-    onTestFinished(() => mcp.dispose());
 
     const reply = await mcp.handler(
       mcpRequest({
@@ -277,6 +270,7 @@ describe("the pre-handler hook", () => {
     // The progress went out with a 200: the refusal can only follow it as the tool's result.
     expect(reply.status).toBe(200);
     expect(reply.headers.get("www-authenticate")).toBeNull();
+    Effect.runSync(streamed.open);
 
     const text = await reply.text();
     expect(text).toContain('"method":"notifications/progress"');
@@ -342,9 +336,7 @@ describe("the pre-handler hook", () => {
 
     const [refused] = await run(ActionCli.command(app, Write), ["--value", "x"]);
 
-    expect(Exit.isFailure(refused) ? Cause.squash(refused.cause) : undefined).toBeInstanceOf(
-      Action.Forbidden,
-    );
+    expect(Option.getOrUndefined(Exit.findErrorOption(refused))).toBeInstanceOf(Action.Forbidden);
 
     expect(hooks).toEqual(["read", "write"]);
     expect(handlers).toEqual(["read"]);
@@ -353,7 +345,6 @@ describe("the pre-handler hook", () => {
   it("is skipped by no action of its implementation", async () => {
     const { app, hooks } = make();
     const web = serveHttp(app, Layer.succeed(Scopes, ["read", "write"]));
-    onTestFinished(() => web.dispose());
 
     expect((await web.handler(post("/api/write", { value: "x" }))).status).toBe(200);
     expect(hooks).toEqual(["write"]);
@@ -370,8 +361,6 @@ describe("the pre-handler hook", () => {
     const web = serve(
       ActionHttp.layer(Http, [read, write]).pipe(HttpRouter.provideRequest(readOnly)),
     );
-
-    onTestFinished(() => web.dispose());
 
     expect((await web.handler(post("/api/read"))).status).toBe(200);
     expect((await web.handler(post("/api/write", { value: "x" }))).status).toBe(403);
@@ -395,8 +384,6 @@ describe("the pre-handler hook", () => {
           ),
         ),
       );
-
-      onTestFinished(() => web.dispose());
 
       const response = await web.handler(post("/api/write", { value: "x" }));
       expect(response.status).toBe(status);

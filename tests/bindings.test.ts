@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
@@ -32,8 +32,6 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
 
   // The request identity these routes require is deliberately missing.
   const web = serveWithContext(routes);
-
-  onTestFinished(() => web.dispose());
 
   const request = transport === "HTTP" ? post("/api/identity") : rawToolCall("identity");
 
@@ -128,8 +126,6 @@ it("builds a shared implementation with one set of startup services, not one per
     ),
   );
 
-  onTestFinished(() => web.dispose());
-
   const http = await (await web.handler(post("/api/identity"))).json();
 
   await withMcpClient({ fetch: web.handler }, async (client) => {
@@ -145,15 +141,11 @@ it("serves a copy of a binding like the binding itself", async () => {
 
   const web = serve(ActionHttp.layer({ ...Http }, app));
 
-  onTestFinished(() => web.dispose());
-
   expect(await (await web.handler(post("/v1/identity"))).json()).toBe("copied");
 });
 
 it("serves a binding with no actions", async () => {
   const web = serve(ActionHttp.layer(ActionHttp.make([], { prefix: "/empty" }), []));
-
-  onTestFinished(() => web.dispose());
 
   expect((await web.handler(post("/empty/identity"))).status).toBe(404);
 });
@@ -186,8 +178,6 @@ it("keeps same-contract implementations apart over MCP", async () => {
       }),
     ),
   );
-
-  onTestFinished(() => web.dispose());
 
   for (const name of ["a", "b", "a"]) {
     await withMcpClient({ fetch: web.handler, path: `/${name}` }, async (client) => {
@@ -246,8 +236,6 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     const context = Context.make(Logger.CurrentLoggers, new Set([logger])).pipe(
       Context.add(Tracer.Tracer, tracer),
     );
-
-    onTestFinished(() => web.dispose());
 
     if (transport === "HTTP") {
       await web.handler(post("/api/identity"), context);
@@ -316,8 +304,6 @@ it.each(["HTTP", "MCP"])(
           });
 
     const web = serve(routes.pipe(HttpRouter.provideRequest(Layer.succeed(Actor, "request"))));
-
-    onTestFinished(() => web.dispose());
 
     const response = await web.handler(
       transport === "HTTP" ? post("/api/identity") : rawToolCall("identity"),

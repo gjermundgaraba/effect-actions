@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -215,7 +215,7 @@ describe("implementations", () => {
     expect(Object.keys(app)).toEqual(["actions"]);
     expect(app.actions).toEqual([Hello]);
     const web = makeTestHttp(app);
-    onTestFinished(() => web.dispose());
+
     expect(await (await web.handler(request("/api/hello"))).json()).toBe("hi Ada");
   });
 
@@ -230,7 +230,6 @@ describe("implementations", () => {
       ),
     );
 
-    onTestFinished(() => web.dispose());
     expect(await (await web.handler(request("/a/hello"))).json()).toBe("from A");
     expect(await (await web.handler(request("/b/hello"))).json()).toBe("from B");
   });
@@ -249,7 +248,6 @@ describe("implementations", () => {
     },
   ])("routes prototype-sensitive action names through native HTTP: $form", async ({ make }) => {
     const web = makeTestHttp(make());
-    onTestFinished(() => web.dispose());
 
     const response = await web.handler(
       new Request("http://localhost/api/__proto__", {

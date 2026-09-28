@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { type Client, InsufficientScopeError } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Schema } from "effect";
 import { McpSchema } from "effect/unstable/ai";
@@ -27,10 +27,6 @@ const challenge =
 
 beforeEach(() => {
   app = makeTestApp();
-});
-
-afterEach(async () => {
-  await app.dispose();
 });
 
 const request = (path: string, token = "alice", body?: Schema.Json, method?: string) => {
@@ -423,8 +419,6 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
       }),
     );
 
-    onTestFinished(() => web.dispose());
-
     return web.handler;
   };
 
@@ -489,8 +483,6 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
     }).pipe(Layer.provide(authentication)),
   );
 
-  onTestFinished(() => web.dispose());
-
   const rejected = await web.handler(
     mcpRequest({
       method: "tools/list",
@@ -525,8 +517,6 @@ it("supplies the native request context to handlers without a router requirement
 
   // No `path`: the endpoint is served at `/mcp`.
   const web = serve(ActionMcp.layerHttp(app, { name: "test", version: "0" }));
-
-  onTestFinished(() => web.dispose());
 
   const result = Schema.decodeUnknownSync(
     Schema.Struct({ result: Schema.Struct({ structuredContent: Schema.Json }) }),

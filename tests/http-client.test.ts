@@ -1,4 +1,4 @@
-import { expect, it, onTestFinished } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { Effect, Schema, SchemaTransformation } from "effect";
 import {
   FetchHttpClient,
@@ -61,8 +61,6 @@ const serveNotes = () => {
   const requests: Array<Request> = [];
 
   const web = serve(ActionHttp.layer(Http, apps));
-
-  onTestFinished(() => web.dispose());
 
   const fetch: typeof globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
@@ -169,8 +167,6 @@ it("fails with Effect's own errors when the contract cannot account for the answ
 it("fails an unserved action's call by whether the action declares its 404", async () => {
   const web = serve(ActionHttp.layer(Http, []));
 
-  onTestFinished(() => web.dispose());
-
   const reasonOf = <A, E>(call: Effect.Effect<A, E>) =>
     Effect.map(Effect.flip(call), (error) =>
       HttpClientError.isHttpClientError(error) ? error.reason._tag : "declared",
@@ -267,8 +263,6 @@ it("sends a no-input call as {}, and any given input encoded as given, through t
     ),
   );
 
-  onTestFinished(() => web.dispose());
-
   const handler = async (request: Request) => {
     bodies.push(await request.clone().json());
 
@@ -334,8 +328,6 @@ it("decodes two errors that share a status by their tag", async () => {
       ),
     ),
   );
-
-  onTestFinished(() => web.dispose());
 
   const refused = await Effect.runPromise(
     Effect.flatMap(httpClient(binding, web), (client) =>

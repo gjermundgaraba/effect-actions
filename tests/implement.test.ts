@@ -1,5 +1,5 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Effect, Layer, Schema, Stdio, Stream } from "effect";
+import { describe, expect, it } from "vite-plus/test";
+import { Context, Effect, Exit, Layer, Result, Schema, Stdio, Stream } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
 import { HttpApi, OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
@@ -9,6 +9,12 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { against, httpClient, serve as serveRoutes } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
+
+/** The defect building `layer` dies with; `undefined` when it builds or fails. */
+const defectOf = async <A, E>(layer: Layer.Layer<A, E>) =>
+  Result.getOrUndefined(
+    Exit.findDefect(await Effect.runPromiseExit(Effect.scoped(Layer.build(layer)))),
+  );
 
 class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") {}
 
@@ -49,13 +55,7 @@ type Routes<E> = Layer.Layer<
   HttpRouter.HttpRouter | Layer.Success<typeof HttpServer.layerServices>
 >;
 
-const handlerOf = <E>(routes: Routes<E>) => {
-  const web = serveRoutes(routes);
-
-  onTestFinished(() => web.dispose());
-
-  return web.handler;
-};
+const handlerOf = <E>(routes: Routes<E>) => serveRoutes(routes).handler;
 
 const serve = () =>
   handlerOf(
@@ -221,6 +221,9 @@ describe("implement", () => {
     await expect(handler(post("/api/hello", { name: "Ada" }))).rejects.toThrow(
       "Missing handlers: bye",
     );
+    expect(await defectOf(ActionToolkit.make(app).layer)).toMatchObject({
+      message: "Missing handlers: bye",
+    });
   });
 
   it("refuses a record key that names no action: a plain one at implement", async () => {
@@ -238,9 +241,9 @@ describe("implement", () => {
       Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
     );
 
-    await expect(
-      Effect.runPromise(Effect.scoped(Layer.build(ActionToolkit.make(built).layer))),
-    ).rejects.toThrow("Unknown handlers: stale");
+    expect(await defectOf(ActionToolkit.make(built).layer)).toMatchObject({
+      message: "Unknown handlers: stale",
+    });
   });
 });
 

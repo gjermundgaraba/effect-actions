@@ -1,5 +1,5 @@
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { Context, Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema, Tool } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
@@ -23,8 +23,6 @@ it("serves MCP 2026-07-28 only over HTTP and passes the native server options th
       extensions: { "io.example/extension": {} },
     }),
   );
-
-  onTestFinished(() => web.dispose());
 
   const discovered = await web.handler(mcpRequest({ method: "server/discover" }));
 
@@ -143,9 +141,9 @@ describe("projection boundaries", () => {
       "/rpc/tool",
     ]);
     const web = makeTestHttp([echo, tool], options);
-    onTestFinished(() => web.dispose());
+
     const mcp = makeTestMcp(tool);
-    onTestFinished(() => mcp.dispose());
+
     const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
@@ -172,7 +170,7 @@ describe("projection boundaries", () => {
         OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
       ).toHaveProperty(String(status ?? 422));
       const web = makeTestHttp(apps);
-      onTestFinished(() => web.dispose());
+
       const response = await web.handler(post("/api/fail"));
       expect(response.status).toBe(status ?? 422);
       expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
@@ -214,9 +212,9 @@ describe("projection boundaries", () => {
 
     expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403", "404", "409"]);
     const web = makeTestHttp(apps);
-    onTestFinished(() => web.dispose());
+
     const mcp = makeTestMcp(apps);
-    onTestFinished(() => mcp.dispose());
+
     expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
     expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
     expect(
@@ -308,7 +306,7 @@ describe("projection boundaries", () => {
     };
 
     const mcp = makeTestMcp(app);
-    onTestFinished(() => mcp.dispose());
+
     const listed = await listTools(mcp.handler);
     expect(Object.fromEntries(listed.map((tool) => [tool.name, tool.annotations]))).toMatchObject(
       hints,
@@ -367,7 +365,6 @@ describe("projection boundaries", () => {
       }),
     );
 
-    onTestFinished(() => mcp.dispose());
     expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
       result: {
         isError: true,
@@ -413,7 +410,6 @@ describe("projection boundaries", () => {
 
       const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }));
 
-      onTestFinished(() => web.dispose());
       const tools = await listTools(web.handler);
       expect(tools).toHaveLength(1);
       const tool = tools[0];
@@ -453,7 +449,6 @@ describe("projection boundaries", () => {
       }),
     );
 
-    onTestFinished(() => web.dispose());
     const tools = await listTools(web.handler);
     const tool = tools[0];
 
@@ -513,7 +508,6 @@ describe("projection boundaries", () => {
       ),
     );
 
-    onTestFinished(() => web.dispose());
     expect((await listTools(web.handler))[0]?.inputSchema).toMatchObject({ type: "object" });
   });
 
@@ -530,9 +524,9 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestHttp(apps);
-    onTestFinished(() => web.dispose());
+
     const mcp = makeTestMcp(apps);
-    onTestFinished(() => mcp.dispose());
+
     const response = await web.handler(post("/api/scalar"));
     expect(response.status).toBe(422);
     expect(await response.json()).toBe("failure");
@@ -555,7 +549,6 @@ describe("projection boundaries", () => {
       }),
     );
 
-    onTestFinished(() => web.dispose());
     const response = await web.handler(rawToolCall("encode"));
     expect(await response.text()).toContain('"structuredContent":{"value":"42"}');
   });
@@ -574,7 +567,6 @@ describe("projection boundaries", () => {
       }),
     );
 
-    onTestFinished(() => web.dispose());
     // McpServer presents InvalidParams from a tool as an isError result carrying the message.
     const reply = await (await web.handler(rawToolCall("echo", { value: "nope" }))).json();
     expect(reply).toMatchObject({ result: { isError: true } });
@@ -601,9 +593,8 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestHttp(apps);
-    onTestFinished(() => web.dispose());
+
     const mcp = makeTestMcp(apps);
-    onTestFinished(() => mcp.dispose());
 
     // A result that does not encode is a defect, like any other: HTTP answers both with an
     // empty 500, and the native McpServer reports both as a generic isError tool result.
@@ -629,9 +620,9 @@ describe("projection boundaries", () => {
     const apps = Action.implement([Stamp], { stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
     const web = makeTestHttp(apps);
-    onTestFinished(() => web.dispose());
+
     const mcp = makeTestMcp(apps);
-    onTestFinished(() => mcp.dispose());
+
     const tools = await listTools(mcp.handler);
     expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
     const http = await web.handler(post("/api/stamp", { d: iso }));
@@ -661,7 +652,7 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestHttp(apps);
-    onTestFinished(() => web.dispose());
+
     const abort = new AbortController();
 
     const request = new Request("http://localhost/api/slow", {

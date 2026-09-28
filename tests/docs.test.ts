@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { routes } from "../examples/quickstart-server.js";
@@ -103,8 +103,6 @@ it("keeps relative links in docs/ inside docs/", () => {
 it("runs the documented client against the quickstart routes", async () => {
   const web = serve(routes);
 
-  onTestFinished(() => web.dispose());
-
   const result = await Effect.runPromise(
     greeting.pipe(
       Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
@@ -118,8 +116,6 @@ it("runs the documented client against the quickstart routes", async () => {
 
 it("serves browser preflight and MCP calls with the documented CORS configuration", async () => {
   const web = serve(browserRoutes);
-
-  onTestFinished(() => web.dispose());
 
   const preflight = await web.handler(
     new Request("http://localhost/mcp", {

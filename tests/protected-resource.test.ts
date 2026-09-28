@@ -1,4 +1,4 @@
-import { expect, it, onTestFinished } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { Context, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import * as Action from "../src/Action.js";
@@ -44,8 +44,6 @@ it("answers before routing, so the authentication publishing it never covers it"
     ),
   );
 
-  onTestFinished(() => web.dispose());
-
   expect((await web.handler(new Request(`https://api.example.com${prefix}/mcp`))).status).toBe(200);
 
   const refused = await web.handler(new Request("https://api.example.com/private"));
@@ -78,8 +76,6 @@ it("publishes discovery for every layer it authenticates, which may share it", a
     ),
   );
 
-  onTestFinished(() => web.dispose());
-
   const response = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
@@ -95,8 +91,6 @@ it("publishes metadata at the resource's well-known URL", async () => {
       published("https://api.example.com", { resourceName: "Root" }),
     ),
   );
-
-  onTestFinished(() => web.dispose());
 
   const response = await web.handler(
     new Request(`https://api.example.com${prefix}/mcp?tenant=alice`),
@@ -142,8 +136,6 @@ it("matches literal resource paths exactly and delegates other requests to the h
       ...paths.map((path) => published(`https://api.example.com${path}`)),
     ),
   );
-
-  onTestFinished(() => web.dispose());
 
   // The discovery URL inserts the well-known prefix before the resource's path and query.
   for (const path of paths) {

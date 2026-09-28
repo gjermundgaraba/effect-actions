@@ -1,3 +1,4 @@
+import { onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Predicate } from "effect";
 import { type HttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -25,16 +26,22 @@ type Routable =
 /**
  * Serve `routes` in memory, without a network or request logs, each request taking a
  * context: for tests that supply request services per request, or deliberately leave them
- * out, which `serve` refuses.
+ * out, which `serve` refuses. They are released when the test finishes; a test may
+ * release them sooner with `dispose`.
  */
-export const serveWithContext = <A, E, R extends Routable>(routes: Layer.Layer<A, E, R>) =>
-  HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
+export const serveWithContext = <A, E, R extends Routable>(routes: Layer.Layer<A, E, R>) => {
+  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
     disableLogger: true,
   });
 
+  onTestFinished(() => web.dispose());
+
+  return web;
+};
+
 /**
  * Serve `routes` in memory, without a network or request logs, for tests that send raw
- * requests. `Testing.layer` is the public form, answering an `HttpClient` instead.
+ * requests, released when the test finishes. `Testing.layer` is the public form, answering an `HttpClient` instead.
  */
 export function serve<A, E, R extends Served>(routes: Layer.Layer<A, E, R>): Server;
 export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {

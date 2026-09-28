@@ -38,8 +38,6 @@ const app = Action.implement([Remote], { remote });
 it("projects commands through the HTTP client without a local fallback", async () => {
   const web = serve(ActionHttp.layer(Http, app));
 
-  onTestFinished(() => web.dispose());
-
   const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
   decodedInputs.length = 0;
 
@@ -93,8 +91,6 @@ it("projects commands through the HTTP client without a local fallback", async (
 it("takes positional arguments over HTTP as locally", async () => {
   const web = serve(ActionHttp.layer(Http, app));
 
-  onTestFinished(() => web.dispose());
-
   const command = ActionCli.command(Http, Remote, { positional: ["value"] });
 
   const [, output] = await logged(Command.runWith(command, { version: "0" })(["21"])).pipe(
@@ -119,8 +115,6 @@ it("projects a flat binding as one kebab-case subcommand per action", async () =
   const web = serve(
     ActionHttp.layer(Flat, [app, Action.implement(Echo, ({ text }) => Effect.succeed(text))]),
   );
-
-  onTestFinished(() => web.dispose());
 
   const urls: string[] = [];
 
@@ -191,7 +185,6 @@ it("propagates domain, refusal and transport failures as typed failures", async 
 
   const open = serve(ActionHttp.layer(Http, app));
 
-  onTestFinished(() => refusing.dispose());
   onTestFinished(() => open.dispose());
 
   const command = ActionCli.command(Http, Remote);

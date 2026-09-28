@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { McpSchema } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
@@ -54,8 +54,6 @@ it("answers a request that does not decode with InvalidInput and the schema's me
   const { app, calls } = counted();
   const web = serve(ActionHttp.layer(Http, app));
 
-  onTestFinished(() => web.dispose());
-
   const malformed = await web.handler(request("secret input"));
   expect(malformed.status).toBe(400);
   // The schema's own words, which name the path but not the value sent.
@@ -92,8 +90,6 @@ it("describes every issue of the input in the message", async () => {
     ),
   );
 
-  onTestFinished(() => web.dispose());
-
   const response = await web.handler(
     new Request("http://localhost/api/pair", {
       method: "POST",
@@ -111,8 +107,6 @@ it("describes every issue of the input in the message", async () => {
 it("decodes InvalidInput as a typed failure of the client", async () => {
   const { app } = counted();
   const web = serve(ActionHttp.layer(Http, app));
-
-  onTestFinished(() => web.dispose());
 
   // The client encodes valid input, so the body is replaced on its way to the server.
   const tampered = (request: Request) =>
@@ -183,8 +177,6 @@ it("answers InvalidInput on every binding and every layer of one router", async 
     ),
   );
 
-  onTestFinished(() => web.dispose());
-
   for (const path of ["/api/echo", "/api/other", "/second/other"]) {
     const response = await web.handler(request("not a number", path));
 
@@ -216,8 +208,6 @@ it("keeps MCP's native argument and result handling", async () => {
       ActionMcp.layerHttp(app, { name: "test", version: "0" }),
     ),
   );
-
-  onTestFinished(() => web.dispose());
 
   // Over MCP, invalid arguments and results are the native tool errors, and a declared
   // error is rendered like any other.
@@ -282,7 +272,6 @@ it("executes each input/output transformation once per call", async () => {
     ),
   );
 
-  onTestFinished(() => web.dispose());
   expect(await (await web.handler(request("7"))).json()).toBe("7");
   expect(
     decodeMcp(await (await web.handler(mcpRequest("7"))).json()).result.structuredContent,
@@ -313,7 +302,6 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     ),
   );
 
-  onTestFinished(() => web.dispose());
   const http = await web.handler(request(1));
   expect(http.status).toBe(500);
   expect(await http.text()).toBe("");
@@ -337,8 +325,6 @@ describe.each([
         ActionMcp.layerHttp(app, { name: "test", version: "0" }),
       ),
     );
-
-    onTestFinished(() => server.dispose());
 
     return server;
   };
@@ -375,14 +361,12 @@ describe.each([
 it("publishes `success: {}` as the closed empty object", async () => {
   const Empty = Action.make("empty", { description: "Empty", access: "read", success: {} });
 
-  const { handler, dispose } = serve(
+  const { handler } = serve(
     ActionMcp.layerHttp(
       Action.implement(Empty, () => Effect.succeed({})),
       { name: "test", version: "0" },
     ),
   );
-
-  onTestFinished(dispose);
 
   const listed = await (await handler(rpc({ method: "tools/list" }))).json();
   expect(listed).toMatchObject({

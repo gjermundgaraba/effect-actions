@@ -59,8 +59,6 @@ describe("Authentication.make", () => {
       ).pipe(Layer.provide(auth)),
     );
 
-    onTestFinished(() => web.dispose());
-
     // The body is the error's own JSON encoding, the one a typed client decodes.
     for (const [token, status, challenge, body] of [
       [
@@ -101,8 +99,6 @@ describe("Authentication.make", () => {
       ),
     );
 
-    onTestFinished(() => web.dispose());
-
     const response = await web.handler(request());
     expect(response.status).toBe(401);
     // The constructor's default message, `Authentication is required.`, on the wire.
@@ -138,8 +134,6 @@ describe("Authentication.make", () => {
       ).pipe(Layer.provide(auth)),
     );
 
-    onTestFinished(() => web.dispose());
-
     const response = await web.handler(request());
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toBe('Bearer realm="host"');
@@ -167,8 +161,6 @@ describe("Authentication.make", () => {
         Effect.succeed(HttpServerResponse.text("Not this one", { status: 401 })),
       ).pipe(Layer.provide(auth)),
     );
-
-    onTestFinished(() => web.dispose());
 
     // The host's own response, and a route's own 401 behind the middleware, whose request
     // presented credentials that did not authenticate it.
@@ -211,8 +203,6 @@ describe("Authentication.make", () => {
         ),
       ),
     );
-
-    onTestFinished(() => web.dispose());
 
     // A missing token, and a hook's refusal of an authenticated caller.
     const missing = await web.handler(post("/api/read"));
@@ -266,8 +256,6 @@ describe("Authentication.make", () => {
       ),
     );
 
-    onTestFinished(() => web.dispose());
-
     // A hook's refusal. Its message is no RFC 6750 error description, so it has none.
     const hooked = await web.handler(post("/api/write"));
     expect(hooked.status).toBe(403);
@@ -298,7 +286,6 @@ describe("Authentication.make", () => {
     );
 
     const web = serve(ActionHttp.layer(ActionHttp.make([Write]), app));
-    onTestFinished(() => web.dispose());
 
     const refused = await web.handler(post("/api/write"));
     expect(refused.headers.get("www-authenticate")).toBe(
@@ -316,8 +303,6 @@ describe("Authentication.make", () => {
         ),
       ),
     );
-
-    onTestFinished(() => plain.dispose());
 
     expect((await plain.handler(post("/api/write"))).headers.get("www-authenticate")).toBeNull();
   });
@@ -338,8 +323,6 @@ describe("Authentication.make", () => {
         Layer.provide(auth),
       ),
     );
-
-    onTestFinished(() => web.dispose());
 
     const response = await web.handler(request());
     expect(response.status).toBe(500);
@@ -364,8 +347,6 @@ describe("Authentication.make", () => {
         ActionMcp.layerHttp(app, { name: "refusal-test", version: "0" }),
       ).pipe(Layer.provide(Authentication.make(Identity, authenticateToken))),
     );
-
-    onTestFinished(() => web.dispose());
 
     const failureOf = (token?: string) =>
       Effect.runPromise(
@@ -442,7 +423,6 @@ describe("Authentication.make", () => {
       ).pipe(Layer.provide(auth)),
     );
 
-    onTestFinished(() => web.dispose());
     const response = await web.handler(request());
     expect(response.status).toBe(500);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -477,7 +457,6 @@ describe("Authentication.make", () => {
       ).pipe(Layer.provide(auth), Layer.provide(outer.layer)),
     );
 
-    onTestFinished(() => web.dispose());
     const response = await web.handler(request());
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("private data for alice");
@@ -499,8 +478,6 @@ describe("Authentication.make", () => {
         HttpRouter.add("GET", "/identity", HttpServerResponse.text("alice")),
       ).pipe(Layer.provide(auth)),
     );
-
-    onTestFinished(() => web.dispose());
 
     const artifact = await web.handler(new Request("http://localhost/artifact"));
     expect(artifact.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
@@ -536,7 +513,6 @@ describe("Authentication.make", () => {
       ).pipe(Layer.provide(auth), Layer.provide(tokens.layer)),
     );
 
-    onTestFinished(() => web.dispose());
     expect(await (await web.handler(request("alice"))).text()).toBe("actor:alice");
   });
 
@@ -633,8 +609,6 @@ describe("Authentication.refusal", () => {
         Layer.provide(Authentication.make(Identity, Effect.fail(error), resource)),
       ),
     );
-
-    onTestFinished(() => web.dispose());
 
     return web.handler(request());
   };
@@ -792,7 +766,6 @@ describe("authentication around a surface", () => {
     );
 
     const web = serve(routes.pipe(HttpRouter.provideRequest(tokens)));
-    onTestFinished(() => web.dispose());
 
     const response = await web.handler(call("secret", { note: "hi" }, "Bearer alice"));
     expect(await response.json()).toBe("actor:alice: hi");
@@ -836,8 +809,6 @@ describe("authentication around a surface", () => {
       ).pipe(Layer.provide(identify.combine(resolveTenant).layer)),
     );
 
-    onTestFinished(() => web.dispose());
-
     expect(await (await web.handler(call("secret", { note: "hi" }))).json()).toBe("acme@acme: hi");
     const called = Effect.flatMap(Testing.mcpClient([Secret]), (mcp) => mcp.secret({ note: "hi" }));
 
@@ -851,8 +822,6 @@ describe("authentication around a surface", () => {
         ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate)),
       ),
     );
-
-    onTestFinished(() => web.dispose());
 
     const anyone = await web.handler(call("public", {}));
     expect(anyone.status).toBe(200);
@@ -869,7 +838,6 @@ describe("authentication around a surface", () => {
 
   it("runs before decoding, so an unauthenticated caller learns nothing of the input", async () => {
     const web = serve(ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate)));
-    onTestFinished(() => web.dispose());
 
     expect((await web.handler(call("secret", { note: 42 }))).status).toBe(401);
     expect((await web.handler(call("secret", { note: 42 }, "alice"))).status).toBe(400);
@@ -881,8 +849,6 @@ describe("authentication around a surface", () => {
         Layer.provide(authenticate),
       ),
     );
-
-    onTestFinished(() => web.dispose());
 
     // One route: every tool of it is authenticated.
     const anonymous = Testing.mcpClient([Secret, Public]);
