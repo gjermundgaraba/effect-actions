@@ -204,7 +204,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
   const run = async (
     handler: () => Effect.Effect<string>,
-    before?: Action.Before<typeof identity, never>,
+    before?: Action.Before<typeof identity>,
   ) => {
     const logs: unknown[] = [];
     const annotations: Array<ReadonlyMap<string, unknown>> = [];

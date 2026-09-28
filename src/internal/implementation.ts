@@ -24,7 +24,9 @@ export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
  * refusal, answered as a declared error, or over HTTP as its status when an OAuth client
  * steps up on it. Its services `RB` are request-time requirements, like a handler's.
  */
-export type Before<A extends Action.Any, RB> = (action: A) => Effect.Effect<void, Refusal, RB>;
+export type Before<A extends Action.Any, RB = never> = (
+  action: A,
+) => Effect.Effect<void, Refusal, RB>;
 
 /** An implementation's hook, erased. */
 type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;

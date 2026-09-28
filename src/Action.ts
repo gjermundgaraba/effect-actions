@@ -135,14 +135,14 @@ type ErrorsOf<O> = Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>;
 export interface Action<
   Name extends string,
   Input extends Codec,
-  Output extends Codec,
+  Success extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
 > {
   readonly name: Name;
   readonly description: string;
   readonly input: Input;
-  readonly success: Output;
+  readonly success: Success;
   readonly errors: Errors;
   // Declared, never defaulted, so a rule that switches on it reads a literal
   // rather than the runtime values the hints are.

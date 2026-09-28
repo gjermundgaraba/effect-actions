@@ -827,7 +827,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     access: "read",
   } satisfies Action.Options;
 
-  const hook: Action.Before<typeof Double, never> = (action) =>
+  const hook: Action.Before<typeof Double> = (action) =>
     action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
 
   const clientOptions: ActionHttp.ClientOptions = { baseUrl: "http://localhost" };
