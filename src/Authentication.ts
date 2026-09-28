@@ -1,4 +1,4 @@
-import { type Context, Effect, Layer } from "effect";
+import { type Context, Effect, Layer, Redacted } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import {
   HttpEffect,
@@ -11,11 +11,13 @@ import { answer, bearer, ResourceMetadata } from "./internal/refusal.js";
 
 /**
  * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
- * when it has none. The scheme is matched case-insensitively, as RFC 9110 requires. Where
- * a token is optional, `Effect.option(bearerToken)`.
+ * when it has none. The scheme is matched case-insensitively, as RFC 9110 requires. The
+ * token is `Redacted`, as Effect's own `HttpApiSecurity.bearer` gives it, so a log or an
+ * error holding it never prints it; `Redacted.value(token)` reads it. Where a token is
+ * optional, `Effect.option(bearerToken)`.
  */
 export const bearerToken: Effect.Effect<
-  string,
+  Redacted.Redacted<string>,
   Unauthenticated,
   HttpServerRequest.HttpServerRequest
 > = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
@@ -23,7 +25,7 @@ export const bearerToken: Effect.Effect<
 
   return token === undefined
     ? Effect.fail(new Unauthenticated({ message: "A bearer token is required." }))
-    : Effect.succeed(token);
+    : Effect.succeed(Redacted.make(token));
 });
 
 /** An OAuth protected resource (RFC 9728), as `make` publishes it. */

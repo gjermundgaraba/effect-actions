@@ -45,6 +45,7 @@ ActionHttp.layer(Http, users);
 | A refusal built by hand outside the router                       | `Authentication.refusal(error, protectedResource?, authorization?)`                                   |
 | An `InsufficientScope` error and a hand-built challenge          | `new Action.Forbidden({ message, scopes: [scope] })`                                                  |
 | `bearerToken` succeeding with an `Option`                        | `bearerToken` failing with `Unauthenticated`; `Effect.option(bearerToken)` where it is optional       |
+| `bearerToken` succeeding with a `string`                         | A `Redacted<string>`; `Redacted.value(token)` where it is verified                                    |
 | The `ActionHttp.Http` type                                       | `ActionHttp.Binding`                                                                                  |
 | `ActionHttpClient.make`, `ActionHttpClient.Client`               | `ActionHttp.client`, `ActionHttp.Client`                                                              |
 | `ActionHttpClient.promise`                                       | A client built once with `FetchHttpClient.layer`, each call `Effect.runPromise`d (ActionHttp.md)      |

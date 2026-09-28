@@ -1,5 +1,6 @@
+import { inspect } from "node:util";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Context, Deferred, Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -204,7 +205,7 @@ describe("Authentication.make", () => {
         Layer.provide(
           Authentication.make(
             Identity,
-            Authentication.bearerToken.pipe(Effect.map((id) => ({ id }))),
+            Authentication.bearerToken.pipe(Effect.map((token) => ({ id: Redacted.value(token) }))),
             resource,
           ),
         ),
@@ -696,12 +697,19 @@ describe("Authentication.bearerToken", () => {
     );
 
   const tokenOf = (authorization?: string) =>
-    Effect.runSync(Effect.option(withAuthorization(authorization)));
+    Option.map(Effect.runSync(Effect.option(withAuthorization(authorization))), Redacted.value);
 
   it("reads the token of a Bearer authorization, whatever the scheme's case", () => {
     expect(tokenOf("Bearer alice")).toEqual(Option.some("alice"));
     expect(tokenOf("bearer alice")).toEqual(Option.some("alice"));
     expect(tokenOf("BEARER alice")).toEqual(Option.some("alice"));
+  });
+
+  it("keeps the token out of anything that prints it", () => {
+    const token = Effect.runSync(withAuthorization("Bearer alice"));
+
+    expect(inspect(token)).not.toContain("alice");
+    expect(JSON.stringify({ token })).not.toContain("alice");
   });
 
   it("fails without an authorization, with another scheme, or without a token", () => {
@@ -758,7 +766,7 @@ describe("authentication around a surface", () => {
       Effect.gen(function* () {
         const { prefix } = yield* Tokens;
 
-        return { id: `${prefix}${yield* Authentication.bearerToken}` };
+        return { id: `${prefix}${Redacted.value(yield* Authentication.bearerToken)}` };
       }),
     );
 

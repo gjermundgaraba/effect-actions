@@ -5,7 +5,7 @@ import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { type HttpApiClient, OpenApi } from "effect/unstable/httpapi";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { Context, Effect, Layer, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { Greet, Http } from "./quickstart.js";
 import { routes } from "./quickstart-server.js";
@@ -137,7 +137,10 @@ if (Read.access !== "read" || Write.access !== "write")
 
 class Identity extends Context.Service<Identity, string>()("consumer/Identity") {}
 
-const authenticate = Authentication.make(Identity, Authentication.bearerToken);
+// A token is its own identity here; a real host verifies it.
+const token = Effect.map(Authentication.bearerToken, Redacted.value);
+
+const authenticate = Authentication.make(Identity, token);
 
 const guarded = Action.implement(
   [Read, Write],
@@ -172,7 +175,7 @@ const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(
 // An OAuth protected resource's authentication publishes its discovery, public.
 const published = ActionHttp.layer(GuardedHttp, guarded).pipe(
   Layer.provide(
-    Authentication.make(Identity, Authentication.bearerToken, {
+    Authentication.make(Identity, token, {
       resource: "http://localhost/mcp",
       authorizationServers: ["https://example.com/auth"],
     }),

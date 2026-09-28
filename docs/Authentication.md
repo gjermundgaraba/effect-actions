@@ -16,7 +16,7 @@ Import `@gjermundgaraba/effect-actions/Authentication`.
 | API                                                  | Purpose                                                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `make(service, authenticate, protectedResource?)`    | A router middleware layer providing an identity service per request, or answering with a refusal. |
-| `bearerToken`                                        | The request's bearer token, failing with `Action.Unauthenticated` without one.                    |
+| `bearerToken`                                        | The request's bearer token, `Redacted`, failing with `Action.Unauthenticated` without one.        |
 | `refusal(error, protectedResource?, authorization?)` | The response `make` answers a refusal with, for a caller outside the router.                      |
 
 `authenticate` is an Effect producing the identity, or failing with `Action.Unauthenticated`,
@@ -44,7 +44,7 @@ resource's discovery. Provide `authenticate` around the layers serving the prote
 implementations ([ActionHttp.md](ActionHttp.md#serving), [ActionMcp.md](ActionMcp.md#canonical)).
 
 ```ts
-import { Effect } from "effect";
+import { Effect, Redacted } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { actors, CurrentActor } from "./authorization.js";
@@ -60,11 +60,13 @@ const isActorToken = (token: string): token is keyof typeof actors => Object.has
 // A first login requests read only; a write refused for its scope steps up.
 export const authenticate = Authentication.make(
   CurrentActor,
-  Effect.flatMap(Authentication.bearerToken, (token) =>
-    isActorToken(token)
-      ? Effect.succeed(actors[token])
-      : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." })),
-  ),
+  Effect.flatMap(Authentication.bearerToken, (token) => {
+    const name = Redacted.value(token);
+
+    return isActorToken(name)
+      ? Effect.succeed(actors[name])
+      : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
+  }),
   {
     resource: "http://localhost:3000/mcp",
     authorizationServers: ["https://auth.example.com"],
@@ -88,7 +90,7 @@ export const authenticate = Authentication.make(
 - `refusal(error, protectedResource?, authorization?)` is the response `make` answers `error` with: its JSON and status, `no-store`, and the same challenge, naming `protectedResource` as `make` does. Pass the request's `Authorization` header, when it has one, for the `invalid_token` a 401 names then. Refuse with it where no route runs, such as a WebSocket upgrade handled before the router, so every refusal of the resource reads the same. `HttpServerResponse.toWeb` makes it a web `Response`.
 - It authenticates any credential: `authenticate` is any Effect, reading a bearer token, a session cookie or an API key. For another scheme, fail with an `HttpServerResponse` carrying its own challenge, which is kept; a 401 without one gets `Bearer`. A 401 carries a challenge only under `make`.
 - `authenticate` can fail with nothing else: any other error is a type error. Map a verifier's failure to a refusal.
-- `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. Verifying the token stays the host's.
+- `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. The token is `Redacted`, as `HttpApiSecurity.bearer` gives it, so a log, span or error holding it prints `<redacted>`; read it with `Redacted.value(token)` where it is verified. Verifying the token stays the host's.
 - Provided to a layer, it covers that layer's routes, before decoding, and no others: `ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate))` beside a public `ActionHttp.layer(Http, open)` keeps the public routes public. An MCP endpoint is one route: provided to `ActionMcp.layerHttp`, it covers every tool of it.
 - It removes the identity from the covered layer's request requirements: [guarantees.md](guarantees.md#dependency-lifetimes).
 - Any native router middleware providing the identity works the same way, and sets its own challenges: provide its `.layer`, combined with `.combine(...)` first if it needs another middleware's services.
