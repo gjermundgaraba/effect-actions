@@ -103,8 +103,8 @@ Behavior that changes without a rename:
 
 ### Additions
 
-- `input` and `success` take plain fields: `input: { id: Schema.String }`. `input: {}` is an
-  action without input.
+- `input` and `success` take plain fields: `input: { id: Schema.String }`. `input: {}`, or
+  `Schema.Struct({})`, is an action without input: a strict empty object, the root MCP needs.
 - `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.

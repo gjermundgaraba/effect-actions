@@ -159,7 +159,7 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 
 ## Failure modes
 
-- Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: a served action has scalar or array input, or `Schema.Struct({})`, which accepts any value but `null`. The native server refuses them.
+- Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: a served action has scalar or array input. The native server refuses them.
 - That defect is not in the layer's error channel, so it cannot be caught by tag. Wrap the input in a struct, omit `input` (or give `{}`) for no arguments, or leave the action off MCP.
 - An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's hook, before the handler runs.
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.

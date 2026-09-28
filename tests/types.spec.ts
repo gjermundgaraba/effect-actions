@@ -843,6 +843,9 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   // An action given `{}` has no input, as one without `input`.
   const given = Action.make("given", { ...options, input: {} });
   const noInput: Equal<(typeof given)["input"], (typeof WhoAmI)["input"]> = true;
+  // So has an action given an empty struct.
+  const struct = Action.make("struct", { ...options, input: Schema.Struct({}) });
+  const noStruct: Equal<(typeof struct)["input"], (typeof WhoAmI)["input"]> = true;
 
-  void [binding, app, hook, clientOptions, httpOptions, call, request, auth, noInput];
+  void [binding, app, hook, clientOptions, httpOptions, call, request, auth, noInput, noStruct];
 };

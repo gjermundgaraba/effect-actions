@@ -1,4 +1,5 @@
 import { Effect, Predicate, Schema } from "effect";
+import { isObjects } from "effect/SchemaAST";
 import type { Scope } from "effect";
 import { assertDistinct, assertName, assertOwnTags } from "./internal/actions.js";
 import {
@@ -29,15 +30,19 @@ type Codec = Schema.Codec<unknown, unknown, never, never>;
 type Fields = { readonly [key: string]: Codec };
 
 /**
- * An object without fields: an action without arguments, `{}` given or not. Strict, unlike
- * `Schema.Struct({})`, which accepts any value but `null`; its JSON Schema is the object
- * root MCP requires.
+ * An object without fields: an action without arguments, `{}` or `Schema.Struct({})` given
+ * or not. Strict, unlike `Schema.Struct({})` itself, which accepts any value but `null`; its
+ * JSON Schema is the object root MCP requires.
  */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
-/** The schema a `Codec | Fields` option stands for: `NoInput` for no fields. */
+/** The schema a `Codec | Fields` option stands for: `NoInput` for no fields, in a struct or not. */
 type CodecOf<S extends Codec | Fields> = S extends Codec
-  ? S
+  ? S extends Schema.Struct<infer F>
+    ? keyof F extends never
+      ? typeof NoInput
+      : S
+    : S
   : S extends Schema.Struct.Fields
     ? keyof S extends never
       ? typeof NoInput
@@ -69,7 +74,7 @@ export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./intern
 /** What `make` needs to define an action. */
 export interface Options {
   readonly description: string;
-  /** A schema or struct fields. Omit for an action without arguments: `{}`. */
+  /** A schema or struct fields. Omit for an action without arguments: `{}`, `Schema.Struct({})`. */
   readonly input?: Codec | Fields | undefined;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields | undefined;
@@ -153,9 +158,22 @@ export type Handler<A extends Any, R = never> = (
   input: A["input"]["Type"],
 ) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R>;
 
+/**
+ * `Schema.Struct({})` as written, with no check or transformation of its own: an object
+ * without fields, as `{}` is.
+ */
+const isEmptyStruct = ({ ast }: Codec): boolean =>
+  isObjects(ast) &&
+  ast.propertySignatures.length === 0 &&
+  ast.indexSignatures.length === 0 &&
+  ast.checks === undefined &&
+  ast.encoding === undefined;
+
 const codecOf = (schema: Codec | Fields): Codec =>
   Schema.isSchema(schema)
-    ? schema
+    ? isEmptyStruct(schema)
+      ? NoInput
+      : schema
     : Object.keys(schema).length === 0
       ? NoInput
       : Schema.Struct(schema);

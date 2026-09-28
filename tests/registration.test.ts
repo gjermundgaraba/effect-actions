@@ -468,7 +468,6 @@ describe("projection boundaries", () => {
 
   it.each([
     Schema.String,
-    Schema.Struct({}),
     // Compiles to a `$ref` root, which the native server inlines and still rejects.
     Schema.String.annotate({ identifier: "Named" }),
   ])("the native server rejects non-object MCP input at layer build", async (input) => {
@@ -492,6 +491,30 @@ describe("projection boundaries", () => {
     await expect(Effect.runPromise(Effect.scoped(Layer.build(layer)))).rejects.toThrow(
       /Expected "object"|Missing key/,
     );
+  });
+
+  it("serves an empty struct as no input, the object root MCP requires", async () => {
+    const Empty = Action.make("empty", {
+      description: "No arguments, written as an empty struct",
+      access: "read",
+      input: Schema.Struct({}),
+      success: Schema.String,
+    });
+
+    expect(Schema.decodeUnknownOption(Empty.input)({ extra: 1 })._tag).toBe("None");
+
+    const web = serve(
+      ActionMcp.layerHttp(
+        Action.implement(Empty, () => Effect.succeed("ok")),
+        {
+          name: "test",
+          version: "0",
+        },
+      ),
+    );
+
+    onTestFinished(() => web.dispose());
+    expect((await listTools(web.handler))[0]?.inputSchema).toMatchObject({ type: "object" });
   });
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
