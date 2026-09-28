@@ -48,6 +48,8 @@ is one choice of three.
 A field's description is its flag's help text, whatever its encoding. An optional field's
 flag is optional and takes its value without the `null` that `Schema.optional` encodes
 (`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
+An optional field whose own schema encodes `null` takes it too: `--note null` is `Option.none()`
+for `Schema.optionalKey(Schema.OptionFromNullOr(Schema.String))`.
 
 A field listed in `positional` is an argument instead of a flag, parsed as its flag would
 be, a boolean taking `true` or `false`: `command(implementations, Inspect, { positional: ["path"] })`

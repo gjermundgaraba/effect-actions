@@ -515,6 +515,30 @@ it("keeps the null an optional field declares itself, so the flag can send it", 
   expect(await lines(command, [])).toEqual([JSON.stringify("{}")]);
 });
 
+it("keeps the null an optional field's codec encodes, so the flag can send it", async () => {
+  const Note = Action.make("note", {
+    description: "Sets or clears a note",
+    access: "write",
+    input: { note: Schema.optionalKey(Schema.OptionFromNullOr(Schema.String)) },
+    success: Schema.String,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Note, ({ note }) =>
+      Effect.succeed(
+        note === undefined
+          ? "absent"
+          : Option.match(note, { onNone: () => "none", onSome: (text) => `some ${text}` }),
+      ),
+    ),
+    Note,
+  );
+
+  expect(await lines(command, ["--note", "null"])).toEqual([JSON.stringify("none")]);
+  expect(await lines(command, ["--note", "x"])).toEqual([JSON.stringify("some x")]);
+  expect(await lines(command, [])).toEqual([JSON.stringify("absent")]);
+});
+
 it("takes a number, a non-finite number or a string beside it as JSON or plain text", async () => {
   const Page = Action.make("page", {
     description: "Reads a page",

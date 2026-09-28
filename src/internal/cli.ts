@@ -119,8 +119,8 @@ const valueParam = (
 /**
  * An optional field's value without the absence `Schema.optional` adds to it: `undefined`
  * declared, `null` encoded. Omitting the flag already leaves the field out, so
- * `optional(Schema.String)` takes a plain string. A field that declares `null` itself keeps
- * it, as `optionalKey(NullOr(Schema.String))` does.
+ * `optional(Schema.String)` takes a plain string. A field whose own schema has `null` keeps
+ * it, as `optionalKey(NullOr(Schema.String))` and `optionalKey(OptionFromNullOr(...))` do.
  */
 const present = (ast: SchemaAST.AST): SchemaAST.AST => {
   const members = SchemaAST.isUnion(ast)
@@ -130,9 +130,16 @@ const present = (ast: SchemaAST.AST): SchemaAST.AST => {
   return members.length === 1 && members[0] !== undefined ? members[0] : ast;
 };
 
-/** Whether a declared value may be `null`. */
-const nullable = (ast: SchemaAST.AST): boolean =>
-  SchemaAST.isNull(ast) || (SchemaAST.isUnion(ast) && ast.types.some(nullable));
+/**
+ * Whether `Schema.optional` added the field's encoded `null`: its declared value admits
+ * `undefined` but not `null`. A `null` of the field's own codec, as `OptionFromNullOr`
+ * encodes `None`, is not declared at all, and stays.
+ */
+const addsNull = (declared: SchemaAST.AST): boolean => {
+  const types = members(declared);
+
+  return types.some(SchemaAST.isUndefined) && !types.some(SchemaAST.isNull);
+};
 
 /**
  * A field's flag or argument, `None` when omitted. A required field's is required, so the
@@ -153,7 +160,7 @@ const fieldParam = (
         valueParam(
           kind,
           name,
-          declared !== undefined && nullable(declared) ? encoded : present(encoded),
+          declared === undefined || addsNull(declared) ? present(encoded) : encoded,
         ),
       );
 
