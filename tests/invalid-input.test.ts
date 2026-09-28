@@ -104,6 +104,49 @@ it("describes every issue of the input in the message", async () => {
   expect(message).toContain('at ["right"]');
 });
 
+it("refuses undeclared input fields, nested ones too, on the server and in the client", async () => {
+  const calls = { count: 0 };
+
+  const Save = Action.make("save", {
+    description: "Save",
+    access: "write",
+    input: { value: Schema.Finite, owner: Schema.Struct({ id: Schema.String }) },
+    success: Schema.Finite,
+  });
+
+  const SaveHttp = ActionHttp.make([Save]);
+  const app = Action.implement(Save, ({ value }) => Effect.sync(() => calls.count++ + value));
+  const web = serve(ActionHttp.layer(SaveHttp, app));
+
+  const save = (body: Schema.Json) =>
+    web.handler(
+      new Request("http://localhost/api/save", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  const extra = await save({ value: 1, owner: { id: "a" }, admin: true });
+  expect(extra.status).toBe(400);
+  expect(await invalidInput(extra)).toContain('at ["admin"]');
+
+  const nested = await save({ value: 1, owner: { id: "a", role: "admin" } });
+  expect(nested.status).toBe(400);
+  expect(await invalidInput(nested)).toContain('at ["owner"]["role"]');
+
+  // A wider object type-checks, as TypeScript allows; the client refuses it before sending.
+  const wider = { value: 1, owner: { id: "a" }, admin: true };
+
+  const refused = await Effect.flatMap(httpClient(SaveHttp, web), (client) =>
+    client.save(wider),
+  ).pipe(Effect.flip, Effect.runPromise);
+
+  expect(Schema.isSchemaError(refused)).toBe(true);
+  expect(calls.count).toBe(0);
+  expect((await save({ value: 1, owner: { id: "a" } })).status).toBe(200);
+});
+
 it("decodes InvalidInput as a typed failure of the client", async () => {
   const { app } = counted();
   const web = serve(ActionHttp.layer(Http, app));

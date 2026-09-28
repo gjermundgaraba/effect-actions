@@ -213,7 +213,7 @@ elsewhere, give `baseUrl`.
   - `HttpClientError` with `response` `undefined`: the server could not be reached.
   - `HttpClientError` with `reason._tag` `DecodeError`: the server answered with a status no schema declares, such as the empty 500 of a defect.
   - `HttpClientError` with `StatusCodeError`: a declared status whose body did not decode.
-  - `SchemaError`: the input did not encode, or the success body did not decode.
+  - `SchemaError`: the input did not encode, a field its action does not declare included, or the success body did not decode.
 - The library interprets no status. Which failures mean "signed out" or "try again" is the caller's decision.
 - Nothing is retried. A failed write may or may not have happened; only a declared error says what the server did.
 - Every action of the binding has a method, whether or not a server serves it. An unserved action answers 404 with no body, so its method fails with `HttpClientError`: `DecodeError`, or `StatusCodeError` when the action declares a 404 error, whose body the empty response is not.

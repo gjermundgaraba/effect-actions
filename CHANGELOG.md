@@ -81,6 +81,8 @@ Behavior that changes without a rename:
 - Every endpoint declares its action's errors, its binding's, and the three built-in ones, and
   every tool the two refusals. Input that does not decode, malformed JSON included, is a 400
   `InvalidInput` carrying the schema's message. A result that does not encode is an empty 500.
+- HTTP refuses an undeclared input field, nested ones too, with a 400 `InvalidInput` naming
+  its path; 0.7.0 dropped it. A client given one fails with a `SchemaError` before sending.
 - `implement` refuses an application error encoding with a built-in `_tag`: a client could not
   tell them apart.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one

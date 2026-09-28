@@ -49,7 +49,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 
 ## Design notes
 
-- HTTP input is not strict, and cannot be made strict without a hack: Effect merges one `HttpApi.ParseOptions` per endpoint and uses it for payload decoding _and_ error encoding, so `onExcessProperty: "error"` also rejects a `TaggedError` instance's own `message` and `stack`, turning a declared 409 into an empty 500. Making the payload schema strict would mean wrapping it in an open schema, which erases its OpenAPI shape. An action without input is strict anyway: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP, so it is `Schema.Record(Schema.String, Schema.Never)`.
+- HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. The binding's API carries it, so the server and the client share it. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
 - MCP over HTTP serves 2026-07-28 only. The stateful revisions work over Effect's HTTP transport, and request identity stays per request, but each `initialize` registers a session that Effect's runtime never deletes, with no expiry and no `DELETE` termination, and any caller holding the session id may use it.
 
 ## Release
