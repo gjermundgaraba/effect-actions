@@ -21,9 +21,9 @@ import { withMcpClient } from "./mcp-client.js";
 
 let app: ReturnType<typeof makeTestApp>;
 
-/** The example's 401 challenge: its resource's metadata URL. */
+/** The example's 401 challenge: the scope a first login requests and its metadata URL. */
 const challenge =
-  'Bearer resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"';
+  'Bearer scope="users:read", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"';
 
 beforeEach(() => {
   app = makeTestApp();

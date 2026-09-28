@@ -7,7 +7,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import { type Refusal, Unauthenticated } from "./internal/errors.js";
-import { bearer, refuse, ResourceMetadata } from "./internal/refusal.js";
+import { answer, bearer, ResourceMetadata } from "./internal/refusal.js";
 
 /**
  * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
@@ -34,19 +34,58 @@ export interface Options {
   readonly authorizationServers: NonEmptyReadonlyArray<string>;
   /** Every scope the resource accepts, which a client requests when a 401 names none. */
   readonly scopesSupported?: ReadonlyArray<string>;
+  /**
+   * The scopes every 401 names, each an OAuth scope token: what a client requests when it
+   * authenticates, rather than every scope supported. A `Forbidden` naming scopes asks for
+   * more when a call needs them.
+   */
+  readonly scopesRequired?: NonEmptyReadonlyArray<string>;
   readonly resourceName?: string;
 }
 
 /**
- * RFC 9728 discovery of `options` at `/.well-known/oauth-protected-resource` followed by the
- * resource's path, where MCP clients look when a 401 names no metadata URL, and that URL. It
- * answers before routing, so no route middleware, authentication included, ever covers it.
+ * The RFC 9728 metadata URL of `options`: `/.well-known/oauth-protected-resource` followed
+ * by the resource's path, where MCP clients look when a 401 names no metadata URL.
+ */
+const metadataUrl = (options: Options): URL => {
+  const resource = new URL(options.resource);
+  const url = new URL(resource);
+  url.pathname = `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}`;
+
+  return url;
+};
+
+/**
+ * The challenge of every 401 about `options`: `Bearer`, naming the scopes a client requests
+ * and the metadata URL where it finds its authorization server.
+ */
+const challengeOf = (options: Options | undefined): string =>
+  bearer([
+    ["scope", options?.scopesRequired?.join(" ")],
+    ["resource_metadata", options === undefined ? undefined : metadataUrl(options).href],
+  ]);
+
+/**
+ * `response` as the routes of the authentication answer: `no-store` unless it states its
+ * own caching, and a 401 challenged with `challenge` unless it names its own.
+ */
+const settle = (
+  response: HttpServerResponse.HttpServerResponse,
+  challenge: string,
+): HttpServerResponse.HttpServerResponse =>
+  HttpServerResponse.setHeaders(response, {
+    ...(response.headers["cache-control"] === undefined ? { "cache-control": "no-store" } : {}),
+    ...(response.status === 401 && response.headers["www-authenticate"] === undefined
+      ? { "www-authenticate": challenge }
+      : {}),
+  });
+
+/**
+ * RFC 9728 discovery of `options` at its metadata URL. It answers before routing, so no
+ * route middleware, authentication included, ever covers it.
  */
 const discovery = (options: Options) => {
-  const resource = new URL(options.resource);
-
-  const discoveryUrl = new URL(resource);
-  discoveryUrl.pathname = `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}`;
+  const discoveryUrl = metadataUrl(options);
   const target = discoveryUrl.href.slice(discoveryUrl.origin.length);
 
   // `undefined` fields are dropped by JSON serialization.
@@ -64,7 +103,7 @@ const discovery = (options: Options) => {
     (next) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const url = new URL(request.url, resource.origin);
+        const url = new URL(request.url, discoveryUrl.origin);
 
         if (
           (request.method === "GET" || request.method === "HEAD") &&
@@ -93,12 +132,13 @@ const discovery = (options: Options) => {
  * `HttpRouter.provideRequest` builds one once, such as a token verifier. Acquired
  * resources live until the request scope closes, including while the handler is running.
  *
- * Every response of the routes it covers is marked `Cache-Control: no-store`, and every
- * 401 among them without a challenge gets one, including failures serialized by enclosing
- * middleware: `Bearer`. Given an OAuth protected resource, it also publishes the resource's
- * RFC 9728 discovery, once however many layers it covers, public and before routing, and
- * every challenge names its metadata URL, a 401's and the `insufficient_scope` challenge of a
- * refusal naming scopes.
+ * Every response of the routes it covers is marked `Cache-Control: no-store`, unless its
+ * route states its own caching, and a failure serialized by enclosing middleware always is.
+ * Every 401 among them without a challenge gets one: `Bearer`. Given an OAuth protected
+ * resource, it also publishes the resource's RFC 9728 discovery, once however many layers it
+ * covers, public and before routing; every challenge names its metadata URL, a 401's and the
+ * `insufficient_scope` challenge of a refusal naming scopes, and a 401's names
+ * `scopesRequired`.
  */
 export const make = <I, A, R>(
   service: Context.Key<I, A>,
@@ -110,9 +150,13 @@ export const make = <I, A, R>(
   HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
 > => {
   const published = protectedResource === undefined ? undefined : discovery(protectedResource);
+  const challenge = challengeOf(protectedResource);
 
-  // No error code: RFC 6750 §3.1 makes one optional, and a client re-authenticates on any 401.
-  const challenge = bearer([["resource_metadata", published?.url]]);
+  // A response made of a covered route's failure elsewhere, such as by enclosing middleware,
+  // may carry what the route failed with, whatever caching it states.
+  const failed = HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
+  );
 
   // SAFETY: native middleware types its layer only once no request requirement is left,
   // asking for another middleware to provide them. The layer is the same at run time, and
@@ -122,8 +166,11 @@ export const make = <I, A, R>(
     authenticate.pipe(
       Effect.matchEffect({
         onFailure: (error) =>
-          HttpServerResponse.isHttpServerResponse(error) ? Effect.succeed(error) : refuse(error),
-        onSuccess: (identity) => Effect.provideService(httpEffect, service, identity),
+          Effect.succeed(
+            HttpServerResponse.isHttpServerResponse(error) ? error : answer(error, published?.url),
+          ),
+        onSuccess: (identity) =>
+          Effect.provideService(httpEffect, service, identity).pipe(Effect.onError(() => failed)),
       }),
       // Every refusal under it, its own, a hook's or a handler's, names the metadata URL.
       (answered) =>
@@ -131,14 +178,7 @@ export const make = <I, A, R>(
           ? answered
           : Effect.provideService(answered, ResourceMetadata, published.url),
       HttpEffect.withPreResponseHandler((_request, response) =>
-        Effect.succeed(
-          HttpServerResponse.setHeaders(response, {
-            "cache-control": "no-store",
-            ...(response.status === 401 && response.headers["www-authenticate"] === undefined
-              ? { "www-authenticate": challenge }
-              : {}),
-          }),
-        ),
+        Effect.succeed(settle(response, challenge)),
       ),
     ),
   ).layer as Layer.Layer<
@@ -149,3 +189,21 @@ export const make = <I, A, R>(
 
   return published === undefined ? middleware : Layer.merge(middleware, published.layer);
 };
+
+/**
+ * The response `make` answers `refusal` with, for a caller outside the router, such as a
+ * WebSocket upgrade refused before any route: its JSON with its status, `no-store`, and the
+ * challenge of a 401, or of a `Forbidden` naming scopes, naming `protectedResource`'s
+ * metadata URL. `HttpServerResponse.toWeb` makes it a web `Response`.
+ */
+export const refusal = (
+  error: Refusal,
+  protectedResource?: Options,
+): HttpServerResponse.HttpServerResponse =>
+  settle(
+    answer(
+      error,
+      protectedResource === undefined ? undefined : metadataUrl(protectedResource).href,
+    ),
+    challengeOf(protectedResource),
+  );

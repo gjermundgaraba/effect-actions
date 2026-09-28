@@ -28,32 +28,38 @@ export const bearer = (
 
 const Refusals = Schema.Union(refusals);
 
+const encode = Schema.encodeSync(Refusals);
+
 /**
  * A refusal as its JSON with its status, as every endpoint declares it. A `Forbidden` naming
  * scopes carries the RFC 6750 `insufficient_scope` challenge an OAuth client steps up on,
- * naming the resource's metadata URL under `Authentication.make`.
+ * naming the resource's metadata URL when there is one.
  */
-export const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-  Effect.gen(function* () {
-    const response = yield* HttpServerResponse.schemaJson(Refusals)(error, {
-      status: statuses[error._tag],
-    }).pipe(Effect.orDie);
+export const answer = (
+  error: Refusal,
+  metadataUrl: string | undefined,
+): HttpServerResponse.HttpServerResponse => {
+  const response = HttpServerResponse.jsonUnsafe(encode(error), { status: statuses[error._tag] });
 
-    if (!Predicate.isTagged(error, "Forbidden") || error.scopes === undefined) return response;
+  if (!Predicate.isTagged(error, "Forbidden") || error.scopes === undefined) return response;
 
-    const metadata = yield* Effect.serviceOption(ResourceMetadata);
+  return HttpServerResponse.setHeader(
+    response,
+    "www-authenticate",
+    bearer([
+      ["error", "insufficient_scope"],
+      ["scope", error.scopes.join(" ")],
+      ["resource_metadata", metadataUrl],
+      ["error_description", description.test(error.message) ? error.message : undefined],
+    ]),
+  );
+};
 
-    return HttpServerResponse.setHeader(
-      response,
-      "www-authenticate",
-      bearer([
-        ["error", "insufficient_scope"],
-        ["scope", error.scopes.join(" ")],
-        ["resource_metadata", Option.getOrUndefined(metadata)],
-        ["error_description", description.test(error.message) ? error.message : undefined],
-      ]),
-    );
-  });
+/** `answer`, naming the metadata URL of the resource `Authentication.make` covers the request for. */
+const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+  Effect.map(Effect.serviceOption(ResourceMetadata), (metadata) =>
+    answer(error, Option.getOrUndefined(metadata)),
+  );
 
 const isRefusal = Schema.is(Refusals);
 

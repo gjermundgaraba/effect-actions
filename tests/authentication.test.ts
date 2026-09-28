@@ -176,6 +176,57 @@ describe("Authentication.make", () => {
     }
   });
 
+  it("names the scopes a first login requests in every 401 of a protected resource", async () => {
+    const Read = Action.make("read", { description: "Read", access: "read" });
+
+    const resource = {
+      resource: "https://api.example.com/api",
+      authorizationServers: ["https://auth.example.com"],
+      scopesSupported: ["docs:read", "docs:write"],
+      scopesRequired: ["docs:read"],
+    } as const;
+
+    const challenge =
+      'Bearer scope="docs:read", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/api"';
+
+    const web = serve(
+      ActionHttp.layer(
+        ActionHttp.make([Read]),
+        Action.implement(
+          Read,
+          () => Effect.void,
+          () => Effect.fail(new Action.Unauthenticated()),
+        ),
+      ).pipe(
+        Layer.provide(
+          Authentication.make(
+            Identity,
+            Authentication.bearerToken.pipe(Effect.map((id) => ({ id }))),
+            resource,
+          ),
+        ),
+      ),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    // A missing token, and a hook's refusal of an authenticated caller.
+    const missing = await web.handler(post("/api/read"));
+
+    const hooked = await web.handler(
+      new Request("http://localhost/api/read", {
+        method: "POST",
+        headers: { authorization: "Bearer alice", "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+
+    for (const response of [missing, hooked]) {
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toBe(challenge);
+    }
+  });
+
   it("challenges a refusal naming scopes with insufficient_scope, its own or a hook's", async () => {
     const Write = Action.make("write", { description: "Write", access: "write" });
 
@@ -418,6 +469,29 @@ describe("Authentication.make", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("keeps the caching a route states, and no-stores every other response", async () => {
+    const auth = Authentication.make(Identity, Effect.succeed({ id: "alice" }));
+
+    const web = serve(
+      Layer.mergeAll(
+        HttpRouter.add(
+          "GET",
+          "/artifact",
+          HttpServerResponse.text("artifact", {
+            headers: { "cache-control": "private, max-age=31536000, immutable" },
+          }),
+        ),
+        HttpRouter.add("GET", "/identity", HttpServerResponse.text("alice")),
+      ).pipe(Layer.provide(auth)),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    const artifact = await web.handler(new Request("http://localhost/artifact"));
+    expect(artifact.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect((await web.handler(request())).headers.get("cache-control")).toBe("no-store");
+  });
+
   it("owes its services per request, which middleware around it provides", async () => {
     const auth = Authentication.make(
       Identity,
@@ -526,6 +600,54 @@ describe("Authentication.make", () => {
       expect(events).toEqual(["acquire", "handler", "release"]);
     },
   );
+});
+
+describe("Authentication.refusal", () => {
+  const resource = {
+    resource: "https://api.example.com/mcp",
+    authorizationServers: ["https://auth.example.com"],
+    scopesRequired: ["read"],
+  } as const;
+
+  const metadata = "https://api.example.com/.well-known/oauth-protected-resource/mcp";
+
+  /** What `make` answers a request it refuses with `error`. */
+  const answered = async (error: Action.Refusal) => {
+    const web = serve(
+      HttpRouter.add("GET", "/identity", HttpServerResponse.text("never")).pipe(
+        Layer.provide(Authentication.make(Identity, Effect.fail(error), resource)),
+      ),
+    );
+
+    onTestFinished(() => web.dispose());
+
+    return web.handler(request());
+  };
+
+  it.each([
+    [new Action.Unauthenticated(), `Bearer scope="read", resource_metadata="${metadata}"`],
+    [
+      new Action.Forbidden({ scopes: ["write"] }),
+      `Bearer error="insufficient_scope", scope="write", resource_metadata="${metadata}", error_description="Not allowed."`,
+    ],
+    [new Action.Forbidden(), null],
+  ] as const)("is the response make answers %s with", async (error, challenge) => {
+    const response = HttpServerResponse.toWeb(Authentication.refusal(error, resource));
+    const expected = await answered(error);
+
+    expect(response.status).toBe(expected.status);
+    expect(response.headers.get("www-authenticate")).toBe(challenge);
+    expect(response.headers.get("www-authenticate")).toBe(expected.headers.get("www-authenticate"));
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual(await expected.json());
+  });
+
+  it("challenges a 401 with Bearer alone without a protected resource", () => {
+    const response = Authentication.refusal(new Action.Unauthenticated());
+
+    expect(response.status).toBe(401);
+    expect(response.headers["www-authenticate"]).toBe("Bearer");
+  });
 });
 
 describe("Authentication.bearerToken", () => {

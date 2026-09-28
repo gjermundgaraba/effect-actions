@@ -11,6 +11,7 @@ const isActorToken = (token: string): token is keyof typeof actors => Object.has
 // missing or unknown token is the built-in `Unauthenticated`: a 401 every client decodes.
 // As an OAuth protected resource, it publishes RFC 9728 discovery, public, and every
 // challenge names it, so an MCP client that was refused finds the server issuing its tokens.
+// A first login requests read only; a write refused for its scope steps up.
 export const authenticate = Authentication.make(
   CurrentActor,
   Effect.flatMap(Authentication.bearerToken, (token) =>
@@ -22,5 +23,6 @@ export const authenticate = Authentication.make(
     resource: "http://localhost:3000/mcp",
     authorizationServers: ["https://auth.example.com"],
     scopesSupported: ["users:read", "users:write"],
+    scopesRequired: ["users:read"],
   },
 );
