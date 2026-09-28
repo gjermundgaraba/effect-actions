@@ -515,28 +515,52 @@ it("keeps the null an optional field declares itself, so the flag can send it", 
   expect(await lines(command, [])).toEqual([JSON.stringify("{}")]);
 });
 
-it("keeps the null an optional field's codec encodes, so the flag can send it", async () => {
-  const Note = Action.make("note", {
-    description: "Sets or clears a note",
-    access: "write",
-    input: { note: Schema.optionalKey(Schema.OptionFromNullOr(Schema.String)) },
-    success: Schema.String,
-  });
+it("keeps the null an optional field's codec encodes, under its encoded name too", async () => {
+  const note = Schema.OptionFromNullOr(Schema.String);
 
-  const command = ActionCli.command(
-    Action.implement(Note, ({ note }) =>
-      Effect.succeed(
-        note === undefined
-          ? "absent"
-          : Option.match(note, { onNone: () => "none", onSome: (text) => `some ${text}` }),
+  const noteOf = async (
+    input: Schema.Codec<{ readonly note?: Option.Option<string> | undefined }, unknown>,
+    flag: string,
+  ) => {
+    const Note = Action.make("note", {
+      description: "Sets or clears a note",
+      access: "write",
+      input,
+      success: Schema.String,
+    });
+
+    const command = ActionCli.command(
+      Action.implement(Note, (value) =>
+        Effect.succeed(
+          value.note === undefined
+            ? "absent"
+            : Option.match(value.note, { onNone: () => "none", onSome: (text) => `some ${text}` }),
+        ),
       ),
-    ),
-    Note,
-  );
+      Note,
+    );
 
-  expect(await lines(command, ["--note", "null"])).toEqual([JSON.stringify("none")]);
-  expect(await lines(command, ["--note", "x"])).toEqual([JSON.stringify("some x")]);
-  expect(await lines(command, [])).toEqual([JSON.stringify("absent")]);
+    return [
+      ...(await lines(command, [flag, "null"])),
+      ...(await lines(command, [flag, "x"])),
+      ...(await lines(command, [])),
+    ];
+  };
+
+  const expected = ["none", "some x", "absent"].map((line) => JSON.stringify(line));
+
+  expect(await noteOf(Schema.Struct({ note: Schema.optionalKey(note) }), "--note")).toEqual(
+    expected,
+  );
+  expect(await noteOf(Schema.Struct({ note: Schema.optional(note) }), "--note")).toEqual(expected);
+  expect(
+    await noteOf(
+      Schema.Struct({ note: Schema.optionalKey(note) }).pipe(
+        Schema.encodeKeys({ note: "wireNote" }),
+      ),
+      "--wire-note",
+    ),
+  ).toEqual(expected);
 });
 
 it("takes a number, a non-finite number or a string beside it as JSON or plain text", async () => {
@@ -718,7 +742,7 @@ it("runs any action locally, scopes every invocation, and exposes aggregate subc
   expect(released).toBe(2);
 });
 
-it("releases a local call's own resources before its builder's", async () => {
+it("releases a local call's own resources, the hook's included, before its builder's", async () => {
   const log: string[] = [];
 
   const Scoped = Action.make("scoped", {
@@ -745,11 +769,25 @@ it("releases a local call's own resources before its builder's", async () => {
       }),
       () => Effect.sync(() => log.push("builder release")),
     ),
+    () =>
+      Effect.asVoid(
+        Effect.acquireRelease(
+          Effect.sync(() => log.push("hook acquire")),
+          () => Effect.sync(() => log.push("hook release")),
+        ),
+      ),
   );
 
   await run(ActionCli.command(app, Scoped), []);
 
-  expect(log).toEqual(["builder acquire", "handler acquire", "handler release", "builder release"]);
+  expect(log).toEqual([
+    "builder acquire",
+    "hook acquire",
+    "handler acquire",
+    "handler release",
+    "hook release",
+    "builder release",
+  ]);
 });
 
 it("builds a local command's implementation per invocation even where the host built it", async () => {

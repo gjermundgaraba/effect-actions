@@ -45,11 +45,13 @@ A value flag parses its text as JSON when the field's encoding accepts the value
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
 Choices may be nested unions: `Schema.Union([Schema.Literals(["a", "b"]), Schema.Literal("c")])`
 is one choice of three.
-A field's description is its flag's help text, whatever its encoding. An optional field's
+A field's description is its flag's help text, whatever its encoding, except a transformed
+field that `Schema.encodeKeys` renames: its flag goes by the encoded name, where encoding has
+dropped the description, as JSON Schema does for every transformed field. An optional field's
 flag is optional and takes its value without the `null` that `Schema.optional` encodes
 (`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
 An optional field whose own schema encodes `null` takes it too: `--note null` is `Option.none()`
-for `Schema.optionalKey(Schema.OptionFromNullOr(Schema.String))`.
+for `Schema.optionalKey(Schema.OptionFromNullOr(Schema.String))`, renamed or not.
 
 A field listed in `positional` is an argument instead of a flag, parsed as its flag would
 be, a boolean taking `true` or `false`: `command(implementations, Inspect, { positional: ["path"] })`

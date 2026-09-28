@@ -119,8 +119,7 @@ const valueParam = (
 /**
  * An optional field's value without the absence `Schema.optional` adds to it: `undefined`
  * declared, `null` encoded. Omitting the flag already leaves the field out, so
- * `optional(Schema.String)` takes a plain string. A field whose own schema has `null` keeps
- * it, as `optionalKey(NullOr(Schema.String))` and `optionalKey(OptionFromNullOr(...))` do.
+ * `optional(Schema.String)` takes a plain string.
  */
 const present = (ast: SchemaAST.AST): SchemaAST.AST => {
   const members = SchemaAST.isUnion(ast)
@@ -131,37 +130,34 @@ const present = (ast: SchemaAST.AST): SchemaAST.AST => {
 };
 
 /**
- * Whether `Schema.optional` added the field's encoded `null`: its declared value admits
- * `undefined` but not `null`. A `null` of the field's own codec, as `OptionFromNullOr`
- * encodes `None`, is not declared at all, and stays.
+ * Whether `Schema.optional` added the field's JSON `null`: encoded without the JSON codec,
+ * its value admits `undefined` but not `null`. A `null` of the field's own schema, as
+ * `NullOr` or `OptionFromNullOr` encode, stays.
  */
-const addsNull = (declared: SchemaAST.AST): boolean => {
-  const types = members(declared);
+const addsNull = (plain: SchemaAST.AST): boolean => {
+  const types = members(plain);
 
   return types.some(SchemaAST.isUndefined) && !types.some(SchemaAST.isNull);
 };
 
 /**
- * A field's flag or argument, `None` when omitted. A required field's is required, so the
- * parser reports it missing; a required boolean flag is a switch instead: omitted, it is
- * `false`, as a switch reads. A boolean argument takes `true` or `false`.
+ * A field's flag or argument, `None` when omitted, from its JSON encoding and its plain one.
+ * A required field's is required, so the parser reports it missing; a required boolean flag
+ * is a switch instead: omitted, it is `false`, as a switch reads. A boolean argument takes
+ * `true` or `false`.
  */
 const fieldParam = (
   kind: Kind,
   name: string,
   encoded: SchemaAST.AST,
-  declared: SchemaAST.AST | undefined,
+  plain: SchemaAST.AST | undefined,
 ): Param.Param<Kind, Option.Option<unknown>> =>
   !SchemaAST.isOptional(encoded)
     ? kind === Param.flagKind && SchemaAST.isBoolean(encoded)
       ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
       : valueParam(kind, name, encoded).pipe(Param.map(Option.some))
     : Param.optional(
-        valueParam(
-          kind,
-          name,
-          declared === undefined || addsNull(declared) ? present(encoded) : encoded,
-        ),
+        valueParam(kind, name, plain !== undefined && addsNull(plain) ? present(encoded) : encoded),
       );
 
 /** One input field's flag or argument, parsed as its encoded value, `None` when omitted. */
@@ -175,14 +171,9 @@ interface FieldParam {
 /** What the field parameters parse to, by field. */
 type Parsed = Readonly<Record<string, Option.Option<unknown>>>;
 
-/**
- * The fields of a struct or class as declared, by name. Encoding drops the description of
- * a transformed field, such as `Schema.Number` or `Schema.FiniteFromString`; here it stays.
- */
-const declaredFields = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> => {
-  const type = SchemaAST.toType(ast);
-  // A class declares its fields as its one type parameter.
-  const fields = SchemaAST.isDeclaration(type) ? type.typeParameters[0] : type;
+/** The fields of a struct, or of a class, which declares them as its one type parameter, by name. */
+const fieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> => {
+  const fields = SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast;
 
   return new Map(
     fields !== undefined && SchemaAST.isObjects(fields)
@@ -199,16 +190,20 @@ const declaredFields = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.
  */
 const fieldParams = (
   encoded: SchemaAST.Objects,
-  declared: SchemaAST.AST,
+  input: SchemaAST.AST,
   positional: ReadonlyArray<string>,
 ): ReadonlyArray<FieldParam> => {
-  const described = declaredFields(declared);
+  // Encoded without the JSON codec, a field still tells `undefined` from `null`, under its
+  // encoded name. Declared, it keeps the description encoding drops from a transformed
+  // field, such as `Schema.FiniteFromString`, under its declared name.
+  const plain = fieldsOf(SchemaAST.toEncoded(input));
+  const described = fieldsOf(SchemaAST.toType(input));
 
   return encoded.propertySignatures.map((property) => {
     const field = String(property.name);
     const declaredField = described.get(property.name);
     const kind = positional.includes(field) ? Param.argumentKind : Param.flagKind;
-    const param = fieldParam(kind, kebab(field), property.type, declaredField);
+    const param = fieldParam(kind, kebab(field), property.type, plain.get(property.name));
     const documented = declaredField ?? property.type;
 
     // Described as a whole, as `optional(X).annotate(...)`, or as its value.
