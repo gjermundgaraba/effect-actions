@@ -2,12 +2,12 @@
 import { isString } from "effect/Predicate";
 import { type AST, isLiteral, isObjects, isUnion, toEncoded } from "effect/SchemaAST";
 import type * as Action from "../Action.js";
-import { httpErrors, statuses } from "./errors.js";
+import { statuses } from "./errors.js";
 
 /**
  * An action's own failures plus the ones its surface answers with, which is what
- * a projection of that action declares. A schema the action already declares is
- * not repeated.
+ * a projection of that action declares. A schema both declare, such as a binding error
+ * the action lists too, is not repeated.
  */
 export const projectedErrors = (
   action: Action.Any,
@@ -48,14 +48,9 @@ export const assertDistinct = <T>(
   }
 };
 
-/**
- * The built-in error's `_tag` a schema's encoding may carry, of a member of a union
- * included; the built-in errors themselves, which an action may declare, carry none.
- */
+/** The built-in error's `_tag` a schema's encoding carries, of a member of a union included. */
 const builtInTag = (ast: AST): string | undefined => {
   const encoded = toEncoded(ast);
-
-  if (httpErrors.some((builtIn) => toEncoded(builtIn.ast) === encoded)) return undefined;
 
   if (isUnion(encoded)) return encoded.types.map(builtInTag).find(isString);
 
@@ -72,16 +67,16 @@ const builtInTag = (ast: AST): string | undefined => {
 };
 
 /**
- * Refuse an application error that encodes with a built-in error's `_tag`: every endpoint
- * declares the built-in one at the same status, and a client decoding the answer could not
- * tell them apart.
+ * Refuse an error that encodes with a built-in error's `_tag`, the built-in itself included:
+ * every endpoint and tool declares the built-in errors already, and a client decoding the
+ * answer could not tell a look-alike from them.
  */
 export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
   for (const error of errors) {
     const tag = builtInTag(error.ast);
 
     if (tag !== undefined) {
-      throw new Error(`${what}: error _tag "${tag}" is built in; declare Action.${tag} itself`);
+      throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
     }
   }
 };

@@ -44,19 +44,22 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
 ) {}
 
 /**
- * What a surface refuses with instead of running a handler. Every endpoint and tool
- * declares them, so clients decode them as typed failures.
+ * What a surface refuses with instead of running a handler: authentication's failures, and a
+ * `before` hook's.
  */
 export type Refusal = Unauthenticated | Forbidden;
 
-/** The refusals a tool surface declares on every tool: a `before` hook's failures. */
+/** The refusals, as schemas. */
 export const refusals = [Unauthenticated, Forbidden] as const;
 
-/** What HTTP declares on every endpoint: bad input, and every refusal. */
-export const httpErrors = [InvalidInput, ...refusals] as const;
+/**
+ * The failures every endpoint and tool declares beyond its action's own, and any handler may
+ * fail with: bad input, and every refusal. No action or binding declares them itself.
+ */
+export const builtIns = [InvalidInput, ...refusals] as const;
 
-/** The schemas every tool declares beyond its action's own errors. */
-export type ToolErrors = (typeof refusals)[number];
+/** The built-in failures' schemas. */
+export type BuiltIns = (typeof builtIns)[number];
 
-/** The schemas every endpoint declares beyond its action's own errors. */
-export type HttpErrors = (typeof httpErrors)[number];
+/** A built-in failure. */
+export type BuiltIn = InvalidInput | Refusal;

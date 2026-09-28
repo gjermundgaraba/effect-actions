@@ -17,7 +17,7 @@ import {
   methods,
   type Options as ClientOptions,
 } from "./internal/client.js";
-import { httpErrors, type HttpErrors } from "./internal/errors.js";
+import { builtIns, type BuiltIns } from "./internal/errors.js";
 import { challengeScopes } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
@@ -70,7 +70,7 @@ type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
       Schema.toCodecJson<A["input"]>,
       never,
       Schema.toCodecJson<A["success"]>,
-      Schema.toCodecJson<A["errors"][number] | E[number] | HttpErrors>,
+      Schema.toCodecJson<A["errors"][number] | E[number] | BuiltIns>,
       never
     >
   : never;
@@ -227,7 +227,7 @@ export function make(
     HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
       payload: action.input,
       success: action.success,
-      error: projectedErrors(action, [...errors, ...httpErrors]).flatMap(declared),
+      error: projectedErrors(action, [...errors, ...builtIns]).flatMap(declared),
     }).annotate(OpenApi.Description, action.description),
   );
 

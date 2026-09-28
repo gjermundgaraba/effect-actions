@@ -384,6 +384,6 @@ it("refuses a binding error with a built-in error's tag", () => {
   const binding = ActionHttp.make([Get], { errors: [Forbidden] });
 
   expect(() => ActionHttp.layer(binding, [])).toThrow(
-    'ActionHttp binding: error _tag "Forbidden" is built in; declare Action.Forbidden itself',
+    'ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface',
   );
 });

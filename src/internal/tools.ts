@@ -2,7 +2,7 @@ import { Effect, type Layer } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
-import { refusals } from "./errors.js";
+import { builtIns } from "./errors.js";
 import {
   acquire,
   type AnyImplementation,
@@ -24,7 +24,7 @@ interface BoundTools {
 export interface Projection {
   /** What a tool is called in `Duplicate <label>: <name>`. */
   readonly label: string;
-  /** The tool of `action`, declaring `errors`: its own and the refusals. */
+  /** The tool of `action`, declaring `errors`: its own and the built-in ones. */
   readonly tool: (action: Action.Any, errors: Action.Any["errors"]) => Tool.Any;
   /** What a call of the tool runs, given the action's handler behind its hook. */
   readonly handler: (run: ErasedHandler<unknown>) => ErasedHandler<unknown>;
@@ -48,11 +48,11 @@ export const bindTools = (
   // Fail before building handlers when two tools share a name.
   const actions = servedActions(projection.label, apps);
 
-  // A hook refusal is the implementation's failure, so every tool declares the refusals
-  // alongside the action's own errors and returns them exactly as a handler failure.
+  // A hook refusal, or a handler's built-in failure, is the implementation's failure, so every
+  // tool declares the built-in errors alongside the action's own and returns them as such.
   const toolkit = Toolkit.make(
     ...actions.map((action) =>
-      annotate(projection.tool(action, projectedErrors(action, refusals)), action),
+      annotate(projection.tool(action, projectedErrors(action, builtIns)), action),
     ),
   );
 

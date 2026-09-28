@@ -23,7 +23,7 @@ A local surface: each implementation's `before` hook runs before its handlers, a
 provides the identity.
 
 Each tool keeps the action's native input/success codecs, combines the action's errors with
-the built-in `Unauthenticated` and `Forbidden` in a native union, and uses
+the built-in `InvalidInput`, `Unauthenticated` and `Forbidden` in a native union, and uses
 `failureMode: "return"`. Its request requirements are its handler's plus its hook's, identity included; build
 failures and services belong to the handler layer.
 
@@ -75,7 +75,7 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 - `needsApproval` receives each action, typed as the implementations' own, once when `make` runs. It returns Effect's native `Tool.needsApproval` for its tool: a boolean, or a function of each call's decoded input and context returning a boolean or an `Effect` of one. Default: no tool needs approval.
 - `LanguageModel` enforces approval; `tools.handle` ignores it, like any caller that is not a model's turn. It is not authorization, which stays the `before` hook's. MCP has no such field, so `ActionMcp` takes no such option.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
-- Every tool declares the refusals ([guarantees.md](guarantees.md#wire-behavior)), so a `before` refusal is an ordinary returned tool failure.
+- Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), so a `before` refusal, or a handler's built-in failure, is an ordinary returned tool failure.
 
 ## Failure modes
 

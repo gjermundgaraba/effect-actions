@@ -2,7 +2,7 @@ import { Effect, type Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
-import type { HttpErrors } from "./errors.js";
+import type { BuiltIns } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 
 /**
@@ -36,7 +36,7 @@ type BindingError = Action.Any["errors"][number];
 export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | A["errors"][number]["Type"]
   | E["Type"]
-  | HttpErrors["Type"]
+  | BuiltIns["Type"]
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 

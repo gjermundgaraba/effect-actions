@@ -14,7 +14,7 @@ import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import type { Call } from "./internal/client.js";
-import { type Refusal, refusals } from "./internal/errors.js";
+import { type BuiltIn, builtIns, refusals } from "./internal/errors.js";
 import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
@@ -67,14 +67,14 @@ export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallErr
 }) {}
 
 /**
- * What one call of `A` fails with: a declared error value (the action's own from the tool,
- * or a refusal from the tool or the endpoint's authentication), a `SchemaError` when the
+ * What one call of `A` fails with: a declared error value (the action's own or a built-in one
+ * from the tool, or a refusal from the endpoint's authentication), a `SchemaError` when the
  * input does not encode or the success does not decode, an `HttpClientError` when the
  * endpoint could not be reached, or an `McpCallError` for any other answer.
  */
 type CallError<A extends Action.Any> =
   | A["errors"][number]["Type"]
-  | Refusal
+  | BuiltIn
   | Schema.SchemaError
   | HttpClientError.HttpClientError
   | McpCallError;
@@ -174,7 +174,7 @@ const callTool = (
       const error = result.content.find((content) => content.type === "text")?.text ?? "";
 
       return yield* failWith(
-        projectedErrors(action, refusals),
+        projectedErrors(action, builtIns),
         error,
         other(`returned an error: ${error}`),
       );

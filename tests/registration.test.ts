@@ -338,19 +338,19 @@ describe("projection boundaries", () => {
     ).toEqual(hints);
   });
 
-  it("does not repeat a built-in error an action already declares", () => {
+  it("declares each built-in error once on every tool and endpoint", () => {
     const Declared = Action.make("whoAmI", {
       description: "Name the authenticated principal",
       access: "read",
       success: Schema.String,
-      errors: [Action.Forbidden],
     });
 
     const { toolkit } = ActionToolkit.make(Action.implement(Declared, () => Effect.succeed("ada")));
 
     expect(toolkit.tools.whoAmI.failureSchema.members).toEqual([
-      Action.Forbidden,
+      Action.InvalidInput,
       Action.Unauthenticated,
+      Action.Forbidden,
     ]);
 
     const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths["/api/whoAmI"]?.post
@@ -513,11 +513,11 @@ describe("projection boundaries", () => {
     );
   });
 
-  it("serves an empty struct as no input, the object root MCP requires", async () => {
+  it("serves `{}` as no input, the object root MCP requires", async () => {
     const Empty = Action.make("empty", {
-      description: "No arguments, written as an empty struct",
+      description: "No arguments, written as no fields",
       access: "read",
-      input: Schema.Struct({}),
+      input: {},
       success: Schema.String,
     });
 

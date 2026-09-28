@@ -336,10 +336,11 @@ export const builtInErrorTypes = Effect.gen(function* () {
   const fields: Equal<keyof typeof bound, "actions" | "errors" | "api"> = true;
   void fields;
 
-  // @ts-expect-error Refusals belong to the surface, not to handlers.
-  Action.implement(Echo, () => Effect.fail(new Action.Forbidden()));
-  // @ts-expect-error Bad input is answered before a handler runs, not by it.
-  Action.implement(Echo, () => Effect.fail(new Action.InvalidInput()));
+  // Any handler may fail with a built-in error, which every surface declares.
+  Action.implement(Echo, () => Effect.fail(new Action.Forbidden({ scopes: ["admin"] })));
+  Action.implement(Echo, () => Effect.fail(new Action.InvalidInput({ message: "Too many" })));
+  // @ts-expect-error Only those and the declared errors.
+  Action.implement(Echo, () => Effect.fail(new Error("undeclared")));
 
   // Every built-in error reaches every client method as a typed failure.
   const client = yield* ActionHttp.client(bound);
@@ -673,8 +674,8 @@ export const servedRequirementTypes = () => {
   const toolAssertions: [
     Equal<keyof typeof tools, "act">,
     Equal<Tool.HandlerServices<(typeof tools)["act"]>, Principal>,
-    // Every tool declares the refusals a `before` hook may fail with.
-    Equal<Tool.Failure<(typeof tools)["act"]>, Action.Unauthenticated | Action.Forbidden>,
+    // Every tool declares the built-in errors.
+    Equal<Tool.Failure<(typeof tools)["act"]>, Action.BuiltIn>,
   ] = [true, true, true];
 
   void toolAssertions;
@@ -689,7 +690,7 @@ export const mcpClientTypes = Effect.gen(function* () {
     typeof call,
     Effect.Effect<
       number,
-      Action.Refusal | Schema.SchemaError | HttpClientError.HttpClientError | Testing.McpCallError
+      Action.BuiltIn | Schema.SchemaError | HttpClientError.HttpClientError | Testing.McpCallError
     >
   > = true;
 
@@ -840,9 +841,9 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   // An action given `{}` has no input, as one without `input`.
   const given = Action.make("given", { ...options, input: {} });
   const noInput: Equal<(typeof given)["input"], (typeof WhoAmI)["input"]> = true;
-  // So has an action given an empty struct.
+  // An empty struct given is kept as it is, like any schema.
   const struct = Action.make("struct", { ...options, input: Schema.Struct({}) });
-  const noStruct: Equal<(typeof struct)["input"], (typeof WhoAmI)["input"]> = true;
+  const noStruct: Equal<(typeof struct)["input"], Schema.Struct<{}>> = true;
 
   void [
     binding,

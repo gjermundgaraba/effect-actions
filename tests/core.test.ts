@@ -92,7 +92,7 @@ describe("contracts", () => {
     ).toHaveLength(128);
   });
 
-  it("refuses an error sharing a built-in error's tag, which no client could tell apart", () => {
+  it("refuses an error with a built-in error's tag, the built-in itself included", () => {
     class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {
       error: Schema.String,
     }) {}
@@ -111,28 +111,38 @@ describe("contracts", () => {
           encode: SchemaGetter.transform((_tag) => ({ _tag: "Busy" as const })),
         }),
       ),
+      // Every surface declares the built-in errors already, annotated or not.
+      Action.Forbidden,
+      Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]),
+      Action.InvalidInput.annotate({ description: "Out of stock" }),
+    ];
+
+    const tags = [
+      "Forbidden",
+      "InvalidInput",
+      "Unauthenticated",
+      "Forbidden",
+      "Forbidden",
+      "Unauthenticated",
+      "InvalidInput",
     ];
 
     // The contract is plain data a client may hold; serving it is refused.
-    for (const [error, tag] of errors.map(
-      (error, i) =>
-        [error, ["Forbidden", "InvalidInput", "Unauthenticated", "Forbidden"][i]] as const,
-    )) {
+    for (const [error, tag] of errors.map((error, i) => [error, tags[i]] as const)) {
       const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
 
       expect(() => Action.implement(Guarded, () => Effect.void)).toThrow(
-        `Action "guarded": error _tag "${tag}" is built in; declare Action.${tag} itself`,
+        `Action "guarded": error _tag "${tag}" is built in, and declared on every surface`,
       );
     }
 
-    // The built-in errors themselves, in a union too, and other tags, are fine.
+    // Other tags, in a union too, are fine.
     const Allowed = Action.make("allowed", {
       description: "",
       access: "write",
       errors: [
-        Action.Forbidden,
         Schema.TaggedStruct("Busy", {}),
-        Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]),
+        Schema.Union([Schema.TaggedStruct("Late", {}), Schema.TaggedStruct("Gone", {})]),
       ],
     });
 
@@ -209,17 +219,16 @@ describe("contracts", () => {
     expect(Schema.is(Keyed.input)({})).toBe(false);
   });
 
-  it("keeps an empty struct's annotations, its HTTP status and description included", async () => {
+  it("keeps a given empty struct as it is, its HTTP status included", async () => {
+    const created = Schema.Struct({}).annotate({ httpApiStatus: 201 });
+
     const Create = Action.make("create", {
       description: "Creates, answering 201",
       access: "write",
-      input: Schema.Struct({}).annotate({ description: "Nothing to give" }),
-      success: Schema.Struct({}).annotate({ httpApiStatus: 201 }),
+      success: created,
     });
 
-    expect(Create.input.ast.annotations?.description).toBe("Nothing to give");
-    // Still the strict empty object.
-    expect(Schema.is(Create.input)({ extra: 1 })).toBe(false);
+    expect(Create.success).toBe(created);
 
     const web = makeTestHttp(Action.implement(Create, () => Effect.succeed({})));
     const response = await web.handler(post("/api/create"));

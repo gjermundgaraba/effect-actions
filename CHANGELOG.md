@@ -79,12 +79,12 @@ Behavior that changes without a rename:
   action names are unique per binding. The OpenAPI tag is the mount path, such as `api/users`,
   or `/` at the root.
 - Every endpoint declares its action's errors, its binding's, and the three built-in ones, and
-  every tool the two refusals. Input that does not decode, malformed JSON included, is a 400
+  every tool its action's and the three. Any handler may fail with them unlisted. Input that does not decode, malformed JSON included, is a 400
   `InvalidInput` carrying the schema's message. A result that does not encode is an empty 500.
 - HTTP refuses an undeclared input field, nested ones too, with a 400 `InvalidInput` naming
   its path; 0.7.0 dropped it. A client given one fails with a `SchemaError` before sending.
-- `implement` refuses an application error encoding with a built-in `_tag`: a client could not
-  tell them apart.
+- `implement` refuses an `errors` entry encoding with a built-in `_tag`, the built-in itself
+  included: every surface declares it already, and a client could not tell a look-alike apart.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one
   sends each member at its own. Annotate `{ httpApiStatus: 500 }` to keep the old status.
 - On MCP over HTTP, `Unauthenticated`, or a `Forbidden` naming `scopes`, is answered with its
@@ -100,7 +100,7 @@ Behavior that changes without a rename:
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
   remote command takes no client options: it calls through the host's `HttpClient`.
-- A local command's error channel includes `Action.Refusal`.
+- A local command's error channel includes `Action.BuiltIn`.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses a misspelled key, a name over 128 characters, and `hints.destructive`
   on a read.
@@ -114,8 +114,9 @@ Behavior that changes without a rename:
 
 ### Additions
 
-- `input` and `success` take plain fields: `input: { id: Schema.String }`. `input: {}`, or
-  `Schema.Struct({})`, is an action without input: a strict empty object, the root MCP needs.
+- `input` and `success` take plain fields: `input: { id: Schema.String }`. `input: {}`, or no
+  `input`, is an action without input: a strict empty object, the root MCP needs. A given
+  schema, `Schema.Struct({})` included, is kept as it is.
 - `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.

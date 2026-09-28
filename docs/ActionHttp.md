@@ -234,7 +234,7 @@ elsewhere, give `baseUrl`.
 - Type error at `layer`, or `Action "x" is not in this HTTP binding` thrown by it: the implementation's action was not passed to this binding's `make`. Implement the exact contract value the binding received, or add the action to the binding. Matching names and schemas do not establish identity.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same action.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action. Serve each action in one call.
-- `ActionHttp binding: error _tag "Forbidden" is built in; declare Action.Forbidden itself` thrown by `layer`: a binding error reuses a built-in tag. Rename it, or use the built-in error.
+- `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by `layer`: a binding error has a built-in tag, or is a built-in error. Drop a built-in error, which every endpoint declares already; rename an error of your own.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.

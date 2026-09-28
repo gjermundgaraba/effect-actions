@@ -4,7 +4,7 @@ One contract: a name, schemas for input, success and declared errors, `access`, 
 hints. A contract holds no behavior; `implement` binds handlers to contracts, with the hook every
 surface runs before them: whether a caller may call. Every surface that runs handlers takes an
 implementation or a list of them. The module also exports the built-in
-errors every surface answers with.
+errors every surface declares and any handler may fail with.
 
 ## API
 
@@ -19,18 +19,19 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                   |
 | `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.        |
 | `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.   |
+| `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.       |
 | `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                            |
 | `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                              |
 | `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`. |
 | `Options`, `Hints`                             | What `make` takes, and its tool hints.                                               |
 
-| Option                  | Meaning                                                                           |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| `description`, `access` | Required description and `"read"` / `"write"`.                                    |
-| `input`                 | Optional schema or fields; omitted, `{}` or `Schema.Struct({})`, an empty object. |
-| `success`               | Optional schema or fields; omission means `Schema.Void`.                          |
-| `errors`                | Declared error codecs; defaults to none.                                          |
-| `hints`                 | Tool hints for MCP and the Toolkit; each defaults from `access`.                  |
+| Option                  | Meaning                                                          |
+| ----------------------- | ---------------------------------------------------------------- |
+| `description`, `access` | Required description and `"read"` / `"write"`.                   |
+| `input`                 | Optional schema or fields; omitted or `{}`, an empty object.     |
+| `success`               | Optional schema or fields; omission means `Schema.Void`.         |
+| `errors`                | Declared error codecs; defaults to none.                         |
+| `hints`                 | Tool hints for MCP and the Toolkit; each defaults from `access`. |
 
 `before` receives the selected action and fails with a `Refusal`; every surface runs it
 ([guarantees.md](guarantees.md#dependency-lifetimes)). Authentication is the host's, not
@@ -182,9 +183,9 @@ export const listChanges = Action.implement(
 ### Contracts
 
 - Names are 1 to 128 characters of `[A-Za-z0-9_-]`. `then` is rejected: it would make a client thenable. The name is also the HTTP route segment, the client method and the MCP tool name.
-- Omit `input`, or give `{}` or `Schema.Struct({})`, for a no-argument action. Its input is an empty object that accepts only `{}`: over HTTP, extra fields and a missing body are a 400. It is MCP's object root. Its client method may be called without an argument.
+- Omit `input`, or give `{}`, for a no-argument action. Its input is an empty object that accepts only `{}`: over HTTP, extra fields and a missing body are a 400. It is MCP's object root. Its client method may be called without an argument.
 - Omit `success` for an action that returns nothing. The default is `Schema.Void`: the client methods of `ActionHttp.client` and `Testing.mcpClient` return `void`, HTTP answers with no content, and a CLI command prints nothing. As for a function returning `void`, its handler may still return a value; the encoding drops it. Declare `success` to return data.
-- `input` and `success` take a schema or fields. Fields become `Schema.Struct(fields)`, and no fields, or a `Schema.Struct({})` without checks of its own, the empty object above, keeping its annotations (`httpApiStatus: 201` still answers 201); each field must be service-free, like every schema here.
+- `input` and `success` take a schema or fields. Fields become `Schema.Struct(fields)`, and no fields the empty object above; each field must be service-free, like every schema here. A schema is kept as given: a `Schema.Struct({})` accepts any value but `null`, as in Effect, and MCP refuses it as a tool's input, so write `{}` instead.
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation, and so does each member of a union without one of its own. An unannotated error is served as HTTP 422: an expected outcome, not Effect's default 500, which reads as a server fault.
 - To share errors across actions, spread one constant array into each action's `errors`.
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level.
@@ -197,7 +198,7 @@ export const listChanges = Action.implement(
 - Options typed as a whole (`Parameters<typeof Action.make>[1]`) are not checked. Their action's schemas are as wide as what may run, so its success is `unknown`.
 - MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but the native MCP server refuses it when an `ActionMcp` layer is built. Success and error schemas may be any shape.
 - Hint defaults: `destructive: access === "write"`, `idempotent: false`, `openWorld: true`; `readOnlyHint` is always `access === "read"`. Only a write may state `destructive`: a read is never destructive, as MCP defines the hint for writes only. Hints are metadata for the model. They do not enforce authorization, approval, or retries; a native Toolkit's approval is `ActionToolkit.make`'s `needsApproval` option.
-- The built-in errors are declared everywhere ([guarantees.md](guarantees.md#wire-behavior)). List one in `errors` only when the handler fails with it. `implement` refuses an error of your own that encodes with a built-in tag, since a client could not tell the two apart.
+- The built-in errors are declared everywhere ([guarantees.md](guarantees.md#wire-behavior)), and any handler may fail with them without listing them: `InvalidInput` for input that decodes but cannot be served, a refusal for a step-up. `implement` refuses an `errors` entry that encodes with a built-in tag, the built-in itself included, since every surface declares it already and a client could not tell a look-alike apart.
 - Build a refusal with or without a message: `new Action.Forbidden()` sends `"Not allowed."`, `new Action.Forbidden({ message: "Requires users:write." })` sends that. A `Forbidden` may name the OAuth scopes the call lacks, `new Action.Forbidden({ scopes: ["users:write"] })`: a refused OAuth client then re-authorizes with them ([Authentication.md](Authentication.md#rules)).
 - Schemas must be service-free. Put service access in the handler.
 
@@ -230,4 +231,4 @@ export const listChanges = Action.implement(
 - Type error on `hints.destructive` of a read action: a read is never destructive. Drop the hint, or make the action a write.
 - `Type '...' is not assignable to type 'never'` on a key at `make`: an option it does not take, or a misspelled one.
 - `Object literal may only specify known properties, and 'before' does not exist` at `implement`: the hook is the third argument itself, not an option of an object.
-- `implement` throws `Action "<name>": error _tag "Forbidden" is built in; declare Action.Forbidden itself`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`, and is not the built-in error itself, an annotated copy included. Use the built-in error, or another tag.
+- `implement` throws `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error from `errors`, since a handler may fail with it anyway; rename an error of your own.

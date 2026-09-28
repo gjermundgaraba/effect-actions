@@ -29,7 +29,7 @@ around `layerHttp` ([Authentication.md](Authentication.md)).
 | `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only, not CORS configuration.            |
 
 `implementations` is one implementation or a list. Every tool declares its action's errors plus the
-built-in `Unauthenticated` and `Forbidden`. Both layers retain the build failures and
+built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. Both layers retain the build failures and
 requirements of their builders, plus native
 `IllegalArgumentError`. HTTP needs the router and wraps handler and hook services as request
 requirements until middleware provided around it, such as authentication, provides them. stdio
@@ -155,7 +155,7 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 - `runStdio` is the subprocess's whole program: it serves until the host closes stdin, then succeeds, so the process exits 0. A signal interrupts it, as any program. Provide `Stdio` and its services to it and run it, `NodeRuntime.runMain`.
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity. `runStdio` sends Effect logs to stderr, since stdout carries the protocol; keep `console.log` and other writes off stdout.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
-- Every tool declares the refusals ([guarantees.md](guarantees.md#wire-behavior)). A `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error.
+- Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)). A `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error.
 - The hook runs after the native server decodes the tool's arguments.
 - Over HTTP, a step-up refusal is an HTTP 401 or 403 instead of a tool result ([guarantees.md](guarantees.md#dependency-lifetimes)). On a `Forbidden`'s `insufficient_scope` challenge, an MCP client re-authorizes with those scopes and retries.
 - That holds only while nothing of the response has been sent. Once a handler's notification, such as progress, has started a 200 event stream, a later refusal is the tool's `isError` result in it. A hook runs before its handler, so its refusal is always the status.

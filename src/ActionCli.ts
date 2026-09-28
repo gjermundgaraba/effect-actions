@@ -41,11 +41,12 @@ type Selected<App, A extends Action.Any> = App extends unknown
 
 /**
  * What one local command of `A` runs: its implementation's hook, then its handler. A CLI
- * serializes no failure, so a refusal is a typed failure of the command effect.
+ * serializes no failure, so a refusal or another built-in failure is a typed failure of the
+ * command effect.
  */
 type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
-  A["errors"][number]["Type"] | BuildError<App> | Action.Refusal,
+  A["errors"][number]["Type"] | BuildError<App> | Action.BuiltIn,
   Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
 >;
 
@@ -54,7 +55,7 @@ type LocalCommand<App, A extends Action.Any, Subcommands = never> = Command.Comm
   string,
   Subcommands,
   {},
-  A["errors"][number]["Type"] | BuildError<App> | Action.Refusal | Schema.SchemaError,
+  A["errors"][number]["Type"] | BuildError<App> | Action.BuiltIn | Schema.SchemaError,
   Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
 >;
 
@@ -85,7 +86,7 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
   });
 
   // SAFETY: the builder's failures and services are the implementation's `EX` and `RX`,
-  // the handler's and the hook's are its entry of `R`, and the hook refuses with a `Refusal`.
+  // the handler's and the hook's are its entry of `R`, and both fail with a `BuiltIn` at most.
   return call.pipe(
     Effect.scoped,
     Effect.provide(Implementation.layerOf(app), { local: true }),

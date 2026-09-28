@@ -1,7 +1,7 @@
 import { Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "./Action.js";
-import type { ToolErrors } from "./internal/errors.js";
+import type { BuiltIns } from "./internal/errors.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type ActionOf,
@@ -20,7 +20,7 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
   {
     readonly parameters: A["input"];
     readonly success: A["success"];
-    readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | ToolErrors>>;
+    readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | BuiltIns>>;
     readonly failureMode: "return";
   },
   R

@@ -72,7 +72,7 @@ const greeting = Effect.gen(function* () {
 ## Why
 
 - Input, success and errors are declared once. Routes, tools, CLI flags, clients and the OpenAPI document are derived from that declaration, so they cannot disagree.
-- A handler can fail only with the errors its action declares, and every client decodes them as typed values. Bad input, a missing credential and a refusal come back as three built-in errors (400, 401, 403) that every client decodes too, never as an unreadable body.
+- A handler can fail only with the errors its action declares and three built-in ones, and every client decodes them as typed values. Bad input, a missing credential and a refusal come back as those built-in errors (400, 401, 403), never as an unreadable body.
 - Authorization is written once, on the implementation: `Action.implement(actions, handlers, before)`. Every surface that serves it runs the rule before each handler, so no surface can leave it out and no handler repeats the access policy. Authentication is native router middleware, provided around the HTTP and MCP layers like any other.
 - Every action states whether it reads or writes (`access`), so that rule reads the contract instead of a hand-maintained list of mutation names.
 - A handler or rule that needs a request identity can't be served without authentication that provides it: it is a type error. Public and authenticated routes share one binding, one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.

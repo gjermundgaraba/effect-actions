@@ -55,8 +55,8 @@ const localServices: [
   Equal<Command.Services<typeof localGroup>, Build | OneRequest | TwoRequest>,
 ] = [true, true, true];
 
-// Any implementation may refuse: every local command fails with `Refusal`, beside the
-// action's own failures and invalid input, whatever its hook.
+// Any implementation may refuse, and any handler fail with a built-in error: every local
+// command fails with `BuiltIn`, beside the action's own failures, whatever its hook.
 const forbid = () => Effect.fail(new Action.Forbidden());
 
 const forbidding = Action.implement(One, ({ value }) => Effect.succeed(value), forbid);
@@ -75,11 +75,11 @@ const refusing = ActionCli.command(
   { render: (output) => output.toUpperCase() },
 );
 
-// Failures are the action's, the implementation hook's and the CLI's own encoding error.
+// Failures are the action's, the built-in ones and the CLI's own encoding error.
 const refusalErrors: [
-  Equal<Command.Error<typeof localOne>, Action.Refusal | Schema.SchemaError>,
-  Equal<Command.Error<typeof localGroup>, Action.Refusal | Schema.SchemaError>,
-  Equal<Command.Error<typeof refusing>, Action.Refusal | Schema.SchemaError>,
+  Equal<Command.Error<typeof localOne>, Action.BuiltIn | Schema.SchemaError>,
+  Equal<Command.Error<typeof localGroup>, Action.BuiltIn | Schema.SchemaError>,
+  Equal<Command.Error<typeof refusing>, Action.BuiltIn | Schema.SchemaError>,
 ] = [true, true, true];
 
 // The hook's services are the command's too.
@@ -230,8 +230,6 @@ const Erring = Action.make("erring", {
 
 const Bound = ActionHttp.make([Plain, Erring]);
 
-type BuiltIn = Action.InvalidInput | Action.Refusal;
-
 type Transport = HttpClientError.HttpClientError | Schema.SchemaError;
 
 const boundPlain = ActionCli.command(Bound, Plain);
@@ -241,9 +239,9 @@ const boundErring = ActionCli.command(Bound, Erring);
 const boundAll = ActionCli.make(Bound, { name: "remote" });
 
 const remoteErrors: [
-  Equal<Command.Error<typeof boundPlain>, BuiltIn | Transport>,
-  Equal<Command.Error<typeof boundErring>, Gone | BuiltIn | Transport>,
-  Equal<Command.Error<typeof boundAll>, Gone | BuiltIn | Transport>,
+  Equal<Command.Error<typeof boundPlain>, Action.BuiltIn | Transport>,
+  Equal<Command.Error<typeof boundErring>, Gone | Action.BuiltIn | Transport>,
+  Equal<Command.Error<typeof boundAll>, Gone | Action.BuiltIn | Transport>,
 ] = [true, true, true];
 
 void remoteErrors;
@@ -258,8 +256,8 @@ const throttledPlain = ActionCli.command(Throttling, Plain);
 const throttledAll = ActionCli.make(Throttling, { name: "remote" });
 
 const bindingErrors: [
-  Equal<Command.Error<typeof throttledPlain>, Throttled | BuiltIn | Transport>,
-  Equal<Command.Error<typeof throttledAll>, Throttled | Gone | BuiltIn | Transport>,
+  Equal<Command.Error<typeof throttledPlain>, Throttled | Action.BuiltIn | Transport>,
+  Equal<Command.Error<typeof throttledAll>, Throttled | Gone | Action.BuiltIn | Transport>,
 ] = [true, true];
 
 void bindingErrors;

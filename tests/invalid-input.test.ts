@@ -232,6 +232,31 @@ const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.Cal
 
 const mcpRequest = (value: Schema.Json) => rawToolCall("echo", { value });
 
+it("answers a handler's own InvalidInput as declared, over HTTP and MCP", async () => {
+  const app = Action.implement(Echo, ({ value }) =>
+    value > 10
+      ? Effect.fail(new Action.InvalidInput({ message: "Too large" }))
+      : Effect.succeed(value),
+  );
+
+  const web = serve(
+    Layer.merge(
+      ActionHttp.layer(Http, app),
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+    ),
+  );
+
+  const http = await web.handler(request(11));
+  expect(http.status).toBe(400);
+  expect(await invalidInput(http)).toBe("Too large");
+
+  const { result } = decodeMcp(await (await web.handler(mcpRequest(11))).json());
+  expect(result.isError).toBe(true);
+  expect(result.content).toEqual([
+    { type: "text", text: '{"_tag":"InvalidInput","message":"Too large"}' },
+  ]);
+});
+
 it("keeps MCP's native argument and result handling", async () => {
   let calls = 0;
 

@@ -175,7 +175,6 @@ describe("the pre-handler hook", () => {
     const Handled = Action.make("handled", {
       description: "Refused by its handler",
       access: "write",
-      errors: [Action.Forbidden],
     });
 
     const app = Action.implement(
@@ -235,7 +234,6 @@ describe("the pre-handler hook", () => {
     const Reporting = Action.make("reporting", {
       description: "Reports progress, then refuses",
       access: "write",
-      errors: [Action.Forbidden],
     });
 
     // Opened once the test has the response: the refusal comes only after it has started.

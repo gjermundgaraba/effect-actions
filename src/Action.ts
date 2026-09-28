@@ -1,7 +1,7 @@
 import { Effect, Predicate, Schema } from "effect";
-import { isObjects } from "effect/SchemaAST";
 import type { Scope } from "effect";
 import { assertDistinct, assertName, assertOwnTags } from "./internal/actions.js";
+import type { BuiltIn } from "./internal/errors.js";
 import {
   type Before,
   type Bound,
@@ -30,19 +30,15 @@ type Codec = Schema.Codec<unknown, unknown, never, never>;
 type Fields = { readonly [key: string]: Codec };
 
 /**
- * An object without fields: an action without arguments, `{}` or `Schema.Struct({})` given
- * or not. Strict, unlike `Schema.Struct({})` itself, which accepts any value but `null`; its
- * JSON Schema is the object root MCP requires.
+ * An object without fields: an action without arguments, `{}` given or not. Effect's own
+ * `Tool.EmptyParams`: strict, unlike `Schema.Struct({})`, which accepts any value but `null`,
+ * and the object root MCP requires.
  */
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
-/** The schema a `Codec | Fields` option stands for: `NoInput` for no fields, in a struct or not. */
+/** The schema a `Codec | Fields` option stands for: a schema itself, `NoInput` for no fields. */
 type CodecOf<S extends Codec | Fields> = S extends Codec
-  ? S extends Schema.Struct<infer F>
-    ? keyof F extends never
-      ? typeof NoInput
-      : S
-    : S
+  ? S
   : S extends Schema.Struct.Fields
     ? keyof S extends never
       ? typeof NoInput
@@ -68,13 +64,22 @@ export interface Hints {
   readonly openWorld?: boolean;
 }
 
-/** The refusals every surface answers with; see `internal/errors`. */
-export { Forbidden, InvalidInput, type Refusal, Unauthenticated } from "./internal/errors.js";
+/**
+ * The failures every surface declares and any handler may fail with, and the refusals among
+ * them; see `internal/errors`.
+ */
+export {
+  type BuiltIn,
+  Forbidden,
+  InvalidInput,
+  type Refusal,
+  Unauthenticated,
+} from "./internal/errors.js";
 
 /** What `make` needs to define an action. */
 export interface Options {
   readonly description: string;
-  /** A schema or struct fields. Omit for an action without arguments: `{}`, `Schema.Struct({})`. */
+  /** A schema or struct fields. Omit, or give `{}`, for an action without arguments. */
   readonly input?: Codec | Fields | undefined;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields | undefined;
@@ -153,31 +158,18 @@ export interface Action<
 /** Any action, with its schemas erased. */
 export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
 
-/** Receives decoded input; may fail only with the declared errors. */
+/** Receives decoded input; may fail only with the declared errors and the built-in ones. */
 export type Handler<A extends Any, R = never> = (
   input: A["input"]["Type"],
-) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"], R>;
+) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | BuiltIn, R>;
 
 /**
- * `Schema.Struct({})` as written, with no check or transformation of its own: an object
- * without fields, as `{}` is.
- */
-const isEmptyStruct = ({ ast }: Codec): boolean =>
-  isObjects(ast) &&
-  ast.propertySignatures.length === 0 &&
-  ast.indexSignatures.length === 0 &&
-  ast.checks === undefined &&
-  ast.encoding === undefined;
-
-/**
- * The schema an option stands for. An empty struct keeps its annotations, such as an
- * `httpApiStatus` or a description; fields keyed by symbols are fields too, as in a struct.
+ * The schema an option stands for: a schema as given, `NoInput` for no fields, or the struct
+ * of the fields, which may be keyed by symbols, as in a struct.
  */
 const codecOf = (schema: Codec | Fields): Codec =>
   Schema.isSchema(schema)
-    ? isEmptyStruct(schema)
-      ? NoInput.annotate(schema.ast.annotations ?? {})
-      : schema
+    ? schema
     : Reflect.ownKeys(schema).length === 0
       ? NoInput
       : Schema.Struct(schema);

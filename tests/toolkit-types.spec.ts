@@ -62,10 +62,10 @@ const Fetch = Action.make("fetch", {
 
 const fetched = ActionToolkit.make(Action.implement(Fetch, () => Effect.succeed(""))).toolkit;
 
-// Every tool declares its action's errors plus the refusals a `before` hook may fail with.
+// Every tool declares its action's errors plus the built-in ones.
 const toolFailures: [
-  Equal<Tool.Failure<typeof fetched.tools.fetch>, Gone | Action.Unauthenticated | Action.Forbidden>,
-  Equal<Tool.Failure<typeof binding.toolkit.tools.named>, Action.Refusal>,
+  Equal<Tool.Failure<typeof fetched.tools.fetch>, Gone | Action.BuiltIn>,
+  Equal<Tool.Failure<typeof binding.toolkit.tools.named>, Action.BuiltIn>,
 ] = [true, true];
 
 void toolFailures;
