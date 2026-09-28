@@ -62,7 +62,7 @@ by the host. Success output is encoded; failures remain failures of the command 
 ## Canonical
 
 ```ts
-import { Console, Effect, Logger } from "effect";
+import { Cause, Console, Effect, Logger, Runtime } from "effect";
 import { Command } from "effect/unstable/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
@@ -75,7 +75,12 @@ import { double } from "./handlers.js";
 const command = ActionCli.command(double, Double);
 
 Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
-  Effect.tapCause((cause) => Console.error(cause)),
+  // Report a failure as runMain would, but on stderr, and none the CLI has printed.
+  Effect.tapCause((cause) =>
+    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
+      ? Effect.void
+      : Console.error(Cause.pretty(cause)),
+  ),
   Effect.provideService(Logger.LogToStderr, true),
   // No remote caller to authenticate: the host supplies the identity the hook reads.
   Effect.provideService(CurrentActor, actors.alice),
@@ -88,7 +93,7 @@ Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
 
 ```ts
 import { Command } from "effect/unstable/cli";
-import { Console, Effect, Logger } from "effect";
+import { Cause, Console, Effect, Logger, Runtime } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
@@ -104,7 +109,12 @@ Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
     HttpClient.HttpClient,
     HttpClient.mapRequest(HttpClientRequest.prependUrl("http://127.0.0.1:3000")),
   ),
-  Effect.tapCause((cause) => Console.error(cause)),
+  // Report a failure as runMain would, but on stderr, and none the CLI has printed.
+  Effect.tapCause((cause) =>
+    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
+      ? Effect.void
+      : Console.error(Cause.pretty(cause)),
+  ),
   Effect.provideService(Logger.LogToStderr, true),
   Effect.provide(NodeHttpClient.layerUndici),
   Effect.provide(NodeServices.layer),

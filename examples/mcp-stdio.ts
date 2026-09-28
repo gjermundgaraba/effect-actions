@@ -1,5 +1,5 @@
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Console, Effect, Logger, Schema } from "effect";
+import { Cause, Console, Effect, Runtime, Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 
@@ -14,10 +14,14 @@ const status = Action.implement(Status, () =>
 );
 
 // Serves until the host closes stdin, then exits 0. Protocol messages use stdout
-// exclusively; runtime diagnostics remain on stderr.
+// exclusively; runStdio sends Effect logs to stderr.
 ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
   Effect.provide(NodeStdio.layer),
-  Effect.tapCause((cause) => Console.error(cause)),
-  Effect.provideService(Logger.LogToStderr, true),
+  // Report a failure as runMain would, but on stderr.
+  Effect.tapCause((cause) =>
+    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
+      ? Effect.void
+      : Console.error(Cause.pretty(cause)),
+  ),
   NodeRuntime.runMain({ disableErrorReporting: true }),
 );

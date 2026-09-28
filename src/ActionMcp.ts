@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Fiber, Layer } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Logger } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
@@ -101,9 +101,9 @@ export function layerHttp(apps: Served, options: LayerHttpOptions) {
  * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates: the whole program of an MCP
  * subprocess, which succeeds when the host closes its side. A signal interrupts it.
  *
- * The host supplies the `Stdio` service and the identity. Arguments are tool input only
- * and never establish request identity or authority; each implementation's `before` hook
- * runs.
+ * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
+ * `Stdio` service and the identity. Arguments are tool input only and never establish
+ * request identity or authority; each implementation's `before` hook runs.
  */
 export function runStdio<const Apps extends Served>(
   implementations: Apps,
@@ -121,15 +121,15 @@ export function runStdio(apps: Served, options: Options) {
 
   // The native transport ends by interrupting the fiber that built it once the host closes
   // its side. Built in a child, that is a normal end, while an interruption of the program
-  // itself, such as a signal, stays one.
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const served = yield* Effect.forkScoped(Effect.andThen(Layer.build(transport), Effect.never));
-      const exit = yield* Fiber.await(served);
-
-      if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
-        return yield* Effect.failCause(exit.cause);
-      }
-    }),
+  // itself, such as a signal, stays one. Stdout carries the protocol, so logs go to stderr.
+  return Layer.launch(transport).pipe(
+    Effect.provideService(Logger.LogToStderr, true),
+    Effect.forkChild,
+    Effect.flatMap(Fiber.await),
+    Effect.flatMap((exit) =>
+      Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+        ? Effect.failCause(exit.cause)
+        : Effect.void,
+    ),
   );
 }

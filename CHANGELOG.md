@@ -57,6 +57,7 @@ ActionHttp.layer(Http, users);
 | `ActionCatalog`                                                  | `OpenApi.fromApi(Http.api)`, or an MCP endpoint's `tools/list`                                        |
 | `ActionMcp.Options` of `layerHttp`                               | `ActionMcp.LayerHttpOptions`; `ActionMcp.Options` is the server's, which both functions take          |
 | `Layer.launch(ActionMcp.layerStdio(implementations, options))`   | `ActionMcp.runStdio(implementations, options)`, which succeeds when the host closes stdin             |
+| `Logger.LogToStderr` provided to an stdio server                 | Nothing: `runStdio` sends Effect logs to stderr                                                       |
 | Span `<group>.<action>`, attribute `action.group`                | Span `<action>`                                                                                       |
 
 Behavior that changes without a rename:

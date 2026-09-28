@@ -107,7 +107,7 @@ export const routes = Layer.mergeAll(
 
 ```ts
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Console, Effect, Logger, Schema } from "effect";
+import { Cause, Console, Effect, Runtime, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
@@ -122,11 +122,15 @@ const status = Action.implement(Status, () =>
 );
 
 // Serves until the host closes stdin, then exits 0. Protocol messages use stdout
-// exclusively; runtime diagnostics remain on stderr.
+// exclusively; runStdio sends Effect logs to stderr.
 ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
   Effect.provide(NodeStdio.layer),
-  Effect.tapCause((cause) => Console.error(cause)),
-  Effect.provideService(Logger.LogToStderr, true),
+  // Report a failure as runMain would, but on stderr.
+  Effect.tapCause((cause) =>
+    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
+      ? Effect.void
+      : Console.error(Cause.pretty(cause)),
+  ),
   NodeRuntime.runMain({ disableErrorReporting: true }),
 );
 ```
@@ -149,7 +153,7 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 - Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing. A tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
 - `runStdio` is the subprocess's whole program: it serves until the host closes stdin, then succeeds, so the process exits 0. A signal interrupts it, as any program. Provide `Stdio` and its services to it and run it, `NodeRuntime.runMain`.
-- stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
+- stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity. `runStdio` sends Effect logs to stderr, since stdout carries the protocol; keep `console.log` and other writes off stdout.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 - Every tool declares the refusals ([guarantees.md](guarantees.md#wire-behavior)). A `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error.
 - The hook runs after the native server decodes the tool's arguments.
@@ -165,7 +169,7 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
 - Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler or hook yields a request service that no middleware around the endpoint provides. Provide the authentication, `Layer.provide(authenticate)`, or other middleware (`Layer.provide(middleware.layer)`) on that `layerHttp`.
 - A public tool demands credentials: it shares an endpoint with authenticated ones, and the authentication covers the whole endpoint. Serve it on an endpoint of its own.
-- Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.
+- Client reports a broken transport from a stdio subprocess: something wrote to stdout outside Effect's loggers, such as `console.log`. Remove it, or log with `Effect.log`.
 - Older MCP client cannot connect over HTTP: a request answers `400` with JSON-RPC error `-32020`. The client speaks a 2025 revision, which opens with `initialize`. Only 2026-07-28 is served over HTTP; pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
 - Client disconnects right after `initialize` over stdio: it speaks a revision older than 2025-06-18, so the server counter-offered 2025-11-25, which it does not support. Upgrade the client.
 - An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.

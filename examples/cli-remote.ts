@@ -1,5 +1,5 @@
 import { Command } from "effect/unstable/cli";
-import { Console, Effect, Logger } from "effect";
+import { Cause, Console, Effect, Logger, Runtime } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
@@ -15,7 +15,12 @@ Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
     HttpClient.HttpClient,
     HttpClient.mapRequest(HttpClientRequest.prependUrl("http://127.0.0.1:3000")),
   ),
-  Effect.tapCause((cause) => Console.error(cause)),
+  // Report a failure as runMain would, but on stderr, and none the CLI has printed.
+  Effect.tapCause((cause) =>
+    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
+      ? Effect.void
+      : Console.error(Cause.pretty(cause)),
+  ),
   Effect.provideService(Logger.LogToStderr, true),
   Effect.provide(NodeHttpClient.layerUndici),
   Effect.provide(NodeServices.layer),
