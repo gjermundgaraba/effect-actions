@@ -29,16 +29,14 @@ import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 ```
 
 Every module imports from the `effect` package only. There is no package root, so importing
-`Action` or `ActionHttp` never pulls in an MCP server or the AI toolkit; `test:package` bounds
-what a client adds to a browser bundle.
+`Action` or `ActionHttp` never pulls in an MCP server or the AI toolkit.
 
 ## Browser
 
 A browser app calls the server with `ActionHttp.client`. It needs the contracts and the HTTP
 binding, and nothing else of the server. The package declares `"sideEffects": false`, so a
-bundle of a client keeps `Action`, `ActionHttp.make` and `ActionHttp.client`, under 2 KB
-gzipped beyond Effect's own `HttpApiClient` with Vite or esbuild, and drops every server
-module. Keep the contracts and the binding in modules that import no server code, and import
+bundle of a client keeps `Action`, `ActionHttp.make` and `ActionHttp.client`, and drops every
+server module. Keep the contracts and the binding in modules that import no server code, and import
 those alone from the page, as the minimal program does:
 
 ```text

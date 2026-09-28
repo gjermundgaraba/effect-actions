@@ -10,7 +10,7 @@ Requires a supported Node.js version (24 LTS recommended) and [Vite+](https://vi
 vp install
 vp check            # format, lint (type-aware), type check, compile-time assertions
 vp test             # unit, transport, docs and skill-sync tests
-vp run test:package # build a tarball, type-check it in an isolated consumer, bound its browser client
+vp run test:package # build a tarball, type-check and run it in an isolated consumer
 vp run example      # the authenticated example server on 127.0.0.1:3000
 vp run docs:sync    # regenerate skills/effect-actions from docs/
 ```
