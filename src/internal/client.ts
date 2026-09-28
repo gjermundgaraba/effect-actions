@@ -16,17 +16,13 @@ export type Options = Omit<
 >;
 
 /**
- * Whether a call of `A` may leave its input out: when `{}` is a valid input, such as for an
- * action declared without `input`. Omitting it sends `{}`. The client and `Testing.mcpClient`
- * share this rule.
+ * A call of `A` answering `R`. It may leave its input out when `{}` is a valid input, such
+ * as for an action declared without `input`, and then sends `{}`. The client and
+ * `Testing.mcpClient` share this rule.
  */
-export type OmittableInput<A extends Action.Any> = {} extends A["input"]["Type"] ? true : false;
-
-/** A call of `A` answering `R`, whose argument follows `OmittableInput`. */
-export type Call<A extends Action.Any, R> =
-  OmittableInput<A> extends true
-    ? (...input: [] | [input: A["input"]["Type"]]) => R
-    : (input: A["input"]["Type"]) => R;
+export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
+  ? (...input: [] | [input: A["input"]["Type"]]) => R
+  : (input: A["input"]["Type"]) => R;
 
 /** An error schema the binding declares on every endpoint. */
 type BindingError = Action.Any["errors"][number];

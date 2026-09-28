@@ -357,6 +357,16 @@ describe("projection boundaries", () => {
       ?.responses;
 
     expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
+
+    // Declared twice, a status would list its error twice, as an `anyOf`.
+    for (const [status, error] of [
+      ["401", "UnauthenticatedEncoded"],
+      ["403", "ForbiddenEncoded"],
+    ] as const) {
+      expect(responses?.[status]?.content?.["application/json"]?.schema).toEqual({
+        $ref: `#/components/schemas/${error}`,
+      });
+    }
   });
 
   it("reports a declared error as its encoding over MCP, message field included", async () => {

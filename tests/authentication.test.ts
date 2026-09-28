@@ -308,6 +308,7 @@ describe("Authentication.make", () => {
   });
 
   it("refuses a scope that is no OAuth scope token", () => {
+    expect(new Action.Forbidden({ scopes: ["users:write"] }).scopes).toEqual(["users:write"]);
     expect(() => new Action.Forbidden({ scopes: ["has space"] })).toThrow();
   });
 

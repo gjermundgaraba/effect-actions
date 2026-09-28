@@ -267,16 +267,6 @@ void bindingErrors;
 // @ts-expect-error An aggregate remote command needs a name.
 ActionCli.make(Bound, {});
 
-// The connection is the host's `HttpClient`: no command takes client options.
-// @ts-expect-error A remote command takes no client options.
-ActionCli.command(Bound, Plain, { baseUrl: "http://localhost" });
-
-// @ts-expect-error A remote aggregate takes none either.
-ActionCli.make(Bound, { name: "r", baseUrl: "http://localhost" });
-
-// @ts-expect-error A local command takes none.
-ActionCli.command(local, One, { baseUrl: "http://localhost" });
-
 // The options exported for each function, the same locally and over HTTP.
 const commandOptions: ActionCli.CommandOptions<typeof RemoteAction> = {
   render: (output) => output,

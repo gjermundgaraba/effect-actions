@@ -8,7 +8,7 @@ import type { Equal } from "./equal.js";
 class Principal extends Context.Service<Principal, string>()("toolkit-types/Principal") {}
 
 const Named = Action.make("named", {
-  description: "A read-only tool.",
+  description: "A named tool.",
   access: "write",
   success: Schema.String,
 });

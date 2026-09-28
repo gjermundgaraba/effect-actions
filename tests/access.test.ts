@@ -275,6 +275,7 @@ describe("the pre-handler hook", () => {
     const text = await reply.text();
     expect(text).toContain('"method":"notifications/progress"');
     expect(text).toContain('"isError":true');
+    expect(text).toContain(String.raw`\"_tag\":\"Forbidden\"`);
   });
 
   it("runs over the native Toolkit", async () => {

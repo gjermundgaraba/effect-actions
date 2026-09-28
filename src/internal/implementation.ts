@@ -44,8 +44,6 @@ export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>
 /** The bound handlers of one implementation, under a key private to it. */
 type BoundKey = Context.Key<Bound, Bound>;
 
-let implementations = 0;
-
 /**
  * Actions bound to their handlers and their hook: everything one `Action.implement` call
  * binds.
@@ -79,10 +77,10 @@ export class Implementation<
     build: Effect.Effect<Bound, EX, RX | Scope.Scope>,
     before: ErasedBefore | undefined,
   ) {
-    // A string key is a service's identity, so it is unique to this implementation
-    // even across copies of this module.
+    // A string key is a service's identity, so a random one is unique to this
+    // implementation even across copies of this module.
     this.#key = Context.Service<Bound>(
-      `effect-actions/Implementation/${(implementations += 1)}/${Math.random().toString(36).slice(2)}`,
+      `effect-actions/Implementation/${Math.random().toString(36).slice(2)}`,
     );
     // Each handler goes behind the hook once, when the handlers are built.
     this.#layer = Layer.effect(

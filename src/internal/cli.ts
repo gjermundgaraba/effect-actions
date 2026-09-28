@@ -317,7 +317,8 @@ const inputConfig = <A extends Action.Any>(
   return {
     flags: { input: inputFlag(encoded) },
     positional: [],
-    // With no input, `{}` is decoded afresh each run so invocations never share a value.
+    // `--input` left off: `{}`, the empty value of a record input, and otherwise the
+    // schema's own error. A fresh one each run, so invocations never share a value.
     decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
   };
 };
