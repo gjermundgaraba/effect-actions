@@ -134,7 +134,7 @@ export function command<const H extends AnyHttp, A extends H["actions"][number]>
   options?: CommandOptions<A>,
 ): RemoteCommand<H, A>;
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
-  apps: Apps,
+  implementations: Apps,
   action: A,
   options?: CommandOptions<A>,
 ): LocalCommand<Selected<Member<Apps>, A>, A>;
@@ -157,7 +157,7 @@ export function command(
  * takes, by action name.
  */
 export function make<const Apps extends Served>(
-  apps: Apps,
+  implementations: Apps,
   options: NoInfer<Options<ActionOf<Member<Apps>>>>,
 ): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, {}>;
 export function make<const H extends AnyHttp>(

@@ -73,7 +73,7 @@ interface ErasedTools {
  * call must be approved for; it authorizes nothing, which stays the `before` hook's.
  */
 export function make<const Apps extends Served>(
-  apps: Apps,
+  implementations: Apps,
   options?: Options<ActionOf<Member<Apps>>>,
 ): Tools<ToolkitTools<Member<Apps>>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
 export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {

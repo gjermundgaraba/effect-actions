@@ -10,12 +10,12 @@ nothing locally.
 
 Import `@gjermundgaraba/effect-actions/ActionCli`.
 
-| API                               | Purpose                                                             |
-| --------------------------------- | ------------------------------------------------------------------- |
-| `command(apps, action, options?)` | One action, selected by its contract, as a native Effect `Command`. |
-| `command(http, action, options?)` | One action of an HTTP binding, called over HTTP.                    |
-| `make(apps, options)`             | Every implemented action as a subcommand of one aggregate command.  |
-| `make(http, options)`             | Every action of the binding as a subcommand, called over HTTP.      |
+| API                                          | Purpose                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------- |
+| `command(implementations, action, options?)` | One action, selected by its contract, as a native Effect `Command`. |
+| `command(http, action, options?)`            | One action of an HTTP binding, called over HTTP.                    |
+| `make(implementations, options)`             | Every implemented action as a subcommand of one aggregate command.  |
+| `make(http, options)`                        | Every action of the binding as a subcommand, called over HTTP.      |
 
 | Option                  | Meaning                                                                                                      |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -50,7 +50,7 @@ flag is optional and takes its value without the `null` that `Schema.optional` e
 (`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
 
 A field listed in `positional` is an argument instead of a flag, parsed as its flag would
-be, a boolean taking `true` or `false`: `command(apps, Inspect, { positional: ["path"] })`
+be, a boolean taking `true` or `false`: `command(implementations, Inspect, { positional: ["path"] })`
 reads `inspect README.md --lines 10`. Arguments are read in the listed order, not the
 input's. An optional field's argument is optional.
 
@@ -116,8 +116,8 @@ Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bear
 
 ## Rules
 
-- `command(apps, action)` selects the implementation of `action` among `apps` (one implementation or a list) by contract identity, not by name: two contracts that share a name select their own implementations. The action must be one of the implementations' actions: the types refuse an action of another shape, and the runtime check refuses an equal-looking one.
-- `make(apps, { name })` puts every implemented action under one command named `name`, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). `commands` gives one subcommand the options `command` takes, by its action's name, typed by that action; a key no action names is refused. That includes actions no HTTP binding or MCP endpoint serves. Subcommand names must be distinct after kebab-casing; two actions whose names collide are refused.
+- `command(implementations, action)` selects the implementation of `action` among `implementations` (one implementation or a list) by contract identity, not by name: two contracts that share a name select their own implementations. The action must be one of the implementations' actions: the types refuse an action of another shape, and the runtime check refuses an equal-looking one.
+- `make(implementations, { name })` puts every implemented action under one command named `name`, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). `commands` gives one subcommand the options `command` takes, by its action's name, typed by that action; a key no action names is refused. That includes actions no HTTP binding or MCP endpoint serves. Subcommand names must be distinct after kebab-casing; two actions whose names collide are refused.
 - Flags are values in their encoded form: `double --value 21` for a `FiniteFromString` field, which is string-encoded; a value flag takes the encoded JSON, or text. The action's schema then decodes the assembled input before dispatch.
 - A field that is required once encoded has a required flag. Omitted, the parser refuses the command with `Required flag missing` and shows its help, and the implementation is not built. A required boolean is the exception: omitted, its switch is `false`.
 - An optional field's flag is optional. Omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
@@ -143,7 +143,7 @@ Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bear
 - Also thrown by `command`, and refused by the types first: `Not an input field: <field>`, or `Positional arguments need named input fields` for an input that is not a struct.
 - `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name. Examples are two input fields with the same kebab-case name (`userId`, `user_id`), or a `json` field beside `render`'s `--json`. Rename the field, or drop `render`.
 - A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
-- Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `apps`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
+- Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `implementations`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
 - `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the host's client prepends no URL, and routes are relative outside `Testing.layer`. Connection refused: the prepended URL is wrong. 401 `Unauthenticated`: add credentials to the host's client; the command adds no headers of its own.
 - `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Give one a `name` in `commands`, or aggregate them under separate `make` commands.

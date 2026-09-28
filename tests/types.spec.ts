@@ -831,7 +831,9 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
 
   const clientOptions: ActionHttp.ClientOptions = { baseUrl: "http://localhost" };
-  const httpOptions: ActionMcp.HttpOptions = { name: "test", version: "0" };
+  const httpOptions: ActionMcp.LayerHttpOptions = { name: "test", version: "0" };
+  const serverOptions: ActionMcp.Options = { name: "test", version: "0" };
+  const shared: ActionMcp.LayerHttpOptions = serverOptions;
   const call: Testing.McpClientOptions = { url: "/mcp" };
   const request: Testing.McpRequestOptions = { url: "/mcp", headers: {} };
 
@@ -847,5 +849,17 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   const struct = Action.make("struct", { ...options, input: Schema.Struct({}) });
   const noStruct: Equal<(typeof struct)["input"], (typeof WhoAmI)["input"]> = true;
 
-  void [binding, app, hook, clientOptions, httpOptions, call, request, auth, noInput, noStruct];
+  void [
+    binding,
+    app,
+    hook,
+    clientOptions,
+    httpOptions,
+    call,
+    request,
+    auth,
+    noInput,
+    noStruct,
+    shared,
+  ];
 };

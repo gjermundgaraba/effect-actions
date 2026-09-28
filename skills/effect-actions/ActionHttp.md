@@ -10,16 +10,16 @@ middleware the host provides around it, authentication included; clients call it
 
 Import `@gjermundgaraba/effect-actions/ActionHttp`.
 
-| API                       | Purpose                                                                                      |
-| ------------------------- | -------------------------------------------------------------------------------------------- |
-| `make(actions, options?)` | Bind a list of actions; returns `Http`.                                                      |
-| `Http.actions`            | The exact bound actions.                                                                     |
-| `Http.errors`             | The errors every endpoint declares besides its action's own.                                 |
-| `Http.api`                | Native Effect `HttpApi` for clients and OpenAPI.                                             |
-| `layer(Http, apps)`       | Mount the routes of these implementations, each behind its `before` hook.                    |
-| `client(Http, options?)`  | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
+| API                            | Purpose                                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------- |
+| `make(actions, options?)`      | Bind a list of actions; returns a `Binding`.                                                 |
+| `Http.actions`                 | The exact bound actions.                                                                     |
+| `Http.errors`                  | The errors every endpoint declares besides its action's own.                                 |
+| `Http.api`                     | Native Effect `HttpApi` for clients and OpenAPI.                                             |
+| `layer(Http, implementations)` | Mount the routes of these implementations, each behind its `before` hook.                    |
+| `client(Http, options?)`       | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
 
-Exported types: `Http`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make` and `ClientOptions` of `client`.
+Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make` and `ClientOptions` of `client`.
 
 | Option                      | Meaning                                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -158,7 +158,7 @@ success, failure or required services, which the method types cannot follow; use
 
 - HTTP serves exactly the actions passed to `make`; an action has no HTTP switch. To keep an action off HTTP, leave it out of the list and serve it elsewhere (MCP, Toolkit, CLI).
 - Action names are unique within a binding. Two bindings with different prefixes may reuse a name and be served side by side, but not combined into one `HttpApi`.
-- `layer(Http, apps)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape.
+- `layer(Http, implementations)` mounts the routes of every action of the implementations it receives. Each action must be the exact contract value passed to `make`: an equal-looking action is refused at runtime, and the types refuse only an action of another shape.
 - An action may be served once per call. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
 - The binding is plain data: `layer` and `client` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
 - Middleware, authentication included, is per layer call: provided to a `layer` call, it covers that call's routes, before decoding, and no others. Public and authenticated actions go in separate `layer` calls over the same binding, merged with `Layer.mergeAll`; they still share one binding, one document and one client.

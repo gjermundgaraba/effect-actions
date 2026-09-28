@@ -17,20 +17,22 @@ import {
 } from "./internal/implementation.js";
 
 /**
- * One Streamable HTTP MCP endpoint: every native `McpServer.layerHttp` option except
- * `protocols` (server information, `allowedOrigins`, `instructions`, `extensions`, ...),
- * with `path` defaulting to `/mcp`.
+ * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option except
+ * `protocols`, the server information, `instructions` and `extensions`.
  */
-export interface HttpOptions extends Omit<
+export type Options = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
+
+/**
+ * One Streamable HTTP MCP endpoint: every native `McpServer.layerHttp` option except
+ * `protocols`, `Options` and `allowedOrigins` among them, with `path` defaulting to `/mcp`.
+ */
+export interface LayerHttpOptions extends Omit<
   Parameters<typeof McpServer.layerHttp>[0],
   "protocols" | "path"
 > {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
 }
-
-/** An MCP subprocess on standard I/O: every native `McpServer.layerStdio` option except `protocols`. */
-export type StdioOptions = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
 
 /**
  * The revisions served over stdio: 2026-07-28 and the stateful revisions a host
@@ -74,8 +76,8 @@ const server = <Out, R>(
  * startup.
  */
 export function layerHttp<const Apps extends Served>(
-  apps: Apps,
-  options: HttpOptions,
+  implementations: Apps,
+  options: LayerHttpOptions,
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
@@ -83,7 +85,7 @@ export function layerHttp<const Apps extends Served>(
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", ToolRequestContext<RequestContext<Member<Apps>>>>
 >;
-export function layerHttp(apps: Served, options: HttpOptions) {
+export function layerHttp(apps: Served, options: LayerHttpOptions) {
   return server(
     toList(apps),
     McpServer.layerHttp({
@@ -104,14 +106,14 @@ export function layerHttp(apps: Served, options: HttpOptions) {
  * runs.
  */
 export function runStdio<const Apps extends Served>(
-  apps: Apps,
-  options: StdioOptions,
+  implementations: Apps,
+  options: Options,
 ): Effect.Effect<
   void,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
   BuildContext<Member<Apps>> | StdioService | ToolRequestContext<RequestContext<Member<Apps>>>
 >;
-export function runStdio(apps: Served, options: StdioOptions) {
+export function runStdio(apps: Served, options: Options) {
   const transport = server(
     toList(apps),
     McpServer.layerStdio({ ...options, protocols: stdioProtocols }),

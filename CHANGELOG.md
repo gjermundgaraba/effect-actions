@@ -34,7 +34,7 @@ ActionHttp.layer(Http, users);
 | `mcp: false`                                                     | Leave the implementation out of `ActionMcp` and `ActionToolkit`                                       |
 | `hints.readOnly`                                                 | `access: "read"`                                                                                      |
 | `ActionHttp.make({ apiPath, errors, schemaError, name }, Group)` | `ActionHttp.make(actions, { prefix? })`: `prefix: "/api/users"` keeps `/api/users/getUser`            |
-| `Http.layer(apps, { before })`                                   | `ActionHttp.layer(Http, apps)`                                                                        |
+| `Http.layer(implementations, { before })`                        | `ActionHttp.layer(Http, implementations)`                                                             |
 | `Http.openApi()`                                                 | `HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`               |
 | `errors`, `schemaError`, `SchemaErrorPolicy` on any surface      | The built-in `Action.InvalidInput`, `Action.Unauthenticated` and `Action.Forbidden`                   |
 | `before` on any surface, `ActionToolkit.make`'s second argument  | `Action.implement(actions, handlers, before)`                                                         |
@@ -45,17 +45,18 @@ ActionHttp.layer(Http, users);
 | A refusal built by hand outside the router                       | `Authentication.refusal(error, protectedResource?, authorization?)`                                   |
 | An `InsufficientScope` error and a hand-built challenge          | `new Action.Forbidden({ message, scopes: [scope] })`                                                  |
 | `bearerToken` succeeding with an `Option`                        | `bearerToken` failing with `Unauthenticated`; `Effect.option(bearerToken)` where it is optional       |
+| The `ActionHttp.Http` type                                       | `ActionHttp.Binding`                                                                                  |
 | `ActionHttpClient.make`, `ActionHttpClient.Client`               | `ActionHttp.client`, `ActionHttp.Client`                                                              |
 | `ActionHttpClient.promise`                                       | `Effect.runPromise` of an `ActionHttp.client` call, with `FetchHttpClient.layer`                      |
 | `client.getUser({ payload })`                                    | `client.getUser(input)`                                                                               |
 | `ActionCliClient.command(Http, A, { connection: { baseUrl } })`  | `ActionCli.command(Http, A)` on a host `HttpClient` that prepends the URL                             |
-| `ActionCli.command(app, "name")`, `ActionCli.group(app)`         | `ActionCli.command(apps, Action)`, `ActionCli.make(apps, { name })`                                   |
+| `ActionCli.command(app, "name")`, `ActionCli.group(app)`         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`             |
 | `parameters`, the `input` mapper, `--input-file`                 | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct |
 | `Testing.serve`, `Testing.httpClient`, `TestingClient`           | `Testing.layer(routes)`, an in-memory `HttpClient` for every client                                   |
 | `Testing.mcpCall(server, { name, arguments })`                   | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`                  |
 | `ActionCatalog`                                                  | `OpenApi.fromApi(Http.api)`, or an MCP endpoint's `tools/list`                                        |
-| `ActionMcp.Options`                                              | `ActionMcp.HttpOptions`                                                                               |
-| `Layer.launch(ActionMcp.layerStdio(apps, options))`              | `ActionMcp.runStdio(apps, options)`, which succeeds when the host closes stdin                        |
+| `ActionMcp.Options` of `layerHttp`                               | `ActionMcp.LayerHttpOptions`; `ActionMcp.Options` is the server's, which both functions take          |
+| `Layer.launch(ActionMcp.layerStdio(implementations, options))`   | `ActionMcp.runStdio(implementations, options)`, which succeeds when the host closes stdin             |
 | Span `<group>.<action>`, attribute `action.group`                | Span `<action>`                                                                                       |
 
 Behavior that changes without a rename:
@@ -125,11 +126,11 @@ Behavior that changes without a rename:
 - A CLI flag's help text is its field's schema description.
 - `ActionCli.make(target, { name, commands })` gives a subcommand the options `command` takes,
   by action name: `commands: { readFile: { positional: ["path"], render } }`.
-- `ActionCli.command(apps, Action, { positional: ["path"] })` takes the listed fields of a
-  struct input as positional arguments, locally and over HTTP.
-- `ActionToolkit.make(apps, { needsApproval })` sets Effect's native `Tool.needsApproval` of
-  each action's tool, a boolean or a function of each call's input, which `LanguageModel`
-  honors.
+- `ActionCli.command(implementations, Action, { positional: ["path"] })` takes the listed
+  fields of a struct input as positional arguments, locally and over HTTP.
+- `ActionToolkit.make(implementations, { needsApproval })` sets Effect's native
+  `Tool.needsApproval` of each action's tool, a boolean or a function of each call's input,
+  which `LanguageModel` honors.
 - The package declares `"sideEffects": false`, and a browser bundle of `ActionHttp.client`
   keeps only the contracts, the binding and the client. Keep contracts and bindings in modules
   that import no server code ([setup.md](docs/setup.md#browser)).

@@ -9,12 +9,12 @@ JSON-RPC on standard I/O for a subprocess. HTTP speaks MCP 2026-07-28 only; stdi
 
 Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
-| API                        | Purpose                                                                                            |
-| -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `layerHttp(apps, options)` | Serve implementations at a Streamable HTTP endpoint.                                               |
-| `runStdio(apps, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
+| API                                   | Purpose                                                                                            |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `layerHttp(implementations, options)` | Serve implementations at a Streamable HTTP endpoint.                                               |
+| `runStdio(implementations, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
 
-The options, exported as `HttpOptions` and `StdioOptions`, are the native
+The options, exported as `LayerHttpOptions` and `Options` (the server's, which `LayerHttpOptions` extends), are the native
 `McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`. They pass through unchanged; `path` gains a default. Each implementation brings its
 hook ([Action.md](Action.md#implementations)); authentication is middleware the host provides
 around `layerHttp` ([Authentication.md](Authentication.md)).
@@ -28,7 +28,7 @@ around `layerHttp` ([Authentication.md](Authentication.md)).
 | `path`                               | HTTP endpoint path; HTTP only, defaults to `/mcp`.                             |
 | `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only, not CORS configuration.            |
 
-`apps` is one implementation or a list. Every tool declares its action's errors plus the
+`implementations` is one implementation or a list. Every tool declares its action's errors plus the
 built-in `Unauthenticated` and `Forbidden`. Both layers retain the build failures and
 requirements of their builders, plus native
 `IllegalArgumentError`. HTTP needs the router and wraps handler and hook services as request

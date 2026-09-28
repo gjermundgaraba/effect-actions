@@ -108,7 +108,7 @@ type HttpLayer<App> = Layer.Layer<
  * Plain data, so a copy of it, or one made by another installed copy of this package,
  * serves the same; `layer` serves it and `client` calls it.
  */
-export interface Http<Actions extends ReadonlyArray<Action.Any>, E extends Errors = []> {
+export interface Binding<Actions extends ReadonlyArray<Action.Any>, E extends Errors = []> {
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
   /** The errors every endpoint declares besides its action's own. */
@@ -211,11 +211,11 @@ const declared = (error: Declared): ReadonlyArray<Declared> => {
 export function make<const Actions extends ReadonlyArray<Action.Any>, const E extends Errors = []>(
   actions: Actions,
   options?: Options<E>,
-): Http<Actions, E>;
+): Binding<Actions, E>;
 export function make(
   actions: ReadonlyArray<Action.Any>,
   options: Options = {},
-): Http<ReadonlyArray<Action.Any>, Errors> {
+): Binding<ReadonlyArray<Action.Any>, Errors> {
   assertDistinct("action", actions, (action) => action.name);
 
   const errors = options.errors ?? [];
@@ -253,7 +253,7 @@ export function layer<
       | AnyImplementation<H["actions"][number]>
       | ReadonlyArray<AnyImplementation<H["actions"][number]>>
     ),
->(http: H, apps: Apps): HttpLayer<Member<Apps>>;
+>(http: H, implementations: Apps): HttpLayer<Member<Apps>>;
 export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
   // Checked where the binding is served, so a client bundle carries no check of its own.
   assertOwnTags("ActionHttp binding", http.errors);
