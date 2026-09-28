@@ -49,7 +49,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 
 ## Design notes
 
-- HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. The binding's API carries it, so the server and the client share it. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
+- HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. Only `layer`'s own API carries it: a client encodes with Effect's default, dropping a field the input does not declare, as TypeScript lets a wider value through. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
 - MCP over HTTP serves 2026-07-28 only. The stateful revisions work over Effect's HTTP transport, and request identity stays per request, but each `initialize` registers a session that Effect's runtime never deletes, with no expiry and no `DELETE` termination, and any caller holding the session id may use it.
 
 ## Release

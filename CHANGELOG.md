@@ -82,7 +82,7 @@ Behavior that changes without a rename:
   every tool its action's and the three. Any handler may fail with them unlisted. Input that does not decode, malformed JSON included, is a 400
   `InvalidInput` carrying the schema's message. A result that does not encode is an empty 500.
 - HTTP refuses an undeclared input field, nested ones too, with a 400 `InvalidInput` naming
-  its path; 0.7.0 dropped it. A client given one fails with a `SchemaError` before sending.
+  its path; 0.7.0 dropped it. A client drops one when it encodes.
 - `implement` refuses an `errors` entry encoding with a built-in `_tag`, the built-in itself
   included: every surface declares it already, and a client could not tell a look-alike apart.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one

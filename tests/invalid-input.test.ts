@@ -104,8 +104,8 @@ it("describes every issue of the input in the message", async () => {
   expect(message).toContain('at ["right"]');
 });
 
-it("refuses undeclared input fields, nested ones too, on the server and in the client", async () => {
-  const calls = { count: 0 };
+it("refuses undeclared input fields on the server, nested ones too; the client drops them", async () => {
+  const seen: Array<unknown> = [];
 
   const Save = Action.make("save", {
     description: "Save",
@@ -115,7 +115,7 @@ it("refuses undeclared input fields, nested ones too, on the server and in the c
   });
 
   const SaveHttp = ActionHttp.make([Save]);
-  const app = Action.implement(Save, ({ value }) => Effect.sync(() => calls.count++ + value));
+  const app = Action.implement(Save, (input) => Effect.sync(() => seen.push(input)));
   const web = serve(ActionHttp.layer(SaveHttp, app));
 
   const save = (body: Schema.Json) =>
@@ -135,16 +135,16 @@ it("refuses undeclared input fields, nested ones too, on the server and in the c
   expect(nested.status).toBe(400);
   expect(await invalidInput(nested)).toContain('at ["owner"]["role"]');
 
-  // A wider object type-checks, as TypeScript allows; the client refuses it before sending.
-  const wider = { value: 1, owner: { id: "a" }, admin: true };
+  expect(seen).toEqual([]);
 
-  const refused = await Effect.flatMap(httpClient(SaveHttp, web), (client) =>
-    client.save(wider),
-  ).pipe(Effect.flip, Effect.runPromise);
+  // A wider object type-checks, as TypeScript allows; the client sends only the declared fields.
+  const wider = { value: 1, owner: { id: "a", role: "admin" }, admin: true };
 
-  expect(Schema.isSchemaError(refused)).toBe(true);
-  expect(calls.count).toBe(0);
-  expect((await save({ value: 1, owner: { id: "a" } })).status).toBe(200);
+  await Effect.flatMap(httpClient(SaveHttp, web), (client) => client.save(wider)).pipe(
+    Effect.runPromise,
+  );
+
+  expect(seen).toEqual([{ value: 1, owner: { id: "a" } }]);
 });
 
 it("decodes InvalidInput as a typed failure of the client", async () => {

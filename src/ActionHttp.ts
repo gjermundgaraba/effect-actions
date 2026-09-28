@@ -128,7 +128,7 @@ const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> 
 /** An absolute route from path segments. */
 const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
 
-/** A native API of one top-level group of `endpoints`, refusing undeclared payload fields. */
+/** A native API of one top-level group of `endpoints`. */
 function apiOf(
   group: string,
   endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
@@ -142,7 +142,6 @@ function apiOf(
 
   return HttpApi.make("actions")
     .annotate(HttpApi.ParseOptions, { errors: "all" })
-    .annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" })
     .add(first === undefined ? empty : empty.add(first, ...rest));
 }
 
@@ -263,10 +262,12 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
   const actions = servedActions("served action", apps);
   const name = groupOf(http.api).identifier;
 
+  // The server refuses undeclared payload fields; a client, on the binding's own API, drops
+  // them when it encodes, as TypeScript lets a wider value through.
   const api = apiOf(
     name,
     endpointsOf(http, actions).map((endpoint) => endpoint.middleware(SchemaErrors)),
-  );
+  ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
 
   const handlers = Layer.unwrap(
     Effect.map(acquire(apps), (bound) =>
