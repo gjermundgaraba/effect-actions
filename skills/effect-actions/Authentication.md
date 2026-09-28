@@ -13,11 +13,11 @@ module or the handlers.
 
 Import `@gjermundgaraba/effect-actions/Authentication`.
 
-| API                                               | Purpose                                                                                           |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `make(service, authenticate, protectedResource?)` | A router middleware layer providing an identity service per request, or answering with a refusal. |
-| `bearerToken`                                     | The request's bearer token, failing with `Action.Unauthenticated` without one.                    |
-| `refusal(error, protectedResource?)`              | The response `make` answers a refusal with, for a caller outside the router.                      |
+| API                                                  | Purpose                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `make(service, authenticate, protectedResource?)`    | A router middleware layer providing an identity service per request, or answering with a refusal. |
+| `bearerToken`                                        | The request's bearer token, failing with `Action.Unauthenticated` without one.                    |
+| `refusal(error, protectedResource?, authorization?)` | The response `make` answers a refusal with, for a caller outside the router.                      |
 
 `authenticate` is an Effect producing the identity, or failing with `Action.Unauthenticated`,
 `Action.Forbidden`, or the `HttpServerResponse` to send instead. The services it yields, such
@@ -28,13 +28,13 @@ result is the middleware's layer: provide it to the layers whose routes it authe
 `protectedResource` is an OAuth protected resource, which `make` publishes and names in every
 challenge. Exported type: `Options`.
 
-| Protected resource option | Meaning                                                                        |
-| ------------------------- | ------------------------------------------------------------------------------ |
-| `resource`                | Required exact OAuth resource identifier; its path selects the discovery path. |
-| `authorizationServers`    | Required, nonempty: where clients get tokens.                                  |
-| `scopesSupported`         | Optional: every scope the resource accepts, published in discovery.            |
-| `scopesRequired`          | Optional, nonempty: the scopes every 401 names, which a first login requests.  |
-| `resourceName`            | Optional human-readable name.                                                  |
+| Protected resource option | Meaning                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| `resource`                | Required exact OAuth resource identifier; its path selects the discovery path.                |
+| `authorizationServers`    | Required, nonempty: where clients get tokens.                                                 |
+| `scopesSupported`         | Optional: every scope the resource accepts, published in discovery.                           |
+| `scopesRequired`          | Optional, nonempty OAuth scope tokens: every 401 names them, and a first login requests them. |
+| `resourceName`            | Optional human-readable name.                                                                 |
 
 ## Canonical
 
@@ -79,12 +79,13 @@ export const authenticate = Authentication.make(
 - `authenticate` succeeds with the identity value or fails with a refusal. `Unauthenticated` is sent as its JSON with **401**; `Forbidden` as its JSON with **403**. Both are the bodies every endpoint declares, so typed clients decode them. An `HttpServerResponse` is sent with its own status and headers, for a status or header that varies per refusal.
 - Every response of the routes it covers gets `Cache-Control: no-store` unless its route states its own caching, such as `private, max-age=31536000, immutable` for a content-addressed download. A failure enclosing middleware serializes always gets `no-store`, whatever caching it states.
 - Every 401 among them without a challenge gets one, whether authentication, a hook or a handler answers it, including failures serialized by enclosing middleware.
-- The 401 challenge is `Bearer`, or as a protected resource `Bearer scope="<scopesRequired>", resource_metadata="<metadata URL>"`, `scope` only when `scopesRequired` is given. It names no error code: a client re-authenticates on any 401.
+- The 401 challenge is `Bearer`, or as a protected resource `Bearer scope="<scopesRequired>", resource_metadata="<metadata URL>"`, `scope` only when `scopesRequired` is given.
+- A 401 to a request that presented an `Authorization` header also names `error="invalid_token"` first (RFC 6750), whoever refused it: the credentials did not authenticate it, and a client may refresh its token before it signs in again. A request without credentials gets no error code.
 - An MCP client requests the scopes a 401 names, or every one of `scopesSupported` when it names none. Give `scopesRequired` whenever some scopes are needed only by some actions, so a first login asks for the least, and a `Forbidden` naming scopes asks for more when a call needs them.
 - A `Forbidden` naming `scopes`, whether `authenticate`, a hook or a handler fails with it, is a **403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`. As a protected resource it adds `resource_metadata`, and `error_description` when the message is a valid one (printable ASCII without `"` or `\`).
 - An OAuth client re-authorizes on that challenge with those scopes added, as MCP authorization requires; the official MCP client does. A `Forbidden` naming no scope has no challenge ([guarantees.md](guarantees.md#dependency-lifetimes)).
 - Name scopes only when re-authorizing can grant them. A caller whose credential cannot step up, such as an API key, gets a `Forbidden` naming none: a plain 403, and a tool result over MCP, rather than a login prompt that cannot help.
-- `refusal(error, protectedResource?)` is the response `make` answers `error` with: its JSON and status, `no-store`, and the same challenge, naming `protectedResource` as `make` does. Refuse with it where no route runs, such as a WebSocket upgrade handled before the router, so every refusal of the resource reads the same. `HttpServerResponse.toWeb` makes it a web `Response`.
+- `refusal(error, protectedResource?, authorization?)` is the response `make` answers `error` with: its JSON and status, `no-store`, and the same challenge, naming `protectedResource` as `make` does. Pass the request's `Authorization` header, when it has one, for the `invalid_token` a 401 names then. Refuse with it where no route runs, such as a WebSocket upgrade handled before the router, so every refusal of the resource reads the same. `HttpServerResponse.toWeb` makes it a web `Response`.
 - It authenticates any credential: `authenticate` is any Effect, reading a bearer token, a session cookie or an API key. For another scheme, fail with an `HttpServerResponse` carrying its own challenge, which is kept; a 401 without one gets `Bearer`. A 401 carries a challenge only under `make`.
 - `authenticate` can fail with nothing else: any other error is a type error. Map a verifier's failure to a refusal.
 - `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. Verifying the token stays the host's.
@@ -115,4 +116,5 @@ export const authenticate = Authentication.make(
 - An MCP client reports `InsufficientScopeError` instead of re-authorizing: it has no OAuth provider configured, so it cannot step up. Configure one, or grant the scope up front.
 - `new Action.Forbidden({ scopes })` throws a schema validation error: a scope is not an OAuth scope token (it is empty, or contains a space, `"` or `\`). Give each scope as its own element.
 - An MCP client asks a user who only reads to consent to writes on first login: the 401 names no scope, so it requests every one of `scopesSupported`. Give `scopesRequired`.
+- `Invalid scope in scopesRequired: "<scope>"` thrown by `make` or `refusal`: a scope is empty or contains a space, `"` or `\`. Give each scope as its own element.
 - A route's `Cache-Control` is replaced by `no-store`: an enclosing middleware serialized the response of a failure. Only a route's own answer keeps its caching.

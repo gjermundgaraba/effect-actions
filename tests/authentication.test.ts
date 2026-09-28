@@ -169,11 +169,14 @@ describe("Authentication.make", () => {
 
     onTestFinished(() => web.dispose());
 
-    // The host's own response, and a route's own 401 behind the middleware.
-    for (const response of [await web.handler(request()), await web.handler(request("alice"))]) {
-      expect(response.status).toBe(401);
-      expect(response.headers.get("www-authenticate")).toBe("Bearer");
-    }
+    // The host's own response, and a route's own 401 behind the middleware, whose request
+    // presented credentials that did not authenticate it.
+    const host = await web.handler(request());
+    const route = await web.handler(request("alice"));
+
+    expect([host.status, route.status]).toEqual([401, 401]);
+    expect(host.headers.get("www-authenticate")).toBe("Bearer");
+    expect(route.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"');
   });
 
   it("names the scopes a first login requests in every 401 of a protected resource", async () => {
@@ -221,10 +224,11 @@ describe("Authentication.make", () => {
       }),
     );
 
-    for (const response of [missing, hooked]) {
-      expect(response.status).toBe(401);
-      expect(response.headers.get("www-authenticate")).toBe(challenge);
-    }
+    expect([missing.status, hooked.status]).toEqual([401, 401]);
+    expect(missing.headers.get("www-authenticate")).toBe(challenge);
+    expect(hooked.headers.get("www-authenticate")).toBe(
+      challenge.replace("Bearer ", 'Bearer error="invalid_token", '),
+    );
   });
 
   it("challenges a refusal naming scopes with insufficient_scope, its own or a hook's", async () => {
@@ -650,6 +654,25 @@ describe("Authentication.refusal", () => {
     expect(response.headers.get("www-authenticate")).toBe(expected.headers.get("www-authenticate"));
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual(await expected.json());
+  });
+
+  it("names invalid_token for a request that presented credentials, as make does", () => {
+    const response = Authentication.refusal(new Action.Unauthenticated(), resource, "Bearer x");
+
+    expect(response.headers["www-authenticate"]).toBe(
+      `Bearer error="invalid_token", scope="read", resource_metadata="${metadata}"`,
+    );
+  });
+
+  it("refuses a required scope that is no OAuth scope token, as make does", () => {
+    const bad = { ...resource, scopesRequired: ["has space"] as const };
+
+    expect(() => Authentication.refusal(new Action.Unauthenticated(), bad)).toThrow(
+      'Invalid scope in scopesRequired: "has space"',
+    );
+    expect(() => Authentication.make(Identity, Effect.succeed({ id: "a" }), bad)).toThrow(
+      'Invalid scope in scopesRequired: "has space"',
+    );
   });
 
   it("challenges a 401 with Bearer alone without a protected resource", () => {

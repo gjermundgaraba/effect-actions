@@ -6,7 +6,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { type Refusal, Unauthenticated } from "./internal/errors.js";
+import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
 import { answer, bearer, ResourceMetadata } from "./internal/refusal.js";
 
 /**
@@ -57,13 +57,23 @@ const metadataUrl = (options: Options): URL => {
 
 /**
  * The challenge of every 401 about `options`: `Bearer`, naming the scopes a client requests
- * and the metadata URL where it finds its authorization server.
+ * and the metadata URL where it finds its authorization server. A request that presented
+ * credentials is told they are invalid, RFC 6750's `invalid_token`, on which a client may
+ * refresh its token before it signs in again; one that presented none names no error code.
  */
-const challengeOf = (options: Options | undefined): string =>
+const challengeOf = (options: Options | undefined, presented: boolean): string =>
   bearer([
+    ["error", presented ? "invalid_token" : undefined],
     ["scope", options?.scopesRequired?.join(" ")],
     ["resource_metadata", options === undefined ? undefined : metadataUrl(options).href],
   ]);
+
+/** Refuse a `scopesRequired` that is no list of OAuth scope tokens, as `Forbidden` does. */
+const assertScopes = (options: Options | undefined): void => {
+  const invalid = options?.scopesRequired?.find((scope) => !scopeToken.test(scope));
+
+  if (invalid !== undefined) throw new Error(`Invalid scope in scopesRequired: "${invalid}"`);
+};
 
 /**
  * `response` as the routes of the authentication answer: `no-store` unless it states its
@@ -134,7 +144,8 @@ const discovery = (options: Options) => {
  *
  * Every response of the routes it covers is marked `Cache-Control: no-store`, unless its
  * route states its own caching, and a failure serialized by enclosing middleware always is.
- * Every 401 among them without a challenge gets one: `Bearer`. Given an OAuth protected
+ * Every 401 among them without a challenge gets one: `Bearer`, naming `invalid_token` when
+ * the request presented credentials. Given an OAuth protected
  * resource, it also publishes the resource's RFC 9728 discovery, once however many layers it
  * covers, public and before routing; every challenge names its metadata URL, a 401's and the
  * `insufficient_scope` challenge of a refusal naming scopes, and a 401's names
@@ -149,8 +160,11 @@ export const make = <I, A, R>(
   never,
   HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
 > => {
+  assertScopes(protectedResource);
+
   const published = protectedResource === undefined ? undefined : discovery(protectedResource);
-  const challenge = challengeOf(protectedResource);
+  const anonymous = challengeOf(protectedResource, false);
+  const presented = challengeOf(protectedResource, true);
 
   // A response made of a covered route's failure elsewhere, such as by enclosing middleware,
   // may carry what the route failed with, whatever caching it states.
@@ -177,8 +191,10 @@ export const make = <I, A, R>(
         published === undefined
           ? answered
           : Effect.provideService(answered, ResourceMetadata, published.url),
-      HttpEffect.withPreResponseHandler((_request, response) =>
-        Effect.succeed(settle(response, challenge)),
+      HttpEffect.withPreResponseHandler((request, response) =>
+        Effect.succeed(
+          settle(response, request.headers.authorization === undefined ? anonymous : presented),
+        ),
       ),
     ),
   ).layer as Layer.Layer<
@@ -191,19 +207,25 @@ export const make = <I, A, R>(
 };
 
 /**
- * The response `make` answers `refusal` with, for a caller outside the router, such as a
+ * The response `make` answers `error` with, for a caller outside the router, such as a
  * WebSocket upgrade refused before any route: its JSON with its status, `no-store`, and the
  * challenge of a 401, or of a `Forbidden` naming scopes, naming `protectedResource`'s
- * metadata URL. `HttpServerResponse.toWeb` makes it a web `Response`.
+ * metadata URL. `authorization` is the request's `Authorization` header, when it has one: a
+ * 401 then names `invalid_token`, as `make` does. `HttpServerResponse.toWeb` makes it a web
+ * `Response`.
  */
 export const refusal = (
   error: Refusal,
   protectedResource?: Options,
-): HttpServerResponse.HttpServerResponse =>
-  settle(
+  authorization?: string,
+): HttpServerResponse.HttpServerResponse => {
+  assertScopes(protectedResource);
+
+  return settle(
     answer(
       error,
       protectedResource === undefined ? undefined : metadataUrl(protectedResource).href,
     ),
-    challengeOf(protectedResource),
+    challengeOf(protectedResource, authorization !== undefined),
   );
+};

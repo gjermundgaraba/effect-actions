@@ -50,7 +50,7 @@ it("answers before routing, so the authentication publishing it never covers it"
 
   const refused = await web.handler(new Request("https://api.example.com/private"));
   expect(refused.status).toBe(401);
-  // The challenge names the metadata URL, and no error code, credentials or not.
+  // The challenge names the metadata URL, and no error code without credentials.
   expect(refused.headers.get("www-authenticate")).toBe(
     `Bearer resource_metadata="https://api.example.com${prefix}/mcp"`,
   );
@@ -59,7 +59,10 @@ it("answers before routing, so the authentication publishing it never covers it"
     new Request("https://api.example.com/private", { headers: { authorization: "Bearer x" } }),
   );
 
-  expect(invalid.headers.get("www-authenticate")).toBe(refused.headers.get("www-authenticate"));
+  // Credentials that did not authenticate the request are invalid, RFC 6750's error code.
+  expect(invalid.headers.get("www-authenticate")).toBe(
+    `Bearer error="invalid_token", resource_metadata="https://api.example.com${prefix}/mcp"`,
+  );
 });
 
 it("publishes discovery for every layer it authenticates, which may share it", async () => {

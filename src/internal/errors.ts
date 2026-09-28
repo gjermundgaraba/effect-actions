@@ -25,7 +25,9 @@ export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
 ) {}
 
 /** An OAuth scope token (RFC 6749 §3.3): printable ASCII but space, `"` and `\`. */
-const ScopeToken = Schema.String.check(Schema.isPattern(/^[\x21\x23-\x5B\x5D-\x7E]+$/));
+export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+
+const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
 
 /**
  * The caller may not run this action: an implementation's `before` hook refuses. `scopes`,
