@@ -28,7 +28,7 @@ ActionHttp.layer(Http, users);
 | 0.7.0                                                            | 0.8.0                                                                                                 |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `ActionGroup.make(...)`, `Group.implement(build)`                | `Action.implement(actions, build)`                                                                    |
-| A group's `errors`                                               | One constant array spread into each action's `errors`                                                 |
+| A group's `errors`                                               | `ActionHttp.make(actions, { errors })` for middleware's; an action's `errors` for its handler's       |
 | `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                | `hints: { ... }`, `action.hints`                                                                      |
 | `mcp.name`                                                       | The action's name, which is the tool's                                                                |
 | `mcp: false`                                                     | Leave the implementation out of `ActionMcp` and `ActionToolkit`                                       |
@@ -68,9 +68,9 @@ Behavior that changes without a rename:
 - Routes are `POST <prefix>/<action>`, `/api` by default, with operation ID `<action>`, so
   action names are unique per binding. The OpenAPI tag is the mount path, such as `api/users`,
   or `/` at the root.
-- Every endpoint declares its action's errors plus the three built-in ones, and every tool the
-  two refusals. Input that does not decode, malformed JSON included, is a 400 `InvalidInput`
-  carrying the schema's message. A result that does not encode is an empty 500.
+- Every endpoint declares its action's errors, its binding's, and the three built-in ones, and
+  every tool the two refusals. Input that does not decode, malformed JSON included, is a 400
+  `InvalidInput` carrying the schema's message. A result that does not encode is an empty 500.
 - `implement` refuses an application error encoding with a built-in `_tag`: a client could not
   tell them apart.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one
@@ -108,6 +108,8 @@ Behavior that changes without a rename:
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.
 - Handler parameters are typed from the contract in every `implement` form.
+- `ActionHttp.make(actions, { errors: [RateLimited] })` declares errors middleware answers with
+  on every endpoint, so clients decode them as typed failures. Handlers never fail with them.
 - `scopesRequired` names the scopes every 401 of a protected resource asks for, so a first
   login requests the least rather than every scope supported.
 - `Authentication.refusal(error, protectedResource?)` is the response `make` answers a refusal

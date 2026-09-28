@@ -337,8 +337,8 @@ export const builtInErrorTypes = Effect.gen(function* () {
 
   const bound = ActionHttp.make([Echo]);
 
-  // A binding is plain data: its actions and the native API.
-  const fields: Equal<keyof typeof bound, "actions" | "api"> = true;
+  // A binding is plain data: its actions, its errors and the native API.
+  const fields: Equal<keyof typeof bound, "actions" | "errors" | "api"> = true;
   void fields;
 
   // @ts-expect-error Refusals belong to the surface, not to handlers.

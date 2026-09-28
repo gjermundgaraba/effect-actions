@@ -67,12 +67,12 @@ type LocalCommand<App, A extends Action.Any, Subcommands = never> = Command.Comm
   Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
 >;
 
-/** A native command calling `A` over HTTP, failing as its client method. */
-type RemoteCommand<A extends Action.Any, Subcommands = never> = Command.Command<
+/** A native command calling `A` of the binding `H` over HTTP, failing as its client method. */
+type RemoteCommand<H extends AnyHttp, A extends Action.Any, Subcommands = never> = Command.Command<
   string,
   Subcommands,
   {},
-  MethodError<A>,
+  MethodError<A, H["errors"][number]>,
   HttpClient.HttpClient
 >;
 
@@ -142,7 +142,7 @@ export function command<const H extends AnyHttp, A extends H["actions"][number]>
   http: H,
   action: A,
   options?: CommandOptions<A> & ClientOptions,
-): RemoteCommand<A>;
+): RemoteCommand<H, A>;
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
   apps: Apps,
   action: A,
@@ -168,7 +168,7 @@ export function command(
 export function make<const H extends AnyHttp>(
   http: H,
   options: MakeOptions & ClientOptions,
-): RemoteCommand<H["actions"][number], {}>;
+): RemoteCommand<H, H["actions"][number], {}>;
 export function make<const Apps extends Served>(
   apps: Apps,
   options: MakeOptions,

@@ -248,6 +248,22 @@ const remoteErrors: [
 
 void remoteErrors;
 
+// A binding's own errors are every remote command's failures too.
+class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
+
+const Throttling = ActionHttp.make([Plain, Erring], { errors: [Throttled] });
+
+const throttledPlain = ActionCli.command(Throttling, Plain);
+
+const throttledAll = ActionCli.make(Throttling, { name: "remote" });
+
+const bindingErrors: [
+  Equal<Command.Error<typeof throttledPlain>, Throttled | BuiltIn | Transport>,
+  Equal<Command.Error<typeof throttledAll>, Throttled | Gone | BuiltIn | Transport>,
+] = [true, true];
+
+void bindingErrors;
+
 const transformResponse = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
 
 // `transformResponse` could change a call's failures, which the command's type states.

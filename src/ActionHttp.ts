@@ -9,7 +9,7 @@ import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/u
 import { status } from "effect/unstable/httpapi/HttpApiSchema";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import type * as Action from "./Action.js";
-import { assertDistinct, projectedErrors } from "./internal/actions.js";
+import { assertDistinct, assertOwnTags, projectedErrors } from "./internal/actions.js";
 import {
   type AnyHttp,
   type Client,
@@ -45,13 +45,22 @@ export type { AnyHttp as Any } from "./internal/client.js";
  */
 export type { Options as ClientOptions } from "./internal/client.js";
 
+/** Error schemas, as an action declares them. */
+type Errors = Action.Any["errors"];
+
 /** Contract-level configuration: servers and clients must agree on it. */
-export interface Options {
+export interface Options<E extends Errors = Errors> {
   /** Mount path of every route; defaults to `/api`. `/` mounts at the root. */
   readonly prefix?: `/${string}`;
+  /**
+   * Errors every endpoint may answer with besides its action's own, such as the rate limit
+   * middleware around the routes sends: declared by every endpoint, so clients decode them.
+   * Handlers never fail with them; they are the binding's, and no other surface declares them.
+   */
+  readonly errors?: E;
 }
 
-type Endpoint<A extends Action.Any> = A extends Action.Any
+type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       A["name"],
       "POST",
@@ -61,7 +70,7 @@ type Endpoint<A extends Action.Any> = A extends Action.Any
       Schema.toCodecJson<A["input"]>,
       never,
       Schema.toCodecJson<A["success"]>,
-      Schema.toCodecJson<A["errors"][number] | HttpErrors>,
+      Schema.toCodecJson<A["errors"][number] | E[number] | HttpErrors>,
       never
     >
   : never;
@@ -71,9 +80,9 @@ type Endpoint<A extends Action.Any> = A extends Action.Any
  * not nested, named after the binding's mount path, `/` at the root, so bindings composed
  * into one host API keep their own groups.
  */
-type Api<Actions extends ReadonlyArray<Action.Any>> = HttpApi.HttpApi<
+type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.HttpApi<
   "actions",
-  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number]>, true>
+  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E>, true>
 >;
 
 /**
@@ -95,14 +104,16 @@ type HttpLayer<App> = Layer.Layer<
 >;
 
 /**
- * An HTTP binding: actions and where they are mounted. Plain data, so a copy of it, or
- * one made by another installed copy of this package, serves the same; `layer` serves it
- * and `client` calls it.
+ * An HTTP binding: actions, the errors every endpoint declares, and where they are mounted.
+ * Plain data, so a copy of it, or one made by another installed copy of this package,
+ * serves the same; `layer` serves it and `client` calls it.
  */
-export interface Http<Actions extends ReadonlyArray<Action.Any>> {
+export interface Http<Actions extends ReadonlyArray<Action.Any>, E extends Errors = []> {
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
-  readonly api: Api<Actions>;
+  /** The errors every endpoint declares besides its action's own. */
+  readonly errors: E;
+  readonly api: Api<Actions, E>;
 }
 
 /** A native request, as `HttpApiBuilder.handleAll` passes it to a handler. */
@@ -121,7 +132,7 @@ const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.jo
 function apiOf(
   group: string,
   endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
-): Api<ReadonlyArray<Action.Any>>;
+): Api<ReadonlyArray<Action.Any>, Errors>;
 function apiOf(
   group: string,
   endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
@@ -193,19 +204,21 @@ const declared = (error: Declared): ReadonlyArray<Declared> => {
 
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
- * Every endpoint declares its action's errors, each member of a union at its own status,
- * 422 unless a schema states one, and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode
- * each as a typed failure.
+ * Every endpoint declares its action's errors, the binding's `errors`, and the built-in
+ * `InvalidInput`, `Unauthenticated` and `Forbidden`, each member of a union at its own
+ * status, 422 unless a schema states one, so clients decode each as a typed failure.
  */
-export function make<const Actions extends ReadonlyArray<Action.Any>>(
+export function make<const Actions extends ReadonlyArray<Action.Any>, const E extends Errors = []>(
   actions: Actions,
-  options?: Options,
-): Http<Actions>;
+  options?: Options<E>,
+): Http<Actions, E>;
 export function make(
   actions: ReadonlyArray<Action.Any>,
   options: Options = {},
-): Http<ReadonlyArray<Action.Any>> {
+): Http<ReadonlyArray<Action.Any>, Errors> {
   assertDistinct("action", actions, (action) => action.name);
+
+  const errors = options.errors ?? [];
 
   const mount = mountSegments(options.prefix);
 
@@ -213,7 +226,7 @@ export function make(
     HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
       payload: action.input,
       success: action.success,
-      error: projectedErrors(action, httpErrors).flatMap(declared),
+      error: projectedErrors(action, [...errors, ...httpErrors]).flatMap(declared),
     }).annotate(OpenApi.Description, action.description),
   );
 
@@ -223,7 +236,7 @@ export function make(
   // combine side by side, when no action name, and so no operation ID, repeats across them.
   const api = apiOf(mount.join("/") || "/", endpoints);
 
-  return { actions, api };
+  return { actions, errors, api };
 }
 
 /**
@@ -242,6 +255,9 @@ export function layer<
     ),
 >(http: H, apps: Apps): HttpLayer<Member<Apps>>;
 export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
+  // Checked where the binding is served, so a client bundle carries no check of its own.
+  assertOwnTags("ActionHttp binding", http.errors);
+
   const apps = toList(served);
   const actions = servedActions("served action", apps);
   const name = groupOf(http.api).identifier;

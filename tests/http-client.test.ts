@@ -349,3 +349,54 @@ it("decodes two errors that share a status by their tag", async () => {
   const responses = OpenApi.fromApi(binding.api).paths?.["/api/refuse"]?.post?.responses;
   expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
 });
+
+it("declares a binding's errors on every endpoint, so middleware's answers decode", async () => {
+  class RateLimited extends Schema.TaggedError<RateLimited>()(
+    "RateLimited",
+    { retryAfter: Schema.Finite },
+    { httpApiStatus: 429 },
+  ) {}
+
+  // No status of its own: sent as 422, as an action's own would be.
+  class Maintenance extends Schema.TaggedError<Maintenance>()("Maintenance", {}) {}
+
+  const binding = ActionHttp.make([Get, Count], { errors: [RateLimited, Maintenance] });
+
+  // What middleware around the routes answers with, as the binding declares it.
+  const answering = (error: RateLimited | Maintenance, status: number) => () =>
+    Promise.resolve(
+      Response.json(Schema.encodeSync(Schema.Union([RateLimited, Maintenance]))(error), { status }),
+    );
+
+  const failures = (handler: () => Promise<Response>) =>
+    Effect.runPromise(
+      Effect.flatMap(httpClient(binding, handler), (client) =>
+        Effect.all([Effect.flip(client.get({ id: "a" })), Effect.flip(client.count())]),
+      ),
+    );
+
+  expect(await failures(answering(new RateLimited({ retryAfter: 3 }), 429))).toEqual([
+    new RateLimited({ retryAfter: 3 }),
+    new RateLimited({ retryAfter: 3 }),
+  ]);
+
+  expect(await failures(answering(new Maintenance(), 422))).toEqual([
+    new Maintenance(),
+    new Maintenance(),
+  ]);
+
+  for (const path of ["/api/get", "/api/count"]) {
+    const responses = OpenApi.fromApi(binding.api).paths?.[path]?.post?.responses;
+    expect(Object.keys(responses ?? {})).toEqual(expect.arrayContaining(["422", "429"]));
+  }
+});
+
+it("refuses a binding error with a built-in error's tag", () => {
+  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+  const binding = ActionHttp.make([Get], { errors: [Forbidden] });
+
+  expect(() => ActionHttp.layer(binding, [])).toThrow(
+    'ActionHttp binding: error _tag "Forbidden" is built in; declare Action.Forbidden itself',
+  );
+});

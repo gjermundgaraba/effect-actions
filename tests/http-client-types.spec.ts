@@ -110,3 +110,32 @@ ActionHttp.client(ActionHttp.make(Notes), {
   // @ts-expect-error A response transform could change what a method returns.
   transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
 });
+
+// A binding's errors fail every method, beside each action's own; handlers are unaffected.
+class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
+
+const Throttling = ActionHttp.make(Notes, { errors: [Throttled] });
+
+export const bindingErrorTypes = Effect.gen(function* () {
+  const methods = yield* ActionHttp.client(Throttling);
+
+  const getFailures: Equal<
+    Effect.Error<ReturnType<typeof methods.get>>,
+    Missing | Throttled | BuiltIn
+  > = true;
+
+  const countFailures: Equal<
+    Effect.Error<ReturnType<typeof methods.count>>,
+    Throttled | BuiltIn
+  > = true;
+
+  void getFailures;
+  void countFailures;
+
+  yield* methods.count().pipe(Effect.catchTag("Throttled", () => Effect.succeed(0)));
+});
+
+Action.implement(Get, {
+  // @ts-expect-error A handler fails with its action's errors only, never a binding's.
+  get: () => Effect.fail(new Throttled()),
+});

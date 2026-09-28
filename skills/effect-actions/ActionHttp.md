@@ -14,6 +14,7 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | ------------------------- | -------------------------------------------------------------------------------------------- |
 | `make(actions, options?)` | Bind a list of actions; returns `Http`.                                                      |
 | `Http.actions`            | The exact bound actions.                                                                     |
+| `Http.errors`             | The errors every endpoint declares besides its action's own.                                 |
 | `Http.api`                | Native Effect `HttpApi` for clients and OpenAPI.                                             |
 | `layer(Http, apps)`       | Mount the routes of these implementations, each behind its `before` hook.                    |
 | `client(Http, options?)`  | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
@@ -23,13 +24,14 @@ Exported types: `Http`; `Any`, any binding; `Client`, a client's type: `Client<t
 | Option                      | Meaning                                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `make`: `prefix`            | Mount path of every route; defaults to `/api`. `/` mounts at the root; a trailing slash is dropped.                             |
+| `make`: `errors`            | Errors middleware around the routes answers with, such as a rate limit: declared by every endpoint, so clients decode them.     |
 | `client`: `baseUrl`         | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
 | `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
 
 Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action>`. The
 OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `/` at the root. Every
-endpoint declares its action's errors plus the built-in `InvalidInput` (400),
-`Unauthenticated` (401) and `Forbidden` (403).
+endpoint declares its action's errors, the binding's `errors`, and the built-in
+`InvalidInput` (400), `Unauthenticated` (401) and `Forbidden` (403).
 
 Layer failures and startup requirements come from the builders of the supplied
 implementations. Every handler's and hook's request services remain router request
@@ -167,9 +169,16 @@ success, failure or required services, which the method types cannot follow; use
 - Serve the OpenAPI document as a native route: `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
 
+### Binding errors
+
+- `errors` are what middleware around the routes answers with, on any endpoint: `ActionHttp.make(actions, { errors: [RateLimited] })`. Every endpoint declares them, OpenAPI shows them, and every client decodes them.
+- Middleware sends one as the binding declares it: `HttpServerResponse.schemaJson(RateLimited)(error, { status: 429 })`, the status its `httpApiStatus` states, or 422 without one. Each member of a union is declared at its own status.
+- No handler fails with them: a handler serves every surface, and only HTTP declares them. An action whose handler fails with one lists it in its own `errors`.
+- They may not reuse a built-in error's tag: `layer` refuses such a binding.
+
 ### Client methods
 
-- A method fails with exactly what the native client fails with. Declared errors arrive as their decoded values: the action's own and the three built-in errors every endpoint declares. Match them with `Effect.catchTag`.
+- A method fails with exactly what the native client fails with. Declared errors arrive as their decoded values: the action's own, the binding's, and the three built-in errors every endpoint declares. Match them with `Effect.catchTag`.
 - Anything the contract does not account for is Effect's own error:
   - `HttpClientError` with `response` `undefined`: the server could not be reached.
   - `HttpClientError` with `reason._tag` `DecodeError`: the server answered with a status no schema declares, such as the empty 500 of a defect.
@@ -186,7 +195,7 @@ success, failure or required services, which the method types cannot follow; use
 
 ### Built-in errors
 
-- Every endpoint declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)). `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. There is no option to declare more or fewer.
+- Every endpoint declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)). `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. They cannot be left out; the binding's `errors` add to them.
 - `InvalidInput`'s `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`.
 
 ## Failure modes
@@ -195,6 +204,7 @@ success, failure or required services, which the method types cannot follow; use
 - Type error at `layer`, or `Action "x" is not in this HTTP binding` thrown by it: the implementation's action was not passed to this binding's `make`. Implement the exact contract value the binding received, or add the action to the binding. Matching names and schemas do not establish identity.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same action.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action. Serve each action in one call.
+- `ActionHttp binding: error _tag "Forbidden" is built in; declare Action.Forbidden itself` thrown by `layer`: a binding error reuses a built-in tag. Rename it, or use the built-in error.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.
@@ -205,7 +215,7 @@ success, failure or required services, which the method types cannot follow; use
 
 ### Client methods
 
-- Fails with `HttpClientError` whose `reason._tag` is `DecodeError` for a status such as 429: the server answered with a status no schema declares. Declare that error on the action, or handle the native error. The built-in 400, 401 and 403 always decode, as long as their body is the built-in error's JSON.
+- Fails with `HttpClientError` whose `reason._tag` is `DecodeError` for a status such as 429: the server answered with a status no schema declares. Declare that error on the binding, `make`'s `errors`, when middleware answers with it; on the action when its handler does; or handle the native error. The built-in 400, 401 and 403 always decode, as long as their body is the built-in error's JSON.
 - Fails with `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: `baseUrl` is omitted, and there is no page to resolve relative routes against. Set `baseUrl`.
 - Type error listing `HttpClient` as an unsatisfied requirement of `client`: provide one, such as `FetchHttpClient.layer`.
 - Property does not exist on the client: the action is not in the binding.

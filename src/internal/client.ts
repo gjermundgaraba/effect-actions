@@ -28,20 +28,27 @@ export type Call<A extends Action.Any, R> =
     ? (...input: [] | [input: A["input"]["Type"]]) => R
     : (input: A["input"]["Type"]) => R;
 
+/** An error schema the binding declares on every endpoint. */
+type BindingError = Action.Any["errors"][number];
+
 /**
- * What one call of `A` fails with: a declared error value (the action's own, or a built-in
- * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` for a failed
- * request or an undeclared answer, or a `SchemaError` when the input does not encode or
- * the success does not decode.
+ * What one call of `A` fails with: a declared error value (the action's own, one `E` of the
+ * binding's, or a built-in `InvalidInput`, `Unauthenticated` or `Forbidden`), a native
+ * `HttpClientError` for a failed request or an undeclared answer, or a `SchemaError` when
+ * the input does not encode or the success does not decode.
  */
-export type MethodError<A extends Action.Any> =
+export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | A["errors"][number]["Type"]
+  | E["Type"]
   | HttpErrors["Type"]
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
 /** One action as an Effect of its decoded success, failing with `MethodError`. */
-type Method<A extends Action.Any> = Call<A, Effect.Effect<A["success"]["Type"], MethodError<A>>>;
+type Method<A extends Action.Any, E extends BindingError> = Call<
+  A,
+  Effect.Effect<A["success"]["Type"], MethodError<A, E>>
+>;
 
 /**
  * Any HTTP binding. The API is a native constraint here because native groups are
@@ -49,12 +56,13 @@ type Method<A extends Action.Any> = Call<A, Effect.Effect<A["success"]["Type"], 
  */
 export interface AnyHttp {
   readonly actions: ReadonlyArray<Action.Any>;
+  readonly errors: ReadonlyArray<BindingError>;
   readonly api: HttpApi.Constraint;
 }
 
 /** Every action of the binding `H`, as `client.<action>(input)`. */
 export type Client<H extends AnyHttp> = {
-  readonly [A in H["actions"][number] as A["name"]]: Method<A>;
+  readonly [A in H["actions"][number] as A["name"]]: Method<A, H["errors"][number]>;
 };
 
 /** A client method, erased: the binding's actions restore its exact type. */
