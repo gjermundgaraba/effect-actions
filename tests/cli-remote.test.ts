@@ -43,14 +43,13 @@ it("projects commands through the HTTP client without a local fallback", async (
   const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
   decodedInputs.length = 0;
 
-  const command = ActionCli.make(Http, {
-    name: "cli",
-    baseUrl: "http://localhost",
-    transformClient: (client) =>
-      client.pipe(
-        HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer host")),
-      ),
-  });
+  // The host configures its client: every remote command calls through it.
+  const command = ActionCli.make(Http, { name: "cli" });
+
+  const host = Effect.updateService(
+    HttpClient.HttpClient,
+    HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "Bearer host")),
+  );
 
   const fetchLayer = clientLayer(async (request) => {
     requests.push({
@@ -64,7 +63,7 @@ it("projects commands through the HTTP client without a local fallback", async (
 
   const [, output] = await logged(
     Command.runWith(command, { version: "0" })(["remote", "--value", "21"]),
-  ).pipe(Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
+  ).pipe(host, Effect.provide(fetchLayer), Effect.provide(cliServices), Effect.runPromise);
 
   expect(requests).toEqual([
     {
@@ -96,10 +95,7 @@ it("takes positional arguments over HTTP as locally", async () => {
 
   onTestFinished(() => web.dispose());
 
-  const command = ActionCli.command(Http, Remote, {
-    baseUrl: "http://localhost",
-    positional: ["value"],
-  });
+  const command = ActionCli.command(Http, Remote, { positional: ["value"] });
 
   const [, output] = await logged(Command.runWith(command, { version: "0" })(["21"])).pipe(
     Effect.provide(clientLayer(web.handler)),
@@ -134,10 +130,7 @@ it("projects a flat binding as one kebab-case subcommand per action", async () =
     return web.handler(request);
   });
 
-  const command = ActionCli.make(Flat, {
-    name: "cli",
-    baseUrl: "http://localhost",
-  });
+  const command = ActionCli.make(Flat, { name: "cli" });
 
   const runLines = (args: ReadonlyArray<string>) =>
     logged(Command.runWith(command, { version: "0" })(args)).pipe(
@@ -201,7 +194,7 @@ it("propagates domain, refusal and transport failures as typed failures", async 
   onTestFinished(() => refusing.dispose());
   onTestFinished(() => open.dispose());
 
-  const command = ActionCli.command(Http, Remote, { baseUrl: "http://localhost" });
+  const command = ActionCli.command(Http, Remote);
 
   const run = (server: typeof refusing, value: string) =>
     Command.runWith(command, { version: "0" })(["--value", value]).pipe(

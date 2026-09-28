@@ -264,40 +264,43 @@ const bindingErrors: [
 
 void bindingErrors;
 
-const transformResponse = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
-
-// `transformResponse` could change a call's failures, which the command's type states.
-// @ts-expect-error The command takes the client's options, which exclude it.
-ActionCli.command(Bound, Plain, { transformResponse });
-
-// @ts-expect-error The aggregate excludes it too.
-ActionCli.make(Bound, { name: "r", transformResponse });
-
 // @ts-expect-error An aggregate remote command needs a name.
 ActionCli.make(Bound, {});
 
-// Client options are a remote command's only; a local command runs no client.
+// The connection is the host's `HttpClient`: no command takes client options.
+// @ts-expect-error A remote command takes no client options.
 ActionCli.command(Bound, Plain, { baseUrl: "http://localhost" });
 
+// @ts-expect-error A remote aggregate takes none either.
 ActionCli.make(Bound, { name: "r", baseUrl: "http://localhost" });
 
-// @ts-expect-error A local command takes no client options.
+// @ts-expect-error A local command takes none.
 ActionCli.command(local, One, { baseUrl: "http://localhost" });
 
-// @ts-expect-error A local aggregate takes none either.
-ActionCli.make(local, { name: "l", baseUrl: "http://localhost" });
-
-// The options exported for each function, joined with the client's over HTTP.
-const remoteOptions: ActionCli.Options<typeof RemoteAction> & ActionHttp.ClientOptions = {
-  baseUrl: "http://localhost",
+// The options exported for each function, the same locally and over HTTP.
+const commandOptions: ActionCli.CommandOptions<typeof RemoteAction> = {
   render: (output) => output,
 };
 
-const remoteMake: ActionCli.MakeOptions & ActionHttp.ClientOptions = { name: "r" };
+const makeOptions: ActionCli.Options<typeof RemoteAction> = {
+  name: "r",
+  commands: { remote: { positional: ["value"], render: (output) => output.toUpperCase() } },
+};
 
-ActionCli.command(http, RemoteAction, remoteOptions);
+ActionCli.command(http, RemoteAction, commandOptions);
 
-ActionCli.make(http, remoteMake);
+ActionCli.make(http, makeOptions);
+
+// A subcommand's options are typed by its own action.
+ActionCli.make(http, { name: "r", commands: { count: { render: (output) => output.toFixed() } } });
+
+ActionCli.make(local, { name: "l", commands: { one: { positional: ["value"] } } });
+
+// @ts-expect-error A subcommand's renderer receives its own action's success.
+ActionCli.make(http, { name: "r", commands: { count: { render: (output: string) => output } } });
+
+// @ts-expect-error No action is named so.
+ActionCli.make(http, { name: "r", commands: { missing: {} } });
 
 // Positional arguments name a struct input's own fields, locally and over HTTP.
 ActionCli.command(local, One, { positional: ["value"] });
@@ -327,9 +330,15 @@ const shapes = Action.implement([ScalarInput, UnionInput, Other], {
 
 // Only named fields of one struct may be positional: none for a scalar, a union or no input.
 const noFields: [
-  Equal<ActionCli.Options<typeof ScalarInput>["positional"], ReadonlyArray<never> | undefined>,
-  Equal<ActionCli.Options<typeof UnionInput>["positional"], ReadonlyArray<never> | undefined>,
-  Equal<ActionCli.Options<typeof Other>["positional"], ReadonlyArray<never> | undefined>,
+  Equal<
+    ActionCli.CommandOptions<typeof ScalarInput>["positional"],
+    ReadonlyArray<never> | undefined
+  >,
+  Equal<
+    ActionCli.CommandOptions<typeof UnionInput>["positional"],
+    ReadonlyArray<never> | undefined
+  >,
+  Equal<ActionCli.CommandOptions<typeof Other>["positional"], ReadonlyArray<never> | undefined>,
 ] = [true, true, true];
 
 void noFields;

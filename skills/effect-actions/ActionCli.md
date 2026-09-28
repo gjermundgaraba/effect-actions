@@ -14,17 +14,18 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | --------------------------------- | ------------------------------------------------------------------- |
 | `command(apps, action, options?)` | One action, selected by its contract, as a native Effect `Command`. |
 | `command(http, action, options?)` | One action of an HTTP binding, called over HTTP.                    |
-| `make(apps, { name })`            | Every implemented action as a subcommand of one aggregate command.  |
-| `make(http, { name, ...client })` | Every action of the binding as a subcommand, called over HTTP.      |
+| `make(apps, options)`             | Every implemented action as a subcommand of one aggregate command.  |
+| `make(http, options)`             | Every action of the binding as a subcommand, called over HTTP.      |
 
-| Option                       | Meaning                                                                                                                |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `name`                       | `command`: override the command name (default: the action name in kebab case). `make`: the aggregate's name, required. |
-| `render`                     | `command` only: decoded success to human-readable string; adds `--json`.                                               |
-| `positional`                 | `command` only: input fields taken as positional arguments instead of flags, in this order.                            |
-| `baseUrl`, `transformClient` | Over HTTP only: the native client's options, as `ActionHttp.client` takes them.                                        |
+| Option                  | Meaning                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `command`: `name`       | Override the command name (default: the action name in kebab case).                                          |
+| `command`: `render`     | Decoded success to human-readable string; adds `--json`.                                                     |
+| `command`: `positional` | Input fields taken as positional arguments instead of flags, in this order.                                  |
+| `make`: `name`          | The aggregate's name, required.                                                                              |
+| `make`: `commands`      | Each subcommand's `command` options, keyed by action name: `{ readFile: { positional: ["path"], render } }`. |
 
-Exported types: `Options<typeof Action>` of `command` and `MakeOptions` of `make`. Over HTTP, either is joined with `ActionHttp.ClientOptions`.
+Exported types: `Options<Actions>` of `make` and `CommandOptions<typeof Action>` of `command`, the same locally and over HTTP. A command over HTTP calls through the host's `HttpClient`, which sets where it sends and any credentials.
 
 Flags come from the action's input. A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`), parsing the field's encoded JSON
@@ -88,30 +89,35 @@ Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
 ```ts
 import { Command } from "effect/unstable/cli";
 import { Console, Effect, Logger } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { Http } from "./binding.js";
 import { Status } from "./contracts.js";
 
 // From a binding rather than an implementation, the command calls the server instead.
-const command = ActionCli.command(Http, Status, { baseUrl: "http://127.0.0.1:3000" });
+const command = ActionCli.command(Http, Status);
 
 Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
+  // The host's client is the connection: where it sends, and any credentials.
+  Effect.updateService(
+    HttpClient.HttpClient,
+    HttpClient.mapRequest(HttpClientRequest.prependUrl("http://127.0.0.1:3000")),
+  ),
   Effect.tapCause((cause) => Console.error(cause)),
   Effect.provideService(Logger.LogToStderr, true),
-  // The host supplies the native client and its configuration.
   Effect.provide(NodeHttpClient.layerUndici),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain({ disableErrorReporting: true }),
 );
 ```
 
-Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
+Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`, with a token read at run time, as from `Config`.
 
 ## Rules
 
 - `command(apps, action)` selects the implementation of `action` among `apps` (one implementation or a list) by contract identity, not by name: two contracts that share a name select their own implementations. The action must be one of the implementations' actions: the types refuse an action of another shape, and the runtime check refuses an equal-looking one.
-- `make(apps, { name })` puts every implemented action under one command named `name`, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). That includes actions no HTTP binding or MCP endpoint serves. Subcommand names must be distinct after kebab-casing; two actions whose names collide are refused.
+- `make(apps, { name })` puts every implemented action under one command named `name`, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). `commands` gives one subcommand the options `command` takes, by its action's name, typed by that action; a key no action names is refused. That includes actions no HTTP binding or MCP endpoint serves. Subcommand names must be distinct after kebab-casing; two actions whose names collide are refused.
 - Flags are values in their encoded form: `double --value 21` for a `FiniteFromString` field, which is string-encoded; a value flag takes the encoded JSON, or text. The action's schema then decodes the assembled input before dispatch.
 - A field that is required once encoded has a required flag. Omitted, the parser refuses the command with `Required flag missing` and shows its help, and the implementation is not built. A required boolean is the exception: omitted, its switch is `false`.
 - An optional field's flag is optional. Omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
@@ -122,8 +128,8 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - Each invocation builds the selected implementation's builder in a scope of its own and releases it after the call. Only that implementation's builder runs: other implementations passed alongside it, on `command` or `make`, are not built. Domain services and authority come from the host's provided layers. There is no HTTP fallback.
 - A local command is a local surface: the implementation's `before` runs before the selected handler, on `command` and on every subcommand of `make`, and the host provides the identity the hook reads, as `Effect.provideService(CurrentActor, actor)`. A CLI is not a trusted bypass; a trusted admin CLI implements the same handlers without `before`.
 - The CLI does not serialize a refusal: it is a typed failure of the command effect. Every local command's error channel includes `Action.Refusal`, whatever its implementation's hook. Invalid input fails decoding before the hook, so it skips the hook and handler.
-- From a binding, `command(http, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `make(http, { name })` projects every action of the binding, the same tree `make` builds locally. Nothing in the options selects another endpoint.
-- A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient` and its configuration. Credentials are the host's; nothing is inferred from action arguments.
+- From a binding, `command(http, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `make(http, { name })` projects every action of the binding, the same tree `make` builds locally, with the same options.
+- A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient` and configures it: where it sends, `HttpClient.mapRequest(HttpClientRequest.prependUrl(url))`, and credentials, `HttpClientRequest.bearerToken(token)`, read at run time. Nothing is inferred from action arguments.
 - Over HTTP, input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. Errors are the client's: the action's declared errors, the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), `SchemaError`, and `HttpClientError`.
 - For a custom tree, compose individual `command` results with native `Command` combinators (`Command.make(name).pipe(Command.withSubcommands([...]))`).
 
@@ -139,8 +145,9 @@ Authentication: `transformClient: HttpClient.mapRequest(HttpClientRequest.bearer
 - A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `apps`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
-- `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: `baseUrl` is omitted, and it has no default outside `Testing.layer`. Connection refused: `baseUrl` is wrong. 401 `Unauthenticated`: add `transformClient`; the command adds no headers of its own.
-- `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Aggregate them under separate `make` commands, or compose `command` results with a `name` override.
+- `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the host's client prepends no URL, and routes are relative outside `Testing.layer`. Connection refused: the prepended URL is wrong. 401 `Unauthenticated`: add credentials to the host's client; the command adds no headers of its own.
+- `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Give one a `name` in `commands`, or aggregate them under separate `make` commands.
+- `Unknown commands: <keys>` thrown by `make`: a `commands` key names no action of it. Use the action's own name, not its kebab-case command name.
 - `Action "x" is implemented twice here` thrown by `command`: more than one implementation passed implements the selected action. Pass one. Other actions' names are not checked.
 - Handler cannot find a service: provide its Layer to the runtime (`Effect.provide`) before `runMain`. The command does not supply services.
 - A command requires a request-identity tag no handler yields: the implementation's `before` hook yields it. Provide a trusted identity around the invocation; do not remove the authorization hook just to satisfy the service requirement.

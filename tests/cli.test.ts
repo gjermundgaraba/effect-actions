@@ -1067,3 +1067,47 @@ it("refuses positional arguments a parser could not read back", () => {
     "Positional arguments need named input fields: length",
   );
 });
+
+it("gives a subcommand of an aggregate the options command takes, by action name", async () => {
+  const Read = Action.make("readFile", {
+    description: "Read a file",
+    access: "read",
+    input: { path: Schema.String, lines: Schema.optional(Schema.Finite) },
+    success: Schema.String,
+  });
+
+  const Size = Action.make("size", {
+    description: "A file's size",
+    access: "read",
+    input: { path: Schema.String },
+    success: Schema.Finite,
+  });
+
+  const app = Action.implement([Read, Size], {
+    readFile: ({ path, lines }) => Effect.succeed(`${path}:${lines ?? "all"}`),
+    size: () => Effect.succeed(3),
+  });
+
+  const command = ActionCli.make(app, {
+    name: "files",
+    commands: {
+      readFile: { name: "cat", positional: ["path"], render: (text) => text.toUpperCase() },
+    },
+  });
+
+  expect(await lines(command, ["cat", "a.txt", "--lines", "2"])).toEqual(["A.TXT:2"]);
+  expect(await lines(command, ["cat", "a.txt", "--json"])).toEqual(['"a.txt:all"']);
+  // A subcommand without options keeps its defaults.
+  expect(await lines(command, ["size", "--path", "a.txt"])).toEqual(["3"]);
+
+  // A key no action names is refused, as plain JavaScript may pass it, and so is a name
+  // another subcommand has.
+  const stale = Object.fromEntries([["read", { name: "read" }]]);
+
+  expect(() => ActionCli.make(app, { name: "files", commands: stale })).toThrow(
+    "Unknown commands: read",
+  );
+  expect(() =>
+    ActionCli.make(app, { name: "files", commands: { readFile: { name: "size" } } }),
+  ).toThrow("Duplicate command: size");
+});

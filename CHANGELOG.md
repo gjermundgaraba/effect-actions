@@ -48,7 +48,7 @@ ActionHttp.layer(Http, users);
 | `ActionHttpClient.make`, `ActionHttpClient.Client`               | `ActionHttp.client`, `ActionHttp.Client`                                                              |
 | `ActionHttpClient.promise`                                       | `Effect.runPromise` of an `ActionHttp.client` call, with `FetchHttpClient.layer`                      |
 | `client.getUser({ payload })`                                    | `client.getUser(input)`                                                                               |
-| `ActionCliClient.command(Http, A, { connection: { baseUrl } })`  | `ActionCli.command(Http, A, { baseUrl })`                                                             |
+| `ActionCliClient.command(Http, A, { connection: { baseUrl } })`  | `ActionCli.command(Http, A)` on a host `HttpClient` that prepends the URL                             |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`         | `ActionCli.command(apps, Action)`, `ActionCli.make(apps, { name })`                                   |
 | `parameters`, the `input` mapper, `--input-file`                 | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct |
 | `Testing.serve`, `Testing.httpClient`, `TestingClient`           | `Testing.layer(routes)`, an in-memory `HttpClient` for every client                                   |
@@ -88,7 +88,7 @@ Behavior that changes without a rename:
   sent as given; 0.7.0 sent `{}` for `undefined` or `null`.
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
-  remote command takes no `transformResponse`.
+  remote command takes no client options: it calls through the host's `HttpClient`.
 - A local command's error channel includes `Action.Refusal`.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses a misspelled key, a name over 128 characters, and `hints.destructive`
@@ -123,6 +123,8 @@ Behavior that changes without a rename:
   tools as `ActionHttp.client` calls routes. `Testing.mcpRequest` sends any stateless MCP
   request, with any `_meta` merged over the client metadata.
 - A CLI flag's help text is its field's schema description.
+- `ActionCli.make(target, { name, commands })` gives a subcommand the options `command` takes,
+  by action name: `commands: { readFile: { positional: ["path"], render } }`.
 - `ActionCli.command(apps, Action, { positional: ["path"] })` takes the listed fields of a
   struct input as positional arguments, locally and over HTTP.
 - `ActionToolkit.make(apps, { needsApproval })` sets Effect's native `Tool.needsApproval` of

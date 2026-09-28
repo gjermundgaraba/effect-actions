@@ -4,12 +4,7 @@ import type { HttpClient } from "effect/unstable/http";
 import type * as Action from "./Action.js";
 import { assertDistinct } from "./internal/actions.js";
 import { kebab, command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
-import {
-  type AnyHttp,
-  type MethodError,
-  methods,
-  type Options as ClientOptions,
-} from "./internal/client.js";
+import { type AnyHttp, type MethodError, methods } from "./internal/client.js";
 import {
   acquire,
   type ActionOf,
@@ -23,23 +18,19 @@ import {
   toList,
 } from "./internal/implementation.js";
 
-/**
- * How a command is named and prints its result. A command over HTTP also takes the
- * client's options, `ActionHttp.ClientOptions`.
- */
-export type { Options } from "./internal/cli.js";
+/** How one command of `A` is named, takes its input and prints its result. */
+export type { Options as CommandOptions } from "./internal/cli.js";
 
-/**
- * The name of an aggregate command. One over HTTP also takes the client's options,
- * `ActionHttp.ClientOptions`.
- */
-export interface MakeOptions {
+/** An aggregate command of the actions `A`: its name, and its subcommands' options. */
+export interface Options<A extends Action.Any = Action.Any> {
   /** The aggregate command's name. */
   readonly name: string;
+  /**
+   * The options of each subcommand, keyed by its action's name, as `command` takes them:
+   * `{ readFile: { positional: ["path"], render } }`.
+   */
+  readonly commands?: { readonly [K in A as K["name"]]?: CommandOptions<K> };
 }
-
-/** Every option, erased: the public signatures restore them. */
-type ErasedOptions = CommandOptions<Action.Any> & ClientOptions;
 
 /** The implementation of `A` among `App`. */
 type Selected<App, A extends Action.Any> = App extends unknown
@@ -109,20 +100,19 @@ const select = (apps: ReadonlyArray<AnyImplementation>, action: Action.Any): Any
   return app;
 };
 
-/** One command calling `action` through the binding's client, with `options`' client. */
-const remote = (http: AnyHttp, action: Action.Any, options: ErasedOptions | undefined) => {
+/** One command calling `action` through the binding's client, on the host's `HttpClient`. */
+const remote = (
+  http: AnyHttp,
+  action: Action.Any,
+  options: CommandOptions<Action.Any> | undefined,
+) => {
   if (!http.actions.includes(action)) {
     throw new Error(`Action "${action.name}" is not in this HTTP binding`);
   }
 
-  const { baseUrl, transformClient } = options ?? {};
-
   return makeCommand(
     action,
-    (input) =>
-      Effect.flatMap(methods(http, { baseUrl, transformClient }), (methodOf) =>
-        methodOf(action)(input),
-      ),
+    (input) => Effect.flatMap(methods(http), (methodOf) => methodOf(action)(input)),
     options,
   );
 };
@@ -141,7 +131,7 @@ const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasPrope
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
-  options?: CommandOptions<A> & ClientOptions,
+  options?: CommandOptions<A>,
 ): RemoteCommand<H, A>;
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
   apps: Apps,
@@ -151,7 +141,7 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
 export function command(
   target: AnyHttp | Served,
   action: Action.Any,
-  options?: ErasedOptions,
+  options?: CommandOptions<Action.Any>,
 ): Command.Command<string, never, {}, unknown, unknown> {
   if (isHttp(target)) return remote(target, action, options);
 
@@ -163,40 +153,56 @@ export function command(
 /**
  * Project every action as a subcommand of one aggregate command, each named after its
  * action in kebab case: each action of an HTTP binding called over HTTP, or each
- * implemented action run in process.
+ * implemented action run in process. `commands` gives a subcommand the options `command`
+ * takes, by action name.
  */
-export function make<const H extends AnyHttp>(
-  http: H,
-  options: MakeOptions & ClientOptions,
-): RemoteCommand<H, H["actions"][number], {}>;
 export function make<const Apps extends Served>(
   apps: Apps,
-  options: MakeOptions,
+  options: NoInfer<Options<ActionOf<Member<Apps>>>>,
 ): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, {}>;
+export function make<const H extends AnyHttp>(
+  http: H,
+  options: NoInfer<Options<H["actions"][number]>>,
+): RemoteCommand<H, H["actions"][number], {}>;
 export function make(
   target: AnyHttp | Served,
-  options: ErasedOptions & MakeOptions,
+  options: Options,
 ): Command.Command<string, {}, {}, unknown, unknown> {
-  const { baseUrl, transformClient } = options;
+  const commands = options.commands ?? {};
 
-  // One subcommand per action: called over HTTP, or run by its own implementation.
-  const subcommands = isHttp(target)
-    ? target.actions.map((action) => ({
-        action,
-        command: remote(target, action, { baseUrl, transformClient }),
-      }))
+  // Every action, with how its subcommand runs: called over HTTP, or run by its own
+  // implementation.
+  const projected: ReadonlyArray<{
+    readonly action: Action.Any;
+    readonly build: (
+      own: CommandOptions<Action.Any> | undefined,
+    ) => Command.Command<string, never, {}, unknown, unknown>;
+  }> = isHttp(target)
+    ? target.actions.map((action) => ({ action, build: (own) => remote(target, action, own) }))
     : toList(target).flatMap((app) =>
         app.actions.map((action) => ({
           action,
-          command: makeCommand(action, (input) => local(app, action, input)),
+          build: (own) => makeCommand(action, (input) => local(app, action, input), own),
         })),
       );
 
-  // An action served twice has one kebab-case name twice, so this refuses it too.
+  // A key no action names is refused, so a stale option cannot outlive its action.
+  const names = projected.map(({ action }) => action.name);
+  const unknown = Object.keys(commands).filter((key) => !names.includes(key));
+
+  if (unknown.length > 0) throw new Error(`Unknown commands: ${unknown.join(", ")}`);
+
+  const subcommands = projected.map(({ action, build }) => {
+    const own = Object.hasOwn(commands, action.name) ? commands[action.name] : undefined;
+
+    return { action, name: own?.name ?? kebab(action.name), command: build(own) };
+  });
+
+  // An action served twice has one name twice, so this refuses it too.
   assertDistinct(
     "command",
     subcommands,
-    ({ action }) => kebab(action.name),
+    ({ name }) => name,
     ({ action }) => `action ${action.name}`,
   );
 
