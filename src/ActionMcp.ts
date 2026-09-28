@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit, Fiber, Layer, Logger, Schema } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
-import { McpProtocol, McpServer, type McpSchema, Tool } from "effect/unstable/ai";
-import type { HttpRouter } from "effect/unstable/http";
+import { McpProtocol, McpServer, type McpSchema, Tool } from "effect/ai";
+import type { HttpRouter } from "effect/http";
 import { defaultPath, httpProtocol } from "./internal/mcp.js";
 import { recordStepUp, stepUp } from "./internal/refusal.js";
 import { bindTools, type Projection } from "./internal/tools.js";

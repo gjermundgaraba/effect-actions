@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { Http } from "./quickstart.js";
 

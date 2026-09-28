@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpApiSwagger, OpenApi } from "effect/http-api";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { authenticate } from "./authentication.js";
 import { Http } from "./binding.js";

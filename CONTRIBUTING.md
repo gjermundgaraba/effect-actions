@@ -55,7 +55,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 ## Release
 
 The package publishes to the `latest` tag. The `effect` peer accepts any Effect 4.0 release
-candidate from `4.0.0-rc.116` on (the peer's lower bound); the package is built and tested
+candidate from `4.0.0-rc.118` on (the peer's lower bound); the package is built and tested
 against the release candidate in `devDependencies`. When
 adopting a newer release candidate, bump `devDependencies`, re-run the full check, and raise the
 peer's lower bound only if the package starts to depend on the newer release.

@@ -1,5 +1,5 @@
 import { Effect, type Layer } from "effect";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
 import { refusals } from "./errors.js";

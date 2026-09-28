@@ -1,6 +1,6 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { Cause, Console, Effect, Logger, Runtime } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
 import { Http } from "./binding.js";

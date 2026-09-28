@@ -1,11 +1,6 @@
 import { type Context, Effect, Layer, Redacted } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
-import {
-  HttpEffect,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
 import { answer, bearer, ResourceMetadata } from "./internal/refusal.js";
 

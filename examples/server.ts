@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { layer } from "./app.js";
 
 // NodeRuntime handles signals; scoped Layers stop the server and release services.

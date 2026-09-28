@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
-import { LanguageModel } from "effect/unstable/ai";
+import { LanguageModel } from "effect/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 

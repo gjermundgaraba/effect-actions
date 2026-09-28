@@ -1,12 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { Effect, Schema, SchemaTransformation } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-} from "effect/unstable/http";
-import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
+import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { clientLayer, httpClient, serve } from "./serve.js";

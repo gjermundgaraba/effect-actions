@@ -5,7 +5,7 @@ import {
   HttpClientRequest,
   type HttpRouter,
   type HttpServer,
-} from "effect/unstable/http";
+} from "effect/http";
 
 /** What in-memory routes may leave to the host: the router, the platform, nothing per request. */
 export type Served =

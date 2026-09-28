@@ -1,6 +1,6 @@
 import { Effect, Predicate, type Schema, type Scope } from "effect";
-import { Command } from "effect/unstable/cli";
-import type { HttpClient } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import type { HttpClient } from "effect/http";
 import type * as Action from "./Action.js";
 import { assertDistinct } from "./internal/actions.js";
 import { kebab, command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";

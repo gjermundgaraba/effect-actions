@@ -1,6 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import { Context, Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
 import { serve } from "./serve.js";

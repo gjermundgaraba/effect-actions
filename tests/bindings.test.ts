@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";

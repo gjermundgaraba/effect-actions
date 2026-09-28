@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 import { Cause, Effect, Exit, flow, Option, Schema, type Scope } from "effect";
 import { TestConsole } from "effect/testing";
-import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import { CliError, Command, Flag, GlobalFlag } from "effect/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";

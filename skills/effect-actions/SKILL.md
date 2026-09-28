@@ -18,7 +18,7 @@ Read the card for a module before writing code that uses it. Exported TypeScript
 Package facts that apply everywhere:
 
 - Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
-- The `effect` peer accepts any 4.0 release candidate from `4.0.0-rc.116` on (`>=4.0.0-rc.116 <4.0.0`). The package is built and tested against `4.0.0-rc.117`.
+- The `effect` peer accepts any 4.0 release candidate from `4.0.0-rc.118` on (`>=4.0.0-rc.118 <4.0.0`). The package is built and tested against `4.0.0-rc.118`.
 - Actions are pure values. Nothing runs, binds, or acquires services until a surface's layer is built.
 
 ## Pages

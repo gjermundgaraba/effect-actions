@@ -67,7 +67,7 @@ by the host. Success output is encoded; failures remain failures of the command 
 
 ```ts
 import { Cause, Console, Effect, Logger, Runtime } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { actors, CurrentActor } from "./authorization.js";
@@ -96,9 +96,9 @@ Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
 ### Over HTTP
 
 ```ts
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { Cause, Console, Effect, Logger, Runtime } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { Http } from "./binding.js";

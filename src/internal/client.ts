@@ -1,6 +1,6 @@
 import { Effect, type Schema } from "effect";
-import type { HttpClient, HttpClientError } from "effect/unstable/http";
-import { type HttpApi, HttpApiClient } from "effect/unstable/httpapi";
+import type { HttpClient, HttpClientError } from "effect/http";
+import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
 import type { HttpErrors } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";

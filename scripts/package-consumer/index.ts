@@ -2,11 +2,11 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import { type HttpApiClient, OpenApi } from "effect/unstable/httpapi";
+import { type HttpApiClient, OpenApi } from "effect/http-api";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { Greet, Http } from "./quickstart.js";
 import { routes } from "./quickstart-server.js";
 

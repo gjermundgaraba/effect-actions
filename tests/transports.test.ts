@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { type Client, InsufficientScopeError } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Schema } from "effect";
-import { McpSchema } from "effect/unstable/ai";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
-import { OpenApi } from "effect/unstable/httpapi";
+import { McpSchema } from "effect/ai";
+import { HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";

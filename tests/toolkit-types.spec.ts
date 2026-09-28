@@ -1,6 +1,6 @@
 // Compile-only native Toolkit assertions, included by `vp check`.
 import { Context, Effect, Layer, Schema, Stream } from "effect";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import type { Equal } from "./equal.js";

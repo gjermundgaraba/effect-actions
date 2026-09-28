@@ -1,5 +1,5 @@
 import { Predicate, type Schema } from "effect";
-import { McpProtocol } from "effect/unstable/ai";
+import { McpProtocol } from "effect/ai";
 
 /**
  * The one protocol revision served over HTTP. 2026-07-28 is stateless: every request

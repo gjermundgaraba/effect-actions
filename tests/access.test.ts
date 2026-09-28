@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Exit, Latch, Layer, Option, Schema, type Scope, Stream } from "effect";
-import { Command } from "effect/unstable/cli";
-import { McpServer } from "effect/unstable/ai";
-import { HttpRouter } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import { McpServer } from "effect/ai";
+import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";

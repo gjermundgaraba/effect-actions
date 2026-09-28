@@ -73,7 +73,7 @@ choose its policy for every route it covers.
 
 ```ts
 import { Effect, Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { Greet } from "./quickstart.js";

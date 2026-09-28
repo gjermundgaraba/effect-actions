@@ -1,5 +1,5 @@
 import { Console, Effect } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { Http } from "./binding.js";
 

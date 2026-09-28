@@ -10,6 +10,12 @@ owns the failures a surface answers with: `InvalidInput` (400), `Unauthenticated
 Effect-only, the client modules merge into `ActionHttp` and `ActionCli`, and `ActionCatalog` is
 removed.
 
+Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.118`. The `effect`
+peer range is now `>=4.0.0-rc.118 <4.0.0`: rc.118 moved Effect's unstable modules to the top
+level, so import `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai` instead of
+`effect/unstable/http`, `effect/unstable/httpapi`, `effect/unstable/cli` and
+`effect/unstable/ai`.
+
 ### Breaking changes
 
 ```ts

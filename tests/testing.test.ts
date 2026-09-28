@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaGetter } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import {
   FetchHttpClient,
   HttpClient,
@@ -10,7 +10,7 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { layer as host } from "../examples/app.js";
 import { Http } from "../examples/binding.js";
 import {

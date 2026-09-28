@@ -1,7 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { Effect, Exit, Option, Schema } from "effect";
-import { Command } from "effect/unstable/cli";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";

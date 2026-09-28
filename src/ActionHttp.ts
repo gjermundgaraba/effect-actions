@@ -1,13 +1,13 @@
 import { Effect, Layer, Schema } from "effect";
 import { isUnion, resolveAt } from "effect/SchemaAST";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import type { Etag, HttpPlatform, HttpRouter } from "effect/unstable/http";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import type { Etag, HttpPlatform, HttpRouter } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 // Their own modules rather than the barrel's namespaces, which esbuild keeps whole in a client.
-import { status } from "effect/unstable/httpapi/HttpApiSchema";
-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
+import { status } from "effect/http-api/HttpApiSchema";
+import * as OpenApi from "effect/http-api/OpenApi";
 import type * as Action from "./Action.js";
 import { assertDistinct, assertOwnTags, projectedErrors } from "./internal/actions.js";
 import {

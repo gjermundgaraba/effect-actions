@@ -1,6 +1,6 @@
 import { onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Predicate } from "effect";
-import { type HttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import { type HttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { AnyHttp, Client } from "../src/internal/client.js";
 import { clientOf, type Served } from "../src/internal/memory.js";

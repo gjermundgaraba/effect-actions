@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Exit, Layer, Result, Schema, Stdio, Stream } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
-import { HttpApi, OpenApi } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import { HttpApi, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";

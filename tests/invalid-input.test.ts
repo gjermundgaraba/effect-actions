@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Schema, SchemaTransformation } from "effect";
-import { McpSchema } from "effect/unstable/ai";
-import { OpenApi } from "effect/unstable/httpapi";
+import { McpSchema } from "effect/ai";
+import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";

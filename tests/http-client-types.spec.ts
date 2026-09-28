@@ -1,6 +1,6 @@
 // Compile-only client assertions, included by `vp check`.
 import { type DateTime, Effect, Schema } from "effect";
-import type { HttpClient, HttpClientError } from "effect/unstable/http";
+import type { HttpClient, HttpClientError } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { Equal } from "./equal.js";

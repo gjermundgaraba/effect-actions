@@ -9,8 +9,8 @@ import {
   HttpEffect,
   HttpRouter,
   HttpServer,
-} from "effect/unstable/http";
-import { Sse } from "effect/unstable/encoding";
+} from "effect/http";
+import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import type { Call } from "./internal/client.js";

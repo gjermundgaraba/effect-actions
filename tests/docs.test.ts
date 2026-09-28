@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { routes } from "../examples/quickstart-server.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";

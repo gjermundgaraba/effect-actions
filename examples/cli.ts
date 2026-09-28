@@ -1,5 +1,5 @@
 import { Cause, Console, Effect, Logger, Runtime } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
 import { actors, CurrentActor } from "./authorization.js";

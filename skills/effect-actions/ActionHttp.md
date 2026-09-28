@@ -59,8 +59,8 @@ export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI
 
 ```ts
 import { Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiSwagger, OpenApi } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpApiSwagger, OpenApi } from "effect/http-api";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { authenticate } from "./authentication.js";
 import { Http } from "./binding.js";
@@ -112,7 +112,7 @@ action's input directly and answering with its decoded success: `client.<action>
 
 ```ts
 import { Console, Effect } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./binding.js";
 
@@ -160,7 +160,7 @@ Code that does not run Effects, such as a browser app, builds the client once wi
 
 ```ts
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./binding.js";
 

@@ -1,7 +1,7 @@
 // Compile-only public CLI API assertions.
 import { Context, Effect, Schema } from "effect";
-import { HttpClient, type HttpClientError } from "effect/unstable/http";
-import type { Command } from "effect/unstable/cli";
+import { HttpClient, type HttpClientError } from "effect/http";
+import type { Command } from "effect/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";

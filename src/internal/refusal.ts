@@ -1,11 +1,6 @@
 // Server-only, and a module of its own: a client bundle, which never serves, drops it whole.
 import { Context, Effect, Option, Predicate, Ref, Schema } from "effect";
-import {
-  HttpEffect,
-  HttpRouter,
-  type HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpEffect, HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Refusal, refusals, statuses } from "./errors.js";
 
 /**

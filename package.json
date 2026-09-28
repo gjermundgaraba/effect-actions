@@ -42,10 +42,10 @@
     "docs:sync": "node --import tsx scripts/sync-skill.ts"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-rc.117",
+    "@effect/platform-node": "4.0.0-rc.118",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.6.2",
-    "effect": "4.0.0-rc.117",
+    "effect": "4.0.0-rc.118",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
@@ -53,7 +53,7 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "effect": ">=4.0.0-rc.116 <4.0.0"
+    "effect": ">=4.0.0-rc.118 <4.0.0"
   },
   "devEngines": {
     "packageManager": {

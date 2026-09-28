@@ -1,5 +1,5 @@
 import { Console, Effect, Option, Predicate, Record, Schema, SchemaAST } from "effect";
-import { Command, Flag, Param } from "effect/unstable/cli";
+import { Command, Flag, Param } from "effect/cli";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
 

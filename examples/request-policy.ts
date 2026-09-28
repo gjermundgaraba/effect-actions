@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 // Host and origin checks for a server bound to localhost: not the library's concern, but
 // every surface of the host sits behind them.
