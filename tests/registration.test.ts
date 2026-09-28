@@ -1,6 +1,16 @@
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  JsonPointer,
+  Layer,
+  Predicate,
+  Result,
+  Schema,
+} from "effect";
 import { McpSchema, Tool } from "effect/unstable/ai";
 import { OpenApi } from "effect/unstable/httpapi";
 import * as Action from "../src/Action.js";
@@ -465,7 +475,7 @@ describe("projection boundaries", () => {
     Schema.String,
     // Compiles to a `$ref` root, which the native server inlines and still rejects.
     Schema.String.annotate({ identifier: "Named" }),
-  ])("the native server rejects non-object MCP input at layer build", async (input) => {
+  ])("the native server refuses non-object MCP input: the layer build dies", async (input) => {
     const Invalid = Action.make("invalid", {
       description: "Unusable MCP input",
       access: "write",
@@ -483,7 +493,12 @@ describe("projection boundaries", () => {
       path: "/mcp",
     }).pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices));
 
-    await expect(Effect.runPromise(Effect.scoped(Layer.build(layer)))).rejects.toThrow(
+    // A defect, not a typed failure: it cannot be caught by tag.
+    const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(layer)));
+
+    const defect = Result.getOrUndefined(Exit.findDefect(exit));
+
+    expect(defect instanceof Error ? defect.message : defect).toMatch(
       /Expected "object"|Missing key/,
     );
   });

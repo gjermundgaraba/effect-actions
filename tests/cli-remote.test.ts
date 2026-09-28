@@ -1,4 +1,4 @@
-import { expect, it, onTestFinished } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { Effect, Exit, Option, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
@@ -184,8 +184,6 @@ it("propagates domain, refusal and transport failures as typed failures", async 
   );
 
   const open = serve(ActionHttp.layer(Http, app));
-
-  onTestFinished(() => open.dispose());
 
   const command = ActionCli.command(Http, Remote);
 
