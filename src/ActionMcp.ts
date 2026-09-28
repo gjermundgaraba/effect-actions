@@ -1,10 +1,10 @@
-import { Cause, Effect, Exit, Fiber, Layer, Logger } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Logger, Schema } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
-import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
+import { McpProtocol, McpServer, type McpSchema, Tool } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
 import { defaultPath, httpProtocol } from "./internal/mcp.js";
-import { stepUp } from "./internal/refusal.js";
-import { bindTools } from "./internal/tools.js";
+import { recordStepUp, stepUp } from "./internal/refusal.js";
+import { bindTools, type Projection } from "./internal/tools.js";
 import {
   type AnyImplementation,
   type BuildContext,
@@ -48,11 +48,31 @@ const stdioProtocols = [
 /** The native server supplies its own request context to every tool call. */
 type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext>;
 
+/**
+ * MCP has a JSON-only wire contract. Success uses its documented `{ value }`
+ * structured-content envelope; declared failures are returned as JSON text. The native
+ * server refuses undeclared arguments, publishes closed input schemas, and rejects any
+ * input whose JSON Schema root is not an object. A step-up refusal is recorded, so that
+ * over HTTP it answers the request.
+ */
+const tools: Projection = {
+  label: "MCP tool",
+  tool: (action, errors) =>
+    Tool.make(action.name, {
+      description: action.description,
+      parameters: Schema.toCodecJson(action.input),
+      success: Schema.toCodecJson(Schema.Struct({ value: action.success })),
+      failure: Schema.toCodecJson(Schema.Union(errors)),
+      failureMode: "return",
+    }).annotate(Tool.Strict, true),
+  handler: (run) => (input) => Effect.map(recordStepUp(run(input)), (value) => ({ value })),
+};
+
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
 ) => {
-  const binding = bindTools(apps, { kind: "mcp" });
+  const binding = bindTools(apps, tools);
 
   return Layer.effectDiscard(McpServer.registerToolkit(binding.toolkit)).pipe(
     Layer.provide(binding.layer),

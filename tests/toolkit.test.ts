@@ -37,8 +37,8 @@ describe("ActionToolkit", () => {
     });
 
     expect(binding.toolkit.tools.read.needsApproval).toBe(false);
-    // No tool needs approval unless the host says so.
-    expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBe(false);
+    // No tool needs approval unless the host says so: the native tool's own default.
+    expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBeUndefined();
 
     // A model that calls the tools at once.
     const model = LanguageModel.make({

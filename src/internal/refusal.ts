@@ -1,6 +1,11 @@
 // Server-only, and a module of its own: a client bundle, which never serves, drops it whole.
 import { Context, Effect, Option, Predicate, Ref, Schema } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpEffect,
+  HttpRouter,
+  type HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import { type Refusal, refusals, statuses } from "./errors.js";
 
 /**
@@ -30,38 +35,66 @@ const Refusals = Schema.Union(refusals);
 
 const encode = Schema.encodeSync(Refusals);
 
+const isRefusal = Schema.is(Refusals);
+
 /**
- * A refusal as its JSON with its status, as every endpoint declares it. A `Forbidden` naming
- * scopes carries the RFC 6750 `insufficient_scope` challenge an OAuth client steps up on,
- * naming the resource's metadata URL when there is one.
+ * The RFC 6750 `insufficient_scope` challenge an OAuth client steps up on, for a `Forbidden`
+ * naming scopes, naming the resource's metadata URL when there is one.
+ */
+const insufficientScope = (error: Refusal, metadataUrl: string | undefined): string | undefined =>
+  Predicate.isTagged(error, "Forbidden") && error.scopes !== undefined
+    ? bearer([
+        ["error", "insufficient_scope"],
+        ["scope", error.scopes.join(" ")],
+        ["resource_metadata", metadataUrl],
+        ["error_description", description.test(error.message) ? error.message : undefined],
+      ])
+    : undefined;
+
+/**
+ * A refusal as its JSON with its status, as every endpoint declares it, and its
+ * `insufficient_scope` challenge if it has one.
  */
 export const answer = (
   error: Refusal,
   metadataUrl: string | undefined,
 ): HttpServerResponse.HttpServerResponse => {
   const response = HttpServerResponse.jsonUnsafe(encode(error), { status: statuses[error._tag] });
+  const challenge = insufficientScope(error, metadataUrl);
 
-  if (!Predicate.isTagged(error, "Forbidden") || error.scopes === undefined) return response;
-
-  return HttpServerResponse.setHeader(
-    response,
-    "www-authenticate",
-    bearer([
-      ["error", "insufficient_scope"],
-      ["scope", error.scopes.join(" ")],
-      ["resource_metadata", metadataUrl],
-      ["error_description", description.test(error.message) ? error.message : undefined],
-    ]),
-  );
+  return challenge === undefined
+    ? response
+    : HttpServerResponse.setHeader(response, "www-authenticate", challenge);
 };
+
+/**
+ * `call`, an HTTP route's, whose `Forbidden` naming scopes adds its `insufficient_scope`
+ * challenge to the response the route answers it with.
+ */
+export const challengeScopes = <A, E, R>(
+  call: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
+  Effect.tapError(call, (error) =>
+    isRefusal(error)
+      ? Effect.flatMap(Effect.serviceOption(ResourceMetadata), (metadata) => {
+          const challenge = insufficientScope(error, Option.getOrUndefined(metadata));
+
+          return challenge === undefined
+            ? Effect.void
+            : HttpEffect.appendPreResponseHandler((_request, response) =>
+                Effect.succeed(
+                  HttpServerResponse.setHeader(response, "www-authenticate", challenge),
+                ),
+              );
+        })
+      : Effect.void,
+  );
 
 /** `answer`, naming the metadata URL of the resource `Authentication.make` covers the request for. */
 const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
   Effect.map(Effect.serviceOption(ResourceMetadata), (metadata) =>
     answer(error, Option.getOrUndefined(metadata)),
   );
-
-const isRefusal = Schema.is(Refusals);
 
 /** The step-up refusal a call under `stepUp` failed with, which answers its request. */
 class SteppedUp extends Context.Service<SteppedUp, Ref.Ref<Option.Option<Refusal>>>()(

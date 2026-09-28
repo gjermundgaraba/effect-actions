@@ -78,8 +78,22 @@ export function make<const Apps extends Served>(
 ): Tools<ToolkitTools<Member<Apps>>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
 export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const served = toList(apps);
-  const needsApproval = options?.needsApproval ?? (() => false);
-  const { toolkit, layer } = bindTools(served, { kind: "native", needsApproval });
+
+  // Its schemas keep the action's transformations, and its result is the action's own,
+  // with no MCP envelope.
+  const { toolkit, layer } = bindTools(served, {
+    label: "tool",
+    tool: (action, errors) =>
+      Tool.make(action.name, {
+        description: action.description,
+        parameters: action.input,
+        success: action.success,
+        failure: Schema.Union(errors),
+        failureMode: "return",
+        needsApproval: options?.needsApproval?.(action),
+      }),
+    handler: (run) => run,
+  });
 
   return { toolkit, layer: layer.pipe(provideHandlers(served)) };
 }

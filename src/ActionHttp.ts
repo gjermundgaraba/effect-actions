@@ -18,7 +18,7 @@ import {
   type Options as ClientOptions,
 } from "./internal/client.js";
 import { httpErrors, type HttpErrors } from "./internal/errors.js";
-import { recordStepUp, stepUp } from "./internal/refusal.js";
+import { challengeScopes } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
@@ -278,7 +278,7 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
             // Own properties, so an action named `__proto__` is a route, not a prototype.
             bound.map(([action, run]) => [
               action.name,
-              (request: Request) => recordStepUp(run(request.payload)),
+              (request: Request) => challengeScopes(run(request.payload)),
             ]),
           ) as never,
         ),
@@ -286,11 +286,7 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
     ),
   ).pipe(provideHandlers(apps));
 
-  return HttpApiBuilder.layer(api).pipe(
-    Layer.provide(handlers),
-    Layer.provide(schemaErrors),
-    Layer.provide(stepUp),
-  );
+  return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
 }
 
 /**
