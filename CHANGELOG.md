@@ -47,7 +47,7 @@ ActionHttp.layer(Http, users);
 | `bearerToken` succeeding with an `Option`                        | `bearerToken` failing with `Unauthenticated`; `Effect.option(bearerToken)` where it is optional       |
 | The `ActionHttp.Http` type                                       | `ActionHttp.Binding`                                                                                  |
 | `ActionHttpClient.make`, `ActionHttpClient.Client`               | `ActionHttp.client`, `ActionHttp.Client`                                                              |
-| `ActionHttpClient.promise`                                       | `Effect.runPromise` of an `ActionHttp.client` call, with `FetchHttpClient.layer`                      |
+| `ActionHttpClient.promise`                                       | A client built once with `FetchHttpClient.layer`, each call `Effect.runPromise`d (ActionHttp.md)      |
 | `client.getUser({ payload })`                                    | `client.getUser(input)`                                                                               |
 | `ActionCliClient.command(Http, A, { connection: { baseUrl } })`  | `ActionCli.command(Http, A)` on a host `HttpClient` that prepends the URL                             |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`             |

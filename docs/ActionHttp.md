@@ -151,8 +151,38 @@ headers also go through `transformClient`
 (`HttpClient.mapRequest(HttpClientRequest.setHeader("x-agent", agent))`). The options are the
 native `HttpApiClient.make` options except `transformResponse`, which may change a call's
 success, failure or required services, which the method types cannot follow; use
-`transformClient`, or the native client. Code that does not run Effects runs the program with
-`Effect.runPromise`, as above.
+`transformClient`, or the native client.
+
+### Promise callers
+
+Code that does not run Effects, such as a browser app, builds the client once with its
+`HttpClient` and runs each call with `Effect.runPromise`.
+
+```ts
+import { Effect } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import { Http } from "./binding.js";
+
+// Built once, for code that does not run Effects: its methods need nothing more.
+export const api = ActionHttp.client(Http).pipe(
+  Effect.provide(FetchHttpClient.layer),
+  // `fetch` is read on every call, so a wrapper or a test's stub installed later is used.
+  Effect.provideService(FetchHttpClient.Fetch, (input, init) => globalThis.fetch(input, init)),
+  Effect.runSync,
+);
+
+// A promise per call. A declared error rejects it as its decoded value, so
+// `error instanceof UserNotFound` holds in a `catch`.
+export const userName = async (id: string): Promise<string> =>
+  (await Effect.runPromise(api.getUser({ id }))).name;
+```
+
+A declared error rejects the promise as its decoded value, so `catch` code matches it with
+`instanceof`. The native `FetchHttpClient` reads the default `fetch` once, on first use, so a
+`fetch` installed later, such as a test's stub, is used only when `FetchHttpClient.Fetch`
+reads it on each call, as above. In a browser, relative routes resolve against the page;
+elsewhere, give `baseUrl`.
 
 ## Rules
 

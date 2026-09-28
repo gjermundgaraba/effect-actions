@@ -23,6 +23,7 @@ const snippets = [
   ["docs/ActionHttp.md", "## Canonical", ["binding.ts"]],
   ["docs/ActionHttp.md", "### Serving", ["http.ts"]],
   ["docs/ActionHttp.md", "### Client", ["client.ts"]],
+  ["docs/ActionHttp.md", "### Promise callers", ["promise-client.ts"]],
   ["docs/Authentication.md", "## Canonical", ["authentication.ts"]],
   ["docs/ActionMcp.md", "## Canonical", ["mcp.ts"]],
   ["docs/ActionCli.md", "## Canonical", ["cli.ts"]],

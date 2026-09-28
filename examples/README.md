@@ -106,6 +106,7 @@ is public.
 - [app.ts](app.ts): every surface of the host, under that policy.
 - [server.ts](server.ts): the Node HTTP server and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
+- [promise-client.ts](promise-client.ts): the client built once for code that does not run Effects, each call a promise.
 
 ## Follow a request
 
