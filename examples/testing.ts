@@ -8,8 +8,9 @@ const program = Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http);
   const greeting = yield* client.greet({ name: "Ada" });
 
-  // The same action as one tool call to `/mcp`, typed like the client's method.
-  const called = yield* Testing.mcpCall(Greet, { name: "Ada" });
+  // The same action as a tool of `/mcp`, called like the client's method.
+  const mcp = yield* Testing.mcpClient([Greet]);
+  const called = yield* mcp.greet({ name: "Ada" });
 
   return { greeting, called };
 });

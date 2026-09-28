@@ -52,7 +52,7 @@ ActionHttp.layer(Http, users);
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`         | `ActionCli.command(apps, Action)`, `ActionCli.make(apps, { name })`                                   |
 | `parameters`, the `input` mapper, `--input-file`                 | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct |
 | `Testing.serve`, `Testing.httpClient`, `TestingClient`           | `Testing.layer(routes)`, an in-memory `HttpClient` for every client                                   |
-| `Testing.mcpCall(server, { name, arguments })`                   | `Testing.mcpCall(Action, input?, { url?, headers? })`, an Effect on that `HttpClient`                 |
+| `Testing.mcpCall(server, { name, arguments })`                   | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`                  |
 | `ActionCatalog`                                                  | `OpenApi.fromApi(Http.api)`, or an MCP endpoint's `tools/list`                                        |
 | `ActionMcp.Options`                                              | `ActionMcp.HttpOptions`                                                                               |
 | Span `<group>.<action>`, attribute `action.group`                | Span `<action>`                                                                                       |
@@ -118,8 +118,9 @@ Behavior that changes without a rename:
   and MCP over HTTP it is a 403 with an `insufficient_scope` challenge, on which an MCP client
   re-authorizes and retries.
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the
-  native `HttpApiClient`, a remote `ActionCli` command and `Testing.mcpCall`.
-  `Testing.mcpRequest` sends any stateless MCP request.
+  native `HttpApiClient`, a remote `ActionCli` command and `Testing.mcpClient`, which calls
+  tools as `ActionHttp.client` calls routes. `Testing.mcpRequest` sends any stateless MCP
+  request, with any `_meta` merged over the client metadata.
 - A CLI flag's help text is its field's schema description.
 - `ActionCli.command(apps, Action, { positional: ["path"] })` takes the listed fields of a
   struct input as positional arguments, locally and over HTTP.

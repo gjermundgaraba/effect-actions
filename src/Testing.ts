@@ -1,4 +1,5 @@
 import { Effect, Layer, Option, Predicate, Schema } from "effect";
+import { identity } from "effect/Function";
 import {
   type Headers,
   HttpClient,
@@ -10,15 +11,15 @@ import {
   HttpServer,
 } from "effect/unstable/http";
 import type * as Action from "./Action.js";
-import { projectedErrors } from "./internal/actions.js";
-import type { OmittableInput } from "./internal/client.js";
+import { assertDistinct, projectedErrors } from "./internal/actions.js";
+import type { Call } from "./internal/client.js";
 import { type Refusal, refusals } from "./internal/errors.js";
 import { defaultPath, httpProtocol } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
- * it to `ActionHttp.client` and to `mcpCall`. The routes are built with this layer and
+ * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
  * released with its scope, without request logs, with the platform services
  * `HttpServer.layerServices` provides. They must satisfy their per-request requirements
  * themselves, with their middleware. A relative URL resolves against `http://localhost`.
@@ -37,20 +38,28 @@ export function layer(
   );
 }
 
-/** Where `mcpCall` and `mcpRequest` send, and with what headers. */
-export interface McpCallOptions {
+/** Where `mcpClient` sends, and through what client. */
+export interface McpClientOptions {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
    * the default `ActionMcp.layerHttp` path.
    */
   readonly url?: string;
+  /** Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token, say. */
+  readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
+}
+
+/** Where `mcpRequest` sends, and with what headers. */
+export interface McpRequestOptions {
+  /** The endpoint, as `McpClientOptions` has it. */
+  readonly url?: string;
   readonly headers?: Headers.Input;
 }
 
 /**
- * An answer `mcpCall` cannot decode as the action's success or a declared error, such as
- * the native server's message for invalid arguments or an unknown tool. Its message holds
- * the answer.
+ * An answer a client method cannot decode as the action's success or a declared error,
+ * such as the native server's message for invalid arguments or an unknown tool. Its message
+ * holds the answer.
  */
 export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
   message: Schema.String,
@@ -69,14 +78,13 @@ type CallError<A extends Action.Any> =
   | HttpClientError.HttpClientError
   | McpCallError;
 
-/**
- * The arguments after the action: its input, then options. As for a client's method, the input
- * may be left out when `{}` is valid, sending `{}`, and a given input is sent as given; with
- * options, it is given.
- */
-type McpCallArguments<A extends Action.Any> =
-  | (OmittableInput<A> extends true ? [] : never)
-  | [input: A["input"]["Type"], options?: McpCallOptions];
+/** Every action of `Actions` as `client.<action>(input)`, calling its tool. */
+export type McpClient<Actions extends ReadonlyArray<Action.Any>> = {
+  readonly [A in Actions[number] as A["name"]]: Call<
+    A,
+    Effect.Effect<A["success"]["Type"], CallError<A>>
+  >;
+};
 
 /** The JSON-RPC response to a `tools/call`: a tool result or a protocol error. */
 const ToolReply = Schema.Union([
@@ -118,23 +126,14 @@ const failWith = (errors: Action.Any["errors"], text: string, otherwise: McpCall
     Effect.flatMap(Effect.fail),
   );
 
-/**
- * Call one action's tool with one stateless request, as `ActionMcp.layerHttp` serves it,
- * on the `HttpClient`, such as the one `layer` provides, as `ActionHttp.client` calls its
- * route: the input is encoded with the action's schema, and the success decoded. A declared
- * error the tool returns, the action's own or a refusal, is its decoded value, and so is a
- * refusal the endpoint's authentication answers with.
- */
-export function mcpCall<const A extends Action.Any>(
-  action: A,
-  ...args: McpCallArguments<A>
-): Effect.Effect<A["success"]["Type"], CallError<A>, HttpClient.HttpClient>;
-export function mcpCall(
+/** The tool call of `action` with `input` on `client`, sending to `url`. */
+const callTool = (
+  client: HttpClient.HttpClient,
+  url: string,
   action: Action.Any,
-  ...args: [] | [input: Action.Any["input"]["Type"], options?: McpCallOptions]
-): Effect.Effect<unknown, unknown, HttpClient.HttpClient> {
+  input: Action.Any["input"]["Type"],
+): Effect.Effect<unknown, unknown> => {
   const { name } = action;
-  const [input, options] = args.length === 0 ? [{}] : args;
 
   const other = (answer: string) =>
     new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
@@ -142,7 +141,9 @@ export function mcpCall(
   return Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
-    const response = yield* mcpRequest("tools/call", { name, arguments: encoded }, options);
+    const response = yield* mcpRequest("tools/call", { name, arguments: encoded }, { url }).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+    );
 
     const text = yield* response.text;
 
@@ -181,21 +182,62 @@ export function mcpCall(
       result.structuredContent.value,
     );
   });
+};
+
+/**
+ * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
+ * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
+ * encoded with the action's schema, and the success decoded. A declared error the tool
+ * returns, the action's own or a refusal, is its decoded value, and so is a refusal the
+ * endpoint's authentication answers with. The argument may be omitted when `{}` is a valid
+ * input. Requires the native `HttpClient`, such as the one `layer` provides.
+ */
+export function mcpClient<const Actions extends ReadonlyArray<Action.Any>>(
+  actions: Actions,
+  options?: McpClientOptions,
+): Effect.Effect<McpClient<Actions>, never, HttpClient.HttpClient>;
+export function mcpClient(
+  actions: ReadonlyArray<Action.Any>,
+  { url = defaultPath, transformClient = identity }: McpClientOptions = {},
+): Effect.Effect<
+  {
+    readonly [name: string]: (...input: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>;
+  },
+  never,
+  HttpClient.HttpClient
+> {
+  assertDistinct("action", actions, (action) => action.name);
+
+  return Effect.map(HttpClient.HttpClient, (native) => {
+    const client = transformClient(native);
+
+    return Object.fromEntries(
+      actions.map((action) => [
+        action.name,
+        // A method takes no argument only when `{}` is a valid input; a given one is sent.
+        (...input: ReadonlyArray<unknown>) =>
+          callTool(client, url, action, input.length === 0 ? {} : input[0]),
+      ]),
+    );
+  });
 }
 
 /**
  * Send one stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves
  * it, on the `HttpClient`: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
- * `params.name`, and the client metadata in `_meta` are filled in. It succeeds with the
- * response as the endpoint sent it, whatever its status: for a test asserting on what
- * `mcpCall` decodes away, such as `tools/list`, a refusal's challenge, or a call its types
- * would not send.
+ * `params.name`, and the client metadata in `_meta` are filled in, under any `_meta` given,
+ * such as a `progressToken`; the protocol version is always the request's own. It succeeds
+ * with the response as the endpoint sent it, whatever its status: for a test asserting on
+ * what `mcpClient` decodes away, such as `tools/list`, a refusal's challenge, or a call its
+ * types would not send.
  */
 export const mcpRequest = (
   method: string,
-  // The client metadata is the request's own: `_meta` would be dropped, so it is no parameter.
-  params: { readonly _meta?: never; readonly [key: string]: Schema.Json } = {},
-  { headers = {}, url = defaultPath }: McpCallOptions = {},
+  params: {
+    readonly _meta?: { readonly [key: string]: Schema.Json };
+    readonly [key: string]: Schema.Json | undefined;
+  } = {},
+  { headers = {}, url = defaultPath }: McpRequestOptions = {},
 ): Effect.Effect<
   HttpClientResponse.HttpClientResponse,
   HttpClientError.HttpClientError,
@@ -222,9 +264,10 @@ export const mcpRequest = (
         params: {
           ...params,
           _meta: {
-            "io.modelcontextprotocol/protocolVersion": protocolVersion,
             "io.modelcontextprotocol/clientCapabilities": {},
             "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
+            ...params._meta,
+            "io.modelcontextprotocol/protocolVersion": protocolVersion,
           },
         },
       }),

@@ -32,18 +32,31 @@ import { cliServices, logged } from "./cli-services.js";
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
   program.pipe(Effect.provide(Testing.layer(host)), Effect.runPromise);
 
-/** Headers carrying `token`, a demo actor's name, as its bearer token. */
-const as = (token = "alice") => ({ headers: { authorization: `Bearer ${token}` } });
+/** Client options sending `token`, a demo actor's name, as its bearer token. */
+const as = (token = "alice") => ({
+  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+});
 
-describe("mcpCall", () => {
+/** Headers carrying `token` as its bearer token, for a raw request. */
+const headersAs = (token = "alice") => ({ headers: { authorization: `Bearer ${token}` } });
+
+/** The example host's MCP client, as `token`'s actor. */
+const mcpAs = (token?: string) =>
+  Testing.mcpClient([GetUser, RenameUser, Double, WhoAmI], as(token));
+
+describe("mcpClient", () => {
   it("encodes the input and decodes the success, without the `{ value }` envelope", async () => {
     const results = await againstHost(
-      Effect.all([
-        Testing.mcpCall(GetUser, { id: "1" }, as()),
-        // Decoded input: `Double` encodes its number as a string on the wire.
-        Testing.mcpCall(Double, { value: 21 }, as()),
-        Testing.mcpCall(WhoAmI, {}, as()),
-      ]),
+      Effect.gen(function* () {
+        const mcp = yield* mcpAs();
+
+        return [
+          yield* mcp.getUser({ id: "1" }),
+          // Decoded input: `Double` encodes its number as a string on the wire.
+          yield* mcp.double({ value: 21 }),
+          yield* mcp.whoAmI(),
+        ];
+      }),
     );
 
     expect(results).toEqual([{ id: "1", name: "Ada" }, 42, { id: "alice", tenantId: "acme" }]);
@@ -51,12 +64,18 @@ describe("mcpCall", () => {
 
   it("fails with a declared error or a refusal as its decoded value", async () => {
     const results = await againstHost(
-      Effect.all([
-        Effect.flip(Testing.mcpCall(GetUser, { id: "404" }, as())),
-        Effect.flip(Testing.mcpCall(RenameUser, { id: "1", name: "Grace" }, as("reader"))),
-        // The endpoint's authentication answers before any tool, with the same JSON.
-        Effect.flip(Testing.mcpCall(GetUser, { id: "1" }, as("nobody"))),
-      ]),
+      Effect.gen(function* () {
+        const alice = yield* mcpAs();
+        const reader = yield* mcpAs("reader");
+        const nobody = yield* mcpAs("nobody");
+
+        return yield* Effect.all([
+          Effect.flip(alice.getUser({ id: "404" })),
+          Effect.flip(reader.renameUser({ id: "1", name: "Grace" })),
+          // The endpoint's authentication answers before any tool, with the same JSON.
+          Effect.flip(nobody.getUser({ id: "1" })),
+        ]);
+      }),
     );
 
     expect(results).toEqual([
@@ -79,8 +98,8 @@ describe("mcpCall", () => {
       { name: "test", version: "0" },
     );
 
-    const result = await Testing.mcpCall(Fail).pipe(
-      Effect.flip,
+    const result = await Testing.mcpClient([Fail]).pipe(
+      Effect.flatMap((mcp) => Effect.flip(mcp.fail())),
       Effect.provide(Testing.layer(routes)),
       Effect.runPromise,
     );
@@ -88,8 +107,8 @@ describe("mcpCall", () => {
     expect(result).toBe("failure");
 
     // A tool's error is a tool result: in any other answer's body, it is that answer.
-    const other = await Testing.mcpCall(Fail, {}, { url: "/broken" }).pipe(
-      Effect.flip,
+    const other = await Testing.mcpClient([Fail], { url: "/broken" }).pipe(
+      Effect.flatMap((mcp) => Effect.flip(mcp.fail())),
       Effect.provide(
         Testing.layer(
           HttpRouter.add("POST", "/broken", HttpServerResponse.text('"failure"', { status: 500 })),
@@ -125,8 +144,8 @@ describe("mcpCall", () => {
       { name: "test", version: "0" },
     );
 
-    const failure = await Testing.mcpCall(Slow).pipe(
-      Effect.flip,
+    const failure = await Testing.mcpClient([Slow]).pipe(
+      Effect.flatMap((mcp) => Effect.flip(mcp.slow())),
       Effect.provide(Testing.layer(routes)),
       Effect.runPromise,
     );
@@ -147,7 +166,9 @@ describe("mcpCall", () => {
     const results = await Effect.gen(function* () {
       const client = yield* ActionHttp.client(Http);
 
-      return [yield* client.reset(), yield* Testing.mcpCall(Reset)];
+      const mcp = yield* Testing.mcpClient([Reset]);
+
+      return [yield* client.reset(), yield* mcp.reset()];
     }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
     expect(results).toEqual([undefined, undefined]);
@@ -168,19 +189,25 @@ describe("mcpCall", () => {
       success: Schema.String,
     });
 
+    /** `Missing` called at `url`. */
+    const missing = (url?: string) =>
+      Effect.flatMap(
+        Testing.mcpClient([Missing], { ...as(), ...(url === undefined ? {} : { url }) }),
+        (mcp) => Effect.flip(mcp.missing_tool()),
+      );
+
     const failures = await againstHost(
       Effect.all([
-        Effect.flip(Testing.mcpCall(Loose, { id: 1 }, as())),
-        Effect.flip(Testing.mcpCall(Missing, {}, as())),
-        Effect.flip(Testing.mcpCall(Missing, {}, { url: "/nowhere" })),
+        Effect.flatMap(Testing.mcpClient([Loose], as()), (mcp) =>
+          Effect.flip(mcp.getUser({ id: 1 })),
+        ),
+        missing(),
+        missing("/nowhere"),
       ]),
     );
 
     // Answers no MCP server gives: no JSON-RPC reply, and a result without its structure.
-    const odd = await Effect.all([
-      Effect.flip(Testing.mcpCall(Missing, {}, { url: "/garbled" })),
-      Effect.flip(Testing.mcpCall(Missing, {}, { url: "/bare" })),
-    ]).pipe(
+    const odd = await Effect.all([missing("/garbled"), missing("/bare")]).pipe(
       Effect.provide(
         Testing.layer(
           Layer.mergeAll(
@@ -211,14 +238,16 @@ describe("mcpCall", () => {
 
   it("calls the endpoint its url names", async () => {
     // The example's public endpoint needs no credentials.
-    const result = await againstHost(Testing.mcpCall(Status, {}, { url: "/mcp/public" }));
+    const result = await againstHost(
+      Effect.flatMap(Testing.mcpClient([Status], { url: "/mcp/public" }), (mcp) => mcp.status()),
+    );
 
     expect(result).toEqual({ service: "effect-actions", users: 2 });
   });
 
   it("resolves a relative url only under layer", async () => {
-    const failure = await Testing.mcpCall(Status).pipe(
-      Effect.flip,
+    const failure = await Testing.mcpClient([Status]).pipe(
+      Effect.flatMap((mcp) => Effect.flip(mcp.status())),
       Effect.provide(FetchHttpClient.layer),
       Effect.runPromise,
     );
@@ -242,7 +271,7 @@ describe("mcpCall", () => {
 
   /** `Listed` against a route answering `body` with `contentType`. */
   const listed = (body: string, contentType: string) =>
-    Testing.mcpCall(Listed, {}, { url: "/events" }).pipe(
+    Effect.flatMap(Testing.mcpClient([Listed], { url: "/events" }), (mcp) => mcp.listed()).pipe(
       Effect.provide(
         Testing.layer(
           HttpRouter.add("POST", "/events", HttpServerResponse.text(body, { contentType })),
@@ -278,16 +307,16 @@ describe("mcpRequest", () => {
     const [listed, refused, unknown] = await againstHost(
       Effect.all([
         Effect.flatMap(
-          Testing.mcpRequest("tools/list", {}, as()),
+          Testing.mcpRequest("tools/list", {}, headersAs()),
           HttpClientResponse.schemaBodyJson(Listed),
         ),
         Testing.mcpRequest(
           "tools/call",
           { name: "renameUser", arguments: { id: "1", name: "Grace" } },
-          as("reader"),
+          headersAs("reader"),
         ),
         Effect.flatMap(
-          Testing.mcpRequest("tools/call", { name: "missing", arguments: {} }, as()),
+          Testing.mcpRequest("tools/call", { name: "missing", arguments: {} }, headersAs()),
           HttpClientResponse.schemaBodyJson(Failed),
         ),
       ]),
@@ -295,12 +324,53 @@ describe("mcpRequest", () => {
 
     expect(listed.result.tools.map(({ name }) => name)).toContain("getUser");
 
-    // A refusal's status and challenge, which `mcpCall` decodes away.
+    // A refusal's status and challenge, which `mcpClient` decodes away.
     expect(refused.status).toBe(403);
     expect(refused.headers["www-authenticate"]).toContain('error="insufficient_scope"');
 
     expect(unknown.error.message).toContain("missing");
   });
+});
+
+describe("mcpRequest metadata", () => {
+  it("merges the given _meta under the protocol version the request speaks", async () => {
+    const echo = HttpRouter.add(
+      "POST",
+      "/echo",
+      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => request.text).pipe(
+        Effect.map((body) => HttpServerResponse.text(body)),
+        Effect.orDie,
+      ),
+    );
+
+    const sent = await Testing.mcpRequest(
+      "tools/call",
+      {
+        name: "slow",
+        arguments: {},
+        _meta: {
+          progressToken: "p",
+          "io.modelcontextprotocol/protocolVersion": "1999-01-01",
+        },
+      },
+      { url: "/echo" },
+    ).pipe(
+      Effect.flatMap((response) => response.text),
+      Effect.provide(Testing.layer(echo)),
+      Effect.runPromise,
+    );
+
+    expect(Schema.decodeUnknownSync(Schema.fromJsonString(Sent))(sent).params._meta).toEqual({
+      progressToken: "p",
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {},
+      "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
+    });
+  });
+});
+
+const Sent = Schema.Struct({
+  params: Schema.Struct({ _meta: Schema.Record(Schema.String, Schema.Json) }),
 });
 
 describe("layer", () => {
@@ -317,7 +387,7 @@ describe("layer", () => {
           user: yield* client.getUser({ id: "1" }),
           missing: yield* Effect.flip(client.getUser({ id: "404" })),
           status: yield* client.status(),
-          doubled: yield* Testing.mcpCall(Double, { value: 2 }, as()),
+          doubled: yield* (yield* mcpAs()).double({ value: 2 }),
         };
       }),
     );

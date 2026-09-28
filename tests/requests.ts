@@ -30,7 +30,7 @@ interface McpRequestOptions {
   readonly path?: string;
 }
 
-/** One stateless 2026-07-28 MCP request to `path`, as `Testing.mcpCall` sends a call. */
+/** One stateless 2026-07-28 MCP request to `path`, as `Testing.mcpClient` sends a call. */
 export const mcpRequest = ({
   method,
   params = {},
@@ -63,6 +63,6 @@ export const mcpRequest = ({
   return new Request(`http://localhost${path}`, { method: "POST", headers, body });
 };
 
-/** A raw `tools/call` request, for tests that assert the wire envelope `Testing.mcpCall` removes. */
+/** A raw `tools/call` request, for tests that assert the wire envelope `Testing.mcpClient` removes. */
 export const rawToolCall = (name: string, args: Schema.Json = {}): Request =>
   mcpRequest({ method: "tools/call", params: { name, arguments: args } });

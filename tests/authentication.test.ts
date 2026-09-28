@@ -387,11 +387,21 @@ describe("Authentication.make", () => {
 
     // The MCP endpoint is refused before any tool runs, with the HTTP 401 itself, which
     // decodes as the same refusal.
-    expect(await against(web, Effect.flip(Testing.mcpCall(Identify)))).toEqual(
+    const identify = (options?: Testing.McpClientOptions) =>
+      Effect.flatMap(Testing.mcpClient([Identify], options), (mcp) => mcp.identify());
+
+    expect(await against(web, Effect.flip(identify()))).toEqual(
       new Action.Unauthenticated({ message: "Missing token" }),
     );
     expect(
-      await against(web, Testing.mcpCall(Identify, {}, { headers: { authorization: "alice" } })),
+      await against(
+        web,
+        identify({
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.setHeader("authorization", "alice"),
+          ),
+        }),
+      ),
     ).toBe("alice");
   });
 
@@ -756,10 +766,13 @@ describe("authentication around a surface", () => {
     const response = await web.handler(call("secret", { note: "hi" }, "Bearer alice"));
     expect(await response.json()).toBe("actor:alice: hi");
 
-    const called = Testing.mcpCall(
-      Secret,
-      { note: "hi" },
-      { headers: { authorization: "Bearer alice" } },
+    const called = Effect.flatMap(
+      Testing.mcpClient([Secret], {
+        transformClient: HttpClient.mapRequest(
+          HttpClientRequest.setHeader("authorization", "Bearer alice"),
+        ),
+      }),
+      (mcp) => mcp.secret({ note: "hi" }),
     );
 
     expect(await against(web, called)).toBe("actor:alice: hi");
@@ -795,7 +808,9 @@ describe("authentication around a surface", () => {
     onTestFinished(() => web.dispose());
 
     expect(await (await web.handler(call("secret", { note: "hi" }))).json()).toBe("acme@acme: hi");
-    expect(await against(web, Testing.mcpCall(Secret, { note: "hi" }))).toBe("acme@acme: hi");
+    const called = Effect.flatMap(Testing.mcpClient([Secret]), (mcp) => mcp.secret({ note: "hi" }));
+
+    expect(await against(web, called)).toBe("acme@acme: hi");
   });
 
   it("covers only the layer it is provided to, so one binding serves public and private actions", async () => {
@@ -839,14 +854,23 @@ describe("authentication around a surface", () => {
     onTestFinished(() => web.dispose());
 
     // One route: every tool of it is authenticated.
-    for (const refused of [Testing.mcpCall(Secret, { note: "hi" }), Testing.mcpCall(Public)]) {
+    const anonymous = Testing.mcpClient([Secret, Public]);
+
+    for (const refused of [
+      Effect.flatMap(anonymous, (mcp) => mcp.secret({ note: "hi" })),
+      Effect.flatMap(anonymous, (mcp) => mcp.public()),
+    ]) {
       expect(await against(web, Effect.flip(refused))).toBeInstanceOf(Action.Unauthenticated);
     }
+
+    const alice = Testing.mcpClient([Secret], {
+      transformClient: HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", "alice")),
+    });
 
     expect(
       await against(
         web,
-        Testing.mcpCall(Secret, { note: "hi" }, { headers: { authorization: "alice" } }),
+        Effect.flatMap(alice, (mcp) => mcp.secret({ note: "hi" })),
       ),
     ).toBe("alice: hi");
   });

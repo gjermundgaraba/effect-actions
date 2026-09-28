@@ -685,40 +685,46 @@ export const servedRequirementTypes = () => {
   void toolAssertions;
 };
 
-export const mcpCallTypes = () => {
+export const mcpClientTypes = Effect.gen(function* () {
   // A tool call is typed by its action, as a client method is.
-  const call = Testing.mcpCall(Double, { value: 2 });
+  const mcp = yield* Testing.mcpClient([Double, WhoAmI, GetUser]);
+  const call = mcp.double({ value: 2 });
 
   const doubled: Equal<
     typeof call,
     Effect.Effect<
       number,
-      Action.Refusal | Schema.SchemaError | HttpClientError.HttpClientError | Testing.McpCallError,
-      HttpClient.HttpClient
+      Action.Refusal | Schema.SchemaError | HttpClientError.HttpClientError | Testing.McpCallError
     >
   > = true;
 
   void doubled;
 
+  const needs: Equal<
+    Effect.Services<ReturnType<typeof Testing.mcpClient>>,
+    HttpClient.HttpClient
+  > = true;
+
+  void needs;
+
   // @ts-expect-error The input is the action's decoded input.
-  void Testing.mcpCall(Double, { value: "2" });
+  void mcp.double({ value: "2" });
   // @ts-expect-error An action with input takes it.
-  void Testing.mcpCall(Double);
-  // An action without input may leave it out, and gives `{}` beside options.
-  void Testing.mcpCall(WhoAmI);
-  void Testing.mcpCall(WhoAmI, {}, { url: "/mcp" });
+  void mcp.double();
+  // An action without input may leave it out.
+  void mcp.whoAmI();
   // @ts-expect-error As for a client's method, a given input is sent as given.
-  void Testing.mcpCall(WhoAmI, undefined, { url: "/mcp" });
-  // @ts-expect-error The client metadata is the request's own, never a parameter.
-  void Testing.mcpRequest("tools/list", { _meta: {} });
+  void mcp.whoAmI(undefined);
+  // Metadata merges under the protocol keys, such as a progress token.
+  void Testing.mcpRequest("tools/list", { _meta: { progressToken: "p" } });
 
   // Its declared errors and the refusals are typed failures.
-  void Testing.mcpCall(GetUser, { id: "1" }).pipe(
+  yield* mcp.getUser({ id: "1" }).pipe(
     Effect.catchTag("UserNotFound", () => Effect.succeed(undefined)),
     Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
     Effect.catchTag("Unauthenticated", () => Effect.succeed(undefined)),
   );
-};
+});
 
 export const maybeAbsentOptionTypes = (enabled: boolean) => {
   // Omitted or undefined, an option takes its default at run time, so one that may be either
@@ -826,7 +832,8 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
 
   const clientOptions: ActionHttp.ClientOptions = { baseUrl: "http://localhost" };
   const httpOptions: ActionMcp.HttpOptions = { name: "test", version: "0" };
-  const call: Testing.McpCallOptions = { url: "/mcp" };
+  const call: Testing.McpClientOptions = { url: "/mcp" };
+  const request: Testing.McpRequestOptions = { url: "/mcp", headers: {} };
 
   const auth: Authentication.Options = {
     resource: "https://api.example.com/mcp",
@@ -837,5 +844,5 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   const given = Action.make("given", { ...options, input: {} });
   const noInput: Equal<(typeof given)["input"], (typeof WhoAmI)["input"]> = true;
 
-  void [binding, app, hook, clientOptions, httpOptions, call, auth, noInput];
+  void [binding, app, hook, clientOptions, httpOptions, call, request, auth, noInput];
 };

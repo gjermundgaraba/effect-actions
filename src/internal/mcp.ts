@@ -7,5 +7,5 @@ import { McpProtocol } from "effect/unstable/ai";
  */
 export const httpProtocol = McpProtocol.v2026_07_28;
 
-/** Where `ActionMcp.layerHttp` serves, and `Testing.mcpCall` calls, by default. */
+/** Where `ActionMcp.layerHttp` serves, and `Testing.mcpClient` calls, by default. */
 export const defaultPath = "/mcp";

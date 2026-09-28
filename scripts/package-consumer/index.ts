@@ -52,7 +52,8 @@ const served = await Effect.gen(function* () {
   void checkClientTypes;
 
   const greeting = yield* client.greet({ name: "Ada" });
-  const called = yield* Testing.mcpCall(Greet, { name: "Ada" });
+  const mcp = yield* Testing.mcpClient([Greet]);
+  const called = yield* mcp.greet({ name: "Ada" });
   const listed = yield* Testing.mcpRequest("tools/list");
 
   return { greeting, called, listed: listed.status };

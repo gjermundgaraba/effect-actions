@@ -58,7 +58,7 @@ export const httpClient = <const H extends AnyHttp>(
 export const clientLayer = (server: Server | Handler): Layer.Layer<HttpClient.HttpClient> =>
   clientOf(handlerOf(server));
 
-/** `effect`, such as a `Testing.mcpCall`, on an `HttpClient` answered by `server` in memory. */
+/** `effect`, such as a `Testing.mcpClient`, on an `HttpClient` answered by `server` in memory. */
 export const against = <A, E>(
   server: Server | Handler,
   effect: Effect.Effect<A, E, HttpClient.HttpClient>,

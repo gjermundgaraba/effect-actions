@@ -298,7 +298,12 @@ describe("builder acquisition", () => {
           ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
         );
 
-        expect(await against(handler, Testing.mcpCall(One))).toBe(1);
+        expect(
+          await against(
+            handler,
+            Effect.flatMap(Testing.mcpClient([One]), (mcp) => mcp.one()),
+          ),
+        ).toBe(1);
       },
     },
     {
@@ -581,7 +586,12 @@ describe("MCP registration", () => {
       "whoAmI",
     ]);
 
-    expect(await against(handler, Testing.mcpCall(WhoAmI))).toBe("ada@acme");
+    expect(
+      await against(
+        handler,
+        Effect.flatMap(Testing.mcpClient([WhoAmI]), (mcp) => mcp.whoAmI()),
+      ),
+    ).toBe("ada@acme");
   });
 
   it("names each tool after its action, and checks names where tools are served", () => {

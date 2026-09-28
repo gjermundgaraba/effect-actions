@@ -17,7 +17,7 @@ export type Options = Omit<
 
 /**
  * Whether a call of `A` may leave its input out: when `{}` is a valid input, such as for an
- * action declared without `input`. Omitting it sends `{}`. The client and `Testing.mcpCall`
+ * action declared without `input`. Omitting it sends `{}`. The client and `Testing.mcpClient`
  * share this rule.
  */
 export type OmittableInput<A extends Action.Any> = {} extends A["input"]["Type"] ? true : false;

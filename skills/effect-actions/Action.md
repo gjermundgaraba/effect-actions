@@ -183,7 +183,7 @@ export const listChanges = Action.implement(
 
 - Names are 1 to 128 characters of `[A-Za-z0-9_-]`. `then` is rejected: it would make a client thenable. The name is also the HTTP route segment, the client method and the MCP tool name.
 - Omit `input`, or give `{}`, for a no-argument action. Its input is an empty object that accepts only `{}`: over HTTP, extra fields and a missing body are a 400. It is MCP's object root. Its client method may be called without an argument.
-- Omit `success` for an action that returns nothing. The default is `Schema.Void`: the client method and `Testing.mcpCall` return `void`, HTTP answers with no content, and a CLI command prints nothing. As for a function returning `void`, its handler may still return a value; the encoding drops it. Declare `success` to return data.
+- Omit `success` for an action that returns nothing. The default is `Schema.Void`: the client methods of `ActionHttp.client` and `Testing.mcpClient` return `void`, HTTP answers with no content, and a CLI command prints nothing. As for a function returning `void`, its handler may still return a value; the encoding drops it. Declare `success` to return data.
 - `input` and `success` take a schema or fields. Fields become `Schema.Struct(fields)`, and no fields the empty object above; each field must be service-free, like every schema here.
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation, and so does each member of a union without one of its own. An unannotated error is served as HTTP 422: an expected outcome, not Effect's default 500, which reads as a server fault.
 - To share errors across actions, spread one constant array into each action's `errors`.
