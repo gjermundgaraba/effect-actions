@@ -9,10 +9,10 @@ JSON-RPC on standard I/O for a subprocess. HTTP speaks MCP 2026-07-28 only; stdi
 
 Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
-| API                         | Purpose                                                 |
-| --------------------------- | ------------------------------------------------------- |
-| `layerHttp(apps, options)`  | Serve implementations at a Streamable HTTP endpoint.    |
-| `layerStdio(apps, options)` | Serve implementations over a subprocess's standard I/O. |
+| API                        | Purpose                                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------------------- |
+| `layerHttp(apps, options)` | Serve implementations at a Streamable HTTP endpoint.                                               |
+| `runStdio(apps, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
 
 The options, exported as `HttpOptions` and `StdioOptions`, are the native
 `McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`. They pass through unchanged; `path` gains a default. Each implementation brings its
@@ -107,7 +107,7 @@ export const routes = Layer.mergeAll(
 
 ```ts
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Console, Effect, Layer, Logger, Schema } from "effect";
+import { Console, Effect, Logger, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
@@ -121,13 +121,10 @@ const status = Action.implement(Status, () =>
   Effect.log("status called").pipe(Effect.as({ ready: true })),
 );
 
-const layer = ActionMcp.layerStdio(status, {
-  name: "effect-actions-stdio",
-  version: "0.1.0",
-}).pipe(Layer.provide(NodeStdio.layer));
-
-// Protocol messages use stdout exclusively. Runtime diagnostics remain on stderr.
-Layer.launch(layer).pipe(
+// Serves until the host closes stdin, then exits 0. Protocol messages use stdout
+// exclusively; runtime diagnostics remain on stderr.
+ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
+  Effect.provide(NodeStdio.layer),
   Effect.tapCause((cause) => Console.error(cause)),
   Effect.provideService(Logger.LogToStderr, true),
   NodeRuntime.runMain({ disableErrorReporting: true }),
@@ -151,6 +148,7 @@ Layer.launch(layer).pipe(
 - Tool discovery is not filtered by actor. Every caller sees every tool of the endpoint. Authorization happens in each implementation's `before`.
 - Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing. A tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
+- `runStdio` is the subprocess's whole program: it serves until the host closes stdin, then succeeds, so the process exits 0. A signal interrupts it, as any program. Provide `Stdio` and its services to it and run it, `NodeRuntime.runMain`.
 - stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity. Keep stdout for protocol messages only and route logs to stderr.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 - Every tool declares the refusals ([guarantees.md](guarantees.md#wire-behavior)). A `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error.
@@ -164,7 +162,7 @@ Layer.launch(layer).pipe(
 - Layer build dies while registering tools, with a defect whose `SchemaError` message says `Expected "object"` or `Missing key`: a served action has scalar or array input, or `Schema.Struct({})`, which accepts any value but `null`. The native server refuses them.
 - That defect is not in the layer's error channel, so it cannot be caught by tag. Wrap the input in a struct, omit `input` (or give `{}`) for no arguments, or leave the action off MCP.
 - An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's hook, before the handler runs.
-- `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `layerStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
+- `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
 - Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler or hook yields a request service that no middleware around the endpoint provides. Provide the authentication, `Layer.provide(authenticate)`, or other middleware (`Layer.provide(middleware.layer)`) on that `layerHttp`.
 - A public tool demands credentials: it shares an endpoint with authenticated ones, and the authentication covers the whole endpoint. Serve it on an endpoint of its own.
 - Client reports a broken transport from a stdio subprocess: something printed to stdout. Set `Logger.LogToStderr` and remove `console.log`.

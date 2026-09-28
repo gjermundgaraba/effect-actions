@@ -307,15 +307,12 @@ describe("builder acquisition", () => {
       },
     },
     {
-      adapter: "ActionMcp.layerStdio",
+      adapter: "ActionMcp.runStdio",
+      // A test host with nothing on stdin closes at once, so the server ends.
       build: ({ pair, solo }: Fixture) =>
         Effect.runPromise(
-          Effect.scoped(
-            Layer.build(
-              ActionMcp.layerStdio([solo, pair], { name: "test", version: "0" }).pipe(
-                Layer.provide(Stdio.layerTest({})),
-              ),
-            ),
+          ActionMcp.runStdio([solo, pair], { name: "test", version: "0" }).pipe(
+            Effect.provide(Stdio.layerTest({})),
           ),
         ),
     },
@@ -611,7 +608,7 @@ describe("MCP registration", () => {
 
     const options = { name: "test", version: "0" };
     expect(() => ActionMcp.layerHttp(apps, options)).toThrow("Duplicate MCP tool: same");
-    expect(() => ActionMcp.layerStdio(apps, options)).toThrow("Duplicate MCP tool: same");
+    expect(() => ActionMcp.runStdio(apps, options)).toThrow("Duplicate MCP tool: same");
     expect(() => ActionToolkit.make(apps)).toThrow("Duplicate tool: same");
 
     const Other = Action.make("other", {

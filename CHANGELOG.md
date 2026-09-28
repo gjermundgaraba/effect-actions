@@ -55,6 +55,7 @@ ActionHttp.layer(Http, users);
 | `Testing.mcpCall(server, { name, arguments })`                   | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`                  |
 | `ActionCatalog`                                                  | `OpenApi.fromApi(Http.api)`, or an MCP endpoint's `tools/list`                                        |
 | `ActionMcp.Options`                                              | `ActionMcp.HttpOptions`                                                                               |
+| `Layer.launch(ActionMcp.layerStdio(apps, options))`              | `ActionMcp.runStdio(apps, options)`, which succeeds when the host closes stdin                        |
 | Span `<group>.<action>`, attribute `action.group`                | Span `<action>`                                                                                       |
 
 Behavior that changes without a rename:
@@ -130,7 +131,7 @@ Behavior that changes without a rename:
 - The package declares `"sideEffects": false`, and a browser bundle of `ActionHttp.client`
   keeps only the contracts, the binding and the client. Keep contracts and bindings in modules
   that import no server code ([setup.md](docs/setup.md#browser)).
-- `ActionMcp.layerStdio` serves MCP 2025-11-25 and 2025-06-18 again, beside 2026-07-28. HTTP
+- `ActionMcp.runStdio` serves MCP 2025-11-25 and 2025-06-18 again, beside 2026-07-28. HTTP
   serves 2026-07-28 only.
 
 ## 0.7.0

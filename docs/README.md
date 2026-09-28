@@ -29,7 +29,7 @@ Package facts that apply everywhere:
 ## Choose a surface
 
 - Callers speak JSON over HTTP: `ActionHttp`. Clients use `ActionHttp.client(Http)`.
-- Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.layerStdio` for a subprocess.
+- Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess.
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
 - Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
 

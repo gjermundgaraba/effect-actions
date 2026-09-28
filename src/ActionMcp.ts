@@ -1,5 +1,4 @@
-import { Layer } from "effect";
-import type { Cause } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
 import type { HttpRouter } from "effect/unstable/http";
@@ -97,20 +96,38 @@ export function layerHttp(apps: Served, options: HttpOptions) {
 
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
- * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates.
+ * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates: the whole program of an MCP
+ * subprocess, which succeeds when the host closes its side. A signal interrupts it.
  *
  * The host supplies the `Stdio` service and the identity. Arguments are tool input only
  * and never establish request identity or authority; each implementation's `before` hook
  * runs.
  */
-export function layerStdio<const Apps extends Served>(
+export function runStdio<const Apps extends Served>(
   apps: Apps,
   options: StdioOptions,
-): Layer.Layer<
-  never,
+): Effect.Effect<
+  void,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
   BuildContext<Member<Apps>> | StdioService | ToolRequestContext<RequestContext<Member<Apps>>>
 >;
-export function layerStdio(apps: Served, options: StdioOptions) {
-  return server(toList(apps), McpServer.layerStdio({ ...options, protocols: stdioProtocols }));
+export function runStdio(apps: Served, options: StdioOptions) {
+  const transport = server(
+    toList(apps),
+    McpServer.layerStdio({ ...options, protocols: stdioProtocols }),
+  );
+
+  // The native transport ends by interrupting the fiber that built it once the host closes
+  // its side. Built in a child, that is a normal end, while an interruption of the program
+  // itself, such as a signal, stays one.
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const served = yield* Effect.forkScoped(Effect.andThen(Layer.build(transport), Effect.never));
+      const exit = yield* Fiber.await(served);
+
+      if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+        return yield* Effect.failCause(exit.cause);
+      }
+    }),
+  );
 }

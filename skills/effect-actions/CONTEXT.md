@@ -13,7 +13,7 @@ words with these meanings. Module names and Effect's own terms (`HttpApi`, `Tool
 - **Builder**: the Effect passed to `implement` instead of a plain handler or record. It runs once per build of the host's layers, however many surfaces serve its implementation, and once per invocation of a local CLI command: [guarantees.md](guarantees.md#dependency-lifetimes).
 - **Host**: the application that serves the surfaces: it builds their layers, provides their services and middleware, and runs the server, subprocess or CLI.
 - **Surface**: where callers reach actions: HTTP routes, an MCP endpoint, a Toolkit, a CLI command. Each serves the implementations passed to it and validates only the names it serves.
-- **Local surface**: a surface without a remote caller: `ActionToolkit`, a local `ActionCli` command, and `ActionMcp.layerStdio`. Nothing authenticates; the host provides the identity.
+- **Local surface**: a surface without a remote caller: `ActionToolkit`, a local `ActionCli` command, and `ActionMcp.runStdio`. Nothing authenticates; the host provides the identity.
 - **Build-time requirement**: a service yielded in a builder. Resolved when the host's layers are built.
 - **Request-time requirement**: a service yielded inside a handler or a `before` hook. Supplied per invocation: over HTTP by router middleware around the surface, authentication included; on a local surface by the host.
 - **Binding**: the `Http` value `ActionHttp.make` returns, `{ actions, api }`. Plain data shared by the server and every client; `ActionHttp.layer` serves it. No other surface has one.

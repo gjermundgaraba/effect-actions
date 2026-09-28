@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vite-plus/test";
@@ -65,6 +66,15 @@ describe("MCP stdio example", () => {
     },
     30_000,
   );
+
+  it("exits cleanly when the host closes stdin", () => {
+    const run = spawnSync(process.execPath, ["--import", "tsx", "examples/mcp-stdio.ts"], {
+      cwd: process.cwd(),
+      input: "",
+    });
+
+    expect(run.status).toBe(0);
+  }, 30_000);
 
   it("refuses a host older than 2025-06-18, whose results have no structured content", async () => {
     const { client, connected } = await connect("2025-03-26");

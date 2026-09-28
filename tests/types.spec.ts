@@ -124,7 +124,7 @@ export const typeAssertions = () => {
     () => Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? ""),
   );
 
-  const stdio: Layer.Layer<never, unknown, Stdio.Stdio> = ActionMcp.layerStdio(contextual, {
+  const stdio: Effect.Effect<void, unknown, Stdio.Stdio> = ActionMcp.runStdio(contextual, {
     name: "t",
     version: "0",
   });
@@ -386,7 +386,7 @@ export const configuredAdapterTypes = () => {
     // @ts-expect-error The protocol revision is fixed at 2026-07-28.
     protocols: [McpProtocol.v2026_07_28],
   });
-  ActionMcp.layerStdio(App, {
+  ActionMcp.runStdio(App, {
     name: "test",
     version: "0",
     // @ts-expect-error Stdio negotiates its own revisions: it takes no `protocols` option.
@@ -569,8 +569,8 @@ export const beforeTypes = () => {
   void timed.handler(new Request("http://localhost"), Context.make(Clock, 0));
 
   // The hook's services join what the stdio host owes, since nothing else supplies them.
-  const stdio = ActionMcp.layerStdio(clocked, { name: "t", version: "0" });
-  stdio satisfies Layer.Layer<never, unknown, Stdio.Stdio | Clock>;
+  const stdio = ActionMcp.runStdio(clocked, { name: "t", version: "0" });
+  stdio satisfies Effect.Effect<void, unknown, Stdio.Stdio | Clock>;
 };
 
 export const authenticationTypes = () => {
@@ -604,8 +604,8 @@ export const authenticationTypes = () => {
   void mcp.handler(new Request("http://localhost/mcp"), Context.empty());
 
   // A local surface leaves the identity to its host.
-  const stdio = ActionMcp.layerStdio(userActions, { name: "t", version: "0" });
-  const owed: Equal<Layer.Services<typeof stdio>, Users | Stdio.Stdio | CurrentActor> = true;
+  const stdio = ActionMcp.runStdio(userActions, { name: "t", version: "0" });
+  const owed: Equal<Effect.Services<typeof stdio>, Users | Stdio.Stdio | CurrentActor> = true;
   void owed;
 
   const tools = ActionToolkit.make(userActions).toolkit.tools;
