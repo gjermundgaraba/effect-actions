@@ -3,6 +3,7 @@ import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { makeTestHttp } from "./server.js";
+import { post } from "./requests.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
 import { serve } from "./serve.js";
 
@@ -192,6 +193,38 @@ describe("contracts", () => {
 
     const total: number = Schema.decodeUnknownSync(Fields.success)({ total: 3 }).total;
     expect([input.id, total]).toEqual(["a", 3]);
+  });
+
+  it("reads fields keyed by symbols as fields, as a struct of them does", () => {
+    const key = Symbol("key");
+
+    const Keyed = Action.make("keyed", {
+      description: "Symbol-keyed fields",
+      access: "read",
+      input: { [key]: Schema.String },
+      success: Schema.String,
+    });
+
+    expect(Schema.decodeUnknownSync(Keyed.input)({ [key]: "a" })).toEqual({ [key]: "a" });
+    expect(Schema.is(Keyed.input)({})).toBe(false);
+  });
+
+  it("keeps an empty struct's annotations, its HTTP status and description included", async () => {
+    const Create = Action.make("create", {
+      description: "Creates, answering 201",
+      access: "write",
+      input: Schema.Struct({}).annotate({ description: "Nothing to give" }),
+      success: Schema.Struct({}).annotate({ httpApiStatus: 201 }),
+    });
+
+    expect(Create.input.ast.annotations?.description).toBe("Nothing to give");
+    // Still the strict empty object.
+    expect(Schema.is(Create.input)({ extra: 1 })).toBe(false);
+
+    const web = makeTestHttp(Action.implement(Create, () => Effect.succeed({})));
+    const response = await web.handler(post("/api/create"));
+
+    expect(response.status).toBe(201);
   });
 });
 

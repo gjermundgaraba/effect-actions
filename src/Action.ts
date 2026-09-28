@@ -169,12 +169,16 @@ const isEmptyStruct = ({ ast }: Codec): boolean =>
   ast.checks === undefined &&
   ast.encoding === undefined;
 
+/**
+ * The schema an option stands for. An empty struct keeps its annotations, such as an
+ * `httpApiStatus` or a description; fields keyed by symbols are fields too, as in a struct.
+ */
 const codecOf = (schema: Codec | Fields): Codec =>
   Schema.isSchema(schema)
     ? isEmptyStruct(schema)
-      ? NoInput
+      ? NoInput.annotate(schema.ast.annotations ?? {})
       : schema
-    : Object.keys(schema).length === 0
+    : Reflect.ownKeys(schema).length === 0
       ? NoInput
       : Schema.Struct(schema);
 
