@@ -3,7 +3,7 @@
 MCP tools from implementations, on Effect's native `McpServer`. One `Tool` per served action,
 named after it. Two transports: a Streamable HTTP endpoint mounted on the router, or newline-delimited
 JSON-RPC on standard I/O for a subprocess. HTTP speaks MCP 2026-07-28 only; stdio also speaks
-2025-11-25 and 2025-06-18, as the host negotiates.
+2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, as the host negotiates.
 
 ## API
 
@@ -137,8 +137,8 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 
 ## Rules
 
-- HTTP serves MCP 2026-07-28 and no other revision: it is stateless, every request standing alone. The stateful revisions keep a session per `initialize`, which Effect's HTTP runtime never expires and which no identity owns. Stdio serves 2026-07-28, 2025-11-25 and 2025-06-18, whichever the host negotiates. There is no `protocols` option; Effect owns version checks and negotiation.
-- Earlier revisions are refused on both transports: they have no `structuredContent`, so a success would lose its shape. Over stdio, invalid arguments are a tool error from 2025-11-25 on, and a JSON-RPC error on 2025-06-18, as that revision specifies.
+- HTTP serves MCP 2026-07-28 and no other revision: it is stateless, every request standing alone. The stateful revisions keep a session per `initialize`, which Effect's HTTP runtime never expires and which no identity owns. Stdio serves 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, whichever the host negotiates. There is no `protocols` option; Effect owns version checks and negotiation.
+- A success is the same `{ value }` text on every revision; before 2025-06-18 there is no `structuredContent` to repeat it in, and 2024-11-05 has no tool hints. Over stdio, invalid arguments are a tool error from 2025-11-25 on, and a JSON-RPC error before, as those revisions specify.
 - `path` defaults to `/mcp`. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form.
 - Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
@@ -171,7 +171,6 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 - A public tool demands credentials: it shares an endpoint with authenticated ones, and the authentication covers the whole endpoint. Serve it on an endpoint of its own.
 - Client reports a broken transport from a stdio subprocess: something wrote to stdout outside Effect's loggers, such as `console.log`. Remove it, or log with `Effect.log`.
 - Older MCP client cannot connect over HTTP: a request answers `400` with JSON-RPC error `-32020`. The client speaks a 2025 revision, which opens with `initialize`. Only 2026-07-28 is served over HTTP; pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
-- Client disconnects right after `initialize` over stdio: it speaks a revision older than 2025-06-18, so the server counter-offered 2025-11-25, which it does not support. Upgrade the client.
 - An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.
 - A disallowed Origin receives 401 instead: wrapping authentication rejected it before the native Origin check. Put any required pre-authentication Host/Origin policy in outer host middleware.
 - Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.

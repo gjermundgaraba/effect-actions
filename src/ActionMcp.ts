@@ -35,14 +35,16 @@ export interface LayerHttpOptions extends Omit<
 }
 
 /**
- * The revisions served over stdio: 2026-07-28 and the stateful revisions a host
- * negotiates with `initialize`, newest first. Each carries `structuredContent`, so a
- * success has one shape on every revision; older ones do not, and are refused.
+ * The revisions served over stdio: 2026-07-28 and every stateful revision a host negotiates
+ * with `initialize`, newest first. A success is the same `{ value }` text on each; revisions
+ * before 2025-06-18 have no `structuredContent` to repeat it in, nor 2024-11-05 tool hints.
  */
 const stdioProtocols = [
   McpProtocol.v2026_07_28,
   McpProtocol.v2025_11_25,
   McpProtocol.v2025_06_18,
+  McpProtocol.v2025_03_26,
+  McpProtocol.v2024_11_05,
 ] as const;
 
 /** The native server supplies its own request context to every tool call. */

@@ -35,9 +35,8 @@ Every module imports from the `effect` package only. There is no package root, s
 
 A browser app calls the server with `ActionHttp.client`. It needs the contracts and the HTTP
 binding, and nothing else of the server. The package declares `"sideEffects": false`, so a
-bundle of a client keeps `Action`, `ActionHttp.make` and `ActionHttp.client`, and drops every
-server module. Keep the contracts and the binding in modules that import no server code, and import
-those alone from the page, as the minimal program does:
+bundler may drop what a client does not use. Keep the contracts and the binding in modules that
+import no server code, and import those alone from the page, as the minimal program does:
 
 ```text
 contracts.ts    Action.make(...) and ActionHttp.make([...]): imports effect only

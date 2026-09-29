@@ -144,10 +144,10 @@ Behavior that changes without a rename:
 - `ActionToolkit.make(implementations, { needsApproval })` sets Effect's native
   `Tool.needsApproval` of each action's tool, a boolean or a function of each call's input,
   which `LanguageModel` honors.
-- The package declares `"sideEffects": false`, and a browser bundle of `ActionHttp.client`
-  keeps only the contracts, the binding and the client. Keep contracts and bindings in modules
-  that import no server code ([setup.md](docs/setup.md#browser)).
-- `ActionMcp.runStdio` serves MCP 2025-11-25 and 2025-06-18 again, beside 2026-07-28. HTTP
+- The package declares `"sideEffects": false`, so a bundler may drop what a browser client
+  does not use. Keep contracts and bindings in modules that import no server code
+  ([setup.md](docs/setup.md#browser)).
+- `ActionMcp.runStdio` serves every MCP revision from 2024-11-05 again, beside 2026-07-28. HTTP
   serves 2026-07-28 only.
 
 ## 0.7.0

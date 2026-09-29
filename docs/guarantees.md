@@ -65,7 +65,7 @@ built-in errors are `Action.InvalidInput` (400), `Action.Unauthenticated` (401) 
 ## MCP transport
 
 - HTTP serves MCP 2026-07-28 only, which is stateless: every request stands alone. The stateful revisions keep a session per `initialize`, which Effect's HTTP runtime never expires and no identity owns.
-- Stdio serves 2026-07-28, 2025-11-25 and 2025-06-18, as the host negotiates. Earlier revisions have no `structuredContent` and are refused. There is no option to select others; Effect owns version checks.
+- Stdio serves 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, as the host negotiates. A success is the same `{ value }` text on each; revisions before 2025-06-18 have no `structuredContent` to repeat it in, and 2024-11-05 no tool hints. There is no option to select others; Effect owns version checks.
 - `layerHttp` is single-endpoint Streamable HTTP, never two-endpoint HTTP+SSE.
 - Cancellation is Effect's native RPC interruption. Without an HTTP session, `notifications/cancelled` interrupts nothing over HTTP; a call ends with its request.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates names, not application context.
@@ -75,7 +75,7 @@ built-in errors are `Action.InvalidInput` (400), `Action.Unauthenticated` (401) 
 What the package does, and nothing else:
 
 - HTTP means JSON `POST` endpoints built on Effect's `HttpApi`. It is not Effect RPC.
-- MCP means one native `McpServer` `Tool` per action, over MCP 2026-07-28, and over stdio 2025-11-25 and 2025-06-18 too. There is no MCP SDK runtime dependency.
+- MCP means one native `McpServer` `Tool` per action, over MCP 2026-07-28, and over stdio every earlier revision from 2024-11-05 too. There is no MCP SDK runtime dependency.
 - Actions are unary: one decoded input, one decoded success or one declared error. No streaming, uploads, prompts, resources, retries, or code-execution sandbox.
 - Authentication and authorization are the application's. The library supplies the seams:
   - `Authentication.make`, native router middleware for identity;

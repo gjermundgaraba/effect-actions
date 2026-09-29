@@ -28,7 +28,7 @@ Package facts that apply everywhere:
 | [setup.md](setup.md)                   | install, pin versions, pick entry points, bundle a browser client, know what the package does not do      |
 | [Action.md](Action.md)                 | define a contract (input, success, errors, access, hints), bind its handler and hook, built-in errors     |
 | [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP (2026-07-28) or stdio (2026-07-28, 2025-11-25, 2025-06-18)           |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP (2026-07-28) or stdio (2026-07-28 and back to 2024-11-05)            |
 | [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                              |
 | [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                          |
 | [Authentication.md](Authentication.md) | authenticate the callers of HTTP surfaces, refuse with 401/403, publish RFC 9728 discovery                |

@@ -31,7 +31,7 @@ const connect = async (revision: string) => {
 // A real subprocess compiles TypeScript at startup, which can outlast the default timeout
 // under load.
 describe("MCP stdio example", () => {
-  it.each(["2026-07-28", "2025-11-25", "2025-06-18"])(
+  it.each(["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])(
     "serves list/call to a %s host and keeps logs off protocol stdout",
     async (revision) => {
       const { client, output, connected } = await connect(revision);
@@ -40,16 +40,21 @@ describe("MCP stdio example", () => {
         await connected;
         expect(client.getNegotiatedProtocolVersion()).toBe(revision);
         expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["status"]);
-        expect(await client.callTool({ name: "status", arguments: {} })).toMatchObject({
-          isError: false,
-          structuredContent: { value: { ready: true } },
-        });
+        const called = await client.callTool({ name: "status", arguments: {} });
+        const [text] = called.content.map((part) => (part.type === "text" ? part.text : ""));
+
+        // Every revision reads the same `{ value }` text; 2025-06-18 on also structures it.
+        expect(called.isError).toBe(false);
+        expect(JSON.parse(text ?? "")).toEqual({ value: { ready: true } });
+        expect(called.structuredContent).toEqual(
+          revision >= "2025-06-18" ? { value: { ready: true } } : undefined,
+        );
 
         // Invalid arguments are a tool error from 2025-11-25 on, and a protocol error before.
         const invalid = client.callTool({ name: "status", arguments: { invented: true } });
         const message = "Invalid parameters for tool 'status'";
 
-        if (revision === "2025-06-18") {
+        if (revision < "2025-11-25") {
           await expect(invalid).rejects.toThrow(message);
         } else {
           const result = await invalid;
@@ -74,16 +79,5 @@ describe("MCP stdio example", () => {
     });
 
     expect(run.status).toBe(0);
-  }, 30_000);
-
-  it("refuses a host older than 2025-06-18, whose results have no structured content", async () => {
-    const { client, connected } = await connect("2025-03-26");
-
-    try {
-      // The server counter-offers its newest stateful revision, which the client does not speak.
-      await expect(connected).rejects.toThrow("2025-11-25");
-    } finally {
-      await client.close();
-    }
   }, 30_000);
 });
