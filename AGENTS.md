@@ -45,11 +45,20 @@ Maintainer guide, lint policy, and release notes: [CONTRIBUTING.md](CONTRIBUTING
 ## Commands
 
 ```sh
-vp check            # format, type-aware lint, type check
+vp check            # format check, type-aware lint, type check; read-only (--fix writes)
 vp test             # all suites, including docs and skill sync
 vp run test:package # tarball type-checked and run in an isolated consumer
 vp run docs:sync    # regenerate the skill after editing anything in docs/
 ```
+
+## Validation
+
+These task-specific rules govern when and where the Vite+ checklist above applies.
+
+- For code or tooling changes, run focused checks during iteration. Before completion, run full validation: `vp check`, `vp test`, and `vp run test:package`. During concurrent work, coordinate one final run after changes settle.
+- For prose-only changes, run relevant formatting, documentation, and skill-sync checks. Treat changes to executable examples or snippets as code changes.
+- For read-only reviews, run checks needed to support the assessment; dependency installation and commands that write must follow the isolation rule below.
+- Fix failures introduced by the change and rerun affected checks. Report unrelated failures and checks not run; do not claim full validation when it was incomplete.
 
 ## Invariants
 
@@ -63,3 +72,22 @@ vp run docs:sync    # regenerate the skill after editing anything in docs/
 - Doc snippets that are also examples stay identical to the example file; edit the example first.
 - Use the latest Effect 4 release-candidate APIs pinned in `package.json`. Check `node_modules/effect` before assuming an API shape.
 - Follow the lint policy in `CONTRIBUTING.md`: refactor the cause, and never launder a finding.
+
+## Direction
+
+- Optimize for a clean, consistent, powerful API with minimal consumer boilerplate. Judge changes by what consumers must understand and write.
+- Prefer one obvious way to perform each task. Avoid overlapping entry points, aliases, and competing patterns for the same purpose.
+- Make the common case complete with useful defaults and minimal setup. The library handles mechanical wiring; applications supply their domain behavior and policy.
+- Make advanced capabilities optional and discoverable. Extend the same concepts through consistent options and native Effect composition, keeping ordinary usage free of advanced configuration.
+- A new public concept must justify its learning and maintenance cost. Show the concrete need, why existing concepts cannot serve it cleanly, and what complexity it adds or removes. An additional export or option is not necessarily an additional concept.
+- Assess simplicity across the complete consumer workflow. Removing a helper is not an improvement if every consumer must rebuild it.
+- Breaking changes and churn are fine. Never add compatibility shims, deprecations or migration aliases.
+- Proposals and options that change the public API or consumer workflow show consumer code before and after, and say which concepts appear or disappear. Show the common case and, when affected, one advanced case. Explain how consumers move between them without adopting a different model.
+- Do not reverse an earlier decision, recorded in `CONTRIBUTING.md`'s design notes or the `CHANGELOG.md`, without naming it and saying why.
+- When a documented guarantee lacks coverage, determine whether it is intended and valuable. Test intended guarantees; correct accidental or unsupported promises. Do not build machinery merely to preserve an accidental claim.
+
+## Several agents share this worktree
+
+- Reviewers leave the shared worktree untouched. Dependency installation, builds, tests that write repository fixtures, scratch files, and mutation tests run in an isolated copy containing the changes under review, including relevant uncommitted changes. Clean up only what you created.
+- Rerun load-related timeouts in isolation and report both results.
+- Report a skim as a skim. A plan step is done only when it was done in full.
