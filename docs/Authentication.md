@@ -13,16 +13,16 @@ module or the handlers.
 
 Import `@gjermundgaraba/effect-actions/Authentication`.
 
-| API                                                  | Purpose                                                                                           |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `make(service, authenticate, protectedResource?)`    | A router middleware layer providing an identity service per request, or answering with a refusal. |
-| `bearerToken`                                        | The request's bearer token, `Redacted`, failing with `Action.Unauthenticated` without one.        |
-| `refusal(error, protectedResource?, authorization?)` | The response `make` answers a refusal with, for a caller outside the router.                      |
+| API                                               | Purpose                                                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `make(service, authenticate, protectedResource?)` | A router middleware layer providing an identity service per request, or answering with a refusal. |
+| `bearerToken`                                     | The request's bearer token, `Redacted`, failing with `Action.Unauthenticated` without one.        |
 
 `authenticate` is an Effect producing the identity, or failing with `Action.Unauthenticated`,
-`Action.Forbidden`, or the `HttpServerResponse` to send instead. The services it yields, such
-as a token verifier, are request requirements, like a handler's, which the layer keeps. The
-result is the middleware's layer: provide it to the layers whose routes it authenticates,
+`Action.Forbidden`, or the `HttpServerResponse` to send instead. It reads the request the
+router provides; the other services it yields, such as a token verifier, are startup
+requirements of the layer: `make(...).pipe(Layer.provide(Verifier.layer))`. The result is the
+middleware's layer: provide it to the layers whose routes it authenticates,
 `ActionHttp.layer`, `ActionMcp.layerHttp` or routes of the host's own.
 
 `protectedResource` is an OAuth protected resource, which `make` publishes and names in every
@@ -82,12 +82,13 @@ export const authenticate = Authentication.make(
 - Every response of the routes it covers gets `Cache-Control: no-store` unless its route states its own caching, such as `private, max-age=31536000, immutable` for a content-addressed download. A failure enclosing middleware serializes always gets `no-store`, whatever caching it states.
 - Every 401 among them without a challenge gets one, whether authentication, a hook or a handler answers it, including failures serialized by enclosing middleware.
 - The 401 challenge is `Bearer`, or as a protected resource `Bearer scope="<scopesRequired>", resource_metadata="<metadata URL>"`, `scope` only when `scopesRequired` is given.
-- A 401 to a request that presented an `Authorization` header also names `error="invalid_token"` first (RFC 6750), whoever refused it: the credentials did not authenticate it, and a client may refresh its token before it signs in again. A request without credentials gets no error code.
+- A 401 to a request that presented a bearer token also names `error="invalid_token"` first (RFC 6750), whoever refused it: the token did not authenticate it, and a client may refresh it before it signs in again. A request without one, or with another scheme such as `Basic`, gets no error code.
 - An MCP client requests the scopes a 401 names, or every one of `scopesSupported` when it names none. Give `scopesRequired` whenever some scopes are needed only by some actions, so a first login asks for the least, and a `Forbidden` naming scopes asks for more when a call needs them.
+- A step-up refusal of a call it covers, `Unauthenticated` or a `Forbidden` naming scopes, from a hook or a handler, answers the request with its status, JSON and challenge, whatever the route answered: over MCP, instead of a tool result ([guarantees.md](guarantees.md#authorization)). Without `make` it is answered like any declared error.
 - A `Forbidden` naming `scopes`, whether `authenticate`, a hook or a handler fails with it, is a **403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`. As a protected resource it adds `resource_metadata`, and `error_description` when the message is a valid one (printable ASCII without `"` or `\`).
 - An OAuth client re-authorizes on that challenge with those scopes added, as MCP authorization requires; the official MCP client does. A `Forbidden` naming no scope has no challenge ([guarantees.md](guarantees.md#authorization)).
 - Name scopes only when re-authorizing can grant them. A caller whose credential cannot step up, such as an API key, gets a `Forbidden` naming none: a plain 403, and a tool result over MCP, rather than a login prompt that cannot help.
-- `refusal(error, protectedResource?, authorization?)` is the response `make` answers `error` with: its JSON and status, `no-store`, and the same challenge, naming `protectedResource` as `make` does. Pass the request's `Authorization` header, when it has one, for the `invalid_token` a 401 names then. Refuse with it where no route runs, such as a WebSocket upgrade handled before the router, so every refusal of the resource reads the same. `HttpServerResponse.toWeb` makes it a web `Response`.
+- A WebSocket upgrade is a router route, such as `RpcServer.layerProtocolWebsocket`'s: provide `make` to it as to any other.
 - It authenticates any credential: `authenticate` is any Effect, reading a bearer token, a session cookie or an API key. For another scheme, fail with an `HttpServerResponse` carrying its own challenge, which is kept; a 401 without one gets `Bearer`. A 401 carries a challenge only under `make`.
 - `authenticate` can fail with nothing else: any other error is a type error. Map a verifier's failure to a refusal.
 - `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. The token is `Redacted`, as `HttpApiSecurity.bearer` gives it, so a log, span or error holding it prints `<redacted>`; read it with `Redacted.value(token)` where it is verified. Verifying the token stays the host's.
@@ -95,7 +96,7 @@ export const authenticate = Authentication.make(
 - It removes the identity from the covered layer's request requirements: [guarantees.md](guarantees.md#authorization).
 - Any native router middleware providing the identity works the same way, and sets its own challenges: provide its `.layer`, combined with `.combine(...)` first if it needs another middleware's services.
 - A local surface has no remote caller: the host provides the identity service itself, as `Effect.provideService(CurrentActor, actor)`. The `before` hook still runs.
-- Services `authenticate` yields other than the request are request requirements, like a handler's, which the layer keeps as `HttpRouter.Request.From<"Requires", R>`, and so every layer it covers. `HttpRouter.provideRequest(layer)` builds a layer once and provides it to every request, as a token verifier needs; router middleware provided around it provides a service resolved per request, such as a tenant.
+- Services `authenticate` yields other than what the router provides each request are startup requirements of its layer, captured once when it is built, as a token verifier needs. The request's own services win over them. A service resolved per request, such as a tenant, cannot feed `authenticate`: resolve it inside `authenticate`, or write native middleware.
 - Resources it acquires in the request scope live until that scope closes, including while the handler runs.
 - Downstream action errors are handled by their transport. They are never serialized as authentication failures.
 - Never provide `CurrentActor` or any identity or tenant tag in a startup layer or root context: [guarantees.md](guarantees.md#dependency-lifetimes).
@@ -111,8 +112,8 @@ export const authenticate = Authentication.make(
 - An action that must be authenticated answers without credentials: its layer has no authentication around it, and nothing it runs reads the identity, so no type asks for one. Provide the authentication around that layer too.
 - A public action demands credentials: it is served by a layer the authentication covers, such as one MCP endpoint with the protected tools. Serve it from a layer of its own.
 - Type error at `make`: `authenticate` may fail with an error that is neither a refusal nor an `HttpServerResponse`.
-- `HttpRouter.Request.From<"Requires", Verifier>` unsatisfied on an HTTP surface: `authenticate` yields it. Provide it per request, as `HttpRouter.provideRequest(Verifier.layer)`, which builds it once; `Layer.provide` does not satisfy a request requirement.
-- `"Need to .combine(middleware) that satisfy the missing request dependencies"` on a native middleware's `.layer`: that middleware yields a service. Combine it with middleware providing that service first. `Authentication.make`'s layer keeps such services as requirements instead.
+- `Verifier` unsatisfied at startup: `authenticate` yields it. Provide it to the layer, `make(...).pipe(Layer.provide(Verifier.layer))`, or above it.
+- `"Need to .combine(middleware) that satisfy the missing request dependencies"` on a native middleware's `.layer`: that middleware yields a service. Combine it with middleware providing that service first. `Authentication.make`'s layer takes such services at startup instead.
 - Discovery returns 404: the request path does not match `resource`'s path and query exactly, or the authentication is provided to no served layer.
 - An MCP client does not find the authorization server: discovery is not at the well-known URL for the endpoint's path. Set `resource` to the endpoint's exact URL.
 - An MCP client reports `InsufficientScopeError` instead of re-authorizing: it has no OAuth provider configured, so it cannot step up. Configure one, or grant the scope up front.

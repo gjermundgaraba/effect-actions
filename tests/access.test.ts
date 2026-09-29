@@ -8,11 +8,17 @@ import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Authentication from "../src/Authentication.js";
 import { cliServices, logged } from "./cli-services.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { httpClient, serve } from "./serve.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
+
+class Caller extends Context.Service<Caller, string>()("access-test/Caller") {}
+
+/** Authentication accepting every request: what OAuth step-up answers under. */
+const anyone = Authentication.make(Caller, Effect.succeed("anyone"));
 
 const Read = Action.make("read", {
   description: "Read the resource",
@@ -167,7 +173,7 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("answers a refusal a client steps up on with its HTTP status, a hook's or a handler's", async () => {
+  it("answers a refusal a client steps up on with its HTTP status under authentication, a hook's or a handler's", async () => {
     const needsWrite = new Action.Forbidden({ message: "Needs write.", scopes: ["write"] });
 
     const Hooked = Action.make("hooked", { description: "Refused by its hook", access: "write" });
@@ -187,7 +193,7 @@ describe("the pre-handler hook", () => {
       Layer.mergeAll(
         ActionHttp.layer(ActionHttp.make([Hooked, Handled]), app),
         ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-      ),
+      ).pipe(Layer.provide(anyone)),
     );
 
     // The routing header encoded as MCP allows, which the native server accepts.
@@ -215,19 +221,63 @@ describe("the pre-handler hook", () => {
     // Unauthenticated is a 401 over MCP too: a client authenticates on it.
     const { app: guarded } = make();
 
-    const anonymous = serve(
-      ActionMcp.layerHttp(guarded, { name: "test", version: "0" }).pipe(
-        HttpRouter.provideRequest(Layer.succeed(Scopes, [])),
-      ),
-    );
+    const noScopes = HttpRouter.provideRequest(Layer.succeed(Scopes, []));
 
-    const unauthenticated = await anonymous.handler(rawToolCall("read"));
+    const unauthenticated = await serve(
+      ActionMcp.layerHttp(guarded, { name: "test", version: "0" }).pipe(
+        Layer.provide(anyone),
+        noScopes,
+      ),
+    ).handler(rawToolCall("read"));
+
     expect(unauthenticated.status).toBe(401);
     expect(await unauthenticated.json()).toEqual(
       Schema.encodeSync(Action.Unauthenticated)(
         new Action.Unauthenticated({ message: "Sign in." }),
       ),
     );
+
+    // Without authentication there is no OAuth client to step up: the model reads a result.
+    const result = await serve(
+      ActionMcp.layerHttp(guarded, { name: "test", version: "0" }).pipe(noScopes),
+    ).handler(rawToolCall("read"));
+
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ result: { isError: true } });
+  });
+
+  it("keeps each request's step-up refusal its own under concurrent calls", async () => {
+    const Allowed = Action.make("allowed", { description: "Allowed", access: "read" });
+    const Refused = Action.make("refused", { description: "Refused", access: "write" });
+
+    const app = Action.implement(
+      [Allowed, Refused],
+      { allowed: () => Effect.sleep("1 millis"), refused: () => Effect.void },
+      (action) =>
+        action === Refused ? Effect.fail(new Action.Forbidden({ scopes: ["write"] })) : Effect.void,
+    );
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Allowed, Refused]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+      ).pipe(Layer.provide(anyone)),
+    );
+
+    const calls = Array.from({ length: 25 }).flatMap(
+      (): ReadonlyArray<readonly [Request, number]> => [
+        [post("/api/allowed"), 200],
+        [post("/api/refused"), 403],
+        [rawToolCall("allowed"), 200],
+        [rawToolCall("refused"), 403],
+      ],
+    );
+
+    const statuses = await Promise.all(
+      calls.map(async ([call]) => (await web.handler(call)).status),
+    );
+
+    expect(statuses).toEqual(calls.map(([, status]) => status));
   });
 
   it("answers a handler's step-up refusal as a tool result once its call has streamed", async () => {
@@ -256,7 +306,9 @@ describe("the pre-handler hook", () => {
       }),
     );
 
-    const mcp = serve(ActionMcp.layerHttp(app, { name: "test", version: "0" }));
+    const mcp = serve(
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(Layer.provide(anyone)),
+    );
 
     const reply = await mcp.handler(
       mcpRequest({

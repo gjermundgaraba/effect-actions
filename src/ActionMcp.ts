@@ -3,7 +3,7 @@ import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema, Tool } from "effect/ai";
 import type { HttpRouter } from "effect/http";
 import { defaultPath, httpProtocol } from "./internal/mcp.js";
-import { recordStepUp, stepUp } from "./internal/refusal.js";
+import { recordStepUp } from "./internal/refusal.js";
 import { bindTools, type Projection } from "./internal/tools.js";
 import {
   type AnyImplementation,
@@ -60,7 +60,7 @@ type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provi
  * structured-content envelope; declared failures are returned as JSON text. The native
  * server refuses undeclared arguments, publishes closed input schemas, and rejects any
  * input whose JSON Schema root is not an object. A step-up refusal is recorded, so that
- * over HTTP it answers the request.
+ * under `Authentication.make` it answers the request.
  */
 const tools: Projection = {
   label: "MCP tool",
@@ -96,11 +96,11 @@ const server = <Out, R>(
  *
  * An endpoint is one route: middleware provided around this layer, such as
  * authentication, covers every tool of it, tool listing included, with the normal HTTP
- * lifetime. Tools under different middleware go on endpoints of their own. A call refused
- * with `Unauthenticated`, or with `Forbidden` naming scopes, is answered with its HTTP
- * status and challenge, 401 or 403, as MCP authorization requires; any other failure is a
- * tool result. Native context capture applies: never provide request-identity tags at
- * startup.
+ * lifetime. Tools under different middleware go on endpoints of their own. Under
+ * `Authentication.make`, a call refused with `Unauthenticated`, or with `Forbidden` naming
+ * scopes, is answered with its HTTP status and challenge, 401 or 403, as MCP authorization
+ * requires; any other failure, and every failure without it, is a tool result. Native
+ * context capture applies: never provide request-identity tags at startup.
  */
 export function layerHttp<const Apps extends Served>(
   implementations: Apps,
@@ -119,7 +119,7 @@ export function layerHttp(apps: Served, options: LayerHttpOptions) {
       ...options,
       path: options.path ?? defaultPath,
       protocols: [httpProtocol],
-    }).pipe(Layer.provide(stepUp)),
+    }),
   );
 }
 

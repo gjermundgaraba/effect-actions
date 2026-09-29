@@ -48,7 +48,6 @@ ActionHttp.layer(Http, users);
 | `Authentication.middleware(tag, authenticate, options).layer`    | `Authentication.make(tag, authenticate, resource?)`, provided as it is                                |
 | `Authentication.protectedResource`, `challenge()`                | `make`'s third argument, which publishes discovery and names it in every challenge                    |
 | A 401 challenge naming a scope                                   | `scopesRequired` in `make`'s third argument                                                           |
-| A refusal built by hand outside the router                       | `Authentication.refusal(error, protectedResource?, authorization?)`                                   |
 | An `InsufficientScope` error and a hand-built challenge          | `new Action.Forbidden({ message, scopes: [scope] })`                                                  |
 | `bearerToken` succeeding with an `Option`                        | `bearerToken` failing with `Unauthenticated`; `Effect.option(bearerToken)` where it is optional       |
 | `bearerToken` succeeding with a `string`                         | A `Redacted<string>`; `Redacted.value(token)` where it is verified                                    |
@@ -88,11 +87,15 @@ Behavior that changes without a rename:
   included: every surface declares it already, and a client could not tell a look-alike apart.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one
   sends each member at its own. Annotate `{ httpApiStatus: 500 }` to keep the old status.
-- On MCP over HTTP, `Unauthenticated`, or a `Forbidden` naming `scopes`, is answered with its
-  HTTP status, challenge and JSON, not a tool result, as MCP authorization defines.
+- Under `Authentication.make`, `Unauthenticated`, or a `Forbidden` naming `scopes`, from a hook
+  or a handler, is answered with its HTTP status, challenge and JSON, on MCP too instead of a
+  tool result, as MCP authorization defines. Without it, such a refusal is a declared error.
 - `Authentication.make` gives every 401 it covers without a challenge a `Bearer` one, naming
   `scopesRequired` and the metadata URL of a protected resource, and `invalid_token` when the
-  request presented credentials. Serve public and authenticated actions of one binding in
+  request presented a bearer token.
+- The services `authenticate` yields, other than the request, are startup requirements of
+  `make`'s layer: `make(...).pipe(Layer.provide(Verifier.layer))`. 0.7.0 kept them as request
+  requirements, for `HttpRouter.provideRequest`. Serve public and authenticated actions of one binding in
   separate `ActionHttp.layer` calls. `MiddlewareOptions` is gone.
 - `Authentication.make` marks its routes' responses `Cache-Control: no-store` unless the route
   states its own caching; a failure enclosing middleware serializes is always `no-store`.
@@ -138,8 +141,6 @@ Behavior that changes without a rename:
   on every endpoint, so clients decode them as typed failures. Handlers never fail with them.
 - `scopesRequired` names the scopes every 401 of a protected resource asks for, so a first
   login requests the least rather than every scope supported.
-- `Authentication.refusal(error, protectedResource?, authorization?)` is the response `make` answers a refusal
-  with, for callers outside the router such as a WebSocket upgrade.
 - `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`. On HTTP
   and MCP over HTTP it is a 403 with an `insufficient_scope` challenge, on which an MCP client
   re-authorizes and retries.

@@ -22,7 +22,7 @@ import {
   type Options as ClientOptions,
 } from "./internal/client.js";
 import type { BuiltIns } from "./internal/errors.js";
-import { recordStepUp, stepUp } from "./internal/refusal.js";
+import { recordStepUp } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
@@ -291,12 +291,7 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
     ),
   ).pipe(provideHandlers(apps));
 
-  // A step-up refusal answers with its challenge, as over MCP.
-  return HttpApiBuilder.layer(api).pipe(
-    Layer.provide(handlers),
-    Layer.provide(schemaErrors),
-    Layer.provide(stepUp),
-  );
+  return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
 }
 
 /**

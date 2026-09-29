@@ -1,15 +1,6 @@
 import { Context, Effect, Option, Predicate, Ref, Schema } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpServerResponse } from "effect/http";
 import { type Refusal, refusals, statuses } from "./errors.js";
-
-/**
- * The RFC 9728 metadata URL of the protected resource a request is authenticated for,
- * provided by `Authentication.make` when it publishes one: every challenge under it names
- * the URL.
- */
-export class ResourceMetadata extends Context.Service<ResourceMetadata, string>()(
-  "effect-actions/ResourceMetadata",
-) {}
 
 /** An RFC 6750 error description: printable ASCII but `"` and `\`. */
 const description = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
@@ -64,21 +55,15 @@ export const answer = (
     : HttpServerResponse.setHeader(response, "www-authenticate", challenge);
 };
 
-/** `answer`, naming the metadata URL of the resource `Authentication.make` covers the request for. */
-const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-  Effect.map(Effect.serviceOption(ResourceMetadata), (metadata) =>
-    answer(error, Option.getOrUndefined(metadata)),
-  );
-
-/** The step-up refusal a call under `stepUp` failed with, which answers its request. */
+/** The step-up refusal a call under `answerStepUp` failed with, which answers its request. */
 class SteppedUp extends Context.Service<SteppedUp, Ref.Ref<Option.Option<Refusal>>>()(
   "effect-actions/SteppedUp",
 ) {}
 
 /**
  * `call`, whose failure, when an OAuth client acts on it (`Unauthenticated`, or `Forbidden`
- * naming scopes), answers the request under `stepUp`. Elsewhere, such as over stdio, it is
- * `call` as it is.
+ * naming scopes), answers the request under `answerStepUp`. Elsewhere, such as without
+ * `Authentication.make` or over stdio, it is `call` as it is.
  */
 export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.tapError(call, (error) =>
@@ -90,16 +75,18 @@ export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effe
   );
 
 /**
- * Route middleware answering a request whose call failed with a step-up refusal with the
- * refusal's status, JSON and challenge, whatever the route answered: an HTTP route's own
- * refusal, or an MCP tool result, where MCP authorization requires 401 or 403.
+ * `route`, answered, when a call in it failed with a step-up refusal, with the refusal's
+ * status, JSON and challenge, naming `metadataUrl`, whatever the route answered: an HTTP
+ * route's own refusal, or an MCP tool result, where MCP authorization requires 401 or 403.
  */
-export const stepUp = HttpRouter.middleware((httpEffect) =>
+export const answerStepUp = <E, R>(
+  route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  metadataUrl: string | undefined,
+): Effect.Effect<HttpServerResponse.HttpServerResponse, E, Exclude<R, SteppedUp>> =>
   Effect.gen(function* () {
     const slot = yield* Ref.make(Option.none<Refusal>());
-    const response = yield* Effect.provideService(httpEffect, SteppedUp, slot);
+    const response = yield* Effect.provideService(route, SteppedUp, slot);
     const refused = yield* Ref.get(slot);
 
-    return Option.isSome(refused) ? yield* refuse(refused.value) : response;
-  }),
-).layer;
+    return Option.isSome(refused) ? answer(refused.value, metadataUrl) : response;
+  });

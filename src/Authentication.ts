@@ -1,8 +1,11 @@
-import { type Context, Effect, Layer, Redacted } from "effect";
+import { Context, Effect, Layer, Redacted } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
-import { answer, bearer, ResourceMetadata } from "./internal/refusal.js";
+import { answer, answerStepUp, bearer } from "./internal/refusal.js";
+
+/** An `Authorization` header of the `Bearer` scheme, and its token. */
+const bearerScheme = /^Bearer +(\S+) *$/i;
 
 /**
  * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
@@ -16,7 +19,7 @@ export const bearerToken: Effect.Effect<
   Unauthenticated,
   HttpServerRequest.HttpServerRequest
 > = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
-  const token = /^Bearer +(\S+) *$/i.exec(request.headers.authorization ?? "")?.[1];
+  const token = bearerScheme.exec(request.headers.authorization ?? "")?.[1];
 
   return token === undefined
     ? Effect.fail(new Unauthenticated({ message: "A bearer token is required." }))
@@ -110,11 +113,13 @@ const discovery = (options: Options) => {
     (next) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const url = new URL(request.url, discoveryUrl.origin);
 
+        // A request no URL parses, such as `//[x`, is no discovery request: the host answers it.
         if (
           (request.method === "GET" || request.method === "HEAD") &&
-          url.href.slice(url.origin.length) === target
+          URL.canParse(request.url, discoveryUrl.origin) &&
+          new URL(request.url, discoveryUrl.origin).href.slice(discoveryUrl.origin.length) ===
+            target
         )
           return response;
 
@@ -134,19 +139,20 @@ const discovery = (options: Options) => {
  * and removes the identity from that layer's request requirements.
  *
  * `authenticate` fails with `Unauthenticated` (a 401) or `Forbidden` (a 403), each sent as
- * the JSON every client decodes, or with the response to send instead. The services it
- * yields are request requirements, like a handler's, which the layer keeps;
- * `HttpRouter.provideRequest` builds one once, such as a token verifier. Acquired
- * resources live until the request scope closes, including while the handler is running.
+ * the JSON every client decodes, or with the response to send instead. It reads the request
+ * the router provides; the other services it yields, such as a token verifier, are
+ * startup requirements of the layer, captured when it is built. Acquired resources live
+ * until the request scope closes, including while the handler is running.
  *
  * Every response of the routes it covers is marked `Cache-Control: no-store`, unless its
  * route states its own caching, and a failure serialized by enclosing middleware always is.
  * Every 401 among them without a challenge gets one: `Bearer`, naming `invalid_token` when
- * the request presented credentials. Given an OAuth protected
- * resource, it also publishes the resource's RFC 9728 discovery, once however many layers it
- * covers, public and before routing; every challenge names its metadata URL, a 401's and the
- * `insufficient_scope` challenge of a refusal naming scopes, and a 401's names
- * `scopesRequired`.
+ * the request presented a bearer token. A call under it refused with `Unauthenticated`, or
+ * with a `Forbidden` naming scopes, by a hook or a handler, is answered with that refusal's
+ * status, JSON and challenge, whatever its route answered, as OAuth step-up and MCP
+ * authorization require. Given an OAuth protected resource, it also publishes the
+ * resource's RFC 9728 discovery, once however many layers it covers, public and before
+ * routing; every challenge names its metadata URL, and a 401's names `scopesRequired`.
  */
 export const make = <I, A, R>(
   service: Context.Key<I, A>,
@@ -155,7 +161,7 @@ export const make = <I, A, R>(
 ): Layer.Layer<
   HttpRouter.Request.From<"Requires", I>,
   never,
-  HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+  HttpRouter.HttpRouter | Exclude<R, HttpRouter.Provided>
 > => {
   assertScopes(protectedResource);
 
@@ -169,60 +175,52 @@ export const make = <I, A, R>(
     Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
   );
 
-  // SAFETY: native middleware types its layer only once no request requirement is left,
-  // asking for another middleware to provide them. The layer is the same at run time, and
-  // they stay requirements of the routes it covers, as the type states.
+  // Its services beyond the request are captured once, when the layer is built.
+  // SAFETY: what is left of each request's requirements is what the router provides every
+  // request; native middleware types its layer by generic differences, of `R`, the identity
+  // and the step-up slot, that TypeScript cannot reduce, and asks for more middleware.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native middleware boundary.
-  const middleware = HttpRouter.middleware<{ provides: I }>()((httpEffect) =>
-    authenticate.pipe(
-      Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.succeed(
-            HttpServerResponse.isHttpServerResponse(error) ? error : answer(error, published?.url),
+  const middleware = HttpRouter.middleware<{ provides: I }>()(
+    Effect.map(Effect.context<Exclude<R, HttpRouter.Provided>>(), (startup) => {
+      // The request's own services, its scope included, win over those captured at startup.
+      const authenticated = Effect.updateContext(
+        authenticate,
+        (request: Context.Context<HttpRouter.Provided>) =>
+          // SAFETY: `R` is what startup captured and what the router provides each request.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Generic context boundary.
+          Context.merge(startup, request) as Context.Context<R>,
+      );
+
+      return (httpEffect) =>
+        authenticated.pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.succeed(
+                HttpServerResponse.isHttpServerResponse(error)
+                  ? error
+                  : answer(error, published?.url),
+              ),
+            onSuccess: (identity) =>
+              answerStepUp(
+                Effect.provideService(httpEffect, service, identity),
+                published?.url,
+              ).pipe(Effect.onError(() => failed)),
+          }),
+          HttpEffect.withPreResponseHandler((request, response) =>
+            Effect.succeed(
+              settle(
+                response,
+                bearerScheme.test(request.headers.authorization ?? "") ? presented : anonymous,
+              ),
+            ),
           ),
-        onSuccess: (identity) =>
-          Effect.provideService(httpEffect, service, identity).pipe(Effect.onError(() => failed)),
-      }),
-      // Every refusal under it, its own, a hook's or a handler's, names the metadata URL.
-      (answered) =>
-        published === undefined
-          ? answered
-          : Effect.provideService(answered, ResourceMetadata, published.url),
-      HttpEffect.withPreResponseHandler((request, response) =>
-        Effect.succeed(
-          settle(response, request.headers.authorization === undefined ? anonymous : presented),
-        ),
-      ),
-    ),
+        );
+    }),
   ).layer as Layer.Layer<
     HttpRouter.Request.From<"Requires", I>,
     never,
-    HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
+    Exclude<R, HttpRouter.Provided>
   >;
 
   return published === undefined ? middleware : Layer.merge(middleware, published.layer);
-};
-
-/**
- * The response `make` answers `error` with, for a caller outside the router, such as a
- * WebSocket upgrade refused before any route: its JSON with its status, `no-store`, and the
- * challenge of a 401, or of a `Forbidden` naming scopes, naming `protectedResource`'s
- * metadata URL. `authorization` is the request's `Authorization` header, when it has one: a
- * 401 then names `invalid_token`, as `make` does. `HttpServerResponse.toWeb` makes it a web
- * `Response`.
- */
-export const refusal = (
-  error: Refusal,
-  protectedResource?: Options,
-  authorization?: string,
-): HttpServerResponse.HttpServerResponse => {
-  assertScopes(protectedResource);
-
-  return settle(
-    answer(
-      error,
-      protectedResource === undefined ? undefined : metadataUrl(protectedResource).href,
-    ),
-    challengeOf(protectedResource, authorization !== undefined),
-  );
 };

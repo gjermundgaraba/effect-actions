@@ -16,6 +16,7 @@ import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { against, httpClient, serve } from "./serve.js";
 import { post, rawToolCall } from "./requests.js";
+import type { Equal } from "./equal.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
@@ -163,9 +164,9 @@ describe("Authentication.make", () => {
     );
 
     // The host's own response, and a route's own 401 behind the middleware, whose request
-    // presented credentials that did not authenticate it.
+    // presented a bearer token that did not authenticate it.
     const host = await web.handler(request());
-    const route = await web.handler(request("alice"));
+    const route = await web.handler(request("Bearer alice"));
 
     expect([host.status, route.status]).toEqual([401, 401]);
     expect(host.headers.get("www-authenticate")).toBe("Bearer");
@@ -276,35 +277,47 @@ describe("Authentication.make", () => {
     );
   });
 
-  it("challenges a hook's scopes without authentication too, naming no metadata", async () => {
+  it("challenges a hook's scopes under authentication only, naming no metadata without a resource", async () => {
     const Write = Action.make("write", { description: "Write", access: "write" });
 
-    const app = Action.implement(
-      Write,
-      () => Effect.void,
-      () => Effect.fail(new Action.Forbidden({ scopes: ["write"] })),
+    const refusing = (error: Action.Forbidden) =>
+      Action.implement(
+        Write,
+        () => Effect.void,
+        () => Effect.fail(error),
+      );
+
+    const authenticated = (error: Action.Forbidden) =>
+      serve(
+        ActionHttp.layer(ActionHttp.make([Write]), refusing(error)).pipe(
+          Layer.provide(Authentication.make(Identity, Effect.succeed({ id: "alice" }))),
+        ),
+      );
+
+    const refused = await authenticated(new Action.Forbidden({ scopes: ["write"] })).handler(
+      post("/api/write"),
     );
 
-    const web = serve(ActionHttp.layer(ActionHttp.make([Write]), app));
-
-    const refused = await web.handler(post("/api/write"));
+    expect(refused.status).toBe(403);
     expect(refused.headers.get("www-authenticate")).toBe(
       'Bearer error="insufficient_scope", scope="write", error_description="Not allowed."',
     );
 
     // A refusal naming no scope has no challenge: re-authorizing would not help.
-    const plain = serve(
+    const plain = await authenticated(new Action.Forbidden()).handler(post("/api/write"));
+    expect(plain.headers.get("www-authenticate")).toBeNull();
+
+    // Without authentication there is no OAuth client to step up: a declared error, as it is.
+    const open = serve(
       ActionHttp.layer(
         ActionHttp.make([Write]),
-        Action.implement(
-          Write,
-          () => Effect.void,
-          () => Effect.fail(new Action.Forbidden()),
-        ),
+        refusing(new Action.Forbidden({ scopes: ["write"] })),
       ),
     );
 
-    expect((await plain.handler(post("/api/write"))).headers.get("www-authenticate")).toBeNull();
+    const answered = await open.handler(post("/api/write"));
+    expect(answered.status).toBe(403);
+    expect(answered.headers.get("www-authenticate")).toBeNull();
   });
 
   it("refuses a scope that is no OAuth scope token", () => {
@@ -485,7 +498,9 @@ describe("Authentication.make", () => {
     expect((await web.handler(request())).headers.get("cache-control")).toBe("no-store");
   });
 
-  it("owes its services per request, which middleware around it provides", async () => {
+  it("captures its services when its layer is built, from a plain Layer.provide", async () => {
+    let built = 0;
+
     const auth = Authentication.make(
       Identity,
       Effect.gen(function* () {
@@ -496,14 +511,18 @@ describe("Authentication.make", () => {
       }),
     );
 
-    const owesTokens: HttpRouter.Request<"Requires", Tokens> extends Layer.Services<typeof auth>
-      ? true
-      : false = true;
+    // A startup requirement of the layer, not of each request; the request is the router's.
+    const owesTokens: Equal<Layer.Services<typeof auth>, HttpRouter.HttpRouter | Tokens> = true;
 
     void owesTokens;
 
-    const tokens = HttpRouter.middleware<{ provides: Tokens }>()((effect) =>
-      Effect.provideService(effect, Tokens, { prefix: "actor:" }),
+    const tokens = Layer.effect(
+      Tokens,
+      Effect.sync(() => {
+        built += 1;
+
+        return { prefix: "actor:" };
+      }),
     );
 
     const web = serve(
@@ -511,10 +530,12 @@ describe("Authentication.make", () => {
         "GET",
         "/identity",
         Effect.map(Identity, (actor) => HttpServerResponse.text(actor.id)),
-      ).pipe(Layer.provide(auth), Layer.provide(tokens.layer)),
+      ).pipe(Layer.provide(auth.pipe(Layer.provide(tokens)))),
     );
 
     expect(await (await web.handler(request("alice"))).text()).toBe("actor:alice");
+    expect(await (await web.handler(request("bob"))).text()).toBe("actor:bob");
+    expect(built).toBe(1);
   });
 
   it.each(["http", "mcp"] as const)(
@@ -594,7 +615,7 @@ describe("Authentication.make", () => {
   );
 });
 
-describe("Authentication.refusal", () => {
+describe("Authentication.make's refusals", () => {
   const resource = {
     resource: "https://api.example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
@@ -603,59 +624,65 @@ describe("Authentication.refusal", () => {
 
   const metadata = "https://api.example.com/.well-known/oauth-protected-resource/mcp";
 
-  /** What `make` answers a request it refuses with `error`. */
-  const answered = async (error: Action.Refusal) => {
-    const web = serve(
+  const web = (error: Action.Refusal) =>
+    serve(
       HttpRouter.add("GET", "/identity", HttpServerResponse.text("never")).pipe(
         Layer.provide(Authentication.make(Identity, Effect.fail(error), resource)),
       ),
     );
 
-    return web.handler(request());
-  };
-
   it.each([
-    [new Action.Unauthenticated(), `Bearer scope="read", resource_metadata="${metadata}"`],
+    [new Action.Unauthenticated(), 401, `Bearer scope="read", resource_metadata="${metadata}"`],
     [
       new Action.Forbidden({ scopes: ["write"] }),
+      403,
       `Bearer error="insufficient_scope", scope="write", resource_metadata="${metadata}", error_description="Not allowed."`,
     ],
-    [new Action.Forbidden(), null],
-  ] as const)("is the response make answers %s with", async (error, challenge) => {
-    const response = HttpServerResponse.toWeb(Authentication.refusal(error, resource));
-    const expected = await answered(error);
+    [new Action.Forbidden(), 403, null],
+  ] as const)(
+    "answers %s with its JSON, status and challenge, never cached",
+    async (error, status, challenge) => {
+      const response = await web(error).handler(request());
 
-    expect(response.status).toBe(expected.status);
-    expect(response.headers.get("www-authenticate")).toBe(challenge);
-    expect(response.headers.get("www-authenticate")).toBe(expected.headers.get("www-authenticate"));
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual(await expected.json());
-  });
+      expect(response.status).toBe(status);
+      expect(response.headers.get("www-authenticate")).toBe(challenge);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual(
+        Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]))(error),
+      );
+    },
+  );
 
-  it("names invalid_token for a request that presented credentials, as make does", () => {
-    const response = Authentication.refusal(new Action.Unauthenticated(), resource, "Bearer x");
+  it.each([
+    ["Bearer x", `Bearer error="invalid_token", scope="read", resource_metadata="${metadata}"`],
+    // Another scheme, or no token, presented no bearer token: RFC 6750 names no error code.
+    ["Basic YWxpY2U6c2VjcmV0", `Bearer scope="read", resource_metadata="${metadata}"`],
+    ["Bearer", `Bearer scope="read", resource_metadata="${metadata}"`],
+  ])(
+    "names invalid_token only for a bearer token presented: %s",
+    async (authorization, challenge) => {
+      const response = await web(new Action.Unauthenticated()).handler(
+        new Request("http://localhost/identity", { headers: { authorization } }),
+      );
 
-    expect(response.headers["www-authenticate"]).toBe(
-      `Bearer error="invalid_token", scope="read", resource_metadata="${metadata}"`,
-    );
-  });
+      expect(response.headers.get("www-authenticate")).toBe(challenge);
+    },
+  );
 
-  it("refuses a required scope that is no OAuth scope token, as make does", () => {
+  it("refuses a required scope that is no OAuth scope token", () => {
     const bad = { ...resource, scopesRequired: ["has space"] as const };
 
-    expect(() => Authentication.refusal(new Action.Unauthenticated(), bad)).toThrow(
-      'Invalid scope in scopesRequired: "has space"',
-    );
     expect(() => Authentication.make(Identity, Effect.succeed({ id: "a" }), bad)).toThrow(
       'Invalid scope in scopesRequired: "has space"',
     );
   });
 
-  it("challenges a 401 with Bearer alone without a protected resource", () => {
-    const response = Authentication.refusal(new Action.Unauthenticated());
+  it("leaves a request whose URL does not parse to the host, not a 500", async () => {
+    const response = await web(new Action.Unauthenticated()).handler(
+      new Request("http://localhost//[x/y"),
+    );
 
-    expect(response.status).toBe(401);
-    expect(response.headers["www-authenticate"]).toBe("Bearer");
+    expect(response.status).toBe(404);
   });
 });
 
@@ -733,7 +760,7 @@ describe("authentication around a surface", () => {
     return request;
   };
 
-  it("owes its services per request, on every HTTP surface it covers", async () => {
+  it("builds its services once, on every HTTP surface it covers", async () => {
     let built = 0;
 
     const verify = Authentication.make(
@@ -745,18 +772,7 @@ describe("authentication around a surface", () => {
       }),
     );
 
-    const routes = Layer.mergeAll(
-      ActionHttp.layer(Http, guarded),
-      ActionMcp.layerHttp(guarded, { name: "test", version: "0" }),
-    ).pipe(Layer.provide(verify));
-
-    const owesTokens: HttpRouter.Request<"Requires", Tokens> extends Layer.Services<typeof routes>
-      ? true
-      : false = true;
-
-    void owesTokens;
-
-    // `provideRequest` builds its layer once and provides it to every request.
+    // Its services are startup requirements of the layers it covers.
     const tokens = Layer.effect(
       Tokens,
       Effect.sync(() => {
@@ -766,7 +782,12 @@ describe("authentication around a surface", () => {
       }),
     );
 
-    const web = serve(routes.pipe(HttpRouter.provideRequest(tokens)));
+    const routes = Layer.mergeAll(
+      ActionHttp.layer(Http, guarded),
+      ActionMcp.layerHttp(guarded, { name: "test", version: "0" }),
+    ).pipe(Layer.provide(verify.pipe(Layer.provide(tokens))));
+
+    const web = serve(routes);
 
     const response = await web.handler(call("secret", { note: "hi" }, "Bearer alice"));
     expect(await response.json()).toBe("actor:alice: hi");
