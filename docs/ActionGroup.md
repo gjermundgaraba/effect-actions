@@ -109,7 +109,7 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 - MCP is unaffected. The native `McpServer` answers invalid arguments and unencodable results itself.
 - Policy errors extend the transport contract, not the handler contract. A handler cannot return them.
 - The policy runs only on the server. Client-side codec failures stay `SchemaError`.
-- HTTP decodes with `errors: "all"`, so `cause` carries every issue. Issues never retain the rejected values.
+- HTTP decodes input with `errors: "all"`, so an `invalid` `cause` carries every issue. Issues never retain the rejected values.
 - Groups served by one adapter may have different policies; each action answers with its own group's.
 - Input schema-error policies run before the `before` hook. Invalid input is answered by the policy without invoking the hook or handler.
 - Domain errors, defects, interruptions, and protocol errors are not remapped. An unencodable declared error is a defect. A broken policy error is not recursively remapped.

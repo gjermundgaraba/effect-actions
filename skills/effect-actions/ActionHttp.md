@@ -114,7 +114,7 @@ export const greeting = Effect.gen(function* () {
 - `Implementation of group "x" is not served by this adapter`: `Http.layer` received an implementation whose group was not passed to `ActionHttp.make`. Implement the exact shared group object bound by `make`, or add a genuinely new group to the binding. Matching names and schemas do not establish identity.
 - `Duplicate implementation group: <name>`: a single `Http.layer` call received more than one implementation of the same group. Pass one implementation per group.
 - Client method missing for an action: its group is not bound by `make`.
-- Empty 400 on a valid-looking request: input did not decode. Set a `schemaError` policy on the group to get a typed body, and check `Content-Type: application/json`.
+- Empty 400 on a valid-looking request: input did not decode, or it carries a field the action does not declare. Set a `schemaError` policy on the group to get a typed body, and check `Content-Type: application/json`.
 - 415: wrong or missing content type.
 - `HttpClientError: Decode error (401 POST ...)` from a typed client: the surface answered with a status no endpoint declares. Add that error schema to `ActionHttp.make`'s `errors`.
 - A surface error decodes as the wrong type: two schemas that share a status also share a `_tag`. Give them distinct tags.

@@ -183,7 +183,13 @@ function bind(
 function apiOf(groups: ReadonlyArray<ApiGroup<Actions, Action.Codec>>): Api<Actions, Action.Codec>;
 function apiOf(groups: ReadonlyArray<ApiGroup<Actions, Action.Codec>>): HttpApi.Constraint {
   const [first, ...rest] = groups;
-  const empty = HttpApi.make("actions").annotate(HttpApi.ParseOptions, { errors: "all" });
+
+  // Input is closed and reports every issue, for servers and clients alike, as the
+  // published OpenAPI schemas say. Results and errors encode with the native defaults.
+  const empty = HttpApi.make("actions").annotate(HttpApi.PayloadParseOptions, {
+    errors: "all",
+    onExcessProperty: "error",
+  });
 
   return first === undefined ? empty : empty.add(first, ...rest);
 }

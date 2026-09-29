@@ -97,7 +97,7 @@ export const Double = Action.make("double", {
 - Hint defaults: `readOnly: access === "read"`, `destructive: !readOnly`, `idempotent: false`, `openWorld: true`. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
 - Schemas must be service-free. Put service access in the handler.
 - The group name, not the action, is the OpenAPI tag and operation-ID prefix: `<group>.<action>`.
-- HTTP strips undeclared input fields. MCP tools are strict (`Tool.Strict`): undeclared arguments are an invalid-arguments result and input schemas publish `additionalProperties: false`. HTTP is not strict, and cannot be made strict without a hack: Effect merges one `HttpApi.ParseOptions` per endpoint and uses it for payload decoding _and_ error encoding, so `onExcessProperty: "error"` also rejects a `TaggedError` instance's own `message` and `stack`, turning a declared 409 into an empty 500. Making the payload schema itself strict would require wrapping it in an open schema, which erases its OpenAPI shape. Declare the fields you accept and treat extra HTTP fields as ignored.
+- Input is closed: HTTP, MCP and typed clients refuse fields `input` does not declare. Details in [guarantees.md](guarantees.md).
 
 ## Failure modes
 

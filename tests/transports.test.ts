@@ -168,11 +168,20 @@ describe("one implementation, both transports", () => {
     }
   });
 
-  it("never derives authority from action arguments or MCP metadata", async () => {
+  it("refuses undeclared input on both transports", async () => {
     const args = { id: "1", actor: { id: "bob", tenantId: "other" }, tenantId: "other" };
-    // MCP tools are strict: undeclared arguments are refused rather than stripped.
-    expect((await tool("get_user", args)).isError).toBe(true);
+    const http = await app.handler(request("/api/actions/users/getUser", "alice", args));
 
+    expect(http.status).toBe(400);
+    expect(await http.json()).toEqual(
+      Schema.encodeSync(InvalidRequest)(
+        new InvalidRequest({ message: "The request does not match the action's input." }),
+      ),
+    );
+    expect((await tool("get_user", args)).isError).toBe(true);
+  });
+
+  it("never derives authority from MCP metadata", async () => {
     const spoof = await withMcp((client) =>
       client.callTool({
         name: "get_user",

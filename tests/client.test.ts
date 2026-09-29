@@ -11,6 +11,7 @@ import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import { httpClient } from "../src/Testing.js";
 
 class Invalid extends Schema.TaggedError<Invalid>()(
   "Invalid",
@@ -109,6 +110,25 @@ it("keeps the client, routes and document on one configuration", async () => {
     token: "Bearer test",
   });
   expect(sent.slice(1, 3).map((request) => request.body)).toEqual([{}, {}]);
+});
+
+it("refuses to encode undeclared input in the typed client", async () => {
+  const sent: Array<Request> = [];
+  const wider = { value: 21, extra: 1 };
+
+  const failure = await Effect.runPromise(
+    Effect.flatMap(
+      httpClient(Http.api, async (request) => {
+        sent.push(request);
+
+        return new Response(null, { status: 500 });
+      }),
+      (client) => Effect.flip(client.numbers.double({ payload: wider })),
+    ),
+  );
+
+  expect(failure).toBeInstanceOf(Schema.SchemaError);
+  expect(sent).toEqual([]);
 });
 
 it("preserves null and explicitly undefined-valued input codecs", async () => {
