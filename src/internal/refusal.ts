@@ -15,12 +15,15 @@ export class ResourceMetadata extends Context.Service<ResourceMetadata, string>(
 /** An RFC 6750 error description: printable ASCII but `"` and `\`. */
 const description = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
 
-/** An RFC 6750 `Bearer` challenge of the parameters given, each a quoted string. */
+/**
+ * An RFC 6750 `Bearer` challenge of the parameters given, each a quoted string whose `"` and
+ * `\` are escaped: a metadata URL's query may hold a `\`.
+ */
 export const bearer = (
   parameters: ReadonlyArray<readonly [name: string, value: string | undefined]>,
 ): string => {
   const given = parameters.flatMap(([name, value]) =>
-    value === undefined ? [] : [`${name}="${value}"`],
+    value === undefined ? [] : [`${name}="${value.replace(/["\\]/g, "\\$&")}"`],
   );
 
   return given.length === 0 ? "Bearer" : `Bearer ${given.join(", ")}`;

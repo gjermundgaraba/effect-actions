@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { Cause, Effect, Exit, flow, Option, Schema, type Scope } from "effect";
+import { Cause, Effect, Exit, flow, Option, Schema, SchemaGetter, type Scope } from "effect";
 import { TestConsole } from "effect/testing";
 import { CliError, Command, Flag, GlobalFlag } from "effect/cli";
 import * as Action from "../src/Action.js";
@@ -346,13 +346,47 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
   expect(
     failure(await runExit(ActionCli.command(app, Shape), ["--kind", "square", "--side", "2"])),
   ).toBeInstanceOf(CliError.ShowHelp);
-  // Omitted, the flag is missing, since `{}` is no shape; a record takes `{}`.
+  // Omitted, the input is `{}`: no shape, so invalid input, but a valid record.
   expect(failure(await runExit(ActionCli.command(app, Shape), []))).toBeInstanceOf(
-    CliError.ShowHelp,
+    Schema.SchemaError,
   );
   await run(ActionCli.command(app, Scores), []);
 
   expect(values).toEqual(["text", { kind: "square", side: 2 }, { a: 1, b: 2 }, "plain", {}]);
+});
+
+it("decodes --input only when the command runs, with an asynchronous schema too", async () => {
+  let decoded = 0;
+
+  const Delayed = Action.make("delayed", {
+    description: "A record decoded asynchronously",
+    access: "write",
+    input: Schema.Record(Schema.String, Schema.Finite).pipe(
+      Schema.decode({
+        decode: SchemaGetter.transformEffect((scores: Readonly<Record<string, number>>) =>
+          Effect.delay(
+            Effect.as(
+              Effect.sync(() => void decoded++),
+              scores,
+            ),
+            "1 millis",
+          ),
+        ),
+        encode: SchemaGetter.passthrough(),
+      }),
+    ),
+    success: Schema.Finite,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Delayed, (scores) => Effect.succeed(Object.keys(scores).length)),
+    Delayed,
+  );
+
+  expect(decoded).toBe(0);
+  expect(await lines(command, ["--input", '{"a":1}'])).toEqual(["1"]);
+  expect(await lines(command, [])).toEqual(["0"]);
+  expect(decoded).toBe(2);
 });
 
 it("keeps custom renderer JSON output and validates success before rendering", async () => {

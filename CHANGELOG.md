@@ -101,6 +101,8 @@ Behavior that changes without a rename:
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
   remote command takes no client options: it calls through the host's `HttpClient`.
+- An input that is not a struct is one `--input` flag. Left off, it is `{}`, which the schema
+  decodes when the command runs, never when it is built.
 - A local command's error channel includes `Action.BuiltIn`.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses a misspelled key, a name over 128 characters, and `hints.destructive`

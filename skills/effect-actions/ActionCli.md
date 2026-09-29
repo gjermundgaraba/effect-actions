@@ -39,8 +39,9 @@ value:
 | anything else, numbers included          | `--tags <value>`: JSON the field accepts, or the text     |
 
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
-`--input <value>` flag carrying the whole encoded input, required unless `{}` is a valid input,
-as for a record, which it then defaults to. An action without input gets no flags.
+`--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`, which the
+action's schema decodes when the command runs: a record takes it, and a union or a scalar fails
+with a `SchemaError`. An action without input gets no flags.
 A value flag parses its text as JSON when the field's encoding accepts the value
 (`--count 2`, `--tags '["x"]'`), or else keeps the text (`--limit auto`, `--scale Infinity`
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
@@ -151,6 +152,7 @@ Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bear
 ## Failure modes
 
 - Native `CliError.ShowHelp` containing `MissingOption` (`Required flag missing: <flag>`): a required field's flag was not given. Pass it.
+- `SchemaError` from a command whose input is not a struct, run without `--input`: `{}` is not a valid input. Pass `--input`.
 - `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`. For `--input` or a value flag, the JSON or text may not be the field's encoding; malformed JSON is taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
 - Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values.
 - Native `CliError.ShowHelp` containing `MissingArgument`: a required positional argument was not given. A positional field has no flag, so `--<field>` does not supply it.

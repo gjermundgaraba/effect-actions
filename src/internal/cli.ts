@@ -262,16 +262,15 @@ const positionalOrder = (
 
 /**
  * `--input`, the whole encoded input as JSON, or text, for an input that is not a struct of
- * fields: required unless `{}` is itself a valid input, such as a record's.
+ * fields. It is never required: left off, it is `{}`, which the action's schema decodes
+ * when the command runs, never when it is built.
  */
-const inputFlag = (encoded: SchemaAST.AST, optional: boolean) => {
-  const flag = Flag.String("input").pipe(
+const inputFlag = (encoded: SchemaAST.AST) =>
+  Flag.String("input").pipe(
     Flag.withSchema(jsonOrText(encoded)),
-    Flag.withDescription("Whole action input as JSON"),
+    Flag.withDescription("Whole action input as JSON; omitted, {}"),
+    Flag.optional,
   );
-
-  return optional ? Flag.optional(flag) : Flag.map(flag, Option.some);
-};
 
 const output = <A extends Action.Any, E, R>(
   action: A,
@@ -335,10 +334,10 @@ const inputConfig = <A extends Action.Any>(
   }
 
   return {
-    flags: { input: inputFlag(encoded, Option.isSome(Schema.decodeUnknownOption(codec)({}))) },
+    flags: { input: inputFlag(encoded) },
     positional: [],
-    // `--input` left off, where `{}` is valid: `{}`, a fresh one each run, so invocations
-    // never share a value.
+    // `--input` left off is `{}`, a fresh one each run, so invocations never share a value.
+    // The schema decides whether it is valid, when the command runs.
     decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
   };
 };

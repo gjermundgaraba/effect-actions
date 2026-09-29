@@ -63,6 +63,25 @@ it("answers before routing, so the authentication publishing it never covers it"
   );
 });
 
+it("escapes a challenge's quoted metadata URL, whose query may hold a backslash", async () => {
+  const web = serve(
+    HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)).pipe(
+      Layer.provide(
+        Authentication.make(Caller, Effect.fail(new Action.Unauthenticated()), {
+          resource: "https://api.example.com/mcp?tenant=alice\\",
+          authorizationServers: ["https://auth.example.com"],
+        }),
+      ),
+    ),
+  );
+
+  const refused = await web.handler(new Request("https://api.example.com/private"));
+
+  expect(refused.headers.get("www-authenticate")).toBe(
+    `Bearer resource_metadata="https://api.example.com${prefix}/mcp?tenant=alice\\\\"`,
+  );
+});
+
 it("publishes discovery for every layer it authenticates, which may share it", async () => {
   const authenticate = Authentication.make(Caller, Effect.succeed("caller"), {
     resource: "https://api.example.com/mcp",
