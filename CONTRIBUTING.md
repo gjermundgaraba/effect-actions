@@ -42,6 +42,12 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
 - `tests/docs.test.ts` compares the README showcase and selected executable examples with files in `examples/`, so those snippets stay type-checked. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
+- A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
+- Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior.
+
+## Design notes
+
+- HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
 
 ## Release
 
