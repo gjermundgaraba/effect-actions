@@ -107,7 +107,7 @@ it("builds an implementation once per host build, however many adapters serve it
   }
 });
 
-it("shares an implementation's builder with some of its actions, behind a hook of their own", async () => {
+it("shares an implementation's builder with some of its actions, behind its hook or another", async () => {
   let built = 0;
 
   const secret = Action.make("secret", {
@@ -116,7 +116,7 @@ it("shares an implementation's builder with some of its actions, behind a hook o
     success: Schema.String,
   });
 
-  // The source refuses every call; the shared implementation has no hook of its own.
+  // The source refuses every call.
   const app = Action.implement(
     [identity, secret],
     Effect.sync(() => {
@@ -127,20 +127,25 @@ it("shares an implementation's builder with some of its actions, behind a hook o
     () => Effect.fail(new Action.Forbidden()),
   );
 
-  const open = Action.share([identity], app);
+  // Without a hook of its own, a shared implementation keeps its source's; with one, that
+  // one runs instead.
+  const kept = Action.share([identity], app);
+  const open = Action.share([identity], app, () => Effect.void);
 
   expect(open.actions).toEqual([identity]);
 
   const web = serve(
     Layer.mergeAll(
       ActionHttp.layer(ActionHttp.make([identity, secret]), app),
+      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/kept" }), kept),
       ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
     ),
   );
 
   expect((await web.handler(post("/api/secret"))).status).toBe(403);
+  expect((await web.handler(post("/kept/identity"))).status).toBe(403);
   expect(await (await web.handler(post("/open/identity"))).json()).toBe("shared");
-  // Two implementations, one builder run.
+  // Three implementations, one builder run.
   expect(built).toBe(1);
 
   // Plain JavaScript may pass an action the source does not implement.

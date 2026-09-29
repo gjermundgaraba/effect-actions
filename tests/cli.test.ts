@@ -481,6 +481,16 @@ it("names a flag without the field's leading underscore, and describes swapped f
     Tag,
   );
 
+  // A name of underscores alone keeps them, rather than naming nothing.
+  const Underscore = Action.make("_", { description: "", access: "read" });
+
+  expect(
+    ActionCli.command(
+      Action.implement(Underscore, () => Effect.void),
+      Underscore,
+    ).name,
+  ).toBe("_");
+
   // `--b` fills field `a`, its encoded name, and is described as `a`.
   expect(await lines(command, ["--id", "r1", "--b", "first", "--a", "second"])).toEqual([
     '"r1 first second"',

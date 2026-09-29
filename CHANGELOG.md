@@ -79,8 +79,9 @@ Behavior that changes without a rename:
   action names are unique per binding. The OpenAPI tag is the mount path, such as `api/users`,
   or `/` at the root.
 - Every endpoint declares its action's errors, its binding's, and the three built-in ones, and
-  every tool its action's and the three. Any handler may fail with them unlisted. Input that does not decode, malformed JSON included, is a 400
-  `InvalidInput` carrying the schema's message. A result that does not encode is an empty 500.
+  every tool its action's and the three. Any handler may fail with them unlisted. Input that
+  does not decode, malformed JSON included, is a 400 `InvalidInput` carrying the schema's
+  message. A result that does not encode is an empty 500.
 - HTTP refuses an undeclared input field, nested ones too, with a 400 `InvalidInput` naming
   its path; 0.7.0 dropped it. A client drops one when it encodes.
 - `implement` refuses an `errors` entry encoding with a built-in `_tag`, the built-in itself
@@ -119,7 +120,7 @@ Behavior that changes without a rename:
   schema, `Schema.Struct({})` included, is kept as it is.
 - `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing.
 - `Action.share(actions, implementation, before?)` serves some of an implementation's actions
-  behind a hook of their own, or none, sharing its builder's one run per host build.
+  behind its hook, or `before` instead, sharing its builder's one run per host build.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.
 - Handler parameters are typed from the contract in every `implement` form.

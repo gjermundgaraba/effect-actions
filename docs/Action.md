@@ -10,21 +10,21 @@ errors every surface declares and any handler may fail with.
 
 Import `@gjermundgaraba/effect-actions/Action`.
 
-| Export                                         | Purpose                                                                               |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                          |
-| `implement(action, handler)`                   | Bind one handler; returns one `Implementation`.                                       |
-| `implement([actions], handlers)`               | Bind a record of handlers keyed by action name; returns one `Implementation` of all.  |
-| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.    |
-| `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                    |
-| `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind a hook of their own. |
-| `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.         |
-| `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.    |
-| `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.        |
-| `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                             |
-| `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                               |
-| `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`.  |
-| `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                |
+| Export                                         | Purpose                                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                           |
+| `implement(action, handler)`                   | Bind one handler; returns one `Implementation`.                                        |
+| `implement([actions], handlers)`               | Bind a record of handlers keyed by action name; returns one `Implementation` of all.   |
+| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.     |
+| `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                     |
+| `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind its hook or `before`. |
+| `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.          |
+| `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.     |
+| `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.         |
+| `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                              |
+| `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                                |
+| `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`.   |
+| `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                 |
 
 | Option                  | Meaning                                                          |
 | ----------------------- | ---------------------------------------------------------------- |
@@ -193,7 +193,7 @@ export const listChanges = Action.implement(
 - An implementation's `before` hook reads `access` ([guarantees.md](guarantees.md#dependency-lifetimes)); the library itself authorizes nothing. Its only built-in uses are default hints and span/log annotations.
 - `access` is also the tool's read-only hint, which no option overrides, so authorization and what MCP clients are told cannot disagree. Derive authorization from `access`, never from a tool hint.
 - A contract says nothing about where it is served. A surface serves the implementations passed to it. To keep an action off HTTP, leave it out of `ActionHttp.make`; to keep it off MCP, leave its implementation out of the MCP layer.
-- An action kept off a surface this way, but sharing a builder with served ones, needs an `implement` call of its own, whose builder runs separately. Keep what the two must share in a Layer, which Effect builds once.
+- An action kept off a surface this way, but sharing a builder with served ones, is `share`d from their implementation, so the builder still runs once.
 - `make` accepts only the keys listed above. An unknown key is a compile error.
 - An `undefined` option takes its default, as an omitted one does. One that may be either is typed as either: with `success: enabled ? Schema.String : undefined`, or the same through a conditional spread, the success is `string | void`. The same holds for `input` and `errors`.
 - Options typed as a whole (`Parameters<typeof Action.make>[1]`) are not checked. Their action's schemas are as wide as what may run, so its success is `unknown`.
@@ -211,8 +211,8 @@ export const listChanges = Action.implement(
 - Builder lifetime, the hook, authentication, and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Surfaces keep the two kinds of services separate in their types, per action.
 - Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.access` ([guarantees.md](guarantees.md#observability)). Don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
 - `before` sees `action` typed as the implementation's own actions.
-- A surface that serves only some actions, such as dashboard-only writes kept off MCP or public actions beside authenticated ones, takes an implementation of just those: `share([Poll], users)`, and pass each surface the ones it serves. The same handlers under another hook, such as a trusted admin CLI, are `share(actions, users, trustAdmin)`. A shared implementation has its own hook, or none, never its source's; its builder is its source's, which runs once per host build however many share it.
-- A shared implementation owes, per request, what its source owes for its actions, its source's hook's services included, beside its own hook's. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
+- A surface that serves only some actions, such as dashboard-only writes kept off MCP, takes an implementation of just those: `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, () => Effect.void)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per host build however many share it.
+- A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
 - `before` may be a value that may be `undefined`, as `enabled ? authorize : undefined`: its services are required either way.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
 - Test a handler directly by calling the function you passed to `implement`, or through `ActionToolkit` in process. Keep at least one test per surface: direct calls bypass decoding, encoding, middleware and the hook.
@@ -232,5 +232,6 @@ export const listChanges = Action.implement(
 - `'readOnly' does not exist in type 'Hints'` at `make`: a tool's read-only hint is its `access`. Set `access` instead.
 - Type error on `hints.destructive` of a read action: a read is never destructive. Drop the hint, or make the action a write.
 - `Type '...' is not assignable to type 'never'` on a key at `make`: an option it does not take, or a misspelled one.
+- Type error on `errors` at `make`, `... is not assignable to type 'readonly never[]'` or naming the remaining errors: it lists a built-in error. Drop it; every surface declares it, and a handler may fail with it anyway.
 - `Object literal may only specify known properties, and 'before' does not exist` at `implement`: the hook is the third argument itself, not an option of an object.
 - `implement` throws `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error from `errors`, since a handler may fail with it anyway; rename an error of your own.

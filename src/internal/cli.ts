@@ -37,15 +37,19 @@ export interface Options<A extends Action.Any> {
 
 /**
  * `getUser` as a command or flag name: `get-user`; `getHTTPUser`: `get-http-user`; `_id`:
- * `id`, since a flag already starts with its dashes.
+ * `id`, since a flag already starts with its dashes. A name of dashes and underscores alone,
+ * which would be left empty, is kept as it is.
  */
-export const kebab = (name: string): string =>
-  name
+export const kebab = (name: string): string => {
+  const kebabbed = name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/_/g, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase();
+
+  return kebabbed === "" ? name : kebabbed;
+};
 
 /**
  * A command with a renderer takes `--json` as a flag of its own, so nothing is
@@ -256,8 +260,10 @@ const positionalOrder = (
   return ordered;
 };
 
-/** The whole encoded input as JSON, or text, for an input that is not a struct of fields. */
-/** `--input`, required unless `{}` is itself a valid input, such as a record's. */
+/**
+ * `--input`, the whole encoded input as JSON, or text, for an input that is not a struct of
+ * fields: required unless `{}` is itself a valid input, such as a record's.
+ */
 const inputFlag = (encoded: SchemaAST.AST, optional: boolean) => {
   const flag = Flag.String("input").pipe(
     Flag.withSchema(jsonOrText(encoded)),

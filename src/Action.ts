@@ -1,7 +1,7 @@
 import { Effect, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import { assertDistinct, assertName, assertOwnTags } from "./internal/actions.js";
-import type { BuiltIn } from "./internal/errors.js";
+import type { BuiltIn, BuiltIns } from "./internal/errors.js";
 import {
   type ActionOf,
   type AnyImplementation,
@@ -107,13 +107,24 @@ export interface Options {
 type Known<O, Keys> = { readonly [K in Exclude<keyof O, keyof Keys>]: never };
 
 /**
- * The rules `make` checks beyond `Options`: every option known, and a read never
- * destructive. Options that fail `Options` itself infer as `Options`, whose error the
- * compiler already reports, so they are not checked again.
+ * The built-in errors, refused in `errors`: every surface declares them already. A
+ * look-alike of your own, which the types cannot tell by its tag, `implement` refuses.
+ */
+type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
+  ? [Extract<E, BuiltIns>] extends [never]
+    ? unknown
+    : { readonly errors: ReadonlyArray<Exclude<E, BuiltIns>> }
+  : unknown;
+
+/**
+ * The rules `make` checks beyond `Options`: every option known, a read never destructive,
+ * and no built-in error listed. Options that fail `Options` itself infer as `Options`, whose
+ * error the compiler already reports, so they are not checked again.
  */
 type Rules<O> = Options extends O
   ? unknown
   : Known<O, Options> &
+      OwnErrors<O> &
       (O extends { readonly access: "read" }
         ? { readonly hints?: { readonly destructive?: never } }
         : unknown);
@@ -232,23 +243,24 @@ type HandlersFor<T extends Target> =
       : never;
 
 /**
- * Each action's per-request requirements, by name: its entry of `H`, or `H` itself, and
- * the hook's `RB`.
+ * Each action's handler's per-request requirements, by name: its entry of `H`, or `H`
+ * itself; and the hook's `RB`, under `~hook`, which no action name can be.
  */
 type RequestsOf<T extends Target, H, RB> = {
-  readonly [A in ActionsOf<T> as A["name"]]:
-    | HandlerContext<T extends ReadonlyArray<Any> ? H[A["name"] & keyof H] : H>
-    | RB;
+  readonly [K in ActionsOf<T>["name"] | "~hook"]: K extends "~hook"
+    ? RB
+    : HandlerContext<T extends ReadonlyArray<Any> ? H[K & keyof H] : H>;
 };
 
-/**
- * What `S` owes for each action of `T`, which it implements, and the new hook's `RB`. An
- * implementation's types keep its hook's requirements with its handlers', so `S`'s own
- * hook's stay owed.
- */
+/** What `S`'s handlers owe for each action of `T`, which it implements, and the hook's `RB`. */
 type SharedRequests<T extends Target, S, RB> = S extends { readonly "~request": infer R }
-  ? { readonly [A in ActionsOf<T> as A["name"]]: R[A["name"] & keyof R] | RB }
+  ? {
+      readonly [K in ActionsOf<T>["name"] | "~hook"]: K extends "~hook" ? RB : R[K & keyof R];
+    }
   : never;
+
+/** The requirements of `S`'s hook. */
+type HookOf<S> = S extends { readonly "~request": infer R } ? R["~hook" & keyof R] : never;
 
 /** The names a handlers record may have: none for a single action's handler. */
 type Names<T extends Target> = T extends ReadonlyArray<Any> ? T[number]["name"] : never;
@@ -341,11 +353,24 @@ export function implement(
 }
 
 /**
- * Serve some of `app`'s actions with its handlers, behind a hook of their own, or none:
- * `share([Poll], users)` for a public surface, `share(actions, users, trustAdmin)` for an admin
- * CLI. The result shares `app`'s builder, which runs once per host build however many
+ * Serve some of `app`'s actions with its handlers, behind its hook, or `before` instead:
+ * `share([Poll], users)` for a surface serving fewer actions, `share(actions, users,
+ * trustAdmin)` for an admin CLI, `share([Poll], users, () => Effect.void)` for a public one.
+ * The result shares `app`'s builder, which runs once per host build however many
  * implementations share it.
  */
+export function share<
+  App extends AnyImplementation,
+  const T extends Extract<ActionOf<App>, Any> | ReadonlyArray<Extract<ActionOf<App>, Any>>,
+>(
+  target: T,
+  app: App,
+): Implementation<
+  ActionsOf<T>,
+  SharedRequests<T, App, HookOf<App>>,
+  App["~buildError"],
+  App["~buildContext"]
+>;
 export function share<
   App extends AnyImplementation,
   const T extends Extract<ActionOf<App>, Any> | ReadonlyArray<Extract<ActionOf<App>, Any>>,
@@ -353,7 +378,7 @@ export function share<
 >(
   target: T,
   app: App,
-  before?: Before<ActionsOf<T>, RB>,
+  before: Before<ActionsOf<T>, RB>,
 ): Implementation<
   ActionsOf<T>,
   SharedRequests<T, App, RB>,

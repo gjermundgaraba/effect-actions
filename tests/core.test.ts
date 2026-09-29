@@ -97,7 +97,8 @@ describe("contracts", () => {
       error: Schema.String,
     }) {}
 
-    const errors = [
+    // Widened, as plain JavaScript passes them: the types refuse a built-in error listed.
+    const errors: ReadonlyArray<Schema.Codec<unknown, unknown>> = [
       Forbidden,
       Schema.TaggedStruct("InvalidInput", { issues: Schema.Array(Schema.String) }),
       Schema.Union([

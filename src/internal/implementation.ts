@@ -50,8 +50,9 @@ type BoundKey = Context.Key<Bound, Bound>;
  *
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
- * `R` maps each action name to its per-request requirements, its handler's and its hook's;
- * `EX` and `RX` are the failures and services of the builder.
+ * `R` maps each action name to its handler's per-request requirements, and `~hook`, which
+ * no action name can be, to its hook's; `EX` and `RX` are the failures and services of the
+ * builder.
  */
 export class Implementation<
   A extends Action.Any,
@@ -60,7 +61,7 @@ export class Implementation<
   RX,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
-  /** Type-only: each action's per-request requirements, by action name. */
+  /** Type-only: each action's handler's per-request requirements, and the hook's. */
   declare readonly "~request": R;
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
@@ -76,19 +77,21 @@ export class Implementation<
     readonly actions: ReadonlyArray<A>,
     /** Each action paired with its handler, or an implementation whose builder this shares. */
     build: Effect.Effect<Bound, EX, RX | Scope.Scope> | Implementation<Action.Any, any, EX, RX>,
+    /** The hook; sharing a builder without one keeps its source's. */
     before: ErasedBefore | undefined,
   ) {
-    this.#before = before;
-
     if (build instanceof Implementation) {
       // The source's key and layer, so both share one build.
       const source = Implementation.own(build);
 
       this.#key = source.#key;
       this.#layer = source.#layer;
+      this.#before = before ?? source.#before;
 
       return;
     }
+
+    this.#before = before;
 
     // A string key is a service's identity, so a random one is unique to this
     // implementation even across copies of this module.
@@ -155,13 +158,13 @@ const isList = (served: Served): served is ReadonlyArray<AnyImplementation> =>
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
 
-/** Per-request requirements of `App`'s handler for each `A` it implements. */
+/** Per-request requirements of `App`'s hook and handler for each `A` it implements. */
 export type RequestOf<App, A extends Action.Any> = App extends {
   readonly "~request": infer R;
 }
   ? A extends Action.Any
     ? A["name"] extends keyof R
-      ? R[A["name"]]
+      ? R[A["name"]] | R["~hook" & keyof R]
       : never
     : never
   : never;

@@ -41,6 +41,14 @@ const App = Action.implement(
   }),
 );
 
+/** The request services a route layer requires. */
+type RouteRequires<L> =
+  L extends Layer.Layer<infer _A, infer _E, infer R>
+    ? R extends HttpRouter.Request<"Requires", infer S>
+      ? S
+      : never
+    : never;
+
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
 
@@ -197,10 +205,15 @@ export const implementTypes = () => {
     Effect.succeed({ id, name: id.toUpperCase() }),
   );
 
-  // One implementation, whose request requirements are kept per action name.
+  // One implementation, whose request requirements are kept per action name, and its hook's.
   const plainChannels: [
     Equal<
-      Action.Implementation<typeof Lookup, { readonly lookup: never }, never, never>,
+      Action.Implementation<
+        typeof Lookup,
+        { readonly lookup: never; readonly "~hook": never },
+        never,
+        never
+      >,
       typeof plain
     >,
   ] = [true];
@@ -219,7 +232,12 @@ export const implementTypes = () => {
   );
 
   const builtChannels: Equal<
-    Action.Implementation<typeof Lookup, { readonly lookup: Principal }, never, Store>,
+    Action.Implementation<
+      typeof Lookup,
+      { readonly lookup: Principal; readonly "~hook": never },
+      never,
+      Store
+    >,
     typeof built
   > = true;
 
@@ -255,20 +273,61 @@ export const implementTypes = () => {
   // Per action: the shared builder's `rename` owes `Principal`, its `lookup` nothing.
   const sharedRequests: Equal<
     (typeof shared)["~request"],
-    { readonly lookup: never; readonly rename: Principal }
+    { readonly lookup: never; readonly rename: Principal; readonly "~hook": never }
   > = true;
 
   void sharedRequests;
 
-  // Shared, some actions owe what their source owes for them, and their own hook's services.
-  const reshared = Action.share([Rename], shared, () => Effect.asVoid(Store));
+  // A hook's services are kept apart from its handlers'.
+
+  const hooked = Action.implement(
+    Rename,
+    ({ name }) => Effect.as(Store, name),
+    () => Effect.asVoid(Principal),
+  );
+
+  const hookedRequests: Equal<
+    (typeof hooked)["~request"],
+    { readonly rename: Store; readonly "~hook": Principal }
+  > = true;
+
+  void hookedRequests;
+
+  // Shared, some actions keep their source's hook, and owe what it and their handlers owe.
+  const kept = Action.share([Rename], hooked);
+
+  const keptRequests: Equal<
+    (typeof kept)["~request"],
+    { readonly rename: Store; readonly "~hook": Principal }
+  > = true;
+
+  void keptRequests;
+
+  // Given a hook of their own, they owe its services instead of their source's.
+  const reshared = Action.share([Rename], hooked, () => Effect.void);
 
   const resharedChannels: Equal<
     typeof reshared,
-    Action.Implementation<typeof Rename, { readonly rename: Principal | Store }, BuildFailed, Store>
+    Action.Implementation<
+      typeof Rename,
+      { readonly rename: Store; readonly "~hook": never },
+      never,
+      never
+    >
   > = true;
 
   void resharedChannels;
+
+  // Served over HTTP, only the hook that runs is owed: an open subset asks for no identity.
+  const opened = ActionHttp.layer(ActionHttp.make([Rename]), reshared);
+  const closed = ActionHttp.layer(ActionHttp.make([Rename]), kept);
+
+  const servedRequests: [
+    Equal<RouteRequires<typeof opened>, Store>,
+    Equal<RouteRequires<typeof closed>, Store | Principal>,
+  ] = [true, true];
+
+  void servedRequests;
   const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name));
   // @ts-expect-error Only the source's own actions.
   Action.share([Lookup], renameOnly);
@@ -352,6 +411,8 @@ export const builtInErrorTypes = Effect.gen(function* () {
   // Any handler may fail with a built-in error, which every surface declares.
   Action.implement(Echo, () => Effect.fail(new Action.Forbidden({ scopes: ["admin"] })));
   Action.implement(Echo, () => Effect.fail(new Action.InvalidInput({ message: "Too many" })));
+  // @ts-expect-error No action lists a built-in error: every surface declares it.
+  Action.make("listed", { description: "", access: "write", errors: [Action.Forbidden] });
   // @ts-expect-error Only those and the declared errors.
   Action.implement(Echo, () => Effect.fail(new Error("undeclared")));
 
