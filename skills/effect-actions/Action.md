@@ -18,6 +18,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.     |
 | `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                     |
 | `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind its hook or `before`. |
+| `layer(implementations)`                       | Their builders as one layer: provided above every surface, each runs once for all.     |
 | `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.          |
 | `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.     |
 | `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.         |

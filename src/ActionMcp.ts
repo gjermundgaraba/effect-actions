@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Fiber, Layer, Logger, Schema } from "effect";
+import { Cause, Console, Effect, Exit, Fiber, Layer, Schema } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
 import { McpProtocol, McpServer, type McpSchema, Tool } from "effect/ai";
 import type { HttpRouter } from "effect/http";
@@ -46,6 +46,37 @@ const stdioProtocols = [
   McpProtocol.v2025_03_26,
   McpProtocol.v2024_11_05,
 ] as const;
+
+/**
+ * The console of a stdio server, whose stdout carries the protocol: what would go to stdout
+ * goes to stderr, so every console logger, `Console.log` and the default logger alike,
+ * leaves the protocol intact.
+ */
+const stderrConsole = (console: Console.Console): Console.Console => {
+  const error = (...args: ReadonlyArray<unknown>) => console.error(...args);
+
+  return {
+    assert: (condition, ...args: ReadonlyArray<unknown>) => console.assert(condition, ...args),
+    clear: () => console.clear(),
+    count: (label) => console.count(label),
+    countReset: (label) => console.countReset(label),
+    debug: error,
+    dir: error,
+    dirxml: error,
+    error,
+    group: (...args: ReadonlyArray<unknown>) => console.group(...args),
+    groupCollapsed: (...args: ReadonlyArray<unknown>) => console.groupCollapsed(...args),
+    groupEnd: () => console.groupEnd(),
+    info: error,
+    log: error,
+    table: error,
+    time: (label) => console.time(label),
+    timeEnd: (label) => console.timeEnd(label),
+    timeLog: (label, ...args: ReadonlyArray<unknown>) => console.timeLog(label, ...args),
+    trace: (...args: ReadonlyArray<unknown>) => console.trace(...args),
+    warn: (...args: ReadonlyArray<unknown>) => console.warn(...args),
+  };
+};
 
 /**
  * The native server supplies its own request context to every tool call, and over HTTP
@@ -151,7 +182,10 @@ export function runStdio(apps: Served, options: Options) {
   // its side. Built in a child, that is a normal end, while an interruption of the program
   // itself, such as a signal, stays one. Stdout carries the protocol, so logs go to stderr.
   return Layer.launch(transport).pipe(
-    Effect.provideService(Logger.LogToStderr, true),
+    Effect.provideServiceEffect(
+      Console.Console,
+      Effect.map(Effect.service(Console.Console), stderrConsole),
+    ),
     Effect.forkChild,
     Effect.flatMap(Fiber.await),
     Effect.flatMap((exit) =>

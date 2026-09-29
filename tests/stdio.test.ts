@@ -3,11 +3,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vite-plus/test";
 
-/** A client of the stdio example in a real subprocess, speaking only `revision`. */
-const connect = async (revision: string) => {
+/** A client of a stdio server in a real subprocess, speaking only `revision`. */
+const connect = async (revision: string, script = "examples/mcp-stdio.ts") => {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ["--import", "tsx", "examples/mcp-stdio.ts"],
+    args: ["--import", "tsx", script],
     cwd: process.cwd(),
     stderr: "pipe",
   });
@@ -71,6 +71,22 @@ describe("MCP stdio example", () => {
     },
     30_000,
   );
+
+  it("sends every console logger's output and Console.log to stderr", async () => {
+    const { client, output, connected } = await connect("2026-07-28", "tests/stdio-console.ts");
+
+    try {
+      await connected;
+
+      const result = await client.callTool({ name: "status", arguments: {} });
+      expect(result.isError).not.toBe(true);
+    } finally {
+      await client.close();
+    }
+
+    expect(output.stderr).toContain('"message":"json logger"');
+    expect(output.stderr).toContain("console log");
+  }, 30_000);
 
   it("exits cleanly when the host closes stdin", () => {
     const run = spawnSync(process.execPath, ["--import", "tsx", "examples/mcp-stdio.ts"], {

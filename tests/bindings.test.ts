@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Layer, Logger, Option, References, Schema, Tracer } from "effect";
+import { Context, Effect, Layer, Logger, Option, References, Schema, Stream, Tracer } from "effect";
 import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
 import { post, rawToolCall } from "./requests.js";
 import { serve, serveWithContext } from "./serve.js";
@@ -183,6 +185,47 @@ it("builds a shared implementation with one set of startup services, not one per
       value: http,
     });
   });
+});
+
+it("builds once beside routes served apart, when Action.layer is provided above both", async () => {
+  const Count = Action.make("count", { description: "", access: "read", success: Schema.Finite });
+
+  for (const order of ["routes first", "toolkit first"] as const) {
+    let built = 0;
+
+    const app = Action.implement(
+      Count,
+      Effect.sync(() => {
+        built += 1;
+
+        return () => Effect.succeed(built);
+      }),
+    );
+
+    // Testing.layer, like HttpRouter.serve, builds its routes apart from the other layers.
+    const routes = Testing.layer(ActionHttp.layer(ActionHttp.make([Count]), app));
+    const tools = ActionToolkit.make(app);
+
+    const layers = (
+      order === "routes first"
+        ? Layer.mergeAll(routes, tools.layer)
+        : Layer.mergeAll(tools.layer, routes)
+    ).pipe(Layer.provide(Action.layer(app)));
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* ActionHttp.client(ActionHttp.make([Count]));
+          const toolkit = yield* tools.toolkit;
+
+          yield* client.count();
+          yield* Stream.runCollect(yield* toolkit.handle("count", {}));
+        }).pipe(Effect.provide(layers)),
+      ),
+    );
+
+    expect([order, built]).toEqual([order, 1]);
+  }
 });
 
 it("serves a copy of a binding like the binding itself", async () => {

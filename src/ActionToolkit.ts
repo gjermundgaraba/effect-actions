@@ -1,4 +1,4 @@
-import { Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "./Action.js";
 import type { BuiltIns } from "./internal/errors.js";
@@ -41,11 +41,22 @@ type ToolkitTools<App> = {
   readonly [T in ToolFor<App> as T["name"]]: T;
 };
 
-/** Native tools and the layer that binds their action implementations. */
+/** The handled toolkit of one `make` call, which its `layer` provides. */
+export interface Handled<T extends Record<string, Tool.Any>> {
+  readonly "~tools": T;
+}
+
+/**
+ * Native tools bound to their action implementations: `toolkit` gives the handled toolkit
+ * that `layer` provides, for `LanguageModel` or `handle`. Each `make` call's handlers stay its
+ * own, so toolkits with tools of one name never run each other's handlers.
+ */
 export interface Tools<T extends Record<string, Tool.Any>, E, R> {
-  readonly toolkit: Toolkit.Toolkit<T>;
+  /** The native tool definitions, by name: their schemas, hints and approval. */
+  readonly tools: T;
+  readonly toolkit: Effect.Effect<Toolkit.WithHandler<T>, never, Handled<T>>;
   /** Acquires handlers once in the layer scope; handler requirements remain at invocation. */
-  readonly layer: Layer.Layer<Tool.HandlersFor<T>, E, R>;
+  readonly layer: Layer.Layer<Handled<T>, E, R>;
 }
 
 /** How `make` projects its tools. */
@@ -60,10 +71,7 @@ export interface Options<A extends Action.Any> {
 }
 
 /** `Tools`, erased: the public signature restores its tools and channels. */
-interface ErasedTools {
-  readonly toolkit: object;
-  readonly layer: object;
-}
+type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 
 /**
  * Project implementations into Effect's native AI toolkit.
@@ -97,5 +105,16 @@ export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
     handler: (run) => run,
   });
 
-  return { toolkit, layer: layer.pipe(provideHandlers(served)) };
+  // Effect finds a tool's handler by the tool's name, in context: kept inside this layer, a
+  // handler never reaches another toolkit with a tool of that name.
+  const handled = Context.Service<
+    Handled<Record<string, Tool.Any>>,
+    Toolkit.WithHandler<Record<string, Tool.Any>>
+  >(`effect-actions/Tools/${Math.random().toString(36).slice(2)}`);
+
+  return {
+    tools: toolkit.tools,
+    toolkit: Effect.service(handled),
+    layer: Layer.effect(handled, toolkit).pipe(Layer.provide(layer), provideHandlers(served)),
+  };
 }

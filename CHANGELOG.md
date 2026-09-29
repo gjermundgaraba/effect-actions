@@ -114,6 +114,15 @@ Behavior that changes without a rename:
   the action's schemas, refusing an ISO string for a `Schema.Date`.
 - Errors one caller may receive have distinct `_tag`s: `implement` and `ActionHttp.layer`
   refuse two with one.
+- `ActionToolkit.make` returns `{ tools, toolkit, layer }`. `toolkit` is an Effect of the
+  handled toolkit its own `layer` provides, so two toolkits with tools of one name never run
+  each other's handlers; `yield* toolkit` and `LanguageModel`'s `toolkit` option read as
+  before. `tools` holds the tool definitions that `toolkit.tools` held.
+- `Action.layer(implementations)` builds their builders once, above every surface, including
+  routes that `HttpRouter.serve` or `Testing.layer` build apart.
+- `Testing.layer` runs requests in the context it is built in, as `HttpRouter.serve` does.
+- `runStdio` gives its program a `Console` writing to stderr, so console loggers such as
+  `Logger.consoleJson`, and `Console.log`, never corrupt the protocol.
 - A local command's error channel includes `Action.BuiltIn`.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses a misspelled key, a name over 128 characters, and `hints.destructive`

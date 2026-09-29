@@ -712,7 +712,7 @@ export const authenticationTypes = () => {
   const owed: Equal<Effect.Services<typeof stdio>, Users | Stdio.Stdio | CurrentActor> = true;
   void owed;
 
-  const tools = ActionToolkit.make(userActions).toolkit.tools;
+  const tools = ActionToolkit.make(userActions).tools;
   const toolOwed: Equal<Tool.HandlerServices<typeof tools.getUser>, CurrentActor> = true;
   void toolOwed;
 };
@@ -777,7 +777,7 @@ export const servedRequirementTypes = () => {
   void resolved;
 
   // A tool is named after its action, and owes its handler's services.
-  const tools = ActionToolkit.make(hintsApp).toolkit.tools;
+  const tools = ActionToolkit.make(hintsApp).tools;
 
   const toolAssertions: [
     Equal<keyof typeof tools, "act">,

@@ -202,6 +202,14 @@ export const provideHandlers =
     return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
 
+/**
+ * The builders of `apps` as one layer providing nothing: built above the surfaces, it runs
+ * each builder once for all of them, since every surface builds the same memoized layers.
+ */
+export const builders = (
+  apps: ReadonlyArray<AnyImplementation>,
+): Layer.Layer<never, unknown, unknown> => Layer.empty.pipe(provideHandlers(apps));
+
 /** Every action `apps` serve with its handler, behind its hook, as `provideHandlers` built them. */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,

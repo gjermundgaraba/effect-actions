@@ -1,4 +1,4 @@
-import { Effect, Predicate, Schema } from "effect";
+import { Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import {
   assertDistinct,
@@ -12,10 +12,16 @@ import {
   type AnyImplementation,
   type Before,
   type Bound,
+  type BuildContext,
+  type BuildError,
+  builders,
   type ErasedHandler,
   type HandlerContext,
   type Handlers,
   Implementation,
+  type Member,
+  type Served,
+  toList,
 } from "./internal/implementation.js";
 
 /** An action bound to its handler; opaque, see `implement`. */
@@ -412,4 +418,17 @@ export function share(
   }
 
   return new Implementation<Any, {}, unknown, unknown>(actions, app, before);
+}
+
+/**
+ * The builders of `implementations`, as one layer providing nothing. Surfaces build them
+ * themselves, but routes under `HttpRouter.serve` or `Testing.layer` are built apart from the
+ * rest of the host's layers: provided above both, it runs each builder once for every
+ * surface, with the services it is given.
+ */
+export function layer<const Apps extends Served>(
+  implementations: Apps,
+): Layer.Layer<never, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
+export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
+  return builders(toList(implementations));
 }

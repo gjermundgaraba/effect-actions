@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Predicate, Schema } from "effect";
+import { Effect, Layer, Option, Predicate, Schema, type Scope } from "effect";
 import { identity } from "effect/Function";
 import {
   type Headers,
@@ -9,6 +9,7 @@ import {
   HttpEffect,
   HttpRouter,
   HttpServer,
+  type HttpServerRequest,
 } from "effect/http";
 import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
@@ -31,11 +32,22 @@ export function layer<A, E, R extends Served>(
 export function layer(
   routes: Layer.Layer<unknown, unknown, Served>,
 ): Layer.Layer<HttpClient.HttpClient, unknown> {
+  // Requests run in the context the layer is built in, as under `HttpRouter.serve`: a
+  // `TestClock` or reference provided around the program reaches middleware and handlers.
   return Layer.unwrap(
-    Effect.map(
-      HttpRouter.toHttpEffect(routes.pipe(Layer.provide(HttpServer.layerServices))),
-      (app) => clientOf(HttpEffect.toWebHandler(app)),
-    ),
+    Effect.gen(function* () {
+      const app = yield* HttpRouter.toHttpEffect(
+        routes.pipe(Layer.provide(HttpServer.layerServices)),
+      );
+
+      const context = yield* Effect.context<never>();
+
+      return clientOf(
+        HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
+          context,
+        )(app),
+      );
+    }),
   );
 }
 

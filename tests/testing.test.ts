@@ -383,6 +383,32 @@ const Sent = Schema.Struct({
 });
 
 describe("layer", () => {
+  it("runs requests in the program's context, middleware and handlers alike", async () => {
+    const Stage = Context.Reference<string>("testing-test/Stage", { defaultValue: () => "real" });
+
+    const stamped = HttpRouter.middleware((route) =>
+      Effect.flatMap(Effect.service(Stage), (stage) =>
+        Effect.map(route, (response) => HttpServerResponse.setHeader(response, "x-stage", stage)),
+      ),
+    ).layer;
+
+    const routes = HttpRouter.add(
+      "GET",
+      "/stage",
+      Effect.map(Effect.service(Stage), HttpServerResponse.text),
+    ).pipe(Layer.provide(stamped));
+
+    const [header, body] = await Effect.runPromise(
+      Effect.gen(function* () {
+        const response = yield* HttpClient.get("/stage");
+
+        return [response.headers["x-stage"], yield* response.text] as const;
+      }).pipe(Effect.provide(Testing.layer(routes)), Effect.provideService(Stage, "test")),
+    );
+
+    expect([header, body]).toEqual(["test", "test"]);
+  });
+
   class Visits extends Context.Service<Visits, { count: number }>()("testing/Visits") {}
 
   it("answers a client made without a base URL, and every tool call, in memory", async () => {

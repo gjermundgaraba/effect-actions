@@ -36,9 +36,9 @@ describe("ActionToolkit", () => {
       needsApproval: (action) => action.access === "write" && (({ id }) => id !== "draft"),
     });
 
-    expect(binding.toolkit.tools.read.needsApproval).toBe(false);
+    expect(binding.tools.read.needsApproval).toBe(false);
     // No tool needs approval unless the host says so: the native tool's own default.
-    expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBeUndefined();
+    expect(ActionToolkit.make(app).tools.erase.needsApproval).toBeUndefined();
 
     // A model that calls the tools at once.
     const model = LanguageModel.make({
@@ -82,7 +82,7 @@ describe("ActionToolkit", () => {
 
     const binding = ActionToolkit.make(double);
 
-    expect(Object.keys(binding.toolkit.tools)).toEqual(["double"]);
+    expect(Object.keys(binding.tools)).toEqual(["double"]);
 
     const result = await Effect.runPromise(
       Effect.scoped(
@@ -166,6 +166,43 @@ describe("ActionToolkit", () => {
       { result: notFound, encodedResult: Schema.encodeSync(NotFound)(notFound) },
     ]);
     expect(result[0]?.isFailure).toBe(true);
+  });
+
+  it("keeps each toolkit's handlers its own beside another with tools of the same names", async () => {
+    const Secret = Action.make("secret", {
+      description: "A secret.",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const guarded = Action.implement(
+      Secret,
+      () => Effect.succeed("secret"),
+      () => Effect.fail(new Action.Forbidden()),
+    );
+
+    // The same action behind a hook letting everyone through.
+    const guardedTools = ActionToolkit.make(guarded);
+    const openTools = ActionToolkit.make(Action.share(Secret, guarded, () => Effect.void));
+
+    // Merged either way, each toolkit runs its own implementation's hook.
+    for (const layers of [
+      Layer.mergeAll(guardedTools.layer, openTools.layer),
+      Layer.mergeAll(openTools.layer, guardedTools.layer),
+    ]) {
+      const [refused, answered] = await Effect.runPromise(
+        Effect.scoped(
+          Effect.forEach([guardedTools, openTools], ({ toolkit }) =>
+            Effect.flatMap(toolkit, (handled) =>
+              Effect.flatMap(handled.handle("secret", {}), Stream.runCollect),
+            ),
+          ).pipe(Effect.provide(layers)),
+        ),
+      );
+
+      expect(refused).toMatchObject([{ isFailure: true }]);
+      expect(answered).toMatchObject([{ isFailure: false, result: "secret" }]);
+    }
   });
 
   it("releases a builder's resources with the layer", async () => {
