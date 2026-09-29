@@ -120,8 +120,9 @@ export function layerHttp(apps: Served, options: LayerHttpOptions) {
 
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
- * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates: the whole program of an MCP
- * subprocess, which succeeds when the host closes its side. A signal interrupts it.
+ * 2026-07-28 or any earlier revision back to 2024-11-05, as the host negotiates: the whole
+ * program of an MCP subprocess, which succeeds when the host closes its side. A signal
+ * interrupts it.
  *
  * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
  * `Stdio` service and the identity. Arguments are tool input only and never establish

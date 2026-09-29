@@ -1,4 +1,3 @@
-// Server-only, and a module of its own: a client bundle, which never serves, drops it whole.
 import { Effect } from "effect";
 import { type HttpApiError, HttpApiMiddleware } from "effect/http-api";
 import { InvalidInput } from "./errors.js";

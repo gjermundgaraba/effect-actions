@@ -310,7 +310,8 @@ const inputConfig = <A extends Action.Any>(
 ): InputConfig<A> => {
   const codec = Schema.toCodecJson(action.input);
   const encoded = SchemaAST.toEncoded(codec.ast);
-  const decode = Schema.decodeUnknownEffect(codec);
+  // Undeclared fields are refused, as over HTTP: a misspelled key is an error, not dropped.
+  const decode = Schema.decodeUnknownEffect(codec, { onExcessProperty: "error" });
 
   // Encoded, a struct or a class is its named fields. A record's keys are not known in
   // advance, so only named fields get flags; an action without input has none.

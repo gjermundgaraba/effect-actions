@@ -1,6 +1,5 @@
-// Server-only, and a module of its own: a client bundle, which never serves, drops it whole.
 import { Context, Effect, Option, Predicate, Ref, Schema } from "effect";
-import { HttpEffect, HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { type Refusal, refusals, statuses } from "./errors.js";
 
 /**
@@ -65,29 +64,6 @@ export const answer = (
     : HttpServerResponse.setHeader(response, "www-authenticate", challenge);
 };
 
-/**
- * `call`, an HTTP route's, whose `Forbidden` naming scopes adds its `insufficient_scope`
- * challenge to the response the route answers it with.
- */
-export const challengeScopes = <A, E, R>(
-  call: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
-  Effect.tapError(call, (error) =>
-    isRefusal(error)
-      ? Effect.flatMap(Effect.serviceOption(ResourceMetadata), (metadata) => {
-          const challenge = insufficientScope(error, Option.getOrUndefined(metadata));
-
-          return challenge === undefined
-            ? Effect.void
-            : HttpEffect.appendPreResponseHandler((_request, response) =>
-                Effect.succeed(
-                  HttpServerResponse.setHeader(response, "www-authenticate", challenge),
-                ),
-              );
-        })
-      : Effect.void,
-  );
-
 /** `answer`, naming the metadata URL of the resource `Authentication.make` covers the request for. */
 const refuse = (error: Refusal): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
   Effect.map(Effect.serviceOption(ResourceMetadata), (metadata) =>
@@ -115,8 +91,8 @@ export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effe
 
 /**
  * Route middleware answering a request whose call failed with a step-up refusal with the
- * refusal's status and challenge, whatever the route answered: 401 or 403 as MCP
- * authorization requires, where MCP would answer a tool result.
+ * refusal's status, JSON and challenge, whatever the route answered: an HTTP route's own
+ * refusal, or an MCP tool result, where MCP authorization requires 401 or 403.
  */
 export const stepUp = HttpRouter.middleware((httpEffect) =>
   Effect.gen(function* () {

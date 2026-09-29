@@ -103,6 +103,8 @@ Behavior that changes without a rename:
   remote command takes no client options: it calls through the host's `HttpClient`.
 - An input that is not a struct is one `--input` flag. Left off, it is `{}`, which the schema
   decodes when the command runs, never when it is built.
+- A command refuses an undeclared field in `--input` or a flag's JSON with a `SchemaError`;
+  0.7.0 dropped it.
 - A local command's error channel includes `Action.BuiltIn`.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses a misspelled key, a name over 128 characters, and `hints.destructive`

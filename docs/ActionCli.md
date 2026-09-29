@@ -152,6 +152,7 @@ Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bear
 ## Failure modes
 
 - Native `CliError.ShowHelp` containing `MissingOption` (`Required flag missing: <flag>`): a required field's flag was not given. Pass it.
+- `SchemaError` naming an unexpected key: `--input` or a flag's JSON holds a field the schema does not declare, such as a misspelling. Undeclared fields are refused, never dropped.
 - `SchemaError` from a command whose input is not a struct, run without `--input`: `{}` is not a valid input. Pass `--input`.
 - `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`. For `--input` or a value flag, the JSON or text may not be the field's encoding; malformed JSON is taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
 - Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values.

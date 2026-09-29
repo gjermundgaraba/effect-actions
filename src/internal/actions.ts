@@ -1,4 +1,3 @@
-// Its own modules rather than the barrel's namespaces, which esbuild keeps whole in a client.
 import { isString } from "effect/Predicate";
 import { type AST, isLiteral, isObjects, isUnion, toEncoded } from "effect/SchemaAST";
 import type * as Action from "../Action.js";

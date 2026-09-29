@@ -5,7 +5,6 @@ import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
 import type { Etag, HttpPlatform, HttpRouter } from "effect/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
-// Their own modules rather than the barrel's namespaces, which esbuild keeps whole in a client.
 import { status } from "effect/http-api/HttpApiSchema";
 import * as OpenApi from "effect/http-api/OpenApi";
 import type * as Action from "./Action.js";
@@ -18,7 +17,7 @@ import {
   type Options as ClientOptions,
 } from "./internal/client.js";
 import { builtIns, type BuiltIns } from "./internal/errors.js";
-import { challengeScopes } from "./internal/refusal.js";
+import { recordStepUp, stepUp } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
@@ -270,7 +269,7 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
             // Own properties, so an action named `__proto__` is a route, not a prototype.
             bound.map(([action, run]) => [
               action.name,
-              (request: Request) => challengeScopes(run(request.payload)),
+              (request: Request) => recordStepUp(run(request.payload)),
             ]),
           ) as never,
         ),
@@ -278,7 +277,12 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
     ),
   ).pipe(provideHandlers(apps));
 
-  return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
+  // A step-up refusal answers with its challenge, as over MCP.
+  return HttpApiBuilder.layer(api).pipe(
+    Layer.provide(handlers),
+    Layer.provide(schemaErrors),
+    Layer.provide(stepUp),
+  );
 }
 
 /**

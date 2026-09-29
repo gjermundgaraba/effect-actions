@@ -198,6 +198,24 @@ it("derives each field's flag from its encoded JSON value", async () => {
     failure(await runExit(command, ["--tenant-id", "acme", "--tags", "[1]", ...required])),
   ).toBeInstanceOf(Schema.SchemaError);
 
+  // An undeclared field in a JSON flag is refused, not dropped: a misspelling is an error.
+  expect(
+    failure(
+      await runExit(command, [
+        "--tenant-id",
+        "acme",
+        "--count",
+        "1",
+        "--mode",
+        "fast",
+        "--tags",
+        "[]",
+        "--owner",
+        '{"id":"a","nmae":"Ada"}',
+      ]),
+    ),
+  ).toBeInstanceOf(Schema.SchemaError);
+
   expect(inputs).toHaveLength(2);
 });
 
@@ -346,6 +364,16 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
   expect(
     failure(await runExit(ActionCli.command(app, Shape), ["--kind", "square", "--side", "2"])),
   ).toBeInstanceOf(CliError.ShowHelp);
+  // A misspelled key of a union member is refused, not dropped.
+  expect(
+    failure(
+      await runExit(ActionCli.command(app, Shape), [
+        "--input",
+        '{"kind":"square","side":2,"sied":3}',
+      ]),
+    ),
+  ).toBeInstanceOf(Schema.SchemaError);
+
   // Omitted, the input is `{}`: no shape, so invalid input, but a valid record.
   expect(failure(await runExit(ActionCli.command(app, Shape), []))).toBeInstanceOf(
     Schema.SchemaError,
