@@ -233,6 +233,7 @@ elsewhere, give `baseUrl`.
 - Route returns 404: the implementation was never passed to a `layer` call, or the path lacks the prefix.
 - Type error at `layer`, or `Action "x" is not in this HTTP binding` thrown by it: the implementation's action was not passed to this binding's `make`. Implement the exact contract value the binding received, or add the action to the binding. Matching names and schemas do not establish identity.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same action.
+- `Duplicate error _tag in action "<name>" and its binding: <tag>` thrown by `layer`: an error of the action and one of the binding's `errors` share a `_tag`. Rename one, or list the one schema in both.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action. Serve each action in one call.
 - `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by `layer`: a binding error has a built-in tag, or is a built-in error. Drop a built-in error, which every endpoint declares already; rename an error of your own.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.

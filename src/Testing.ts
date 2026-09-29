@@ -14,7 +14,7 @@ import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
 import type { Call } from "./internal/client.js";
-import { type BuiltIn, builtIns, refusals } from "./internal/errors.js";
+import { type BuiltIn, refusals } from "./internal/errors.js";
 import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
@@ -173,11 +173,7 @@ const callTool = (
     if (result.isError === true) {
       const error = result.content.find((content) => content.type === "text")?.text ?? "";
 
-      return yield* failWith(
-        projectedErrors(action, builtIns),
-        error,
-        other(`returned an error: ${error}`),
-      );
+      return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
     }
 
     if (result.structuredContent === undefined) {

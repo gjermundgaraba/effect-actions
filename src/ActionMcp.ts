@@ -47,8 +47,13 @@ const stdioProtocols = [
   McpProtocol.v2024_11_05,
 ] as const;
 
-/** The native server supplies its own request context to every tool call. */
+/**
+ * The native server supplies its own request context to every tool call, and over HTTP
+ * the router its own, such as the request.
+ */
 type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext>;
+
+type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provided>;
 
 /**
  * MCP has a JSON-only wire contract. Success uses its documented `{ value }`
@@ -105,7 +110,7 @@ export function layerHttp<const Apps extends Served>(
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
   | BuildContext<Member<Apps>>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", ToolRequestContext<RequestContext<Member<Apps>>>>
+  | HttpRouter.Request.From<"Requires", HttpToolRequestContext<RequestContext<Member<Apps>>>>
 >;
 export function layerHttp(apps: Served, options: LayerHttpOptions) {
   return server(

@@ -8,7 +8,12 @@ import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/h
 import { status } from "effect/http-api/HttpApiSchema";
 import * as OpenApi from "effect/http-api/OpenApi";
 import type * as Action from "./Action.js";
-import { assertDistinct, assertOwnTags, projectedErrors } from "./internal/actions.js";
+import {
+  assertDistinct,
+  assertDistinctTags,
+  assertOwnTags,
+  projectedErrors,
+} from "./internal/actions.js";
 import {
   type AnyHttp,
   type Client,
@@ -16,7 +21,7 @@ import {
   methods,
   type Options as ClientOptions,
 } from "./internal/client.js";
-import { builtIns, type BuiltIns } from "./internal/errors.js";
+import type { BuiltIns } from "./internal/errors.js";
 import { recordStepUp, stepUp } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
@@ -88,14 +93,15 @@ type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.
  * What `layer` builds: failures, build services and request services are unions over
  * precisely the implementations `App`, joined by the router and platform services
  * `HttpApiBuilder.layer` needs. Middleware provided around it, such as authentication,
- * removes the request services it provides.
+ * removes the request services it provides; the router provides its own, such as the
+ * request, to every route.
  */
 type HttpLayer<App> = Layer.Layer<
   never,
   BuildError<App>,
   | BuildContext<App>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", RequestContext<App>>
+  | HttpRouter.Request.From<"Requires", Exclude<RequestContext<App>, HttpRouter.Provided>>
   | Etag.Generator
   | FileSystem
   | HttpPlatform.HttpPlatform
@@ -215,7 +221,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
     HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
       payload: action.input,
       success: action.success,
-      error: projectedErrors(action, [...errors, ...builtIns]).flatMap(declared),
+      error: projectedErrors(action, errors).flatMap(declared),
     }).annotate(OpenApi.Description, action.description),
   );
 
@@ -244,11 +250,19 @@ export function layer<
     ),
 >(http: H, implementations: Apps): HttpLayer<Member<Apps>>;
 export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
-  // Checked where the binding is served, so a client bundle carries no check of its own.
+  // Checked where the binding is served: a client holds it too.
   assertOwnTags("ActionHttp binding", http.errors);
 
   const apps = toList(served);
   const actions = servedActions("served action", apps);
+
+  for (const action of actions) {
+    assertDistinctTags(`action "${action.name}" and its binding`, [
+      ...action.errors,
+      ...http.errors,
+    ]);
+  }
+
   const name = groupOf(http.api).identifier;
 
   // The server refuses undeclared payload fields; a client, on the binding's own API, drops

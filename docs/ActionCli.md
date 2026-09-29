@@ -42,9 +42,11 @@ An input that is not a struct of named fields (a union, a record, a scalar) gets
 `--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`, which the
 action's schema decodes when the command runs: a record takes it, and a union or a scalar fails
 with a `SchemaError`. An action without input gets no flags.
-A value flag parses its text as JSON when the field's encoding accepts the value
+A value flag parses its text as JSON when the field's encoding accepts that kind of value
 (`--count 2`, `--tags '["x"]'`), or else keeps the text (`--limit auto`, `--scale Infinity`
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
+Only the kind decides: JSON breaking a rule, such as four tags where three are allowed, stays
+JSON, and the schema reports the rule and its path.
 Choices may be nested unions: `Schema.Union([Schema.Literals(["a", "b"]), Schema.Literal("c")])`
 is one choice of three.
 A field's description is its flag's help text, whatever its encoding, except in a struct that

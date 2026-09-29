@@ -347,11 +347,18 @@ describe("projection boundaries", () => {
 
     const { toolkit } = ActionToolkit.make(Action.implement(Declared, () => Effect.succeed("ada")));
 
-    expect(toolkit.tools.whoAmI.failureSchema.members).toEqual([
-      Action.InvalidInput,
-      Action.Unauthenticated,
-      Action.Forbidden,
-    ]);
+    // Each built-in's JSON decodes to its class: the tool declares all three.
+    const builtIns = Schema.Union([Action.InvalidInput, Action.Unauthenticated, Action.Forbidden]);
+
+    for (const error of [
+      new Action.InvalidInput(),
+      new Action.Unauthenticated(),
+      new Action.Forbidden(),
+    ]) {
+      const json = Schema.encodeSync(Schema.toCodecJson(builtIns))(error);
+
+      expect(Schema.decodeUnknownSync(toolkit.tools.whoAmI.failureSchema)(json)).toEqual(error);
+    }
 
     const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths["/api/whoAmI"]?.post
       ?.responses;

@@ -150,6 +150,63 @@ describe("contracts", () => {
     expect(Action.implement(Allowed, () => Effect.void).actions).toEqual([Allowed]);
   });
 
+  it("refuses two errors one caller may receive with one _tag", () => {
+    const Busy = Schema.TaggedStruct("Busy", { retryAfter: Schema.Finite });
+
+    const Twice = Action.make("twice", {
+      description: "",
+      access: "write",
+      errors: [
+        Busy,
+        Schema.Union([Schema.TaggedStruct("Busy", {}), Schema.TaggedStruct("Late", {})]),
+      ],
+    });
+
+    expect(() => Action.implement(Twice, () => Effect.void)).toThrow(
+      'Duplicate error _tag in action "twice": Busy',
+    );
+
+    // An action's error beside its binding's, where the client tries both for one status.
+    const Once = Action.make("once", { description: "", access: "write", errors: [Busy] });
+    const app = Action.implement(Once, () => Effect.void);
+
+    expect(() =>
+      ActionHttp.layer(
+        ActionHttp.make([Once], {
+          errors: [Schema.TaggedStruct("Busy", { reason: Schema.String })],
+        }),
+        app,
+      ),
+    ).toThrow('Duplicate error _tag in action "once" and its binding: Busy');
+
+    // One schema listed by both is one error.
+    expect(() => ActionHttp.layer(ActionHttp.make([Once], { errors: [Busy] }), app)).not.toThrow();
+  });
+
+  it("answers a built-in error as itself beside a loose error schema of the action's", async () => {
+    const Loose = Action.make("loose", {
+      description: "An error schema any object with a message matches",
+      access: "write",
+      errors: [Schema.Struct({ message: Schema.String })],
+    });
+
+    const web = makeTestHttp(
+      Action.implement(Loose, () => Effect.fail(new Action.Forbidden({ message: "no" }))),
+    );
+
+    const refused = await web.handler(post("/api/loose"));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual(
+      Schema.encodeSync(Action.Forbidden)(new Action.Forbidden({ message: "no" })),
+    );
+
+    const invalid = await web.handler(post("/api/loose", { unexpected: 1 }));
+    expect(invalid.status).toBe(400);
+    expect(Schema.decodeUnknownSync(Action.InvalidInput)(await invalid.json())).toBeInstanceOf(
+      Action.InvalidInput,
+    );
+  });
+
   it("accepts names that start with a digit or an underscore", () => {
     expect(
       Action.make("1st", { description: "", access: "write", success: Schema.String }).name,

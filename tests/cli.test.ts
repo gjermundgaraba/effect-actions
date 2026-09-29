@@ -219,6 +219,45 @@ it("derives each field's flag from its encoded JSON value", async () => {
   expect(inputs).toHaveLength(2);
 });
 
+it("keeps JSON that breaks a rule as JSON, for the schema to report the rule and its path", async () => {
+  const inputs: unknown[] = [];
+
+  const Ruled = Action.make("ruled", {
+    description: "Fields with rules beyond their kind",
+    access: "write",
+    input: {
+      tags: Schema.Union([Schema.String, Schema.Array(Schema.String).check(Schema.isMaxLength(3))]),
+      width: Schema.Int.check(Schema.isGreaterThan(0)),
+      owner: Schema.Struct({ id: Schema.String }),
+    },
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Ruled, (input) => Effect.sync(() => void inputs.push(input))),
+    Ruled,
+  );
+
+  const valid = ["--width", "2", "--owner", '{"id":"a"}'];
+
+  // Four tags break the rule: invalid input, never the JSON's text taken as a string.
+  const tags = failure(await runExit(command, ["--tags", '["a","b","c","d"]', ...valid]));
+  expect(tags).toBeInstanceOf(Schema.SchemaError);
+
+  // The schema's own message and path, not "Expected number" or "Expected object".
+  const width = failure(
+    await runExit(command, ["--tags", "x", "--width", "1.5", "--owner", '{"id":"a"}']),
+  );
+
+  expect(String(width)).toContain("Expected an integer");
+
+  const owner = failure(await runExit(command, ["--tags", "x", "--width", "2", "--owner", "{}"]));
+  expect(String(owner)).toContain('["owner"]["id"]');
+
+  // Text of a kind the field does not take is still text: a plain string here.
+  await run(command, ["--tags", "a,b", ...valid]);
+  expect(inputs).toEqual([{ tags: "a,b", width: 2, owner: { id: "a" } }]);
+});
+
 it("takes an enum's value and a template literal's text as they are, not as JSON", async () => {
   const inputs: unknown[] = [];
 

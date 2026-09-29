@@ -1,17 +1,19 @@
 import { isString } from "effect/Predicate";
 import { type AST, isLiteral, isObjects, isUnion, toEncoded } from "effect/SchemaAST";
 import type * as Action from "../Action.js";
-import { statuses } from "./errors.js";
+import { builtIns, statuses } from "./errors.js";
 
 /**
- * An action's own failures plus the ones its surface answers with, which is what
- * a projection of that action declares. A schema both declare, such as a binding error
- * the action lists too, is not repeated.
+ * What a projection of an action declares: the built-in errors, the action's own, and any
+ * its surface adds, such as a binding's. The built-ins come first, since a failure encodes
+ * and decodes with the first schema that accepts it, and they are classes, which accept
+ * only their own instances: a loose schema of the action's never captures one. A schema
+ * listed twice is not repeated.
  */
 export const projectedErrors = (
   action: Action.Any,
-  surface: Action.Any["errors"],
-): Action.Any["errors"] => [...new Set([...action.errors, ...surface])];
+  surface: Action.Any["errors"] = [],
+): Action.Any["errors"] => [...new Set([...builtIns, ...action.errors, ...surface])];
 
 const validName = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -47,22 +49,17 @@ export const assertDistinct = <T>(
   }
 };
 
-/** The built-in error's `_tag` a schema's encoding carries, of a member of a union included. */
-const builtInTag = (ast: AST): string | undefined => {
+/** The `_tag`s a schema's encoding carries, one per member of a union. */
+const tagsOf = (ast: AST): ReadonlyArray<string> => {
   const encoded = toEncoded(ast);
 
-  if (isUnion(encoded)) return encoded.types.map(builtInTag).find(isString);
+  if (isUnion(encoded)) return encoded.types.flatMap(tagsOf);
 
   const tag = isObjects(encoded)
     ? encoded.propertySignatures.find((property) => property.name === "_tag")?.type
     : undefined;
 
-  return tag !== undefined &&
-    isLiteral(tag) &&
-    isString(tag.literal) &&
-    Object.hasOwn(statuses, tag.literal)
-    ? tag.literal
-    : undefined;
+  return tag !== undefined && isLiteral(tag) && isString(tag.literal) ? [tag.literal] : [];
 };
 
 /**
@@ -71,11 +68,22 @@ const builtInTag = (ast: AST): string | undefined => {
  * answer could not tell a look-alike from them.
  */
 export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
-  for (const error of errors) {
-    const tag = builtInTag(error.ast);
+  const tag = errors
+    .flatMap((error) => tagsOf(error.ast))
+    .find((tag) => Object.hasOwn(statuses, tag));
 
-    if (tag !== undefined) {
-      throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
-    }
+  if (tag !== undefined) {
+    throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
   }
 };
+
+/**
+ * Refuse two errors one caller may receive with one `_tag`: a client decodes an answer by
+ * trying the schemas declared for its status, and would take one for the other.
+ */
+export const assertDistinctTags = (what: string, errors: Action.Any["errors"]): void =>
+  assertDistinct(
+    `error _tag in ${what}`,
+    [...new Set(errors)].flatMap((error) => tagsOf(error.ast)),
+    (tag) => tag,
+  );

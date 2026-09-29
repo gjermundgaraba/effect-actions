@@ -2,7 +2,6 @@ import { Effect, type Layer } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../Action.js";
 import { projectedErrors } from "./actions.js";
-import { builtIns } from "./errors.js";
 import {
   acquire,
   type AnyImplementation,
@@ -51,9 +50,7 @@ export const bindTools = (
   // A hook refusal, or a handler's built-in failure, is the implementation's failure, so every
   // tool declares the built-in errors alongside the action's own and returns them as such.
   const toolkit = Toolkit.make(
-    ...actions.map((action) =>
-      annotate(projection.tool(action, projectedErrors(action, builtIns)), action),
-    ),
+    ...actions.map((action) => annotate(projection.tool(action, projectedErrors(action)), action)),
   );
 
   const layer = toolkit.toLayer(

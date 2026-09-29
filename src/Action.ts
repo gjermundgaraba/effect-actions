@@ -1,6 +1,11 @@
 import { Effect, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
-import { assertDistinct, assertName, assertOwnTags } from "./internal/actions.js";
+import {
+  assertDistinct,
+  assertDistinctTags,
+  assertName,
+  assertOwnTags,
+} from "./internal/actions.js";
 import type { BuiltIn, BuiltIns } from "./internal/errors.js";
 import {
   type ActionOf,
@@ -314,7 +319,10 @@ export function implement(
   assertDistinct("action", actions, (action) => action.name);
 
   // Checked where an action is served rather than where it is made, which a client does too.
-  for (const action of actions) assertOwnTags(`Action "${action.name}"`, action.errors);
+  for (const action of actions) {
+    assertOwnTags(`Action "${action.name}"`, action.errors);
+    assertDistinctTags(`action "${action.name}"`, action.errors);
+  }
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so

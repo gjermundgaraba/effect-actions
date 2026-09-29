@@ -22,9 +22,9 @@ Exported types: `Tools`, what `make` returns, and `Options`, what it takes.
 A local surface: each implementation's `before` hook runs before its handlers, and the caller
 provides the identity.
 
-Each tool keeps the action's native input/success codecs, combines the action's errors with
-the built-in `InvalidInput`, `Unauthenticated` and `Forbidden` in a native union, and uses
-`failureMode: "return"`. Its request requirements are its handler's plus its hook's, identity included; build
+Each tool takes and gives the JSON encoding of the action's schemas, as a model speaks and
+as an MCP tool does, combines the action's errors with the built-in `InvalidInput`,
+`Unauthenticated` and `Forbidden` in a native union, and uses `failureMode: "return"`. Its request requirements are its handler's plus its hook's, identity included; build
 failures and services belong to the handler layer.
 
 ## Canonical
@@ -68,8 +68,8 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 ## Rules
 
 - Every action of the implementations passed becomes a tool, named after the action, with its `hints`. `make(implementations)` accepts one implementation or a list, such as `[userActions, double]`.
-- Successes are the action's native values. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
-- `tools.handle(name, encodedInput)` takes encoded arguments and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
+- A result's `result` is the action's decoded success or declared failure, and its `encodedResult` the JSON a model reads, such as `"42"` for a `BigInt`. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
+- `tools.handle(name, encodedInput)` takes JSON arguments, as a model sends them: an ISO string for a `Schema.Date`, `null` for an absent `Schema.optional` field. It and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - Builders and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and the hook the [authorization rules](guarantees.md#authorization): `layer` builds, and identity is supplied at invocation, never when building the layer.
 - Each tool carries only its own handler's request requirements, plus the hook's, not those of sibling actions.
 - `needsApproval` receives each action, typed as the implementations' own, once when `make` runs. It returns Effect's native `Tool.needsApproval` for its tool: a boolean, or a function of each call's decoded input and context returning a boolean or an `Effect` of one. Default: no tool needs approval.

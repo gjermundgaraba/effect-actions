@@ -1,7 +1,13 @@
 import { McpProtocol, McpSchema, Tool } from "effect/ai";
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
 import { Context, Effect, Layer, Schema, type Stdio } from "effect";
-import { type HttpClient, type HttpClientError, HttpRouter, HttpServer } from "effect/http";
+import {
+  type HttpClient,
+  type HttpClientError,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+} from "effect/http";
 import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -328,6 +334,34 @@ export const implementTypes = () => {
   ] = [true, true];
 
   void servedRequests;
+
+  // The router provides the request to every route: a handler reading it owes nothing more
+  // over HTTP or MCP over HTTP.
+  const Headers = Action.make("headers", {
+    description: "",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const readsRequest = Action.implement(Headers, () =>
+    Effect.map(Effect.service(HttpServerRequest.HttpServerRequest), (request) => request.url),
+  );
+
+  const routerProvided: [
+    Equal<
+      RouteRequires<
+        ReturnType<
+          typeof ActionHttp.layer<ActionHttp.Binding<[typeof Headers]>, typeof readsRequest>
+        >
+      >,
+      never
+    >,
+    Equal<RouteRequires<ReturnType<typeof ActionMcp.layerHttp<typeof readsRequest>>>, never>,
+  ] = [true, true];
+
+  void routerProvided;
+  Testing.layer(ActionHttp.layer(ActionHttp.make([Headers]), readsRequest));
+
   const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name));
   // @ts-expect-error Only the source's own actions.
   Action.share([Lookup], renameOnly);

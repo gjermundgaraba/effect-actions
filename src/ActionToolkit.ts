@@ -14,13 +14,15 @@ import {
   toList,
 } from "./internal/implementation.js";
 
-/** A native tool named after its action. */
+/** A native tool named after its action, taking and giving JSON. */
 type NativeTool<A extends Action.Any, R> = Tool.Tool<
   A["name"],
   {
-    readonly parameters: A["input"];
-    readonly success: A["success"];
-    readonly failure: Schema.Union<ReadonlyArray<A["errors"][number] | BuiltIns>>;
+    readonly parameters: Schema.toCodecJson<A["input"]>;
+    readonly success: Schema.toCodecJson<A["success"]>;
+    readonly failure: Schema.toCodecJson<
+      Schema.Union<ReadonlyArray<A["errors"][number] | BuiltIns>>
+    >;
     readonly failureMode: "return";
   },
   R
@@ -79,16 +81,16 @@ export function make<const Apps extends Served>(
 export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const served = toList(apps);
 
-  // Its schemas keep the action's transformations, and its result is the action's own,
-  // with no MCP envelope.
+  // A model speaks JSON: each tool takes and gives the JSON encoding its schema advertises,
+  // as an MCP tool does, without MCP's envelope. Handlers and callers see decoded values.
   const { toolkit, layer } = bindTools(served, {
     label: "tool",
     tool: (action, errors) =>
       Tool.make(action.name, {
         description: action.description,
-        parameters: action.input,
-        success: action.success,
-        failure: Schema.Union(errors),
+        parameters: Schema.toCodecJson(action.input),
+        success: Schema.toCodecJson(action.success),
+        failure: Schema.toCodecJson(Schema.Union(errors)),
         failureMode: "return",
         needsApproval: options?.needsApproval?.(action),
       }),

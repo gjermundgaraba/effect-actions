@@ -70,7 +70,7 @@ describe("ActionToolkit", () => {
     expect(calls).toEqual(["read a", "erase draft"]);
   });
 
-  it("uses native action schemas/results, and names tools after actions", async () => {
+  it("decodes with the action's schemas, returns native results, and names tools after actions", async () => {
     const Double = Action.make("double", {
       description: "Double a number.",
       access: "write",
@@ -96,6 +96,43 @@ describe("ActionToolkit", () => {
     );
 
     expect(result).toMatchObject([{ result: 42, encodedResult: 42, isFailure: false }]);
+  });
+
+  it("takes and gives each tool's JSON encoding, as a model speaks, and decodes it for the handler", async () => {
+    const received: unknown[] = [];
+
+    const Schedule = Action.make("schedule", {
+      description: "Schedule a reminder.",
+      access: "write",
+      input: { at: Schema.Date, note: Schema.optional(Schema.String) },
+      success: Schema.BigInt,
+    });
+
+    const binding = ActionToolkit.make(
+      Action.implement(Schedule, (input) =>
+        Effect.sync(() => {
+          received.push(input);
+
+          return 42n;
+        }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* binding.toolkit;
+
+          return yield* Stream.runCollect(
+            yield* tools.handle("schedule", { at: "2026-09-29T00:00:00.000Z", note: null }),
+          );
+        }).pipe(Effect.provide(binding.layer)),
+      ),
+    );
+
+    expect(received).toEqual([{ at: new Date("2026-09-29T00:00:00.000Z"), note: undefined }]);
+    expect(result).toMatchObject([{ result: 42n, encodedResult: "42", isFailure: false }]);
+    expect(JSON.stringify(result[0]?.encodedResult)).toBe('"42"');
   });
 
   it("returns a declared error as the tool's failure, its own value", async () => {

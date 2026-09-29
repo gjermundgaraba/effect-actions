@@ -61,17 +61,72 @@ const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print machine-readable JSON"),
 );
 
+/** The kinds of JSON value there are. */
+type JsonKind = "null" | "boolean" | "number" | "string" | "array" | "object";
+
+const jsonKinds: ReadonlyArray<JsonKind> = [
+  "null",
+  "boolean",
+  "number",
+  "string",
+  "array",
+  "object",
+];
+
+/** The kind of a JSON value, or of a literal's, which JSON has no bigint for. */
+const kindOf = (value: Schema.Json | SchemaAST.LiteralValue): JsonKind =>
+  value === null
+    ? "null"
+    : Predicate.isBoolean(value)
+      ? "boolean"
+      : Predicate.isNumber(value)
+        ? "number"
+        : Predicate.isString(value)
+          ? "string"
+          : Array.isArray(value)
+            ? "array"
+            : "object";
+
 /**
- * A flag's text as the JSON it holds when the field's `encoded` type accepts that value, or
- * else as itself, for the action's schema to decode: for a number `21` parses, while for
- * `"auto" | string` the text `true` stays text. The JSON is only checked, never decoded
- * here, so no key another union member needs is dropped before the action's schema sees it.
+ * The kinds of JSON value an encoded type accepts at its top: its checks and what it
+ * nests aside, which the action's schema decodes. A type of no fixed kind accepts all.
+ */
+const kindsOf = (ast: SchemaAST.AST): ReadonlyArray<JsonKind> => {
+  if (SchemaAST.isUnion(ast)) return ast.types.flatMap(kindsOf);
+
+  if (SchemaAST.isLiteral(ast)) return [kindOf(ast.literal)];
+
+  if (SchemaAST.isEnum(ast)) return ast.enums.map(([, value]) => kindOf(value));
+
+  if (SchemaAST.isNull(ast)) return ["null"];
+
+  if (SchemaAST.isBoolean(ast)) return ["boolean"];
+
+  if (SchemaAST.isNumber(ast)) return ["number"];
+
+  if (SchemaAST.isString(ast) || SchemaAST.isTemplateLiteral(ast)) return ["string"];
+
+  if (SchemaAST.isArrays(ast)) return ["array"];
+
+  if (SchemaAST.isObjects(ast)) return ["object"];
+
+  return jsonKinds;
+};
+
+/**
+ * A flag's text as the JSON it holds when the field's `encoded` type accepts that kind of
+ * value, or else as itself, for the action's schema to decode: for a number `21` parses,
+ * while for `"auto" | string` the text `true` stays text. Only the kind is checked, so JSON
+ * breaking a rule of the schema, such as a maximum length, stays JSON, and the action's
+ * schema reports the rule and the path to what breaks it.
  */
 const jsonOrText = (encoded: SchemaAST.AST) => {
-  const accepts = Schema.is(Schema.make<Schema.Codec<unknown>>(encoded));
+  const accepted = new Set(kindsOf(encoded));
 
   return Schema.Union([
-    Schema.fromJsonString(Schema.Json).check(Schema.makeFilter(accepts)),
+    Schema.fromJsonString(Schema.Json).check(
+      Schema.makeFilter((json) => accepted.has(kindOf(json))),
+    ),
     Schema.String,
   ]);
 };
