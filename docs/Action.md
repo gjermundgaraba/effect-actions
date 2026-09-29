@@ -35,7 +35,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `hints`                 | Tool hints for MCP and the Toolkit; each defaults from `access`. |
 
 `before` receives the selected action and fails with a `Refusal`; every surface runs it
-([guarantees.md](guarantees.md#dependency-lifetimes)). Authentication is the host's, not
+([guarantees.md](guarantees.md#authorization)). Authentication is the host's, not
 the implementation's ([Authentication.md](Authentication.md)).
 
 `input` and `success` take a schema or plain fields: `{ id: Schema.String }` is
@@ -190,7 +190,7 @@ export const listChanges = Action.implement(
 - `errors` is a list of schemas, default none. Each keeps its own `httpApiStatus` annotation, and so does each member of a union without one of its own. An unannotated error is served as HTTP 422: an expected outcome, not Effect's default 500, which reads as a server fault.
 - To share errors across actions, spread one constant array into each action's `errors`.
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level.
-- An implementation's `before` hook reads `access` ([guarantees.md](guarantees.md#dependency-lifetimes)); the library itself authorizes nothing. Its only built-in uses are default hints and span/log annotations.
+- An implementation's `before` hook reads `access` ([guarantees.md](guarantees.md#authorization)); the library itself authorizes nothing. Its only built-in uses are default hints and span/log annotations.
 - `access` is also the tool's read-only hint, which no option overrides, so authorization and what MCP clients are told cannot disagree. Derive authorization from `access`, never from a tool hint.
 - A contract says nothing about where it is served. A surface serves the implementations passed to it. To keep an action off HTTP, leave it out of `ActionHttp.make`; to keep it off MCP, leave its implementation out of the MCP layer.
 - An action kept off a surface this way, but sharing a builder with served ones, is `share`d from their implementation, so the builder still runs once.
@@ -208,7 +208,7 @@ export const listChanges = Action.implement(
 - `implement` returns one `Implementation` of everything it binds: `implement(action, handler)` one action, `implement([a, b], { a: ..., b: ... })` every listed action. Either may take an Effect that builds the handler or the record instead. Every surface takes one implementation or a list: `[userActions, double]`. A surface serves every action of each implementation it receives.
 - A record has exactly one own-property function per action, keyed by its name. Missing and extra keys are compile errors, for a plain record and for a builder's. An inherited method does not count. Handlers are called without a receiver. Duplicate action names in one call throw at `implement`.
 - A plain handler or record is checked at `implement`; a builder's record when it is built. A record that slips past the types (plain JavaScript, a cast) throws `Unknown handlers` for a key no action names, and `Missing handlers` for an action without a function. From a builder, the layer build dies with the same message. Nothing is served with a handler missing.
-- Builder lifetime, the hook, authentication, and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Surfaces keep the two kinds of services separate in their types, per action.
+- Builder lifetime and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). The hook and authentication: [guarantees.md](guarantees.md#authorization). Surfaces keep the two kinds of services separate in their types, per action.
 - Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.access` ([guarantees.md](guarantees.md#observability)). Don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
 - `before` sees `action` typed as the implementation's own actions.
 - A surface that serves only some actions, such as dashboard-only writes kept off MCP, takes an implementation of just those: `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, () => Effect.void)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per host build however many share it.

@@ -36,7 +36,7 @@ endpoint declares its action's errors, the binding's `errors`, and the built-in
 Layer failures and startup requirements come from the builders of the supplied
 implementations. Every handler's and hook's request services remain router request
 requirements until middleware provided around the layer, such as authentication, provides them;
-router/platform services are also required. Never provide request identity at startup
+router/platform services are also required
 ([guarantees.md](guarantees.md#dependency-lifetimes)).
 
 ## Canonical
