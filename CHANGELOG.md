@@ -118,6 +118,8 @@ Behavior that changes without a rename:
   `input`, is an action without input: a strict empty object, the root MCP needs. A given
   schema, `Schema.Struct({})` included, is kept as it is.
 - `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing.
+- `Action.share(actions, implementation, before?)` serves some of an implementation's actions
+  behind a hook of their own, or none, sharing its builder's one run per host build.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.
 - Handler parameters are typed from the contract in every `implement` form.

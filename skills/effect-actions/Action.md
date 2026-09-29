@@ -10,20 +10,21 @@ errors every surface declares and any handler may fail with.
 
 Import `@gjermundgaraba/effect-actions/Action`.
 
-| Export                                         | Purpose                                                                              |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                         |
-| `implement(action, handler)`                   | Bind one handler; returns one `Implementation`.                                      |
-| `implement([actions], handlers)`               | Bind a record of handlers keyed by action name; returns one `Implementation` of all. |
-| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.   |
-| `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                   |
-| `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.        |
-| `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.   |
-| `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.       |
-| `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                            |
-| `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                              |
-| `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`. |
-| `Options`, `Hints`                             | What `make` takes, and its tool hints.                                               |
+| Export                                         | Purpose                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                          |
+| `implement(action, handler)`                   | Bind one handler; returns one `Implementation`.                                       |
+| `implement([actions], handlers)`               | Bind a record of handlers keyed by action name; returns one `Implementation` of all.  |
+| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.    |
+| `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                    |
+| `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind a hook of their own. |
+| `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.         |
+| `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.    |
+| `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.        |
+| `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                             |
+| `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                               |
+| `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`.  |
+| `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                |
 
 | Option                  | Meaning                                                          |
 | ----------------------- | ---------------------------------------------------------------- |
@@ -209,8 +210,9 @@ export const listChanges = Action.implement(
 - A plain handler or record is checked at `implement`; a builder's record when it is built. A record that slips past the types (plain JavaScript, a cast) throws `Unknown handlers` for a key no action names, and `Missing handlers` for an action without a function. From a builder, the layer build dies with the same message. Nothing is served with a handler missing.
 - Builder lifetime, the hook, authentication, and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Surfaces keep the two kinds of services separate in their types, per action.
 - Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.access` ([guarantees.md](guarantees.md#observability)). Don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
-- `before` sees `action` typed as the implementation's own actions. The same handlers under another hook, such as a trusted admin CLI, are a second `implement` call over the same builder.
-- A surface that serves only some actions, such as dashboard-only writes kept off MCP or public actions beside authenticated ones, takes an implementation of just those: implement each subset over the same builder, picking its handlers, `implement([Poll], Effect.map(build, ({ poll }) => ({ poll })), authorize)`, and pass each surface the ones it serves. Each implementation runs the builder once per host build.
+- `before` sees `action` typed as the implementation's own actions.
+- A surface that serves only some actions, such as dashboard-only writes kept off MCP or public actions beside authenticated ones, takes an implementation of just those: `share([Poll], users)`, and pass each surface the ones it serves. The same handlers under another hook, such as a trusted admin CLI, are `share(actions, users, trustAdmin)`. A shared implementation has its own hook, or none, never its source's; its builder is its source's, which runs once per host build however many share it.
+- A shared implementation owes, per request, what its source owes for its actions, its source's hook's services included, beside its own hook's. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
 - `before` may be a value that may be `undefined`, as `enabled ? authorize : undefined`: its services are required either way.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
 - Test a handler directly by calling the function you passed to `implement`, or through `ActionToolkit` in process. Keep at least one test per surface: direct calls bypass decoding, encoding, middleware and the hook.

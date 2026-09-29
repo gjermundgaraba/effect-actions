@@ -260,6 +260,19 @@ export const implementTypes = () => {
 
   void sharedRequests;
 
+  // Shared, some actions owe what their source owes for them, and their own hook's services.
+  const reshared = Action.share([Rename], shared, () => Effect.asVoid(Store));
+
+  const resharedChannels: Equal<
+    typeof reshared,
+    Action.Implementation<typeof Rename, { readonly rename: Principal | Store }, BuildFailed, Store>
+  > = true;
+
+  void resharedChannels;
+  const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name));
+  // @ts-expect-error Only the source's own actions.
+  Action.share([Lookup], renameOnly);
+
   // Surfaces take implementations as they are, and compute their requirements from them.
   const all = [plain, built, record, shared];
   const http = ActionHttp.make([Lookup, Rename]);

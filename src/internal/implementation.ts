@@ -38,7 +38,7 @@ export type HandlerContext<H> = H extends (
   ? R
   : never;
 
-/** Each action of an implementation with its handler, behind the implementation's hook. */
+/** Each action of an implementation with its handler, behind the hook once acquired. */
 export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
 
 /** The bound handlers of one implementation, under a key private to it. */
@@ -46,7 +46,7 @@ type BoundKey = Context.Key<Bound, Bound>;
 
 /**
  * Actions bound to their handlers and their hook: everything one `Action.implement` call
- * binds.
+ * produced, one builder serving every surface.
  *
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
@@ -69,40 +69,57 @@ export class Implementation<
 
   readonly #key: BoundKey;
   readonly #layer: Layer.Layer<Bound, EX, RX>;
+  readonly #before: ErasedBefore | undefined;
 
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
-    /** Each action paired with its handler. */
-    build: Effect.Effect<Bound, EX, RX | Scope.Scope>,
+    /** Each action paired with its handler, or an implementation whose builder this shares. */
+    build: Effect.Effect<Bound, EX, RX | Scope.Scope> | Implementation<Action.Any, any, EX, RX>,
     before: ErasedBefore | undefined,
   ) {
+    this.#before = before;
+
+    if (build instanceof Implementation) {
+      // The source's key and layer, so both share one build.
+      const source = Implementation.own(build);
+
+      this.#key = source.#key;
+      this.#layer = source.#layer;
+
+      return;
+    }
+
     // A string key is a service's identity, so a random one is unique to this
     // implementation even across copies of this module.
     this.#key = Context.Service<Bound>(
       `effect-actions/Implementation/${Math.random().toString(36).slice(2)}`,
     );
-    // Each handler goes behind the hook once, when the handlers are built.
-    this.#layer = Layer.effect(
-      this.#key,
-      Effect.map(build, (bound) =>
-        bound.map(([action, handle]) => [action, dispatch(action, handle, before)] as const),
-      ),
-    );
+    this.#layer = Layer.effect(this.#key, build);
   }
 
   /**
    * The builder of `app`, as a layer. Effect memoizes a layer by reference within one
-   * build of the host's layers, so every adapter serving `app` shares one run. Static,
-   * so it stays off the public instance type.
+   * build of the host's layers, so every adapter serving `app`, and every implementation
+   * sharing its builder, shares one run. Static, so it stays off the public instance type.
    */
   static layerOf<EX, RX>(app: Implementation<any, any, EX, RX>): Layer.Layer<Bound, EX, RX> {
     return Implementation.own(app).#layer;
   }
 
-  /** The bound handlers of `app`, from the context `layerOf(app)` provides. */
+  /**
+   * The actions of `app` with their handlers, behind its hook, from the context
+   * `layerOf(app)` provides.
+   */
   static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, Bound> {
-    return Implementation.own(app).#key;
+    const { actions } = app;
+    const before = Implementation.own(app).#before;
+
+    return Effect.map(Implementation.own(app).#key, (bound) =>
+      bound.flatMap(([action, handle]) =>
+        actions.includes(action) ? [[action, dispatch(action, handle, before)] as const] : [],
+      ),
+    );
   }
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */

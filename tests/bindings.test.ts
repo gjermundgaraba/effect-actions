@@ -107,6 +107,51 @@ it("builds an implementation once per host build, however many adapters serve it
   }
 });
 
+it("shares an implementation's builder with some of its actions, behind a hook of their own", async () => {
+  let built = 0;
+
+  const secret = Action.make("secret", {
+    description: "Only for the trusted",
+    access: "read",
+    success: Schema.String,
+  });
+
+  // The source refuses every call; the shared implementation has no hook of its own.
+  const app = Action.implement(
+    [identity, secret],
+    Effect.sync(() => {
+      built++;
+
+      return { identity: () => Effect.succeed("shared"), secret: () => Effect.succeed("hidden") };
+    }),
+    () => Effect.fail(new Action.Forbidden()),
+  );
+
+  const open = Action.share([identity], app);
+
+  expect(open.actions).toEqual([identity]);
+
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([identity, secret]), app),
+      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
+    ),
+  );
+
+  expect((await web.handler(post("/api/secret"))).status).toBe(403);
+  expect(await (await web.handler(post("/open/identity"))).json()).toBe("shared");
+  // Two implementations, one builder run.
+  expect(built).toBe(1);
+
+  // Plain JavaScript may pass an action the source does not implement.
+  const stranger: Action.Any = Action.make("stranger", { description: "", access: "read" });
+
+  // @ts-expect-error Only the source's own actions.
+  expect(() => Action.share([stranger], open)).toThrow(
+    "Not implemented by this implementation: stranger",
+  );
+});
+
 it("builds a shared implementation with one set of startup services, not one per surface", async () => {
   const app = Action.implement(
     identity,

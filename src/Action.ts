@@ -3,6 +3,8 @@ import type { Scope } from "effect";
 import { assertDistinct, assertName, assertOwnTags } from "./internal/actions.js";
 import type { BuiltIn } from "./internal/errors.js";
 import {
+  type ActionOf,
+  type AnyImplementation,
   type Before,
   type Bound,
   type ErasedHandler,
@@ -239,6 +241,15 @@ type RequestsOf<T extends Target, H, RB> = {
     | RB;
 };
 
+/**
+ * What `S` owes for each action of `T`, which it implements, and the new hook's `RB`. An
+ * implementation's types keep its hook's requirements with its handlers', so `S`'s own
+ * hook's stay owed.
+ */
+type SharedRequests<T extends Target, S, RB> = S extends { readonly "~request": infer R }
+  ? { readonly [A in ActionsOf<T> as A["name"]]: R[A["name"] & keyof R] | RB }
+  : never;
+
 /** The names a handlers record may have: none for a single action's handler. */
 type Names<T extends Target> = T extends ReadonlyArray<Any> ? T[number]["name"] : never;
 
@@ -327,4 +338,45 @@ export function implement(
     : Effect.succeed(record(build));
 
   return new Implementation(actions, handlers, before);
+}
+
+/**
+ * Serve some of `app`'s actions with its handlers, behind a hook of their own, or none:
+ * `share([Poll], users)` for a public surface, `share(actions, users, trustAdmin)` for an admin
+ * CLI. The result shares `app`'s builder, which runs once per host build however many
+ * implementations share it.
+ */
+export function share<
+  App extends AnyImplementation,
+  const T extends Extract<ActionOf<App>, Any> | ReadonlyArray<Extract<ActionOf<App>, Any>>,
+  RB = never,
+>(
+  target: T,
+  app: App,
+  before?: Before<ActionsOf<T>, RB>,
+): Implementation<
+  ActionsOf<T>,
+  SharedRequests<T, App, RB>,
+  App["~buildError"],
+  App["~buildContext"]
+>;
+export function share(
+  target: Target,
+  app: AnyImplementation,
+  before?: Before<Any, unknown>,
+): Implementation<Any, {}, unknown, unknown> {
+  const actions = isList(target) ? target : [target];
+
+  assertDistinct("action", actions, (action) => action.name);
+
+  // The types admit only `app`'s own actions; plain JavaScript may pass others.
+  const unknown = actions.filter((action) => !app.actions.includes(action));
+
+  if (unknown.length > 0) {
+    throw new Error(
+      `Not implemented by this implementation: ${unknown.map(({ name }) => name).join(", ")}`,
+    );
+  }
+
+  return new Implementation<Any, {}, unknown, unknown>(actions, app, before);
 }
