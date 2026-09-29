@@ -20,10 +20,8 @@ export interface SkillFile {
 export const frontmatter = `---
 name: effect-actions
 description: >
-  Reference for @gjermundgaraba/effect-actions. Use when defining Effect action contracts
-  and implementations (Action), authenticating and authorizing them, serving them over HTTP
-  or MCP, projecting them into an Effect AI Toolkit or a CLI, calling an ActionHttp binding
-  with its client, or testing those surfaces in memory.
+  Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
+  which defines Effect action contracts once for HTTP, MCP, native Toolkits, and CLIs.
 ---
 
 `;

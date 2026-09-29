@@ -202,8 +202,9 @@ const declared = (error: Declared): ReadonlyArray<Declared> => {
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
  * Every endpoint declares its action's errors, the binding's `errors`, and the built-in
- * `InvalidInput`, `Unauthenticated` and `Forbidden`, each member of a union at its own
- * status, 422 unless a schema states one, so clients decode each as a typed failure.
+ * `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a typed
+ * failure. A union's own `httpApiStatus` applies to every member; otherwise, each member
+ * of a plain union uses its own status, or 422 without one.
  */
 export function make<const Actions extends ReadonlyArray<Action.Any>, const E extends Errors = []>(
   actions: Actions,

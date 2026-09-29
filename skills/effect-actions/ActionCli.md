@@ -40,8 +40,8 @@ value:
 
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
 `--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`, which the
-action's schema decodes when the command runs: a record takes it, and a union or a scalar fails
-with a `SchemaError`. An action without input gets no flags.
+action's schema decodes when the command runs. A schema accepting `{}`, including a union
+with such a member, succeeds; otherwise decoding fails with a `SchemaError`. An action without input gets no flags.
 A value flag parses its text as JSON when the field's encoding accepts that kind of value
 (`--count 2`, `--tags '["x"]'`), or else keeps the text (`--limit auto`, `--scale Infinity`
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
@@ -141,21 +141,21 @@ Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bear
 - An optional field's flag is optional. Omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
 - `positional` names fields of a struct or class input, and the types offer none for any other input, a union included. Each is listed once, and every required field before any optional one, since a parser reads arguments in order. Remote commands take it too.
 - The flags follow the schema: renaming a field renames its flag. For a fixed syntax, build the command with native `Command.make`, `Flag` and `Argument`, and call the client in it; calling a handler directly bypasses decoding and the implementation's hook.
-- Output is validated and encoded before printing. Default output is JSON. An action whose `success` is `Schema.Void` prints nothing. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. Rendering cannot bypass validation.
+- Output is validated and encoded before printing. Default output is JSON. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. An action whose `success` is `Schema.Void` prints nothing by default or with `--json`; a custom `render` can still print human output. Rendering cannot bypass validation.
 - `--json` is a regular flag of the rendered command only. A command without `render` has no such flag: its output is JSON already. Nothing is declared tree-wide, so a host CLI may declare its own `--json`, global or not.
 - Each invocation builds the selected implementation's builder in a scope of its own and releases it after the call. Only that implementation's builder runs: other implementations passed alongside it, on `command` or `make`, are not built. Domain services and authority come from the host's provided layers. There is no HTTP fallback.
 - A local command is a local surface: the implementation's `before` runs before the selected handler, on `command` and on every subcommand of `make`, and the host provides the identity the hook reads, as `Effect.provideService(CurrentActor, actor)`. A CLI is not a trusted bypass; a trusted admin CLI implements the same handlers without `before`.
 - The CLI does not serialize a refusal: it is a typed failure of the command effect. Every local command's error channel includes `Action.BuiltIn`, whatever its implementation's hook. Invalid input fails decoding before the hook, so it skips the hook and handler.
 - From a binding, `command(http, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `make(http, { name })` projects every action of the binding, the same tree `make` builds locally, with the same options.
 - A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient` and configures it: where it sends, `HttpClient.mapRequest(HttpClientRequest.prependUrl(url))`, and credentials, `HttpClientRequest.bearerToken(token)`, read at run time. Nothing is inferred from action arguments.
-- Over HTTP, input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. Errors are the client's: the action's declared errors, the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), `SchemaError`, and `HttpClientError`.
+- Over HTTP, input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. Errors are the client's: the action's and binding's declared errors, the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), `SchemaError`, and `HttpClientError`.
 - For a custom tree, compose individual `command` results with native `Command` combinators (`Command.make(name).pipe(Command.withSubcommands([...]))`).
 
 ## Failure modes
 
 - Native `CliError.ShowHelp` containing `MissingOption` (`Required flag missing: <flag>`): a required field's flag was not given. Pass it.
 - `SchemaError` naming an unexpected key: `--input` or a flag's JSON holds a field the schema does not declare, such as a misspelling. Undeclared fields are refused, never dropped.
-- `SchemaError` from a command whose input is not a struct, run without `--input`: `{}` is not a valid input. Pass `--input`.
+- `SchemaError` from a command whose input is not a struct, run without `--input`: the schema rejects the default `{}`. Pass `--input` with a value the schema accepts.
 - `SchemaError` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`. For `--input` or a value flag, the JSON or text may not be the field's encoding; malformed JSON is taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
 - Native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values.
 - Native `CliError.ShowHelp` containing `MissingArgument`: a required positional argument was not given. A positional field has no flag, so `--<field>` does not supply it.

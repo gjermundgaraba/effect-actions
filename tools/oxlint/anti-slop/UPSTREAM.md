@@ -10,7 +10,9 @@
 ## Verification
 
 These files are excluded from this repository's own lint and format runs so they keep
-upstream's style. They are type-checked through the regression tests that import them.
+upstream's style. Only the rules imported by the regression tests and their transitive
+dependencies are included in the repository's TypeScript program; the full vendored plugin
+is not type-checked here.
 Upstream's test suite at the pinned commit is the evidence for unchanged rules; the local
 corrections below are covered by `tools/oxlint/tests/rules.test.ts` (rule level, via
 `RuleTester`) and `tools/oxlint/tests/configuration.test.ts` (through `vp lint` and the

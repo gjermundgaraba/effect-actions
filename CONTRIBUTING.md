@@ -36,7 +36,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 ## Documentation rules
 
 - `README.md` sells the library to humans: the pitch, one showcase snippet, why, install, links. No reference material.
-- `docs/` is for coding agents. Every page has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. No tutorials, no narrative. State what holds and what breaks.
+- `docs/` is for coding agents. Each public-module reference card has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. State what holds and what breaks, without tutorials or narrative. Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
 - `docs/README.md` is the routing table and doubles as the skill body. One line per page saying when to read it.
 - A change to public behavior changes the matching `docs/` page in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
@@ -156,13 +156,12 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
 ### Verification
 
 - `tools/oxlint/tests/rules.test.ts` runs the corrected rules through Oxlint's `RuleTester`,
-  with an accepted and a still-rejected case for each correction, and a justified directive
-  paired with its unused counterpart for each corrected rule.
+  with an accepted and a still-rejected case for each correction.
 - `tools/oxlint/tests/configuration.test.ts` runs `vp lint` on fixtures inside the repository, so
   the probes go through the registered plugin and the effective configuration: unknown parameters
   named `cause`, module mocking via `vite-plus/test`, `typeof` inside and outside predicates, a
-  justified directive and its unused counterpart, maintained JavaScript, and the three disabled
-  rules.
+  justified `no-unknown-parameters` directive and its unused counterpart, maintained JavaScript,
+  and the three disabled rules.
 
 ### History
 

@@ -30,7 +30,10 @@ release. Add a tool name to select part of the graph. For example, run
 
 Library: `@gjermundgaraba/effect-actions`. Define Effect action contracts once and project them
 onto HTTP, MCP, native Toolkits, and CLIs. Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md).
-Maintainer guide, lint policy, and release notes: [CONTRIBUTING.md](CONTRIBUTING.md).
+Use [lint policy](CONTRIBUTING.md#lint-policy) for lint decisions,
+[documentation rules](CONTRIBUTING.md#documentation-rules) when changing docs,
+[design notes](CONTRIBUTING.md#design-notes) when revisiting recorded decisions,
+and [release instructions](CONTRIBUTING.md#release) when releasing.
 
 ## Repository map
 
@@ -64,13 +67,13 @@ These task-specific rules govern when and where the Vite+ checklist above applie
 
 - Contracts (`Action`) never import transport code. Each surface owns its own mapping from actions to itself, never reaches into another's, and validates only the names it serves.
 - `src/internal/` holds what surfaces share: name checks, the nominal `Implementation`, builders as memoized layers, hooks and dispatch, the built-in errors, and the one client `ActionHttp.client` and remote `ActionCli` commands use. Public modules re-export the types consumers need, named `Options` for a module's main function, `<Function>Options` for another's, and `Any` for its erased value.
-- Authentication is host router middleware plus discovery metadata; verification, login and consent stay in the application. Authorization is the application's `before` hook, which the library runs but never writes.
+- Authentication is host router middleware plus discovery metadata; verification, login and consent stay in the application. Action-level authorization is the application's `before` hook, which the library runs but never writes. Record-level checks belong in the handler's data access.
 - A browser client imports `Action` and `ActionHttp`: they and the modules they import use nothing specific to Node or a server platform, as `tests/browser.test.ts` checks.
 - Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime.
 - Build-time and request-time requirements stay separate in the types. Never provide request identity at startup, in code or in docs.
 - Public behavior changes update the matching `docs/` page in the same commit, then `vp run docs:sync`.
 - Doc snippets that are also examples stay identical to the example file; edit the example first.
-- Use the latest Effect 4 release-candidate APIs pinned in `package.json`. Check `node_modules/effect` before assuming an API shape.
+- Use the Effect release pinned in `package.json`. Check `node_modules/effect` before assuming an API shape.
 - Follow the lint policy in `CONTRIBUTING.md`: refactor the cause, and never launder a finding.
 
 ## Direction

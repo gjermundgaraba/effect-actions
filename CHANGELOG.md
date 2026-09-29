@@ -92,7 +92,9 @@ Behavior that changes without a rename:
   sends each member at its own. Annotate `{ httpApiStatus: 500 }` to keep the old status.
 - Under `Authentication.make`, `Unauthenticated`, or a `Forbidden` naming `scopes`, from a hook
   or a handler, is answered with its HTTP status, challenge and JSON, on MCP too instead of a
-  tool result, as MCP authorization defines. Without it, such a refusal is a declared error.
+  tool result, as MCP authorization defines. If an MCP handler's notification has already
+  started the response, a later refusal remains a tool error in that stream. Without
+  `Authentication.make`, such a refusal is a declared error.
 - `Authentication.make` gives every 401 it covers without a challenge a `Bearer` one, naming
   `scopesRequired` and the metadata URL of a protected resource, and `invalid_token` when the
   request presented a bearer token.
@@ -144,7 +146,8 @@ Behavior that changes without a rename:
 - `input` and `success` take plain fields: `input: { id: Schema.String }`. `input: {}`, or no
   `input`, is an action without input: a strict empty object, the root MCP needs. A given
   schema, `Schema.Struct({})` included, is kept as it is.
-- `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing.
+- `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing by
+  default or with `--json`; a custom `render` may print text.
 - `Action.share(actions, implementation, before?)` serves some of an implementation's actions
   behind its hook, or `before` instead, sharing its builder's one run per host build.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either

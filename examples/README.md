@@ -17,8 +17,8 @@ Every action declares `access: "read"` or `access: "write"`. The protected imple
 their hook once, `authorize`: the HTTP and MCP layers serving them authenticate the bearer
 token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
 `access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`,
-naming the scope the caller lacks. No
-handler contains authorization code, and no surface can leave the rule out.
+naming the scope the caller lacks. No handler repeats this action-level policy, and no
+surface can leave the rule out. Record-level access stays in `Users`, which scopes data by tenant.
 
 The application serves its implementations under three access rules:
 

@@ -66,7 +66,7 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 - A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `transformClient`, the same options for `mcpClient` and `ActionHttp.client`: one client per caller, `const alice = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")) }`. `mcpRequest` takes `headers`.
 - A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
-- Direct handler tests call the function passed to `Action.implement`, but they bypass decoding, encoding, authentication and the hook. Keep at least one test per surface.
+- Direct handler tests call the function passed to `Action.implement`. Cover each surface the application exposes. Direct handler tests do not exercise transport decoding, encoding, authentication, or the implementation's hook.
 
 ## Failure modes
 

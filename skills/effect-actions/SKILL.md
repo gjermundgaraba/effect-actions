@@ -1,17 +1,16 @@
 ---
 name: effect-actions
 description: >
-  Reference for @gjermundgaraba/effect-actions. Use when defining Effect action contracts
-  and implementations (Action), authenticating and authorizing them, serving them over HTTP
-  or MCP, projecting them into an Effect AI Toolkit or a CLI, calling an ActionHttp binding
-  with its client, or testing those surfaces in memory.
+  Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
+  which defines Effect action contracts once for HTTP, MCP, native Toolkits, and CLIs.
 ---
 
 # effect-actions reference
 
-Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Every page is a
-card with the same sections: **API** (inventory and options), **Canonical** (the one right way to write
+Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Each public-module
+card has the same sections: **API** (inventory and options), **Canonical** (the one right way to write
 it), **Rules** (must and never), **Failure modes** (what you see when it is wrong, and the fix).
+Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
 Read the card for a module before writing code that uses it. Exported TypeScript declarations are the exact signature reference. Vocabulary is defined in
 [CONTEXT.md](CONTEXT.md); the pages use those terms exactly.
 
@@ -19,16 +18,16 @@ Package facts that apply everywhere:
 
 - Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
 - The `effect` peer accepts any 4.0 release candidate from `4.0.0-rc.118` on (`>=4.0.0-rc.118 <4.0.0`). The package is built and tested against `4.0.0-rc.118`.
-- Actions are pure values. Nothing runs, binds, or acquires services until a surface's layer is built.
+- Action contracts are pure values. Defining contracts and implementations runs neither handlers nor builder Effects. Builder services are acquired when a layer is built or a local CLI command runs; see [dependency lifetimes](guarantees.md#dependency-lifetimes).
 
 ## Pages
 
 | Read                                   | When you need to                                                                                          |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                   | install, pin versions, pick entry points, bundle a browser client, know what the package does not do      |
+| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries    |
 | [Action.md](Action.md)                 | define a contract (input, success, errors, access, hints), bind its handler and hook, built-in errors     |
 | [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP (2026-07-28) or stdio (2026-07-28 and back to 2024-11-05)            |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                             |
 | [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                              |
 | [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                          |
 | [Authentication.md](Authentication.md) | authenticate the callers of HTTP surfaces, refuse with 401/403, publish RFC 9728 discovery                |
@@ -44,43 +43,7 @@ Package facts that apply everywhere:
 
 Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own `before` hook, which every surface runs; surfaces take only their transport's options. Authentication is router middleware the host provides around the HTTP surfaces.
 
-## Minimal program
-
-```ts
-import { Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-
-// The contract and its HTTP binding import no server code, so any client can import them,
-// a browser page included.
-export const Greet = Action.make("greet", {
-  description: "Greet someone by name.",
-  input: { name: Schema.String },
-  success: Schema.String,
-  access: "read",
-});
-
-export const Http = ActionHttp.make([Greet]);
-```
-
-The server, in its own module, so that a browser client imports the contract alone:
-
-```ts
-import { Effect, Layer } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { Greet, Http } from "./quickstart.js";
-
-const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
-
-export const routes = Layer.mergeAll(
-  ActionHttp.layer(Http, greet),
-  ActionMcp.layerHttp(greet, { name: "greetings", version: "1.0.0" }),
-);
-```
-
-Serve `routes` with `HttpRouter.serve` and a platform server layer. Result: `POST /api/greet` and an MCP tool `greet` at `/mcp`.
+For first-time setup, follow the [minimal program](setup.md#minimal-program).
 
 ## Runnable examples
 

@@ -1,6 +1,6 @@
 # Setup
 
-Install, version pins, entry points, and the boundaries of the package.
+Installation, version pins, entry points, a minimal program, and package boundaries.
 
 ## Install
 
@@ -30,6 +30,44 @@ import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 
 Every module imports from the `effect` package only. There is no package root, so importing
 `Action` or `ActionHttp` never pulls in an MCP server or the AI toolkit.
+
+## Minimal program
+
+```ts
+import { Schema } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+
+// The contract and its HTTP binding import no server code, so any client can import them,
+// a browser page included.
+export const Greet = Action.make("greet", {
+  description: "Greet someone by name.",
+  input: { name: Schema.String },
+  success: Schema.String,
+  access: "read",
+});
+
+export const Http = ActionHttp.make([Greet]);
+```
+
+The server, in its own module, so that a browser client imports the contract alone:
+
+```ts
+import { Effect, Layer } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Greet, Http } from "./quickstart.js";
+
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+
+export const routes = Layer.mergeAll(
+  ActionHttp.layer(Http, greet),
+  ActionMcp.layerHttp(greet, { name: "greetings", version: "1.0.0" }),
+);
+```
+
+Serve `routes` with `HttpRouter.serve` and a platform server layer. Result: `POST /api/greet` and an MCP tool `greet` at `/mcp`.
 
 ## Browser
 

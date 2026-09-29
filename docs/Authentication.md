@@ -5,9 +5,9 @@ reader. Authentication is native router middleware the host provides around the 
 that need it, `layer.pipe(Layer.provide(authenticate))`, as around any route. Given an OAuth
 protected resource, it also publishes the resource's RFC 9728 discovery and names it in every
 challenge, so an MCP client that is refused finds its authorization server and steps up to a
-scope it lacks. Token verification, login, and consent stay in the application. Authorization
-belongs in the implementation's `before` hook ([guarantees.md](guarantees.md)), not in this
-module or the handlers.
+scope it lacks. Token verification, login, and consent stay in the application. Action-level
+authorization belongs in the implementation's `before` hook; record-level checks belong in
+the handler's data access ([guarantees.md](guarantees.md#authorization)).
 
 ## API
 
@@ -84,8 +84,8 @@ export const authenticate = Authentication.make(
 - The 401 challenge is `Bearer`, or as a protected resource `Bearer scope="<scopesRequired>", resource_metadata="<metadata URL>"`, `scope` only when `scopesRequired` is given.
 - A 401 to a request that presented a bearer token also names `error="invalid_token"` first (RFC 6750), whoever refused it: the token did not authenticate it, and a client may refresh it before it signs in again. A request without one, or with another scheme such as `Basic`, gets no error code.
 - An MCP client requests the scopes a 401 names, or every one of `scopesSupported` when it names none. Give `scopesRequired` whenever some scopes are needed only by some actions, so a first login asks for the least, and a `Forbidden` naming scopes asks for more when a call needs them.
-- A step-up refusal of a call it covers, `Unauthenticated` or a `Forbidden` naming scopes, from a hook or a handler, answers the request with its status, JSON and challenge, whatever the route answered: over MCP, instead of a tool result ([guarantees.md](guarantees.md#authorization)). Without `make` it is answered like any declared error.
-- A `Forbidden` naming `scopes`, whether `authenticate`, a hook or a handler fails with it, is a **403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`. As a protected resource it adds `resource_metadata`, and `error_description` when the message is a valid one (printable ASCII without `"` or `\`).
+- Step-up refusals follow [guarantees.md](guarantees.md#authorization), including the MCP exception when a notification has already started the **200** stream: a later refusal is an `isError` tool result without an HTTP challenge.
+- When a `Forbidden` naming `scopes` is sent as an HTTP refusal, its **403** carries `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`. As a protected resource it adds `resource_metadata`, and `error_description` when the message is a valid one (printable ASCII without `"` or `\`).
 - An OAuth client re-authorizes on that challenge with those scopes added, as MCP authorization requires; the official MCP client does. A `Forbidden` naming no scope has no challenge ([guarantees.md](guarantees.md#authorization)).
 - Name scopes only when re-authorizing can grant them. A caller whose credential cannot step up, such as an API key, gets a `Forbidden` naming none: a plain 403, and a tool result over MCP, rather than a login prompt that cannot help.
 - A WebSocket upgrade is a router route, such as `RpcServer.layerProtocolWebsocket`'s: provide `make` to it as to any other.
@@ -103,7 +103,7 @@ export const authenticate = Authentication.make(
 - A protected resource's discovery is published with the layer, however many layers it is provided to, and needs no route of its own. It publishes what it is given: the deployment must ensure `resource` and `authorizationServers` are valid OAuth URLs (HTTPS, or loopback HTTP in development).
 - Discovery is served at `/.well-known/oauth-protected-resource` followed by the resource's path (`/.well-known/oauth-protected-resource/mcp` for `https://host/mcp`), for `GET` and `HEAD`, matching that literal path and query. It answers before routing, so no route middleware, the authentication publishing it included, covers it. Other requests fall through to the host router. Caching policy is the host's.
 - A host with two resources, or a protected resource beside a cookie-authenticated dashboard, makes one `make` call per resource or scheme.
-- Tool discovery is never filtered by actor. Authorization belongs in the implementation's `before` hook, which runs with the action contract in hand; write the rule against `action.access` rather than repeating a check in each handler.
+- Tool discovery is never filtered by actor. Action-level authorization belongs in the implementation's `before` hook, which runs with the action contract in hand; write the rule against `action.access` rather than repeating a check in each handler. Record-level checks follow [guarantees.md](guarantees.md#authorization).
 
 ## Failure modes
 
@@ -119,5 +119,5 @@ export const authenticate = Authentication.make(
 - An MCP client reports `InsufficientScopeError` instead of re-authorizing: it has no OAuth provider configured, so it cannot step up. Configure one, or grant the scope up front.
 - `new Action.Forbidden({ scopes })` throws a schema validation error: a scope is not an OAuth scope token (it is empty, or contains a space, `"` or `\`). Give each scope as its own element.
 - An MCP client asks a user who only reads to consent to writes on first login: the 401 names no scope, so it requests every one of `scopesSupported`. Give `scopesRequired`.
-- `Invalid scope in scopesRequired: "<scope>"` thrown by `make` or `refusal`: a scope is empty or contains a space, `"` or `\`. Give each scope as its own element.
+- `Invalid scope in scopesRequired: "<scope>"` thrown by `make`: a scope is empty or contains a space, `"` or `\`. Give each scope as its own element.
 - A route's `Cache-Control` is replaced by `no-store`: an enclosing middleware serialized the response of a failure. Only a route's own answer keeps its caching.

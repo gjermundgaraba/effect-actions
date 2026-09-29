@@ -17,7 +17,7 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 // snippets under the heading, one per file, in order.
 const snippets = [
   ["README.md", "## Looks like this", ["quickstart.ts", "quickstart-server.ts"]],
-  ["docs/README.md", "## Minimal program", ["quickstart.ts", "quickstart-server.ts"]],
+  ["docs/setup.md", "## Minimal program", ["quickstart.ts", "quickstart-server.ts"]],
   ["docs/Action.md", "## Canonical", ["contracts.ts"]],
   ["docs/Action.md", "### Implementations", ["handlers.ts"]],
   ["docs/ActionHttp.md", "## Canonical", ["binding.ts"]],
