@@ -43,7 +43,7 @@ the implementation's ([Authentication.md](Authentication.md)).
 `Schema.Struct({ id: Schema.String })`. A tool is read-only exactly when `access` is
 `"read"`. Hints: `destructive`, a write's only, defaults to `true`; `idempotent` to `false`;
 `openWorld` to `true`. The tool is named after the action. Handlers receive decoded input and return decoded success, failing only
-with declared errors.
+with declared errors and the built-in ones.
 
 ## Canonical
 

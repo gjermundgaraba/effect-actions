@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect";
+import { ensure } from "effect/Array";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
@@ -149,11 +150,7 @@ export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
 export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
 
 /** A surface's implementations as a list. */
-export const toList = (served: Served): ReadonlyArray<AnyImplementation> =>
-  isList(served) ? served : [served];
-
-const isList = (served: Served): served is ReadonlyArray<AnyImplementation> =>
-  Array.isArray(served);
+export const toList = (served: Served): ReadonlyArray<AnyImplementation> => ensure(served);
 
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;

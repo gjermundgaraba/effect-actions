@@ -85,6 +85,31 @@ describe("mcpClient", () => {
     ]);
   });
 
+  it("decodes a built-in error a tool returns as its class", async () => {
+    const Refuse = Action.make("refuse", { description: "Refuses", access: "write" });
+    const Reject = Action.make("reject", { description: "Rejects its input", access: "write" });
+
+    const app = Action.implement([Refuse, Reject], {
+      refuse: () => Effect.fail(new Action.Forbidden({ message: "Never." })),
+      reject: () => Effect.fail(new Action.InvalidInput({ message: "Out of range." })),
+    });
+
+    const results = await Effect.runPromise(
+      Effect.gen(function* () {
+        const mcp = yield* Testing.mcpClient([Refuse, Reject]);
+
+        return yield* Effect.all([Effect.flip(mcp.refuse()), Effect.flip(mcp.reject())]);
+      }).pipe(
+        Effect.provide(Testing.layer(ActionMcp.layerHttp(app, { name: "test", version: "0" }))),
+      ),
+    );
+
+    expect(results).toEqual([
+      new Action.Forbidden({ message: "Never." }),
+      new Action.InvalidInput({ message: "Out of range." }),
+    ]);
+  });
+
   it("decodes a declared error of any shape, a string included", async () => {
     const Fail = Action.make("fail", {
       description: "Fails with a string",

@@ -16,6 +16,7 @@ import {
 } from "./internal/actions.js";
 import {
   type AnyHttp,
+  assertInBinding,
   type Client,
   type ErasedMethod,
   methods,
@@ -165,13 +166,11 @@ const endpointsOf = (
   served: ReadonlyArray<Action.Any>,
 ): ReadonlyArray<HttpApiEndpoint.Top> =>
   served.map((action) => {
-    const endpoint = http.actions.includes(action)
-      ? groupOf(http.api).endpoints[action.name]
-      : undefined;
+    assertInBinding(http, action);
 
-    if (endpoint === undefined) {
-      throw new Error(`Action "${action.name}" is not in this HTTP binding`);
-    }
+    const endpoint = groupOf(http.api).endpoints[action.name];
+
+    if (endpoint === undefined) throw new Error("Not an HTTP binding made by ActionHttp.make");
 
     return endpoint;
   });

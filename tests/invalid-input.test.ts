@@ -147,6 +147,35 @@ it("refuses undeclared input fields on the server, nested ones too; the client d
   expect(seen).toEqual([{ value: 1, owner: { id: "a" } }]);
 });
 
+it("refuses undeclared fields in the input only: a wider success is encoded to its fields", async () => {
+  const Profile = Action.make("profile", {
+    description: "A profile, from a record holding more",
+    access: "read",
+    success: { id: Schema.String },
+  });
+
+  // A handler may return a wider value, as TypeScript allows: the encoding keeps its fields.
+  const stored = { id: "a", passwordHash: "secret" };
+
+  const web = serve(
+    ActionHttp.layer(
+      ActionHttp.make([Profile]),
+      Action.implement(Profile, () => Effect.succeed(stored)),
+    ),
+  );
+
+  const response = await web.handler(
+    new Request("http://localhost/api/profile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ id: "a" });
+});
+
 it("decodes InvalidInput as a typed failure of the client", async () => {
   const { app } = counted();
   const web = serve(ActionHttp.layer(Http, app));

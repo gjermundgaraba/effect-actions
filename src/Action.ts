@@ -1,4 +1,5 @@
 import { Effect, type Layer, Predicate, Schema } from "effect";
+import { ensure } from "effect/Array";
 import type { Scope } from "effect";
 import {
   assertDistinct,
@@ -287,8 +288,6 @@ type Exact<T extends Target, H> = H &
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
 
-const isList = (target: Target): target is ReadonlyArray<Any> => Array.isArray(target);
-
 /**
  * Bind handlers to contracts. Pass one action and its handler, or a list of actions and
  * a record of handlers keyed by action name. Either may instead be an Effect that builds
@@ -319,7 +318,7 @@ export function implement(
   build: Built | Effect.Effect<Built, unknown, unknown>,
   before?: Before<Any, unknown>,
 ): Implementation<Any, {}, unknown, unknown> {
-  const actions = isList(target) ? target : [target];
+  const actions = ensure(target);
   const names = actions.map((action) => action.name);
 
   assertDistinct("action", actions, (action) => action.name);
@@ -335,9 +334,7 @@ export function implement(
   // is an action without a handler. The result pairs each action with its handler.
   const record = (built: Built): Bound => {
     const handlers: Handlers<unknown> = Predicate.isFunction(built)
-      ? isList(target)
-        ? {}
-        : { [target.name]: built }
+      ? Object.fromEntries(Array.isArray(target) ? [] : actions.map(({ name }) => [name, built]))
       : built;
 
     const unknown = Object.keys(handlers).filter((key) => !names.includes(key));
@@ -404,7 +401,7 @@ export function share(
   app: AnyImplementation,
   before?: Before<Any, unknown>,
 ): Implementation<Any, {}, unknown, unknown> {
-  const actions = isList(target) ? target : [target];
+  const actions = ensure(target);
 
   assertDistinct("action", actions, (action) => action.name);
 

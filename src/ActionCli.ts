@@ -4,7 +4,7 @@ import type { HttpClient } from "effect/http";
 import type * as Action from "./Action.js";
 import { assertDistinct } from "./internal/actions.js";
 import { kebab, command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
-import { type AnyHttp, type MethodError, methods } from "./internal/client.js";
+import { type AnyHttp, assertInBinding, type MethodError, methods } from "./internal/client.js";
 import {
   acquire,
   type ActionOf,
@@ -55,8 +55,8 @@ type LocalCommand<App, A extends Action.Any, Subcommands = never> = Command.Comm
   string,
   Subcommands,
   {},
-  A["errors"][number]["Type"] | BuildError<App> | Action.BuiltIn | Schema.SchemaError,
-  Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
+  Effect.Error<Local<App, A>> | Schema.SchemaError,
+  Effect.Services<Local<App, A>>
 >;
 
 /** A native command calling `A` of the binding `H` over HTTP, failing as its client method. */
@@ -113,9 +113,7 @@ const remote = (
   action: Action.Any,
   options: CommandOptions<Action.Any> | undefined,
 ) => {
-  if (!http.actions.includes(action)) {
-    throw new Error(`Action "${action.name}" is not in this HTTP binding`);
-  }
+  assertInBinding(http, action);
 
   return makeCommand(
     action,

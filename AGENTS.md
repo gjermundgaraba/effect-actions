@@ -56,7 +56,7 @@ vp run docs:sync    # regenerate the skill after editing anything in docs/
 - Contracts (`Action`) never import transport code. Each surface owns its own mapping from actions to itself, never reaches into another's, and validates only the names it serves.
 - `src/internal/` holds what surfaces share: name checks, the nominal `Implementation`, builders as memoized layers, hooks and dispatch, the built-in errors, and the one client `ActionHttp.client` and remote `ActionCli` commands use. Public modules re-export the types consumers need, named `Options` for a module's main function, `<Function>Options` for another's, and `Any` for its erased value.
 - Authentication is host router middleware plus discovery metadata; verification, login and consent stay in the application. Authorization is the application's `before` hook, which the library runs but never writes.
-- A browser client imports `Action` and `ActionHttp`: they and the modules they import use nothing specific to Node or a server platform.
+- A browser client imports `Action` and `ActionHttp`: they and the modules they import use nothing specific to Node or a server platform, as `tests/browser.test.ts` checks.
 - Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime.
 - Build-time and request-time requirements stay separate in the types. Never provide request identity at startup, in code or in docs.
 - Public behavior changes update the matching `docs/` page in the same commit, then `vp run docs:sync`.

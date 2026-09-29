@@ -14,7 +14,7 @@ import {
 import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
-import type { Call } from "./internal/client.js";
+import { type Call, inputOf } from "./internal/client.js";
 import { type BuiltIn, refusals } from "./internal/errors.js";
 import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
@@ -165,7 +165,8 @@ const callTool = (
 
     const text = yield* response.text;
 
-    // Only the endpoint's authentication answers otherwise, and only with a refusal.
+    // Only authentication answers otherwise: a refusal of its own, or a hook's or handler's
+    // step-up refusal.
     if (response.status !== 200) {
       return yield* failWith(refusals, text, other(`answered ${response.status}: ${text}`));
     }
@@ -228,9 +229,8 @@ export function mcpClient(
     return Object.fromEntries(
       actions.map((action) => [
         action.name,
-        // A method takes no argument only when `{}` is a valid input; a given one is sent.
-        (...input: ReadonlyArray<unknown>) =>
-          callTool(client, url, action, input.length === 0 ? {} : input[0]),
+        (...args: ReadonlyArray<Action.Any["input"]["Type"]>) =>
+          callTool(client, url, action, inputOf(args)),
       ]),
     );
   });

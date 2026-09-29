@@ -14,6 +14,7 @@ import {
 import { McpSchema, Tool } from "effect/ai";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
@@ -88,6 +89,28 @@ const listTools = async (handler: (request: Request) => Promise<Response>) => {
 
   return reply.result.tools;
 };
+
+describe("descriptions", () => {
+  it("describes each action on every surface by its contract's description", async () => {
+    const Describe = Action.make("describe", {
+      description: "What this action does, for every caller.",
+      access: "read",
+    });
+
+    const app = Action.implement(Describe, () => Effect.void);
+    const { description } = Describe;
+
+    const operation = OpenApi.fromApi(ActionHttp.make([Describe]).api).paths["/api/describe"]?.post;
+    const [tool] = await listTools(makeTestMcp(app).handler);
+
+    expect({
+      http: operation?.description,
+      mcp: tool?.description,
+      toolkit: ActionToolkit.make(app).tools.describe.description,
+      cli: ActionCli.command(app, Describe).description,
+    }).toEqual({ http: description, mcp: description, toolkit: description, cli: description });
+  });
+});
 
 const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
   const refs: string[] = [];

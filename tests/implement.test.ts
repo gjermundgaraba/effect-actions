@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Exit, Layer, Result, Schema, Stdio, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio, Stream } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { HttpApi, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -330,6 +330,25 @@ describe("builder acquisition", () => {
     await build(fixed);
 
     expect(fixed.built.sort()).toEqual(["pair", "solo"]);
+  });
+
+  it("fails runStdio with a builder's failure, rather than ending as the host closing", async () => {
+    class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
+
+    const Solo = Action.make("solo", { description: "", access: "read" });
+
+    const failing = Action.implement(
+      Solo,
+      Effect.as(Effect.fail(new Unavailable()), () => Effect.void),
+    );
+
+    const exit = await Effect.runPromiseExit(
+      ActionMcp.runStdio(failing, { name: "test", version: "0" }).pipe(
+        Effect.provide(Stdio.layerTest({})),
+      ),
+    );
+
+    expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(Unavailable);
   });
 
   it("runs a builder again for a host built separately", async () => {

@@ -79,6 +79,20 @@ type NativeClient = { readonly [name: string]: NativeMethod | undefined };
  * action's input directly. Every binding API is a native `HttpApi` of one top-level
  * group built from `http.actions`, so each action has a native method of its name.
  */
+/**
+ * The input a client method sends for the arguments it was called with: `Call` allows none
+ * only when `{}` is a valid input, and a given argument is sent as given.
+ */
+export const inputOf = (args: ReadonlyArray<ErasedValue>): ErasedValue =>
+  args.length === 0 ? {} : args[0];
+
+/** Refuse an action `http` does not bind, matched by identity, as a surface serving it would. */
+export const assertInBinding = (http: AnyHttp, action: Action.Any): void => {
+  if (!http.actions.includes(action)) {
+    throw new Error(`Action "${action.name}" is not in this HTTP binding`);
+  }
+};
+
 export const methods = (
   http: AnyHttp,
   options: Options = {},
@@ -96,9 +110,7 @@ export const methods = (
 
         if (method === undefined) throw new Error(`No client method for ${action.name}`);
 
-        // `Call` allows no argument only when `{}` is a valid input; a given argument is
-        // sent as given.
-        return (...input) => method({ payload: input.length === 0 ? {} : input[0] });
+        return (...args) => method({ payload: inputOf(args) });
       };
     },
   );
