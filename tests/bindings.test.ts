@@ -190,15 +190,18 @@ it("builds a shared implementation with one set of startup services, not one per
 it("builds once beside routes served apart, when Action.layer is provided above both", async () => {
   const Count = Action.make("count", { description: "", access: "read", success: Schema.Finite });
 
+  class Start extends Context.Service<Start, number>()("bindings/Start") {}
+
   for (const order of ["routes first", "toolkit first"] as const) {
     let built = 0;
 
+    // Its startup service is given once, above `Action.layer` and every surface.
     const app = Action.implement(
       Count,
-      Effect.sync(() => {
+      Effect.map(Start, (start) => {
         built += 1;
 
-        return () => Effect.succeed(built);
+        return () => Effect.succeed(start + built);
       }),
     );
 
@@ -210,7 +213,7 @@ it("builds once beside routes served apart, when Action.layer is provided above 
       order === "routes first"
         ? Layer.mergeAll(routes, tools.layer)
         : Layer.mergeAll(tools.layer, routes)
-    ).pipe(Layer.provide(Action.layer(app)));
+    ).pipe(Layer.provide(Action.layer(app)), Layer.provide(Layer.succeed(Start, 0)));
 
     await Effect.runPromise(
       Effect.scoped(

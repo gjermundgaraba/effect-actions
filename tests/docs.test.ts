@@ -30,6 +30,7 @@ const snippets = [
   ["docs/ActionCli.md", "### Over HTTP", ["cli-remote.ts"]],
   ["docs/ActionToolkit.md", "## Canonical", ["toolkit-authorized.ts"]],
   ["docs/Testing.md", "## Canonical", ["testing.ts"]],
+  ["docs/Testing.md", "### One caller", ["testing-caller.ts"]],
   ["docs/ActionMcp.md", "### Cross-origin browsers", ["mcp-browser.ts"]],
   ["docs/ActionMcp.md", "### Subprocess", ["mcp-stdio.ts"]],
 ] as const;

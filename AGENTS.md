@@ -70,7 +70,7 @@ These task-specific rules govern when and where the Vite+ checklist above applie
 - Authentication is host router middleware plus discovery metadata; verification, login and consent stay in the application. Action-level authorization is the application's `before` hook, which the library runs but never writes. Record-level checks belong in the handler's data access.
 - A browser client imports `Action` and `ActionHttp`: they and the modules they import use nothing specific to Node or a server platform, as `tests/browser.test.ts` checks.
 - Build on Effect's native servers and clients (`HttpApi`, `McpServer`, `Toolkit`, `Command`). Add no protocol runtime.
-- Build-time and request-time requirements stay separate in the types. Never provide request identity at startup, in code or in docs.
+- Build-time and request-time requirements stay separate in the types. Never provide request identity at a server's startup, in code or in docs; in memory, one `Testing.layer` is one caller, and a test provides it around the layer.
 - Public behavior changes update the matching `docs/` page in the same commit, then `vp run docs:sync`.
 - Doc snippets that are also examples stay identical to the example file; edit the example first.
 - Use the Effect release pinned in `package.json`. Check `node_modules/effect` before assuming an API shape.

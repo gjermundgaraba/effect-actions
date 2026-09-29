@@ -216,7 +216,7 @@ export const listChanges = Action.implement(
 - A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
 - `before` may be a value that may be `undefined`, as `enabled ? authorize : undefined`: its services are required either way.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
-- Test a handler directly by calling the function you passed to `implement`, or through `ActionToolkit` in process. Cover each surface the application exposes. Direct handler tests do not exercise transport decoding, encoding, authentication, or the implementation's hook.
+- Test handlers behind their hook in memory, with the caller provided around the in-memory layer instead of authentication ([Testing.md](Testing.md#one-caller)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips the hook. Cover each surface the application exposes.
 
 ## Failure modes
 

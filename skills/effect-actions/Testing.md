@@ -54,9 +54,42 @@ const program = Effect.gen(function* () {
 console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(routes)))));
 ```
 
+### One caller
+
+An implementation's handlers behind its hook, in memory, as one caller: provide the caller
+around `layer` instead of authentication, like any other service the routes require, and the
+test program shares what it reads.
+
+```ts
+import { Effect, Layer } from "effect";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { actors, CurrentActor } from "./authorization.js";
+import { Http } from "./binding.js";
+import { userActions } from "./handlers.js";
+import { Users } from "./users.js";
+
+// The handlers behind their hook, as one caller standing in for authentication. The
+// services provided around the layer are the program's too, one instance.
+const asReader = Testing.layer(ActionHttp.layer(Http, userActions)).pipe(
+  Layer.provide(Layer.succeed(CurrentActor, actors.reader)),
+  Layer.provideMerge(Users.layerMemory),
+);
+
+const program = Effect.gen(function* () {
+  const client = yield* ActionHttp.client(Http);
+  const refused = yield* Effect.flip(client.renameUser({ id: "1", name: "Bea" })); // Forbidden
+  const users = yield* Users;
+
+  return { refused, unchanged: yield* users.get("acme", "1") };
+});
+
+console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
+```
+
 ## Rules
 
-- `layer(routes)` builds the routes with `HttpServer.layerServices` provided and request logging off, and releases them with the layer's scope. Routes must satisfy their own per-request requirements, with their middleware; a route still owing one is a type error. Each `layer` builds the routes anew, builders included, unless `Action.layer` built them above it. Requests run in the context the layer is built in, as under `HttpRouter.serve`: a `TestClock` or a reference provided around the program reaches middleware and handlers.
+- `layer(routes)` builds the routes with `HttpServer.layerServices` provided and request logging off, and releases them with the layer's scope. What the routes still require is the layer's, as under `HttpRouter.serve`: their builders' services, and any per-request service no middleware of theirs provides. Provide them around it, with `Layer.provideMerge` where the program reads them too, so the handlers and the program share one instance. A per-request service provided there, such as a caller, reaches every request; authentication among the routes still provides its own. Each `layer` builds the routes anew, builders included, unless `Action.layer` built them above it. Requests run in the context the layer is built in, as under `HttpRouter.serve`: a `TestClock` or a reference provided around the program reaches middleware and handlers.
 - A relative URL resolves against `http://localhost`, once any `baseUrl` a client adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl` under `layer`, and one given is kept. Every request on this client is answered by the routes, whatever its host, so the native `HttpApiClient` and a remote `ActionCli` command work in memory too.
 - A client method sends one stateless `tools/call` for the action's tool, at the protocol version `ActionMcp.layerHttp` serves, 2026-07-28, in both the header and `_meta`. It encodes the input with the action's schema, and decodes the success from `structuredContent.value`, as `ActionHttp.client` does for a route. It reads a JSON or an event-stream response.
 - A declared error, the action's own or a built-in one, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication or a hook, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
@@ -66,13 +99,14 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 - A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `transformClient`, the same options for `mcpClient` and `ActionHttp.client`: one client per caller, `const alice = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")) }`. `mcpRequest` takes `headers`.
 - A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
-- Direct handler tests call the function passed to `Action.implement`. Cover each surface the application exposes. Direct handler tests do not exercise transport decoding, encoding, authentication, or the implementation's hook.
+- An action no binding holds, such as one served only as a tool, gets a test binding of its own: a binding is plain data. Cover each surface the application exposes.
 
 ## Failure modes
 
 - Fails with `Action.Unauthenticated`: the call reached authentication without a valid credential. Give the client a `transformClient` adding it, such as `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
 - `MCP tools/call "<name>" returned an error: Invalid parameters for tool ...`: the endpoint serves a different contract under that name than the one passed. Call it with the served contract value.
 - 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
-- Type error at `layer` naming `HttpRouter.Request<"Requires", ...>`: a route requires a per-request service, such as an identity no authentication around it provides. Provide the authentication, or other middleware for the service, around the routes.
+- The program reads a service the handlers never changed: it was provided inside the routes and again to the program, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
+- Type error that the program still requires an identity, such as `CurrentActor`: a route needs it per request and no authentication among the routes provides it. Provide the authentication around the routes, or the caller around `layer` ([One caller](#one-caller)).
 - `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
 - An `HttpClientError` whose reason is `InvalidUrlError`, from a client method on an `HttpClient` other than `layer`'s: a relative `url` resolves only under `layer`. Pass an absolute `url`.

@@ -7,18 +7,17 @@ with `LanguageModel` or by hand. No server, no MCP envelope.
 
 Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 
-| API                               | Purpose                                                                                        |
-| --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `make(implementations, options?)` | Project an implementation or a list; returns `{ tools, toolkit, layer }`.                      |
-| `tools`                           | The native tool definitions by name: typed schemas, hints and approval.                        |
-| `toolkit`                         | An Effect of the handled `Toolkit.WithHandler`, which `layer` provides.                        |
-| `layer`                           | The handler layer: acquires handlers in its scope; requires build-time services, not identity. |
+| API                               | Purpose                                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                                              |
+| `toolkit`                         | A native `Toolkit`: `toolkit.tools` holds the tool definitions by name, with typed schemas, hints and approval. |
+| `layer`                           | The handler layer: acquires handlers in its scope; requires build-time services, not identity.                  |
 
 | Option          | Meaning                                                                                                                          |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `needsApproval` | `(action) =>` a boolean, or a function of the call's input: the calls `LanguageModel` asks approval for instead of running them. |
 
-Exported types: `Tools`, what `make` returns; `Options`, what it takes; and `Handled<T>`, the service requirement of `toolkit` that the same `make` call's `layer` provides.
+Exported types: `Tools`, what `make` returns; `Options`, what it takes.
 
 A local surface: each implementation's `before` hook runs before its handlers, and the caller
 provides the identity.
@@ -55,6 +54,15 @@ program.pipe(NodeRuntime.runMain);
 ```
 
 With a model: pass `toolkit` as `toolkit` to `LanguageModel.generateText` and provide `layer`.
+Beside tools of your own, or provider-defined ones such as a web search, merge the toolkits
+natively and provide every handler layer:
+
+```ts
+LanguageModel.generateText({ prompt, toolkit: Toolkit.merge(toolkit, WebKit) }).pipe(
+  Effect.provide(Layer.mergeAll(layer, WebKitHandlers)),
+);
+```
+
 To have the model's writes approved before they run:
 
 ```ts
@@ -74,7 +82,8 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 - Builders and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and the hook the [authorization rules](guarantees.md#authorization): `layer` builds, and identity is supplied at invocation, never when building the layer.
 - Each tool carries only its own handler's request requirements, plus the hook's, not those of sibling actions.
 - `needsApproval` receives each action, typed as the implementations' own, once when `make` runs. It returns Effect's native `Tool.needsApproval` for its tool: a boolean, or a function of each call's decoded input and context returning a boolean or an `Effect` of one. Default: no tool needs approval.
-- Each `make` call's handlers are its own: `layer` provides its handled toolkit and nothing else. Effect finds a tool's handler by the tool's name, so two toolkits with tools of one name, such as an implementation and an `Action.share` of it behind another hook, never run each other's handlers, merged in either order.
+- Each `make` call's handlers are its own: two toolkits with tools of one name, such as an implementation and an `Action.share` of it behind another hook, never run each other's handlers, whatever order their layers are provided in.
+- `toolkit` is a native `Toolkit`: `Toolkit.merge` combines it with other tools, and `yield* toolkit` gives the handled toolkit once the handler layers of all its tools are provided.
 - `LanguageModel` enforces approval; `tools.handle` ignores it, like any caller that is not a model's turn. It is not authorization, which stays the `before` hook's. MCP has no such field, so `ActionMcp` takes no such option.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
 - Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), so a `before` refusal, or a handler's built-in failure, is an ordinary returned tool failure.
@@ -82,7 +91,7 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 ## Failure modes
 
 - Tool missing from the toolkit: its implementation was not passed to `make`.
-- `Service not found: effect-actions/Tools/...` when yielding `toolkit`: its own `layer` is not provided, only another `make` call's. Provide the `layer` of the same `make` call.
+- A defect when a tool handles a call: its own `layer` is not provided, only another `make` call's with tools of the same names, which the types accept. Provide the `layer` of the same `make` call.
 - `Duplicate tool: <name>` thrown at `make`: two implementations serve actions of the same name.
 - `Service not found` for a request tag at call time: it was provided only to the stream, or only to the layer. Provide it around the whole call effect.
 - Type error on `layer` requirements: a build-time service is missing. Provide its Layer before `layer`.

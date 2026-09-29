@@ -23,15 +23,21 @@ import { clientOf, type Served } from "./internal/memory.js";
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
  * released with its scope, without request logs, with the platform services
- * `HttpServer.layerServices` provides. They must satisfy their per-request requirements
- * themselves, with their middleware. A relative URL resolves against `http://localhost`.
+ * `HttpServer.layerServices` provides. What they still require is this layer's, as under
+ * `HttpRouter.serve`: a builder's services, and a per-request service no middleware of theirs
+ * provides, such as the caller a test stands in for authentication. Provided around it, the
+ * test program shares them. A relative URL resolves against `http://localhost`.
  */
-export function layer<A, E, R extends Served>(
+export function layer<A, E, R>(
   routes: Layer.Layer<A, E, R>,
-): Layer.Layer<HttpClient.HttpClient, E>;
+): Layer.Layer<
+  HttpClient.HttpClient,
+  E,
+  Exclude<HttpRouter.Request.Without<R> | HttpRouter.Request.Only<"Requires", R>, Served>
+>;
 export function layer(
-  routes: Layer.Layer<unknown, unknown, Served>,
-): Layer.Layer<HttpClient.HttpClient, unknown> {
+  routes: Layer.Layer<unknown, unknown, unknown>,
+): Layer.Layer<HttpClient.HttpClient, unknown, unknown> {
   // Requests run in the context the layer is built in, as under `HttpRouter.serve`: a
   // `TestClock` or reference provided around the program reaches middleware and handlers.
   return Layer.unwrap(

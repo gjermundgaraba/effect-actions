@@ -83,7 +83,7 @@ const binding = ActionToolkit.make(greet);
 
 const checkToolkitTypes = () => {
   // @ts-expect-error Published Toolkit names must remain literal.
-  void binding.tools.missing;
+  void binding.toolkit.tools.missing;
 };
 
 void checkToolkitTypes;

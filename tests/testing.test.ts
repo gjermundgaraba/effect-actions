@@ -597,18 +597,54 @@ describe("layer", () => {
     expect(failure).toEqual(new Unavailable());
   });
 
-  it("refuses routes that still need a per-request service", () => {
-    const needsVisits = HttpRouter.add(
-      "GET",
-      "/visits",
-      Effect.map(Visits, ({ count }) => HttpServerResponse.text(String(count))),
+  it("leaves the routes' startup services to the program, which shares them", async () => {
+    let built = 0;
+
+    const Visit = Action.make("visit", {
+      description: "Count a visit.",
+      access: "write",
+      success: Schema.Finite,
+    });
+
+    const visit = Action.implement(
+      Visit,
+      Effect.map(Visits, (seen) => () => Effect.sync(() => ++seen.count)),
     );
 
-    const check = () => {
-      // @ts-expect-error -- Nothing provides `Visits`, so the routes cannot be served.
-      Testing.layer(needsVisits);
-    };
+    const Http = ActionHttp.make([Visit]);
 
-    void check;
+    const answered = await Effect.gen(function* () {
+      const client = yield* ActionHttp.client(Http);
+
+      return [yield* client.visit(), (yield* Visits).count];
+    }).pipe(
+      Effect.provide(
+        Testing.layer(ActionHttp.layer(Http, visit)).pipe(
+          Layer.provideMerge(Layer.sync(Visits, () => (built++, { count: 0 }))),
+        ),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(answered).toEqual([1, 1]);
+    expect(built).toBe(1);
+  });
+
+  it("serves a per-request service provided around it, such as the caller", async () => {
+    const routes = HttpRouter.add(
+      "GET",
+      "/visits",
+      Effect.map(Visits, (seen) => HttpServerResponse.text(String(++seen.count))),
+    );
+
+    const answered = await HttpClient.get("/visits").pipe(
+      Effect.flatMap((response) => response.text),
+      Effect.provide(
+        Testing.layer(routes).pipe(Layer.provide(Layer.succeed(Visits, { count: 0 }))),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(answered).toBe("1");
   });
 });

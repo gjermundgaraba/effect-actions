@@ -34,20 +34,20 @@ const app = Action.implement([Named, ServiceFree, Guarded], {
 const binding = ActionToolkit.make(app);
 
 // Every action is a tool, named after it.
-const toolNames: [keyof typeof binding.tools] extends ["named" | "service_free" | "guarded"]
-  ? ["named" | "service_free" | "guarded"] extends [keyof typeof binding.tools]
+const toolNames: [keyof typeof binding.toolkit.tools] extends ["named" | "service_free" | "guarded"]
+  ? ["named" | "service_free" | "guarded"] extends [keyof typeof binding.toolkit.tools]
     ? true
     : false
   : false = true;
 
 void toolNames;
 
-const exactNamedSuccess: Tool.Success<typeof binding.tools.named> = "principal";
+const exactNamedSuccess: Tool.Success<typeof binding.toolkit.tools.named> = "principal";
 
 void exactNamedSuccess;
 
 // @ts-expect-error Native tool successes retain the action schema's decoded type.
-const wrongNamedSuccess: Tool.Success<typeof binding.tools.named> = 1;
+const wrongNamedSuccess: Tool.Success<typeof binding.toolkit.tools.named> = 1;
 
 void wrongNamedSuccess;
 
@@ -64,8 +64,8 @@ const fetched = ActionToolkit.make(Action.implement(Fetch, () => Effect.succeed(
 
 // Every tool declares its action's errors plus the built-in ones.
 const toolFailures: [
-  Equal<Tool.Failure<typeof fetched.tools.fetch>, Gone | Action.BuiltIn>,
-  Equal<Tool.Failure<typeof binding.tools.named>, Action.BuiltIn>,
+  Equal<Tool.Failure<typeof fetched.toolkit.tools.fetch>, Gone | Action.BuiltIn>,
+  Equal<Tool.Failure<typeof binding.toolkit.tools.named>, Action.BuiltIn>,
 ] = [true, true];
 
 void toolFailures;
@@ -81,7 +81,10 @@ const hooked = ActionToolkit.make(
   ),
 );
 
-const hookedServices: Equal<Tool.HandlerServices<typeof hooked.tools.service_free>, Clock> = true;
+const hookedServices: Equal<
+  Tool.HandlerServices<typeof hooked.toolkit.tools.service_free>,
+  Clock
+> = true;
 
 void hookedServices;
 

@@ -135,8 +135,9 @@ See [dependency lifetimes](../docs/guarantees.md#dependency-lifetimes) for how t
 handlers share `Users` while resolving `CurrentActor` on each request.
 
 Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
-Never provide `CurrentActor` at startup: surfaces retain native Effect context semantics,
-not an extra identity-isolation boundary. Authentication establishes it on each request.
+Never provide `CurrentActor` at a server's startup: surfaces retain native Effect context
+semantics, not an extra identity-isolation boundary. Authentication establishes it on each
+request. In memory, [testing-caller.ts](testing-caller.ts) provides one caller around the layer.
 
 ## Other surfaces
 
@@ -157,7 +158,8 @@ node --import tsx examples/toolkit.ts
 [cli.ts](cli.ts) and [cli-remote.ts](cli-remote.ts) return native Effect CLI commands;
 use `--help` for their options. [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
-stdout for JSON-RPC and routes Effect logs to stderr.
+stdout for JSON-RPC and routes Effect logs to stderr, those of services provided around
+`runStdio` through `Logger.LogToStderr`.
 
 [toolkit.ts](toolkit.ts) prints a native Toolkit result.
 [mcp-browser.ts](mcp-browser.ts) exports public stateless MCP routes with an explicit Origin
@@ -166,3 +168,5 @@ allowlist and separate router CORS configuration; mount them with a platform ser
 authorization hook and a per-invocation principal.
 Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-memory HTTP and
 MCP calls with cleanup.
+[testing-caller.ts](testing-caller.ts) tests `userActions` behind their hook as one caller,
+without authentication, sharing the in-memory `Users` with the program.

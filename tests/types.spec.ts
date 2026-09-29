@@ -362,6 +362,23 @@ export const implementTypes = () => {
   void routerProvided;
   Testing.layer(ActionHttp.layer(ActionHttp.make([Headers]), readsRequest));
 
+  // In memory as under `HttpRouter.serve`: what the routes still require is the layer's own,
+  // a builder's services, and a per-request service no middleware of theirs provides.
+  const guardedRoutes = ActionHttp.layer(
+    ActionHttp.make([GetUser, RenameUser, WhoAmI]),
+    userActions,
+  );
+
+  const authenticated = Testing.layer(guardedRoutes.pipe(Layer.provide(authenticate)));
+  const asCaller = Testing.layer(guardedRoutes);
+
+  const inMemoryServices: [
+    Equal<Layer.Services<typeof authenticated>, Users>,
+    Equal<Layer.Services<typeof asCaller>, Users | CurrentActor>,
+  ] = [true, true];
+
+  void inMemoryServices;
+
   const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name));
   // @ts-expect-error Only the source's own actions.
   Action.share([Lookup], renameOnly);
@@ -712,7 +729,7 @@ export const authenticationTypes = () => {
   const owed: Equal<Effect.Services<typeof stdio>, Users | Stdio.Stdio | CurrentActor> = true;
   void owed;
 
-  const tools = ActionToolkit.make(userActions).tools;
+  const tools = ActionToolkit.make(userActions).toolkit.tools;
   const toolOwed: Equal<Tool.HandlerServices<typeof tools.getUser>, CurrentActor> = true;
   void toolOwed;
 };
@@ -777,7 +794,7 @@ export const servedRequirementTypes = () => {
   void resolved;
 
   // A tool is named after its action, and owes its handler's services.
-  const tools = ActionToolkit.make(hintsApp).tools;
+  const tools = ActionToolkit.make(hintsApp).toolkit.tools;
 
   const toolAssertions: [
     Equal<keyof typeof tools, "act">,

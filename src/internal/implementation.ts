@@ -5,6 +5,12 @@ import type * as Action from "../Action.js";
 import { assertDistinct } from "./actions.js";
 import type { Refusal } from "./errors.js";
 
+/**
+ * A random key segment, unique to its caller even across installed copies of this module,
+ * where a counter of each copy would repeat another's.
+ */
+export const uniqueKey = (): string => Math.random().toString(36).slice(2);
+
 /** Decoded values at the adapter dispatch boundary. */
 export type ErasedValue = Action.Any["input"]["Type"];
 
@@ -94,11 +100,8 @@ export class Implementation<
 
     this.#before = before;
 
-    // A string key is a service's identity, so a random one is unique to this
-    // implementation even across copies of this module.
-    this.#key = Context.Service<Bound>(
-      `effect-actions/Implementation/${Math.random().toString(36).slice(2)}`,
-    );
+    // A string key is a service's identity: one of its own for this implementation.
+    this.#key = Context.Service<Bound>(`effect-actions/Implementation/${uniqueKey()}`);
     this.#layer = Layer.effect(this.#key, build);
   }
 

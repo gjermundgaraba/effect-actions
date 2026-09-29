@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
-import { LanguageModel } from "effect/ai";
+import { LanguageModel, Tool, Toolkit } from "effect/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
@@ -36,9 +36,9 @@ describe("ActionToolkit", () => {
       needsApproval: (action) => action.access === "write" && (({ id }) => id !== "draft"),
     });
 
-    expect(binding.tools.read.needsApproval).toBe(false);
+    expect(binding.toolkit.tools.read.needsApproval).toBe(false);
     // No tool needs approval unless the host says so: the native tool's own default.
-    expect(ActionToolkit.make(app).tools.erase.needsApproval).toBeUndefined();
+    expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBeUndefined();
 
     // A model that calls the tools at once.
     const model = LanguageModel.make({
@@ -82,7 +82,7 @@ describe("ActionToolkit", () => {
 
     const binding = ActionToolkit.make(double);
 
-    expect(Object.keys(binding.tools)).toEqual(["double"]);
+    expect(Object.keys(binding.toolkit.tools)).toEqual(["double"]);
 
     const result = await Effect.runPromise(
       Effect.scoped(
@@ -203,6 +203,50 @@ describe("ActionToolkit", () => {
       expect(refused).toMatchObject([{ isFailure: true }]);
       expect(answered).toMatchObject([{ isFailure: false, result: "secret" }]);
     }
+  });
+
+  it("merges with native tools into one toolkit a model calls", async () => {
+    const Double = Action.make("double", {
+      description: "Double a number.",
+      access: "read",
+      input: { value: Schema.Finite },
+      success: Schema.Finite,
+    });
+
+    const actions = ActionToolkit.make(
+      Action.implement(Double, ({ value }) => Effect.succeed(value * 2)),
+    );
+
+    const Now = Tool.make("now", { success: Schema.Finite });
+    const native = Toolkit.make(Now);
+
+    const model = LanguageModel.make({
+      generateText: () =>
+        Effect.succeed([
+          { type: "tool-call", id: "1", name: "double", params: { value: 21 } },
+          { type: "tool-call", id: "2", name: "now", params: {} },
+        ] as const),
+      streamText: () => Stream.empty,
+    });
+
+    const response = await Effect.runPromise(
+      Effect.scoped(
+        LanguageModel.generateText({
+          prompt: "go",
+          toolkit: Toolkit.merge(actions.toolkit, native),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(actions.layer, native.toLayer({ now: () => Effect.succeed(7) })),
+          ),
+          Effect.provideServiceEffect(LanguageModel.LanguageModel, model),
+        ),
+      ),
+    );
+
+    expect(response.toolResults).toMatchObject([
+      { name: "double", result: 42 },
+      { name: "now", result: 7 },
+    ]);
   });
 
   it("releases a builder's resources with the layer", async () => {

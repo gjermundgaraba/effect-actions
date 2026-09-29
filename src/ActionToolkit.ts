@@ -1,4 +1,5 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import type { Layer } from "effect";
+import { Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "./Action.js";
 import type { BuiltIns } from "./internal/errors.js";
@@ -12,6 +13,7 @@ import {
   type RequestOf,
   type Served,
   toList,
+  uniqueKey,
 } from "./internal/implementation.js";
 
 /** A native tool named after its action, taking and giving JSON. */
@@ -41,22 +43,16 @@ type ToolkitTools<App> = {
   readonly [T in ToolFor<App> as T["name"]]: T;
 };
 
-/** The handled toolkit of one `make` call, which its `layer` provides. */
-export interface Handled<T extends Record<string, Tool.Any>> {
-  readonly "~tools": T;
-}
-
 /**
- * Native tools bound to their action implementations: `toolkit` gives the handled toolkit
- * that `layer` provides, for `LanguageModel` or `handle`. Each `make` call's handlers stay its
- * own, so toolkits with tools of one name never run each other's handlers.
+ * Native tools bound to their action implementations: a native `Toolkit` and the layer of
+ * its handlers, for `LanguageModel`, `Toolkit.merge` or `handle`. Each `make` call's handlers
+ * are its own, so toolkits with tools of one name never run each other's handlers.
  */
 export interface Tools<T extends Record<string, Tool.Any>, E, R> {
-  /** The native tool definitions, by name: their schemas, hints and approval. */
-  readonly tools: T;
-  readonly toolkit: Effect.Effect<Toolkit.WithHandler<T>, never, Handled<T>>;
+  /** The native toolkit: its `tools` are the definitions, by name, with schemas, hints and approval. */
+  readonly toolkit: Toolkit.Toolkit<T>;
   /** Acquires handlers once in the layer scope; handler requirements remain at invocation. */
-  readonly layer: Layer.Layer<Handled<T>, E, R>;
+  readonly layer: Layer.Layer<Tool.HandlersFor<T>, E, R>;
 }
 
 /** How `make` projects its tools. */
@@ -89,32 +85,28 @@ export function make<const Apps extends Served>(
 export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const served = toList(apps);
 
+  // Effect finds a tool's handler by the tool's `id`, which `Tool.make` derives from its
+  // name: one of this call's own keeps each toolkit's handlers its own.
+  const suffix = uniqueKey();
+
   // A model speaks JSON: each tool takes and gives the JSON encoding its schema advertises,
   // as an MCP tool does, without MCP's envelope. Handlers and callers see decoded values.
   const { toolkit, layer } = bindTools(served, {
     label: "tool",
     tool: (action, errors) =>
-      Tool.make(action.name, {
-        description: action.description,
-        parameters: Schema.toCodecJson(action.input),
-        success: Schema.toCodecJson(action.success),
-        failure: Schema.toCodecJson(Schema.Union(errors)),
-        failureMode: "return",
-        needsApproval: options?.needsApproval?.(action),
-      }),
+      Object.assign(
+        Tool.make(action.name, {
+          description: action.description,
+          parameters: Schema.toCodecJson(action.input),
+          success: Schema.toCodecJson(action.success),
+          failure: Schema.toCodecJson(Schema.Union(errors)),
+          failureMode: "return",
+          needsApproval: options?.needsApproval?.(action),
+        }),
+        { id: `effect-actions/Tools/${suffix}/${action.name}` },
+      ),
     handler: (run) => run,
   });
 
-  // Effect finds a tool's handler by the tool's name, in context: kept inside this layer, a
-  // handler never reaches another toolkit with a tool of that name.
-  const handled = Context.Service<
-    Handled<Record<string, Tool.Any>>,
-    Toolkit.WithHandler<Record<string, Tool.Any>>
-  >(`effect-actions/Tools/${Math.random().toString(36).slice(2)}`);
-
-  return {
-    tools: toolkit.tools,
-    toolkit: Effect.service(handled),
-    layer: Layer.effect(handled, toolkit).pipe(Layer.provide(layer), provideHandlers(served)),
-  };
+  return { toolkit, layer: layer.pipe(provideHandlers(served)) };
 }

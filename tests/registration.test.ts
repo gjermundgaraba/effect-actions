@@ -106,7 +106,7 @@ describe("descriptions", () => {
     expect({
       http: operation?.description,
       mcp: tool?.description,
-      toolkit: ActionToolkit.make(app).tools.describe.description,
+      toolkit: ActionToolkit.make(app).toolkit.tools.describe.description,
       cli: ActionCli.command(app, Describe).description,
     }).toEqual({ http: description, mcp: description, toolkit: description, cli: description });
   });
@@ -345,7 +345,7 @@ describe("projection boundaries", () => {
       hints,
     );
 
-    const { tools } = ActionToolkit.make(app);
+    const { tools } = ActionToolkit.make(app).toolkit;
     expect(
       Object.fromEntries(
         Object.entries(tools).map(([name, { annotations }]) => [
@@ -368,7 +368,9 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const { tools } = ActionToolkit.make(Action.implement(Declared, () => Effect.succeed("ada")));
+    const { tools } = ActionToolkit.make(
+      Action.implement(Declared, () => Effect.succeed("ada")),
+    ).toolkit;
 
     // Each built-in's JSON decodes to its class: the tool declares all three.
     const builtIns = Schema.Union([Action.InvalidInput, Action.Unauthenticated, Action.Forbidden]);
