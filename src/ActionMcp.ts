@@ -1,8 +1,8 @@
 import { Layer } from "effect";
 import type { Cause } from "effect";
 import type { Stdio as StdioService } from "effect/Stdio";
-import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
-import type { HttpRouter } from "effect/unstable/http";
+import { McpProtocol, McpServer, type McpSchema } from "effect/ai";
+import type { HttpRouter } from "effect/http";
 import type * as Action from "./Action.js";
 import { bindTools, type SurfaceOptions, type ToolOptions } from "./internal/tools.js";
 import {

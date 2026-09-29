@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vite-plus/test";
 import type { Client } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Predicate, Schema } from "effect";
-import { McpSchema } from "effect/unstable/ai";
+import { McpSchema } from "effect/ai";
 import {
   HttpClient,
   HttpClientRequest,
@@ -9,8 +9,8 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
-import { OpenApi } from "effect/unstable/httpapi";
+} from "effect/http";
+import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionMcp from "../src/ActionMcp.js";

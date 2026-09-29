@@ -1,6 +1,6 @@
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient } from "effect/http-api";
 import { Console, Effect } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { Http } from "./contracts.js";
 
 const lookup = Effect.gen(function* () {

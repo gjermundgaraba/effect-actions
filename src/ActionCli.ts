@@ -1,5 +1,5 @@
 import { Effect, type Scope } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import type * as Action from "./Action.js";
 import { command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
 import { type Actions, selectNamed } from "./internal/actions.js";

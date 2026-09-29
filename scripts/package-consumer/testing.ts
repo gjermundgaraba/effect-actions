@@ -1,6 +1,6 @@
 import { withMcpClient } from "@gjermundgaraba/effect-actions/TestingClient";
 import { Layer, Schema } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import { routes } from "./quickstart.js";
 
 const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {

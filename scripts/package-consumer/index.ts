@@ -6,12 +6,12 @@ import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import type { HttpApiClient } from "effect/unstable/httpapi";
+import type { HttpApiClient } from "effect/http-api";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { httpClient, mcpCall, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
 import { Effect, Layer, Schema, Stream } from "effect";
-import { Argument } from "effect/unstable/cli";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { Argument } from "effect/cli";
+import { HttpRouter, HttpServer } from "effect/http";
 import { Actions, Http, routes } from "./quickstart.js";
 
 // Subpaths are the only entry points: one module each, so nothing loads the MCP

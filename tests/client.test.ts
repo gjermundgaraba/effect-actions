@@ -6,8 +6,8 @@ import {
   HttpClientRequest,
   HttpRouter,
   HttpServer,
-} from "effect/unstable/http";
-import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
+} from "effect/http";
+import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";

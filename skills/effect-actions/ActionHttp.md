@@ -32,7 +32,7 @@ Route shape: `POST <apiPath>/<group>/<action>`. Operation ID: `<group>.<action>`
 
 ```ts
 import { Layer } from "effect";
-import { HttpApiScalar, HttpApiSwagger } from "effect/unstable/httpapi";
+import { HttpApiScalar, HttpApiSwagger } from "effect/http-api";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { PublicActions, UserActions } from "./contracts.js";
 import { PublicApp, UserApp } from "./handlers.js";
@@ -73,9 +73,9 @@ The client is Effect's native grouped `HttpApiClient` over `Http.api`. Code that
 run Effects uses the Promise client in [ActionHttpClient.md](ActionHttpClient.md).
 
 ```ts
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient } from "effect/http-api";
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Http } from "./quickstart.js";
 
 export const greeting = Effect.gen(function* () {

@@ -1,7 +1,7 @@
 import { Effect, Layer, type Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import { type Etag, type HttpPlatform, HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { type Etag, type HttpPlatform, HttpRouter, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
   HttpApiBuilder,
@@ -9,7 +9,7 @@ import {
   HttpApiMiddleware,
   HttpApiGroup,
   OpenApi,
-} from "effect/unstable/httpapi";
+} from "effect/http-api";
 import type * as Action from "./Action.js";
 import {
   type Actions,

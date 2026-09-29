@@ -1,9 +1,9 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Layer, Record, Schema, SchemaIssue, SchemaTransformation } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
-import { McpSchema } from "effect/unstable/ai";
-import { HttpApiClient, OpenApi } from "effect/unstable/httpapi";
-import { HttpApiError } from "effect/unstable/httpapi";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
+import { McpSchema } from "effect/ai";
+import { HttpApiClient, OpenApi } from "effect/http-api";
+import { HttpApiError } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";

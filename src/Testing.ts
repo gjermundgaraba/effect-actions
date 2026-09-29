@@ -1,5 +1,5 @@
 import { Option, Predicate, Schema } from "effect";
-import type { HttpApi, HttpApiGroup } from "effect/unstable/httpapi";
+import type { HttpApi, HttpApiGroup } from "effect/http-api";
 import { type ClientOptions, fetchApiClient } from "./internal/fetchClient.js";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */

@@ -1,6 +1,6 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import {
   FetchHttpClient,
   HttpClient,
@@ -9,8 +9,8 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
-import { OpenApi } from "effect/unstable/httpapi";
+} from "effect/http";
+import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionCliClient from "../src/ActionCliClient.js";
 import * as ActionGroup from "../src/ActionGroup.js";

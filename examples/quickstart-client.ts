@@ -1,6 +1,6 @@
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpApiClient } from "effect/http-api";
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Http } from "./quickstart.js";
 
 export const greeting = Effect.gen(function* () {

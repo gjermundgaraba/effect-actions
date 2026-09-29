@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { type HttpApi, HttpApiClient, type HttpApiGroup } from "effect/unstable/httpapi";
+import { FetchHttpClient } from "effect/http";
+import { type HttpApi, HttpApiClient, type HttpApiGroup } from "effect/http-api";
 
 /** The native `HttpApiClient.make` options: `baseUrl`, `transformClient`, `transformResponse`. */
 export type ClientOptions = NonNullable<Parameters<typeof HttpApiClient.make>[1]>;

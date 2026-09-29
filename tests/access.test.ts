@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, type Scope, Stream } from "effect";
-import { Command } from "effect/unstable/cli";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import { HttpRouter, HttpServer } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionGroup from "../src/ActionGroup.js";

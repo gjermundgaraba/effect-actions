@@ -29,7 +29,7 @@ to routes requiring that identity.
 
 ```ts
 import { Context, Effect, Layer, Option, Schema } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 
 interface Actor {

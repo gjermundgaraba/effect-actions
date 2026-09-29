@@ -28,7 +28,7 @@ scope. Success output is encoded; failures remain failures of the command Effect
 
 ```ts
 import { Console, Effect, Logger } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { actors, authorize, CurrentActor } from "./auth.js";

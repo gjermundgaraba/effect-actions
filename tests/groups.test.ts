@@ -1,12 +1,7 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Context, Effect, Layer, Schema } from "effect";
-import {
-  HttpRouter,
-  HttpServer,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
-import { HttpApi, OpenApi } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApi, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";

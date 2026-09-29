@@ -1,6 +1,6 @@
 import { Effect, Layer, Option } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { HttpApiSwagger } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApiSwagger } from "effect/http-api";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
 import { actors, authorize, CurrentActor, Forbidden, Unauthenticated } from "./auth.js";

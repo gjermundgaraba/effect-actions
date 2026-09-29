@@ -1,4 +1,4 @@
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as ActionHttpClient from "../src/ActionHttpClient.js";
 import { Http, UserNotFound } from "./contracts.js";
 

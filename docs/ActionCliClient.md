@@ -25,7 +25,7 @@ retain the selected endpoint's client failures and middleware requirements, and 
 ## Canonical
 
 ```ts
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { Console, Effect, Logger } from "effect";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";

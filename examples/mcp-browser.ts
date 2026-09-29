@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { Actions } from "./quickstart.js";
 

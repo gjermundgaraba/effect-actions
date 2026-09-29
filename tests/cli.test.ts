@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { Cause, Effect, Exit, Schema, type Scope } from "effect";
-import { CliError, Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import { CliError, Command, Flag, GlobalFlag } from "effect/cli";
 import { NodeFileSystem } from "@effect/platform-node";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";

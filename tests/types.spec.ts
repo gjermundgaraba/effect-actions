@@ -1,8 +1,8 @@
-import { McpProtocol, McpSchema, Tool } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, Tool } from "effect/ai";
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
 import { Context, Effect, Layer, Schema, type Stdio } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
+import { HttpRouter, HttpServer } from "effect/http";
+import { HttpApiClient } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";

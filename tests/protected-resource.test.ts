@@ -1,6 +1,6 @@
 import { expect, it, onTestFinished } from "vite-plus/test";
 import { Layer } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import * as Authentication from "../src/Authentication.js";
 
 it("publishes standalone metadata and a bearer challenge", async () => {

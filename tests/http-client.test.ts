@@ -6,7 +6,7 @@ import {
   HttpClientRequest,
   HttpRouter,
   HttpServer,
-} from "effect/unstable/http";
+} from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";

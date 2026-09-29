@@ -1,8 +1,8 @@
 import { Effect } from "effect";
-import { Command } from "effect/unstable/cli";
-import { HttpClient } from "effect/unstable/http";
-import { HttpApi, HttpApiClient } from "effect/unstable/httpapi";
-import type { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { Command } from "effect/cli";
+import { HttpClient } from "effect/http";
+import { HttpApi, HttpApiClient } from "effect/http-api";
+import type { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import type * as Action from "./Action.js";
 import type * as ActionHttp from "./ActionHttp.js";
 import { command as makeCommand, type Options as CliOptions } from "./internal/cli.js";

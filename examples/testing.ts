@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import * as Testing from "../src/Testing.js";
 import * as TestingClient from "../src/TestingClient.js";
 import { Http, routes } from "./quickstart.js";

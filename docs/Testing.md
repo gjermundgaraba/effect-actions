@@ -34,7 +34,7 @@ Exported option/value types: `McpRequestOptions`, `McpRequestParams`, `McpReques
 
 ```ts
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import * as TestingClient from "@gjermundgaraba/effect-actions/TestingClient";
 import { Http, routes } from "./quickstart.js";

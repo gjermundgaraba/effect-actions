@@ -1,5 +1,5 @@
 import { Layer, Schema } from "effect";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "./Action.js";
 import { bindTools, type SurfaceOptions } from "./internal/tools.js";
 import {

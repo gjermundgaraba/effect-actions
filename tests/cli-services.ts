@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect";
 import { TestConsole } from "effect/testing";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 /** Every service `Command.runWith` needs, with no terminal input and no subprocesses. */
 export const cliServices = Layer.mergeAll(

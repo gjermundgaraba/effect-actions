@@ -120,7 +120,7 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - Handler compiles but returns an error not in `errors`: type error on the handler's error channel. Declare it on the action or the group.
 - `Expected 1 arguments, but got 2` at `implement`: the second options object is gone. Move `before` to the adapter that serves the group.
-- `Parameter 'failure' implicitly has an 'any' type` in a standalone policy constant: a `make` that reads the failure is typed only inline. Annotate the parameter as `HttpApiError.HttpApiSchemaError` (type import from `effect/unstable/httpapi`), or annotate the constant as `ActionGroup.SchemaErrorPolicy<typeof Invalid, typeof Internal>`.
+- `Parameter 'failure' implicitly has an 'any' type` in a standalone policy constant: a `make` that reads the failure is typed only inline. Annotate the parameter as `HttpApiError.HttpApiSchemaError` (type import from `effect/http-api`), or annotate the constant as `ActionGroup.SchemaErrorPolicy<typeof Invalid, typeof Internal>`.
 - `Missing handlers for group "<group>": <actions>` thrown at `implement`, or failing the layer build: the handler record has no own-property function for those actions. Add them to the record itself, not to a prototype.
 - A service is resolved once and shared across requests when it should be per request: it was yielded in the builder. Move the `yield*` into the handler.
 - `Duplicate contract group` thrown by `contracts`: two groups share a name, so their keys would collide. Rename one.

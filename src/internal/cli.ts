@@ -1,5 +1,5 @@
 import { Console, Effect, Option, Schema } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import type * as Action from "../Action.js";
 
 /** Options shared by the local and HTTP command projections. */

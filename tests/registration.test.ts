@@ -1,8 +1,8 @@
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
-import { McpSchema } from "effect/unstable/ai";
-import { OpenApi } from "effect/unstable/httpapi";
+import { McpSchema } from "effect/ai";
+import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionHttp from "../src/ActionHttp.js";

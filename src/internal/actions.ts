@@ -1,5 +1,5 @@
 import type * as Action from "../Action.js";
-import type { HttpApiError } from "effect/unstable/httpapi";
+import type { HttpApiError } from "effect/http-api";
 
 /** One side of a schema-error policy: the error it answers with, and how to make it. */
 export interface SchemaErrorAnswer<E extends Action.Codec> {

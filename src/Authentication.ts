@@ -1,11 +1,6 @@
 import { type Context, Effect } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
-import {
-  HttpEffect,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 /**
  * Authenticate each request and provide its identity to the downstream handler.

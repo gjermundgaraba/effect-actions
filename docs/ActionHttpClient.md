@@ -29,7 +29,7 @@ whose input may be empty (no `input`, or only optional fields) may be called wit
 ## Canonical
 
 ```ts
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import { Http, UserNotFound } from "./contracts.js";
 

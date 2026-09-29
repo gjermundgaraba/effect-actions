@@ -5,12 +5,12 @@ Install, version pins, entry points, and the boundaries of the package.
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.117
+pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
 ```
 
 | Need                           | Add                                                   |
 | ------------------------------ | ----------------------------------------------------- |
-| Node HTTP server or stdio host | `@effect/platform-node@4.0.0-rc.117`                  |
+| Node HTTP server or stdio host | `@effect/platform-node@4.0.0-rc.118`                  |
 | `TestingClient.withMcpClient`  | `@modelcontextprotocol/client@^2.0.0` (optional peer) |
 
 Node `^22.12.0 || ^24.0.0 || >=26.0.0`. ESM only.
@@ -35,12 +35,12 @@ import * as TestingClient from "@gjermundgaraba/effect-actions/TestingClient";
 ```
 
 Every module imports from the `effect` package only, with two exceptions worth knowing when
-bundling: `ActionMcp` and `ActionToolkit` are the only modules that import `effect/unstable/ai`,
+bundling: `ActionMcp` and `ActionToolkit` are the only modules that import `effect/ai`,
 and `TestingClient` is the only module that imports the optional `@modelcontextprotocol/client`
 peer. Because there is no package root, importing a contract module never pulls in an MCP
 server or the peer.
 
-Companion Effect modules you will import alongside: `effect/unstable/httpapi` (`HttpApiClient`, `OpenApi`, `HttpApiSwagger`, `HttpApiScalar`), `effect/unstable/http` (`HttpRouter`, `HttpServerResponse`, `FetchHttpClient`, `HttpClientError`), `effect/unstable/cli` (`Command`, `Flag`, `Argument`).
+Companion Effect modules you will import alongside: `effect/http-api` (`HttpApiClient`, `OpenApi`, `HttpApiSwagger`, `HttpApiScalar`), `effect/http` (`HttpRouter`, `HttpServerResponse`, `FetchHttpClient`, `HttpClientError`), `effect/cli` (`Command`, `Flag`, `Argument`).
 
 ## Rules
 
@@ -60,5 +60,6 @@ What the package does, and nothing else:
 ## Failure modes
 
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath.
-- Type errors inside `effect/unstable/*` after install: `effect` version drift. Install one `effect` release candidate within the peer range for every package.
+- Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` release candidate within the peer range for every package.
+- `Cannot find module 'effect/http'` (or `effect/http-api`, `effect/cli`, `effect/ai`): `effect` is older than `4.0.0-rc.118`, which moved these modules out of `effect/unstable/*`. Install a release candidate within the peer range, and import from the new paths.
 - `@modelcontextprotocol/client` resolution errors in a server build: something imported `TestingClient`. Only tests should.
