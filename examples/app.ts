@@ -71,7 +71,7 @@ const documentation = Layer.mergeAll(
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
 // An MCP endpoint is one route, so its middleware, authentication included,
-// covers all of its tools; handlers still authorize each tool themselves. Tools
+// covers all of its tools; its `before` hook still authorizes each tool. Tools
 // that need no credentials at all therefore get their own endpoint, which
 // compiles because this implementation requires nothing per request.
 const publicMcp = ActionMcp.layerHttp([PublicApp], {

@@ -65,7 +65,8 @@ With a model: pass `binding.toolkit` as `toolkit` to `LanguageModel.generateText
 
 - Tool missing from the toolkit: the action has `mcp: false`. The Toolkit selects by MCP enablement.
 - Type error on `before`'s error channel: it fails with an error this binding does not declare. Add its schema to `errors`.
-- `Duplicate MCP tool: <name>` thrown at `make`: two apps expose the same tool name. Rename with `mcp.name`.
-- `Service not found` for a request tag at call time: it was provided only to the stream, or only to the layer. Provide it around the whole call effect.
+- `Duplicate MCP tool: <name>` thrown at `make`: two selected actions expose the same tool name. Rename with `mcp.name`.
+- `Service not found` for a request tag at call time: it was provided only to the stream. Provide it around the whole call effect. Providing it to `binding.layer` does not fail: the startup value is captured and served to every call (see [guarantees.md](guarantees.md)).
+- A returned failure that is an `AiError` with reason `ToolParameterValidationError`, not a declared error: the arguments did not decode. The hook and the handler did not run.
 - Type error on `binding.layer` requirements: a build-time service is missing. Provide its Layer before `binding.layer`.
 - Result is `{ value: ... }` when a plain value was expected: you are reading an MCP response, not a Toolkit result. The Toolkit never wraps.

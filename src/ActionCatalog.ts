@@ -24,9 +24,12 @@ export interface Catalog {
   readonly actions: ReadonlyArray<Entry>;
 }
 
-/** Describe the JSON wire form; decoding on the server remains authoritative. */
+/**
+ * Describe the JSON wire form closed, as the OpenAPI document does; decoding on the
+ * server remains authoritative.
+ */
 const describe = (codec: Action.Codec): JsonSchema.JsonSchema => {
-  const { schema, definitions } = Schema.toJsonSchemaDocument(codec);
+  const { schema, definitions } = Schema.toJsonSchemaDocument(codec, { onExcessProperty: "error" });
 
   // Each root owns its definitions, so equal identifiers never overwrite another schema.
   return {

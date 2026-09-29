@@ -36,11 +36,11 @@ Defaults without a schema-error policy. HTTP is a native `HttpApi`; MCP is a nat
 - `ActionHttp` sets no headers of its own. The host owns cache and challenge headers; `Authentication.middleware` marks its responses `cache-control: no-store`. Hook refusals and handler failures are ordinary declared error responses.
 - Routes are `POST <apiPath>/<group>/<action>`. Operation IDs are `<group>.<action>`. Effect generates OpenAPI component names and references.
 - `ActionHttp.make`'s `errors` are declared on every endpoint so clients decode the surface's own failures (401, 403, 429, 503). They are produced by middleware or by the binding's hook, never by a handler. `ActionMcp` and `ActionToolkit` declare their own `errors` the same way, joined into every tool's failure schema. Two errors may share an HTTP status; their `_tag`s must differ, because the client decodes a status by trying the schemas declared for it.
-- Input is closed. Both transports publish `additionalProperties: false` for input and refuse undeclared fields: over HTTP an extra field is an input failure (an empty 400, or the group's `schemaError` `invalid` answer); an MCP tool (`Tool.Strict`) returns an invalid-arguments result. Typed HTTP clients encode input from `Http.api` and fail with `SchemaError` on an undeclared field, before sending.
+- Input is closed. Both transports publish `additionalProperties: false` for input (so does the catalog) and refuse undeclared fields: over HTTP an extra field is an input failure (an empty 400, or the group's `schemaError` `invalid` answer); an MCP tool (`Tool.Strict`) returns an invalid-arguments result. Typed HTTP clients encode input from `Http.api` and fail with `SchemaError` on an undeclared field, before sending. The native Toolkit, `ActionCli` and `ActionCliClient` decode input locally with default options, which drop an undeclared field instead of refusing it.
 
 ## Namespaces
 
-- Group names are unique within one `ActionHttp.make`. Action names are unique within a group. MCP tool names are unique within a group and within each Toolkit or MCP projection that serves it.
+- Group names are unique within one `ActionHttp.make`. Action names are unique within a group. MCP tool names are unique within each Toolkit or MCP projection that serves them; a group does not check them.
 - Adapters validate only the namespace they serve. HTTP does not check tool names; MCP does not check route names.
 - Each adapter builds only what it serves. HTTP serves every action of a group it binds, so `Http.layer` builds every implementation it is given (except a group without actions); a group with no tools is not built by MCP or Toolkit.
 

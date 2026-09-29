@@ -26,7 +26,12 @@ describe("offline action catalog", () => {
       group: "numbers",
       name: "double",
       mcp: { name: "double_number", idempotent: true, openWorld: false },
-      input: { type: "object", properties: { n: { type: "string" } } },
+      // Closed, as the OpenAPI document describes the same input.
+      input: {
+        type: "object",
+        properties: { n: { type: "string" } },
+        additionalProperties: false,
+      },
       success: { type: "string" },
       errors: [{ type: "string" }],
       httpSchemaErrors: [],

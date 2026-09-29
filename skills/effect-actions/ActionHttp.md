@@ -98,10 +98,10 @@ export const greeting = Effect.gen(function* () {
 - `ActionHttp` sets no response headers of its own. The host owns cache policy; `Authentication.middleware` marks its responses `cache-control: no-store`.
 - A hook refusal and a handler error are plain declared errors: a JSON body and a status, no other headers. Challenge headers such as `WWW-Authenticate` belong to the admission middleware that runs before the router reaches these routes (see [Authentication.md](Authentication.md)), which sets them on its own response.
 - Request-time handler services are `HttpRouter.Request.From<"Requires", R>`. Supply them with router middleware (`Authentication.middleware`, `HttpRouter.middleware`), `HttpRouter.provideRequest`, or the request context. Build-time services are ordinary layer requirements.
-- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.
+- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `Http.api.addHttpApi(other)` to combine with other APIs, `HttpApiClient.make`.
 - `Http.openApi(path?)` is `OpenApi.fromApi(Http.api)` as one `GET` route, `<apiPath>/openapi.json` unless a path is given. It documents every bound group, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - Client calls always take `{ payload }`. No-input actions take `{ payload: {} }`. Pass `null` or `undefined` only when the codec accepts it. There is no flat client.
-- Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures, and native `HttpClientError`.
+- Client effects fail with the declared errors, the group's policy errors, the binding's `errors`, `SchemaError` for local codec failures (including an undeclared input field, before sending), and native `HttpClientError`.
 - Add authentication headers with the native `transformClient` option. Use `HttpApiClient.makeWith` for custom error or service channels. Native per-call response modes are available.
 - Wire format without a policy: input failure is an empty 400, success is the encoded body, a declared error is its JSON encoding with its `httpApiStatus`, an encoding failure is an empty 400, a defect is an empty 500. Full table in [guarantees.md](guarantees.md).
 - Each handler runs in a span named `<group>.<action>`, a child of the request span, attributed with `action.group`, `action.name` and `action.access`; its log lines carry the same annotations. The hook, decoding and encoding are outside it, in the request span.
@@ -114,8 +114,8 @@ export const greeting = Effect.gen(function* () {
 - `Implementation of group "x" is not served by this adapter`: `Http.layer` received an implementation whose group was not passed to `ActionHttp.make`. Implement the exact shared group object bound by `make`, or add a genuinely new group to the binding. Matching names and schemas do not establish identity.
 - `Duplicate implementation group: <name>`: a single `Http.layer` call received more than one implementation of the same group. Pass one implementation per group.
 - Client method missing for an action: its group is not bound by `make`.
-- Empty 400 on a valid-looking request: input did not decode, or it carries a field the action does not declare. Set a `schemaError` policy on the group to get a typed body, and check `Content-Type: application/json`.
-- 415: wrong or missing content type.
+- Empty 400 on a valid-looking request: input did not decode, or it carries a field the action does not declare. Set a `schemaError` policy on the group to get a typed body.
+- 415 `Unsupported content-type: <type>`: a content type other than `application/json`. A missing `Content-Type` is read as JSON.
 - `HttpClientError: Decode error (401 POST ...)` from a typed client: the surface answered with a status no endpoint declares. Add that error schema to `ActionHttp.make`'s `errors`.
 - A surface error decodes as the wrong type: two schemas that share a status also share a `_tag`. Give them distinct tags.
 - The hook's services appear as unsatisfied `HttpRouter.Request.From<"Requires", ...>`: the hook yields an identity tag and this `Http.layer` call has no middleware providing it. Wrap that call with the middleware's `.layer`.

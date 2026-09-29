@@ -120,10 +120,6 @@ export function make(
     "action",
     actions.map((action) => action.name),
   );
-  assertDistinct(
-    "MCP tool",
-    actions.flatMap((action) => (action.mcp === false ? [] : [action.mcp.name])),
-  );
 
   const group: Any = {
     name,

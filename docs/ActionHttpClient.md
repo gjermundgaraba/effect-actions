@@ -65,7 +65,7 @@ Reacting to a response every call may meet (a proxy's 401), or a token read per 
 ## Rules
 
 - A call rejects with exactly what the native client's Effect fails with. Declared errors arrive as their decoded values: the action's own (its group's `errors` included), its group's schema-error policy's, and the binding's surface `errors`. Classify them with `instanceof`, their `_tag`, or `Schema.is`.
-- Anything the contract does not account for rejects with Effect's own error. `HttpClientError`: the server could not be reached (`response` is `undefined`), or answered with a status no schema declares, or with a body that could not be read. `SchemaError`: the input did not encode, or the success body did not decode.
+- Anything the contract does not account for rejects with Effect's own error. `HttpClientError`: the server could not be reached (`response` is `undefined`), or answered with a status no schema declares, or with a body that could not be read. `SchemaError`: the input did not encode (including a field the action does not declare; nothing is sent), or the success body did not decode.
 - The library adds no error type of its own and interprets no status. Which failures mean "signed out" or "try again" is the caller's decision.
 - Nothing is retried. A rejected write may or may not have happened; only a declared error says what the server did.
 - Every action of a bound group has a method. A group without actions has no namespace.
@@ -74,7 +74,7 @@ Reacting to a response every call may meet (a proxy's 401), or a token read per 
 
 ## Failure modes
 
-- Rejects with `HttpClientError` whose `reason._tag` is `StatusCodeError` for a 401 or 403: the surface answered with an error the binding does not declare. Add it to `ActionHttp.make`'s `errors`, and have the middleware encode it.
+- Rejects with `HttpClientError` whose `reason._tag` is `DecodeError` (`Decode error (401 POST ...)`) for a 401 or 403: the surface answered with an error the binding does not declare. Add it to `ActionHttp.make`'s `errors`, and have the middleware encode it.
 - Rejects with `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: `baseUrl` is omitted, and there is no page to resolve relative routes against. Set `baseUrl`.
 - A stubbed global `fetch` is not used: `fetch` was passed as an option, which takes precedence.
 - Property does not exist on the client: the action's group is not bound in this `Http`.

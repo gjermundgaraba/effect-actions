@@ -1,8 +1,9 @@
 # effect-actions reference
 
-Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Every page is a
+Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Every module page is a
 card with the same sections: **API** (inventory and options), **Canonical** (the one right way to write
 it), **Rules** (must and never), **Failure modes** (what you see when it is wrong, and the fix).
+[setup.md](setup.md), [guarantees.md](guarantees.md), and [CONTEXT.md](CONTEXT.md) are cross-cutting pages with their own structure.
 Read the card for a module before writing code that uses it. Exported TypeScript declarations are the exact signature reference. Vocabulary is defined in
 [CONTEXT.md](CONTEXT.md); the pages use those terms exactly.
 
@@ -83,9 +84,8 @@ Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/
 
 - `quickstart.ts`, `quickstart-client.ts`: the minimal program and its typed client.
 - `promise-client.ts`: the Promise client, with a declared error and an unreachable server.
-- `contracts.ts`, `handlers.ts`, `app.ts`, `server.ts`: an authenticated application with three groups, per-group middleware, two MCP endpoints, OpenAPI and Swagger.
+- `contracts.ts`, `auth.ts`, `users.ts`, `handlers.ts`, `app.ts`, `server.ts`, `client.ts`: an authenticated application with three groups, per-group middleware, two MCP endpoints, OpenAPI and Swagger.
 - `toolkit.ts`, `catalog.ts`, `cli.ts`, `cli-client.ts`, `mcp-stdio.ts`: one file per other projection.
-
 - `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
 - `toolkit-authorized.ts`: native Toolkit invocation with authorization and correctly scoped identity.
 - `testing.ts`: in-memory HTTP and MCP calls with cleanup.

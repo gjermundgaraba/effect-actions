@@ -16,7 +16,7 @@ Import `@gjermundgaraba/effect-actions/Testing`; official-client helpers are in 
 | `TestingClient.withMcpClient(options, run)`  | Connect the official client, run an asynchronous callback, then close it.                             |
 
 `httpClient` takes native client options; `baseUrl` defaults to `http://localhost`.
-Its exported `Handler` type is a web request to response Promise.
+Its exported `Handler` type is a web request to response Promise, not an action handler.
 
 | MCP option                            | Meaning                                                     |
 | ------------------------------------- | ----------------------------------------------------------- |
@@ -82,13 +82,15 @@ try {
 - `mcpCall` throws when the answer is not a tool result: a status other than 200 (an authentication refusal), or a JSON-RPC error (an unknown tool). Use `mcpRequest` to assert on those responses.
 - `withMcpClient` pins the official client to MCP 2026-07-28, the only revision `ActionMcp` serves, and closes the transport in a `finally` block.
 - Add `Authorization` through `headers` in the MCP helpers, or through `transformClient` in `httpClient` options.
-- Direct handler tests can use `app.build` under `Effect.scoped`, but they bypass decoding, encoding, and middleware. Keep at least one adapter-level test per transport.
+- Direct handler tests can use `app.build` under `Effect.scoped`, but they bypass decoding, encoding, middleware, and the `before` hook. Keep at least one adapter-level test per transport.
 
 ## Failure modes
 
 - `@modelcontextprotocol/client` not found: only `TestingClient` needs it. Install the peer in devDependencies, or use `Testing.mcpRequest` instead.
-- `withMcpClient` rejects its options with `versionNegotiation`: the revision is fixed at 2026-07-28. Delete the option.
+- Type error on `versionNegotiation` in `withMcpClient` options: the revision is fixed at 2026-07-28. Delete the option.
 - `MCP tools/call "<name>" answered 401`: the call reached authentication without a credential. Pass `headers: { authorization: "Bearer ..." }`.
+- `MCP tools/call "<name>" failed with <code>: <message>`: a JSON-RPC error, such as an unknown tool. Assert on it with `mcpRequest`.
+- `MCP tools/call "<name>" had no reply` or `returned no structured content`: the response was not a tool result. Inspect it with `mcpRequest`.
 - Handler leaks between tests: `web.dispose()` was not called. Register it with the test runner's cleanup hook.
 - 404 from `httpClient`: the requested route was not mounted, or the path/base URL is wrong. Include `Http.layer([app])` in the served routes.
 - Missing platform-service requirements when constructing the web handler: provide `HttpServer.layerServices` to the routes before `toWebHandler`.

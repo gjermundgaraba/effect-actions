@@ -97,15 +97,6 @@ describe("contracts", () => {
 
   it("rejects duplicate names at definition time", () => {
     expect(() => ActionGroup.make({ name: "users" }, GetUser, GetUser)).toThrow("Duplicate action");
-
-    const Alias = Action.make("alias", {
-      description: "Alias collision",
-      access: "write",
-      success: Schema.String,
-      mcp: { name: "get_user" },
-    });
-
-    expect(() => ActionGroup.make({ name: "users" }, GetUser, Alias)).toThrow("Duplicate MCP");
     expect(() => ActionGroup.make({ name: "bad name" }, GetUser)).toThrow(
       "Invalid action group name",
     );

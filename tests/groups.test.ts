@@ -466,6 +466,29 @@ it("checks each namespace only where it is served", () => {
       mcp,
     ),
   ).not.toThrow();
+
+  // A group defines and serves over HTTP with clashing tool names; only a tool binding refuses them.
+  const alias = (action: string) =>
+    Action.make(action, {
+      description: "",
+      access: "write",
+      success: Schema.String,
+      mcp: { name: "same" },
+    });
+
+  const clashing = ActionGroup.make({ name: "clashing" }, alias("first"), alias("second"));
+  expect(() => ActionHttp.make({ apiPath: "/api" }, clashing)).not.toThrow();
+  expect(() =>
+    ActionMcp.layerHttp(
+      [
+        clashing.implement({
+          first: () => Effect.succeed("a"),
+          second: () => Effect.succeed("b"),
+        }),
+      ],
+      mcp,
+    ),
+  ).toThrow("Duplicate MCP tool: same");
 });
 
 it("projects every group's contracts into one map keyed by group and action", () => {

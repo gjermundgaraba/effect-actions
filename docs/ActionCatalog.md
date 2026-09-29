@@ -38,7 +38,7 @@ Console.log(
 - Takes groups, not implementations. Nothing is acquired or started.
 - Group names must be unique. Entries preserve group declaration order, then action declaration order.
 - `id` is the stable `<group>.<action>` identity, equal to the HTTP operation ID.
-- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument`, which lowers to the JSON codec first. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are action values, not MCP's `{ value }` envelope or deployment URLs.
+- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument`, which lowers to the JSON codec first. Objects are closed (`additionalProperties: false`), as in the OpenAPI document. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are action values, not MCP's `{ value }` envelope or deployment URLs.
 - JSON Schema does not preserve arbitrary Effect transformations or filters. Checks on the decoded side of a transformation, such as `FiniteFromString.check(isGreaterThan(0))`, are not described. The server's decode remains authoritative.
 - Each schema root includes its own `$schema` and, where needed, `$defs`. Equal identifiers across entries or fields cannot replace each other; recursive references resolve locally.
 - The catalog contains JSON Schema only. Use Effect's `SchemaRepresentation` directly when native schema persistence or revival is needed.

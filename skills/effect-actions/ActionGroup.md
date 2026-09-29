@@ -31,7 +31,7 @@ builder's requirements.
 import { Effect, Schema } from "effect";
 import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import { CurrentActor } from "./auth.js";
-import { GetUser, RenameUser, WhoAmI } from "./contracts.js";
+import { Double, GetUser, RenameUser, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
 class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
@@ -57,6 +57,8 @@ const schemaError = {
     make: () => new InternalError({ message: "The request could not be completed." }),
   },
 };
+
+export const MathActions = ActionGroup.make({ name: "math" }, Double);
 
 export const UserActions = ActionGroup.make(
   { name: "users", schemaError },
@@ -91,10 +93,10 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 
 ## Rules
 
-- `name` matches `[A-Za-z0-9_-]+`, cannot be `then`, and must be unique within one `ActionHttp.make`. Action names must be unique within the group. MCP tool names must be unique within the group and within each Toolkit or MCP projection that serves it. Duplicates fail at `make`.
+- `name` matches `[A-Za-z0-9_-]+` and cannot be `then`. Action names are unique within the group. Group and MCP tool names are checked where they are served; see [guarantees.md](guarantees.md#namespaces).
 - Group `errors` are appended to each action's own `errors`, so every handler of the group may fail with them. A failure that only the surface produces belongs on the adapter instead (`ActionHttp.make`'s `errors`, `ActionMcp`'s and `ActionToolkit`'s `errors`), not here.
 - `implement` takes a complete plain record or an Effect producing one. Every action must have a handler; missing keys are compile errors. A handler is an own-property function of the record: an inherited one, such as a class instance's method, does not count. A record that still lacks one at runtime (plain JavaScript, a cast: a missing key, `undefined`, any other non-function, an inherited method) throws at `implement`; a builder's record fails the adapter layer's build. Nothing is served with a handler missing. Handlers are called without a receiver. Additional keys are not dispatched. It takes nothing else.
-- The builder Effect runs once per adapter layer that serves the implementation, in that layer's scope. An implementation served by HTTP and MCP is built twice. Acquire shared state in a Layer you provide to the adapters, not in the builder.
+- The builder Effect runs once per adapter layer that serves the implementation, in that layer's scope, and once per invocation under `ActionCli`. An implementation served by HTTP and MCP is built twice. Acquire shared state in a Layer you provide to the adapters, not in the builder.
 - Services yielded in the builder are build-time requirements (`RX`). Services yielded in a handler are request-time requirements (`R` of the handler). Adapters keep these separate in their types. Use distinct tags for each kind; never provide a request-identity tag at startup (see [guarantees.md](guarantees.md)).
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Each `implement` call is a separate binding.
 - `build` exists for direct handler tests under `Effect.scoped`. It bypasses transport validation and the hook, and is not a substitute for adapter tests. There is no public handler service or Layer.
@@ -116,7 +118,7 @@ const renames: "renameUser" = contracts["users.renameUser"].name;
 
 ## Failure modes
 
-- Throws at `make`: duplicate action name, duplicate MCP tool name, invalid group name.
+- Throws at `make`: `Duplicate action: <name>` or `Invalid action group name: <name>`.
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - Handler compiles but returns an error not in `errors`: type error on the handler's error channel. Declare it on the action or the group.
 - `Expected 1 arguments, but got 2` at `implement`: the second options object is gone. Move `before` to the adapter that serves the group.
