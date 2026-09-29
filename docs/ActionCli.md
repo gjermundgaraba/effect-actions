@@ -28,7 +28,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 Exported types: `Options<Actions>` of `make` and `CommandOptions<typeof Action>` of `command`, the same locally and over HTTP. A command over HTTP calls through the host's `HttpClient`, which sets where it sends and any credentials.
 
 Flags come from the action's input. A struct or class input gets one flag per top-level
-field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`), parsing the field's encoded JSON
+field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`, `_id` is `--id`), parsing the field's encoded JSON
 value:
 
 | Encoded field                            | Flag                                                      |
@@ -39,15 +39,16 @@ value:
 | anything else, numbers included          | `--tags <value>`: JSON the field accepts, or the text     |
 
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
-`--input <value>` flag carrying the whole encoded input. An action without input gets no flags.
+`--input <value>` flag carrying the whole encoded input, required unless `{}` is a valid input,
+as for a record, which it then defaults to. An action without input gets no flags.
 A value flag parses its text as JSON when the field's encoding accepts the value
 (`--count 2`, `--tags '["x"]'`), or else keeps the text (`--limit auto`, `--scale Infinity`
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
 Choices may be nested unions: `Schema.Union([Schema.Literals(["a", "b"]), Schema.Literal("c")])`
 is one choice of three.
-A field's description is its flag's help text, whatever its encoding, except a transformed
-field that `Schema.encodeKeys` renames: its flag goes by the encoded name, where encoding has
-dropped the description, as JSON Schema does for every transformed field. An optional field's
+A field's description is its flag's help text, whatever its encoding, except in a struct that
+`Schema.encodeKeys` renames: its flags go by the encoded names and are described by the encoded
+fields, so a transformed field there has no help text, as JSON Schema drops it. An optional field's
 flag is optional and takes its value without the `null` that `Schema.optional` encodes
 (`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
 An optional field whose own schema encodes `null` takes it too: `--note null` is `Option.none()`
@@ -162,6 +163,6 @@ Credentials go on the same client: `HttpClient.mapRequest(HttpClientRequest.bear
 - `HttpClient` missing at runtime for a command over HTTP: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the host's client prepends no URL, and routes are relative outside `Testing.layer`. Connection refused: the prepended URL is wrong. 401 `Unauthenticated`: add credentials to the host's client; the command adds no headers of its own.
 - `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Give one a `name` in `commands`, or aggregate them under separate `make` commands.
 - `Unknown commands: <keys>` thrown by `make`: a `commands` key names no action of it. Use the action's own name, not its kebab-case command name.
-- `Action "x" is implemented twice here` thrown by `command`: more than one implementation passed implements the selected action. Pass one. Other actions' names are not checked.
+- `Action "x" is implemented twice here` thrown by `command` or `make`: more than one implementation passed implements the selected action. Pass one. Other actions' names are not checked.
 - Handler cannot find a service: provide its Layer to the runtime (`Effect.provide`) before `runMain`. The command does not supply services.
 - A command requires a request-identity tag no handler yields: the implementation's `before` hook yields it. Provide a trusted identity around the invocation; do not remove the authorization hook just to satisfy the service requirement.

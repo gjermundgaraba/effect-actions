@@ -11,7 +11,7 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 | --------------------------------------- | ----------------------------------------------------------------------------------- |
 | `layer(routes)`                         | A `Layer<HttpClient>` answering requests with `routes` in memory.                   |
 | `mcpClient(actions, options?)`          | An Effect of a client calling each action's tool, like `ActionHttp.client`.         |
-| `mcpRequest(method, params?, options?)` | Any one MCP request on the `HttpClient`, answering the response as sent.            |
+| `mcpRequest(method, params?, options?)` | One request an `ActionMcp` endpoint serves, answering the response as sent.         |
 | `McpCallError`                          | What a client method fails with for an answer it cannot decode; `message` holds it. |
 
 | Option                         | Meaning                                                                                                                        |

@@ -346,12 +346,13 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
   expect(
     failure(await runExit(ActionCli.command(app, Shape), ["--kind", "square", "--side", "2"])),
   ).toBeInstanceOf(CliError.ShowHelp);
-  // Omitted, the input is `{}`, which the schema rejects.
+  // Omitted, the flag is missing, since `{}` is no shape; a record takes `{}`.
   expect(failure(await runExit(ActionCli.command(app, Shape), []))).toBeInstanceOf(
-    Schema.SchemaError,
+    CliError.ShowHelp,
   );
+  await run(ActionCli.command(app, Scores), []);
 
-  expect(values).toEqual(["text", { kind: "square", side: 2 }, { a: 1, b: 2 }, "plain"]);
+  expect(values).toEqual(["text", { kind: "square", side: 2 }, { a: 1, b: 2 }, "plain", {}]);
 });
 
 it("keeps custom renderer JSON output and validates success before rendering", async () => {
@@ -461,6 +462,34 @@ it("takes flags from a class input's fields, described by their schemas", async 
   const help = (await lines(command, ["--help"])).join("\n");
   expect(help).toMatch(/--user-id string\s+Whose record to read/);
   expect(help).toMatch(/--attempts value\s+How many times to try/);
+});
+
+it("names a flag without the field's leading underscore, and describes swapped fields by their own schemas", async () => {
+  const Tag = Action.make("tag", {
+    description: "Tags a record",
+    access: "write",
+    input: Schema.Struct({
+      _id: Schema.String,
+      a: Schema.String.annotate({ description: "The first" }),
+      b: Schema.String.annotate({ description: "The second" }),
+    }).pipe(Schema.encodeKeys({ a: "b", b: "a" })),
+    success: Schema.String,
+  });
+
+  const command = ActionCli.command(
+    Action.implement(Tag, (input) => Effect.succeed(`${input._id} ${input.a} ${input.b}`)),
+    Tag,
+  );
+
+  // `--b` fills field `a`, its encoded name, and is described as `a`.
+  expect(await lines(command, ["--id", "r1", "--b", "first", "--a", "second"])).toEqual([
+    '"r1 first second"',
+  ]);
+
+  const help = (await lines(command, ["--help"])).join("\n");
+  expect(help).toMatch(/--id string/);
+  expect(help).toMatch(/--b string\s+The first/);
+  expect(help).toMatch(/--a string\s+The second/);
 });
 
 it("takes an optional field's plain value, and leaves it out when its flag is omitted", async () => {

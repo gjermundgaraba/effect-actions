@@ -127,6 +127,19 @@ const remote = (
 // A binding declares its native `api`; an implementation never does.
 const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasProperty(value, "api");
 
+/** `action`'s command: called over HTTP from a binding, or run by its one implementation. */
+const project = (
+  target: AnyHttp | Served,
+  action: Action.Any,
+  options: CommandOptions<Action.Any> | undefined,
+): Command.Command<string, never, {}, unknown, unknown> => {
+  if (isHttp(target)) return remote(target, action, options);
+
+  const app = select(toList(target), action);
+
+  return makeCommand(action, (input) => local(app, action, input), options);
+};
+
 /**
  * Project one action into a native Effect CLI command, named after it in kebab case with
  * one flag per field of its input (`--user-id`), or `--input` taking the whole input as
@@ -150,11 +163,7 @@ export function command(
   action: Action.Any,
   options?: CommandOptions<Action.Any>,
 ): Command.Command<string, never, {}, unknown, unknown> {
-  if (isHttp(target)) return remote(target, action, options);
-
-  const app = select(toList(target), action);
-
-  return makeCommand(action, (input) => local(app, action, input), options);
+  return project(target, action, options);
 }
 
 /**
@@ -177,32 +186,18 @@ export function make(
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const commands = options.commands ?? {};
 
-  // Every action, with how its subcommand runs: called over HTTP, or run by its own
-  // implementation.
-  const projected: ReadonlyArray<{
-    readonly action: Action.Any;
-    readonly build: (
-      own: CommandOptions<Action.Any> | undefined,
-    ) => Command.Command<string, never, {}, unknown, unknown>;
-  }> = isHttp(target)
-    ? target.actions.map((action) => ({ action, build: (own) => remote(target, action, own) }))
-    : toList(target).flatMap((app) =>
-        app.actions.map((action) => ({
-          action,
-          build: (own) => makeCommand(action, (input) => local(app, action, input), own),
-        })),
-      );
+  const actions = isHttp(target) ? target.actions : toList(target).flatMap((app) => app.actions);
 
   // A key no action names is refused, so a stale option cannot outlive its action.
-  const names = projected.map(({ action }) => action.name);
+  const names = actions.map((action) => action.name);
   const unknown = Object.keys(commands).filter((key) => !names.includes(key));
 
   if (unknown.length > 0) throw new Error(`Unknown commands: ${unknown.join(", ")}`);
 
-  const subcommands = projected.map(({ action, build }) => {
+  const subcommands = actions.map((action) => {
     const own = Object.hasOwn(commands, action.name) ? commands[action.name] : undefined;
 
-    return { action, name: own?.name ?? kebab(action.name), command: build(own) };
+    return { action, name: own?.name ?? kebab(action.name), command: project(target, action, own) };
   });
 
   // An action served twice has one name twice, so this refuses it too.

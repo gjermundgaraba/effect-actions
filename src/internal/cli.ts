@@ -35,12 +35,16 @@ export interface Options<A extends Action.Any> {
   readonly positional?: ReadonlyArray<Field<A>>;
 }
 
-/** `getUser` as a command or flag name: `get-user`; `getHTTPUser`: `get-http-user`. */
+/**
+ * `getUser` as a command or flag name: `get-user`; `getHTTPUser`: `get-http-user`; `_id`:
+ * `id`, since a flag already starts with its dashes.
+ */
 export const kebab = (name: string): string =>
   name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/_/g, "-")
+    .replace(/^-+|-+$/g, "")
     .toLowerCase();
 
 /**
@@ -182,6 +186,10 @@ const fieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> =
   );
 };
 
+/** A struct, or a class's, transformed as a whole, as `Schema.encodeKeys` transforms one. */
+const transformedWhole = (ast: SchemaAST.AST): boolean =>
+  (SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast)?.encoding !== undefined;
+
 /**
  * One flag or argument per top-level field of a struct input, named after the field in
  * kebab case, parsed as its encoded value and described by its declared schema: an
@@ -195,9 +203,10 @@ const fieldParams = (
 ): ReadonlyArray<FieldParam> => {
   // Encoded without the JSON codec, a field still tells `undefined` from `null`, under its
   // encoded name. Declared, it keeps the description encoding drops from a transformed
-  // field, such as `Schema.FiniteFromString`, under its declared name.
+  // field, such as `Schema.FiniteFromString`, under its declared name, unless the struct is
+  // transformed as a whole, as `Schema.encodeKeys` does: its names may then be swapped.
   const plain = fieldsOf(SchemaAST.toEncoded(input));
-  const described = fieldsOf(SchemaAST.toType(input));
+  const described = fieldsOf(transformedWhole(input) ? encoded : SchemaAST.toType(input));
 
   return encoded.propertySignatures.map((property) => {
     const field = String(property.name);
@@ -248,12 +257,15 @@ const positionalOrder = (
 };
 
 /** The whole encoded input as JSON, or text, for an input that is not a struct of fields. */
-const inputFlag = (encoded: SchemaAST.AST) =>
-  Flag.String("input").pipe(
+/** `--input`, required unless `{}` is itself a valid input, such as a record's. */
+const inputFlag = (encoded: SchemaAST.AST, optional: boolean) => {
+  const flag = Flag.String("input").pipe(
     Flag.withSchema(jsonOrText(encoded)),
-    Flag.optional,
     Flag.withDescription("Whole action input as JSON"),
   );
+
+  return optional ? Flag.optional(flag) : Flag.map(flag, Option.some);
+};
 
 const output = <A extends Action.Any, E, R>(
   action: A,
@@ -317,10 +329,10 @@ const inputConfig = <A extends Action.Any>(
   }
 
   return {
-    flags: { input: inputFlag(encoded) },
+    flags: { input: inputFlag(encoded, Option.isSome(Schema.decodeUnknownOption(codec)({}))) },
     positional: [],
-    // `--input` left off: `{}`, the empty value of a record input, and otherwise the
-    // schema's own error. A fresh one each run, so invocations never share a value.
+    // `--input` left off, where `{}` is valid: `{}`, a fresh one each run, so invocations
+    // never share a value.
     decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
   };
 };
@@ -354,7 +366,7 @@ export const command = <A extends Action.Any, E, R>(
   const args = positional.map(({ param }) => param);
 
   // Every field the flags and the arguments parsed, by name.
-  const fieldsOf = (input: Parsed, values: ReadonlyArray<Option.Option<unknown>>) => ({
+  const parsedFields = (input: Parsed, values: ReadonlyArray<Option.Option<unknown>>) => ({
     ...input,
     ...Object.fromEntries(
       positional.map(({ field }, index) => [field, values[index] ?? Option.none()] as const),
@@ -364,7 +376,7 @@ export const command = <A extends Action.Any, E, R>(
   const command =
     render === undefined
       ? Command.make(name, { input: flags, args }, ({ input, args: values }) =>
-          Effect.flatMap(decode(fieldsOf(input, values)), (value) =>
+          Effect.flatMap(decode(parsedFields(input, values)), (value) =>
             output(action, execute, value, undefined),
           ),
         )
@@ -372,7 +384,7 @@ export const command = <A extends Action.Any, E, R>(
           name,
           { input: flags, args, json: jsonFlag },
           ({ input, args: values, json }) =>
-            Effect.flatMap(decode(fieldsOf(input, values)), (value) =>
+            Effect.flatMap(decode(parsedFields(input, values)), (value) =>
               output(action, execute, value, json ? undefined : render),
             ),
         );

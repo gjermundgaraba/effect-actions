@@ -129,21 +129,14 @@ const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> 
 const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
 
 /** A native API of one top-level group of `endpoints`. */
-function apiOf(
-  group: string,
-  endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
-): Api<ReadonlyArray<Action.Any>, Errors>;
-function apiOf(
-  group: string,
-  endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>,
-): HttpApi.Constraint {
+const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>) => {
   const empty = HttpApiGroup.make(group, { topLevel: true });
   const [first, ...rest] = endpoints;
 
   return HttpApi.make("actions")
     .annotate(HttpApi.ParseOptions, { errors: "all" })
     .add(first === undefined ? empty : empty.add(first, ...rest));
-}
+};
 
 /** A binding's API as the native helpers read it. */
 const native = (api: HttpApi.Constraint): HttpApi.Top =>
@@ -212,10 +205,7 @@ export function make<const Actions extends ReadonlyArray<Action.Any>, const E ex
   actions: Actions,
   options?: Options<E>,
 ): Binding<Actions, E>;
-export function make(
-  actions: ReadonlyArray<Action.Any>,
-  options: Options = {},
-): Binding<ReadonlyArray<Action.Any>, Errors> {
+export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): AnyHttp {
   assertDistinct("action", actions, (action) => action.name);
 
   const errors = options.errors ?? [];
