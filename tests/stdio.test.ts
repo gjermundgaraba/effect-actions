@@ -30,7 +30,7 @@ describe("MCP stdio example", () => {
       expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["status"]);
       expect(await client.callTool({ name: "status", arguments: {} })).toMatchObject({
         isError: false,
-        structuredContent: { value: { ready: true } },
+        structuredContent: { ready: true },
       });
       expect(
         await client.callTool({ name: "status", arguments: { invented: true } }),

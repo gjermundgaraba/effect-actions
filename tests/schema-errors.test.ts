@@ -336,7 +336,7 @@ it("applies the policy over HTTP only; MCP keeps its native argument and result 
   expect(failures.map((failure) => failure.kind)).toEqual(["Payload", "Body"]);
   expect(failures.every((failure) => Schema.isSchemaError(failure.cause))).toBe(true);
   const success = await web.handler(mcpRequest(7));
-  expect(decodeMcp(await success.json()).result.structuredContent).toEqual({ value: 7 });
+  expect(decodeMcp(await success.json()).result.structuredContent).toEqual(7);
   const defect = await web.handler(mcpRequest(-2));
   expect(await defect.text()).not.toContain("private defect");
   expect(failures).toHaveLength(2);
@@ -392,7 +392,7 @@ it("executes each input/output transformation once with a policy enabled", async
   expect(await (await web.handler(request("7"))).json()).toBe("7");
   expect(
     decodeMcp(await (await web.handler(mcpRequest("7"))).json()).result.structuredContent,
-  ).toEqual({ value: "7" });
+  ).toEqual("7");
   expect(decodes).toBe(2);
   expect(encodes).toBe(2);
 });

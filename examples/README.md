@@ -61,7 +61,7 @@ curl -s http://127.0.0.1:3000/mcp \
   -H 'MCP-Method: tools/call' \
   -H 'MCP-Name: double' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"double","arguments":{"value":"21"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"}}}}'
-# ... "structuredContent":{"value":42} ...
+# ... "structuredContent":42 ...
 
 # The public MCP endpoint lists and runs its one tool without a token
 curl -s http://127.0.0.1:3000/mcp/public \

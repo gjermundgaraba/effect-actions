@@ -23,6 +23,7 @@ use these words with these meanings.
 - **Policy error**: an error a schema-error policy may answer with. Part of the transport contract, never returnable by a handler.
 - **Surface error**: an error declared on an adapter binding rather than on an action. Produced by middleware around the surface or by its pre-handler hook, never by a handler; declared so typed callers decode it.
 - **Tool**: the MCP or Toolkit projection of an MCP-enabled action, named by `mcp.name` and carrying its hints.
+- **Text field**: the string field of an action's encoded success that `mcp.text` names. When a success has it, MCP sends it once, raw, as a text block, and leaves it out of the structured content. Every other surface serves the whole success.
 - **Endpoint**: one `ActionMcp.layerHttp` mount. One route, one middleware set, one tool registry.
 - **Document**: the OpenAPI output of `Http.api`, produced by Effect (`OpenApi.fromApi`) and served by `Http.openApi`.
 - **Promise client**: `ActionHttpClient.promise(Http)`, the native `HttpApiClient` as one Promise method per action of the binding, for code that does not run Effects. It rejects with what the native client fails with.

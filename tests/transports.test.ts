@@ -83,15 +83,15 @@ describe("one implementation, both transports", () => {
     ]);
     const double = reply.tools.find((tool) => tool.name === "double");
     expect(double?.inputSchema.properties).toEqual({ value: { type: "string" } });
-    expect(double?.outputSchema?.properties).toEqual({ value: { type: "number" } });
+    expect(double?.outputSchema).toEqual({ type: "number" });
   });
 
-  it("decodes input transforms on both transports; MCP wraps results as { value }", async () => {
+  it("decodes input transforms on both transports; MCP sends the encoded result", async () => {
     const http = await app.handler(request("/api/actions/users/double", "alice", { value: "21" }));
     expect(await http.json()).toBe(42);
     const reply = await tool("double", { value: "21" });
     expect(reply.isError).toBe(false);
-    expect(reply.structuredContent).toEqual({ value: 42 });
+    expect(reply.structuredContent).toBe(42);
   });
 
   it("a write through MCP is immediately visible through HTTP", async () => {
@@ -163,7 +163,8 @@ describe("one implementation, both transports", () => {
     for (const [i, reply] of results.entries()) {
       const id = requests[i];
       expect(reply.structuredContent).toEqual({
-        value: { id, tenantId: id === "alice" ? "acme" : "other" },
+        id,
+        tenantId: id === "alice" ? "acme" : "other",
       });
     }
   });
@@ -190,7 +191,7 @@ describe("one implementation, both transports", () => {
       }),
     );
 
-    expect(spoof.structuredContent).toEqual({ value: { id: "1", name: "Ada" } });
+    expect(spoof.structuredContent).toEqual({ id: "1", name: "Ada" });
   });
 
   it("keeps concurrent request actors isolated over HTTP", async () => {
@@ -380,7 +381,7 @@ describe("groups under their own middleware", () => {
       (client) => client.callTool({ name: "status", arguments: {} }),
     );
 
-    expect(status.structuredContent).toEqual({ value: { service: "effect-actions", users: 2 } });
+    expect(status.structuredContent).toEqual({ service: "effect-actions", users: 2 });
 
     const anonymous = await app.handler(
       mcpRequest({ url: `http://localhost${testMcpPath}`, method: "tools/list" }),
@@ -402,11 +403,9 @@ describe("groups under their own middleware", () => {
 
     const changes = await tool("list_changes", {});
     expect(changes.structuredContent).toEqual({
-      value: { changes: [{ actorId: "alice", userId: "1", name: "Augusta" }] },
+      changes: [{ actorId: "alice", userId: "1", name: "Augusta" }],
     });
-    expect((await tool("list_changes", {}, "bob")).structuredContent).toEqual({
-      value: { changes: [] },
-    });
+    expect((await tool("list_changes", {}, "bob")).structuredContent).toEqual({ changes: [] });
   });
 });
 
@@ -572,5 +571,5 @@ it("supplies the native request context to handlers without a router requirement
     ).json(),
   );
 
-  expect(result.result.structuredContent).toEqual({ value: "probe" });
+  expect(result.result.structuredContent).toBe("probe");
 });

@@ -336,7 +336,7 @@ describe("projection boundaries", () => {
       const value = { name: "root", children: [{ name: "leaf", children: [] }] };
       const response = await web.handler(rawToolCall("tree", value));
       expect(await response.json()).toMatchObject({
-        result: { isError: false, structuredContent: { value } },
+        result: { isError: false, structuredContent: value },
       });
     },
   );
@@ -440,7 +440,7 @@ describe("projection boundaries", () => {
 
     onTestFinished(() => web.dispose());
     const response = await web.handler(rawToolCall("encode"));
-    expect(await response.text()).toContain('"structuredContent":{"value":"42"}');
+    expect(await response.text()).toContain('"structuredContent":"42"');
   });
 
   it("reports invalid MCP arguments through the native InvalidParams path, never as a declared failure", async () => {
@@ -525,7 +525,7 @@ describe("projection boundaries", () => {
     expect(http.status).toBe(200);
     expect(await http.json()).toEqual({ d: iso });
     expect(await (await mcp.handler(rawToolCall("stamp", { d: iso }))).json()).toMatchObject({
-      result: { isError: false, structuredContent: { value: { d: iso } } },
+      result: { isError: false, structuredContent: { d: iso } },
     });
   });
 

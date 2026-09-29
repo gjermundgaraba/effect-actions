@@ -708,6 +708,52 @@ export const servedRequirementTypes = () => {
 
   void toolAssertions;
 
+  // `mcp.text` names a required string field of the encoded success.
+  const Page = Schema.Struct({
+    body: Schema.String,
+    end: Schema.Number,
+    note: Schema.optionalKey(Schema.String),
+  });
+
+  const textOnly = Action.make("textOnly", {
+    description: "A text field and nothing else in `mcp`",
+    access: "read",
+    input: Schema.Struct({ url: Schema.String }),
+    success: Page,
+    mcp: { text: "body" },
+  });
+
+  const textAssertions: [
+    Equal<typeof textOnly.mcp.name, "textOnly">,
+    Equal<(typeof textOnly.input)["Type"], { readonly url: string }>,
+  ] = [true, true];
+
+  void textAssertions;
+
+  Action.make("textNumber", {
+    description: "Not a string",
+    access: "read",
+    success: Page,
+    // @ts-expect-error `end` is a number.
+    mcp: { text: "end" },
+  });
+
+  // An optional field is allowed: a success without it is sent whole.
+  Action.make("textOptional", {
+    description: "Not always present",
+    access: "read",
+    success: Page,
+    mcp: { text: "note" },
+  });
+
+  Action.make("textScalar", {
+    description: "No fields",
+    access: "read",
+    success: Schema.String,
+    // @ts-expect-error A string success has no fields.
+    mcp: { text: "body" },
+  });
+
   Action.make("stale", {
     description: "Formerly hidden from HTTP",
     access: "read",

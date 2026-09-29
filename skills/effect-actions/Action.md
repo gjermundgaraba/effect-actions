@@ -21,7 +21,8 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `mcp`                              | Defaults to enabled; `false` removes tools, otherwise accepts `McpOptions`.  |
 
 MCP options: `name` defaults to the action name; `readOnly` to `access === "read"`;
-`destructive` to `!readOnly`; `idempotent` to `false`; `openWorld` to `true`.
+`destructive` to `!readOnly`; `idempotent` to `false`; `openWorld` to `true`. `text` has no
+default; it names the success's text field.
 Handlers receive decoded input and return decoded success, failing only with declared errors.
 
 ## Canonical
@@ -72,6 +73,16 @@ export const ListChanges = Action.make("listChanges", {
   mcp: { name: "list_changes" },
 });
 
+// MCP sends `markdown` once, raw, then the rest as structured content.
+// Every other surface serves the whole page.
+export const ReadPage = Action.make("readPage", {
+  description: "Read one page of a document as Markdown.",
+  input: Schema.Struct({ url: Schema.String }),
+  success: Schema.Struct({ markdown: Schema.String, next: Schema.optionalKey(Schema.String) }),
+  access: "read",
+  mcp: { name: "read_page", text: "markdown" },
+});
+
 // Input decoding is the schema's: "21" on the wire, 21 in the handler.
 export const Double = Action.make("double", {
   description: "Double a finite number supplied as a string.",
@@ -94,6 +105,7 @@ export const Double = Action.make("double", {
 - `make` accepts only the keys `Options` declares. An unknown key, such as a stale `http`, is a compile error.
 - MCP input must have an object-root JSON Schema, an identified or recursive root included. Scalar or array input is fine for HTTP and for a native Toolkit, but the native MCP server refuses it when an `ActionMcp` layer is built. `Schema.Struct({})` is not an object root either: omit `input` for no arguments. Success and error schemas may be any shape.
 - `mcp.name` is the tool name, matches `[A-Za-z0-9_-]+` except `then`, is at most 128 characters, unique within each Toolkit or MCP projection that serves it. Default is the action name.
+- `mcp.text` names a string field of the encoded success, the text field; it may be optional. `make` refuses a field that is not a string. Building the MCP layer refuses a field that is not a top-level property of the success's JSON Schema, such as one of a union of structs. It changes only the MCP result (see [ActionMcp.md](ActionMcp.md)).
 - Hint defaults: `readOnly: access === "read"`, `destructive: !readOnly`, `idempotent: false`, `openWorld: true`. Hints are metadata for the model. They do not enforce authorization, approval, or retries.
 - Schemas must be service-free. Put service access in the handler.
 - The group name, not the action, is the OpenAPI tag and operation-ID prefix: `<group>.<action>`.

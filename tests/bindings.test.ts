@@ -113,7 +113,7 @@ it("each adapter layer acquires and releases its own handler build", async () =>
         async (client) => {
           expect(
             (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-          ).toEqual({ value: "build/mcp" });
+          ).toEqual("build/mcp");
         },
       );
       expect(acquired).toBe(2 * runtime);
@@ -153,7 +153,7 @@ it("keeps same-contract implementations apart over MCP", async () => {
     await withMcpClient({ fetch: web.handler, path: `/${name}` }, async (client) => {
       expect(
         (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-      ).toEqual({ value: name });
+      ).toEqual(name);
     });
   }
 });
@@ -293,7 +293,7 @@ it.each(["HTTP", "MCP"])(
       expect(await response.json()).toBe("request");
     } else {
       expect(await response.json()).toMatchObject({
-        result: { structuredContent: { value: "request" } },
+        result: { structuredContent: "request" },
       });
     }
   },

@@ -168,6 +168,24 @@ describe("offline action catalog", () => {
     expect(catalog.actions[1]?.errors).toMatchObject([{ enum: ["shared"] }]);
   });
 
+  it("records the MCP text field with the other tool metadata", () => {
+    const catalog = ActionCatalog.make(
+      ActionGroup.make(
+        { name: "pages" },
+        Action.make("fetch", {
+          description: "Fetch one page",
+          access: "read",
+          success: Schema.Struct({ body: Schema.String, end: Schema.Number }),
+          mcp: { text: "body" },
+        }),
+      ),
+    );
+
+    expect(catalog.actions[0]?.mcp).toMatchObject({ name: "fetch", text: "body" });
+    // The success is still described whole: the split is MCP's.
+    expect(catalog.actions[0]?.success).toMatchObject({ required: ["body", "end"] });
+  });
+
   it("preserves dictionary values instead of projecting an empty object", () => {
     const catalog = ActionCatalog.make(
       ActionGroup.make(

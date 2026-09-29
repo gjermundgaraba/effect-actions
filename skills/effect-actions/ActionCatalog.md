@@ -12,7 +12,7 @@ Import `@gjermundgaraba/effect-actions/ActionCatalog`.
 | Entry field                          | Meaning                                                             |
 | ------------------------------------ | ------------------------------------------------------------------- |
 | `id`, `group`, `name`, `description` | Stable `<group>.<action>` identity and contract metadata.           |
-| `mcp`                                | Resolved MCP enablement, name and hints.                            |
+| `mcp`                                | Resolved MCP enablement, name, hints and text field.                |
 | `input`, `success`                   | Standalone draft 2020-12 JSON Schema objects, not wrappers.         |
 | `errors`                             | JSON Schema objects for own and inherited group errors.             |
 | `httpSchemaErrors`                   | JSON Schema objects for HTTP policy errors; empty without a policy. |
@@ -38,7 +38,7 @@ Console.log(
 - Takes groups, not implementations. Nothing is acquired or started.
 - Group names must be unique. Entries preserve group declaration order, then action declaration order.
 - `id` is the stable `<group>.<action>` identity, equal to the HTTP operation ID.
-- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument`, which lowers to the JSON codec first. Objects are closed (`additionalProperties: false`), as in the OpenAPI document. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are action values, not MCP's `{ value }` envelope or deployment URLs.
+- Schemas describe encoded action values through native `Schema.toJsonSchemaDocument`, which lowers to the JSON codec first. Objects are closed (`additionalProperties: false`), as in the OpenAPI document. A `Date` is a string, an `Option` a tagged union, a `bigint` a string of digits. These are whole action values, as HTTP sends them, not MCP's split of a text field or deployment URLs.
 - JSON Schema does not preserve arbitrary Effect transformations or filters. Checks on the decoded side of a transformation, such as `FiniteFromString.check(isGreaterThan(0))`, are not described. The server's decode remains authoritative.
 - Each schema root includes its own `$schema` and, where needed, `$defs`. Equal identifiers across entries or fields cannot replace each other; recursive references resolve locally.
 - The catalog contains JSON Schema only. Use Effect's `SchemaRepresentation` directly when native schema persistence or revival is needed.

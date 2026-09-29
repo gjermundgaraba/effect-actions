@@ -11,10 +11,7 @@ try {
   await withMcpClient({ fetch: web.handler, path: "/mcp" }, async (client) => {
     const reply = await client.callTool({ name: "greet", arguments: { name: "Ada" } });
 
-    if (
-      Schema.decodeUnknownSync(Schema.Struct({ value: Schema.String }))(reply.structuredContent)
-        .value !== "Hello, Ada!"
-    )
+    if (Schema.decodeUnknownSync(Schema.String)(reply.structuredContent) !== "Hello, Ada!")
       throw new Error("Official MCP client failed");
   });
 } finally {

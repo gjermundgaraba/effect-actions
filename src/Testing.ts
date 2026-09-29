@@ -94,13 +94,13 @@ export interface McpCallOptions {
 }
 
 /**
- * A tool call's outcome with the library's wire envelope removed: the success from
- * `structuredContent.value`, or the error text of an `isError` result, parsed as JSON
- * when it is JSON (a declared error, whatever its shape) and kept as the text otherwise
- * (the native server's own message, such as for invalid arguments).
+ * A tool call's outcome: the success from `structuredContent`, with the text an action's
+ * `mcp.text` field sent before it; or the error text of an `isError` result, parsed as
+ * JSON when it is JSON (a declared error, whatever its shape) and kept as the text
+ * otherwise (the native server's own message, such as for invalid arguments).
  */
 export type McpCallResult =
-  | { readonly isError: false; readonly value: Schema.Json }
+  | { readonly isError: false; readonly value: Schema.Json; readonly text?: string }
   | { readonly isError: true; readonly error: Schema.Json };
 
 /** The JSON-RPC response to a `tools/call`: a tool result or a protocol error. */
@@ -108,7 +108,7 @@ const ToolReply = Schema.Union([
   Schema.Struct({
     result: Schema.Struct({
       isError: Schema.optionalKey(Schema.Boolean),
-      structuredContent: Schema.optionalKey(Schema.Struct({ value: Schema.Json })),
+      structuredContent: Schema.optionalKey(Schema.Json),
       content: Schema.Array(
         Schema.Struct({ type: Schema.String, text: Schema.optionalKey(Schema.String) }),
       ),
@@ -173,5 +173,13 @@ export const mcpCall = async (
     throw new Error(`MCP tools/call "${name}" returned no structured content: ${body}`);
   }
 
-  return { isError: false, value: result.structuredContent.value };
+  // Every success ends with the JSON copy of its structured content; a text field
+  // comes first.
+  const [text] = result.content.length > 1 ? result.content : [];
+
+  return {
+    isError: false,
+    value: result.structuredContent,
+    ...(text?.text === undefined ? {} : { text: text.text }),
+  };
 };

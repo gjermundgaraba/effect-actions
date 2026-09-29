@@ -23,7 +23,21 @@ export interface McpOptions {
   readonly idempotent?: boolean;
   /** `openWorldHint`; defaults to `true`. */
   readonly openWorld?: boolean;
+  /**
+   * A string field of the encoded success that MCP sends as a raw text block rather
+   * than as structured content, such as a document body. Other surfaces serve the
+   * whole success.
+   */
+  readonly text?: string;
 }
+
+/** The fields `mcp.text` may name: those an encoded success has as a string. */
+type TextFields<Encoded> = Encoded extends object
+  ? {
+      readonly [K in keyof Encoded]-?: Required<Encoded>[K] extends string ? K : never;
+    }[keyof Encoded] &
+      string
+  : never;
 
 type ResolvedMcp<
   Name extends string,
@@ -45,6 +59,7 @@ type ResolvedMcp<
       readonly destructive: boolean;
       readonly idempotent: boolean;
       readonly openWorld: boolean;
+      readonly text?: string;
     };
 
 /** What `make` needs to define an action. */
@@ -132,8 +147,14 @@ type McpOf<O extends AnyOptions> = [O] extends [{ readonly mcp: false }]
  */
 export function make<const Name extends string, const O extends AnyOptions>(
   name: Name,
-  // A key `Options` does not declare, such as a stale or misspelled one, is refused.
-  options: O & { readonly [K in Exclude<keyof O, keyof AnyOptions>]: never },
+  // A key `Options` does not declare, such as a stale or misspelled one, is refused, and
+  // `mcp.text` must name a string field of the encoded success.
+  options: O & { readonly [K in Exclude<keyof O, keyof AnyOptions>]: never } & {
+    readonly mcp?:
+      | false
+      | (McpOptions & { readonly text?: TextFields<O["success"]["Encoded"]> })
+      | undefined;
+  },
 ): Action<
   Name,
   "input" extends keyof O ? Exclude<O["input"], undefined> : typeof NoInput,
@@ -164,6 +185,7 @@ export function make(name: string, options: AnyOptions): Any {
           destructive: options.mcp?.destructive ?? !readOnly,
           idempotent: options.mcp?.idempotent ?? false,
           openWorld: options.mcp?.openWorld ?? true,
+          ...(options.mcp?.text === undefined ? {} : { text: options.mcp.text }),
         };
 
   if (mcp !== false && mcp.name.length > 128) {

@@ -24,6 +24,8 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 ## Design notes
 
 - HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
+- MCP sends the encoded success itself as `structuredContent`. This reverses 0.7.0, where every tool output was rooted at a `{ value }` object: MCP 2026-07-28, the only revision served, allows any JSON value there and any `outputSchema` root, and the specification's own examples send the value directly.
+- A text field (`mcp.text`) is moved out of what native `McpServer.registerToolkit` registers, which always sends the whole success as structured content. `ActionMcp` runs `registerToolkit` against a copy of the server whose `addTool` removes the field from the listed `outputSchema` and, when it holds a string, from each success, and sends it as a raw text block. Any other result is the native one, so decoding, failures and defects stay the native server's. The tool carries its field as an annotation. A native option for this would delete the copy.
 
 ## Release
 

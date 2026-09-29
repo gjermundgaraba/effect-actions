@@ -173,7 +173,7 @@ describe("the pre-handler hook", () => {
     onTestFinished(() => mcp.dispose());
 
     expect(await (await mcp.handler(rawToolCall("read"))).json()).toMatchObject({
-      result: { isError: false, structuredContent: { value: "read ok" } },
+      result: { isError: false, structuredContent: "read ok" },
     });
     expect(await (await mcp.handler(rawToolCall("write", { value: "x" }))).json()).toMatchObject({
       result: {

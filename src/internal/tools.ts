@@ -1,9 +1,8 @@
-import { Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../Action.js";
 import { assertDistinct, projectedErrors } from "./actions.js";
 import {
-  type Before,
   dispatch,
   type AnyImplementation,
   type ErasedValue,
@@ -48,6 +47,16 @@ interface BoundTools {
   readonly layer: Layer.Layer<Tool.HandlersFor<Record<string, Tool.Any>>, unknown, unknown>;
 }
 
+/**
+ * The success field an MCP tool sends as a raw text block, from `mcp.text`. The native
+ * server reads a tool's annotations when it registers the tool, so `ActionMcp` finds
+ * it there.
+ */
+export const TextField = Context.Reference<string | undefined>(
+  "@gjermundgaraba/effect-actions/TextField",
+  { defaultValue: () => undefined },
+);
+
 type ToolAction = Action.Any & { readonly mcp: Exclude<Action.Any["mcp"], false> };
 
 const isToolAction = (action: Action.Any): action is ToolAction => action.mcp !== false;
@@ -88,20 +97,20 @@ const nativeTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Co
   );
 
 /**
- * MCP has a JSON-only wire contract. Success uses its documented `{ value }`
- * structured-content envelope; declared failures are returned as JSON text.
+ * MCP has a JSON-only wire contract. Success is the encoded success as structured
+ * content; declared failures are returned as JSON text.
  */
 const mcpTool = (action: ToolEntry["action"], errors: ReadonlyArray<Action.Codec>): Tool.Any =>
   annotate(
     Tool.make(action.mcp.name, {
       description: action.description,
       parameters: Schema.toCodecJson(action.input),
-      success: Schema.toCodecJson(Schema.Struct({ value: action.success })),
+      success: Schema.toCodecJson(action.success),
       failure: Schema.toCodecJson(Schema.Union(errors)),
       failureMode: "return",
     }),
     action.mcp,
-  );
+  ).annotate(TextField, action.mcp.text);
 
 /** The two concrete wire projections that share handler binding and lifetime ownership. */
 type Projection = "native" | "mcp";
@@ -121,24 +130,10 @@ const project = (projection: Projection, entry: ToolEntry, options: ToolOptions)
   return tool.annotate(Tool.Strict, true);
 };
 
-const handler = (
-  projection: Projection,
-  app: AnyImplementation,
-  action: ToolAction,
-  handlers: Handlers<unknown>,
-  before: Before<unknown> | undefined,
-) => {
-  const run = dispatch<ToolAction, ErasedValue, unknown>(app.group, action, handlers, before);
-
-  return projection === "native"
-    ? run
-    : (input: ErasedValue) => Effect.map(run(input), (value) => ({ value }));
-};
-
 /**
  * Project MCP-enabled actions and acquire their handlers exactly once per adapter layer.
- * Native and MCP differ only in tool codecs and the MCP success envelope; selection,
- * scoped acquisition, dispatch and native Toolkit binding stay identical.
+ * Native and MCP differ only in tool codecs; selection, scoped acquisition, dispatch
+ * and native Toolkit binding stay identical.
  */
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
@@ -165,7 +160,15 @@ export const bindTools = (
 
           return actions.map(
             (action) =>
-              [action.mcp.name, handler(projection, app, action, record, options.before)] as const,
+              [
+                action.mcp.name,
+                dispatch<ToolAction, ErasedValue, unknown>(
+                  app.group,
+                  action,
+                  record,
+                  options.before,
+                ),
+              ] as const,
           );
         }),
       ),

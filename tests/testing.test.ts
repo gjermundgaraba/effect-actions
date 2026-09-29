@@ -154,7 +154,11 @@ describe("mcpCall", () => {
   it("reads the reply from an event stream that carries notifications first", async () => {
     const stream = [
       { jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: "x" } },
-      { jsonrpc: "2.0", id: 1, result: { content: [], structuredContent: { value: [1, 2] } } },
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        result: { content: [{ type: "text", text: "[1,2]" }], structuredContent: [1, 2] },
+      },
     ]
       .map((message) => `data: ${JSON.stringify(message)}\n\n`)
       .join("");

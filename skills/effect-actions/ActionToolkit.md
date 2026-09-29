@@ -52,7 +52,7 @@ With a model: pass `binding.toolkit` as `toolkit` to `LanguageModel.generateText
 ## Rules
 
 - Selects MCP-enabled actions only, named by `mcp.name`, with resolved hints. Groups with no selected tools are not built. The toolkit's type follows `ActionMcp`'s rule: only an action whose `mcp` type is exactly `false` has no tool; one whose `mcp` may be `false` at runtime is typed as a tool with its handler's requirements. `make(apps, options?)` accepts a readonly implementation collection; options may be omitted.
-- Successes are the action's native values. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
+- Successes are the action's native values, whole: `mcp.text` does not apply. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes encoded arguments and returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - `binding.layer` acquires each implementation once, in the layer's scope. Build-time requirements belong to the whole selected implementation.
 - Each tool carries only its own handler's request requirements, plus the hook's, not those of sibling or disabled tools.
@@ -69,4 +69,3 @@ With a model: pass `binding.toolkit` as `toolkit` to `LanguageModel.generateText
 - `Service not found` for a request tag at call time: it was provided only to the stream. Provide it around the whole call effect. Providing it to `binding.layer` does not fail: the startup value is captured and served to every call (see [guarantees.md](guarantees.md)).
 - A returned failure that is an `AiError` with reason `ToolParameterValidationError`, not a declared error: the arguments did not decode. The hook and the handler did not run.
 - Type error on `binding.layer` requirements: a build-time service is missing. Provide its Layer before `binding.layer`.
-- Result is `{ value: ... }` when a plain value was expected: you are reading an MCP response, not a Toolkit result. The Toolkit never wraps.
