@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.8.0
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.118`. The `effect`
+peer now starts at rc.118 (`>=4.0.0-rc.118 <4.0.0`).
+
+### Breaking changes
+
+**The `effect` peer starts at `4.0.0-rc.118`.** rc.118 moved Effect's HTTP, HTTP API, CLI, AI
+and process modules out of `effect/unstable/*`, and the package imports them from their new
+paths, so an older release candidate fails with `Cannot find module 'effect/http'`.
+
+- Migrate: install `effect` and `@effect/platform-node` `4.0.0-rc.118`, and import
+  `effect/http`, `effect/http-api`, `effect/cli`, `effect/ai` and `effect/process` instead of
+  `effect/unstable/http`, `effect/unstable/httpapi`, `effect/unstable/cli`,
+  `effect/unstable/ai` and `effect/unstable/process`.
+
+**MCP tools send their success without the `{ value }` envelope.** `structuredContent` is the
+encoded success itself, of any JSON type, and the text content is its JSON. A tool's
+`outputSchema` describes the encoded success. MCP 2026-07-28, the only revision served, allows
+any JSON value there and any `outputSchema` root. Errors are unchanged.
+
+- Migrate: an MCP client reads `structuredContent` instead of `structuredContent.value`.
+  `Testing.mcpCall` already unwrapped the envelope, so its `value` is unchanged.
+
+  ```ts
+  // before: {"structuredContent":{"value":42},"content":[{"type":"text","text":"{\"value\":42}"}]}
+  // after:  {"structuredContent":42,"content":[{"type":"text","text":"42"}]}
+  ```
+
+**HTTP input is closed.** An HTTP server refuses an input field the action does not declare:
+an empty 400, or the group's `schemaError` `invalid` answer. Such fields were stripped before.
+Typed HTTP clients fail with `SchemaError` on an undeclared field, before sending. The
+published OpenAPI already said `additionalProperties: false`, and MCP tools were already
+strict.
+
+- Migrate: stop sending the extra fields, or declare them in the action's `input`.
+
+### Additions
+
+- `mcp.text` names a string field of the encoded success, such as a document body. MCP sends
+  it once, raw, as the first text block, followed by the JSON of the rest, and leaves it out
+  of `structuredContent` and of the listed `outputSchema`. A success without the field, which
+  may be optional, is sent whole. Other surfaces serve the whole success. Building the MCP
+  layer fails when the field is not a top-level property of the success's JSON Schema, as for
+  a union of structs.
+
+  ```ts
+  export const ReadPage = Action.make("readPage", {
+    description: "Read one page of a document as Markdown.",
+    input: Schema.Struct({ url: Schema.String }),
+    success: Schema.Struct({ markdown: Schema.String, next: Schema.optionalKey(Schema.String) }),
+    access: "read",
+    mcp: { name: "read_page", text: "markdown" },
+  });
+  ```
+
+- `Testing.mcpCall` resolves a success with `text`, the text field, when one was sent, and
+  accepts any JSON `structuredContent`.
+- `ActionCatalog` entries record `mcp.text` in `mcp`.
+
+### Other changes
+
+- `ActionCatalog` schemas are closed (`additionalProperties: false`), as in the OpenAPI
+  document.
+- `ActionGroup.make` no longer refuses two actions with the same MCP tool name. The Toolkit or
+  MCP binding that serves both refuses them, so a group served only over HTTP may keep them.
+- `docs/ActionMcp.md` lists the fields the native server adds to every result
+  (`_meta["io.modelcontextprotocol/serverInfo"]` and `resultType`), so a result's encoded size
+  can be computed.
+
 ## 0.7.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.117`. The `effect`
