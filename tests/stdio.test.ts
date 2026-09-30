@@ -145,13 +145,17 @@ describe("runStdio's successes", () => {
   const List = Action.make("list", { ...read, success: Schema.Array(Schema.Finite) });
   const Reset = Action.make("reset", read);
 
-  const shapes = Action.implement([Ready, Count, Greeting, List, Reset], {
-    ready: () => Effect.succeed({ ready: true }),
-    count: () => Effect.succeed(42),
-    greeting: () => Effect.succeed('say "hi"'),
-    list: () => Effect.succeed([1, 2]),
-    reset: () => Effect.void,
-  });
+  const shapes = Action.implement(
+    [Ready, Count, Greeting, List, Reset],
+    {
+      ready: () => Effect.succeed({ ready: true }),
+      count: () => Effect.succeed(42),
+      greeting: () => Effect.succeed('say "hi"'),
+      list: () => Effect.succeed([1, 2]),
+      reset: () => Effect.void,
+    },
+    Action.allowAll,
+  );
 
   // Each tool's encoded success: an object, a number, a string, an array and `null`.
   const successes = [
@@ -274,7 +278,7 @@ describe("runStdio's input schemas", () => {
     input: { item: Item },
   });
 
-  const put = Action.implement(Put, () => Effect.void);
+  const put = Action.implement(Put, () => Effect.void, Action.allowAll);
 
   const Listed = Schema.fromJsonString(
     Schema.Struct({
@@ -369,6 +373,7 @@ describe("runStdio's console", () => {
     const status = Action.implement(
       Status,
       Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void),
+      Action.allowAll,
     );
 
     await Effect.runPromise(

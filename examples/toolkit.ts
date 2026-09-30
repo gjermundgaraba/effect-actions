@@ -10,7 +10,7 @@ const Double = Action.make("double", {
   access: "read",
 });
 
-const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
+const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), Action.allowAll);
 
 const { toolkit, layer } = ActionToolkit.make(double);
 

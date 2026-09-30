@@ -8,7 +8,7 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
 import { post, rawToolCall } from "./requests.js";
-import { serve, serveWithContext } from "./serve.js";
+import { against, type Server, serve, serveWithContext } from "./serve.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
@@ -22,7 +22,7 @@ const identity = Action.make("identity", {
 class Greeting extends Context.Service<Greeting, string>()("bindings/Greeting") {}
 
 it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transport) => {
-  const app = Action.implement(identity, () => Actor);
+  const app = Action.implement(identity, () => Actor, Action.allowAll);
 
   const routes =
     transport === "HTTP"
@@ -66,6 +66,7 @@ it("builds an implementation once per host build, however many adapters serve it
 
       return () => Effect.map(Actor, (actor) => `${greeting}/${actor}`);
     }),
+    Action.allowAll,
   );
 
   const routes = Layer.mergeAll(
@@ -132,7 +133,7 @@ it("shares an implementation's builder with some of its actions, behind its hook
   // Without a hook of its own, a shared implementation keeps its source's; with one, that
   // one runs instead.
   const kept = Action.share([identity], app);
-  const open = Action.share([identity], app, () => Effect.void);
+  const open = Action.share([identity], app, Action.allowAll);
 
   expect(open.actions).toEqual([identity]);
 
@@ -159,10 +160,153 @@ it("shares an implementation's builder with some of its actions, behind its hook
   );
 });
 
+describe("sharing an implementation's builder", () => {
+  const secret = Action.make("secret", {
+    description: "Only for the trusted",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Http = ActionHttp.make([identity, secret]);
+
+  /** An implementation of both actions whose builder counts its runs, behind `before`. */
+  const counted = <RB = never, EB = never, RBX = never>(
+    before:
+      | Action.Before<typeof identity | typeof secret, RB>
+      | Effect.Effect<Action.Before<typeof identity | typeof secret, RB>, EB, RBX>,
+  ) => {
+    const runs = { built: 0 };
+
+    const app = Action.implement(
+      [identity, secret],
+      Effect.sync(() => {
+        runs.built++;
+
+        return { identity: () => Effect.succeed("shared"), secret: () => Effect.succeed("hidden") };
+      }),
+      before,
+    );
+
+    return { runs, app };
+  };
+
+  /** A tool call on `path`, as the value it returned or the tag it failed with. */
+  const call = (web: Server, path: string, name: "identity" | "secret") =>
+    against(
+      web,
+      Effect.flatMap(Testing.mcpClient([identity, secret], { url: path }), (mcp) =>
+        mcp[name]().pipe(Effect.catchTag("Forbidden", ({ _tag }) => Effect.succeed(_tag))),
+      ),
+    );
+
+  it("runs the builder once for an implementation and its shares, with and without another hook, on every surface", async () => {
+    const { runs, app } = counted(() => Effect.fail(new Action.Forbidden()));
+    const kept = Action.share([identity], app);
+    const open = Action.share([identity], app, Action.allowAll);
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Http, app),
+        ActionHttp.layer(ActionHttp.make([identity], { prefix: "/kept" }), kept),
+        ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
+        ActionMcp.layerHttp(kept, { name: "kept", version: "0", path: "/mcp/kept" }),
+        ActionMcp.layerHttp(open, { name: "open", version: "0", path: "/mcp/open" }),
+        ActionToolkit.make([kept, Action.share([secret], app, Action.allowAll)]).layer,
+      ),
+    );
+
+    expect((await web.handler(post("/kept/identity"))).status).toBe(403);
+    expect(await (await web.handler(post("/open/identity"))).json()).toBe("shared");
+    expect(await call(web, "/mcp/kept", "identity")).toBe("Forbidden");
+    expect(await call(web, "/mcp/open", "identity")).toBe("shared");
+    // Five implementations on three surfaces, one builder run.
+    expect(runs.built).toBe(1);
+  });
+
+  it("runs each hook for its own actions, without building the shared handlers again", async () => {
+    const hooks: Array<string> = [];
+
+    const { runs, app } = counted((action) =>
+      Effect.sync(() => {
+        hooks.push(`source ${action.name}`);
+      }),
+    );
+
+    const admin = Action.share([secret], app, (action) =>
+      Effect.sync(() => {
+        hooks.push(`admin ${action.name}`);
+      }),
+    );
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Http, app),
+        ActionHttp.layer(ActionHttp.make([secret], { prefix: "/admin" }), admin),
+        ActionMcp.layerHttp(admin, { name: "admin", version: "0" }),
+      ),
+    );
+
+    expect(await (await web.handler(post("/api/identity"))).json()).toBe("shared");
+    expect(await (await web.handler(post("/api/secret"))).json()).toBe("hidden");
+    expect(await (await web.handler(post("/admin/secret"))).json()).toBe("hidden");
+    expect(await call(web, "/mcp", "secret")).toBe("hidden");
+    expect(hooks).toEqual(["source identity", "source secret", "admin secret", "admin secret"]);
+    expect(runs.built).toBe(1);
+  });
+
+  it("builds a share's own built hook once, and never runs its source's builder again for it", async () => {
+    const builds = { sourceHook: 0, openHook: 0 };
+
+    const { runs, app } = counted(
+      Effect.sync(() => {
+        builds.sourceHook++;
+
+        return () => Effect.fail(new Action.Forbidden());
+      }),
+    );
+
+    const open = Action.share(
+      [identity],
+      app,
+      Effect.sync(() => {
+        builds.openHook++;
+
+        return Action.allowAll;
+      }),
+    );
+
+    const both = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Http, app),
+        // A share given no hook keeps its source's, built once for both.
+        ActionHttp.layer(
+          ActionHttp.make([identity], { prefix: "/kept" }),
+          Action.share([identity], app),
+        ),
+        ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
+        ActionMcp.layerHttp(open, { name: "open", version: "0" }),
+      ),
+    );
+
+    expect((await both.handler(post("/api/identity"))).status).toBe(403);
+    expect((await both.handler(post("/kept/identity"))).status).toBe(403);
+    expect(await (await both.handler(post("/open/identity"))).json()).toBe("shared");
+    expect(await call(both, "/mcp", "identity")).toBe("shared");
+    expect({ ...runs, ...builds }).toEqual({ built: 1, sourceHook: 1, openHook: 1 });
+
+    // Served alone, a share with a hook of its own builds its source's handlers, not its hook.
+    const alone = serve(ActionHttp.layer(ActionHttp.make([identity]), open));
+
+    expect(await (await alone.handler(post("/api/identity"))).json()).toBe("shared");
+    expect({ ...runs, ...builds }).toEqual({ built: 2, sourceHook: 1, openHook: 2 });
+  });
+});
+
 it("builds a shared implementation with one set of startup services, not one per surface", async () => {
   const app = Action.implement(
     identity,
     Effect.map(Greeting, (greeting) => () => Effect.succeed(greeting)),
+    Action.allowAll,
   );
 
   // Startup services provided around one surface reach every surface serving the same
@@ -194,14 +338,21 @@ it("builds once beside routes served apart, when Action.layer is provided above 
 
   for (const order of ["routes first", "toolkit first"] as const) {
     let built = 0;
+    let hooked = 0;
 
-    // Its startup service is given once, above `Action.layer` and every surface.
+    // Its startup service is given once, above `Action.layer` and every surface, to its
+    // handlers' builder and its hook's.
     const app = Action.implement(
       Count,
       Effect.map(Start, (start) => {
         built += 1;
 
         return () => Effect.succeed(start + built);
+      }),
+      Effect.map(Start, () => {
+        hooked += 1;
+
+        return Action.allowAll;
       }),
     );
 
@@ -227,13 +378,13 @@ it("builds once beside routes served apart, when Action.layer is provided above 
       ),
     );
 
-    expect([order, built]).toEqual([order, 1]);
+    expect([order, built, hooked]).toEqual([order, 1, 1]);
   }
 });
 
 it("serves a copy of a binding like the binding itself", async () => {
   const Http = ActionHttp.make([identity], { prefix: "/v1" });
-  const app = Action.implement(identity, () => Effect.succeed("copied"));
+  const app = Action.implement(identity, () => Effect.succeed("copied"), Action.allowAll);
 
   const web = serve(ActionHttp.layer({ ...Http }, app));
 
@@ -257,8 +408,8 @@ it("refuses an object that only looks like an implementation", () => {
 });
 
 it("keeps same-contract implementations apart over MCP", async () => {
-  const a = Action.implement(identity, () => Effect.succeed("a"));
-  const b = Action.implement(identity, () => Effect.succeed("b"));
+  const a = Action.implement(identity, () => Effect.succeed("a"), Action.allowAll);
+  const b = Action.implement(identity, () => Effect.succeed("b"), Action.allowAll);
 
   const web = serve(
     Layer.mergeAll(
@@ -290,7 +441,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 
   const run = async (
     handler: () => Effect.Effect<string>,
-    before?: Action.Before<typeof identity>,
+    before: Action.Before<typeof identity> = Action.allowAll,
   ) => {
     const logs: unknown[] = [];
     const annotations: Array<ReadonlyMap<string, unknown>> = [];
@@ -389,7 +540,7 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
 it.each(["HTTP", "MCP"])(
   "provides request identity through router wiring over %s",
   async (transport) => {
-    const app = Action.implement(identity, () => Actor);
+    const app = Action.implement(identity, () => Actor, Action.allowAll);
 
     const routes =
       transport === "HTTP"

@@ -289,21 +289,24 @@ describe("the pre-handler hook", () => {
     // Opened once the test has the response: the refusal comes only after it has started.
     const streamed = Latch.makeUnsafe();
 
-    const app = Action.implement(Reporting, () =>
-      Effect.gen(function* () {
-        const server = yield* Effect.serviceOption(McpServer.McpServer);
+    const app = Action.implement(
+      Reporting,
+      () =>
+        Effect.gen(function* () {
+          const server = yield* Effect.serviceOption(McpServer.McpServer);
 
-        if (Option.isSome(server)) {
-          yield* server.value.notifications["notifications/progress"]({
-            progressToken: "call",
-            progress: 1,
-          });
-        }
+          if (Option.isSome(server)) {
+            yield* server.value.notifications["notifications/progress"]({
+              progressToken: "call",
+              progress: 1,
+            });
+          }
 
-        yield* streamed.await;
+          yield* streamed.await;
 
-        return yield* new Action.Forbidden({ scopes: ["write"] });
-      }),
+          return yield* new Action.Forbidden({ scopes: ["write"] });
+        }),
+      Action.allowAll,
     );
 
     const mcp = serve(
@@ -405,7 +408,7 @@ describe("the pre-handler hook", () => {
     const hooks: Array<string> = [];
     const handlers: Array<string> = [];
     const record = (name: string) => Effect.sync(() => (handlers.push(name), `${name} ok`));
-    const read = Action.implement(Read, () => record("read"));
+    const read = Action.implement(Read, () => record("read"), Action.allowAll);
     const write = Action.implement(Write, () => record("write"), authorize(hooks));
 
     // One layer: only the write implementation has the hook.

@@ -25,11 +25,15 @@ const ServiceFree = Action.make("service_free", {
   success: Schema.String,
 });
 
-const app = Action.implement([Named, ServiceFree, Guarded], {
-  named: () => Effect.map(Principal, (principal) => principal),
-  service_free: () => Effect.succeed("free"),
-  guarded: () => Effect.map(Principal, (principal) => principal),
-});
+const app = Action.implement(
+  [Named, ServiceFree, Guarded],
+  {
+    named: () => Effect.map(Principal, (principal) => principal),
+    service_free: () => Effect.succeed("free"),
+    guarded: () => Effect.map(Principal, (principal) => principal),
+  },
+  Action.allowAll,
+);
 
 const binding = ActionToolkit.make(app);
 
@@ -60,7 +64,9 @@ const Fetch = Action.make("fetch", {
   errors: [Gone],
 });
 
-const fetched = ActionToolkit.make(Action.implement(Fetch, () => Effect.succeed("")));
+const fetched = ActionToolkit.make(
+  Action.implement(Fetch, () => Effect.succeed(""), Action.allowAll),
+);
 
 // Every tool declares its action's errors plus the built-in ones.
 const toolFailures: [
@@ -123,11 +129,13 @@ const Right = Action.make("right", {
 const left = Action.implement(
   Left,
   Effect.map(LeftBuild, (value) => () => Effect.succeed(value)),
+  Action.allowAll,
 );
 
 const right = Action.implement(
   Right,
   Effect.fail("right-build" as const).pipe(Effect.as(() => Effect.succeed(1))),
+  Action.allowAll,
 );
 
 const mixed = ActionToolkit.make([left, right]);
@@ -150,6 +158,7 @@ const sharing = Action.implement(
     service_free: () => Effect.succeed(value),
     guarded: () => Effect.map(Principal, (principal) => principal),
   })),
+  Action.allowAll,
 );
 
 const shared = ActionToolkit.make(sharing);

@@ -248,13 +248,17 @@ it("sends a no-input call as {}, and any given input encoded as given, through t
   const web = serve(
     ActionHttp.layer(
       Inputs,
-      Action.implement([Double, Optional, Nullable, UndefinedValue, EmptyRecord], {
-        double: ({ value }) => Effect.succeed(value * 2),
-        optional: ({ value }) => Effect.succeed(value ?? 7),
-        nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
-        undefinedValue: (input) => Effect.succeed(String(input)),
-        emptyRecord: () => Effect.succeed(true),
-      }),
+      Action.implement(
+        [Double, Optional, Nullable, UndefinedValue, EmptyRecord],
+        {
+          double: ({ value }) => Effect.succeed(value * 2),
+          optional: ({ value }) => Effect.succeed(value ?? 7),
+          nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
+          undefinedValue: (input) => Effect.succeed(String(input)),
+          emptyRecord: () => Effect.succeed(true),
+        },
+        Action.allowAll,
+      ),
     ),
   );
 
@@ -305,8 +309,10 @@ it("takes a left-out argument as the input {} decodes to, an input class's insta
   const web = serve(
     ActionHttp.layer(
       Lists,
-      Action.implement(List, (filters) =>
-        Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
+      Action.implement(
+        List,
+        (filters) => Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
+        Action.allowAll,
       ),
     ),
   );

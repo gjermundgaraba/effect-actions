@@ -34,23 +34,30 @@ const Tree = Schema.Struct({
 // No input, fields, a struct, identified or with only optional fields, a record, a class and
 // a recursive struct: each one object with keys.
 const served = [
-  Action.implement(Action.make("none", read), done),
-  Action.implement(Action.make("fields", { ...read, input: { id: Schema.String } }), done),
-  Action.implement(Action.make("struct", { ...read, input: One }), done),
+  Action.implement(Action.make("none", read), done, Action.allowAll),
+  Action.implement(
+    Action.make("fields", { ...read, input: { id: Schema.String } }),
+    done,
+    Action.allowAll,
+  ),
+  Action.implement(Action.make("struct", { ...read, input: One }), done, Action.allowAll),
   Action.implement(
     Action.make("identified", { ...read, input: One.annotate({ identifier: "One" }) }),
     done,
+    Action.allowAll,
   ),
   Action.implement(
     Action.make("optional", { ...read, input: Schema.Struct({ id: Schema.optionalKey(One) }) }),
     done,
+    Action.allowAll,
   ),
   Action.implement(
     Action.make("record", { ...read, input: Schema.Record(Schema.String, Schema.Number) }),
     done,
+    Action.allowAll,
   ),
-  Action.implement(Action.make("class", { ...read, input: Fields }), done),
-  Action.implement(Action.make("tree", { ...read, input: Tree }), done),
+  Action.implement(Action.make("class", { ...read, input: Fields }), done, Action.allowAll),
+  Action.implement(Action.make("tree", { ...read, input: Tree }), done, Action.allowAll),
 ] as const;
 
 ActionMcp.layerHttp(served, options);
@@ -60,28 +67,44 @@ ActionMcp.runStdio(served, options);
 const union = Action.implement(
   Action.make("union", { ...read, input: Schema.Union([One, Other]) }),
   done,
+  Action.allowAll,
 );
 
 const nullable = Action.implement(
   Action.make("nullable", { ...read, input: Schema.NullOr(One) }),
   done,
+  Action.allowAll,
 );
 
-const scalar = Action.implement(Action.make("scalar", { ...read, input: Schema.String }), done);
+const scalar = Action.implement(
+  Action.make("scalar", { ...read, input: Schema.String }),
+  done,
+  Action.allowAll,
+);
 
-const array = Action.implement(Action.make("array", { ...read, input: Schema.Array(One) }), done);
+const array = Action.implement(
+  Action.make("array", { ...read, input: Schema.Array(One) }),
+  done,
+  Action.allowAll,
+);
 
 const tuple = Action.implement(
   Action.make("tuple", { ...read, input: Schema.Tuple([Schema.String]) }),
   done,
+  Action.allowAll,
 );
 
 const anything = Action.implement(
   Action.make("anything", { ...read, input: Schema.Struct({}) }),
   done,
+  Action.allowAll,
 );
 
-const fieldless = Action.implement(Action.make("fieldless", { ...read, input: NoFields }), done);
+const fieldless = Action.implement(
+  Action.make("fieldless", { ...read, input: NoFields }),
+  done,
+  Action.allowAll,
+);
 
 // @ts-expect-error A union's JSON Schema root is `anyOf`, not an object.
 ActionMcp.layerHttp(union, options);
@@ -201,13 +224,17 @@ const Rest = Action.make("rest", {
   ]),
 });
 
-const pages = Action.implement([Page, Either, Scalar, Dictionary, Rest], {
-  page: () => Effect.succeed({ markdown: "", words: 0 }),
-  either: () => Effect.succeed({ body: "", kind: "a" as const }),
-  text: () => Effect.succeed(""),
-  dictionary: () => Effect.succeed({}),
-  rest: () => Effect.succeed({ markdown: "" }),
-});
+const pages = Action.implement(
+  [Page, Either, Scalar, Dictionary, Rest],
+  {
+    page: () => Effect.succeed({ markdown: "", words: 0 }),
+    either: () => Effect.succeed({ body: "", kind: "a" as const }),
+    text: () => Effect.succeed(""),
+    dictionary: () => Effect.succeed({}),
+    rest: () => Effect.succeed({ markdown: "" }),
+  },
+  Action.allowAll,
+);
 
 ActionMcp.layerHttp(pages, { ...options, tools: { page: { text: "markdown" } } });
 

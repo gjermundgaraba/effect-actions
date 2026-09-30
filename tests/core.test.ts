@@ -132,7 +132,7 @@ describe("contracts", () => {
     for (const [error, tag] of errors.map((error, i) => [error, tags[i]] as const)) {
       const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
 
-      expect(() => Action.implement(Guarded, () => Effect.void)).toThrow(
+      expect(() => Action.implement(Guarded, () => Effect.void, Action.allowAll)).toThrow(
         `Action "guarded": error _tag "${tag}" is built in, and declared on every surface`,
       );
     }
@@ -147,7 +147,9 @@ describe("contracts", () => {
       ],
     });
 
-    expect(Action.implement(Allowed, () => Effect.void).actions).toEqual([Allowed]);
+    expect(Action.implement(Allowed, () => Effect.void, Action.allowAll).actions).toEqual([
+      Allowed,
+    ]);
   });
 
   it("refuses two errors one caller may receive with one _tag", () => {
@@ -162,13 +164,13 @@ describe("contracts", () => {
       ],
     });
 
-    expect(() => Action.implement(Twice, () => Effect.void)).toThrow(
+    expect(() => Action.implement(Twice, () => Effect.void, Action.allowAll)).toThrow(
       'Duplicate error _tag in action "twice": Busy',
     );
 
     // An action's error beside its binding's, where the client tries both for one status.
     const Once = Action.make("once", { description: "", access: "write", errors: [Busy] });
-    const app = Action.implement(Once, () => Effect.void);
+    const app = Action.implement(Once, () => Effect.void, Action.allowAll);
 
     expect(() =>
       ActionHttp.layer(
@@ -191,7 +193,11 @@ describe("contracts", () => {
     });
 
     const web = makeTestHttp(
-      Action.implement(Loose, () => Effect.fail(new Action.Forbidden({ message: "no" }))),
+      Action.implement(
+        Loose,
+        () => Effect.fail(new Action.Forbidden({ message: "no" })),
+        Action.allowAll,
+      ),
     );
 
     const refused = await web.handler(post("/api/loose"));
@@ -224,7 +230,11 @@ describe("contracts", () => {
   it("rejects duplicate names where they are bound", () => {
     expect(() => ActionHttp.make([GetUser, GetUser])).toThrow("Duplicate action: getUser");
     expect(() =>
-      Action.implement([GetUser, GetUser], { getUser: () => Effect.die("unused") }),
+      Action.implement(
+        [GetUser, GetUser],
+        { getUser: () => Effect.die("unused") },
+        Action.allowAll,
+      ),
     ).toThrow("Duplicate action: getUser");
   });
 
@@ -288,7 +298,7 @@ describe("contracts", () => {
 
     expect(Create.success).toBe(created);
 
-    const web = makeTestHttp(Action.implement(Create, () => Effect.succeed({})));
+    const web = makeTestHttp(Action.implement(Create, () => Effect.succeed({}), Action.allowAll));
     const response = await web.handler(post("/api/create"));
 
     expect(response.status).toBe(201);
@@ -311,7 +321,12 @@ describe("implementations", () => {
     });
 
   it("binds a plain handler, with its actions as its only data", async () => {
-    const app = Action.implement(Hello, ({ name }) => Effect.succeed(`hi ${name}`));
+    const app = Action.implement(
+      Hello,
+      ({ name }) => Effect.succeed(`hi ${name}`),
+      Action.allowAll,
+    );
+
     expect(Object.keys(app)).toEqual(["actions"]);
     expect(app.actions).toEqual([Hello]);
     const web = makeTestHttp(app);
@@ -320,8 +335,8 @@ describe("implementations", () => {
   });
 
   it("keeps same-contract implementations apart", async () => {
-    const appA = Action.implement(Hello, () => Effect.succeed("from A"));
-    const appB = Action.implement(Hello, () => Effect.succeed("from B"));
+    const appA = Action.implement(Hello, () => Effect.succeed("from A"), Action.allowAll);
+    const appB = Action.implement(Hello, () => Effect.succeed("from B"), Action.allowAll);
 
     const web = serve(
       Layer.mergeAll(
@@ -341,10 +356,14 @@ describe("implementations", () => {
   });
 
   it.each([
-    { form: "one action", make: () => Action.implement(Proto, () => Effect.succeed("safe")) },
+    {
+      form: "one action",
+      make: () => Action.implement(Proto, () => Effect.succeed("safe"), Action.allowAll),
+    },
     {
       form: "a record",
-      make: () => Action.implement([Proto], { ["__proto__"]: () => Effect.succeed("safe") }),
+      make: () =>
+        Action.implement([Proto], { ["__proto__"]: () => Effect.succeed("safe") }, Action.allowAll),
     },
   ])("routes prototype-sensitive action names through native HTTP: $form", async ({ make }) => {
     const web = makeTestHttp(make());

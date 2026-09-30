@@ -9,8 +9,10 @@ const Status = Action.make("status", {
   access: "read",
 });
 
-const status = Action.implement(Status, () =>
-  Effect.log("status called").pipe(Effect.as({ ready: true })),
+const status = Action.implement(
+  Status,
+  () => Effect.log("status called").pipe(Effect.as({ ready: true })),
+  Action.allowAll,
 );
 
 // Serves until the host closes stdin, then exits 0. Protocol messages use stdout

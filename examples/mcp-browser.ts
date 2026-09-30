@@ -6,12 +6,16 @@ import { Greet } from "./quickstart.js";
 
 const allowedOrigins = ["https://ui.example.com"];
 
-const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+const actions = Action.implement(
+  Greet,
+  ({ name }) => Effect.succeed(`Hello, ${name}!`),
+  Action.allowAll,
+);
 
 const mcp = ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0", allowedOrigins });
 
 // Global router CORS handles preflight outside route-level authentication.
-// This example is public; protected endpoints still need authentication and a hook.
+// This example is public; a protected endpoint needs authentication and an authorization hook.
 export const routes = Layer.mergeAll(
   mcp,
   HttpRouter.cors({

@@ -2,9 +2,10 @@
 
 One contract: a name, schemas for input, success and declared errors, `access`, and tool
 hints. A contract holds no behavior; `implement` binds handlers to contracts, with the hook every
-surface runs before them: whether a caller may call. Every surface that runs handlers takes an
-implementation or a list of them. The module also exports the built-in
-errors every surface declares and any handler may fail with.
+surface runs before them: whether a caller may call. Every implementation states it, if only as
+`Action.allowAll`. Every surface that runs handlers takes an implementation or a list of them.
+The module also exports the built-in errors every surface declares and any handler may fail
+with.
 
 ## API
 
@@ -13,17 +14,17 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | Export                                         | Purpose                                                                                |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                           |
-| `implement(action, handler)`                   | Bind one handler; returns one `Implementation`.                                        |
-| `implement([actions], handlers)`               | Bind a record of handlers keyed by action name; returns one `Implementation` of all.   |
-| `implement(target, builder)`                   | Either form, with an Effect that builds the handler or record once per host build.     |
-| `implement(target, handlers, before)`          | Any form, with its hook, run on every surface before each handler.                     |
+| `implement(action, handler, before)`           | Bind one handler behind its hook; returns one `Implementation`.                        |
+| `implement([actions], handlers, before)`       | Bind a record of handlers keyed by action name; returns one `Implementation` of all.   |
+| `implement(target, builder, before)`           | Either form, with an Effect that builds the handler or record once per host build.     |
+| `allowAll`                                     | The hook for no action-level rule: every caller the surface admits may call.           |
 | `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind its hook or `before`. |
 | `layer(implementations)`                       | Their builders as one layer: provided above every surface, each runs once for all.     |
 | `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.          |
 | `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook fails with.     |
 | `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.         |
 | `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                              |
-| `AnyImplementation`                            | Any implementation, erased: what every surface accepts.                                |
+| `AnyImplementation`, `AnyImplementation<A>`    | Any implementation, or any of actions `A`, erased: a generic helper's constraint.      |
 | `Handler`, `Before`, `Access`                  | Typed handlers, the hook `(action) => Effect<void, Refusal, R>`, `"read"`/`"write"`.   |
 | `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                 |
 
@@ -35,9 +36,10 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `errors`                | Declared error codecs; defaults to none.                         |
 | `hints`                 | Tool hints for MCP and the Toolkit; each defaults from `access`. |
 
-`before` receives the selected action and fails with a `Refusal`; every surface runs it
-([guarantees.md](guarantees.md#authorization)). Authentication is the host's, not
-the implementation's ([Authentication.md](Authentication.md)).
+`before` is required. It receives the selected action and fails with a `Refusal`; every
+surface runs it ([guarantees.md](guarantees.md#authorization)). It may instead be an Effect
+that builds it, as a builder builds handlers. Authentication is the host's, not the
+implementation's ([Authentication.md](Authentication.md)).
 
 `input` and `success` take a schema or plain fields: `{ id: Schema.String }` is
 `Schema.Struct({ id: Schema.String })`. A tool is read-only exactly when `access` is
@@ -123,8 +125,9 @@ export const ListChanges = Action.make("listChanges", {
 
 Build-time services (`Users`) are yielded in a builder; request-time services
 (`CurrentActor`) inside handlers. `authorize` is the hook every surface runs before each
-handler; the authentication provided around the HTTP surfaces supplies `CurrentActor`. Every
-surface takes one implementation or a list: `double`, `userActions`, `[userActions, double]`.
+handler; the authentication provided around the HTTP surfaces supplies `CurrentActor`. The
+public `status` states `Action.allowAll` instead. Every surface takes one implementation or a
+list: `double`, `userActions`, `[userActions, double]`.
 
 ```ts
 import { Effect } from "effect";
@@ -133,7 +136,8 @@ import { authorize, CurrentActor } from "./authorization.js";
 import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
-// No hook and no request requirement: public on every surface.
+// Every caller may call, and it owes nothing per request: public wherever no
+// authentication covers it.
 export const status = Action.implement(
   Status,
   Effect.gen(function* () {
@@ -141,6 +145,7 @@ export const status = Action.implement(
 
     return () => Effect.map(users.count, (count) => ({ service: "effect-actions", users: count }));
   }),
+  Action.allowAll,
 );
 
 // Capture Users at startup; resolve CurrentActor per request. Every surface runs the
@@ -180,6 +185,57 @@ export const listChanges = Action.implement(
 );
 ```
 
+### Built hooks
+
+A hook that reads a startup service, such as a permission store, is built as handlers are: an
+Effect yields the store once and returns the hook, which yields the caller on every call.
+The host provides `Permissions.layerMemory` at startup, as it provides `Users`; authentication
+still provides `CurrentActor` per request.
+
+```ts
+import { Context, Effect, Layer } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { actors, CurrentActor, type Permission } from "./authorization.js";
+import { WhoAmI } from "./contracts.js";
+
+/** DEMO ONLY: each actor's permissions, kept in a store rather than in the identity. */
+export class Permissions extends Context.Service<
+  Permissions,
+  { readonly of: (actorId: string) => Effect.Effect<ReadonlyArray<Permission>> }
+>()("example/Permissions") {
+  static readonly layerMemory = Layer.succeed(Permissions, {
+    of: (actorId) =>
+      Effect.succeed(Object.values(actors).find(({ id }) => id === actorId)?.permissions ?? []),
+  });
+}
+
+// The `authorize` rule, built as handlers are: the store is yielded once, a startup service
+// provided next to `Users`, and the hook it returns yields the actor on every call.
+export const authorizeStored = Effect.gen(function* () {
+  const permissions = yield* Permissions;
+
+  return (action: Action.Any) =>
+    Effect.gen(function* () {
+      const permission: Permission = action.access === "read" ? "users:read" : "users:write";
+      const actor = yield* CurrentActor;
+
+      if (!(yield* permissions.of(actor.id)).includes(permission)) {
+        return yield* new Action.Forbidden({
+          message: `Requires ${permission}.`,
+          scopes: [permission],
+        });
+      }
+    });
+});
+
+// Built once per layer graph for this implementation, and per invocation of a local command.
+export const whoAmI = Action.implement(
+  WhoAmI,
+  () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
+  authorizeStored,
+);
+```
+
 ## Rules
 
 ### Contracts
@@ -206,15 +262,18 @@ export const listChanges = Action.implement(
 
 ### Implementations
 
-- `implement` returns one `Implementation` of everything it binds: `implement(action, handler)` one action, `implement([a, b], { a: ..., b: ... })` every listed action. Either may take an Effect that builds the handler or the record instead. Every surface takes one implementation or a list: `[userActions, double]`. Which actions it exposes follows the [surface selection rules](guarantees.md#names).
+- `implement` returns one `Implementation` of everything it binds, behind its hook: `implement(action, handler, before)` one action, `implement([a, b], { a: ..., b: ... }, before)` every listed action. Either may take an Effect that builds the handler or the record instead. Every surface takes one implementation or a list: `[userActions, double]`. Which actions it exposes follows the [surface selection rules](guarantees.md#names).
+- Every `implement` states who may call: `before` is required, and leaving it out is a compile error. `Action.allowAll` is the hook without an action-level rule: every caller a surface admits may call, and authentication around the surface still decides who that is. A hook that depends on the deployment is `enabled ? authorize : Action.allowAll`; its services are owed either way. Plain JavaScript has no types, so `implement` also checks at runtime that it got a hook.
+- `before` may be an Effect that builds the hook, as a builder builds handlers ([Built hooks](#built-hooks)). Its lifetime, and startup versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Guarding several implementations, it is built once for each: keep state they share, such as a cache of each actor's permissions, in a service the Effect yields, or pass a service whose value is the hook itself, `implement(actions, handlers, Guard)`, which Effect builds once. `Effect.isEffect` tells the two forms apart, so a hook written with `Effect.fn` is a plain one.
 - A record has exactly one own-property function per action, keyed by its name. Missing and extra keys are compile errors, for a plain record and for a builder's. An inherited method does not count. Handlers are called without a receiver. Duplicate action names in one call throw at `implement`.
 - A plain handler or record is checked at `implement`; a builder's record when it is built. A record that slips past the types (plain JavaScript, a cast) throws `Unknown handlers` for a key no action names, and `Missing handlers` for an action without a function. From a builder, the layer build dies with the same message. Nothing is served with a handler missing.
 - Builder lifetime and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). The hook and authentication: [guarantees.md](guarantees.md#authorization). Surfaces keep the two kinds of services separate in their types, per action.
-- Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.access` ([guarantees.md](guarantees.md#observability)). Don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
-- `before` sees `action` typed as the implementation's own actions.
-- To pass a subset of an implementation's actions to a surface, such as dashboard-only writes kept off MCP, use `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, () => Effect.void)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per host build however many share it.
-- A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
-- `before` may be a value that may be `undefined`, as `enabled ? authorize : undefined`: its services are required either way.
+- A handler's input is typed from its action however it is written: an arrow, a function typed `Action.Handler`, or a generator, `Effect.fn(function* (input) { ... })` or `Effect.fnUntraced`, alone or in a record, a builder's included. The builder must itself be `implement`'s argument: through `.pipe(...)`, or a wrapper such as `Effect.withSpan(builder, name)`, an `Effect.fn` it returns takes an `any` input, so annotate the input there.
+- Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.access` ([guarantees.md](guarantees.md#observability)). Leave `Effect.fn` unnamed: don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
+- `before` sees `action` typed as the implementation's own actions, in a built hook too. As for a builder, an `Effect.fn` hook returned through `.pipe(...)` or a wrapper takes an `any` action: annotate it, `(action: Action.Any)`.
+- To pass a subset of an implementation's actions to a surface, such as dashboard-only writes kept off MCP, use `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, Action.allowAll)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per host build however many share it. A hook given to a share, built or not, is its own: its source's is neither built nor run for its actions.
+- A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. At startup it owes its source's services, its source's hook builder's included, and those of a hook it builds. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
+- A helper over implementations is generic, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, so each implementation's requirements reach the surface it passes them to. An HTTP helper constrains them by its binding's actions, which alone `ActionHttp.layer` serves: `Action.AnyImplementation<(typeof Http.actions)[number]>`, and a `ReadonlyArray` of it. `AnyImplementation` erases every channel to `unknown`: a value or a parameter typed with it owes `unknown`, which no surface can be given.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
 - Test handlers behind their hook in memory, with the caller provided around the in-memory layer instead of authentication ([Testing.md](Testing.md#one-caller)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips the hook. Cover each surface the application exposes.
 
@@ -222,6 +281,9 @@ export const listChanges = Action.implement(
 
 - `Invalid action name: <name>` thrown by `make`: the name is empty, longer than 128 characters, `then`, or has another character.
 - `Invalid access: <value>` thrown by `make`: `access` is neither `"read"` nor `"write"`, which only a caller the compiler never sees can pass.
+- `Expected 3 arguments, but got 2` (TS2554) at `implement`: the implementation states no hook. Pass its authorization hook, or `Action.allowAll` where every caller the surface admits may call.
+- `Argument of type '... | undefined' is not assignable to parameter of type 'Hook<...>'` at `implement`: a hook that may be `undefined`, such as `enabled ? authorize : undefined`. Write `enabled ? authorize : Action.allowAll`.
+- `Missing hook: pass an authorization hook, or Action.allowAll` thrown at `implement` or `share`, or the layer build dies with it: plain JavaScript passed no hook, or a value that is neither a hook nor an Effect building one, or that Effect built something else.
 - Type error `Effect<..., X, ...> is not assignable` at `implement`: the handler fails with an undeclared error `X`. Add it to the action's `errors` or handle it.
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - `Missing handlers: <names>` at `implement`, or when a builder's layer builds: the record has no own-property function for those actions. Add them to the record itself, not to a prototype.
@@ -229,7 +291,10 @@ export const listChanges = Action.implement(
 - `Duplicate action: <name>` at `implement`: the list names one action twice.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
 - `Property 'access' is missing` at `make`: every action declares `"read"` or `"write"`. There is no default.
-- A service is resolved once and shared across requests when it should be per request: it was yielded in the builder. Move the `yield*` into the handler.
+- A service is resolved once and shared across requests when it should be per request: it was yielded in the builder, or in the Effect building the hook. Move the `yield*` into the handler, or the hook. An identity yielded there is a startup requirement of the layer; never provide one at startup.
+- `HttpRouter.Request<"Requires", X>` still owed, or `Type 'X' is not assignable to type 'never'` at `runMain`, although `X`, a store the hook reads, is provided at startup: the hook yields it on every call. Yield it in an Effect that builds the hook ([Built hooks](#built-hooks)).
+- `unknown` among a surface's requirements, and a type error where it is served or run, such as `Argument of type 'Layer<never, unknown, unknown>' is not assignable` at `HttpRouter.toWebHandler` or `Type 'unknown' is not assignable to type 'never'` where it is launched or run: the implementations are typed `Action.AnyImplementation`, as a helper's parameter or a list's annotation. Make the helper generic over them, or drop the annotation.
+- A type error at `ActionHttp.layer`, its argument not assignable to its parameter, ending in `Type 'string' is not assignable to type '"<name>"'` or in the missing properties of an array: the implementations are typed, or a helper constrains them, with `Action.AnyImplementation`, whose actions may be any, while the layer serves only its binding's. Constrain the helper by the binding's actions, `Action.AnyImplementation<(typeof Http.actions)[number]>`, or drop the annotation.
 - `'readOnly' does not exist in type 'Hints'` at `make`, or `Type 'true' is not assignable to type 'never'` on `readOnly` beside another hint: a tool's read-only hint is its `access`. Set `access` instead.
 - Type error on `hints.destructive` of a read action: a read is never destructive. Drop the hint, or make the action a write.
 - `Type '...' is not assignable to type 'never'` on a key at `make`, in `hints` too: an option or hint it does not take, or a misspelled one.

@@ -403,7 +403,7 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
     success: Schema.String,
   });
 
-  const app = Action.implement(Ping, () => Effect.succeed("pong"));
+  const app = Action.implement(Ping, () => Effect.succeed("pong"), Action.allowAll);
 
   const serveMcp = (allowedOrigins?: ReadonlyArray<string>) => {
     const web = serve(
@@ -508,8 +508,11 @@ it("supplies the native request context to handlers without a router requirement
     success: Schema.String,
   });
 
-  const app = Action.implement(ClientName, () =>
-    Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? "anonymous"),
+  const app = Action.implement(
+    ClientName,
+    () =>
+      Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? "anonymous"),
+    Action.allowAll,
   );
 
   // No `path`: the endpoint is served at `/mcp`.

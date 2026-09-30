@@ -11,7 +11,7 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                                              |
 | `toolkit`                         | A native `Toolkit`: `toolkit.tools` holds the tool definitions by name, with typed schemas, hints and approval. |
-| `layer`                           | The handler layer: acquires handlers in its scope; requires build-time services, not identity.                  |
+| `layer`                           | The handler layer: builds handlers and built hooks in its scope; requires build-time services, not identity.    |
 
 | Option          | Meaning                                                                                                                          |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |

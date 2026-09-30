@@ -41,7 +41,7 @@ Package facts that apply everywhere:
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
 - Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
 
-Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own `before` hook, which every surface runs; surfaces take only their transport's options. Authentication is router middleware the host provides around the HTTP surfaces.
+Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own `before` hook, which every surface runs, `Action.allowAll` where no action-level rule applies; surfaces take only their transport's options. Authentication is router middleware the host provides around the HTTP surfaces.
 
 For first-time setup, follow the [minimal program](setup.md#minimal-program).
 

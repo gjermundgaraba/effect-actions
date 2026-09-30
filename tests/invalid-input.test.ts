@@ -41,12 +41,15 @@ const request = (value: Schema.Json, path = "/api/echo") =>
 const counted = () => {
   const calls = { count: 0 };
 
-  const app = Action.implement(Echo, ({ value }) =>
-    Effect.sync(() => {
-      calls.count++;
+  const app = Action.implement(
+    Echo,
+    ({ value }) =>
+      Effect.sync(() => {
+        calls.count++;
 
-      return value;
-    }),
+        return value;
+      }),
+    Action.allowAll,
   );
 
   return { app, calls };
@@ -168,7 +171,7 @@ it("describes every issue of the input in the message", async () => {
   const web = serve(
     ActionHttp.layer(
       ActionHttp.make([Pair]),
-      Action.implement(Pair, ({ left }) => Effect.succeed(left)),
+      Action.implement(Pair, ({ left }) => Effect.succeed(left), Action.allowAll),
     ),
   );
 
@@ -197,7 +200,12 @@ it("refuses undeclared input fields on the server, nested ones too; every typed 
   });
 
   const SaveHttp = ActionHttp.make([Save]);
-  const app = Action.implement(Save, (input) => Effect.sync(() => seen.push(input)));
+
+  const app = Action.implement(
+    Save,
+    (input) => Effect.sync(() => seen.push(input)),
+    Action.allowAll,
+  );
 
   const web = serve(
     Layer.merge(
@@ -264,7 +272,7 @@ it("refuses undeclared fields in the input only: a wider success is encoded to i
   const web = serve(
     ActionHttp.layer(
       ActionHttp.make([Profile]),
-      Action.implement(Profile, () => Effect.succeed(stored)),
+      Action.implement(Profile, () => Effect.succeed(stored), Action.allowAll),
     ),
   );
 
@@ -340,13 +348,13 @@ it("answers InvalidInput on every binding and every layer of one router", async 
 
   const both = ActionHttp.make([Echo, Other]);
   const second = ActionHttp.make([Other], { prefix: "/second" });
-  const other = Action.implement(Other, ({ value }) => Effect.succeed(value));
+  const other = Action.implement(Other, ({ value }) => Effect.succeed(value), Action.allowAll);
 
   const web = serve(
     Layer.mergeAll(
       ActionHttp.layer(
         both,
-        Action.implement(Echo, ({ value }) => Effect.succeed(value)),
+        Action.implement(Echo, ({ value }) => Effect.succeed(value), Action.allowAll),
       ),
       ActionHttp.layer(both, other),
       ActionHttp.layer(second, other),
@@ -366,10 +374,13 @@ const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.Cal
 const mcpRequest = (value: Schema.Json) => rawToolCall("echo", { value });
 
 it("answers a handler's own InvalidInput as declared, over HTTP and MCP", async () => {
-  const app = Action.implement(Echo, ({ value }) =>
-    value > 10
-      ? Effect.fail(new Action.InvalidInput({ message: "Too large" }))
-      : Effect.succeed(value),
+  const app = Action.implement(
+    Echo,
+    ({ value }) =>
+      value > 10
+        ? Effect.fail(new Action.InvalidInput({ message: "Too large" }))
+        : Effect.succeed(value),
+    Action.allowAll,
   );
 
   const web = serve(
@@ -393,15 +404,19 @@ it("answers a handler's own InvalidInput as declared, over HTTP and MCP", async 
 it("keeps MCP's native argument and result handling", async () => {
   let calls = 0;
 
-  const app = Action.implement(Echo, ({ value }) => {
-    calls++;
+  const app = Action.implement(
+    Echo,
+    ({ value }) => {
+      calls++;
 
-    if (value === -1) return Effect.fail(new Rejected({ error: "Negative value" }));
+      if (value === -1) return Effect.fail(new Rejected({ error: "Negative value" }));
 
-    if (value === -2) return Effect.die(new Error("private defect"));
+      if (value === -2) return Effect.die(new Error("private defect"));
 
-    return Effect.succeed(value === 0 ? Infinity : value);
-  });
+      return Effect.succeed(value === 0 ? Infinity : value);
+    },
+    Action.allowAll,
+  );
 
   const web = serve(
     Layer.merge(
@@ -464,7 +479,7 @@ it("executes each input/output transformation once per call", async () => {
     success: number,
   });
 
-  const app = Action.implement(Counted, ({ value }) => Effect.succeed(value));
+  const app = Action.implement(Counted, ({ value }) => Effect.succeed(value), Action.allowAll);
 
   const web = serve(
     Layer.merge(
@@ -494,7 +509,7 @@ it("keeps invalid declared-error encoding a defect on both transports", async ()
     errors: [Domain],
   });
 
-  const app = Action.implement(BrokenDomain, () => Effect.fail(domainError));
+  const app = Action.implement(BrokenDomain, () => Effect.fail(domainError), Action.allowAll);
 
   const web = serve(
     Layer.merge(
@@ -517,7 +532,7 @@ describe.each([
   ["omitted", Action.make("empty", { description: "No input", access: "read" })],
   ["{}", Action.make("empty", { description: "No input", access: "read", input: {} })],
 ] as const)("an action whose input is %s", (_, Empty) => {
-  const app = Action.implement(Empty, () => Effect.void);
+  const app = Action.implement(Empty, () => Effect.void, Action.allowAll);
 
   const web = () => {
     const server = serve(
@@ -566,7 +581,7 @@ it("publishes `success: {}` as the closed empty object", async () => {
 
   const { handler } = serve(
     ActionMcp.layerHttp(
-      Action.implement(Empty, () => Effect.succeed({})),
+      Action.implement(Empty, () => Effect.succeed({}), Action.allowAll),
       { name: "test", version: "0" },
     ),
   );

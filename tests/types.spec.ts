@@ -46,6 +46,7 @@ const App = Action.implement(
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
     };
   }),
+  Action.allowAll,
 );
 
 /** The request services a route layer requires. */
@@ -66,7 +67,7 @@ export const typeAssertions = () => {
     whoAmI: () => Effect.succeed({ id: "alice", tenantId: "acme" }),
   };
 
-  const single = Action.implement(Double, ok.double);
+  const single = Action.implement(Double, ok.double, Action.allowAll);
   // @ts-expect-error No public implementation Layer.
   void single.layer;
   // @ts-expect-error No public handler record.
@@ -77,28 +78,44 @@ export const typeAssertions = () => {
   // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication compile-failure fixture.
   ActionHttp.layer(Http, [{ ...single, actions: [Double] }]);
   // @ts-expect-error Every listed action needs a handler.
-  Action.implement(Actions, { ...ok, whoAmI: undefined });
-  // @ts-expect-error Handler results must match the success schema.
-  Action.implement(Actions, { ...ok, double: ({ value }) => Effect.succeed(String(value)) });
-  // @ts-expect-error Handlers may only fail with the declared errors.
-  Action.implement(Actions, { ...ok, double: () => Effect.fail(new Error("undeclared")) });
-  Action.implement(Actions, {
-    ...ok,
-    // @ts-expect-error Handlers receive the decoded input, number rather than its wire string.
-    double: ({ value }: { value: string }) => Effect.succeed(Number(value)),
-  });
-  Action.implement(Actions, {
-    ...ok,
-    // @ts-expect-error Input fields come from the schema.
-    // oxlint-disable-next-line typescript/no-unsafe-assignment -- Compile-failure fixture: the rejected field yields an error type; nothing runs.
-    getUser: ({ userId }) => Effect.succeed({ id: userId, name: "" }),
-  });
+  Action.implement(Actions, { ...ok, whoAmI: undefined }, Action.allowAll);
+  Action.implement(
+    Actions,
+    // @ts-expect-error Handler results must match the success schema.
+    { ...ok, double: ({ value }) => Effect.succeed(String(value)) },
+    Action.allowAll,
+  );
+  Action.implement(
+    Actions,
+    // @ts-expect-error Handlers may only fail with the declared errors.
+    { ...ok, double: () => Effect.fail(new Error("undeclared")) },
+    Action.allowAll,
+  );
+  Action.implement(
+    Actions,
+    {
+      ...ok,
+      // @ts-expect-error Handlers receive the decoded input, number rather than its wire string.
+      double: ({ value }: { value: string }) => Effect.succeed(Number(value)),
+    },
+    Action.allowAll,
+  );
+  Action.implement(
+    Actions,
+    {
+      ...ok,
+      // @ts-expect-error Input fields come from the schema.
+      // oxlint-disable-next-line typescript/no-unsafe-assignment -- Compile-failure fixture: the rejected field yields an error type; nothing runs.
+      getUser: ({ userId }) => Effect.succeed({ id: userId, name: "" }),
+    },
+    Action.allowAll,
+  );
   // @ts-expect-error A single action takes its handler, not a record.
-  Action.implement(Double, ok);
+  Action.implement(Double, ok, Action.allowAll);
   // @ts-expect-error A single handler's result must match the success schema.
-  Action.implement(Double, () => Effect.succeed("two"));
+  Action.implement(Double, () => Effect.succeed("two"), Action.allowAll);
   // @ts-expect-error A single handler may only fail with the declared errors.
-  Action.implement(Double, () => Effect.fail(new Error("undeclared")));
+  Action.implement(Double, () => Effect.fail(new Error("undeclared")), Action.allowAll);
 
   HttpRouter.toWebHandler(
     // @ts-expect-error Build-time handler dependencies are Layer requirements.
@@ -132,6 +149,7 @@ export const typeAssertions = () => {
       hints: {},
     }),
     () => Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? ""),
+    Action.allowAll,
   );
 
   const stdio: Effect.Effect<void, unknown, Stdio.Stdio> = ActionMcp.runStdio(contextual, {
@@ -141,10 +159,14 @@ export const typeAssertions = () => {
 
   void stdio;
 
-  const requestOnly = Action.implement(Actions, {
-    ...ok,
-    whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
-  });
+  const requestOnly = Action.implement(
+    Actions,
+    {
+      ...ok,
+      whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
+    },
+    Action.allowAll,
+  );
 
   // @ts-expect-error Test helpers must not erase missing request services.
   makeTestHttp([requestOnly]);
@@ -154,6 +176,7 @@ export const typeAssertions = () => {
   const fallible = Action.implement(
     Actions,
     Effect.fail("build-failed" as const).pipe(Effect.as(ok)),
+    Action.allowAll,
   );
 
   for (const routes of [
@@ -208,8 +231,10 @@ export const implementTypes = () => {
   });
 
   // One action, one handler: its parameter is typed from the contract.
-  const plain = Action.implement(Lookup, ({ id }) =>
-    Effect.succeed({ id, name: id.toUpperCase() }),
+  const plain = Action.implement(
+    Lookup,
+    ({ id }) => Effect.succeed({ id, name: id.toUpperCase() }),
+    Action.allowAll,
   );
 
   // One implementation, whose request requirements are kept per action name, and its hook's.
@@ -236,6 +261,7 @@ export const implementTypes = () => {
       return ({ id }) =>
         Effect.flatMap(Principal, () => Effect.map(store.name(id), (name) => ({ id, name })));
     }),
+    Action.allowAll,
   );
 
   const builtChannels: Equal<
@@ -251,10 +277,14 @@ export const implementTypes = () => {
   void builtChannels;
 
   // Several actions, one record: each handler is typed from its own contract.
-  const record = Action.implement([Lookup, Rename], {
-    lookup: ({ id }) => Effect.succeed({ id, name: "" }),
-    rename: ({ name }) => Effect.succeed(name),
-  });
+  const record = Action.implement(
+    [Lookup, Rename],
+    {
+      lookup: ({ id }) => Effect.succeed({ id, name: "" }),
+      rename: ({ name }) => Effect.succeed(name),
+    },
+    Action.allowAll,
+  );
 
   // Several actions, one builder: failures and services are shared, requests are per handler.
   const shared = Action.implement(
@@ -269,13 +299,18 @@ export const implementTypes = () => {
         rename: ({ name }) => Effect.as(Principal, name),
       };
     }),
+    Action.allowAll,
   );
 
   const incomplete = Effect.succeed({ lookup: () => Effect.succeed({ id: "", name: "" }) });
   // @ts-expect-error A list's builder must supply every handler.
-  Action.implement([Lookup, Rename], incomplete);
-  // @ts-expect-error A builder's handlers may only fail with declared errors.
-  Action.implement([Lookup], Effect.succeed({ lookup: () => Effect.fail("nope" as const) }));
+  Action.implement([Lookup, Rename], incomplete, Action.allowAll);
+  Action.implement(
+    [Lookup],
+    // @ts-expect-error A builder's handlers may only fail with declared errors.
+    Effect.succeed({ lookup: () => Effect.fail("nope" as const) }),
+    Action.allowAll,
+  );
 
   // Per action: the shared builder's `rename` owes `Principal`, its `lookup` nothing.
   const sharedRequests: Equal<
@@ -311,7 +346,7 @@ export const implementTypes = () => {
   void keptRequests;
 
   // Given a hook of their own, they owe its services instead of their source's.
-  const reshared = Action.share([Rename], hooked, () => Effect.void);
+  const reshared = Action.share([Rename], hooked, Action.allowAll);
 
   const resharedChannels: Equal<
     typeof reshared,
@@ -344,8 +379,10 @@ export const implementTypes = () => {
     success: Schema.String,
   });
 
-  const readsRequest = Action.implement(Headers, () =>
-    Effect.map(Effect.service(HttpServerRequest.HttpServerRequest), (request) => request.url),
+  const readsRequest = Action.implement(
+    Headers,
+    () => Effect.map(Effect.service(HttpServerRequest.HttpServerRequest), (request) => request.url),
+    Action.allowAll,
   );
 
   const routerProvided: [
@@ -396,7 +433,7 @@ export const implementTypes = () => {
 
   void inMemoryServices;
 
-  const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name));
+  const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name), Action.allowAll);
   // @ts-expect-error Only the source's own actions.
   Action.share([Lookup], renameOnly);
 
@@ -428,7 +465,7 @@ export const implementTypes = () => {
     success: Schema.String,
   });
 
-  const foreign = Action.implement(Foreign, () => Effect.succeed(""));
+  const foreign = Action.implement(Foreign, () => Effect.succeed(""), Action.allowAll);
   // @ts-expect-error Route layers exist only for implementations of the bound actions.
   ActionHttp.layer(http, foreign);
   // @ts-expect-error A list of implementations is not a list of contracts.
@@ -477,12 +514,20 @@ export const builtInErrorTypes = Effect.gen(function* () {
   void fields;
 
   // Any handler may fail with a built-in error, which every surface declares.
-  Action.implement(Echo, () => Effect.fail(new Action.Forbidden({ scopes: ["admin"] })));
-  Action.implement(Echo, () => Effect.fail(new Action.InvalidInput({ message: "Too many" })));
+  Action.implement(
+    Echo,
+    () => Effect.fail(new Action.Forbidden({ scopes: ["admin"] })),
+    Action.allowAll,
+  );
+  Action.implement(
+    Echo,
+    () => Effect.fail(new Action.InvalidInput({ message: "Too many" })),
+    Action.allowAll,
+  );
   // @ts-expect-error No action lists a built-in error: every surface declares it.
   Action.make("listed", { description: "", access: "write", errors: [Action.Forbidden] });
   // @ts-expect-error Only those and the declared errors.
-  Action.implement(Echo, () => Effect.fail(new Error("undeclared")));
+  Action.implement(Echo, () => Effect.fail(new Error("undeclared")), Action.allowAll);
 
   // Every built-in error reaches every client method as a typed failure.
   const client = yield* ActionHttp.client(bound);
@@ -552,7 +597,7 @@ export const layerTypes = () => {
     success: Schema.Number,
   });
 
-  const billingApp = Action.implement(Invoice, () => Effect.as(Tenant, 1));
+  const billingApp = Action.implement(Invoice, () => Effect.as(Tenant, 1), Action.allowAll);
 
   const Both = ActionHttp.make([...Actions, Invoice]);
 
@@ -571,6 +616,7 @@ export const layerTypes = () => {
       Effect.tap(() => BuildA),
       Effect.as(() => Effect.succeed(1)),
     ),
+    Action.allowAll,
   );
 
   const failsAfterBuildB = Action.implement(
@@ -584,6 +630,7 @@ export const layerTypes = () => {
         whoAmI: () => Effect.succeed({ id: "", tenantId: "" }),
       }),
     ),
+    Action.allowAll,
   );
 
   const combined = ActionHttp.layer(Both, [failsAfterBuildA, failsAfterBuildB]);
@@ -639,7 +686,7 @@ export const layerTypes = () => {
   const inline = HttpRouter.toWebHandler(
     ActionHttp.layer(
       ActionHttp.make([Invoice]),
-      Action.implement(Invoice, () => Effect.succeed(1)),
+      Action.implement(Invoice, () => Effect.succeed(1), Action.allowAll),
     ).pipe(services),
   );
 
@@ -647,7 +694,7 @@ export const layerTypes = () => {
 
   const inlineMcp = HttpRouter.toWebHandler(
     ActionMcp.layerHttp(
-      Action.implement(Invoice, () => Effect.succeed(1)),
+      Action.implement(Invoice, () => Effect.succeed(1), Action.allowAll),
       {
         name: "test",
         version: "0",
@@ -709,6 +756,579 @@ export const beforeTypes = () => {
   // The hook's services join what the stdio host owes, since nothing else supplies them.
   const stdio = ActionMcp.runStdio(clocked, { name: "t", version: "0" });
   stdio satisfies Effect.Effect<void, unknown, Stdio.Stdio | Clock>;
+};
+
+export const requiredHookTypes = (enabled: boolean) => {
+  class Identity extends Context.Service<Identity, string>()("types-spec/HookIdentity") {}
+
+  const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
+  const read = () => Effect.succeed("ok");
+  const hook = () => Effect.asVoid(Identity);
+
+  // Every implementation states who may call: a hook of its own, or `Action.allowAll`.
+  // @ts-expect-error Expected 3 arguments: an implementation without a hook is refused.
+  Action.implement(Read, read);
+  // @ts-expect-error `undefined` is not a hook either.
+  Action.implement(Read, read, undefined);
+
+  const open = Action.implement(Read, read, Action.allowAll);
+  const chosen = Action.implement(Read, read, enabled ? hook : Action.allowAll);
+  const guarded = Action.implement(Read, read, hook);
+
+  // A share keeps its source's hook, or takes `Action.allowAll` for a public subset.
+  const kept = Action.share([Read], guarded);
+  const opened = Action.share([Read], guarded, Action.allowAll);
+
+  const owed: [
+    Equal<(typeof open)["~request"], { readonly read: never; readonly "~hook": never }>,
+    Equal<(typeof chosen)["~request"], { readonly read: never; readonly "~hook": Identity }>,
+    Equal<(typeof kept)["~request"], { readonly read: never; readonly "~hook": Identity }>,
+    Equal<(typeof opened)["~request"], { readonly read: never; readonly "~hook": never }>,
+  ] = [true, true, true, true];
+
+  void owed;
+};
+
+export const effectFnHandlerTypes = () => {
+  class Principal extends Context.Service<Principal, string>()("types-spec/FnPrincipal") {}
+
+  class Suffix extends Context.Service<Suffix, string>()("types-spec/FnSuffix") {}
+
+  const Lookup = Action.make("lookup", {
+    description: "Lookup",
+    access: "read",
+    input: { id: Schema.String },
+    success: { id: Schema.String, name: Schema.String },
+  });
+
+  const Rename = Action.make("rename", {
+    description: "Rename",
+    access: "write",
+    input: { id: Schema.String, name: Schema.String },
+    success: Schema.String,
+  });
+
+  // A generator handler is typed from its action like an arrow, whichever `Effect.fn` makes
+  // it, for one action and for each handler of a record.
+  const single = Action.implement(
+    Lookup,
+    Effect.fn(function* ({ id }) {
+      return { id, name: yield* Principal };
+    }),
+    Action.allowAll,
+  );
+
+  const record = Action.implement(
+    [Lookup, Rename],
+    {
+      lookup: Effect.fn("lookup")(function* ({ id }) {
+        return { id, name: yield* Effect.succeed(id.toUpperCase()) };
+      }),
+      rename: Effect.fnUntraced(function* ({ name }) {
+        return `${name} (${yield* Principal})`;
+      }),
+    },
+    Action.allowAll,
+  );
+
+  // A single action's builder may return one itself.
+  const built = Action.implement(
+    Lookup,
+    Effect.gen(function* () {
+      const suffix = yield* Suffix;
+
+      return Effect.fn(function* ({ id }) {
+        return { id, name: `${yield* Principal}${suffix}` };
+      });
+    }),
+    Action.allowAll,
+  );
+
+  // Each action owes exactly what its own handler yields.
+  const owed: [
+    Equal<(typeof single)["~request"], { readonly lookup: Principal; readonly "~hook": never }>,
+    Equal<
+      (typeof record)["~request"],
+      { readonly lookup: never; readonly rename: Principal; readonly "~hook": never }
+    >,
+    Equal<(typeof built)["~request"], { readonly lookup: Principal; readonly "~hook": never }>,
+    Equal<(typeof built)["~buildContext"], Suffix>,
+  ] = [true, true, true, true];
+
+  void owed;
+
+  Action.implement(
+    Lookup,
+    Effect.gen(function* () {
+      const suffix = yield* Suffix;
+
+      // @ts-expect-error A builder's `Effect.fn`: the input has no such field.
+      return Effect.fn(function* ({ idd }) {
+        return { id: String(idd), name: `${yield* Principal}${suffix}` };
+      });
+    }),
+    Action.allowAll,
+  );
+
+  Action.implement(
+    Lookup,
+    Effect.map(Suffix, (suffix) =>
+      // @ts-expect-error A builder's `Effect.fn(name)`: the input has no such field.
+      Effect.fn("lookup")(function* ({ idd }) {
+        return { id: String(idd), name: `${yield* Principal}${suffix}` };
+      }),
+    ),
+    Action.allowAll,
+  );
+
+  Action.implement(
+    Lookup,
+    Effect.succeed(
+      // @ts-expect-error A builder's `Effect.fnUntraced`: the input has no such field.
+      Effect.fnUntraced(function* ({ idd }) {
+        return { id: String(idd), name: yield* Principal };
+      }),
+    ),
+    Action.allowAll,
+  );
+
+  Action.implement(
+    Lookup,
+    // @ts-expect-error `Effect.fn`: the input has no such field.
+    Effect.fn(function* ({ idd }) {
+      return { id: String(idd), name: yield* Principal };
+    }),
+    Action.allowAll,
+  );
+
+  Action.implement(
+    Lookup,
+    // @ts-expect-error `Effect.fn(name)`: the input has no such field.
+    Effect.fn("lookup")(function* ({ idd }) {
+      return { id: String(idd), name: yield* Principal };
+    }),
+    Action.allowAll,
+  );
+
+  Action.implement(
+    Lookup,
+    // @ts-expect-error `Effect.fnUntraced`: the input has no such field.
+    Effect.fnUntraced(function* ({ idd }) {
+      return { id: String(idd), name: yield* Principal };
+    }),
+    Action.allowAll,
+  );
+
+  Action.implement(
+    [Lookup, Rename],
+    {
+      lookup: Effect.fn(function* ({ id }) {
+        // @ts-expect-error `Effect.fn` in a record: a string has no such method.
+        // oxlint-disable-next-line typescript/no-unsafe-call, typescript/no-unsafe-assignment -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
+        const shouted: string = id.toUpperCas();
+
+        return { id: shouted, name: yield* Principal };
+      }),
+      rename: ({ name }) => Effect.succeed(name),
+    },
+    Action.allowAll,
+  );
+
+  Action.implement(
+    [Lookup, Rename],
+    {
+      lookup: ({ id }) => Effect.succeed({ id, name: "" }),
+      // @ts-expect-error `Effect.fn(name)` in a record: the input has no such field.
+      rename: Effect.fn("rename")(function* ({ nam }) {
+        return `${String(nam)} (${yield* Principal})`;
+      }),
+    },
+    Action.allowAll,
+  );
+
+  Action.implement(
+    [Lookup, Rename],
+    {
+      lookup: ({ id }) => Effect.succeed({ id, name: "" }),
+      // @ts-expect-error `Effect.fnUntraced` in a record: the input has no such field.
+      rename: Effect.fnUntraced(function* ({ nam }) {
+        return `${String(nam)} (${yield* Principal})`;
+      }),
+    },
+    Action.allowAll,
+  );
+
+  // One action takes its handler; a list takes a record of them, and nothing else.
+  // @ts-expect-error One action takes its handler, not a record keyed by its name.
+  Action.implement(Lookup, { lookup: () => Effect.succeed({ id: "", name: "" }) }, Action.allowAll);
+  // @ts-expect-error A list takes a record of handlers, not one handler.
+  Action.implement([Lookup, Rename], () => Effect.never, Action.allowAll);
+};
+
+export const deferredTypes = () => {
+  class Store extends Context.Service<Store, string>()("types-spec/DeferredStore") {}
+
+  class Clock extends Context.Service<Clock, number>()("types-spec/DeferredClock") {}
+
+  const Stamp = Action.make("stamp", {
+    description: "Stamp",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Echo = Action.make("echo", {
+    description: "Echo",
+    access: "read",
+    input: { value: Schema.String },
+    success: Schema.String,
+  });
+
+  const binding = ActionHttp.make([Stamp, Echo]);
+
+  // A builder needing two services owes them as one union, `Store | Clock` as written.
+  const stamp = Action.implement(
+    Stamp,
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const clock = yield* Clock;
+
+      return () => Effect.succeed(`${store}@${clock}`);
+    }),
+    Action.allowAll,
+  );
+
+  const buildContext: Equal<(typeof stamp)["~buildContext"], Store | Clock> = true;
+
+  void buildContext;
+
+  // Provided one `Layer.provide` at a time, both are discharged.
+  HttpRouter.toWebHandler(
+    ActionHttp.layer(binding, stamp).pipe(
+      Layer.provide(Layer.succeed(Store, "store")),
+      Layer.provide(Layer.succeed(Clock, 0)),
+      services,
+    ),
+  );
+
+  // An implementation written inside a surface's list infers nothing from what the surface
+  // accepts: the list owes exactly `stamp`'s startup services, and nothing per request.
+  const listed = ActionHttp.layer(binding, [
+    stamp,
+    Action.implement(Echo, ({ value }) => Effect.succeed(value), Action.allowAll),
+  ]);
+
+  const listedOwed: Equal<
+    Extract<Layer.Services<typeof listed>, Store | Clock | HttpRouter.Request<"Requires", unknown>>,
+    Store | Clock
+  > = true;
+
+  void listedOwed;
+
+  // @ts-expect-error A forgotten startup service of a sibling is still refused.
+  HttpRouter.toWebHandler(listed.pipe(Layer.provide(Layer.succeed(Store, "store")), services));
+  HttpRouter.toWebHandler(
+    listed.pipe(
+      Layer.provide(Layer.succeed(Store, "store")),
+      Layer.provide(Layer.succeed(Clock, 0)),
+      services,
+    ),
+  );
+};
+
+export const builtHookTypes = () => {
+  class Permissions extends Context.Service<
+    Permissions,
+    { readonly allows: (actor: string, access: Action.Access) => boolean }
+  >()("types-spec/Permissions") {}
+
+  class Actor extends Context.Service<Actor, string>()("types-spec/Actor") {}
+
+  class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
+
+  const Lookup = Action.make("lookup", {
+    description: "Lookup",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const Rename = Action.make("rename", {
+    description: "Rename",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const handlers = { lookup: () => Effect.succeed(""), rename: () => Effect.succeed("") };
+
+  // What the hook's builder yields is a startup service; what the hook yields, per request.
+  const guarded = Action.implement(
+    [Lookup, Rename],
+    handlers,
+    Effect.gen(function* () {
+      const permissions = yield* Permissions;
+
+      if (Math.random() > 2) return yield* new Unavailable();
+
+      return (action) =>
+        Effect.gen(function* () {
+          // The hook reads the implementation's own actions.
+          const name: "lookup" | "rename" = action.name;
+          // @ts-expect-error No other action.
+          const other: "other" = action.name;
+
+          void [name, other];
+
+          if (!permissions.allows(yield* Actor, action.access)) {
+            return yield* new Action.Forbidden();
+          }
+        });
+    }),
+  );
+
+  const channels: [
+    Equal<
+      (typeof guarded)["~request"],
+      { readonly lookup: never; readonly rename: never; readonly "~hook": Actor }
+    >,
+    Equal<(typeof guarded)["~buildError"], Unavailable>,
+    Equal<(typeof guarded)["~buildContext"], Permissions>,
+  ] = [true, true, true];
+
+  void channels;
+
+  // Over HTTP, the startup service is provided as any other: no `HttpRouter.Request`.
+  const routes = ActionHttp.layer(ActionHttp.make([Lookup, Rename]), guarded);
+
+  const provided = HttpRouter.toWebHandler(
+    routes.pipe(
+      Layer.provide(Layer.succeed(Permissions, { allows: () => true })),
+      Layer.provide(HttpRouter.layer),
+      services,
+    ),
+  );
+
+  // @ts-expect-error The hook's own services stay per request.
+  void provided.handler(new Request("http://localhost"), Context.empty());
+  void provided.handler(new Request("http://localhost"), Context.make(Actor, "alice"));
+
+  // A built hook still fails with refusals only.
+  Action.implement(
+    [Lookup, Rename],
+    handlers,
+    // @ts-expect-error A built hook may not fail with anything but a refusal.
+    Effect.succeed(() => Effect.fail(new Unavailable())),
+  );
+
+  // A share given a built hook owes its startup services beside its source's.
+  const admin = Action.share(
+    [Rename],
+    guarded,
+    Effect.map(
+      Actor,
+      (actor) => () => (actor === "root" ? Effect.void : Effect.fail(new Action.Forbidden())),
+    ),
+  );
+
+  const adminChannels: [
+    Equal<(typeof admin)["~request"], { readonly rename: never; readonly "~hook": never }>,
+    Equal<(typeof admin)["~buildContext"], Permissions | Actor>,
+  ] = [true, true];
+
+  void adminChannels;
+
+  // A service of type `Before` is an Effect building the hook: built once per layer graph,
+  // whatever implementations it guards.
+  class Guard extends Context.Service<Guard, Action.Before<Action.Any, Actor>>()(
+    "types-spec/Guard",
+  ) {}
+
+  const serviced = Action.implement([Lookup, Rename], handlers, Guard);
+
+  const servicedChannels: [
+    Equal<(typeof serviced)["~request"]["~hook"], Actor>,
+    Equal<(typeof serviced)["~buildContext"], Guard>,
+  ] = [true, true];
+
+  void servicedChannels;
+
+  // A hook the Effect returns is typed from the implementation's actions however it is
+  // written: `Effect.fn`, `Effect.fn(name)` or `Effect.fnUntraced`, unannotated.
+  const generated = Action.implement(
+    [Lookup, Rename],
+    handlers,
+    Effect.gen(function* () {
+      const permissions = yield* Permissions;
+
+      if (Math.random() > 2) return yield* new Unavailable();
+
+      return Effect.fn(function* (action) {
+        const name: "lookup" | "rename" = action.name;
+        // @ts-expect-error No other action.
+        const other: "other" = action.name;
+
+        void [name, other];
+
+        // @ts-expect-error A misspelled field is refused, not read as `undefined`.
+        if (action.acess === "write") return yield* new Action.Forbidden();
+
+        if (!permissions.allows(yield* Actor, action.access)) {
+          return yield* new Action.Forbidden();
+        }
+      });
+    }),
+  );
+
+  const single = Action.implement(
+    Lookup,
+    handlers.lookup,
+    Effect.map(Permissions, (permissions) =>
+      Effect.fn("authorize")(function* (action) {
+        const name: "lookup" = action.name;
+        // @ts-expect-error Only its own action.
+        const other: "rename" = action.name;
+
+        void [name, other];
+
+        if (!permissions.allows(yield* Actor, action.access)) {
+          return yield* new Action.Forbidden();
+        }
+      }),
+    ),
+  );
+
+  const reviewed = Action.share(
+    [Rename],
+    generated,
+    Effect.gen(function* () {
+      const permissions = yield* Permissions;
+
+      return Effect.fnUntraced(function* (action) {
+        const name: "rename" = action.name;
+        // @ts-expect-error Only the share's own actions.
+        const other: "lookup" = action.name;
+
+        void [name, other];
+
+        if (!permissions.allows(yield* Actor, action.access)) {
+          return yield* new Action.Forbidden();
+        }
+      });
+    }),
+  );
+
+  const generatedChannels: [
+    Equal<
+      (typeof generated)["~request"],
+      { readonly lookup: never; readonly rename: never; readonly "~hook": Actor }
+    >,
+    Equal<(typeof generated)["~buildError"], Unavailable>,
+    Equal<(typeof generated)["~buildContext"], Permissions>,
+    Equal<(typeof single)["~request"], { readonly lookup: never; readonly "~hook": Actor }>,
+    Equal<(typeof single)["~buildError"], never>,
+    Equal<(typeof single)["~buildContext"], Permissions>,
+    Equal<(typeof reviewed)["~request"], { readonly rename: never; readonly "~hook": Actor }>,
+    Equal<(typeof reviewed)["~buildError"], Unavailable>,
+    Equal<(typeof reviewed)["~buildContext"], Permissions>,
+  ] = [true, true, true, true, true, true, true, true, true];
+
+  void generatedChannels;
+
+  // Written inside a surface's arguments too.
+  const tools = ActionToolkit.make(
+    Action.implement(
+      [Lookup, Rename],
+      handlers,
+      Effect.gen(function* () {
+        const permissions = yield* Permissions;
+
+        return Effect.fn(function* (action) {
+          // @ts-expect-error A misspelled field is refused, not read as `undefined`.
+          if (action.acess === "write") return yield* new Action.Forbidden();
+
+          if (!permissions.allows(yield* Actor, action.access)) {
+            return yield* new Action.Forbidden();
+          }
+        });
+      }),
+    ),
+  );
+
+  const toolChannels: [
+    Equal<Tool.HandlerServices<typeof tools.toolkit.tools.rename>, Actor>,
+    Equal<Layer.Services<typeof tools.layer>, Permissions>,
+  ] = [true, true];
+
+  void toolChannels;
+};
+
+export const erasedImplementationTypes = () => {
+  class Store extends Context.Service<Store, string>()("types-spec/ErasedStore") {}
+
+  const Stored = Action.make("stored", {
+    description: "Stored",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const stored = Action.implement(
+    Stored,
+    Effect.map(Store, (store) => () => Effect.succeed(store)),
+    Action.allowAll,
+  );
+
+  // A helper generic over implementations keeps what each owes.
+  const endpoint = <
+    const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
+  >(
+    apps: Apps,
+  ) => ActionMcp.layerHttp(apps, { name: "t", version: "0" });
+
+  // @ts-expect-error A forgotten startup service is refused through the helper.
+  HttpRouter.toWebHandler(endpoint([stored]).pipe(services));
+  HttpRouter.toWebHandler(
+    endpoint([stored]).pipe(Layer.provide(Layer.succeed(Store, "")), services),
+  );
+
+  // An HTTP helper constrains them by its binding's actions, which alone its layer serves.
+  const StoredHttp = ActionHttp.make([Stored]);
+
+  const routes = <
+    const Apps extends
+      | Action.AnyImplementation<(typeof StoredHttp.actions)[number]>
+      | ReadonlyArray<Action.AnyImplementation<(typeof StoredHttp.actions)[number]>>,
+  >(
+    apps: Apps,
+  ) => ActionHttp.layer(StoredHttp, apps);
+
+  // @ts-expect-error A forgotten startup service is refused through the helper.
+  HttpRouter.toWebHandler(routes([stored]).pipe(services));
+  HttpRouter.toWebHandler(routes([stored]).pipe(Layer.provide(Layer.succeed(Store, "")), services));
+  HttpRouter.toWebHandler(routes(stored).pipe(Layer.provide(Layer.succeed(Store, "")), services));
+
+  // Constrained by any implementation's actions, it could pass the layer another action.
+  const unbound = <
+    const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
+  >(
+    apps: Apps,
+  ) =>
+    // @ts-expect-error An HTTP layer serves only its binding's actions.
+    ActionHttp.layer(StoredHttp, apps);
+
+  void unbound;
+
+  // Typed with the erased type, a value owes `unknown`, which nothing provides.
+  const erased: ReadonlyArray<Action.AnyImplementation> = [stored];
+  const layer = ActionMcp.layerHttp(erased, { name: "t", version: "0" });
+  const unknowns: Equal<Layer.Services<typeof layer>, unknown> = true;
+
+  void unknowns;
+
+  // @ts-expect-error An HTTP layer refuses it where it is made: its actions may be any.
+  ActionHttp.layer(StoredHttp, erased);
+
+  HttpRouter.toWebHandler(
+    // @ts-expect-error No surface serves what is typed with the erased type alone.
+    layer.pipe(Layer.provide(Layer.succeed(Store, "")), services),
+  );
 };
 
 export const authenticationTypes = () => {
@@ -843,18 +1463,19 @@ export const voidSuccessTypes = () => {
   // An omitted success is `Schema.Void`, so the handler returns nothing.
   const success: Equal<(typeof Reset)["success"], typeof Schema.Void> = true;
 
-  Action.implement(Reset, () => Effect.void);
-  Action.implement(Reset, () => Effect.succeed(undefined));
-  Action.implement([Reset], { reset: () => Effect.void });
+  Action.implement(Reset, () => Effect.void, Action.allowAll);
+  Action.implement(Reset, () => Effect.succeed(undefined), Action.allowAll);
+  Action.implement([Reset], { reset: () => Effect.void }, Action.allowAll);
   Action.implement(
     Reset,
     Effect.succeed(() => Effect.void),
+    Action.allowAll,
   );
 
   // As for a function returning `void`, a void action's handler may return a value, which
   // its encoding drops.
-  Action.implement(Reset, () => Effect.succeed("done"));
-  Action.implement(Explicit, () => Effect.succeed(1));
+  Action.implement(Reset, () => Effect.succeed("done"), Action.allowAll);
+  Action.implement(Explicit, () => Effect.succeed(1), Action.allowAll);
 
   void success;
 };
@@ -951,6 +1572,7 @@ export const servedRequirementTypes = () => {
       hints: { idempotent: true },
     }),
     principal,
+    Action.allowAll,
   );
 
   Action.make("typo", {
@@ -1050,8 +1672,9 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
   const who = () => Effect.succeed("anyone");
   const hook = () => Effect.asVoid(Identity);
 
-  // A hook that may be undefined is accepted: its services are owed either way.
-  const maybe = Action.implement(Who, who, enabled ? hook : undefined);
+  // A hook chosen by a condition, one branch allowing every caller: its services are owed
+  // either way.
+  const maybe = Action.implement(Who, who, enabled ? hook : Action.allowAll);
 
   type Owed<L> =
     L extends Layer.Layer<infer _A, infer _E, infer R>
@@ -1112,7 +1735,7 @@ export const unionOptionTypes = (
   ] = [true, true, true];
 
   // A handler may return what either member's success accepts.
-  void Action.implement(Either, () => Effect.succeed("x"));
+  void Action.implement(Either, () => Effect.succeed("x"), Action.allowAll);
 
   void union;
 };

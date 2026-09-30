@@ -176,7 +176,11 @@ export const bindingErrorTypes = Effect.gen(function* () {
   yield* methods.count().pipe(Effect.catchTag("Throttled", () => Effect.succeed(0)));
 });
 
-Action.implement(Get, {
-  // @ts-expect-error A handler fails with its action's errors only, never a binding's.
-  get: () => Effect.fail(new Throttled()),
-});
+Action.implement(
+  Get,
+  {
+    // @ts-expect-error A handler fails with its action's errors only, never a binding's.
+    get: () => Effect.fail(new Throttled()),
+  },
+  Action.allowAll,
+);

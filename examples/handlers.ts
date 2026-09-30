@@ -4,7 +4,8 @@ import { authorize, CurrentActor } from "./authorization.js";
 import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
-// No hook and no request requirement: public on every surface.
+// Every caller may call, and it owes nothing per request: public wherever no
+// authentication covers it.
 export const status = Action.implement(
   Status,
   Effect.gen(function* () {
@@ -12,6 +13,7 @@ export const status = Action.implement(
 
     return () => Effect.map(users.count, (count) => ({ service: "effect-actions", users: count }));
   }),
+  Action.allowAll,
 );
 
 // Capture Users at startup; resolve CurrentActor per request. Every surface runs the

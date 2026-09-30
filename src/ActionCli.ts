@@ -85,12 +85,15 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
     return run === undefined ? Effect.die(`No handler for ${action.name}`) : run(input);
   });
 
-  // SAFETY: the builder's failures and services are the implementation's `EX` and `RX`,
-  // the handler's and the hook's are its entry of `R`, and both fail with a `BuiltIn` at most.
-  return call.pipe(
+  const built = call.pipe(
     Effect.scoped,
     Effect.provide(Implementation.layerOf(app), { local: true }),
-  ) as Local<App, A>;
+  );
+
+  // SAFETY: the builders' failures and services are the implementation's `EX` and `RX`,
+  // the handler's and the hook's are its entry of `R`, and both fail with a `BuiltIn` at most.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased handler boundary: the implementation's type restores every channel.
+  return built as Local<App, A>;
 };
 
 /**

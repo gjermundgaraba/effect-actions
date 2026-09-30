@@ -20,6 +20,7 @@ const snippets = [
   ["docs/setup.md", "## Minimal program", ["quickstart.ts", "quickstart-server.ts"]],
   ["docs/Action.md", "## Canonical", ["contracts.ts"]],
   ["docs/Action.md", "### Implementations", ["handlers.ts"]],
+  ["docs/Action.md", "### Built hooks", ["authorization-built.ts"]],
   ["docs/ActionHttp.md", "## Canonical", ["binding.ts"]],
   ["docs/ActionHttp.md", "### Serving", ["http.ts"]],
   ["docs/ActionHttp.md", "### Client", ["client.ts"]],

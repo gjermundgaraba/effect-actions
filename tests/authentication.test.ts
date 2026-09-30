@@ -374,7 +374,11 @@ describe("Authentication.make", () => {
       success: Schema.String,
     });
 
-    const app = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id));
+    const app = Action.implement(
+      Identify,
+      () => Effect.map(Identity, ({ id }) => id),
+      Action.allowAll,
+    );
 
     const Http = ActionHttp.make([Identify]);
 
@@ -603,13 +607,16 @@ describe("Authentication.make", () => {
         success: Schema.String,
       });
 
-      const app = Action.implement(Identify, () =>
-        Effect.gen(function* () {
-          expect(events).toEqual(["acquire"]);
-          events.push("handler");
+      const app = Action.implement(
+        Identify,
+        () =>
+          Effect.gen(function* () {
+            expect(events).toEqual(["acquire"]);
+            events.push("handler");
 
-          return (yield* Identity).id;
-        }),
+            return (yield* Identity).id;
+          }),
+        Action.allowAll,
       );
 
       const web = serve(
@@ -781,10 +788,12 @@ describe("authentication around a surface", () => {
   const Http = ActionHttp.make([Public, Secret]);
   const authenticate = Authentication.make(Identity, Effect.succeed(authenticateToken)).layer;
 
-  const open = Action.implement(Public, () => Effect.succeed("anyone"));
+  const open = Action.implement(Public, () => Effect.succeed("anyone"), Action.allowAll);
 
-  const guarded = Action.implement(Secret, ({ note }) =>
-    Effect.map(Identity, ({ id }) => `${id}: ${note}`),
+  const guarded = Action.implement(
+    Secret,
+    ({ note }) => Effect.map(Identity, ({ id }) => `${id}: ${note}`),
+    Action.allowAll,
   );
 
   const call = (path: string, body: Schema.Json, token?: string) => {
@@ -854,10 +863,13 @@ describe("authentication around a surface", () => {
       Effect.provideService(effect, Tenant, "acme"),
     );
 
-    const tenanted = Action.implement(Secret, ({ note }) =>
-      Effect.flatMap(Tenant, (tenant) =>
-        Effect.map(Identity, ({ id }) => `${id}@${tenant}: ${note}`),
-      ),
+    const tenanted = Action.implement(
+      Secret,
+      ({ note }) =>
+        Effect.flatMap(Tenant, (tenant) =>
+          Effect.map(Identity, ({ id }) => `${id}@${tenant}: ${note}`),
+        ),
+      Action.allowAll,
     );
 
     // Everything the combined middleware provides is provided, so nothing is owed.

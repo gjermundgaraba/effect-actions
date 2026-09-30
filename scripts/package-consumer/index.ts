@@ -81,7 +81,11 @@ const Page = Action.make("page", {
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
 });
 
-const page = Action.implement(Page, () => Effect.succeed({ markdown: "# Page", next: "2" }));
+const page = Action.implement(
+  Page,
+  () => Effect.succeed({ markdown: "# Page", next: "2" }),
+  Action.allowAll,
+);
 
 const tools = { page: { text: "markdown" } } as const;
 
@@ -124,7 +128,11 @@ const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>
 if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))
   throw new Error("The OpenAPI document lacks the greet route");
 
-const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+const greet = Action.implement(
+  Greet,
+  ({ name }) => Effect.succeed(`Hello, ${name}!`),
+  Action.allowAll,
+);
 
 const binding = ActionToolkit.make(greet);
 
@@ -211,6 +219,36 @@ const checkHookTypes = () => {
     () => Effect.succeed("read"),
     // @ts-expect-error A published hook refuses only with a built-in refusal.
     () => Effect.fail(new Denied()),
+  );
+  // @ts-expect-error A published implementation states who may call it.
+  Action.implement(Read, () => Effect.succeed("read"));
+  Action.implement(
+    Greet,
+    // @ts-expect-error A published `Effect.fn` handler is typed from its action.
+    Effect.fn(function* ({ nam }) {
+      return `${String(nam)}${yield* Effect.succeed("!")}`;
+    }),
+    Action.allowAll,
+  );
+  Action.implement(
+    Greet,
+    Effect.succeed(
+      // @ts-expect-error So is one a published builder returns.
+      Effect.fn(function* ({ nam }) {
+        return `${String(nam)}${yield* Effect.succeed("!")}`;
+      }),
+    ),
+    Action.allowAll,
+  );
+  Action.implement(
+    [Read, Write],
+    { read: () => Effect.succeed("read"), write: () => Effect.succeed("write") },
+    Effect.succeed(
+      Effect.fn(function* (action) {
+        // @ts-expect-error A published built hook's action is typed from its implementation.
+        if (action.acess === "write") return yield* new Action.Forbidden();
+      }),
+    ),
   );
 };
 

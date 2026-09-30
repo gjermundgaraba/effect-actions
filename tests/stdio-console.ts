@@ -15,6 +15,7 @@ const status = Action.implement(
     everyConsoleMethod(() => Effect.void),
     () => Effect.log("json logger").pipe(Effect.andThen(Console.log("console log"))),
   ),
+  Action.allowAll,
 );
 
 ActionMcp.runStdio(status, { name: "stdio-console", version: "0" }).pipe(

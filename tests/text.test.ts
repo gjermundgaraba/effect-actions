@@ -349,7 +349,7 @@ describe("a text field MCP cannot send", () => {
       success: Schema.Union([Schema.Struct({ body: Schema.String })]),
     });
 
-    const single = Action.implement(Single, () => Effect.succeed({ body: "x" }));
+    const single = Action.implement(Single, () => Effect.succeed({ body: "x" }), Action.allowAll);
 
     expect(
       await buildDefect(
@@ -380,7 +380,11 @@ describe("a text field MCP cannot send", () => {
       { readonly [name: string]: never },
       never,
       never
-    > = Action.implement(Erased, () => Effect.succeed({ body: "x", kind: "a" as const }));
+    > = Action.implement(
+      Erased,
+      () => Effect.succeed({ body: "x", kind: "a" as const }),
+      Action.allowAll,
+    );
 
     expect(
       await buildDefect(
@@ -408,7 +412,7 @@ describe("a text field MCP cannot send", () => {
       success: { markdown: Schema.String },
     });
 
-    const dump = Action.implement(Dump, () => Effect.succeed({ markdown: "" }));
+    const dump = Action.implement(Dump, () => Effect.succeed({ markdown: "" }), Action.allowAll);
 
     // The types accept a key any choice serves.
     const shared = (debug: boolean) =>

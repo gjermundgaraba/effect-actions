@@ -33,7 +33,7 @@ const remote = ({ value }: { readonly value: number }) =>
     () => (value === 0 ? Effect.fail(new Domain({ message: "zero" })) : Effect.succeed(value * 2)),
   );
 
-const app = Action.implement([Remote], { remote });
+const app = Action.implement([Remote], { remote }, Action.allowAll);
 
 it("projects commands through the HTTP client without a local fallback", async () => {
   const web = serve(ActionHttp.layer(Http, app));
@@ -113,7 +113,10 @@ it("projects a flat binding as one kebab-case subcommand per action", async () =
   const Flat = ActionHttp.make([Remote, Echo]);
 
   const web = serve(
-    ActionHttp.layer(Flat, [app, Action.implement(Echo, ({ text }) => Effect.succeed(text))]),
+    ActionHttp.layer(Flat, [
+      app,
+      Action.implement(Echo, ({ text }) => Effect.succeed(text), Action.allowAll),
+    ]),
   );
 
   const urls: string[] = [];
@@ -156,9 +159,12 @@ it("names the same subcommands as a local aggregate for the same actions", () =>
     }>;
   }) => command.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name));
 
-  const local = ActionCli.make([app, Action.implement(Echo, ({ text }) => Effect.succeed(text))], {
-    name: "cli",
-  });
+  const local = ActionCli.make(
+    [app, Action.implement(Echo, ({ text }) => Effect.succeed(text), Action.allowAll)],
+    {
+      name: "cli",
+    },
+  );
 
   const remote = ActionCli.make(ActionHttp.make([Remote, Echo]), { name: "cli" });
 

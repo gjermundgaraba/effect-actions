@@ -4,7 +4,7 @@
 
 One contract, one `implement`, one binding, one hook. `ActionGroup` is gone: actions are
 implemented directly, HTTP binds a flat list of actions, and every client calls an action with
-its input. An implementation carries its `before` hook, which every surface runs. The library
+its input. Every implementation states its `before` hook, which every surface runs. The library
 owns the failures a surface answers with: `InvalidInput` (400), `Unauthenticated` (401) and
 `Forbidden` (403). CLI flags come from each action's input. Clients and `Testing` are
 Effect-only, the client modules merge into `ActionHttp` and `ActionCli`, and `ActionCatalog`
@@ -32,12 +32,13 @@ const users = Action.implement([GetUser, RenameUser], build, authorize);
 const Http = ActionHttp.make([GetUser, RenameUser]);
 ActionHttp.layer(Http, users);
 const ReadPage = Action.make("readPage", { ... });
+const pages = Action.implement(ReadPage, read, authorize);
 ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: "markdown" } } });
 ```
 
 | 0.8.0                                                                                                                                     | 0.9.0                                                                                                                                                                                                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionGroup.make(...)`, `Group.implement(build)`                                                                                         | `Action.implement(actions, build)`                                                                                                                                                                            |
+| `ActionGroup.make(...)`, `Group.implement(build)`                                                                                         | `Action.implement(actions, build, before)`, with `Action.allowAll` where 0.8.0 passed no `before`                                                                                                             |
 | `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                                                                | `Action.Implementation`; a group is a list of actions                                                                                                                                                         |
 | `ActionGroup.contracts(...groups)`, `Contracts`                                                                                           | The actions themselves, or a binding's `Http.actions`                                                                                                                                                         |
 | `app.group`, `app.build`                                                                                                                  | None: test handlers behind their hook through a surface, as under `Testing.layer`                                                                                                                             |
@@ -45,6 +46,7 @@ ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: 
 | A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                                                                         | The built-in `Action.InvalidInput`, for input that does not decode                                                                                                                                            |
 | `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group`                                              | `Action.implement(actions, handlers, before)`                                                                                                                                                                 |
 | A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`                                                   | A hook failing with an `Action.Refusal`, `Action.Unauthenticated` or `Action.Forbidden`, which every surface declares                                                                                         |
+| `before`'s `action`, an `Action.Any`                                                                                                      | `before`'s `action`, typed as the implementation's own actions, in a built hook too                                                                                                                           |
 | `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                                                                                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                              |
 | `mcp.name`                                                                                                                                | The action's name, which is the tool's                                                                                                                                                                        |
 | `mcp.readOnly`                                                                                                                            | `access: "read"`                                                                                                                                                                                              |
@@ -83,6 +85,16 @@ ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: 
 
 Behavior that changes without a rename:
 
+- Every implementation states who may call it: `before` is required, and `Action.allowAll` is
+  the hook without an action-level rule. In 0.8.0 `before` was an option of `Http.layer`,
+  `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, `ActionCli.command` and
+  `ActionCli.group`, and leaving it out meant no authorization. Where 0.8.0 passed none, pass
+  `Action.allowAll`. Where it guarded one surface and not another, implement once with the
+  hook, and serve the other surface `Action.share(actions, app, Action.allowAll)`; a surface
+  that had a hook of its own takes its share with that hook. Without a hook, `implement` does
+  not compile (`Expected 3 arguments, but got 2`), and from plain JavaScript it throws
+  `Missing hook: pass an authorization hook, or Action.allowAll`. `undefined` is not a hook:
+  `before: enabled ? authorize : undefined` becomes `enabled ? authorize : Action.allowAll`.
 - A record has exactly one handler per action: an extra key is a compile error, which 0.8.0
   ignored. `implement` throws `Missing handlers: <names>` or `Unknown handlers: <keys>`; a
   builder's record is checked when its layer builds.
@@ -90,6 +102,9 @@ Behavior that changes without a rename:
   adapter layer. Provide `Action.layer(implementations)` with its startup services once, above
   every surface, `HttpRouter.serve` and `Testing.layer` included. `ActionCli` still runs it per
   invocation.
+- A builder's startup services are one union, `A | B` as written, so providing them in two
+  `Layer.provide` calls, one per service, discharges both. 0.8.0 typed them `NoInfer<A | B>`,
+  which stayed owed after both calls and showed in every hover.
 - Routes are `POST <prefix>/<action>`, `/api` by default, with operation ID `<action>`, so
   action names are unique per binding; 0.8.0's were `POST <apiPath>/<group>/<action>`, with
   operation ID `<group>.<action>`. The OpenAPI tag is the mount path, such as `api/users`, or
@@ -183,7 +198,10 @@ Behavior that changes without a rename:
   type parameter (`[app, status]`), or generic over actions (`Action.AnyImplementation<A>`),
   does not compile: take the implementations as its type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spread them,
-  `[...apps, status]`.
+  `[...apps, status]`. A value typed `Action.AnyImplementation` itself owes `unknown`:
+  `ActionHttp.layer` refuses it, and other surfaces' layers owe `unknown`. An HTTP helper
+  constrains its implementations by the binding's actions,
+  `Action.AnyImplementation<(typeof Http.actions)[number]>`.
 - MCP sends a text field as 0.8.0 did: once, raw, as the first text block, leaving it out of
   `structuredContent` and the listed `outputSchema`. Every other surface serves the whole
   success. `text` is typed by the served action: a top-level string field of its encoded
@@ -215,8 +233,19 @@ Behavior that changes without a rename:
   schema, `Schema.Struct({})` included, is kept as it is.
 - `success` is optional: omitted, it is `Schema.Void`, and a CLI command prints nothing by
   default or with `--json`; a custom `render` may print text.
+- A hook may be an Effect that builds it, as a builder builds handlers. What the Effect yields,
+  such as a permission store, is a startup requirement, provided once beside the builders'
+  services; what the hook it returns yields, such as the caller, stays per request. It is built
+  once per layer graph for its implementation, and per invocation of a local command. A 0.8.0
+  hook that read a store owed it per request, supplied with `HttpRouter.provideRequest` on each
+  surface: yield the store in the Effect instead, and provide its layer at startup. A 0.8.0
+  hook built in `Layer.unwrap` around a surface becomes that Effect, passed to `implement`. A
+  service whose value is the hook, `implement(actions, handlers, Guard)`, is built once for
+  every implementation it guards.
 - `Action.share(actions, implementation, before?)` serves some of an implementation's actions
-  behind its hook, or `before` instead, sharing its builder's one run per host build.
+  behind its hook, or `before` instead, sharing its builder's one run per host build. `before`
+  may be `Action.allowAll`, for a public subset, or built, as `implement`'s may; given one, the
+  source's hook is neither built nor run for its actions.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.
 - `scopesRequired` names the scopes every 401 of a protected resource asks for, so a first

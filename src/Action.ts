@@ -7,7 +7,7 @@ import {
   assertName,
   assertOwnTags,
 } from "./internal/actions.js";
-import type { BuiltIn, BuiltIns } from "./internal/errors.js";
+import type { BuiltIn, BuiltIns, Refusal } from "./internal/errors.js";
 import {
   type ActionOf,
   type AnyImplementation,
@@ -16,11 +16,12 @@ import {
   type BuildContext,
   type BuildError,
   builders,
+  type ErasedBefore,
   type ErasedHandler,
-  type HandlerContext,
   type Handlers,
   Implementation,
   type Member,
+  memoized,
   type Served,
   toList,
 } from "./internal/implementation.js";
@@ -31,10 +32,17 @@ export type { Implementation } from "./internal/implementation.js";
 /**
  * An implementation's hook: whether a caller may call. It receives the selected action and
  * fails only with a refusal; its services are request-time requirements, like a handler's.
+ * `implement` and `share` also take an Effect building one, whose services are startup
+ * requirements, like a builder's.
  */
 export type { Before } from "./internal/implementation.js";
 
-/** Any implementation, with its actions and channels erased: what every surface accepts. */
+/**
+ * Any implementation, with its actions and channels erased: the constraint of a helper
+ * generic over implementations, `<App extends Action.AnyImplementation>`. An HTTP helper's is
+ * `AnyImplementation<A>`, of its binding's actions `A`, which alone `ActionHttp.layer`
+ * serves. A value of this type owes `unknown`, which no surface can be given.
+ */
 export type { AnyImplementation } from "./internal/implementation.js";
 
 /** Any service-free schema. Only handlers may require services. */
@@ -114,7 +122,7 @@ export interface Options {
 
 /**
  * No key beyond `Keys`, so a misspelled option or hint is refused rather than ignored.
- * Checked after inference, as `Exact` is.
+ * Checked after inference: `make`'s options are `O & NoInfer<Rules<O>>`.
  */
 type Known<O, Keys> = { readonly [K in Exclude<keyof O, keyof Keys>]: never };
 
@@ -258,77 +266,151 @@ type Target = Any | ReadonlyArray<Any>;
 /** The actions `T` stands for. */
 type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : T;
 
-/** The handler of one action, or a record of handlers keyed by action name. */
-type HandlersFor<T extends Target> =
-  T extends ReadonlyArray<Any>
-    ? { readonly [A in T[number] as A["name"]]: Handler<A, any> }
-    : T extends Any
-      ? Handler<T, any>
-      : never;
-
-/**
- * Each action's handler's per-request requirements, by name: its entry of `H`, or `H`
- * itself; and the hook's `RB`, under `~hook`, which no action name can be.
- */
-type RequestsOf<T extends Target, H, RB> = {
-  readonly [K in ActionsOf<T>["name"] | "~hook"]: K extends "~hook"
-    ? RB
-    : HandlerContext<T extends ReadonlyArray<Any> ? H[K & keyof H] : H>;
-};
+/** The names of the actions `T` stands for. */
+type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
 /** What `S`'s handlers owe for each action of `T`, which it implements, and the hook's `RB`. */
 type SharedRequests<T extends Target, S, RB> = S extends { readonly "~request": infer R }
   ? {
-      readonly [K in ActionsOf<T>["name"] | "~hook"]: K extends "~hook" ? RB : R[K & keyof R];
+      readonly [K in NamesOf<T> | "~hook"]: K extends "~hook" ? RB : R[K & keyof R];
     }
   : never;
 
 /** The requirements of `S`'s hook. */
 type HookOf<S> = S extends { readonly "~request": infer R } ? R["~hook" & keyof R] : never;
 
-/** The names a handlers record may have: none for a single action's handler. */
-type Names<T extends Target> = T extends ReadonlyArray<Any> ? T[number]["name"] : never;
+/**
+ * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
+ * stay one: while a builder's inner call, such as `Effect.gen`, is inferred, TypeScript keeps
+ * an alias's arguments marked as not yet inferred, where `never` or this type written inline
+ * becomes a candidate, and the builder's record loses its handlers' parameter types.
+ */
+type NoHandler<R> = { readonly "~list": R };
 
 /**
- * A handlers record with no key beyond its actions' names. `H` itself stays the inferred
- * parameter, so handlers are contextually typed and a generic handler such as
- * `Effect.succeed` is still inferred; the check does not take part in inference.
+ * One action's handler, owing `R` per request; a list takes none. It is `Handler` written
+ * out, as `Hook`'s hooks are. While `implement` infers, an alias whose argument `R` is not yet
+ * inferred is marked, as a whole, as not inferrable (the mark `NoHandler` relies on), so an
+ * `Effect.fn(...)` a builder returns would infer nothing from it and take an `any` input.
  */
-type Exact<T extends Target, H> = H &
-  NoInfer<{ readonly [K in Exclude<keyof H, Names<T>>]: never }>;
+type Single<T extends Target, R> = T extends Any
+  ? (
+      input: T["input"]["Type"],
+    ) => Effect.Effect<T["success"]["Type"], T["errors"][number]["Type"] | BuiltIn, R>
+  : NoHandler<R>;
+
+/**
+ * A record of handlers, one per key of `R`, each typed from its own action and owing its
+ * entry of `R` per request. TypeScript infers `R` from the record, key by key, so each
+ * handler, `Effect.fn` included, is typed from its contract; a key no action names takes
+ * nothing.
+ */
+type Several<T extends Target, R> = {
+  readonly [K in keyof R]: K extends NamesOf<T>
+    ? Handler<Extract<ActionsOf<T>, { readonly name: K }>, R[K]>
+    : never;
+};
+
+/** What `implement` binds to `T`: one action's handler, or a list's record. */
+type HandlersOf<T extends Target, RS, R> = Single<T, RS> | Several<T, R>;
+
+/**
+ * `T`, never inferred from where it stands: an index TypeScript cannot read until `T` is
+ * known, as `NoInfer` would be, but read as `T` itself once it is. So an implementation
+ * written inside a surface's arguments takes nothing from what that surface accepts, and a
+ * union of services is one union, which `Layer.provide` discharges a member at a time.
+ */
+type Deferred<T> = [T][T extends unknown ? 0 : never];
+
+/**
+ * A hook, or an Effect that builds it, as a builder builds handlers: `EB` and `RBX` are
+ * startup failures and services, `RB` what the hook reads per request. Each hook is `Before`
+ * written out. TypeScript would infer `RB` from only one branch of a conditional hook whose
+ * other branch is typed `Before`, such as `enabled ? authorize : Action.allowAll`. And while
+ * `implement` infers, an alias whose argument `RB` is not yet inferred is marked, as a whole,
+ * as not inferrable, so an `Effect.fn(...)` the Effect returns would infer nothing from it and
+ * take an `any` action.
+ */
+type Hook<A extends Any, RB, EB, RBX> =
+  | ((action: A) => Effect.Effect<void, Refusal, RB>)
+  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RB>, EB, RBX>;
+
+/** What `implement` and `share` receive as a hook, erased. */
+type ErasedHook = Before<Any, unknown> | Effect.Effect<Before<Any, unknown>, unknown, unknown>;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
 
 /**
- * Bind handlers to contracts. Pass one action and its handler, or a list of actions and
- * a record of handlers keyed by action name. Either may instead be an Effect that builds
- * them: its services are startup requirements, resolved once however many surfaces serve
- * the result, while services a handler yields are per-request requirements.
+ * The hook that decides nothing: every caller a surface admits may call. Authentication
+ * around the surface still decides who is admitted. State it where an implementation needs
+ * no action-level rule, as `enabled ? authorize : Action.allowAll` does where one depends
+ * on the deployment.
+ */
+export const allowAll: Before<Any> = () => Effect.void;
+
+/**
+ * `before`, checked: the types require a hook, and plain JavaScript can still pass none,
+ * which must not serve every caller.
+ */
+const assertHook = (before: Before<Any, unknown>): ErasedBefore => {
+  if (!Predicate.isFunction(before)) {
+    throw new Error("Missing hook: pass an authorization hook, or Action.allowAll");
+  }
+
+  return before;
+};
+
+/**
+ * The layer building `before`: a plain hook as it is, a built one once its Effect runs,
+ * checked when the layer builds, as a builder's record is. `Effect.isEffect` tells them
+ * apart, so a hook written with `Effect.fn` stays plain.
+ */
+const hookOf = (before: ErasedHook) =>
+  memoized(
+    Effect.isEffect(before) ? Effect.map(before, assertHook) : Effect.succeed(assertHook(before)),
+  );
+
+/**
+ * Bind handlers to contracts, behind a hook. Pass one action and its handler, or a list of
+ * actions and a record of handlers keyed by action name. Either may instead be an Effect
+ * that builds them: its services are startup requirements, resolved once however many
+ * surfaces serve the result, while services a handler yields are per-request requirements.
  *
  * `before` is the implementation's hook, which every surface serving it runs before each
- * handler: whether the caller may call. Omit it for a public implementation.
+ * handler: whether the caller may call. It is required: `Action.allowAll` says every caller
+ * may. It may also be an Effect that builds the hook, as a builder builds handlers.
  */
 export function implement<
   const T extends Target,
-  H extends HandlersFor<T>,
+  // A list's record has a handler for each of its actions; one action takes no record.
+  R extends (T extends ReadonlyArray<Any> ? { readonly [K in NamesOf<T>]: unknown } : never),
+  RS = never,
   EX = never,
   RX = never,
   RB = never,
+  EB = never,
+  RBX = never,
 >(
   target: T,
-  build: Exact<T, H> | Effect.Effect<Exact<T, H>, EX, RX>,
-  before?: Before<ActionsOf<T>, RB>,
+  build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  before: Hook<ActionsOf<T>, RB, EB, RBX>,
 ): Implementation<
   ActionsOf<T>,
-  RequestsOf<T, H, RB>,
-  NoInfer<EX>,
-  NoInfer<Exclude<RX, Scope.Scope>>
+  {
+    readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
+      ? RB
+      : T extends ReadonlyArray<Any>
+        ? R[K & keyof R]
+        : RS;
+  },
+  Deferred<EX | EB>,
+  Deferred<Exclude<RX | RBX, Scope.Scope>>
 >;
 export function implement(
   target: Target,
   build: Built | Effect.Effect<Built, unknown, unknown>,
-  before?: Before<Any, unknown>,
+  before: ErasedHook,
 ): Implementation<Any, {}, unknown, unknown> {
   const actions = ensure(target);
   const names = actions.map((action) => action.name);
@@ -340,6 +422,8 @@ export function implement(
     assertOwnTags(`Action "${action.name}"`, action.errors);
     assertDistinctTags(`action "${action.name}"`, action.errors);
   }
+
+  const hook = hookOf(before);
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so
@@ -372,15 +456,15 @@ export function implement(
     ? Effect.map(build, record)
     : Effect.succeed(record(build));
 
-  return new Implementation(actions, handlers, before);
+  return new Implementation(actions, memoized(handlers), hook);
 }
 
 /**
  * Serve some of `app`'s actions with its handlers, behind its hook, or `before` instead:
  * `share([Poll], users)` for a surface serving fewer actions, `share(actions, users,
- * trustAdmin)` for an admin CLI, `share([Poll], users, () => Effect.void)` for a public one.
+ * trustAdmin)` for an admin CLI, `share([Poll], users, Action.allowAll)` for a public one.
  * The result shares `app`'s builder, which runs once per host build however many
- * implementations share it.
+ * implementations share it; `before` may be built, as `implement`'s may.
  */
 export function share<
   App extends AnyImplementation,
@@ -398,20 +482,22 @@ export function share<
   App extends AnyImplementation,
   const T extends Extract<ActionOf<App>, Any> | ReadonlyArray<Extract<ActionOf<App>, Any>>,
   RB = never,
+  EB = never,
+  RBX = never,
 >(
   target: T,
   app: App,
-  before: Before<ActionsOf<T>, RB>,
+  before: Hook<ActionsOf<T>, RB, EB, RBX>,
 ): Implementation<
   ActionsOf<T>,
   SharedRequests<T, App, RB>,
-  App["~buildError"],
-  App["~buildContext"]
+  App["~buildError"] | Deferred<EB>,
+  App["~buildContext"] | Deferred<Exclude<RBX, Scope.Scope>>
 >;
 export function share(
   target: Target,
   app: AnyImplementation,
-  before?: Before<Any, unknown>,
+  ...before: [] | [ErasedHook]
 ): Implementation<Any, {}, unknown, unknown> {
   const actions = ensure(target);
 
@@ -426,7 +512,9 @@ export function share(
     );
   }
 
-  return new Implementation<Any, {}, unknown, unknown>(actions, app, before);
+  // Left out, the hook is the source's; given, even as `undefined`, it is checked, as
+  // `implement` checks its own.
+  return Implementation.share(actions, app, before.length === 0 ? undefined : hookOf(before[0]));
 }
 
 /**

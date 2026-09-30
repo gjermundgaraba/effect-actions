@@ -64,7 +64,11 @@ describe("the identity authentication provides", () => {
     success: Schema.String,
   });
 
-  const caller = Action.implement(Caller, () => Effect.map(CurrentActor, ({ id }) => id));
+  const caller = Action.implement(
+    Caller,
+    () => Effect.map(CurrentActor, ({ id }) => id),
+    Action.allowAll,
+  );
 
   const Public = ActionHttp.make([Caller], { prefix: "/public" });
 
@@ -150,7 +154,7 @@ describe("a value provided per request", () => {
     success: Schema.String,
   });
 
-  const where = Action.implement(Where, () => Tenant);
+  const where = Action.implement(Where, () => Tenant, Action.allowAll);
 
   const routes = Layer.mergeAll(
     ActionHttp.layer(ActionHttp.make([Where]), where),
@@ -224,6 +228,7 @@ describe("a value provided per request", () => {
                 ),
             ),
         ),
+        Action.allowAll,
       );
 
       const identify = HttpRouter.middleware<{ provides: Actor }>()((route) =>
@@ -257,7 +262,11 @@ describe("what the routes were built with", () => {
   const Boom = Action.make("boom", { description: "Die.", access: "write" });
 
   it("fills in a reference a request lacks, but never the log level an MCP client asks for", async () => {
-    const level = Action.implement(Level, () => Effect.service(References.CurrentLogLevel));
+    const level = Action.implement(
+      Level,
+      () => Effect.service(References.CurrentLogLevel),
+      Action.allowAll,
+    );
 
     const web = serve(
       Layer.mergeAll(
@@ -291,11 +300,14 @@ describe("what the routes were built with", () => {
         success: { stage: Schema.String, level: Schema.String },
       });
 
-      const probe = Action.implement(Probe, () =>
-        Effect.all({
-          stage: Effect.service(Stage),
-          level: Effect.service(References.CurrentLogLevel),
-        }),
+      const probe = Action.implement(
+        Probe,
+        () =>
+          Effect.all({
+            stage: Effect.service(Stage),
+            level: Effect.service(References.CurrentLogLevel),
+          }),
+        Action.allowAll,
       );
 
       const bindings = {
@@ -351,11 +363,14 @@ describe("what the routes were built with", () => {
 
       const Hold = Action.make("hold", { description: "Hold a resource.", access: "write" });
 
-      const hold = Action.implement(Hold, () =>
-        Effect.acquireRelease(
-          Effect.sync(() => void events.push("acquire")),
-          () => Effect.sync(() => void events.push("release")),
-        ),
+      const hold = Action.implement(
+        Hold,
+        () =>
+          Effect.acquireRelease(
+            Effect.sync(() => void events.push("acquire")),
+            () => Effect.sync(() => void events.push("release")),
+          ),
+        Action.allowAll,
       );
 
       const routes =
@@ -381,7 +396,7 @@ describe("what the routes were built with", () => {
       const reported: Array<string> = [];
       const reporter = ErrorReporter.make(({ error }) => void reported.push(error.message));
 
-      const boom = Action.implement(Boom, () => Effect.die(new Error("boom")));
+      const boom = Action.implement(Boom, () => Effect.die(new Error("boom")), Action.allowAll);
 
       const routes =
         transport === "HTTP"
@@ -411,7 +426,7 @@ describe("what the routes were built with", () => {
         },
       });
 
-      const level = Action.implement(Level, () => Effect.succeed("ok"));
+      const level = Action.implement(Level, () => Effect.succeed("ok"), Action.allowAll);
 
       const routes =
         transport === "HTTP"

@@ -94,10 +94,14 @@ describe("mcpClient", () => {
     const Refuse = Action.make("refuse", { description: "Refuses", access: "write" });
     const Reject = Action.make("reject", { description: "Rejects its input", access: "write" });
 
-    const app = Action.implement([Refuse, Reject], {
-      refuse: () => Effect.fail(new Action.Forbidden({ message: "Never." })),
-      reject: () => Effect.fail(new Action.InvalidInput({ message: "Out of range." })),
-    });
+    const app = Action.implement(
+      [Refuse, Reject],
+      {
+        refuse: () => Effect.fail(new Action.Forbidden({ message: "Never." })),
+        reject: () => Effect.fail(new Action.InvalidInput({ message: "Out of range." })),
+      },
+      Action.allowAll,
+    );
 
     const results = await Effect.runPromise(
       Effect.gen(function* () {
@@ -124,7 +128,7 @@ describe("mcpClient", () => {
     });
 
     const routes = ActionMcp.layerHttp(
-      Action.implement(Fail, () => Effect.fail("failure")),
+      Action.implement(Fail, () => Effect.fail("failure"), Action.allowAll),
       { name: "test", version: "0" },
     );
 
@@ -170,7 +174,7 @@ describe("mcpClient", () => {
     });
 
     const routes = ActionMcp.layerHttp(
-      Action.implement(Slow, () => Effect.fail(new Late({ reason: "busy" }))),
+      Action.implement(Slow, () => Effect.fail(new Late({ reason: "busy" })), Action.allowAll),
       { name: "test", version: "0" },
     );
 
@@ -186,7 +190,7 @@ describe("mcpClient", () => {
   it("returns nothing for an action that returns nothing, over HTTP and MCP alike", async () => {
     const Reset = Action.make("reset", { description: "Reset", access: "write" });
     const Http = ActionHttp.make([Reset]);
-    const reset = Action.implement(Reset, () => Effect.void);
+    const reset = Action.implement(Reset, () => Effect.void, Action.allowAll);
 
     const routes = Layer.mergeAll(
       ActionHttp.layer(Http, reset),
@@ -216,8 +220,10 @@ describe("mcpClient", () => {
       success: Schema.String,
     });
 
-    const list = Action.implement(List, (filters) =>
-      Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
+    const list = Action.implement(
+      List,
+      (filters) => Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
+      Action.allowAll,
     );
 
     const results = await Effect.flatMap(Testing.mcpClient([List]), (mcp) =>
@@ -631,6 +637,7 @@ describe("layer", () => {
 
           return () => Effect.succeed(true);
         }),
+        Action.allowAll,
       ),
     );
 
@@ -641,6 +648,20 @@ describe("layer", () => {
     );
 
     expect(failure).toEqual(new Unavailable());
+
+    // A hook's builder fails the routes the same way, with its typed failure.
+    const hooked = ActionHttp.layer(
+      ActionHttp.make([Ping]),
+      Action.implement(Ping, () => Effect.succeed(true), Effect.fail(new Unavailable())),
+    );
+
+    const hookFailure = await HttpClient.get("/api/ping").pipe(
+      Effect.provide(Testing.layer(hooked)),
+      Effect.flip,
+      Effect.runPromise,
+    );
+
+    expect(hookFailure).toEqual(new Unavailable());
   });
 
   it("leaves the routes' startup services to the program, which shares them", async () => {
@@ -655,6 +676,7 @@ describe("layer", () => {
     const visit = Action.implement(
       Visit,
       Effect.map(Visits, (seen) => () => Effect.sync(() => ++seen.count)),
+      Action.allowAll,
     );
 
     const Http = ActionHttp.make([Visit]);
@@ -761,6 +783,7 @@ describe("layer", () => {
             return [atStartup, perRequest];
           }).pipe(Effect.orDie);
       }),
+      Action.allowAll,
     );
 
     const Http = ActionHttp.make([Read]);
@@ -812,6 +835,7 @@ describe("layer", () => {
               Effect.all([fs.exists(path), perRequest.exists(path)]),
             ).pipe(Effect.orDie),
       ),
+      Action.allowAll,
     );
 
     const Http = ActionHttp.make([Exists]);

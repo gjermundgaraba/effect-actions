@@ -60,7 +60,12 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { Greet, Http } from "./quickstart.js";
 
-const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+// Every implementation states who may call it: here, anyone.
+const greet = Action.implement(
+  Greet,
+  ({ name }) => Effect.succeed(`Hello, ${name}!`),
+  Action.allowAll,
+);
 
 export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, greet),

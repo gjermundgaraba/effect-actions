@@ -26,10 +26,14 @@ describe("ActionToolkit", () => {
       success: Schema.String,
     });
 
-    const app = Action.implement([Read, Erase], {
-      read: ({ id }) => Effect.sync(() => (calls.push(`read ${id}`), "read")),
-      erase: ({ id }) => Effect.sync(() => (calls.push(`erase ${id}`), "erased")),
-    });
+    const app = Action.implement(
+      [Read, Erase],
+      {
+        read: ({ id }) => Effect.sync(() => (calls.push(`read ${id}`), "read")),
+        erase: ({ id }) => Effect.sync(() => (calls.push(`erase ${id}`), "erased")),
+      },
+      Action.allowAll,
+    );
 
     // A write needs approval, except of a draft: the native function of each call's input.
     const binding = ActionToolkit.make(app, {
@@ -78,7 +82,11 @@ describe("ActionToolkit", () => {
       success: Schema.Finite,
     });
 
-    const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2));
+    const double = Action.implement(
+      Double,
+      ({ value }) => Effect.succeed(value * 2),
+      Action.allowAll,
+    );
 
     const binding = ActionToolkit.make(double);
 
@@ -109,12 +117,15 @@ describe("ActionToolkit", () => {
     });
 
     const binding = ActionToolkit.make(
-      Action.implement(Schedule, (input) =>
-        Effect.sync(() => {
-          received.push(input);
+      Action.implement(
+        Schedule,
+        (input) =>
+          Effect.sync(() => {
+            received.push(input);
 
-          return 42n;
-        }),
+            return 42n;
+          }),
+        Action.allowAll,
       ),
     );
 
@@ -147,7 +158,7 @@ describe("ActionToolkit", () => {
     });
 
     const binding = ActionToolkit.make(
-      Action.implement(Find, ({ id }) => Effect.fail(new NotFound({ id }))),
+      Action.implement(Find, ({ id }) => Effect.fail(new NotFound({ id })), Action.allowAll),
     );
 
     const result = await Effect.runPromise(
@@ -208,7 +219,7 @@ describe("ActionToolkit", () => {
       success: Schema.String,
     });
 
-    const binding = ActionToolkit.make(Action.implement(Who, () => Principal));
+    const binding = ActionToolkit.make(Action.implement(Who, () => Principal, Action.allowAll));
 
     // What the docs warn against: an identity provided at startup.
     const startup = binding.layer.pipe(Layer.provide(Layer.succeed(Principal, "startup")));
@@ -245,7 +256,7 @@ describe("ActionToolkit", () => {
 
     // The same action behind a hook letting everyone through.
     const guardedTools = ActionToolkit.make(guarded);
-    const openTools = ActionToolkit.make(Action.share(Secret, guarded, () => Effect.void));
+    const openTools = ActionToolkit.make(Action.share(Secret, guarded, Action.allowAll));
 
     // Merged either way, each toolkit runs its own implementation's hook.
     for (const layers of [
@@ -276,7 +287,7 @@ describe("ActionToolkit", () => {
     });
 
     const actions = ActionToolkit.make(
-      Action.implement(Double, ({ value }) => Effect.succeed(value * 2)),
+      Action.implement(Double, ({ value }) => Effect.succeed(value * 2), Action.allowAll),
     );
 
     const Now = Tool.make("now", { success: Schema.Finite });
@@ -327,6 +338,7 @@ describe("ActionToolkit", () => {
         }),
         () => Effect.sync(() => released++),
       ),
+      Action.allowAll,
     );
 
     const binding = ActionToolkit.make(app);
@@ -361,6 +373,7 @@ describe("ActionToolkit", () => {
 
         return () => Principal;
       }),
+      Action.allowAll,
     );
 
     const binding = ActionToolkit.make(app);

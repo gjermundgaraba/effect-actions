@@ -17,8 +17,9 @@ Every action declares `access: "read"` or `access: "write"`. The protected imple
 their hook once, `authorize`: the HTTP and MCP layers serving them authenticate the bearer
 token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
 `access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`,
-naming the scope the caller lacks. No handler repeats this action-level policy, and no
-surface can leave the rule out. Record-level access stays in `Users`, which scopes data by tenant.
+naming the scope the caller lacks. The public `status` states `Action.allowAll` instead. No
+handler repeats this action-level policy, and no surface can leave the rule out. Record-level
+access stays in `Users`, which scopes data by tenant.
 
 The application serves its implementations under three access rules:
 
@@ -97,6 +98,7 @@ is public.
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
 - [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
 - [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the protected implementations name.
+- [authorization-built.ts](authorization-built.ts): the same rule as a hook built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the protected ones.
 - [authentication.ts](authentication.ts): `Authentication.make`'s router middleware for an OAuth protected resource, and its layer `authenticate`, publishing its RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.

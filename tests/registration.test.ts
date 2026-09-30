@@ -97,7 +97,7 @@ describe("descriptions", () => {
       access: "read",
     });
 
-    const app = Action.implement(Describe, () => Effect.void);
+    const app = Action.implement(Describe, () => Effect.void, Action.allowAll);
     const { description } = Describe;
 
     const operation = OpenApi.fromApi(ActionHttp.make([Describe]).api).paths["/api/describe"]?.post;
@@ -165,8 +165,8 @@ describe("projection boundaries", () => {
 
     // MCP needs an object root, so the scalar action has an implementation of its own
     // that only HTTP serves.
-    const echo = Action.implement(Echo, Effect.succeed);
-    const tool = Action.implement(Tool, () => Effect.succeed("tool"));
+    const echo = Action.implement(Echo, Effect.succeed, Action.allowAll);
+    const tool = Action.implement(Tool, () => Effect.succeed("tool"), Action.allowAll);
 
     const options = { prefix: "/rpc" } as const;
     expect(Object.keys(OpenApi.fromApi(ActionHttp.make([Echo, Tool], options).api).paths)).toEqual([
@@ -195,9 +195,13 @@ describe("projection boundaries", () => {
         errors: [status === undefined ? Failure : Failure.annotate({ httpApiStatus: status })],
       });
 
-      const apps = Action.implement([Fail], {
-        fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
-      });
+      const apps = Action.implement(
+        [Fail],
+        {
+          fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
+        },
+        Action.allowAll,
+      );
 
       expect(
         OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
@@ -235,10 +239,14 @@ describe("projection boundaries", () => {
       errors,
     });
 
-    const apps = Action.implement([Fail], {
-      fail: ({ which }) =>
-        which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
-    });
+    const apps = Action.implement(
+      [Fail],
+      {
+        fail: ({ which }) =>
+          which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
+      },
+      Action.allowAll,
+    );
 
     const Http = ActionHttp.make([Fail]);
     const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
@@ -311,11 +319,15 @@ describe("projection boundaries", () => {
       hints: { idempotent: true },
     });
 
-    const app = Action.implement([Lookup, Append, Wipe], {
-      lookup: () => Effect.void,
-      append: () => Effect.void,
-      wipe: () => Effect.void,
-    });
+    const app = Action.implement(
+      [Lookup, Append, Wipe],
+      {
+        lookup: () => Effect.void,
+        append: () => Effect.void,
+        wipe: () => Effect.void,
+      },
+      Action.allowAll,
+    );
 
     const hints = {
       lookup: {
@@ -369,7 +381,7 @@ describe("projection boundaries", () => {
     });
 
     const { tools } = ActionToolkit.make(
-      Action.implement(Declared, () => Effect.succeed("ada")),
+      Action.implement(Declared, () => Effect.succeed("ada"), Action.allowAll),
     ).toolkit;
 
     // Each built-in's JSON decodes to its class: the tool declares all three.
@@ -412,9 +424,13 @@ describe("projection boundaries", () => {
     });
 
     const mcp = makeTestMcp(
-      Action.implement([Fail], {
-        fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
-      }),
+      Action.implement(
+        [Fail],
+        {
+          fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
+        },
+        Action.allowAll,
+      ),
     );
 
     expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
@@ -460,7 +476,7 @@ describe("projection boundaries", () => {
         success: Node,
       });
 
-      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }));
+      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }, Action.allowAll));
 
       const tools = await listTools(web.handler);
       expect(tools).toHaveLength(1);
@@ -496,9 +512,13 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      Action.implement([Nested], {
-        nested: ({ item }) => Effect.succeed({ first: item, second: item }),
-      }),
+      Action.implement(
+        [Nested],
+        {
+          nested: ({ item }) => Effect.succeed({ first: item, second: item }),
+        },
+        Action.allowAll,
+      ),
     );
 
     const tools = await listTools(web.handler);
@@ -550,9 +570,13 @@ describe("projection boundaries", () => {
         { readonly [name: string]: never },
         never,
         never
-      > = Action.implement([Invalid], {
-        invalid: () => Effect.succeed("unused"),
-      });
+      > = Action.implement(
+        [Invalid],
+        {
+          invalid: () => Effect.succeed("unused"),
+        },
+        Action.allowAll,
+      );
 
       expect(
         await buildDefect(ActionMcp.layerHttp(apps, { name: "test", version: "0" })),
@@ -568,7 +592,7 @@ describe("projection boundaries", () => {
     });
 
     const layer = ActionMcp.layerHttp(
-      Action.implement(Single, () => Effect.void),
+      Action.implement(Single, () => Effect.void, Action.allowAll),
       { name: "test", version: "0" },
     );
 
@@ -587,7 +611,7 @@ describe("projection boundaries", () => {
 
     const web = serve(
       ActionMcp.layerHttp(
-        Action.implement(Empty, () => Effect.succeed("ok")),
+        Action.implement(Empty, () => Effect.succeed("ok"), Action.allowAll),
         {
           name: "test",
           version: "0",
@@ -606,7 +630,7 @@ describe("projection boundaries", () => {
     const web = serve(
       Layer.mergeAll(
         ActionMcp.layerHttp(
-          Action.implement(Ping, () => Effect.void),
+          Action.implement(Ping, () => Effect.void, Action.allowAll),
           { name: "test", version: "0" },
         ),
         McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("#") }),
@@ -633,9 +657,13 @@ describe("projection boundaries", () => {
       errors: [Schema.String],
     });
 
-    const apps = Action.implement([Scalar], {
-      scalar: () => Effect.fail("failure"),
-    });
+    const apps = Action.implement(
+      [Scalar],
+      {
+        scalar: () => Effect.fail("failure"),
+      },
+      Action.allowAll,
+    );
 
     const web = makeTestHttp(apps);
 
@@ -658,9 +686,13 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      Action.implement([Encode], {
-        encode: ({ value }) => Effect.succeed(value ?? 42),
-      }),
+      Action.implement(
+        [Encode],
+        {
+          encode: ({ value }) => Effect.succeed(value ?? 42),
+        },
+        Action.allowAll,
+      ),
     );
 
     const response = await web.handler(rawToolCall("encode"));
@@ -676,9 +708,13 @@ describe("projection boundaries", () => {
     });
 
     const web = makeTestMcp(
-      Action.implement([Echo], {
-        echo: ({ value }) => Effect.succeed(value),
-      }),
+      Action.implement(
+        [Echo],
+        {
+          echo: ({ value }) => Effect.succeed(value),
+        },
+        Action.allowAll,
+      ),
     );
 
     // McpServer presents InvalidParams from a tool as an isError result carrying the message.
@@ -701,10 +737,14 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const apps = Action.implement([Broken, Boom], {
-      broken: () => Effect.succeed(Infinity),
-      boom: () => Effect.die(new Error("secret database password")),
-    });
+    const apps = Action.implement(
+      [Broken, Boom],
+      {
+        broken: () => Effect.succeed(Infinity),
+        boom: () => Effect.die(new Error("secret database password")),
+      },
+      Action.allowAll,
+    );
 
     const web = makeTestHttp(apps);
 
@@ -731,7 +771,7 @@ describe("projection boundaries", () => {
       success: Schema.Struct({ d: Schema.Date }),
     });
 
-    const apps = Action.implement([Stamp], { stamp: Effect.succeed });
+    const apps = Action.implement([Stamp], { stamp: Effect.succeed }, Action.allowAll);
     const iso = "1970-01-01T00:00:00.000Z";
     const web = makeTestHttp(apps);
 
@@ -757,13 +797,17 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const apps = Action.implement([Slow], {
-      slow: () =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.never),
-          Effect.ensuring(Deferred.succeed(stopped, undefined)),
-        ),
-    });
+    const apps = Action.implement(
+      [Slow],
+      {
+        slow: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(stopped, undefined)),
+          ),
+      },
+      Action.allowAll,
+    );
 
     const web = makeTestHttp(apps);
 

@@ -36,6 +36,7 @@ const local = Action.implement(
       Effect.map(OneRequest, (request) => `${prefix}${request}${value}`),
     two: ({ value }: { value: number }) => Effect.map(TwoRequest, (request) => value + request),
   })),
+  Action.allowAll,
 );
 
 const localOne = ActionCli.command(local, One, {
@@ -100,7 +101,7 @@ const Plain = Action.make("plain", {
   success: Schema.String,
 });
 
-const noService = Action.implement(Plain, () => Effect.succeed("plain"));
+const noService = Action.implement(Plain, () => Effect.succeed("plain"), Action.allowAll);
 
 const plainCommand = ActionCli.command(noService, Plain);
 
@@ -125,6 +126,7 @@ const scoped = Action.implement(
     Effect.succeed({ scoped: () => Effect.succeed("scoped") }),
     () => Effect.void,
   ),
+  Action.allowAll,
 );
 
 const scopedCommand = ActionCli.command(scoped, Scoped);
@@ -145,8 +147,10 @@ const ScopedHandler = Action.make("scopedHandler", {
   success: Schema.String,
 });
 
-const scopedHandler = Action.implement(ScopedHandler, () =>
-  Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
+const scopedHandler = Action.implement(
+  ScopedHandler,
+  () => Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
+  Action.allowAll,
 );
 
 const scopedHandlerCommand = ActionCli.command(scopedHandler, ScopedHandler);
@@ -310,11 +314,15 @@ const UnionInput = Action.make("unionInput", {
   input: Schema.Union([Schema.Struct({ a: Schema.String }), Schema.Struct({ a: Schema.Finite })]),
 });
 
-const shapes = Action.implement([ScalarInput, UnionInput, Other], {
-  scalarInput: () => Effect.void,
-  unionInput: () => Effect.void,
-  other: () => Effect.succeed("other"),
-});
+const shapes = Action.implement(
+  [ScalarInput, UnionInput, Other],
+  {
+    scalarInput: () => Effect.void,
+    unionInput: () => Effect.void,
+    other: () => Effect.succeed("other"),
+  },
+  Action.allowAll,
+);
 
 // Only named fields of one struct may be positional: none for a scalar, a union or no input.
 const noFields: [

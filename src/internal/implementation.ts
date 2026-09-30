@@ -36,20 +36,30 @@ export type Before<A extends Action.Any, RB = never> = (
 ) => Effect.Effect<void, Refusal, RB>;
 
 /** An implementation's hook, erased. */
-type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
+export type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
 
-/** Per-request requirements of one handler. */
-export type HandlerContext<H> = H extends (
-  input: never,
-) => Effect.Effect<infer _A, infer _E, infer R>
-  ? R
-  : never;
-
-/** Each action of an implementation with its handler, behind the hook once acquired. */
+/** Each action of an implementation with its handler, as its builder made them. */
 export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
 
-/** The bound handlers of one implementation, under a key private to it. */
-type BoundKey = Context.Key<Bound, Bound>;
+/**
+ * What a layer builds once per layer graph, under a key private to it: an implementation's
+ * handlers, or its hook. Effect memoizes a layer by reference within one build of the host's
+ * layers, so everything holding this one shares one run.
+ */
+export interface Memoized<S, E, R> {
+  readonly key: Context.Key<S, S>;
+  readonly layer: Layer.Layer<S, E, R>;
+}
+
+/** What `build` makes, as a layer of its own. */
+export const memoized = <S, E, R>(
+  build: Effect.Effect<S, E, R>,
+): Memoized<S, E, Exclude<R, Scope.Scope>> => {
+  // A string key is a service's identity: one of its own for each.
+  const key = Context.Service<S>(`effect-actions/Implementation/${uniqueKey()}`);
+
+  return { key, layer: Layer.effect(key, build) };
+};
 
 /**
  * Actions bound to their handlers and their hook: everything one `Action.implement` call
@@ -58,8 +68,8 @@ type BoundKey = Context.Key<Bound, Bound>;
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
  * `R` maps each action name to its handler's per-request requirements, and `~hook`, which
- * no action name can be, to its hook's; `EX` and `RX` are the failures and services of the
- * builder.
+ * no action name can be, to its hook's; `EX` and `RX` are the failures and services of its
+ * builders, the handlers' and the hook's.
  */
 export class Implementation<
   A extends Action.Any,
@@ -70,59 +80,61 @@ export class Implementation<
   // Type-only fields, one per type parameter, so a type reads each by name.
   /** Type-only: each action's handler's per-request requirements, and the hook's. */
   declare readonly "~request": R;
-  /** Type-only: what building its handlers fails with. */
+  /** Type-only: what building its handlers and its hook fails with. */
   declare readonly "~buildError": EX;
-  /** Type-only: what building its handlers needs. */
+  /** Type-only: what building its handlers and its hook needs. */
   declare readonly "~buildContext": RX;
 
-  readonly #key: BoundKey;
-  readonly #layer: Layer.Layer<Bound, EX, RX>;
-  readonly #before: ErasedBefore | undefined;
+  readonly #handlers: Memoized<Bound, EX, RX>;
+  readonly #hook: Memoized<ErasedBefore, EX, RX>;
 
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
-    /** Each action paired with its handler, or an implementation whose builder this shares. */
-    build: Effect.Effect<Bound, EX, RX | Scope.Scope> | Implementation<Action.Any, any, EX, RX>,
-    /** The hook; sharing a builder without one keeps its source's. */
-    before: ErasedBefore | undefined,
+    /** Builds each action paired with its handler: its own builder, or the one it shares. */
+    handlers: Memoized<Bound, EX, RX>,
+    /** Builds its hook. */
+    hook: Memoized<ErasedBefore, EX, RX>,
   ) {
-    if (build instanceof Implementation) {
-      // The source's key and layer, so both share one build.
-      const source = Implementation.own(build);
-
-      this.#key = source.#key;
-      this.#layer = source.#layer;
-      this.#before = before ?? source.#before;
-
-      return;
-    }
-
-    this.#before = before;
-
-    // A string key is a service's identity: one of its own for this implementation.
-    this.#key = Context.Service<Bound>(`effect-actions/Implementation/${uniqueKey()}`);
-    this.#layer = Layer.effect(this.#key, build);
+    this.#handlers = handlers;
+    this.#hook = hook;
   }
 
   /**
-   * The builder of `app`, as a layer. Effect memoizes a layer by reference within one
-   * build of the host's layers, so every adapter serving `app`, and every implementation
-   * sharing its builder, shares one run. Static, so it stays off the public instance type.
+   * `actions` of `app` with its handlers, from its builder's one run, behind its hook or
+   * `hook`: given one, the source's is neither built nor run for them.
    */
-  static layerOf<EX, RX>(app: Implementation<any, any, EX, RX>): Layer.Layer<Bound, EX, RX> {
-    return Implementation.own(app).#layer;
+  static share(
+    actions: ReadonlyArray<Action.Any>,
+    app: AnyImplementation,
+    hook: Memoized<ErasedBefore, unknown, unknown> | undefined,
+  ): AnyImplementation {
+    const source = Implementation.own(app);
+
+    return new Implementation(actions, source.#handlers, hook ?? source.#hook);
+  }
+
+  /**
+   * The builders of `app`, its handlers' and its hook's, as a layer. Effect memoizes each
+   * by reference within one build of the host's layers, so every adapter serving `app`, and
+   * every implementation sharing its builder, shares one run. Static, so it stays off the
+   * public instance type.
+   */
+  static layerOf(app: AnyImplementation): Layer.Layer<Bound | ErasedBefore, unknown, unknown> {
+    const source = Implementation.own(app);
+
+    return Layer.merge(source.#handlers.layer, source.#hook.layer);
   }
 
   /**
    * The actions of `app` with their handlers, behind its hook, from the context
    * `layerOf(app)` provides.
    */
-  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, Bound> {
+  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, Bound | ErasedBefore> {
     const { actions } = app;
-    const before = Implementation.own(app).#before;
+    const source = Implementation.own(app);
 
-    return Effect.map(Implementation.own(app).#key, (bound) =>
+    return Effect.zipWith(source.#handlers.key, source.#hook.key, (bound, before) =>
       bound.flatMap(([action, handle]) =>
         actions.includes(action) ? [[action, dispatch(action, handle, before)] as const] : [],
       ),
@@ -131,7 +143,7 @@ export class Implementation<
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
   private static own<App extends AnyImplementation>(app: App): App {
-    if (!(#key in app)) {
+    if (!(#handlers in app)) {
       throw new Error(
         "Not an implementation made by this Action.implement: is effect-actions installed twice?",
       );
@@ -141,10 +153,17 @@ export class Implementation<
   }
 }
 
-// The one place listing every parameter: `any` admits each implementation's, where
-// `unknown` would not. Types read a parameter from its type-only field.
+// The one place listing every parameter. Each is covariant, so `unknown` admits every
+// implementation, while a value of this type owes everything: a surface serving it asks
+// for `unknown`, which nothing provides. Types read a parameter from its type-only field.
 /** Any implementation, with its actions and channels erased. */
-export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<A, any, any, any>;
+export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<
+  A,
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Type-only requirements by action name, erased to the top type.
+  { readonly [name: string]: unknown },
+  unknown,
+  unknown
+>;
 
 /** What a surface serves: one implementation, or a list of them. */
 export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
@@ -226,7 +245,7 @@ export const acquire = (
 const dispatch = (
   action: Action.Any,
   handle: ErasedHandler<unknown>,
-  before: ErasedBefore | undefined,
+  before: ErasedBefore,
 ): ErasedHandler<unknown> => {
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -245,6 +264,6 @@ const dispatch = (
       { captureStackTrace: false, attributes },
     );
 
-    return before === undefined ? handled : Effect.flatMap(before(action), () => handled);
+    return Effect.flatMap(before(action), () => handled);
   };
 };
