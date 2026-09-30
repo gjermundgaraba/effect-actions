@@ -24,7 +24,7 @@ Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Clien
 | Option                      | Meaning                                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `make`: `prefix`            | Mount path of every route; defaults to `/api`. `/` mounts at the root; a trailing slash is dropped.                             |
-| `make`: `errors`            | Errors middleware around the routes answers with, such as a rate limit: declared by every endpoint, so clients decode them.     |
+| `make`: `errors`            | Errors middleware around the routes sends, such as a limit before decoding: declared by every endpoint, so clients decode them. |
 | `client`: `baseUrl`         | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
 | `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
 
@@ -204,7 +204,7 @@ elsewhere, give `baseUrl`.
 
 - `errors` are what middleware around the routes answers with, on any endpoint: `ActionHttp.make(actions, { errors: [RateLimited] })`. Every endpoint declares them, OpenAPI shows them, and every client decodes them.
 - Middleware sends one as the binding declares it, at the status its `httpApiStatus` states, or 422 without one: for `class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {}, { httpApiStatus: 429 }) {}`, `HttpServerResponse.schemaJson(RateLimited)(error, { status: 429 })`. A union with its own `httpApiStatus` uses that status for every member; otherwise, each member of a plain union is declared at its own status, or 422 without one.
-- No handler fails with them: a handler serves every surface, and only HTTP declares them. An action whose handler fails with one lists it in its own `errors`.
+- No handler or hook fails with them: both serve every surface, and only HTTP declares them. An action whose handler fails with one lists it in its own `errors`; a limit its implementation's hook applies is listed by each of its actions ([guarantees.md](guarantees.md#authorization)).
 - They may not reuse a built-in error's tag: `layer` refuses such a binding.
 
 ### Client methods
@@ -247,7 +247,7 @@ elsewhere, give `baseUrl`.
 
 ### Client methods
 
-- Fails with `HttpClientError` whose `reason._tag` is `DecodeError` for a status such as 429: the server answered with a status no schema declares. Declare that error on the binding, `make`'s `errors`, when middleware answers with it; on the action when its handler does; or handle the native error. The built-in 400, 401 and 403 always decode, as long as their body is the built-in error's JSON.
+- Fails with `HttpClientError` whose `reason._tag` is `DecodeError` for a status such as 429: the server answered with a status no schema declares. Declare that error on the binding, `make`'s `errors`, when middleware answers with it; on the action when its handler or its hook does; or handle the native error. The built-in 400, 401 and 403 always decode, as long as their body is the built-in error's JSON.
 - Fails with `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: `baseUrl` is omitted, and there is no page to resolve relative routes against. Set `baseUrl`.
 - Type error listing `HttpClient` as an unsatisfied requirement of `client`: provide one, such as `FetchHttpClient.layer`.
 - Property does not exist on the client: the action is not in the binding.

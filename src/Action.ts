@@ -16,6 +16,7 @@ import {
   type BuildContext,
   type BuildError,
   builders,
+  type CommonErrorsAmong,
   type ErasedBefore,
   type ErasedHandler,
   type Handlers,
@@ -31,9 +32,10 @@ export type { Implementation } from "./internal/implementation.js";
 
 /**
  * An implementation's hook: whether a caller may call. It receives the selected action and
- * fails only with a refusal; its services are request-time requirements, like a handler's.
- * `implement` and `share` also take an Effect building one, whose services are startup
- * requirements, like a builder's.
+ * fails with a refusal, or with an error every action it guards declares, such as a rate
+ * limit; its services are request-time requirements, like a handler's. `implement` and
+ * `share` also take an Effect building one, whose services are startup requirements, like a
+ * builder's.
  */
 export type { Before } from "./internal/implementation.js";
 
@@ -266,6 +268,38 @@ type Target = Any | ReadonlyArray<Any>;
 /** The actions `T` stands for. */
 type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : T;
 
+/**
+ * A type holding `_T` without using it. TypeScript measures such a parameter as independent:
+ * it relates two carriers without comparing what they hold, and still infers `_T` from one.
+ */
+interface Carrier<_T> {}
+
+/**
+ * One member of the union `U`. Each member becomes a function taking a thunk that returns its
+ * `Carrier`, so the parameter inferred from all of them is the thunks' intersection. Carriers
+ * compare as identical whatever they hold, so TypeScript sees the thunks' signatures as one
+ * and keeps the first member's. Relating each function to the inferred one then compares no
+ * two members. Thunks returning the members themselves are compared pair by pair: over 1000
+ * actions that took 3 s more, and over 1400 it was too complex to compare (TS2859).
+ */
+type OneOf<U> = (U extends unknown ? (member: () => Carrier<U>) => void : never) extends (
+  member: infer I,
+) => void
+  ? I extends () => Carrier<infer M>
+    ? M
+    : never
+  : never;
+
+/**
+ * The errors of one action `T` stands for: its one action, or the first a tuple lists. A list
+ * whose type fixes no first action, such as an array without `as const`, `Object.values(...)`
+ * or `[...actions, extra]`, types its actions only as their union, of which any member serves:
+ * `OneOf` picks one. Every error all the actions declare is among each one's.
+ */
+type FirstErrors<T extends Target> = T extends readonly [infer F extends Any, ...ReadonlyArray<Any>]
+  ? F["errors"][number]["Type"]
+  : Extract<OneOf<ActionsOf<T>>, Any>["errors"][number]["Type"];
+
 /** The names of the actions `T` stands for. */
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
@@ -326,17 +360,27 @@ type Deferred<T> = [T][T extends unknown ? 0 : never];
  * A hook, or an Effect that builds it, as a builder builds handlers: `EB` and `RBX` are
  * startup failures and services, `RB` what the hook reads per request. Each hook is `Before`
  * written out. TypeScript would infer `RB` from only one branch of a conditional hook whose
- * other branch is typed `Before`, such as `enabled ? authorize : Action.allowAll`. And while
+ * other branch is typed `Before`, such as `enabled ? authorize : Action.allowAll`. While
  * `implement` infers, an alias whose argument `RB` is not yet inferred is marked, as a whole,
  * as not inferrable, so an `Effect.fn(...)` the Effect returns would infer nothing from it and
- * take an `any` action.
+ * take an `any` action. And TypeScript would relate a hook typed `Before` to `Before` by the
+ * variance it measures for the actions, which does not see through `CommonErrors`: a hook
+ * over an action typed with wider `errors` would pass, failing with errors these actions do
+ * not declare. Written out, a hook is compared member by member. `C` is what its errors are
+ * filtered from, one action's (`FirstErrors`): every error all the actions declare is among
+ * them, and filtering only those keeps the cost linear in the actions, where filtering every
+ * declared error made one `implement` of a few hundred actions too deep to check (TS2589).
  */
-type Hook<A extends Any, RB, EB, RBX> =
-  | ((action: A) => Effect.Effect<void, Refusal, RB>)
-  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RB>, EB, RBX>;
+type Hook<A extends Any, RB, EB, RBX, C> =
+  | ((action: A) => Effect.Effect<void, Refusal | CommonErrorsAmong<A, C>, RB>)
+  | Effect.Effect<
+      (action: A) => Effect.Effect<void, Refusal | CommonErrorsAmong<A, C>, RB>,
+      EB,
+      RBX
+    >;
 
 /** What `implement` and `share` receive as a hook, erased. */
-type ErasedHook = Before<Any, unknown> | Effect.Effect<Before<Any, unknown>, unknown, unknown>;
+type ErasedHook = ErasedBefore | Effect.Effect<ErasedBefore, unknown, unknown>;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
@@ -353,7 +397,7 @@ export const allowAll: Before<Any> = () => Effect.void;
  * `before`, checked: the types require a hook, and plain JavaScript can still pass none,
  * which must not serve every caller.
  */
-const assertHook = (before: Before<Any, unknown>): ErasedBefore => {
+const assertHook = (before: ErasedBefore): ErasedBefore => {
   if (!Predicate.isFunction(before)) {
     throw new Error("Missing hook: pass an authorization hook, or Action.allowAll");
   }
@@ -394,7 +438,7 @@ export function implement<
 >(
   target: T,
   build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
-  before: Hook<ActionsOf<T>, RB, EB, RBX>,
+  before: Hook<ActionsOf<T>, RB, EB, RBX, FirstErrors<T>>,
 ): Implementation<
   ActionsOf<T>,
   {
@@ -487,7 +531,7 @@ export function share<
 >(
   target: T,
   app: App,
-  before: Hook<ActionsOf<T>, RB, EB, RBX>,
+  before: Hook<ActionsOf<T>, RB, EB, RBX, FirstErrors<T>>,
 ): Implementation<
   ActionsOf<T>,
   SharedRequests<T, App, RB>,

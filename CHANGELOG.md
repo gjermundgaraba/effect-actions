@@ -45,7 +45,7 @@ ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: 
 | A group's `errors`                                                                                                                        | One array spread into each action's `errors`; `ActionHttp.make(actions, { errors })` for middleware's                                                                                                         |
 | A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                                                                         | The built-in `Action.InvalidInput`, for input that does not decode                                                                                                                                            |
 | `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group`                                              | `Action.implement(actions, handlers, before)`                                                                                                                                                                 |
-| A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`                                                   | A hook failing with an `Action.Refusal`, `Action.Unauthenticated` or `Action.Forbidden`, which every surface declares                                                                                         |
+| A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`                                                   | A hook failing with an `Action.Refusal`, or with an error every action of its implementation declares: one array, such as `[RateLimited]`, spread into each action's `errors`                                 |
 | `before`'s `action`, an `Action.Any`                                                                                                      | `before`'s `action`, typed as the implementation's own actions, in a built hook too                                                                                                                           |
 | `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                                                                                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                              |
 | `mcp.name`                                                                                                                                | The action's name, which is the tool's                                                                                                                                                                        |
@@ -95,6 +95,14 @@ Behavior that changes without a rename:
   not compile (`Expected 3 arguments, but got 2`), and from plain JavaScript it throws
   `Missing hook: pass an authorization hook, or Action.allowAll`. `undefined` is not a hook:
   `before: enabled ? authorize : undefined` becomes `enabled ? authorize : Action.allowAll`.
+- A hook fails with a refusal, or with an error every action of its implementation declares,
+  which every surface declares for that action and every client decodes: HTTP answers with its
+  status and JSON, MCP with an `isError` tool result, the Toolkit and the CLI with a typed
+  failure. Only a refusal steps up under `Authentication.make`. 0.8.0's hook failed with its
+  surface's `errors`, which that surface alone declared, and a CLI's with any error: move a limit
+  from a surface's `errors` into each guarded action's `errors`, spreading one array, or keep a
+  limit applied before decoding in HTTP middleware, with `ActionHttp.make`'s `errors`. An
+  action that lacks the error is a type error naming `Refusal`, not the action.
 - A record has exactly one handler per action: an extra key is a compile error, which 0.8.0
   ignored. `implement` throws `Missing handlers: <names>` or `Unknown handlers: <keys>`; a
   builder's record is checked when its layer builds.

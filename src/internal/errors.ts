@@ -44,8 +44,8 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
 ) {}
 
 /**
- * What a surface refuses with instead of running a handler: authentication's failures, and a
- * `before` hook's.
+ * What authentication or a `before` hook refuses a caller with, instead of running a handler.
+ * A hook may also fail with an error every action it guards declares, which is not a refusal.
  */
 export type Refusal = Unauthenticated | Forbidden;
 

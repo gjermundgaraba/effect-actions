@@ -217,7 +217,16 @@ const checkHookTypes = () => {
   Action.implement(
     Read,
     () => Effect.succeed("read"),
-    // @ts-expect-error A published hook refuses only with a built-in refusal.
+    // @ts-expect-error A published hook fails with nothing its actions do not declare.
+    () => Effect.fail(new Denied()),
+  );
+  // A published hook may fail with an error every action it guards declares.
+  Action.implement(
+    [
+      Action.make("first", { description: "First", access: "read", errors: [Denied] }),
+      Action.make("second", { description: "Second", access: "write", errors: [Denied] }),
+    ],
+    { first: () => Effect.void, second: () => Effect.void },
     () => Effect.fail(new Denied()),
   );
   // @ts-expect-error A published implementation states who may call it.

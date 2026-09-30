@@ -58,9 +58,10 @@ export interface Options<E extends Errors = Errors> {
   /** Mount path of every route; defaults to `/api`. `/` mounts at the root. */
   readonly prefix?: `/${string}`;
   /**
-   * Errors every endpoint may answer with besides its action's own, such as the rate limit
-   * middleware around the routes sends: declared by every endpoint, so clients decode them.
-   * Handlers never fail with them; they are the binding's, and no other surface declares them.
+   * Errors every endpoint may answer with besides its action's own, such as a limit
+   * middleware around the routes applies before decoding: declared by every endpoint, so
+   * clients decode them. Handlers and hooks never fail with them; they are the binding's, and
+   * no other surface declares them.
    */
   readonly errors?: E;
 }

@@ -24,16 +24,64 @@ export type ErasedHandler<R> = {
 /** An adapter's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
+/** The errors the actions `A` declare: each action's, in turn. */
+type DeclaredErrors<A extends Action.Any> = A extends unknown ? A["errors"][number]["Type"] : never;
+
+/**
+ * The errors every action of `A` declares: each member of their union that no action leaves
+ * out, filtered one at a time. Inferring an intersection of each action's union instead
+ * multiplies them out, which TypeScript refuses as too complex (TS2590) from 11 actions of 3
+ * errors each, or 9 of 4, even for a hook that only refuses. An erased action's errors are
+ * `unknown`, which admits nothing: a hook typed over `Action.Any` only refuses. Filtering
+ * every declared error against every action costs their product, so `implement` and `share`
+ * filter only one action's, however the actions are listed, with `CommonErrorsAmong`.
+ * `Before` keeps this: through `CommonErrorsAmong`, the variance TypeScript measures for
+ * `Before` no longer lets `Action.allowAll` fit a `Before<A>`.
+ */
+export type CommonErrors<A extends Action.Any> =
+  DeclaredErrors<A> extends infer E
+    ? unknown extends E
+      ? never
+      : E extends unknown
+        ? [
+            A extends unknown ? ([E] extends [A["errors"][number]["Type"]] ? never : A) : never,
+          ] extends [never]
+          ? E
+          : never
+        : never
+    : never;
+
+/**
+ * The errors of `C` that every action of `A` declares, filtered one at a time, as
+ * `CommonErrors` filters. `implement` and `share` pass one action's errors as `C`, the first
+ * listed or, for a list whose type fixes no first action, one member of their union: every
+ * error all the actions declare is among them, so the filter costs that action's errors times
+ * the actions rather than every declared error times the actions. An erased action admits
+ * nothing, wherever it is listed.
+ */
+export type CommonErrorsAmong<A extends Action.Any, C> =
+  unknown extends DeclaredErrors<A>
+    ? never
+    : C extends unknown
+      ? [
+          A extends unknown ? ([C] extends [A["errors"][number]["Type"]] ? never : A) : never,
+        ] extends [never]
+        ? C
+        : never
+      : never;
+
 /**
  * An implementation's hook: whether a caller may call. It runs once per call on every
  * surface, after the input is decoded and before the selected handler, with its action
  * contract, so a policy reads `access` rather than the action name. It fails with a
  * refusal, answered as a declared error, or over HTTP as its status when an OAuth client
- * steps up on it. Its services `RB` are request-time requirements, like a handler's.
+ * steps up on it, or with an error every action of `A` declares, such as a rate limit,
+ * which every surface declares for each of them. Its services `RB` are request-time
+ * requirements, like a handler's.
  */
 export type Before<A extends Action.Any, RB = never> = (
   action: A,
-) => Effect.Effect<void, Refusal, RB>;
+) => Effect.Effect<void, Refusal | CommonErrors<A>, RB>;
 
 /** An implementation's hook, erased. */
 export type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
@@ -240,7 +288,7 @@ export const acquire = (
 
 /**
  * One action's handler behind its hook. The hook runs first, outside the action's span,
- * so a refusal is attributed to the surface rather than to a handler that never ran.
+ * so what it fails with is attributed to the surface rather than to a handler that never ran.
  */
 const dispatch = (
   action: Action.Any,
