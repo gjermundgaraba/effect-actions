@@ -1,7 +1,9 @@
 # Testing
 
 In-memory calls against served layers, through Effect's own `HttpClient`. Needs no extra
-dependency and opens no port.
+dependency and opens no port. It tests what the wire does: routes and tools, authentication,
+statuses and codecs as sent. What an implementation does, its hook and its handlers, is tested
+in process with `Action.client` ([Implementations](#implementations)).
 
 ## API
 
@@ -56,11 +58,51 @@ const program = Effect.gen(function* () {
 console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(routes)))));
 ```
 
+### Implementations
+
+What an implementation does, with no transport between: `Action.client` gives the methods
+`ActionHttp.client` gives, and each call runs the hook and the handler, with every check a
+surface makes on its input, its success and its failure ([Action.md](Action.md#clients)). Each
+call takes its caller, so one test has several, and an action no binding holds, such as a
+tool, has a method like any other.
+
+```ts
+import { Effect } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { actors, CurrentActor } from "./authorization.js";
+import { listChanges, userActions } from "./handlers.js";
+import { Users } from "./users.js";
+
+// Each call names its caller, as authentication names one per request.
+const asAlice = Effect.provideService(CurrentActor, actors.alice);
+
+const asReader = Effect.provideService(CurrentActor, actors.reader);
+
+const program = Effect.gen(function* () {
+  // Acquired once, as a layer is built: the builders run here, not per call.
+  const users = yield* Action.client([userActions, listChanges]);
+
+  // The methods of `ActionHttp.client(Http)`, with no transport between: each call decodes
+  // its input, runs the hook, then the handler, and checks the success or the failure.
+  const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
+  const refused = yield* Effect.flip(users.renameUser({ id: "1", name: "Cy" }).pipe(asReader));
+  const { changes } = yield* users.listChanges().pipe(asReader); // served by MCP alone
+
+  return { renamed, refused, changes };
+});
+
+// The builders are released with the program's scope, before the services they captured.
+console.log(
+  await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(Users.layerMemory))),
+);
+```
+
 ### One caller
 
-An implementation's handlers behind its hook, in memory, as one caller: provide the caller
-around `layer` instead of authentication, like any other service the routes require, and the
-test program shares what it reads.
+Routes whose handlers read a caller, on the wire without authentication: provide the caller
+around `layer`, like any other service the routes require, and the test program shares what it
+reads. One `layer` is one caller; several are called in process
+([Implementations](#implementations)).
 
 ```ts
 import { Effect, Layer } from "effect";
@@ -104,7 +146,7 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
 - A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `transformClient`, the same options for `mcpClient` and `ActionHttp.client`: one client per caller, `const alice = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")) }`. `mcpRequest` takes `headers`.
 - A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
-- An action no binding holds, such as one served only as a tool, gets a test binding of its own: a binding is plain data. Cover each surface the application exposes.
+- Test what an implementation does in process, with `Action.client`: its hook, its handlers, and the checks every surface makes on input, success and failure, with several callers, an action no binding holds included. Test what a surface adds under `layer`: authentication, statuses, headers, bodies as sent, MCP results and text fields. The two call the same methods. Cover each surface the application exposes.
 
 ## Failure modes
 

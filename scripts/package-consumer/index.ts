@@ -319,3 +319,27 @@ if (
   refusals.forbidden.message !== "Read only."
 )
   throw new Error("Published hook allowed a write");
+
+// In process, the client's methods: the hook runs, and each call owes its caller.
+const local = await Effect.gen(function* () {
+  const actions = yield* Action.client(guarded);
+
+  const checkLocalTypes = () => {
+    // @ts-expect-error A published in-process call owes its caller.
+    const owed: Effect.Effect<string, Action.BuiltIn> = actions.read();
+
+    return owed;
+  };
+
+  void checkLocalTypes;
+
+  return {
+    identity: yield* actions.read().pipe(Effect.provideService(Identity, "ada")),
+    forbidden: yield* Effect.flip(actions.write()),
+  };
+}).pipe(Effect.scoped, Effect.runPromise);
+
+if (local.identity !== "ada") throw new Error("Published client lost its caller");
+
+if (!(local.forbidden instanceof Action.Forbidden))
+  throw new Error("Published client skipped the hook");

@@ -25,7 +25,7 @@ import {
 import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertDistinct, projectedErrors } from "./internal/actions.js";
-import { type Call, inputOf } from "./internal/client.js";
+import { type Call, inputOf } from "./internal/call.js";
 import { type BuiltIn, refusals } from "./internal/errors.js";
 import {
   defaultPath,

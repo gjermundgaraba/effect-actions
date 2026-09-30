@@ -222,7 +222,7 @@ elsewhere, give `baseUrl`.
 - The client holds no connections or timers. `client` builds the native client once from the `HttpClient` in context.
 - The native client stays available: `HttpApiClient.make(Http.api)` has the same routes, with methods taking `{ payload }`.
 - In a browser, import the binding from a module with no server code, so the bundle keeps the client alone ([setup.md](setup.md#browser)).
-- In tests, provide `Testing.layer(routes)` instead of a network client; `baseUrl` may be left out ([Testing.md](Testing.md)).
+- In tests, provide `Testing.layer(routes)` instead of a network client; `baseUrl` may be left out ([Testing.md](Testing.md)). `Action.client` has the same methods in process, for what an implementation does without the wire ([Action.md](Action.md#clients)).
 
 ### Built-in errors
 

@@ -1,4 +1,4 @@
-import { Effect, type Layer, Predicate, Schema } from "effect";
+import { Cause, Effect, type Layer, Predicate, Schema } from "effect";
 import { ensure } from "effect/Array";
 import type { Scope } from "effect";
 import {
@@ -6,8 +6,10 @@ import {
   assertDistinctTags,
   assertName,
   assertOwnTags,
+  projectedErrors,
 } from "./internal/actions.js";
-import type { BuiltIn, BuiltIns, Refusal } from "./internal/errors.js";
+import { type Call, inputOf } from "./internal/call.js";
+import { type BuiltIn, type BuiltIns, InvalidInput, type Refusal } from "./internal/errors.js";
 import {
   type ActionOf,
   type AnyImplementation,
@@ -16,14 +18,18 @@ import {
   type BuildContext,
   type BuildError,
   builders,
+  built,
   type CommonErrorsAmong,
   type ErasedBefore,
   type ErasedHandler,
+  type ErasedValue,
   type Handlers,
   Implementation,
   type Member,
   memoized,
+  type RequestOf,
   type Served,
+  servedActions,
   toList,
 } from "./internal/implementation.js";
 
@@ -577,4 +583,114 @@ export function layer<const Apps extends Served>(
 ): Layer.Layer<never, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
 export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
   return builders(toList(implementations));
+}
+
+/**
+ * One call of `A` in process: its decoded success, or its declared errors and the built-in
+ * ones, owing `R` per call, what its handler and its implementation's hook read.
+ */
+type Method<A extends Any, R> = Call<
+  A,
+  Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | BuiltIn, R>
+>;
+
+/**
+ * Every action of the implementations `Apps`, one or a list, as `client.<action>(input)`: what
+ * `client` gives, each method owing per call what its handler and its hook read.
+ */
+export type Client<Apps extends Served> = {
+  readonly [A in Extract<ActionOf<Member<Apps>>, Any> as A["name"]]: Method<
+    A,
+    RequestOf<Member<Apps>, A>
+  >;
+};
+
+/** A client method, erased: the implementations' actions restore its exact type. */
+type ErasedMethod = (
+  ...input: ReadonlyArray<ErasedValue>
+) => Effect.Effect<ErasedValue, unknown, unknown>;
+
+/**
+ * A value through `schema`'s JSON codec, as a wire carries it: encoded, then decoded, so what
+ * comes out is what a remote call's other side decodes. Every issue is reported.
+ */
+const wire = (schema: Codec) => {
+  const codec = Schema.toCodecJson(schema);
+  const encode = Schema.encodeUnknownEffect(codec, { errors: "all" });
+  const decode = Schema.decodeUnknownEffect(codec, { errors: "all" });
+
+  return (value: ErasedValue) => Effect.flatMap(encode(value), (encoded) => decode(encoded));
+};
+
+/**
+ * A failure of `action` through the JSON codec of every error it declares, the built-in ones
+ * included, as `wire` passes a value, keeping the stack of where it was made, where the
+ * decoded error's would be the codec's. One that does not pass, such as an error the action
+ * does not declare, throws, and the call dies with it, as it is an empty 500 over HTTP.
+ */
+const failureOf = (action: Any) => {
+  const codec = Schema.toCodecJson(Schema.Union(projectedErrors(action)));
+  const encode = Schema.encodeUnknownSync(codec, { errors: "all" });
+  const decode = Schema.decodeUnknownSync(codec, { errors: "all" });
+
+  return (error: ErasedValue): ErasedValue => {
+    const decoded = decode(encode(error));
+
+    return Predicate.isError(error) && Predicate.isError(decoded)
+      ? Object.assign(decoded, { stack: error.stack })
+      : decoded;
+  };
+};
+
+/**
+ * `action`'s method, running `run`, its handler behind its hook, as a remote call runs: input
+ * that does not pass through its codec is `InvalidInput`, and the hook and the handler never
+ * run; a success or a failure that does not is a defect, as it is an empty 500 over HTTP,
+ * since the handler or the hook broke its contract. A failure is mapped within its cause,
+ * which keeps the span it failed in; failed anew, it would lose it.
+ */
+const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
+  const input = wire(action.input);
+  const success = wire(action.success);
+  const failure = failureOf(action);
+
+  return (...args) =>
+    inputOf(action, args).pipe(
+      Effect.flatMap(input),
+      Effect.mapError(({ message }) => new InvalidInput({ message })),
+      Effect.flatMap((value) =>
+        Effect.catchCause(run(value), (cause) => Effect.failCause(Cause.map(cause, failure))),
+      ),
+      Effect.flatMap((value) => Effect.orDie(success(value))),
+    );
+};
+
+/**
+ * Call implementations in process: one method per action, taking its input directly, as
+ * `ActionHttp.client`'s methods do, `client.renameUser({ id, name })`, so moving between the
+ * two changes the line acquiring it. A call runs as a remote one does: its input passes through
+ * its JSON codec, encoded then decoded, then the implementation's hook and the handler run, in
+ * a scope of their own, and the success or the failure passes through its codec. It fails
+ * with the action's errors and the built-in ones, and owes, per call, what the handler and the
+ * hook read, the caller's identity included; the caller provides it around the call.
+ *
+ * Acquiring it builds the implementations' builders, as a layer does, into the layer graph it
+ * is acquired in, and its scope holds them: in a builder, it shares their one run with every
+ * surface of that graph. Acquire it where builders live, in a builder, a layer or a scoped
+ * program, never per request.
+ */
+export function client<const Apps extends Served>(
+  implementations: Apps,
+): Effect.Effect<Client<Apps>, BuildError<Member<Apps>>, BuildContext<Member<Apps>> | Scope.Scope>;
+export function client(
+  served: Served,
+): Effect.Effect<{ readonly [name: string]: ErasedMethod }, unknown, unknown> {
+  const apps = toList(served);
+
+  // Checked where it is made, as a surface checks the names it serves.
+  servedActions("action", apps);
+
+  return Effect.map(built(apps), (bound) =>
+    Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),
+  );
 }

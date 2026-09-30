@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { ensure } from "effect/Array";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
@@ -302,6 +302,33 @@ export const acquire = (
     Effect.forEach(apps, (app) => Implementation.boundOf(app)),
     (bound) => bound.flat(),
   );
+
+/**
+ * Every action `apps` serve with its handler, behind its hook, their builders built as layers
+ * of the graph being built around the caller, into its memo map, as `HttpRouter` builds a
+ * middleware's dependencies: a builder acquiring them shares each builder's one run with the
+ * surfaces of its graph, whichever builds first. Outside any graph, a program under
+ * `Effect.provide` shares that layer's, and one under none builds into a map of its own. The
+ * caller's scope holds them; a surface serving them too keeps them until it is released.
+ */
+export const built = (
+  apps: ReadonlyArray<AnyImplementation>,
+): Effect.Effect<Bound, unknown, unknown> => {
+  // Made here, so a value that is not an implementation is refused where it is passed.
+  const layers = apps.map((app) => Implementation.layerOf(app));
+  const [first, ...rest] = layers;
+
+  return Effect.gen(function* () {
+    if (first === undefined) return [];
+
+    const current = yield* Effect.serviceOption(Layer.CurrentMemoMap);
+    const memoMap = Option.getOrElse(current, Layer.makeMemoMapUnsafe);
+    const scope = yield* Effect.scope;
+    const context = yield* Layer.buildWithMemoMap(Layer.mergeAll(first, ...rest), memoMap, scope);
+
+    return yield* Effect.provideContext(acquire(apps), context);
+  });
+};
 
 /**
  * One action's handler behind its hook. The hook runs first, outside the action's span,

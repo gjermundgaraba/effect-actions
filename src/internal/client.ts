@@ -1,7 +1,8 @@
-import { Effect, Schema } from "effect";
+import { Effect, type Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
+import { type Call, inputOf } from "./call.js";
 import type { BuiltIns } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 
@@ -14,15 +15,6 @@ export type Options = Omit<
   NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
   "transformResponse"
 >;
-
-/**
- * A call of `A` answering `R`. It may leave its input out when `{}` is a valid input, such
- * as for an action declared without `input`, and then sends the input `{}` decodes to. The
- * client and `Testing.mcpClient` share this rule.
- */
-export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
-  ? (...input: [] | [input: A["input"]["Type"]]) => R
-  : (input: A["input"]["Type"]) => R;
 
 /** An error schema the binding declares on every endpoint. */
 type BindingError = Action.Any["errors"][number];
@@ -73,20 +65,6 @@ type NativeMethod = (request: {
 
 /** A native client, erased: one method per endpoint of the top-level group. */
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
-
-/**
- * The input a method of `action` sends for the arguments it was called with: a given
- * argument as given, and none as the input `{}` decodes to, as a server decodes the `{}` it
- * receives. `Call` allows none only when `{}` is a valid input; decoding makes it one of
- * the input's own values, such as an instance of an input class.
- */
-export const inputOf = (
-  action: Action.Any,
-  args: ReadonlyArray<ErasedValue>,
-): Effect.Effect<ErasedValue, Schema.SchemaError> =>
-  args.length === 0
-    ? Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))({})
-    : Effect.succeed(args[0]);
 
 /** Refuse an action `http` does not bind, matched by identity, as a surface serving it would. */
 export const assertInBinding = (http: AnyHttp, action: Action.Any): void => {

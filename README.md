@@ -62,6 +62,7 @@ implementation is also:
 const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolkit and its handler layer
 const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --name Ada
 const remote = ActionCli.command(Http, Greet); // greet --name Ada, over HTTP
+const local = Action.client(greet); // the HTTP client's methods, in process
 ```
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
@@ -82,7 +83,7 @@ const greeting = Effect.gen(function* () {
 - Every action states whether it reads or writes (`access`), so that rule reads the contract instead of a hand-maintained list of mutation names.
 - A handler or rule that needs a request identity requires that service in the surface's types. The host supplies it through authentication on protected requests. Types check that the identity is provided, not where from, so never provide one at startup. Public and authenticated routes share one binding, one mount path, one OpenAPI document and one client, and a handler's startup services are built once however many surfaces serve it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency.
-- Tests run in memory. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpClient`, without opening a port.
+- Tests run in memory. `Action.client` calls an implementation in process, with the typed client's methods, behind its hook, as several callers in one test. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpClient`, without opening a port.
 
 ## Install
 

@@ -41,3 +41,15 @@ it.each(["src/Action.ts", "src/ActionHttp.ts"])("%s imports nothing a browser la
   // It followed the imports: the check is not vacuous.
   expect(modulesOf(entry).size).toBeGreaterThan(3);
 });
+
+// Contracts import no transport code, the in-process client among them: `Action` loads no
+// server or client of HTTP, MCP, the AI toolkit or the CLI.
+it("src/Action.ts imports no transport", () => {
+  const transports = [...modulesOf("src/Action.ts")].flatMap(([file, specifiers]) =>
+    specifiers
+      .filter((specifier) => /^effect\/(?:http|http-api|ai|cli)(?:\/|$)/.test(specifier))
+      .map((specifier) => `${file}: ${specifier}`),
+  );
+
+  expect(transports).toEqual([]);
+});

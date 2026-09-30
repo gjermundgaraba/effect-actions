@@ -24,7 +24,7 @@ Package facts that apply everywhere:
 | [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                              |
 | [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                          |
 | [Authentication.md](Authentication.md) | authenticate the callers of HTTP surfaces, refuse with 401/403, publish RFC 9728 discovery                |
-| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`                                                      |
+| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                |
 | [guarantees.md](guarantees.md)         | cross-cutting rules: builder lifetimes, wire formats, spans, request context, scope                       |
 
 ## Choose a surface
@@ -33,6 +33,7 @@ Package facts that apply everywhere:
 - Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess.
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
 - Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
+- Callers are your own code in the same process, such as a test, a job or a command of your own: `Action.client`, with the methods of `ActionHttp.client`.
 
 Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own `before` hook, which every surface runs, `Action.allowAll` where no action-level rule applies; surfaces take only their transport's options. Authentication is router middleware the host provides around the HTTP surfaces.
 

@@ -42,7 +42,8 @@ ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: 
 | `ActionGroup.make(...)`, `Group.implement(build)`                                                                                         | `Action.implement(actions, build, before)`, with `Action.allowAll` where 0.8.0 passed no `before`                                                                                                             |
 | `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                                                                | `Action.Implementation`; a group is a list of actions                                                                                                                                                         |
 | `ActionGroup.contracts(...groups)`, `Contracts`                                                                                           | The actions themselves, or a binding's `Http.actions`                                                                                                                                                         |
-| `app.group`, `app.build`                                                                                                                  | None: test handlers behind their hook through a surface, as under `Testing.layer`                                                                                                                             |
+| `app.group`                                                                                                                               | `app.actions`, its exact contracts                                                                                                                                                                            |
+| `app.build`                                                                                                                               | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its hook, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer`                            |
 | A group's `errors`                                                                                                                        | One array spread into each action's `errors`; `ActionHttp.make(actions, { errors })` for middleware's                                                                                                         |
 | A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                                                                         | The built-in `Action.InvalidInput`, for input that does not decode                                                                                                                                            |
 | `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group`                                              | `Action.implement(actions, handlers, before)`                                                                                                                                                                 |
@@ -355,6 +356,30 @@ Behavior that changes without a rename:
   on those revisions reads a non-object success from the text.
 - `ActionMcp.Options<A>`, `ActionMcp.LayerHttpOptions<A>` and `Testing.McpClientOptions<A>`
   take the served actions as `A`, which types `tools`. `A` defaults to any action.
+- `Action.client(implementations)` calls implementations in process: one method per action,
+  taking its input directly, as `ActionHttp.client`'s methods do, so moving between an
+  in-process and a remote caller changes the line acquiring it. A call runs as a remote one
+  does, through the dispatch every surface shares: its input passes through its JSON codec,
+  encoded then decoded, the hook and the handler run in a scope of their own, and the success
+  or the failure passes through its codec too. It fails with the action's errors and the
+  built-in ones, as a remote caller decodes them: input that does not pass is `InvalidInput`,
+  before the hook, and a success or a failure that does not, an error the action does not
+  declare included, is a defect, as it is an empty 500 over HTTP. Each call owes what the hook
+  and the handler read, the caller's identity included, provided around the call, never
+  around the acquisition. Acquiring it builds the implementations into the layer graph around
+  it, as a layer does, sharing each builder's run with the surfaces of that graph: acquire it
+  in a builder, a layer or a scoped program, never per request. It is how an implementation's
+  own behavior is tested, several callers in one test, an action no binding holds included;
+  `Testing.layer` tests what a surface adds. `Action.Client<Apps>` is its type.
+
+  ```ts
+  const asAlice = Effect.provideService(CurrentActor, alice); // each call's caller
+
+  Effect.gen(function* () {
+    const users = yield* Action.client([userActions, listChanges]); // once, where builders live
+    return yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
+  });
+  ```
 
 ### Other changes
 

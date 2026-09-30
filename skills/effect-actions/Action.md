@@ -3,7 +3,8 @@
 One contract: a name, schemas for input, success and declared errors, `access`, and tool
 hints. A contract holds no behavior; `implement` binds handlers to contracts, with the hook every
 surface runs before them: whether a caller may call. Every implementation states it, if only as
-`Action.allowAll`. Every surface that runs handlers takes an implementation or a list of them.
+`Action.allowAll`. Every surface that runs handlers takes an implementation or a list of them,
+and so does `client`, which calls them in process with the methods `ActionHttp.client` has.
 The module also exports the built-in errors every surface declares and any handler may fail
 with.
 
@@ -20,10 +21,12 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `allowAll`                                     | The hook for no action-level rule: every caller the surface admits may call.           |
 | `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind its hook or `before`. |
 | `layer(implementations)`                       | Their builders as one layer: provided above every surface, each runs once for all.     |
+| `client(implementations)`                      | An Effect of a caller running them in process: `client.<action>(input)`.               |
 | `InvalidInput`, `Unauthenticated`, `Forbidden` | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.          |
 | `Refusal`                                      | `Unauthenticated \| Forbidden`: what authentication or a `before` hook refuses with.   |
 | `BuiltIn`                                      | `InvalidInput \| Refusal`: what any handler may fail with beyond its `errors`.         |
 | `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                              |
+| `Client<Apps>`                                 | What `client` gives for the implementations `Apps`, one or a list.                     |
 | `AnyImplementation`, `AnyImplementation<A>`    | Any implementation, or any of actions `A`, erased: a generic helper's constraint.      |
 | `Handler`, `Before`, `Access`                  | Typed handlers, hooks `(action) => Effect<void, Refusal \| E, R>`, `"read"`/`"write"`. |
 | `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                 |
@@ -237,6 +240,44 @@ export const whoAmI = Action.implement(
 );
 ```
 
+### Client
+
+Implementations called in process, by code: a test, a job, a command of your own. The client is
+acquired once, where builders live, and each call is given its caller, as authentication gives
+one per request, so one client serves several callers. Every implemented action has a method,
+the MCP-only `listChanges` included.
+
+```ts
+import { Effect } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { actors, CurrentActor } from "./authorization.js";
+import { listChanges, userActions } from "./handlers.js";
+import { Users } from "./users.js";
+
+// Each call names its caller, as authentication names one per request.
+const asAlice = Effect.provideService(CurrentActor, actors.alice);
+
+const asReader = Effect.provideService(CurrentActor, actors.reader);
+
+const program = Effect.gen(function* () {
+  // Acquired once, as a layer is built: the builders run here, not per call.
+  const users = yield* Action.client([userActions, listChanges]);
+
+  // The methods of `ActionHttp.client(Http)`, with no transport between: each call decodes
+  // its input, runs the hook, then the handler, and checks the success or the failure.
+  const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
+  const refused = yield* Effect.flip(users.renameUser({ id: "1", name: "Cy" }).pipe(asReader));
+  const { changes } = yield* users.listChanges().pipe(asReader); // served by MCP alone
+
+  return { renamed, refused, changes };
+});
+
+// The builders are released with the program's scope, before the services they captured.
+console.log(
+  await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(Users.layerMemory))),
+);
+```
+
 ## Rules
 
 ### Contracts
@@ -277,7 +318,16 @@ export const whoAmI = Action.implement(
 - A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. At startup it owes its source's services, its source's hook builder's included, and those of a hook it builds. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
 - A helper over implementations is generic, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, so each implementation's requirements reach the surface it passes them to. An HTTP helper constrains them by its binding's actions, which alone `ActionHttp.layer` serves: `Action.AnyImplementation<(typeof Http.actions)[number]>`, and a `ReadonlyArray` of it. `AnyImplementation` erases every channel to `unknown`: a value or a parameter typed with it owes `unknown`, which no surface can be given.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
-- Test handlers behind their hook in memory, with the caller provided around the in-memory layer instead of authentication ([Testing.md](Testing.md#one-caller)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips the hook. Cover each surface the application exposes.
+- Test what an implementation does, its hook and its handlers, in process with `client`, each caller provided around its own calls ([Clients](#clients)); test what a surface adds, authentication, statuses and codecs, under `Testing.layer` ([Testing.md](Testing.md)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips the hook and every check. Cover each surface the application exposes.
+
+### Clients
+
+- `client(implementations)` takes one implementation or a list, as a surface does, and gives one method per action, named after it and taking its input directly: the methods `ActionHttp.client` gives, so moving between an in-process and a remote caller changes the line acquiring it. The argument may be left out when `{}` is a valid input, and is then what `{}` decodes to. Every implemented action has a method, whether or not a surface serves it. An action name twice among the implementations throws `Duplicate action: <name>` where `client` is called.
+- A call runs as a remote one does, through the dispatch every surface shares. Its input passes through its JSON codec, encoded then decoded, so the handler receives what a remote handler decodes: an undeclared field dropped, as a client's encoding drops it, a class instance built anew, a decoding transformation such as a trim applied. The hook runs, then the handler, in its action's span, each call in a scope of its own ([guarantees.md](guarantees.md#dependency-lifetimes)). The success passes through its codec the same way, and a failure through the codec of every error the action declares, the built-in ones included, so the caller gets what a remote caller decodes: no undeclared field, a decoding transformation applied, `undefined` for a `Schema.Void` success. A failure keeps its trace: where the hook or the handler failed.
+- A call fails with the action's declared errors and the built-in ones, as `ActionHttp.client` decodes them, and with nothing of a transport. Input that does not pass through its codec is `InvalidInput`, with the schema's message, and the hook and the handler never run; a class input is passed as an instance, as over HTTP. The hook's refusal, or an error every action of its implementation declares, is the call's failure. A success or a failure that does not pass, an error the action does not declare included, is a defect, its `SchemaError`, as it is an empty 500 over HTTP: the handler or the hook broke its contract.
+- Each method owes, per call, what its handler and its implementation's hook read, the caller's identity included, and the caller provides it around the call, or around a program making several: `users.renameUser(input).pipe(Effect.provideService(CurrentActor, actor))`. A call reads its caller's context, never the one the client was acquired in: provided around the acquisition, a service reaches no call, so neither does a startup identity, and one client serves every caller.
+- Acquiring a client builds its implementations' builders, and every hook an Effect builds, as a layer does: the acquisition owes their startup services and a `Scope`, and fails as they fail; no call does. Where it builds, and what it shares: [dependency lifetimes](guarantees.md#dependency-lifetimes). Acquire it where builders live, once: in a builder, in a layer providing it as a service of type `Action.Client<typeof users>`, or in a scoped program, such as a test, a job or a command. Never per request, in a handler.
+- Under `share`, a client calls the share's actions alone, with its source's handlers, behind the share's hook: `client(share(actions, users, trustAdmin))` is a trusted program's own client.
 
 ## Failure modes
 
@@ -291,7 +341,7 @@ export const whoAmI = Action.implement(
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - `Missing handlers: <names>` at `implement`, or when a builder's layer builds: the record has no own-property function for those actions. Add them to the record itself, not to a prototype.
 - `Unknown handlers: <keys>` at `implement` or when a builder's layer builds, or a type error names a key: the record has a handler for an action not in this `implement` call. Remove it, or add its action to the list.
-- `Duplicate action: <name>` at `implement`: the list names one action twice.
+- `Duplicate action: <name>` at `implement`: the list names one action twice. Thrown by `client`: two of its implementations implement an action of that name, such as one and a `share` of it. Pass one.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
 - `Property 'access' is missing` at `make`: every action declares `"read"` or `"write"`. There is no default.
 - A service is resolved once and shared across requests when it should be per request: it was yielded in the builder, or in the Effect building the hook. Move the `yield*` into the handler, or the hook. An identity yielded there is a startup requirement of the layer; never provide one at startup.
@@ -306,3 +356,9 @@ export const whoAmI = Action.implement(
 - `Object literal may only specify known properties, and 'before' does not exist` at `implement`: the hook is the third argument itself, not an option of an object.
 - `implement` throws `Duplicate error _tag in action "<name>": <tag>`: two of the action's errors, or members of a union among them, encode with one `_tag`, so a client could not tell them apart. Rename one.
 - `implement` throws `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error from `errors`, since a handler may fail with it anyway; rename an error of your own.
+- `Type 'CurrentActor' is not assignable to type 'never'` where a program calling a client runs: a call reads the caller, and nothing provides one around it. Provide it around the call, or around the calls it makes; provided around the acquisition, it reaches no call. Never provide it to a layer or a builder acquiring the client.
+- A type error that a program still requires `Scope`: acquiring a client builds, as a layer does. Acquire it in a builder or a layer, or run the program in `Effect.scoped`.
+- A builder runs on every request, or a route owes `HttpRouter.Request<"Requires", X>` for `X`, a service its builder yields: a handler acquires a client per request. Acquire it in the builder, and call it in the handler.
+- `'<name>' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer` (TS7022) at `implement`, or, with the types bypassed, an acquisition that never completes: a builder acquires a client of its own implementation, directly or through another builder. Call the services both use instead.
+- A call dies with a `SchemaError`: the handler's success, or what the handler or the hook fails with, does not pass through its codec, which an HTTP caller sees as an empty 500. Return what the success schema accepts, and fail with an error the action declares, as its schema accepts it.
+- `InvalidInput` with `Expected <Class>` from a call given a plain object: the input is a class, which encodes only its instances. Pass `new Class({ ... })`, or leave out an argument whose fields are all optional.

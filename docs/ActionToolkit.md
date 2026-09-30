@@ -1,7 +1,8 @@
 # ActionToolkit
 
 Implementations as Effect's native AI `Toolkit`, for programs that call tools in-process
-with `LanguageModel` or by hand. No server.
+with `LanguageModel` or by hand. No server. A tool takes and gives JSON, as a model does; code
+of your own calls the implementations typed, with `Action.client` ([Action.md](Action.md#clients)).
 
 ## API
 

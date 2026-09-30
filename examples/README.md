@@ -157,6 +157,9 @@ node --import tsx examples/cli-remote.ts
 # Native Effect Toolkit result
 node --import tsx examples/toolkit.ts
 
+# In process, as two callers
+node --import tsx examples/in-process.ts
+
 ```
 
 [cli.ts](cli.ts) and [cli-remote.ts](cli-remote.ts) return native Effect CLI commands;
@@ -178,3 +181,6 @@ Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-me
 MCP calls with cleanup.
 [testing-caller.ts](testing-caller.ts) tests `userActions` behind their hook as one caller,
 without authentication, sharing the in-memory `Users` with the program.
+[in-process.ts](in-process.ts) calls `userActions` and the MCP-only `listChanges` in process
+with `Action.client`, as two callers, each given around its own calls: what the
+implementations do, with no transport.
