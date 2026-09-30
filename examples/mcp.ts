@@ -1,7 +1,7 @@
 import { Layer } from "effect";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { authenticate } from "./authentication.js";
-import { double, listChanges, status, userActions } from "./handlers.js";
+import { double, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
@@ -14,8 +14,9 @@ const publicMcp = ActionMcp.layerHttp(status, {
   allowedOrigins,
 });
 
-// A list of implementations serves all of their actions. `path` defaults to `/mcp`.
-const mcp = ActionMcp.layerHttp([userActions, double, listChanges], {
+// A list of implementations serves all of their actions, `listChanges` included, which HTTP
+// leaves out. `path` defaults to `/mcp`.
+const mcp = ActionMcp.layerHttp([userActions, double], {
   name: "effect-actions",
   version: "0.0.0",
   allowedOrigins,

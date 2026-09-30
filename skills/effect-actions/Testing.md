@@ -26,7 +26,8 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 Exported types: `McpClient<Actions>`, a client's type; `McpClientOptions<A>` of `mcpClient`, which types `tools` by the client's actions, and `McpRequestOptions` of `mcpRequest`.
 
 `mcpClient(actions, options)` builds a client on the `HttpClient` in context, one method per
-action, called as a client method is: `mcp.getUser({ id })`. A method succeeds with the
+action, called as a client method is: `mcp.getUser({ id })`. For every tool one implementation
+serves, pass its actions: `Testing.mcpClient(userActions.actions)`. A method succeeds with the
 action's decoded success. It fails with the action's declared errors and the built-in ones as
 decoded values, `SchemaError`, `HttpClientError`, or `McpCallError` for any other answer.
 Only a tool result carries the action's own errors; any other response decodes only as a
@@ -70,7 +71,7 @@ tool, has a method like any other.
 import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { actors, CurrentActor } from "./authorization.js";
-import { listChanges, userActions } from "./handlers.js";
+import { userActions } from "./handlers.js";
 import { Users } from "./users.js";
 
 // Each call names its caller, as authentication names one per request.
@@ -80,13 +81,13 @@ const asReader = Effect.provideService(CurrentActor, actors.reader);
 
 const program = Effect.gen(function* () {
   // Acquired once, as a layer is built: the builders run here, not per call.
-  const users = yield* Action.client([userActions, listChanges]);
+  const users = yield* Action.client(userActions);
 
   // The methods of `ActionHttp.client(Http)`, with no transport between: each call decodes
   // its input, runs the hook, then the handler, and checks the success or the failure.
   const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
   const refused = yield* Effect.flip(users.renameUser({ id: "1", name: "Cy" }).pipe(asReader));
-  const { changes } = yield* users.listChanges().pipe(asReader); // served by MCP alone
+  const { changes } = yield* users.listChanges().pipe(asReader); // not an HTTP route
 
   return { renamed, refused, changes };
 });
@@ -152,7 +153,7 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
 
 - Fails with `Action.Unauthenticated`: the call reached authentication without a valid credential. Give the client a `transformClient` adding it, such as `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
 - `MCP tools/call "<name>" returned an error: Invalid parameters for tool ...`: the endpoint serves a different contract under that name than the one passed. Call it with the served contract value.
-- 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
+- 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call of its binding in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
 - The program reads a service the handlers never changed: it was provided inside the routes and again to the program, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
 - Type error that the program still requires an identity, such as `CurrentActor`: a route needs it per request and no authentication among the routes provides it. Provide the authentication around the routes, or the caller around `layer` ([One caller](#one-caller)).
 - A builder or handler finds no file where one exists, failing with `NotFound: FileSystem.<method> (<path>)`, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it, with `Layer.provideMerge` where the program reads files too.

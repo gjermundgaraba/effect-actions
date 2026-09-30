@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect";
+import { Context, Effect, Layer, Redacted, Schema, SchemaTransformation, Stream } from "effect";
 import { McpSchema } from "effect/ai";
+import { Command } from "effect/cli";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
+import { cliServices, printed } from "./cli-services.js";
 import { against, httpClient, serve } from "./serve.js";
-import { mcpRequest as rpc, rawToolCall } from "./requests.js";
+import { post, mcpRequest as rpc, rawToolCall } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -448,6 +452,88 @@ it("keeps MCP's native argument and result handling", async () => {
   expect(decodeMcp(await success.json()).result.structuredContent).toBe(7);
   const defect = await web.handler(mcpRequest(-2));
   expect(await defect.text()).not.toContain("private defect");
+});
+
+it("says where input does not decode and what it expects, never a value sent, on every surface", async () => {
+  const Login = Action.make("login", {
+    description: "Log in",
+    access: "write",
+    input: {
+      password: Schema.Redacted(Schema.String.check(Schema.isMinLength(12))),
+      pin: Schema.String.check(Schema.isPattern(/^\d{4}$/)),
+      count: Schema.Finite,
+    },
+    success: Schema.String,
+  });
+
+  const app = Action.implement(Login, () => Effect.succeed("in"), Action.allowAll);
+  const sent = { password: "hunter2", pin: "pin-secret", count: "count-secret" };
+  // An undeclared field, which HTTP and MCP refuse by its path and a Toolkit drops.
+  const wider = { ...sent, note: "note-secret" };
+
+  const web = serve(
+    Layer.merge(
+      ActionHttp.layer(ActionHttp.make([Login]), app),
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+    ),
+  );
+
+  const http = await (await web.handler(post("/api/login", wider))).text();
+  const mcp = await (await web.handler(rawToolCall("login", wider))).text();
+  const tools = ActionToolkit.make(app);
+
+  const [called] = await Effect.runPromise(
+    Effect.scoped(
+      Effect.flatMap(tools.toolkit, (toolkit) =>
+        Effect.flatMap(toolkit.handle("login", wider), Stream.runCollect),
+      ).pipe(Effect.provide(tools.layer)),
+    ),
+  );
+
+  const [, , stderr] = await Command.runWith(ActionCli.command(app, Login), { version: "0" })([
+    "--password",
+    sent.password,
+    "--pin",
+    sent.pin,
+    "--count",
+    sent.count,
+  ]).pipe(printed, Effect.provide(cliServices), Effect.runPromise);
+
+  // In process, the caller passes the input's own type: values of it that fail its checks.
+  const inProcess = await Effect.gen(function* () {
+    const client = yield* Action.client(app);
+
+    return yield* Effect.flip(
+      client.login({ password: Redacted.make(sent.password), pin: sent.pin, count: Number.NaN }),
+    );
+  }).pipe(Effect.scoped, Effect.runPromise);
+
+  // What each sends back, as JSON: HTTP's body, MCP's tool result, the Toolkit's result for
+  // the model, and what the CLI prints. HTTP and MCP describe every issue, the others the first.
+  const answers = [http, mcp, JSON.stringify(called?.encodedResult), stderr.join("\n")];
+
+  for (const answer of answers) {
+    expect(answer).toContain(
+      'Expected a value with a length of at least 12\\n  at [\\"password\\"]',
+    );
+
+    for (const value of Object.values(wider)) expect(answer).not.toContain(value);
+  }
+
+  for (const answer of [http, mcp]) {
+    expect(answer).toContain('at [\\"pin\\"]');
+    expect(answer).toContain('at [\\"count\\"]');
+    expect(answer).toContain('at [\\"note\\"]');
+  }
+
+  // `Action.client` describes every issue too, each by its path.
+  expect(inProcess).toBeInstanceOf(Action.InvalidInput);
+
+  for (const path of ['at ["password"]', 'at ["pin"]', 'at ["count"]']) {
+    expect(inProcess.message).toContain(path);
+  }
+
+  for (const value of [sent.password, sent.pin]) expect(inProcess.message).not.toContain(value);
 });
 
 it("executes each input/output transformation once per call", async () => {

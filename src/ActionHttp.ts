@@ -4,7 +4,14 @@ import type { Etag, HttpClient, HttpPlatform } from "effect/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+import {
+  HttpApi,
+  HttpApiBuilder,
+  HttpApiEndpoint,
+  HttpApiGroup,
+  HttpApiMiddleware,
+  type HttpApiSecurity,
+} from "effect/http-api";
 import { status } from "effect/http-api/HttpApiSchema";
 import * as OpenApi from "effect/http-api/OpenApi";
 import type * as Action from "./Action.js";
@@ -27,16 +34,17 @@ import { recordStepUp } from "./internal/refusal.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   acquire,
+  type ActionOf,
   type AnyImplementation,
   type BuildContext,
   type BuildError,
   type ErasedValue,
   type Member,
   provideHandlers,
-  type RequestContext,
+  type RequestOf,
   type Served,
-  servedActions,
   toList,
+  uniqueKey,
 } from "./internal/implementation.js";
 
 /** A client's methods, one per action of the binding. */
@@ -53,8 +61,11 @@ export type { Options as ClientOptions } from "./internal/client.js";
 /** Error schemas, as an action declares them. */
 type Errors = Action.Any["errors"];
 
+/** Native security schemes, keyed by the name the OpenAPI document gives each. */
+type Security = Readonly<Record<string, HttpApiSecurity.HttpApiSecurity>>;
+
 /** Contract-level configuration: servers and clients must agree on it. */
-export interface Options<E extends Errors = Errors> {
+export interface Options<E extends Errors = Errors, A extends Action.Any = Action.Any> {
   /** Mount path of every route; defaults to `/api`. `/` mounts at the root. */
   readonly prefix?: `/${string}`;
   /**
@@ -64,6 +75,21 @@ export interface Options<E extends Errors = Errors> {
    * no other surface declares them.
    */
   readonly errors?: E;
+  /**
+   * The credentials the authentication around the routes reads, as Effect's native schemes
+   * keyed by the name OpenAPI gives each: `{ bearer: HttpApiSecurity.bearer }`. The document
+   * states them on every endpoint but `public`'s, any one of them sufficing, and
+   * `OpenApi.fromApi`, Swagger and Scalar show them. Documentation only: it enforces nothing,
+   * and `layer` serves every endpoint without it. The authentication provided around a layer
+   * alone decides who is admitted.
+   */
+  readonly security?: Security;
+  /**
+   * The actions served without that authentication, such as a status check: their endpoints
+   * state no security requirement. Each must be one of the binding's actions; without
+   * `security`, it changes nothing.
+   */
+  readonly public?: ReadonlyArray<A>;
 }
 
 type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
@@ -91,24 +117,60 @@ type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.
   HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E>, true>
 >;
 
+/** The actions of the implementations `App`. */
+type ActionsOf<App> = Extract<ActionOf<App>, Action.Any>;
+
 /**
- * What `layer` builds: failures, build services and request services are unions over
- * precisely the implementations `App`, joined by the router and platform services
- * `HttpApiBuilder.layer` needs. Middleware provided around it, such as authentication,
- * removes the request services it provides; the router provides its own, such as the
- * request, to every route.
+ * The actions of `App` a layer of the binding's actions `Bound` serves: those the binding
+ * holds. An implementation whose actions are erased may hold any, so all of them count.
  */
-type HttpLayer<App> = Layer.Layer<
-  never,
-  BuildError<App>,
-  | BuildContext<App>
-  | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", Exclude<RequestContext<App>, HttpRouter.Provided>>
-  | Etag.Generator
-  | FileSystem
-  | HttpPlatform.HttpPlatform
-  | Path
->;
+type Serving<App, Bound extends Action.Any> = string extends ActionsOf<App>["name"]
+  ? ActionsOf<App>
+  : Extract<ActionsOf<App>, Bound>;
+
+/** The implementations among `App` of which a layer of the actions `Bound` serves nothing. */
+type Idle<App, Bound extends Action.Any> = App extends unknown
+  ? [Serving<App, Bound>] extends [never]
+    ? App
+    : never
+  : never;
+
+/**
+ * Nothing when every implementation `Apps` stands for holds an action of the binding `H`;
+ * otherwise a property no implementation has, naming the actions of those holding none, so
+ * the call is a type error that names them. The entry is selected by a key distributed over
+ * `H` and `Apps`, so where either is a helper's own type parameter, the compiler reads the
+ * key through the helper's constraint, which serves: an erased binding holds any action, and
+ * an erased implementation may hold one, which `layer` checks when it is called. A list
+ * holding a type parameter beside another implementation, or a binding or a share made of
+ * generic actions, leaves the key deferred, and indexed by its constraint, both entries, the
+ * parameter demands the refusal: such a helper spreads its type parameter, takes the binding
+ * as one, or is passed the share.
+ */
+type Serves<H extends AnyHttp, Apps> = {
+  readonly served: unknown;
+  readonly idle: {
+    readonly "serves no action of this binding": ActionsOf<
+      Idle<Member<Apps>, H["actions"][number]>
+    >["name"];
+  };
+}[H extends unknown
+  ? string extends H["actions"][number]["name"]
+    ? "served"
+    : Apps extends unknown
+      ? [Idle<Member<Apps>, H["actions"][number]>] extends [never]
+        ? "served"
+        : "idle"
+      : never
+  : never];
+
+/**
+ * What each implementation among `App` owes per request where a layer of the actions `Bound`
+ * serves it: its hook's services, and the handlers' of the actions it serves.
+ */
+type ServedRequest<App, Bound extends Action.Any> = App extends unknown
+  ? RequestOf<App, Serving<App, Bound>>
+  : never;
 
 /**
  * An HTTP binding: actions, the errors every endpoint declares, and where they are mounted.
@@ -161,20 +223,53 @@ const groupOf = (api: HttpApi.Constraint): HttpApiGroup.Top => {
   return group;
 };
 
-/** The native endpoint of each of `served`, refusing an action outside the binding. */
-const endpointsOf = (
+/** Whether `path` is an absolute route, as `HttpApiEndpoint` takes one. */
+const isRoute = (path: string): path is `/${string}` => path.startsWith("/");
+
+/** Where the binding's group mounts `action`. */
+const pathOf = (group: HttpApiGroup.Top, action: Action.Any): `/${string}` => {
+  const path = group.endpoints[action.name]?.path;
+
+  if (path === undefined || !isRoute(path)) {
+    throw new Error("Not an HTTP binding made by ActionHttp.make");
+  }
+
+  return path;
+};
+
+/**
+ * The actions of `apps` the binding holds, matched by identity, each once: an
+ * implementation's other actions are not this binding's to serve, nor their names to check.
+ * An implementation holding none is refused, as the wrong implementation or the wrong
+ * binding; a name the binding holds is marked as another contract's, as a second copy of the
+ * contracts module makes one.
+ */
+const servedBy = (
   http: AnyHttp,
-  served: ReadonlyArray<Action.Any>,
-): ReadonlyArray<HttpApiEndpoint.Top> =>
-  served.map((action) => {
-    assertInBinding(http, action);
+  apps: ReadonlyArray<AnyImplementation>,
+): ReadonlyArray<Action.Any> => {
+  const bound = new Set(http.actions.map(({ name }) => name));
 
-    const endpoint = groupOf(http.api).endpoints[action.name];
+  const served = apps.flatMap((app) => {
+    const own = app.actions.filter((action) => http.actions.includes(action));
 
-    if (endpoint === undefined) throw new Error("Not an HTTP binding made by ActionHttp.make");
+    if (own.length === 0) {
+      const held = app.actions.map(({ name }) =>
+        bound.has(name) ? `${name} (another contract)` : name,
+      );
 
-    return endpoint;
+      throw new Error(
+        `No action of this implementation is in this HTTP binding: ${held.join(", ") || "none"}`,
+      );
+    }
+
+    return own;
   });
+
+  assertDistinct("served action", served, (action) => action.name);
+
+  return served;
+};
 
 /** The status an error schema states, as `HttpApi` reads it. */
 const statusOf = resolveAt<number>("httpApiStatus");
@@ -201,30 +296,62 @@ const declared = (error: Declared): ReadonlyArray<Declared> => {
 };
 
 /**
+ * The native endpoint of `action` at `path`, declaring its action's errors, the binding's
+ * `errors` and the built-in ones: what `make` documents and `layer` serves.
+ */
+const endpointOf = (action: Action.Any, path: `/${string}`, errors: Errors) =>
+  HttpApiEndpoint.post(action.name, path, {
+    payload: action.input,
+    success: action.success,
+    error: projectedErrors(action, errors).flatMap(declared),
+  });
+
+/**
+ * Native security middleware stating `schemes` on the endpoints it is added to, which is
+ * how `OpenApi.fromApi` documents a scheme, under a key of each binding's own; none for no
+ * scheme. It documents only: `layer` serves its endpoints without it.
+ */
+const documentation = (schemes: Security) =>
+  Object.keys(schemes).length === 0
+    ? undefined
+    : HttpApiMiddleware.Service<never>()(`effect-actions/ActionHttp/Security/${uniqueKey()}`, {
+        security: schemes,
+      });
+
+/**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
  * Every endpoint declares its action's errors, the binding's `errors`, and the built-in
  * `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a typed
  * failure. A union's own `httpApiStatus` applies to every member; otherwise, each member
- * of a plain union uses its own status, or 422 without one.
+ * of a plain union uses its own status, or 422 without one. `security` documents what the
+ * authentication around the routes reads, on every endpoint but `public`'s.
  */
 export function make<const Actions extends ReadonlyArray<Action.Any>, const E extends Errors = []>(
   actions: Actions,
-  options?: Options<E>,
+  options?: Options<E, Actions[number]>,
 ): Binding<Actions, E>;
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): AnyHttp {
   assertDistinct("action", actions, (action) => action.name);
 
   const errors = options.errors ?? [];
+  const open = options.public ?? [];
+
+  // The types admit only the binding's own actions; plain JavaScript may pass others.
+  for (const action of open) assertInBinding(actions, action);
 
   const mount = mountSegments(options.prefix);
+  const security = documentation(options.security ?? {});
 
-  const endpoints = actions.map((action) =>
-    HttpApiEndpoint.post(action.name, route([...mount, action.name]), {
-      payload: action.input,
-      success: action.success,
-      error: projectedErrors(action, errors).flatMap(declared),
-    }).annotate(OpenApi.Description, action.description),
-  );
+  const endpoints = actions.map((action) => {
+    const endpoint = endpointOf(action, route([...mount, action.name]), errors).annotate(
+      OpenApi.Description,
+      action.description,
+    );
+
+    return security === undefined || open.includes(action)
+      ? endpoint
+      : endpoint.middleware(security);
+  });
 
   // The one native group is top level, so its client methods are not nested. Its name
   // is its OpenAPI tag, and the native `addHttpApi` method keys groups by it, so it is
@@ -274,28 +401,43 @@ const entry = () =>
   ).layer;
 
 /**
- * Serve implementations of a binding's actions in one layer, each implementation's `before`
- * hook running after decoding, before each handler. It mounts only the routes of the
- * actions it serves, so one binding may be served by several layers, such as public
- * routes beside authenticated ones: middleware provided to a layer covers its routes
- * only. Each implementation's builder runs once however many layers serve it. Its routes
- * take only requests typed as JSON, and what middleware provides per request wins over what
- * the layer was built with.
+ * Serve the binding's actions among `implementations` in one layer, each implementation's
+ * `before` hook running after decoding, before each handler. The binding decides what is
+ * served: an implementation's actions the binding leaves out have no route here, and one
+ * holding none of the binding's is refused. It mounts only the routes of the actions it
+ * serves, so one binding may be served by several layers, such as public routes beside
+ * authenticated ones: middleware provided to a layer covers its routes only. Each
+ * implementation's builder runs once however many layers serve it.
+ *
+ * The layer fails as the builders do, needs at startup what they need, and per request what
+ * each implementation's hook needs and the handlers of the actions it serves, until
+ * middleware provided around it, such as authentication, provides them; the router provides
+ * its own, such as the request, to every route. Its routes take only requests typed as JSON,
+ * and what middleware provides per request wins over what the layer was built with.
  */
-export function layer<
-  const H extends AnyHttp,
-  const Apps extends Served &
-    (
-      | AnyImplementation<H["actions"][number]>
-      | ReadonlyArray<AnyImplementation<H["actions"][number]>>
-    ),
->(http: H, implementations: Apps): HttpLayer<Member<Apps>>;
+export function layer<const H extends AnyHttp, const Apps extends Served>(
+  http: H,
+  implementations: Apps & NoInfer<Serves<H, Apps>>,
+): Layer.Layer<
+  never,
+  BuildError<Member<Apps>>,
+  | BuildContext<Member<Apps>>
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<
+      "Requires",
+      Exclude<ServedRequest<Member<Apps>, H["actions"][number]>, HttpRouter.Provided>
+    >
+  | Etag.Generator
+  | FileSystem
+  | HttpPlatform.HttpPlatform
+  | Path
+>;
 export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
   // Checked where the binding is served: a client holds it too.
   assertOwnTags("ActionHttp binding", http.errors);
 
   const apps = toList(served);
-  const actions = servedActions("served action", apps);
+  const actions = servedBy(http, apps);
 
   for (const action of actions) {
     assertDistinctTags(`action "${action.name}" and its binding`, [
@@ -304,23 +446,30 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
     ]);
   }
 
-  const name = groupOf(http.api).identifier;
+  const group = groupOf(http.api);
+  const name = group.identifier;
 
-  // The server refuses undeclared payload fields; a client, on the binding's own API, drops
-  // them when it encodes, as TypeScript lets a wider value through.
+  // Each endpoint anew, at the binding's path: the binding's own carry what documents its
+  // security, which enforces nothing. The server refuses undeclared payload fields; a client,
+  // on the binding's own API, drops them when it encodes, as TypeScript lets a wider value
+  // through.
   const api = apiOf(
     name,
-    endpointsOf(http, actions).map((endpoint) => endpoint.middleware(SchemaErrors)),
+    actions.map((action) =>
+      endpointOf(action, pathOf(group, action), http.errors).middleware(SchemaErrors),
+    ),
   ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
 
   const handlers = Layer.unwrap(
     Effect.map(acquire(apps), (bound) => {
-      // Own properties, so an action named `__proto__` is a route, not a prototype.
+      // Own properties, so an action named `__proto__` is a route, not a prototype. Only the
+      // served actions: a native group refuses a handler of an endpoint it lacks.
       const byName = Object.fromEntries(
-        bound.map(([action, run]) => [
-          action.name,
-          (request: Request) => recordStepUp(run(request.payload)),
-        ]),
+        bound.flatMap(([action, run]) =>
+          actions.includes(action)
+            ? [[action.name, (request: Request) => recordStepUp(run(request.payload))] as const]
+            : [],
+        ),
       );
 
       return HttpApiBuilder.group(api, name, (builder) =>

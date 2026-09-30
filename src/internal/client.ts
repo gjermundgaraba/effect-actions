@@ -66,9 +66,9 @@ type NativeMethod = (request: {
 /** A native client, erased: one method per endpoint of the top-level group. */
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
-/** Refuse an action `http` does not bind, matched by identity, as a surface serving it would. */
-export const assertInBinding = (http: AnyHttp, action: Action.Any): void => {
-  if (!http.actions.includes(action)) {
+/** Refuse an action a binding of `actions` does not hold, matched by identity. */
+export const assertInBinding = (actions: ReadonlyArray<Action.Any>, action: Action.Any): void => {
+  if (!actions.includes(action)) {
     throw new Error(`Action "${action.name}" is not in this HTTP binding`);
   }
 };

@@ -28,15 +28,18 @@ The application serves its implementations under three access rules:
 | `status`       | `status`                          | no credentials | `/mcp/public`, no credentials |
 | `userActions`  | `getUser`, `renameUser`, `whoAmI` | bearer token   | `/mcp`, bearer token          |
 | `double`       | `double`                          | bearer token   | `/mcp`, bearer token          |
-| `listChanges`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
+| `userActions`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
 
 Every HTTP action is in one binding, `Http`: one mount path, one document, one client, served
-by two `ActionHttp.layer` calls, the protected one with the authentication around it. The `Users`
-builder runs once, though HTTP and MCP both serve `userActions`. An MCP endpoint is a single
+by two `ActionHttp.layer` calls, the protected one with the authentication around it. The
+binding decides what HTTP serves, so `listChanges`, which it leaves out, has no route, though
+`userActions` holds it. The `Users` builder runs once, though HTTP and MCP both serve
+`userActions`. An MCP endpoint is a single
 route, so authentication around it covers every tool. That is why the public tool has its own
 endpoint.
 The OpenAPI document (`/api/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
-are Effect's own tools reading the native `Http.api`.
+are Effect's own tools reading the native `Http.api`, which states the bearer scheme on every
+route but `status`.
 
 ```sh
 # The public action needs no token
@@ -96,7 +99,7 @@ is public.
 
 - [quickstart.ts](quickstart.ts), [quickstart-server.ts](quickstart-server.ts), [quickstart-client.ts](quickstart-client.ts): the minimal program's contract and binding, its server, and its typed client.
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
-- [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so it is MCP-only.
+- [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so HTTP does not serve it. It documents the bearer scheme, `status` public.
 - [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the protected implementations name.
 - [authorization-built.ts](authorization-built.ts): the same rule as a hook built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
@@ -129,8 +132,8 @@ lets [client.ts](client.ts) decode a refusal as a typed failure. Responses throu
 authentication carry `cache-control: no-store`; other routes use the host's cache policy. MCP over HTTP answers
 a refusal with the same status and body as HTTP. Tool discovery is not filtered by actor.
 
-A write through `renameUser` is visible through both transports, and through the MCP-only
-`listChanges` tool. `double`
+A write through `renameUser` is visible through both transports, and through the
+`listChanges` tool, which HTTP does not serve. `double`
 demonstrates string-to-number input decoding. `whoAmI` reads the authenticated
 identity from request context, not action arguments.
 
@@ -181,6 +184,6 @@ Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-me
 MCP calls with cleanup.
 [testing-caller.ts](testing-caller.ts) tests `userActions` behind their hook as one caller,
 without authentication, sharing the in-memory `Users` with the program.
-[in-process.ts](in-process.ts) calls `userActions` and the MCP-only `listChanges` in process
-with `Action.client`, as two callers, each given around its own calls: what the
-implementations do, with no transport.
+[in-process.ts](in-process.ts) calls `userActions`, `listChanges` included, which no binding
+holds, in process with `Action.client`, as two callers, each given around its own calls: what
+the implementation does, with no transport.

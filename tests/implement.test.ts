@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio, Stream } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
-import { HttpApi, OpenApi } from "effect/http-api";
+import { FetchHttpClient, HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -632,7 +632,7 @@ describe("HTTP bindings", () => {
     success: Schema.String,
   });
 
-  it("mounts only implementations of the actions it was made with, each once", () => {
+  it("refuses an implementation holding none of its binding's actions, and serves each once", () => {
     const bound = ActionHttp.make([Alpha]);
 
     const LookAlike = Action.make("alpha", {
@@ -649,14 +649,14 @@ describe("HTTP bindings", () => {
         bound,
         Action.implement(LookAlike, () => Effect.succeed("x"), Action.allowAll),
       ),
-    ).toThrow('Action "alpha" is not in this HTTP binding');
+    ).toThrow("No action of this implementation is in this HTTP binding: alpha (another contract)");
     expect(() =>
       ActionHttp.layer(
         bound,
-        // @ts-expect-error An action outside the binding is part of the implementation's type.
+        // @ts-expect-error An implementation holding none of the binding's actions serves nothing.
         Action.implement(Beta, () => Effect.succeed("x"), Action.allowAll),
       ),
-    ).toThrow('Action "beta" is not in this HTTP binding');
+    ).toThrow("No action of this implementation is in this HTTP binding: beta");
     expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow("Duplicate served action: alpha");
     expect(() =>
       ActionHttp.layer(bound, [
@@ -664,6 +664,133 @@ describe("HTTP bindings", () => {
         Action.implement(Alpha, () => Effect.succeed("y"), Action.allowAll),
       ]),
     ).toThrow("Duplicate served action: alpha");
+
+    const text = () => Effect.succeed("x");
+
+    // Only the names it serves are checked: both implementations hold a `beta` it leaves out.
+    expect(() =>
+      ActionHttp.layer(ActionHttp.make([Alpha, Audit]), [
+        Action.implement([Alpha, Beta], { alpha: text, beta: text }, Action.allowAll),
+        Action.implement([Audit, Beta], { audit: text, beta: text }, Action.allowAll),
+      ]),
+    ).not.toThrow();
+  });
+
+  it("serves the actions its binding holds among an implementation's, and no others", async () => {
+    let built = 0;
+    const hooked: Array<string> = [];
+
+    // One builder for an action HTTP serves and one it leaves to other surfaces.
+    const app = Action.implement(
+      [Alpha, Beta],
+      Effect.sync(() => {
+        built++;
+
+        return { alpha: () => Effect.succeed("alpha"), beta: () => Effect.succeed("beta") };
+      }),
+      (action) =>
+        Effect.sync(() => {
+          hooked.push(action.name);
+        }),
+    );
+
+    const web = serveRoutes(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Alpha]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+      ),
+    );
+
+    expect(await (await web.handler(post("/api/alpha"))).json()).toBe("alpha");
+    expect((await web.handler(post("/api/beta"))).status).toBe(404);
+
+    const tool = await web.handler(rawToolCall("beta"));
+
+    expect(await tool.json()).toMatchObject({ result: { structuredContent: "beta" } });
+    expect({ built, hooked }).toEqual({ built: 1, hooked: ["alpha", "beta"] });
+  });
+
+  it("serves one implementation through bindings of its own, each routing what it holds", async () => {
+    let built = 0;
+
+    const app = Action.implement(
+      [Alpha, Beta, Audit],
+      Effect.sync(() => {
+        built++;
+
+        return {
+          alpha: () => Effect.succeed("alpha"),
+          beta: () => Effect.succeed("beta"),
+          audit: () => Effect.succeed("audit"),
+        };
+      }),
+      Action.allowAll,
+    );
+
+    const Reads = ActionHttp.make([Alpha, Audit], { prefix: "/reads" });
+    const Writes = ActionHttp.make([Beta], { prefix: "/writes" });
+
+    const handler = handlerOf(
+      Layer.mergeAll(ActionHttp.layer(Reads, app), ActionHttp.layer(Writes, app)),
+    );
+
+    const answers = await Promise.all(
+      ["/reads/alpha", "/reads/audit", "/writes/beta", "/reads/beta", "/writes/alpha"].map(
+        async (path) => {
+          const response = await handler(post(path));
+
+          return response.status === 200 ? await response.json() : response.status;
+        },
+      ),
+    );
+
+    expect(answers).toEqual(["alpha", "audit", "beta", 404, 404]);
+    expect(built).toBe(1);
+  });
+
+  it("serves a route and another contract's tool of the same name side by side", async () => {
+    const Search = Action.make("search", {
+      description: "Search the site",
+      access: "read",
+      input: { query: Schema.String },
+      success: Schema.String,
+    });
+
+    const AgentSearch = Action.make("search", {
+      description: "Search the agent's notes",
+      access: "read",
+      input: { topic: Schema.String },
+      success: Schema.String,
+    });
+
+    const web = Action.implement(
+      Search,
+      ({ query }) => Effect.succeed(`site:${query}`),
+      Action.allowAll,
+    );
+
+    // The agent's `search` is not the binding's: HTTP leaves it, and its name, to MCP.
+    const agent = Action.implement(
+      [Alpha, AgentSearch],
+      {
+        alpha: () => Effect.succeed("alpha"),
+        search: ({ topic }) => Effect.succeed(`notes:${topic}`),
+      },
+      Action.allowAll,
+    );
+
+    const routes = serveRoutes(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Search, Alpha]), [web, agent]),
+        ActionMcp.layerHttp(agent, { name: "test", version: "0" }),
+      ),
+    );
+
+    expect(await (await routes.handler(post("/api/search", { query: "x" }))).json()).toBe("site:x");
+
+    const tool = await routes.handler(rawToolCall("search", { topic: "y" }));
+
+    expect(await tool.json()).toMatchObject({ result: { structuredContent: "notes:y" } });
   });
 
   it("serves one binding's actions through several layers; an unserved action has no route", async () => {
@@ -781,6 +908,107 @@ describe("HTTP bindings", () => {
     });
     expect(reply).not.toHaveProperty("result.structuredContent");
     expect(OpenApi.fromApi(bound.api).paths["/api/list"]?.post?.responses).toHaveProperty("403");
+  });
+});
+
+describe("documented security", () => {
+  const schemes = {
+    bearer: HttpApiSecurity.bearer,
+    key: HttpApiSecurity.apiKey({ key: "x-api-key" }),
+  };
+
+  const Secured = ActionHttp.make([WhoAmI, Invoice, Audit], {
+    security: schemes,
+    public: [WhoAmI],
+  });
+
+  const Ping = Action.make("ping", { description: "Ping", access: "read", success: Schema.String });
+
+  /** Each operation's security requirements in `document`, by path. */
+  const requirements = (document: OpenApi.OpenAPISpec) =>
+    Object.fromEntries(
+      Object.entries(document.paths).map(([path, item]) => [path, item.post?.security]),
+    );
+
+  it("states the schemes on every endpoint but the public ones, any one of them sufficing", () => {
+    expect(OpenApi.fromApi(Secured.api).components.securitySchemes).toEqual({
+      bearer: { type: "http", scheme: "Bearer" },
+      key: { type: "apiKey", name: "x-api-key", in: "header" },
+    });
+    expect(requirements(OpenApi.fromApi(Secured.api))).toEqual({
+      "/api/whoAmI": [],
+      "/api/invoice": [{ bearer: [] }, { key: [] }],
+      "/api/audit": [{ bearer: [] }, { key: [] }],
+    });
+    // Without `security` there is nothing to state, `public` or not.
+    const open = ActionHttp.make([WhoAmI, Invoice], { public: [WhoAmI] });
+
+    expect(requirements(OpenApi.fromApi(open.api))).toEqual({
+      "/api/whoAmI": [],
+      "/api/invoice": [],
+    });
+  });
+
+  it("keeps each binding's schemes in one document for several", () => {
+    const combined = HttpApi.make("host")
+      .addHttpApi(Secured.api)
+      .addHttpApi(ActionHttp.make([Ping], { prefix: "/open" }).api);
+
+    expect(requirements(OpenApi.fromApi(combined))).toEqual({
+      "/api/whoAmI": [],
+      "/api/invoice": [{ bearer: [] }, { key: [] }],
+      "/api/audit": [{ bearer: [] }, { key: [] }],
+      "/open/ping": [],
+    });
+
+    // One name, two schemes: Effect refuses to document either.
+    const conflicting = HttpApi.make("host")
+      .addHttpApi(Secured.api)
+      .addHttpApi(
+        ActionHttp.make([Ping], {
+          prefix: "/open",
+          security: { bearer: HttpApiSecurity.basic },
+        }).api,
+      );
+
+    expect(() => OpenApi.fromApi(conflicting)).toThrow("Conflicting OpenAPI security scheme");
+  });
+
+  it("enforces nothing: served without authentication, every route answers any caller", async () => {
+    const handler = handlerOf(
+      ActionHttp.layer(Secured, [whoAmI, billing]).pipe(
+        Layer.provide(Layer.succeed(Tenant, "acme")),
+      ),
+    );
+
+    expect(await (await handler(post("/api/invoice", { amount: "2" }))).json()).toBe(4);
+    expect(await (await handler(post("/api/audit"))).json()).toBe("clean");
+
+    // The native client of the documented API calls it as it calls any binding.
+    const answers = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(Secured.api, { baseUrl: "http://localhost" });
+
+        return [
+          yield* client.whoAmI({ payload: {} }),
+          yield* client.invoice({ payload: { amount: 3 } }),
+        ];
+      }).pipe(
+        Effect.provide(
+          Layer.succeed(FetchHttpClient.Fetch, (input, init) => handler(new Request(input, init))),
+        ),
+        Effect.provide(FetchHttpClient.layer),
+      ),
+    );
+
+    expect(answers).toEqual(["ada@acme", 6]);
+  });
+
+  it("refuses a public action outside the binding, as plain JavaScript may pass one", () => {
+    expect(() =>
+      // @ts-expect-error Only the binding's own actions are public.
+      ActionHttp.make([WhoAmI], { security: schemes, public: [Ping] }),
+    ).toThrow('Action "ping" is not in this HTTP binding');
   });
 });
 

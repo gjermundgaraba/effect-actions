@@ -14,7 +14,7 @@ import {
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
-import { listChanges, userActions } from "../examples/handlers.js";
+import { userActions } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
 
 /** The defect `effect` dies with; `undefined` when it succeeds or fails. */
@@ -30,7 +30,7 @@ const Ping = Action.make("ping", { description: "Ping", access: "read", success:
 describe("Action.client", () => {
   it("calls each action with its input, behind its hook, as the caller around each call", async () => {
     const result = await Effect.gen(function* () {
-      const users = yield* Action.client([userActions, listChanges]);
+      const users = yield* Action.client(userActions);
 
       const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
       const refused = yield* Effect.flip(users.renameUser({ id: "1", name: "Cy" }).pipe(asReader));
@@ -43,7 +43,7 @@ describe("Action.client", () => {
     expect(result.renamed).toEqual({ id: "1", name: "Bea" });
     expect(result.refused).toBeInstanceOf(Action.Forbidden);
     expect(result.refused).toMatchObject({ scopes: ["users:write"] });
-    // The refused call changed nothing, and the MCP-only action is called all the same.
+    // The refused call changed nothing, and an action no binding holds is called all the same.
     expect(result.read).toEqual({ id: "1", name: "Bea" });
     expect(result.changes).toEqual([{ actorId: "alice", userId: "1", name: "Bea" }]);
   });

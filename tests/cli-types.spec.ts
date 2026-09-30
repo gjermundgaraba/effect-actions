@@ -115,6 +115,37 @@ const plainServices: [
 
 void plainServices;
 
+// An implementation written inside the list owes nothing, as every surface's list keeps it:
+// inferring from the list's erased element would make it owe `unknown`.
+const inlineGroup = ActionCli.make(
+  [local, Action.implement(Plain, () => Effect.succeed("plain"), Action.allowAll)],
+  { name: "inline" },
+);
+
+const inlineServices: Equal<
+  Command.Services<typeof inlineGroup>,
+  Build | OneRequest | TwoRequest
+> = true;
+
+void inlineServices;
+
+// TypeScript reports a call no overload matches by the last overload's error alone, so the
+// last, for `make` as for `command`, takes a binding or implementations and is reached only
+// when both precise forms fail: a mistake in either form is named, such as a misspelled
+// `commands` key, `Did you mean to write 'one'?`, rather than reported against the other form.
+const lastOverloads: [
+  Equal<
+    Parameters<typeof ActionCli.make>[0],
+    ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
+  >,
+  Equal<
+    Parameters<typeof ActionCli.command>[0],
+    ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
+  >,
+] = [true, true];
+
+void lastOverloads;
+
 const Scoped = Action.make("scoped", {
   description: "Scoped",
   access: "write",

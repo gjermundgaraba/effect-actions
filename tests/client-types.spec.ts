@@ -6,7 +6,7 @@ import { actors, CurrentActor } from "../examples/authorization.js";
 import { type Permissions, whoAmI as storedWhoAmI } from "../examples/authorization-built.js";
 import { Http } from "../examples/binding.js";
 import { GetUser, type User, type UserNotFound } from "../examples/contracts.js";
-import { double, listChanges, status, userActions } from "../examples/handlers.js";
+import { double, status, userActions } from "../examples/handlers.js";
 import type { Users } from "../examples/users.js";
 import type { Equal } from "./equal.js";
 
@@ -43,7 +43,7 @@ export const methodTypes = Effect.gen(function* () {
   void users.getUser({ id: "1" }).pipe(Effect.catchTag("SchemaError", () => Effect.void));
   // @ts-expect-error Only the actions it was given.
   // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
-  void users.listChanges();
+  void users.double({ value: 2 });
 });
 
 // The caller is per call: provided around the acquisition, it is still owed by every call.
@@ -62,7 +62,7 @@ export const callerTypes = Effect.gen(function* () {
 
 // Several implementations: each method owes its own implementation's request services.
 export const listTypes = Effect.gen(function* () {
-  const many = Action.client([userActions, double, status, listChanges]);
+  const many = Action.client([userActions, double, status]);
   const actions = yield* many;
 
   const types: [

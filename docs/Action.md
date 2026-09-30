@@ -28,6 +28,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.                              |
 | `Client<Apps>`                                 | What `client` gives for the implementations `Apps`, one or a list.                     |
 | `AnyImplementation`, `AnyImplementation<A>`    | Any implementation, or any of actions `A`, erased: a generic helper's constraint.      |
+| `implementation.actions`                       | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.           |
 | `Handler`, `Before`, `Access`                  | Typed handlers, hooks `(action) => Effect<void, Refusal \| E, R>`, `"read"`/`"write"`. |
 | `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                 |
 
@@ -131,7 +132,10 @@ Build-time services (`Users`) are yielded in a builder; request-time services
 (`CurrentActor`) inside handlers. `authorize` is the hook every surface runs before each
 handler; the authentication provided around the HTTP surfaces supplies `CurrentActor`. The
 public `status` states `Action.allowAll` instead. Every surface takes one implementation or a
-list: `double`, `userActions`, `[userActions, double]`.
+list: `double`, `userActions`, `[userActions, double]`. Implementations group actions by domain,
+not by surface: `userActions` holds `listChanges`, which HTTP does not serve because its
+binding leaves it out. A layer without authentication still takes only public actions
+([ActionHttp.md](ActionHttp.md#rules)).
 
 ```ts
 import { Effect } from "effect";
@@ -154,9 +158,10 @@ export const status = Action.implement(
 
 // Capture Users at startup; resolve CurrentActor per request. Every surface runs the
 // `authorize` hook before each handler, so it has already refused an actor without the
-// permission the action's access needs.
+// permission the action's access needs. HTTP serves only the actions its binding holds:
+// `listChanges`, which it leaves out, is a tool and a command, never a route.
 export const userActions = Action.implement(
-  [GetUser, RenameUser, WhoAmI],
+  [GetUser, RenameUser, WhoAmI, ListChanges],
   Effect.gen(function* () {
     const users = yield* Users;
 
@@ -165,6 +170,12 @@ export const userActions = Action.implement(
       renameUser: ({ id, name }) =>
         Effect.flatMap(CurrentActor, (actor) => users.rename(actor, id, name)),
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
+      listChanges: () =>
+        Effect.gen(function* () {
+          const actor = yield* CurrentActor;
+
+          return { changes: yield* users.changes(actor.tenantId) };
+        }),
     };
   }),
   authorize,
@@ -172,21 +183,6 @@ export const userActions = Action.implement(
 
 // Pure: no builder and no services, only the hook.
 export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), authorize);
-
-export const listChanges = Action.implement(
-  ListChanges,
-  Effect.gen(function* () {
-    const users = yield* Users;
-
-    return () =>
-      Effect.gen(function* () {
-        const actor = yield* CurrentActor;
-
-        return { changes: yield* users.changes(actor.tenantId) };
-      });
-  }),
-  authorize,
-);
 ```
 
 ### Built hooks
@@ -245,13 +241,13 @@ export const whoAmI = Action.implement(
 Implementations called in process, by code: a test, a job, a command of your own. The client is
 acquired once, where builders live, and each call is given its caller, as authentication gives
 one per request, so one client serves several callers. Every implemented action has a method,
-the MCP-only `listChanges` included.
+`listChanges` included, which no binding holds.
 
 ```ts
 import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { actors, CurrentActor } from "./authorization.js";
-import { listChanges, userActions } from "./handlers.js";
+import { userActions } from "./handlers.js";
 import { Users } from "./users.js";
 
 // Each call names its caller, as authentication names one per request.
@@ -261,13 +257,13 @@ const asReader = Effect.provideService(CurrentActor, actors.reader);
 
 const program = Effect.gen(function* () {
   // Acquired once, as a layer is built: the builders run here, not per call.
-  const users = yield* Action.client([userActions, listChanges]);
+  const users = yield* Action.client(userActions);
 
   // The methods of `ActionHttp.client(Http)`, with no transport between: each call decodes
   // its input, runs the hook, then the handler, and checks the success or the failure.
   const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
   const refused = yield* Effect.flip(users.renameUser({ id: "1", name: "Cy" }).pipe(asReader));
-  const { changes } = yield* users.listChanges().pipe(asReader); // served by MCP alone
+  const { changes } = yield* users.listChanges().pipe(asReader); // not an HTTP route
 
   return { renamed, refused, changes };
 });
@@ -291,8 +287,8 @@ console.log(
 - `access` is `"read"` or `"write"` and is required. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a rule may switch on it at the type level.
 - An implementation's `before` hook reads `access` ([guarantees.md](guarantees.md#authorization)); the library itself authorizes nothing. Its only built-in uses are default hints and span/log annotations.
 - `access` is also the tool's read-only hint, which no option overrides, so authorization and what MCP clients are told cannot disagree. Derive authorization from `access`, never from a tool hint.
-- A contract says nothing about where it is served. A surface serves the implementations passed to it. To keep an action off HTTP, leave it out of `ActionHttp.make`; to keep it off MCP, leave its implementation out of the MCP layer.
-- An action kept off a surface this way, but sharing a builder with served ones, is `share`d from their implementation, so the builder still runs once.
+- A contract says nothing about where it is served. HTTP serves its binding's actions among the implementations passed to it; MCP, a Toolkit and `ActionCli.make` serve every action of theirs. To keep an action off HTTP, leave it out of `ActionHttp.make`, whatever implementation holds it; to keep it off MCP, leave its implementation out of the MCP layer.
+- An action kept off MCP, a Toolkit or a CLI this way, but sharing a builder with served ones, is `share`d from their implementation, so the builder still runs once. HTTP needs no `share`: its binding already leaves the action out.
 - `make` accepts only the keys listed above, and `hints` only `destructive`, `idempotent` and `openWorld`. An unknown key is a compile error, beside known ones too.
 - An `undefined` option takes its default, as an omitted one does. One that may be either is typed as either: with `success: enabled ? Schema.String : undefined`, or the same through a conditional spread, the success is `string | void`. The same holds for `input` and `errors`.
 - Options typed as a whole (`Parameters<typeof Action.make>[1]`) are not checked. Their action's schemas are as wide as what may run, so its success is `unknown`.
@@ -316,7 +312,7 @@ console.log(
 - `before` sees `action` typed as the implementation's own actions, in a built hook too. As for a builder, an `Effect.fn` hook returned through `.pipe(...)` or a wrapper takes an `any` action: annotate it, `(action: Action.Any)`.
 - To pass a subset of an implementation's actions to a surface, such as dashboard-only writes kept off MCP, use `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, Action.allowAll)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per host build however many share it. A hook given to a share, built or not, is its own: its source's is neither built nor run for its actions.
 - A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. At startup it owes its source's services, its source's hook builder's included, and those of a hook it builds. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
-- A helper over implementations is generic, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, so each implementation's requirements reach the surface it passes them to. An HTTP helper constrains them by its binding's actions, which alone `ActionHttp.layer` serves: `Action.AnyImplementation<(typeof Http.actions)[number]>`, and a `ReadonlyArray` of it. `AnyImplementation` erases every channel to `unknown`: a value or a parameter typed with it owes `unknown`, which no surface can be given.
+- A helper over implementations is generic, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, so each implementation's requirements reach the surface it passes them to, `ActionHttp.layer` included, whose binding decides what it serves. Beside the helper's own implementations, spread the parameter, `[...apps, double]`: `ActionHttp.layer` and MCP refuse a type parameter listed as one element. `ActionHttp.layer` also refuses a binding or a share the helper makes from generic actions: take the binding as a type parameter, and pass the share in. `AnyImplementation` erases every channel to `unknown`: a value or a parameter typed with it owes `unknown`, which no surface can be given.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
 - Test what an implementation does, its hook and its handlers, in process with `client`, each caller provided around its own calls ([Clients](#clients)); test what a surface adds, authentication, statuses and codecs, under `Testing.layer` ([Testing.md](Testing.md)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips the hook and every check. Cover each surface the application exposes.
 
@@ -347,7 +343,6 @@ console.log(
 - A service is resolved once and shared across requests when it should be per request: it was yielded in the builder, or in the Effect building the hook. Move the `yield*` into the handler, or the hook. An identity yielded there is a startup requirement of the layer; never provide one at startup.
 - `HttpRouter.Request<"Requires", X>` still owed, or `Type 'X' is not assignable to type 'never'` at `runMain`, although `X`, a store the hook reads, is provided at startup: the hook yields it on every call. Yield it in an Effect that builds the hook ([Built hooks](#built-hooks)).
 - `unknown` among a surface's requirements, and a type error where it is served or run, such as `Argument of type 'Layer<never, unknown, unknown>' is not assignable` at `HttpRouter.toWebHandler` or `Type 'unknown' is not assignable to type 'never'` where it is launched or run: the implementations are typed `Action.AnyImplementation`, as a helper's parameter or a list's annotation. Make the helper generic over them, or drop the annotation.
-- A type error at `ActionHttp.layer`, its argument not assignable to its parameter, ending in `Type 'string' is not assignable to type '"<name>"'` or in the missing properties of an array: the implementations are typed, or a helper constrains them, with `Action.AnyImplementation`, whose actions may be any, while the layer serves only its binding's. Constrain the helper by the binding's actions, `Action.AnyImplementation<(typeof Http.actions)[number]>`, or drop the annotation.
 - `'readOnly' does not exist in type 'Hints'` at `make`, or `Type 'true' is not assignable to type 'never'` on `readOnly` beside another hint: a tool's read-only hint is its `access`. Set `access` instead.
 - Type error on `hints.destructive` of a read action: a read is never destructive. Drop the hint, or make the action a write.
 - `Type '...' is not assignable to type 'never'` on a key at `make`, in `hints` too: an option or hint it does not take, or a misspelled one.

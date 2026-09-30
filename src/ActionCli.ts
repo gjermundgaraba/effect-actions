@@ -1,6 +1,6 @@
-import { Effect, Predicate } from "effect";
+import { Effect, Predicate, type Schema } from "effect";
 import { Command } from "effect/cli";
-import type { HttpClient } from "effect/http";
+import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "./Action.js";
 import { assertDistinct } from "./internal/actions.js";
 import {
@@ -9,7 +9,7 @@ import {
   command as makeCommand,
   type Options as CommandOptions,
 } from "./internal/cli.js";
-import { type AnyHttp, assertInBinding, type MethodError, methods } from "./internal/client.js";
+import { type AnyHttp, assertInBinding, methods } from "./internal/client.js";
 import {
   acquire,
   type ActionOf,
@@ -62,24 +62,6 @@ type Local<App, A extends Action.Any> = Effect.Effect<
   RequestOf<App, A> | BuildContext<App>
 >;
 
-/** A native command running `Local`, or subcommands running it for each `A`. */
-type LocalCommand<App, A extends Action.Any, Subcommands = never> = Command.Command<
-  string,
-  Subcommands,
-  {},
-  Failure<Effect.Error<Local<App, A>>>,
-  Effect.Services<Local<App, A>>
->;
-
-/** A native command calling `A` of the binding `H` over HTTP, failing as its client method. */
-type RemoteCommand<H extends AnyHttp, A extends Action.Any, Subcommands = never> = Command.Command<
-  string,
-  Subcommands,
-  {},
-  Failure<MethodError<A, H["errors"][number]>>,
-  HttpClient.HttpClient
->;
-
 /**
  * Build the implementation's handlers for this call alone, run one action through its hook
  * and its handler, and release them: every local command, selected or aggregated. The call's
@@ -130,7 +112,7 @@ const remote = (
   action: Action.Any,
   options: CommandOptions<Action.Any> | undefined,
 ) => {
-  assertInBinding(http, action);
+  assertInBinding(http.actions, action);
 
   return makeCommand(
     action,
@@ -160,21 +142,52 @@ const project = (
  * Project one action into a native Effect CLI command, named after it in kebab case with
  * one flag per field of its input (`--user-id`), or `--input` taking the whole input as
  * JSON when it is not a struct. From an HTTP binding, the command calls the action over
- * HTTP through its `ActionHttp.client` method, on the host's `HttpClient`. From
- * implementations, it runs the handler in process, behind its implementation's `before`
- * hook; the host provides the identity. Its stdout is the result; a failure is a
- * `Failure`, which `Command.run` prints on stderr.
+ * HTTP through its `ActionHttp.client` method, on the host's `HttpClient`, and fails as the
+ * method does. From implementations, it runs the handler in process, behind its
+ * implementation's `before` hook, and needs what its handler, hook and builder need; the
+ * host provides the identity. Its stdout is the result; a failure is a `Failure`, which
+ * `Command.run` prints on stderr.
  */
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
   options?: CommandOptions<A>,
-): RemoteCommand<H, A>;
+): Command.Command<
+  string,
+  never,
+  {},
+  Failure<
+    | A["errors"][number]["Type"]
+    | H["errors"][number]["Type"]
+    | Action.BuiltIn
+    | HttpClientError.HttpClientError
+    | Schema.SchemaError
+  >,
+  HttpClient.HttpClient
+>;
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
   implementations: Apps,
   action: A,
   options?: CommandOptions<A>,
-): LocalCommand<Selected<Member<Apps>, A>, A>;
+): Command.Command<
+  string,
+  never,
+  {},
+  Failure<Effect.Error<Local<Selected<Member<Apps>, A>, A>>>,
+  Effect.Services<Local<Selected<Member<Apps>, A>, A>>
+>;
+// Last, and reached only when both forms above fail: TypeScript reports a call matching no
+// overload by the last one's error alone, and this one's names the mistake in either form,
+// such as a positional argument that is not a field. A target that is a binding or
+// implementations, chosen by a condition, reaches it too, and owes `unknown`.
+export function command<
+  const T extends AnyHttp | Served,
+  A extends (T extends AnyHttp ? T["actions"][number] : ActionOf<Member<T>>),
+>(
+  target: T,
+  action: A,
+  options?: CommandOptions<A>,
+): Command.Command<string, never, {}, unknown, unknown>;
 export function command(
   target: AnyHttp | Served,
   action: Action.Any,
@@ -189,14 +202,40 @@ export function command(
  * implemented action run in process. `commands` gives a subcommand the options `command`
  * takes, by action name.
  */
-export function make<const Apps extends Served>(
-  implementations: Apps,
-  options: NoInfer<Options<ActionOf<Member<Apps>>>>,
-): LocalCommand<Member<Apps>, ActionOf<Member<Apps>>, {}>;
 export function make<const H extends AnyHttp>(
   http: H,
   options: NoInfer<Options<H["actions"][number]>>,
-): RemoteCommand<H, H["actions"][number], {}>;
+): Command.Command<
+  string,
+  {},
+  {},
+  Failure<
+    | H["actions"][number]["errors"][number]["Type"]
+    | H["errors"][number]["Type"]
+    | Action.BuiltIn
+    | HttpClientError.HttpClientError
+    | Schema.SchemaError
+  >,
+  HttpClient.HttpClient
+>;
+export function make<const Apps extends Served>(
+  implementations: Apps,
+  options: NoInfer<Options<ActionOf<Member<Apps>>>>,
+): Command.Command<
+  string,
+  {},
+  {},
+  Failure<Effect.Error<Local<Member<Apps>, ActionOf<Member<Apps>>>>>,
+  Effect.Services<Local<Member<Apps>, ActionOf<Member<Apps>>>>
+>;
+// Last, and reached only when both forms above fail: TypeScript reports a call matching no
+// overload by the last one's error alone, and this one's names every option mistake in
+// either form, such as a misspelled `commands` key. A target that is a binding or
+// implementations, chosen by a condition, reaches it too, and owes `unknown`.
+export function make<const T extends AnyHttp | Served>(
+  target: T,
+  options: NoInfer<Options<T extends AnyHttp ? T["actions"][number] : ActionOf<Member<T>>>>,
+): Command.Command<string, {}, {}, unknown, unknown>;
 export function make(
   target: AnyHttp | Served,
   options: Options,
@@ -230,7 +269,7 @@ export function make(
   );
 
   // SAFETY: every subcommand runs or calls one action, so the aggregate's channels are
-  // the unions `Local` and `RemoteCommand` state over them.
+  // the unions of what `Local` and a client method state over them.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list.
   return group as never;
 }

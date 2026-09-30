@@ -70,8 +70,8 @@ describe("one implementation, both transports", () => {
       "getUser",
       "renameUser",
       "whoAmI",
-      "double",
       "listChanges",
+      "double",
     ]);
     const double = reply.tools.find((tool) => tool.name === "double");
     expect(double?.inputSchema.properties).toEqual({ value: { type: "string" } });
@@ -319,6 +319,30 @@ describe("actions under their own middleware", () => {
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.headers.get("www-authenticate")).toBe(challenge);
     expect((await app.handler(request("/api/whoAmI", "alice", {}))).status).toBe(200);
+  });
+
+  it("documents the bearer scheme on every route but status, for Swagger UI too", async () => {
+    const document = OpenApi.fromApi(Http.api);
+
+    expect(document.components.securitySchemes).toEqual({
+      bearer: { type: "http", scheme: "Bearer" },
+    });
+    expect(
+      Object.fromEntries(
+        Object.entries(document.paths).map(([path, item]) => [path, item.post?.security]),
+      ),
+    ).toEqual({
+      "/api/status": [],
+      "/api/getUser": [{ bearer: [] }],
+      "/api/renameUser": [{ bearer: [] }],
+      "/api/double": [{ bearer: [] }],
+      "/api/whoAmI": [{ bearer: [] }],
+    });
+
+    // Swagger UI reads the same document, so it offers to send a token.
+    expect(await (await app.handler(anonymous("/docs"))).text()).toContain(
+      '"securitySchemes":{"bearer":{"type":"http","scheme":"Bearer"}}',
+    );
   });
 
   it("calls every action through one flat client, which decodes the built-in refusals", async () => {

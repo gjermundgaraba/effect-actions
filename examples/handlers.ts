@@ -18,9 +18,10 @@ export const status = Action.implement(
 
 // Capture Users at startup; resolve CurrentActor per request. Every surface runs the
 // `authorize` hook before each handler, so it has already refused an actor without the
-// permission the action's access needs.
+// permission the action's access needs. HTTP serves only the actions its binding holds:
+// `listChanges`, which it leaves out, is a tool and a command, never a route.
 export const userActions = Action.implement(
-  [GetUser, RenameUser, WhoAmI],
+  [GetUser, RenameUser, WhoAmI, ListChanges],
   Effect.gen(function* () {
     const users = yield* Users;
 
@@ -29,6 +30,12 @@ export const userActions = Action.implement(
       renameUser: ({ id, name }) =>
         Effect.flatMap(CurrentActor, (actor) => users.rename(actor, id, name)),
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
+      listChanges: () =>
+        Effect.gen(function* () {
+          const actor = yield* CurrentActor;
+
+          return { changes: yield* users.changes(actor.tenantId) };
+        }),
     };
   }),
   authorize,
@@ -36,18 +43,3 @@ export const userActions = Action.implement(
 
 // Pure: no builder and no services, only the hook.
 export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), authorize);
-
-export const listChanges = Action.implement(
-  ListChanges,
-  Effect.gen(function* () {
-    const users = yield* Users;
-
-    return () =>
-      Effect.gen(function* () {
-        const actor = yield* CurrentActor;
-
-        return { changes: yield* users.changes(actor.tenantId) };
-      });
-  }),
-  authorize,
-);

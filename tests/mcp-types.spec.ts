@@ -301,3 +301,17 @@ export const pagesClient = <const Actions extends ReadonlyArray<Action.Any>>(act
 export const wordsClient = <const Actions extends ReadonlyArray<Action.Any>>(actions: Actions) =>
   // @ts-expect-error `words` is a number.
   Testing.mcpClient([...actions, Page], { tools: { page: { text: "words" } } });
+
+// An implementation's `actions` are its exact contracts: a client of them has one method per
+// tool the implementation serves, and no other.
+const listed = Action.implement(
+  [Action.make("first", read), Action.make("second", read)],
+  { first: done, second: done },
+  Action.allowAll,
+);
+
+export const listedClient = Effect.map(Testing.mcpClient(listed.actions), (mcp) => {
+  const methods: Equal<keyof typeof mcp, "first" | "second"> = true;
+
+  return methods;
+});

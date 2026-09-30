@@ -42,10 +42,6 @@ type ToolFor<App> = App extends unknown
     : never
   : never;
 
-type ToolkitTools<App> = {
-  readonly [T in ToolFor<App> as T["name"]]: T;
-};
-
 /**
  * Native tools bound to their action implementations: a native `Toolkit` and the layer of
  * its handlers, for `LanguageModel`, `Toolkit.merge` or `handle`. Tools belong to their
@@ -115,7 +111,8 @@ const keyOf = (app: AnyImplementation): string => {
 };
 
 /**
- * Project implementations into Effect's native AI toolkit.
+ * Project implementations into Effect's native AI toolkit: one tool per action, keyed by its
+ * name.
  *
  * Unlike MCP, calls return the action's native success/failure values directly.
  * Build services are needed to construct `layer`; request services are needed
@@ -126,7 +123,11 @@ const keyOf = (app: AnyImplementation): string => {
 export function make<const Apps extends Served>(
   implementations: Apps,
   options?: Options<ActionOf<Member<Apps>>>,
-): Tools<ToolkitTools<Member<Apps>>, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
+): Tools<
+  { readonly [T in ToolFor<Member<Apps>> as T["name"]]: T },
+  BuildError<Member<Apps>>,
+  BuildContext<Member<Apps>>
+>;
 export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const served = toList(apps);
   const needsApproval = options?.needsApproval;

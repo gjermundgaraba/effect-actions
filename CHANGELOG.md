@@ -60,6 +60,7 @@ ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: 
 | The `ActionHttp.Http` type, `Http.groups`                                                                                                 | `ActionHttp.Binding`, `Http.actions`                                                                                                                                                                          |
 | `ActionHttp.Api`, `ActionHttp.LayerOptions`                                                                                               | `typeof Http.api`; `layer` takes no options                                                                                                                                                                   |
 | `Http.layer(implementations, { before })`                                                                                                 | `ActionHttp.layer(Http, implementations)`                                                                                                                                                                     |
+| A group left out of `ActionHttp.make`, implemented apart, to keep its actions off HTTP                                                    | The actions left out of `ActionHttp.make`: `ActionHttp.layer` serves the binding's among its implementations, which may hold others                                                                           |
 | `Http.openApi()`                                                                                                                          | `HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`                                                                                                                       |
 | `Authentication.middleware(tag, authenticate).layer`                                                                                      | `Authentication.make(tag, Effect.succeed(authenticate), resource?).layer`; `authenticate` may fail with a refusal                                                                                             |
 | `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`                                                                       | `Authentication.Options`, `make`'s third argument                                                                                                                                                             |
@@ -256,10 +257,8 @@ Behavior that changes without a rename:
   type parameter (`[app, status]`), or generic over actions (`Action.AnyImplementation<A>`),
   does not compile: take the implementations as its type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spread them,
-  `[...apps, status]`. A value typed `Action.AnyImplementation` itself owes `unknown`:
-  `ActionHttp.layer` refuses it, and other surfaces' layers owe `unknown`. An HTTP helper
-  constrains its implementations by the binding's actions,
-  `Action.AnyImplementation<(typeof Http.actions)[number]>`.
+  `[...apps, status]`. A value typed `Action.AnyImplementation` itself owes `unknown`, on
+  every surface's layer, `ActionHttp.layer`'s included.
 - MCP sends a text field as 0.8.0 did: once, raw, as the first text block, leaving it out of
   `structuredContent` and the listed `outputSchema`. Every other surface serves the whole
   success. `text` is typed by the served action: a top-level string field of its encoded
@@ -279,6 +278,27 @@ Behavior that changes without a rename:
   calls one of its actions, as a client reads only the entries of the actions it calls; give
   a client that calls none of them no `tools`.
 - A local command's `Failure` includes `Action.BuiltIn`, whatever its implementation's hook.
+- `ActionHttp.layer` serves the binding's actions among the implementations it is given. An
+  implementation may also hold actions the binding leaves out, such as a tool for agents: they
+  get no route, and their names are not checked. 0.8.0 kept an action off HTTP in a group of
+  its own, implemented apart, as `Http.layer` refused an implementation of a group the binding
+  left out, `Implementation of group "x" is not served by this adapter`; implement it with the
+  others and leave it out of `ActionHttp.make`. An implementation holding none of the
+  binding's actions is still refused, as the wrong one: a type error naming its actions,
+  `"serves no action of this binding": "x"`, and
+  `No action of this implementation is in this HTTP binding: x` from plain JavaScript. Two
+  implementations of one served action throw `Duplicate served action: <name>`, where 0.8.0
+  threw `Duplicate implementation group: <group>`; actions the binding leaves out may repeat.
+  A helper listing its type parameter beside another implementation,
+  `ActionHttp.layer(Http, [app, double])`, which 0.8.0's `Http.layer([app, double])` allowed,
+  or making the binding or an `Action.share` from generic actions, does not compile, the first
+  as on MCP: take the implementations as one type parameter and spread it, `[...apps, double]`,
+  take the binding as a type parameter, and pass a share in. A layer owes per request its
+  implementations' hooks and the handlers of the actions it serves. It serves every bound
+  action its implementations hold, so a layer without authentication takes only
+  implementations of public actions; where one implementation holds public and protected
+  actions, each layer takes an `Action.share` of its own
+  ([ActionHttp.md](docs/ActionHttp.md#rules)).
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses an action name over 128 characters, which 0.8.0 refused only as a tool
   name, and `hints.destructive` on a read; it also refuses hints typed by a helper's type
@@ -376,8 +396,23 @@ Behavior that changes without a rename:
   const asAlice = Effect.provideService(CurrentActor, alice); // each call's caller
 
   Effect.gen(function* () {
-    const users = yield* Action.client([userActions, listChanges]); // once, where builders live
+    const users = yield* Action.client(userActions); // once, where builders live
     return yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
+  });
+  ```
+
+- `ActionHttp.make(actions, { security, public })` states in the OpenAPI document what the
+  authentication around the routes reads: `security` takes Effect's own schemes, keyed by
+  their OpenAPI name, and every endpoint but a `public` action's requires one of them.
+  `OpenApi.fromApi`, Swagger and Scalar show them, and a combined document keeps each
+  binding's. Without it, as in 0.8.0, the document states no security, and Swagger offers no
+  Authorize. It enforces nothing: `layer` serves every endpoint without it, the
+  authentication around a layer admits or refuses, and clients are unchanged.
+
+  ```ts
+  ActionHttp.make([Status, GetUser], {
+    security: { bearer: HttpApiSecurity.bearer },
+    public: [Status],
   });
   ```
 
@@ -392,6 +427,11 @@ Behavior that changes without a rename:
   `Command.provideEffect(HttpClient.HttpClient, ...)`, so no other request of the program takes
   its URL or credentials. `make`'s aggregate run alone still builds its provisions before
   showing its help, and fails instead if one fails.
+- The docs state what a message for input that does not decode says on every surface: where
+  each issue is and what the schema expects, never a value sent; a path names the keys it
+  passes through, a record's included ([guarantees.md](docs/guarantees.md#wire-behavior)).
+- The examples implement the agent-only `listChanges` beside the other user actions, which
+  HTTP's binding leaves out, and document the bearer scheme in the OpenAPI document.
 
 ## 0.8.0
 

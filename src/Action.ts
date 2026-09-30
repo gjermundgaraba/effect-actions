@@ -47,9 +47,9 @@ export type { Before } from "./internal/implementation.js";
 
 /**
  * Any implementation, with its actions and channels erased: the constraint of a helper
- * generic over implementations, `<App extends Action.AnyImplementation>`. An HTTP helper's is
- * `AnyImplementation<A>`, of its binding's actions `A`, which alone `ActionHttp.layer`
- * serves. A value of this type owes `unknown`, which no surface can be given.
+ * generic over implementations, `<App extends Action.AnyImplementation>`, whatever surface it
+ * passes them to; `AnyImplementation<A>` is one of the actions `A`. A value of this type owes
+ * `unknown`, which no surface can be given.
  */
 export type { AnyImplementation } from "./internal/implementation.js";
 
@@ -310,21 +310,6 @@ type FirstErrors<T extends Target> = T extends readonly [infer F extends Any, ..
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
 /**
- * What `S`'s handlers owe for each action of `T`, which it implements, and the hook's `RB`,
- * without the `Scope` each call has of its own.
- */
-type SharedRequests<T extends Target, S, RB> = S extends { readonly "~request": infer R }
-  ? {
-      readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
-        ? Exclude<RB, Scope.Scope>
-        : R[K & keyof R];
-    }
-  : never;
-
-/** The requirements of `S`'s hook. */
-type HookOf<S> = S extends { readonly "~request": infer R } ? R["~hook" & keyof R] : never;
-
-/**
  * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
  * stay one: while a builder's inner call, such as `Effect.gen`, is inferred, TypeScript keeps
  * an alias's arguments marked as not yet inferred, where `never` or this type written inline
@@ -519,7 +504,8 @@ export function implement(
  * `share([Poll], users)` for a surface serving fewer actions, `share(actions, users,
  * trustAdmin)` for an admin CLI, `share([Poll], users, Action.allowAll)` for a public one.
  * The result shares `app`'s builder, which runs once per host build however many
- * implementations share it; `before` may be built, as `implement`'s may.
+ * implementations share it; `before` may be built, as `implement`'s may. Per request, it owes
+ * what `app`'s handlers owe for its actions, and what its hook owes, `app`'s or `before`'s.
  */
 export function share<
   App extends AnyImplementation,
@@ -529,7 +515,7 @@ export function share<
   app: App,
 ): Implementation<
   ActionsOf<T>,
-  SharedRequests<T, App, HookOf<App>>,
+  { readonly [K in NamesOf<T> | "~hook"]: App["~request"][K & keyof App["~request"]] },
   App["~buildError"],
   App["~buildContext"]
 >;
@@ -545,7 +531,12 @@ export function share<
   before: Hook<ActionsOf<T>, RB, EB, RBX, FirstErrors<T>>,
 ): Implementation<
   ActionsOf<T>,
-  SharedRequests<T, App, RB>,
+  // Each call has a scope of its own, so `Scope` is never a request-time requirement.
+  {
+    readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
+      ? Exclude<RB, Scope.Scope>
+      : App["~request"][K & keyof App["~request"]];
+  },
   App["~buildError"] | Deferred<EB>,
   App["~buildContext"] | Deferred<Exclude<RBX, Scope.Scope>>
 >;
