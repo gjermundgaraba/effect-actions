@@ -163,6 +163,17 @@ export class Implementation<
   }
 
   /**
+   * What runs a call of `app`'s actions: its handlers' builder and its hook's. A share that
+   * keeps its source's hook has its source's pair; one behind another hook does not. Static,
+   * so it stays off the public instance type.
+   */
+  static identity(app: AnyImplementation): Identity {
+    const source = Implementation.own(app);
+
+    return [source.#handlers, source.#hook];
+  }
+
+  /**
    * The builders of `app`, its handlers' and its hook's, as a layer. Effect memoizes each
    * by reference within one build of the host's layers, so every adapter serving `app`, and
    * every implementation sharing its builder, shares one run. Static, so it stays off the
@@ -212,6 +223,12 @@ export type AnyImplementation<A extends Action.Any = Action.Any> = Implementatio
   unknown,
   unknown
 >;
+
+/** What runs a call of an implementation's actions: its handlers' builder and its hook's. */
+export type Identity = readonly [
+  Memoized<Bound, unknown, unknown>,
+  Memoized<ErasedBefore, unknown, unknown>,
+];
 
 /** What a surface serves: one implementation, or a list of them. */
 export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
@@ -289,6 +306,8 @@ export const acquire = (
 /**
  * One action's handler behind its hook. The hook runs first, outside the action's span,
  * so what it fails with is attributed to the surface rather than to a handler that never ran.
+ * Each call has a scope of its own, on every surface: what the hook and the handler acquire is
+ * released when the call ends, the handler's first, so no call needs a `Scope` of its caller.
  */
 const dispatch = (
   action: Action.Any,
@@ -312,6 +331,6 @@ const dispatch = (
       { captureStackTrace: false, attributes },
     );
 
-    return Effect.flatMap(before(action), () => handled);
+    return Effect.scoped(Effect.flatMap(before(action), () => handled));
   };
 };

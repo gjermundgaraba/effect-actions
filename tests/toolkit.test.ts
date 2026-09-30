@@ -1,77 +1,193 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
-import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai";
+import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
+import { actors } from "../examples/authorization.js";
+import { chat, layer as approvalHandlers } from "../examples/toolkit-approval.js";
+import { Users } from "../examples/users.js";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-test/Principal") {}
 
-describe("ActionToolkit", () => {
-  it("marks the tools a model needs approval for, which LanguageModel asks for instead of calling", async () => {
-    const calls: string[] = [];
+const Erase = Action.make("erase", {
+  description: "Erase",
+  access: "write",
+  input: { id: Schema.String },
+  success: Schema.String,
+});
 
-    const input = { id: Schema.String };
+/** A model that calls the tools of each `[name, params]` at once, then stops. */
+const modelCalling = (...calls: ReadonlyArray<readonly [string, object]>) =>
+  LanguageModel.make({
+    generateText: () =>
+      Effect.succeed(
+        calls.map(([name, params], index) => ({
+          type: "tool-call" as const,
+          id: `${index + 1}`,
+          name,
+          params,
+        })),
+      ),
+    streamText: () => Stream.empty,
+  });
+
+/** What a response asks approval for, by tool call, and what it ran. */
+const outcome = <Tools extends Record<string, Tool.Any>, Mode extends Response.ToolParametersMode>(
+  response: LanguageModel.GenerateTextResponse<Tools, Mode>,
+) => ({
+  approvals: response.content.flatMap((part) =>
+    part.type === "tool-approval-request" ? [part.toolCallId] : [],
+  ),
+  results: response.toolResults.map(({ name, result }) => [name, result]),
+});
+
+describe("ActionToolkit", () => {
+  it("asks approval for the calls one check over every call marks, each call's name narrowing its input", async () => {
+    const calls: string[] = [];
 
     const Read = Action.make("read", {
       description: "Read",
       access: "read",
-      input,
-      success: Schema.String,
-    });
-
-    const Erase = Action.make("erase", {
-      description: "Erase",
-      access: "write",
-      input,
+      input: { path: Schema.String },
       success: Schema.String,
     });
 
     const app = Action.implement(
       [Read, Erase],
       {
-        read: ({ id }) => Effect.sync(() => (calls.push(`read ${id}`), "read")),
+        read: ({ path }) => Effect.sync(() => (calls.push(`read ${path}`), "read")),
         erase: ({ id }) => Effect.sync(() => (calls.push(`erase ${id}`), "erased")),
       },
       Action.allowAll,
     );
 
-    // A write needs approval, except of a draft: the native function of each call's input.
+    const contexts: Array<readonly [string, number]> = [];
+
+    // Erasing needs approval, except a draft: `call.name` narrows `call.input` to erase's. The
+    // check also gets Effect's native approval context: the call's id and the conversation.
     const binding = ActionToolkit.make(app, {
-      needsApproval: (action) => action.access === "write" && (({ id }) => id !== "draft"),
+      needsApproval: (call, context) => {
+        contexts.push([context.toolCallId, context.messages.length]);
+
+        return call.name === "erase" && call.input.id !== "draft";
+      },
     });
 
-    expect(binding.toolkit.tools.read.needsApproval).toBe(false);
     // No tool needs approval unless the host says so: the native tool's own default.
     expect(ActionToolkit.make(app).toolkit.tools.erase.needsApproval).toBeUndefined();
 
-    // A model that calls the tools at once.
-    const model = LanguageModel.make({
-      generateText: () =>
-        Effect.succeed([
-          { type: "tool-call", id: "1", name: "read", params: { id: "a" } },
-          { type: "tool-call", id: "2", name: "erase", params: { id: "draft" } },
-          { type: "tool-call", id: "3", name: "erase", params: { id: "final" } },
-        ] as const),
-      streamText: () => Stream.empty,
-    });
-
     const response = await Effect.runPromise(
-      Effect.scoped(
-        LanguageModel.generateText({ prompt: "go", toolkit: binding.toolkit }).pipe(
-          Effect.provide(binding.layer),
-          Effect.provideServiceEffect(LanguageModel.LanguageModel, model),
+      LanguageModel.generateText({ prompt: "go", toolkit: binding.toolkit }).pipe(
+        Effect.provide(binding.layer),
+        Effect.provideServiceEffect(
+          LanguageModel.LanguageModel,
+          modelCalling(["read", { path: "a" }], ["erase", { id: "draft" }], ["erase", { id: "x" }]),
         ),
       ),
     );
 
-    expect(response.content.filter((part) => part.type === "tool-approval-request")).toMatchObject([
-      { toolCallId: "3" },
-    ]);
-    expect(response.toolResults).toMatchObject([
-      { name: "read", result: "read" },
-      { name: "erase", result: "erased" },
-    ]);
+    expect(outcome(response)).toEqual({
+      approvals: ["3"],
+      results: [
+        ["read", "read"],
+        ["erase", "erased"],
+      ],
+    });
     expect(calls).toEqual(["read a", "erase draft"]);
+    expect(contexts).toEqual([
+      ["1", 1],
+      ["2", 1],
+      ["3", 1],
+    ]);
+  });
+
+  it("reads each call's caller in the check, so one toolkit asks approval of some callers only", async () => {
+    const calls: string[] = [];
+
+    const app = Action.implement(
+      Erase,
+      ({ id }) => Effect.sync(() => (calls.push(id), "erased")),
+      Action.allowAll,
+    );
+
+    // One make call: a write needs approval unless an admin calls; without a caller, it asks.
+    const { toolkit, layer } = ActionToolkit.make(app, {
+      needsApproval: (call) =>
+        call.action.access === "write" &&
+        Effect.map(
+          Effect.serviceOption(Principal),
+          Option.match({ onNone: () => true, onSome: (principal) => principal !== "admin" }),
+        ),
+    });
+
+    const turn = LanguageModel.generateText({ prompt: "go", toolkit }).pipe(
+      Effect.map(outcome),
+      Effect.provideServiceEffect(
+        LanguageModel.LanguageModel,
+        modelCalling(["erase", { id: "x" }]),
+      ),
+    );
+
+    const [admin, guest, nobody] = await Effect.runPromise(
+      Effect.all([
+        Effect.provideService(turn, Principal, "admin"),
+        Effect.provideService(turn, Principal, "guest"),
+        turn,
+      ]).pipe(Effect.provide(layer)),
+    );
+
+    expect(admin).toEqual({ approvals: [], results: [["erase", "erased"]] });
+    expect(guest).toEqual({ approvals: ["1"], results: [] });
+    expect(nobody).toEqual({ approvals: ["1"], results: [] });
+    expect(calls).toEqual(["x"]);
+  });
+
+  it("asks, in the approval example, before a model renames anyone but its caller", async () => {
+    // A caller who is also user 1 of acme, beside alice, who is not.
+    const self = { id: "1", tenantId: "acme", permissions: ["users:read", "users:write"] } as const;
+
+    const [asked, renamed] = await Effect.runPromise(
+      Effect.all([chat(actors.alice, "rename"), chat(self, "rename")]).pipe(
+        Effect.map((responses) => responses.map(outcome)),
+        Effect.provideServiceEffect(
+          LanguageModel.LanguageModel,
+          modelCalling(["renameUser", { id: "1", name: "Bea" }]),
+        ),
+        Effect.provide(approvalHandlers.pipe(Layer.provide(Users.layerMemory))),
+      ),
+    );
+
+    expect(asked).toEqual({ approvals: ["1"], results: [] });
+    expect(renamed).toEqual({ approvals: [], results: [["renameUser", { id: "1", name: "Bea" }]] });
+  });
+
+  it("runs a call whose check fails without approval, as LanguageModel decides natively", async () => {
+    const calls: string[] = [];
+
+    const binding = ActionToolkit.make(
+      Action.implement(
+        Erase,
+        ({ id }) => Effect.sync(() => (calls.push(id), "erased")),
+        Action.allowAll,
+      ),
+      {
+        // @ts-expect-error The check's Effect cannot fail in its type; plain JavaScript's can.
+        needsApproval: () => Effect.fail("unavailable"),
+      },
+    );
+
+    const response = await Effect.runPromise(
+      LanguageModel.generateText({ prompt: "go", toolkit: binding.toolkit }).pipe(
+        Effect.provide(binding.layer),
+        Effect.provideServiceEffect(
+          LanguageModel.LanguageModel,
+          modelCalling(["erase", { id: "x" }]),
+        ),
+      ),
+    );
+
+    expect(outcome(response)).toEqual({ approvals: [], results: [["erase", "erased"]] });
+    expect(calls).toEqual(["x"]);
   });
 
   it("decodes with the action's schemas, returns native results, and names tools after actions", async () => {
@@ -241,7 +357,7 @@ describe("ActionToolkit", () => {
     expect(lacking).toMatchObject([{ result: "startup" }]);
   });
 
-  it("keeps each toolkit's handlers its own beside another with tools of the same names", async () => {
+  it("keeps each implementation's tools its own beside another's with tools of the same names", async () => {
     const Secret = Action.make("secret", {
       description: "A secret.",
       access: "read",
@@ -258,24 +374,182 @@ describe("ActionToolkit", () => {
     const guardedTools = ActionToolkit.make(guarded);
     const openTools = ActionToolkit.make(Action.share(Secret, guarded, Action.allowAll));
 
+    const secret = ({ toolkit }: typeof guardedTools) =>
+      Effect.flatMap(toolkit, (handled) =>
+        Effect.flatMap(handled.handle("secret", {}), Stream.runCollect),
+      );
+
     // Merged either way, each toolkit runs its own implementation's hook.
     for (const layers of [
       Layer.mergeAll(guardedTools.layer, openTools.layer),
       Layer.mergeAll(openTools.layer, guardedTools.layer),
     ]) {
       const [refused, answered] = await Effect.runPromise(
-        Effect.scoped(
-          Effect.forEach([guardedTools, openTools], ({ toolkit }) =>
-            Effect.flatMap(toolkit, (handled) =>
-              Effect.flatMap(handled.handle("secret", {}), Stream.runCollect),
-            ),
-          ).pipe(Effect.provide(layers)),
-        ),
+        Effect.forEach([guardedTools, openTools], secret).pipe(Effect.provide(layers)),
       );
 
       expect(refused).toMatchObject([{ isFailure: true }]);
       expect(answered).toMatchObject([{ isFailure: false, result: "secret" }]);
     }
+
+    // Given only the other implementation's layer, which the types accept, it never answers.
+    const crossed = await Effect.runPromiseExit(
+      secret(guardedTools).pipe(Effect.provide(openTools.layer)),
+    );
+
+    expect(Exit.hasDies(crossed)).toBe(true);
+  });
+
+  it("serves every toolkit of an implementation with the layer of any make call of it", async () => {
+    let built = 0;
+
+    const Read = Action.make("read", {
+      description: "Read",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const Other = Action.make("other", {
+      description: "Other",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const app = Action.implement(
+      [Read, Erase],
+      Effect.sync(() => {
+        built++;
+
+        return { read: () => Effect.succeed("read"), erase: () => Effect.succeed("erased") };
+      }),
+      Action.allowAll,
+    );
+
+    const other = Action.implement(Other, () => Effect.succeed("other"), Action.allowAll);
+
+    // A toolkit per agent or per policy, each from a make call of its own.
+    const approving = ActionToolkit.make(app, {
+      needsApproval: (call) => call.action.access === "write",
+    }).toolkit;
+
+    const some = ActionToolkit.make(other).toolkit;
+    const every = ActionToolkit.make([app, other]).toolkit;
+
+    const handle = (toolkit: typeof every, name: "read" | "other") =>
+      Effect.flatMap(toolkit, (handled) =>
+        Effect.map(Effect.flatMap(handled.handle(name, {}), Stream.runCollect), (results) =>
+          results.map(({ result }) => result),
+        ),
+      );
+
+    // The handlers once, from yet another make call: one build serves them all.
+    const [approved, subset, superset] = await Effect.runPromise(
+      Effect.all([
+        LanguageModel.generateText({ prompt: "go", toolkit: approving }).pipe(
+          Effect.map(outcome),
+          Effect.provideServiceEffect(
+            LanguageModel.LanguageModel,
+            modelCalling(["read", {}], ["erase", { id: "x" }]),
+          ),
+        ),
+        Effect.flatMap(some, (handled) =>
+          Effect.flatMap(handled.handle("other", {}), Stream.runCollect),
+        ),
+        Effect.all([handle(every, "read"), handle(every, "other")]),
+      ]).pipe(Effect.provide(ActionToolkit.make([app, other]).layer)),
+    );
+
+    expect(approved).toEqual({ approvals: ["2"], results: [["read", "read"]] });
+    expect(subset).toMatchObject([{ result: "other" }]);
+    expect(superset).toEqual([["read"], ["other"]]);
+    expect(built).toBe(1);
+
+    // And the layers of two make calls, one per implementation, serve a toolkit of both.
+    const split = await Effect.runPromise(
+      Effect.all([handle(every, "read"), handle(every, "other")]).pipe(
+        Effect.provide(
+          Layer.mergeAll(ActionToolkit.make(app).layer, ActionToolkit.make(other).layer),
+        ),
+      ),
+    );
+
+    expect(split).toEqual([["read"], ["other"]]);
+
+    // A share keeping its source's hook, an agent's fewer tools, runs with its source's layer.
+    const reader = ActionToolkit.make(Action.share(Read, app)).toolkit;
+
+    const shared = await Effect.runPromise(
+      Effect.flatMap(reader, (handled) =>
+        Effect.flatMap(handled.handle("read", {}), Stream.runCollect),
+      ).pipe(Effect.provide(ActionToolkit.make(app).layer)),
+    );
+
+    expect(shared).toMatchObject([{ isFailure: false, result: "read" }]);
+  });
+
+  it("releases what a call acquires when the call ends, not when its caller's scope closes", async () => {
+    const log: string[] = [];
+
+    const Open = Action.make("open", {
+      description: "Opens a resource of its own",
+      access: "write",
+      success: Schema.String,
+    });
+
+    const logged = (name: string) =>
+      Effect.acquireRelease(
+        Effect.sync(() => log.push(`${name} acquire`)),
+        () => Effect.sync(() => log.push(`${name} release`)),
+      );
+
+    const { toolkit, layer } = ActionToolkit.make(
+      Action.implement(
+        Open,
+        () => Effect.as(logged("handler"), "opened"),
+        () => Effect.asVoid(logged("hook")),
+      ),
+      // Approved below by a response the prompt carries.
+      { needsApproval: () => true },
+    );
+
+    // An approved call, which LanguageModel runs before asking the model again.
+    const approved = LanguageModel.generateText({
+      prompt: [
+        { role: "user", content: "open" },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool-call", id: "1", name: "open", params: {} },
+            { type: "tool-approval-request", approvalId: "a", toolCallId: "1" },
+          ],
+        },
+        {
+          role: "tool",
+          content: [{ type: "tool-approval-response", approvalId: "a", approved: true }],
+        },
+      ],
+      toolkit,
+    }).pipe(Effect.provideServiceEffect(LanguageModel.LanguageModel, modelCalling()));
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* toolkit;
+
+          yield* Stream.runDrain(yield* tools.handle("open", {}));
+          log.push("called directly");
+
+          yield* approved;
+          log.push("approved");
+
+          yield* Effect.addFinalizer(() => Effect.sync(() => log.push("caller's scope closed")));
+        }),
+      ).pipe(Effect.provide(layer)),
+    );
+
+    const call = ["hook acquire", "handler acquire", "handler release", "hook release"];
+
+    expect(log).toEqual([...call, "called directly", ...call, "approved", "caller's scope closed"]);
   });
 
   it("merges with native tools into one toolkit a model calls", async () => {

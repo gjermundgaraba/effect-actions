@@ -303,10 +303,15 @@ type FirstErrors<T extends Target> = T extends readonly [infer F extends Any, ..
 /** The names of the actions `T` stands for. */
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
-/** What `S`'s handlers owe for each action of `T`, which it implements, and the hook's `RB`. */
+/**
+ * What `S`'s handlers owe for each action of `T`, which it implements, and the hook's `RB`,
+ * without the `Scope` each call has of its own.
+ */
 type SharedRequests<T extends Target, S, RB> = S extends { readonly "~request": infer R }
   ? {
-      readonly [K in NamesOf<T> | "~hook"]: K extends "~hook" ? RB : R[K & keyof R];
+      readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
+        ? Exclude<RB, Scope.Scope>
+        : R[K & keyof R];
     }
   : never;
 
@@ -441,12 +446,12 @@ export function implement<
   before: Hook<ActionsOf<T>, RB, EB, RBX, FirstErrors<T>>,
 ): Implementation<
   ActionsOf<T>,
+  // Each call has a scope of its own, so `Scope` is never a request-time requirement.
   {
-    readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
-      ? RB
-      : T extends ReadonlyArray<Any>
-        ? R[K & keyof R]
-        : RS;
+    readonly [K in NamesOf<T> | "~hook"]: Exclude<
+      K extends "~hook" ? RB : T extends ReadonlyArray<Any> ? R[K & keyof R] : RS,
+      Scope.Scope
+    >;
   },
   Deferred<EX | EB>,
   Deferred<Exclude<RX | RBX, Scope.Scope>>

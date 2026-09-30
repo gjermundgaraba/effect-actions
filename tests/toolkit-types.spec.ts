@@ -1,6 +1,6 @@
 // Compile-only native Toolkit assertions, included by `vp check`.
-import { Context, Effect, Layer, Schema, Stream } from "effect";
-import { Tool } from "effect/ai";
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { LanguageModel, Tool } from "effect/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import type { Equal } from "./equal.js";
@@ -186,21 +186,92 @@ guardedCall satisfies Effect.Effect<unknown, unknown, Principal>;
 // @ts-expect-error The guarded tool keeps its principal.
 guardedCall satisfies Effect.Effect<unknown, unknown, never>;
 
-// `needsApproval` reads the implementations' own actions, as `before` does.
+// `needsApproval` reads each call of the implementations' own actions, as `before` reads them.
 ActionToolkit.make(app, {
-  needsApproval: (action) => {
-    const name: "named" | "service_free" | "guarded" = action.name;
-    const access: "write" = action.access;
+  needsApproval: (call) => {
+    const name: "named" | "service_free" | "guarded" = call.name;
+    const access: "write" = call.action.access;
 
     return name === "guarded" && access === "write";
   },
 });
 
-// @ts-expect-error It is a boolean, or a function of the call's input.
+// @ts-expect-error It is a boolean, or an Effect of one.
 ActionToolkit.make(app, { needsApproval: () => "yes" });
 
-// A function of each call's input and context is the native form, and may be an Effect.
-ActionToolkit.make(app, { needsApproval: () => () => Effect.succeed(true) });
+// @ts-expect-error One check over the whole call, not the native function of one tool's input.
+ActionToolkit.make(app, { needsApproval: () => () => true });
+
+// The Effect form, with Effect's native approval context.
+ActionToolkit.make(app, {
+  needsApproval: (_, context) => Effect.succeed(context.toolCallId !== ""),
+});
+
+// The check requires nothing: it reads the caller with `Effect.serviceOption`.
+ActionToolkit.make(app, {
+  needsApproval: () => Effect.map(Effect.serviceOption(Principal), Option.isNone),
+});
+
+// @ts-expect-error A check requiring the caller would be a requirement no tool states.
+ActionToolkit.make(app, { needsApproval: () => Effect.map(Principal, () => true) });
+
+// @ts-expect-error Its Effect cannot fail: a failure would mean no approval needed.
+ActionToolkit.make(app, { needsApproval: () => Effect.fail("unavailable") });
+
+const Erase = Action.make("erase", {
+  description: "Erase a document.",
+  access: "write",
+  input: { id: Schema.String, hard: Schema.Boolean },
+  success: Schema.String,
+});
+
+const eraser = Action.implement(Erase, () => Effect.succeed("erased"), Action.allowAll);
+
+const Read = Action.make("read", {
+  description: "Read a document.",
+  access: "read",
+  input: { path: Schema.String },
+  success: Schema.String,
+});
+
+const reader = Action.implement(Read, () => Effect.succeed("read"), Action.allowAll);
+
+// Across several implementations, a call's name narrows its input and its action.
+ActionToolkit.make([app, eraser, reader], {
+  needsApproval: (call) => {
+    if (call.name !== "erase") return call.name === "read" && call.input.path.startsWith("/");
+
+    const hard: boolean = call.input.hard;
+    const access: "write" = call.action.access;
+
+    return hard && access === "write" && call.input.id !== "draft";
+  },
+});
+
+// @ts-expect-error An input field only one action has, unnarrowed.
+// oxlint-disable-next-line typescript/no-unsafe-return -- Compile-failure fixture: the rejected field yields an error type; nothing runs.
+ActionToolkit.make([reader, eraser], { needsApproval: (call) => call.input.hard });
+
+// @ts-expect-error A name no implementation serves.
+ActionToolkit.make([reader, eraser], { needsApproval: (call) => call.name === "erased" });
+
+// A helper generic over implementations states a policy every call's action reads, and
+// keeps each tool's type.
+const writesApproved = <
+  const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
+>(
+  implementations: Apps,
+) =>
+  ActionToolkit.make(implementations, { needsApproval: (call) => call.action.access === "write" });
+
+const helped: Equal<
+  typeof writesApproved<[typeof app, typeof eraser]>,
+  (
+    implementations: [typeof app, typeof eraser],
+  ) => ReturnType<typeof ActionToolkit.make<[typeof app, typeof eraser]>>
+> = true;
+
+void helped;
 
 // Approval changes no tool's type or requirements.
 const approved = ActionToolkit.make(app, { needsApproval: () => true });
@@ -208,3 +279,31 @@ const approved = ActionToolkit.make(app, { needsApproval: () => true });
 const sameTools: Equal<typeof approved, typeof binding> = true;
 
 void sameTools;
+
+// Each call has a scope of its own: what a hook or a handler acquires never asks its caller
+// for a `Scope`, on a tool, in a direct call, or in a model's turn.
+const scoped = ActionToolkit.make(
+  Action.implement(
+    Named,
+    () => Effect.acquireRelease(Effect.succeed("opened"), () => Effect.void),
+    () => Effect.asVoid(Effect.acquireRelease(Effect.void, () => Effect.void)),
+  ),
+);
+
+const scopedServices: Equal<Tool.HandlerServices<typeof scoped.toolkit.tools.named>, never> = true;
+
+void scopedServices;
+
+export const scopedCall = Effect.gen(function* () {
+  const tools = yield* scoped.toolkit;
+  yield* Stream.runDrain(yield* tools.handle("named", {}));
+}).pipe(Effect.provide(scoped.layer));
+
+scopedCall satisfies Effect.Effect<unknown, unknown, never>;
+
+export const scopedTurn = LanguageModel.generateText({
+  prompt: "go",
+  toolkit: scoped.toolkit,
+}).pipe(Effect.provide(scoped.layer));
+
+scopedTurn satisfies Effect.Effect<unknown, unknown, LanguageModel.LanguageModel>;

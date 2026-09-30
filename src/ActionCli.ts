@@ -1,4 +1,4 @@
-import { Effect, Predicate, type Schema, type Scope } from "effect";
+import { Effect, Predicate, type Schema } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient } from "effect/http";
 import type * as Action from "./Action.js";
@@ -47,7 +47,7 @@ type Selected<App, A extends Action.Any> = App extends unknown
 type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
   A["errors"][number]["Type"] | BuildError<App> | Action.BuiltIn,
-  Exclude<RequestOf<App, A> | BuildContext<App>, Scope.Scope>
+  RequestOf<App, A> | BuildContext<App>
 >;
 
 /** A native command running `Local`, or subcommands running it for each `A`. */
@@ -71,8 +71,8 @@ type RemoteCommand<H extends AnyHttp, A extends Action.Any, Subcommands = never>
 /**
  * Build the implementation's handlers for this call alone, run one action through its hook
  * and its handler, and release them: every local command, selected or aggregated. The call's
- * own scope closes first, so its finalizers run while the builder's resources are still open;
- * a local build never reuses one the host already made.
+ * own scope, which every call has, closes first, so its finalizers run while the builder's
+ * resources are still open; a local build never reuses one the host already made.
  */
 const local = <App extends AnyImplementation, A extends Action.Any>(
   app: App,
@@ -85,10 +85,7 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
     return run === undefined ? Effect.die(`No handler for ${action.name}`) : run(input);
   });
 
-  const built = call.pipe(
-    Effect.scoped,
-    Effect.provide(Implementation.layerOf(app), { local: true }),
-  );
+  const built = call.pipe(Effect.provide(Implementation.layerOf(app), { local: true }));
 
   // SAFETY: the builders' failures and services are the implementation's `EX` and `RX`, the
   // handler's and the hook's services its entry of `R`. The handler fails with the action's

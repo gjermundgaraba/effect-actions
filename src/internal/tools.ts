@@ -23,8 +23,12 @@ interface BoundTools {
 export interface Projection {
   /** What a tool is called in `Duplicate <label>: <name>`. */
   readonly label: string;
-  /** The tool of `action`, declaring `errors`: its own and the built-in ones. */
-  readonly tool: (action: Action.Any, errors: Action.Any["errors"]) => Tool.Any;
+  /** The tool of `action`, one of `app`'s, declaring `errors`: its own and the built-in ones. */
+  readonly tool: (
+    action: Action.Any,
+    errors: Action.Any["errors"],
+    app: AnyImplementation,
+  ) => Tool.Any;
   /** What a call of the tool runs, given the action's handler behind its hook. */
   readonly handler: (run: ErasedHandler<unknown>) => ErasedHandler<unknown>;
 }
@@ -45,12 +49,16 @@ export const bindTools = (
   projection: Projection,
 ): BoundTools => {
   // Fail before building handlers when two tools share a name.
-  const actions = servedActions(projection.label, apps);
+  servedActions(projection.label, apps);
 
   // A hook refusal, or a handler's built-in failure, is the implementation's failure, so every
   // tool declares the built-in errors alongside the action's own and returns them as such.
   const toolkit = Toolkit.make(
-    ...actions.map((action) => annotate(projection.tool(action, projectedErrors(action)), action)),
+    ...apps.flatMap((app) =>
+      app.actions.map((action) =>
+        annotate(projection.tool(action, projectedErrors(action), app), action),
+      ),
+    ),
   );
 
   const layer = toolkit.toLayer(

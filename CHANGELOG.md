@@ -113,6 +113,17 @@ Behavior that changes without a rename:
 - A builder's startup services are one union, `A | B` as written, so providing them in two
   `Layer.provide` calls, one per service, discharges both. 0.8.0 typed them `NoInfer<A | B>`,
   which stayed owed after both calls and showed in every hover.
+- Each call has a scope of its own, on every surface: what a hook or a handler acquires is
+  released when the call ends, the handler's first, and a fiber it forks with
+  `Effect.forkScoped` is interrupted. In 0.8.0 a Toolkit call made with `tools.handle`, or
+  approved through `LanguageModel`, held it until its caller's scope closed, so with a pooled
+  connection per call, a third call on a pool of two waited forever. Over HTTP, a handler's
+  finalizers now run before the route middleware around it resumes, and before the success
+  is encoded, rather than when the request's scope closes. A resource that must outlive a
+  call belongs to the builder, or to a service the host provides around its calls. `Scope`
+  is never a request-time requirement: `runStdio`, a Toolkit tool, `tools.handle` and
+  `LanguageModel.generateText` need no `Effect.scoped` for a handler that acquires; drop one
+  added only for the types.
 - Routes are `POST <prefix>/<action>`, `/api` by default, with operation ID `<action>`, so
   action names are unique per binding; 0.8.0's were `POST <apiPath>/<group>/<action>`, with
   operation ID `<group>.<action>`. The OpenAPI tag is the mount path, such as `api/users`, or
@@ -185,9 +196,17 @@ Behavior that changes without a rename:
   the action's schemas, refusing an ISO string for a `Schema.Date`.
 - Errors one caller may receive have distinct `_tag`s: `implement` and `ActionHttp.layer`
   refuse two with one.
-- Each `ActionToolkit.make` call's handlers are its own: two toolkits with tools of one name
-  never run each other's handlers, their layers provided together in either order. `toolkit`
-  is still a native `Toolkit`, which `Toolkit.merge` combines with other tools.
+- A Toolkit tool belongs to its implementation. Two implementations with tools of one name,
+  such as one and an `Action.share` of it behind another hook, never run each other's
+  handlers, their layers provided together in either order; 0.8.0 found a tool's handler by
+  its name alone, so one layer answered every toolkit's tool of that name, behind that
+  layer's own `before`. The `layer` of any `make` call serves the tools of its
+  implementations in any `toolkit`, and of an `Action.share` of one that keeps its hook, such
+  as an agent's fewer tools, so toolkits made per agent or per approval policy run with one
+  handler layer, built once. Two layers of one implementation, built apart with
+  different services and provided together, serve its tools from one of them: use separate
+  implementations for separate services. `toolkit` is still a native `Toolkit`, which
+  `Toolkit.merge` combines with other tools.
 - `runStdio` gives its program a `Console` whose every method writes to stderr, so console
   loggers such as `Logger.consoleJson`, `Console.log`, and the counters, timers and group
   labels Node's console prints on stdout never corrupt the protocol from its builders, hooks
@@ -276,9 +295,21 @@ Behavior that changes without a rename:
   by action name: `commands: { readFile: { positional: ["path"], render } }`.
 - `ActionCli.command(implementations, Action, { positional: ["path"] })` takes the listed
   fields of a struct input as positional arguments, locally and over HTTP.
-- `ActionToolkit.make(implementations, { needsApproval })` sets Effect's native
-  `Tool.needsApproval` of each action's tool, a boolean or a function of each call's input,
-  which `LanguageModel` honors.
+- `ActionToolkit.make(implementations, { needsApproval })` has `LanguageModel` ask for
+  approval of a model's call before it runs, through Effect's native `Tool.needsApproval`:
+  one check over every call, `(call, context) =>` a boolean or an `Effect` of one, where
+  `call` holds the action's `name`, the `action` and the decoded `input`. Checking
+  `call.name` narrows `call.input`, across implementations too. The check requires nothing
+  and runs in the caller's context, so it reads the caller with `Effect.serviceOption`, and
+  one toolkit serves callers with different policies. A check that fails means no approval
+  is needed, as `LanguageModel` decides natively. `tools.handle` ignores approval.
+
+  ```ts
+  ActionToolkit.make([users, documents], {
+    needsApproval: (call) => call.name === "erase" && call.input.id !== "draft",
+  });
+  ```
+
 - The package declares `"sideEffects": false`, so a bundler may drop what a browser client
   does not use. Keep contracts and bindings in modules that import no server code
   ([setup.md](docs/setup.md#browser)).

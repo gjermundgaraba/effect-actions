@@ -31,6 +31,7 @@ const snippets = [
   ["docs/ActionCli.md", "## Canonical", ["cli.ts"]],
   ["docs/ActionCli.md", "### Over HTTP", ["cli-remote.ts"]],
   ["docs/ActionToolkit.md", "## Canonical", ["toolkit-authorized.ts"]],
+  ["docs/ActionToolkit.md", "### Approval", ["toolkit-approval.ts"]],
   ["docs/Testing.md", "## Canonical", ["testing.ts"]],
   ["docs/Testing.md", "### One caller", ["testing-caller.ts"]],
   ["docs/ActionMcp.md", "### Cross-origin browsers", ["mcp-browser.ts"]],

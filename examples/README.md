@@ -170,6 +170,8 @@ stdout for JSON-RPC and routes Effect logs to stderr, those of services provided
 allowlist and separate router CORS configuration; mount them with a platform server.
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
 authorization hook and a per-invocation principal.
+[toolkit-approval.ts](toolkit-approval.ts) asks a model's caller to approve its writes, one
+check over every call reading the call and the caller.
 Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-memory HTTP and
 MCP calls with cleanup.
 [testing-caller.ts](testing-caller.ts) tests `userActions` behind their hook as one caller,

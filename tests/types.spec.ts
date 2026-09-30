@@ -371,6 +371,35 @@ export const implementTypes = () => {
 
   void servedRequests;
 
+  // Each call has a scope of its own: what a handler or a hook acquires asks no `Scope` of the
+  // caller, whether the hook is its implementation's or a share's, on any surface.
+  const acquired = <A>(value: A) => Effect.acquireRelease(Effect.succeed(value), () => Effect.void);
+
+  const scoped = Action.implement(
+    [Lookup, Rename],
+    {
+      lookup: ({ id }) => acquired({ id, name: "" }),
+      rename: ({ name }) => Effect.flatMap(Principal, () => acquired(name)),
+    },
+    () => Effect.asVoid(acquired(true)),
+  );
+
+  const rescoped = Action.share([Rename], scoped, () => Effect.asVoid(acquired(true)));
+
+  const stdio = ActionMcp.runStdio(scoped, { name: "t", version: "0" });
+
+  const scopedRequests: [
+    Equal<
+      (typeof scoped)["~request"],
+      { readonly lookup: never; readonly rename: Principal; readonly "~hook": never }
+    >,
+    Equal<(typeof rescoped)["~request"], { readonly rename: Principal; readonly "~hook": never }>,
+    Equal<Effect.Services<typeof stdio>, Stdio.Stdio | Principal>,
+    Equal<RouteRequires<ReturnType<typeof ActionMcp.layerHttp<typeof scoped>>>, Principal>,
+  ] = [true, true, true, true];
+
+  void scopedRequests;
+
   // The router provides the request to every route: a handler reading it owes nothing more
   // over HTTP or MCP over HTTP.
   const Headers = Action.make("headers", {

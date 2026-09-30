@@ -257,7 +257,7 @@ const buildAlone = <A, E>(group: Layer.Layer<A, E>): Layer.Layer<A, E> =>
 const entry = () =>
   HttpRouter.middleware(
     Effect.map(Effect.context<unknown>(), (built) => {
-      // Never the layer's scope: a call acquires in its request's.
+      // Never the layer's scope: a route runs in its request's, and each call in its own.
       const startup = Context.omit(Scope.Scope)(built);
 
       return (route) =>

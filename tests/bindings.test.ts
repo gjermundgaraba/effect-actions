@@ -110,6 +110,50 @@ it("builds an implementation once per host build, however many adapters serve it
   }
 });
 
+it("releases what an HTTP call acquires when the call ends, before route middleware resumes", async () => {
+  const log: string[] = [];
+
+  const Open = Action.make("open", {
+    description: "Opens a resource of its own",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const logged = (name: string) =>
+    Effect.acquireRelease(
+      Effect.sync(() => log.push(`${name} acquire`)),
+      () => Effect.sync(() => log.push(`${name} release`)),
+    );
+
+  const app = Action.implement(
+    Open,
+    () => Effect.as(logged("handler"), "opened"),
+    () => Effect.asVoid(logged("hook")),
+  );
+
+  const around = HttpRouter.middleware((route) =>
+    Effect.gen(function* () {
+      log.push("middleware before");
+      const response = yield* route;
+      log.push("middleware after");
+
+      return response;
+    }),
+  ).layer;
+
+  const web = serve(ActionHttp.layer(ActionHttp.make([Open]), app).pipe(Layer.provide(around)));
+
+  expect(await (await web.handler(post("/api/open"))).json()).toBe("opened");
+  expect(log).toEqual([
+    "middleware before",
+    "hook acquire",
+    "handler acquire",
+    "handler release",
+    "hook release",
+    "middleware after",
+  ]);
+});
+
 it("shares an implementation's builder with some of its actions, behind its hook or another", async () => {
   let built = 0;
 
