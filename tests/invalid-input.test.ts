@@ -483,11 +483,9 @@ it("says where input does not decode and what it expects, never a value sent, on
   const tools = ActionToolkit.make(app);
 
   const [called] = await Effect.runPromise(
-    Effect.scoped(
-      Effect.flatMap(tools.toolkit, (toolkit) =>
-        Effect.flatMap(toolkit.handle("login", wider), Stream.runCollect),
-      ).pipe(Effect.provide(tools.layer)),
-    ),
+    Effect.flatMap(tools.toolkit, (toolkit) =>
+      Effect.flatMap(toolkit.handle("login", wider), Stream.runCollect),
+    ).pipe(Effect.provide(tools.layer)),
   );
 
   const [, , stderr] = await Command.runWith(ActionCli.command(app, Login), { version: "0" })([
@@ -584,7 +582,7 @@ it("executes each input/output transformation once per call", async () => {
 
 it("keeps invalid declared-error encoding a defect on both transports", async () => {
   const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
-  // Bypass construction checks deliberately; the adapter must reject this value.
+  // Bypass construction checks deliberately; the surface must reject this value.
   const domainError = Domain.make({ value: Infinity }, { disableChecks: true });
 
   const BrokenDomain = Action.make("echo", {

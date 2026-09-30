@@ -474,7 +474,7 @@ describe("builder acquisition", () => {
 
   it.each([
     {
-      adapter: "ActionHttp.layer",
+      surface: "ActionHttp.layer",
       build: async ({ pair, solo }: Fixture) => {
         const handler = handlerOf(
           ActionHttp.layer(ActionHttp.make([One, Two, Solo]), [solo, pair]),
@@ -484,7 +484,7 @@ describe("builder acquisition", () => {
       },
     },
     {
-      adapter: "ActionMcp.layerHttp",
+      surface: "ActionMcp.layerHttp",
       build: async ({ pair, solo }: Fixture) => {
         const handler = handlerOf(
           ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
@@ -499,7 +499,7 @@ describe("builder acquisition", () => {
       },
     },
     {
-      adapter: "ActionMcp.runStdio",
+      surface: "ActionMcp.runStdio",
       // A test host with nothing on stdin closes at once, so the server ends.
       build: ({ pair, solo }: Fixture) =>
         Effect.runPromise(
@@ -509,11 +509,11 @@ describe("builder acquisition", () => {
         ),
     },
     {
-      adapter: "ActionToolkit",
+      surface: "ActionToolkit",
       build: ({ pair, solo }: Fixture) =>
         Effect.runPromise(Effect.scoped(Layer.build(ActionToolkit.make([solo, pair]).layer))),
     },
-  ])("$adapter runs the builder of each implementation it serves once", async ({ build }) => {
+  ])("$surface runs the builder of each implementation it serves once", async ({ build }) => {
     const fixed = fixture();
 
     await build(fixed);

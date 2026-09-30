@@ -81,7 +81,7 @@ const greeting = Effect.gen(function* () {
 - A handler can fail only with the errors its action declares and three built-in ones, and every client decodes them as typed values. Bad input, a missing credential and a refusal come back as those built-in errors (400, 401, 403), never as an unreadable body.
 - Action-level authorization is written once, on the implementation: `Action.implement(actions, handlers, before)`. Every surface that serves it runs the rule before each handler, so no surface can leave it out and no handler repeats the access policy. No implementation leaves it unsaid either: a public one states `Action.allowAll`. Record-level checks stay in handler data access. Authentication is native router middleware, provided around the HTTP and MCP layers like any other.
 - Every action states whether it reads or writes (`access`), so that rule reads the contract instead of a hand-maintained list of mutation names.
-- A handler or rule that needs a request identity requires that service in the surface's types. The host supplies it through authentication on protected requests. Types check that the identity is provided, not where from, so never provide one at startup. Public and authenticated routes share one binding, one mount path, one OpenAPI document, which can state the credentials each needs, and one client, and a handler's startup services are built once however many surfaces serve it.
+- A handler or rule that needs a request identity requires that service in the surface's types. The host supplies it through authentication on protected requests. Types check that the identity is provided, not where from, so never provide one at startup. Public and authenticated routes share one binding, one mount path, one OpenAPI document, which can state the credentials each needs, and one client, and a handler's startup services are built once per [layer graph](docs/guarantees.md#dependency-lifetimes), however many surfaces serve it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency.
 - Tests run in memory. `Action.client` calls an implementation in process, with the typed client's methods, behind its hook, as several callers in one test. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpClient`, without opening a port.
 
@@ -91,9 +91,9 @@ const greeting = Effect.gen(function* () {
 pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
 ```
 
-Add `@effect/platform-node@4.0.0-rc.118` to serve from Node. Every module is a subpath import
-(`.../Action`, `.../ActionHttp`, ...); there is no package root, so a contracts-only bundle
-never loads a server.
+Add `@effect/platform-node@4.0.0-rc.118` to serve or run a CLI from Node. Every module is a
+subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
+contracts-only bundle never loads a server.
 
 ## Docs
 
@@ -111,8 +111,9 @@ with the API, a canonical snippet, the rules, and the failure modes.
 npx skills add gjermundgaraba/effect-actions --skill effect-actions
 ```
 
-The skill is generated from `docs/`, so pointing an agent at `docs/` (in this repository or
-in `node_modules/@gjermundgaraba/effect-actions/docs`) gives the same content.
+The skill is generated from `docs/` on the main branch, which can be ahead of the latest
+release; in a project that installs the package, point the agent at
+`node_modules/@gjermundgaraba/effect-actions/docs`, the pages of the installed version.
 
 ## Status
 

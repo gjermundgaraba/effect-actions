@@ -30,8 +30,8 @@ around `layerHttp` ([Authentication.md](Authentication.md)).
 | `tools`                              | Each action's tool options, by action name; `text` names its text field.       |
 
 `implementations` is one implementation or a list. Every tool declares its action's errors plus the
-built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. Both layers retain the build failures and
-requirements of their builders, plus native
+built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. `layerHttp`'s layer and `runStdio`'s
+program retain the build failures and requirements of their builders, plus native
 `IllegalArgumentError`. HTTP needs the router and wraps handler and hook services as request
 requirements until middleware provided around it, such as authentication, provides them. stdio
 needs `Stdio` and the caller's request services, identity included. Native `McpRequestContext`
@@ -47,8 +47,8 @@ import { double, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-// An MCP endpoint is one route, so authentication covers all of its tools: a public
-// tool gets an endpoint of its own.
+// An MCP endpoint is one route, so authentication covers all of its tools. The public tool
+// gets an endpoint of its own, which keeps the protected tools unlisted to signed-out callers.
 const publicMcp = ActionMcp.layerHttp(status, {
   name: "effect-actions-public",
   version: "0.0.0",
@@ -130,8 +130,8 @@ const status = Action.implement(
 );
 
 // Serves until the host closes stdin, then exits 0. Protocol messages use stdout
-// exclusively: runStdio sends its own Effect logs to stderr, and `LogToStderr` those of
-// the services provided around it.
+// exclusively: runStdio writes its program's Effect logs and `Console` output to stderr,
+// and `LogToStderr` moves the default logger there for the layers provided around it.
 ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
   Effect.provide(NodeStdio.layer),
   // Report a failure as runMain would, but on stderr.
@@ -140,7 +140,7 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
       ? Effect.void
       : Console.error(Cause.pretty(cause)),
   ),
-  // Outermost, so every layer provided above it logs to stderr too.
+  // Outermost, so the default logger of every layer provided above it writes to stderr.
   Effect.provideService(Logger.LogToStderr, true),
   NodeRuntime.runMain({ disableErrorReporting: true }),
 );
@@ -171,7 +171,7 @@ and the tool lists no `markdown` in its `outputSchema`. A test client takes the 
 - `path` defaults to `/mcp`. `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form.
 - Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. Authentication wrapping the endpoint runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests.
 - `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
-- An endpoint is one route, so middleware provided around `layerHttp`, authentication included, covers every request to it, tool listing included, and every tool it serves, public ones too. To serve tools under different authentication or middleware, or without any, mount them on different paths with separate `layerHttp` calls.
+- An endpoint is one route, so middleware provided around `layerHttp`, authentication included, covers every request to it, tool listing included, and every tool it serves, public ones too. To serve tools under different authentication or middleware, or without any, mount them on different paths with separate `layerHttp` calls; one URL for signed-out and signed-in callers takes an optional identity instead ([Authentication.md](Authentication.md#one-url-for-signed-out-callers)).
 - Every action of the implementations passed becomes a tool, named after the action, with the action's `hints` (except on stdio revision 2024-11-05, which has no tool hints). To keep an action off MCP, leave its implementation out ([Action.md](Action.md#contracts)).
 - Builders and request services follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and the hook the [authorization rules](guarantees.md#authorization). Only the tool registry is fresh per endpoint.
 - Every served action's input must be one object with keys, as a tool's arguments are: fields, a struct or a class, identified or recursive, or a record. `layerHttp` and `runStdio` refuse any other with a type error naming the actions: a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Input the types do not check, the native server refuses when the layer is built: erased input, and a helper's own type parameter, passed alone or spread into a list (`layerHttp([...apps, status], options)`). An argument chosen by a condition, `debug ? [status, inspect] : [status]`, compiles when one choice's input passes: the native server refuses another's when the layer is built. When no choice's input passes, it is a type error. Omit `input`, or give `{}`, for a tool with no arguments.
@@ -186,9 +186,9 @@ and the tool lists no `markdown` in its `outputSchema`. A test client takes the 
 - Every caller sees every tool of the endpoint ([guarantees.md](guarantees.md#scope)); authorization happens in each implementation's `before`.
 - Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing. A tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
 - Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
-- `runStdio` is the subprocess's whole program: it serves until the host closes stdin, then succeeds, so the process exits 0. A signal interrupts it, as any program. Provide `Stdio` and its services to it and run it, `NodeRuntime.runMain`.
-- stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted principal. Each implementation's `before` runs. Tool arguments never establish identity.
-- `runStdio` gives its program a `Console` that writes every method to stderr, since stdout carries the protocol: every console logger, the default one included, `Console.log`, and the counters, timers and group labels Node's console prints on stdout. It counts, times and warns with the labels of Node's console, and a group indents every line of a string first argument and the first line of a value it inspects. A timer prints seconds past a minute, `dir` takes no inspect options, `table` prints its data without a grid or column filter, and `clear` does nothing. For layers provided around `runStdio`, provide `Logger.LogToStderr` outermost, as the example does. Keep the global `console.log` and other direct writes off stdout.
+- `runStdio` is the subprocess's whole program: it serves until the host closes stdin, then succeeds, so the process exits 0. Closing stdin ends it at once, without waiting for calls in flight: a call not yet answered gets no answer, and a handler still running is interrupted. MCP hosts close stdin to shut a server down; a script piping requests keeps stdin open until it has read every answer. A signal interrupts it, as any program. Provide `Stdio` and its services to it and run it, `NodeRuntime.runMain`.
+- stdio: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly, including the trusted identity. Each implementation's `before` runs. Tool arguments never establish identity.
+- `runStdio` gives its program a `Console` that writes every method to stderr, since stdout carries the protocol: every console logger, the default one included, `Console.log`, and the counters, timers and group labels Node's console prints on stdout. It counts, times and warns with the labels of Node's console, and a group indents every line of a string first argument and the first line of a value it inspects. A timer prints seconds past a minute, `dir` takes no inspect options, `table` prints its data without a grid or column filter, and `clear` does nothing. Layers provided around `runStdio` run outside its program: provide `Logger.LogToStderr` outermost, as the example does, which moves the default logger to stderr, but not their `Console` output or a logger writing through `Console.log`, such as `Logger.consoleJson`; log JSON with `Logger.withConsoleError(Logger.formatJson)` instead. Keep the global `console.log` and other direct writes off stdout.
 - Each endpoint or subprocess owns a fresh native tool registry. That isolates tool names, not application context.
 - Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)). A `before` refusal is an `isError` result whose text is its JSON, `{"_tag":"Forbidden","message":"Not allowed."}`, exactly like an action's own error.
 - The hook runs after the native server decodes the tool's arguments.
@@ -205,10 +205,10 @@ and the tool lists no `markdown` in its `outputSchema`. A test client takes the 
 - A native `McpServer.resource`, `McpServer.prompt` or `McpServer.toolkit` layer merged beside `layerHttp` builds without error and is never served: `resources/list` is empty, `prompts/list` is not found, and `tools/list` lists only the actions. Each endpoint's registry is its own, and only its actions register on it. Serve native features from a native `McpServer.layerHttp` endpoint on another path.
 - An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's hook, before the handler runs.
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
-- Type error listing `HttpRouter.Request.From<"Requires", ...>`: a handler or hook yields a request service that no middleware around the endpoint provides. Provide the authentication, `Layer.provide(authenticate)`, or other middleware (`Layer.provide(middleware.layer)`) on that `layerHttp`.
-- A public tool demands credentials: it shares an endpoint with authenticated ones, and the authentication covers the whole endpoint. Serve it on an endpoint of its own.
-- Client reports a broken transport from a stdio subprocess: something wrote to stdout, such as `console.log`, or a layer provided around `runStdio` without `Logger.LogToStderr` outermost. Remove the write, or provide it.
-- Older MCP client cannot connect over HTTP: a request answers `400` with JSON-RPC error `-32020`. The client speaks a 2025 revision, which opens with `initialize`. Only 2026-07-28 is served over HTTP; pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
+- `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched, or `Request<"Requires", CurrentActor>` in the endpoint's type: a handler or hook yields a request service that no middleware around the endpoint provides. Provide the authentication, `Layer.provide(authenticate)`, or other middleware (`Layer.provide(middleware.layer)`) on that `layerHttp`; never an identity at startup ([Authentication.md](Authentication.md#failure-modes)).
+- A public tool demands credentials: it shares an endpoint with authenticated ones, and the authentication covers the whole endpoint. Serve it on an endpoint of its own, or keep one URL with an optional identity ([Authentication.md](Authentication.md#one-url-for-signed-out-callers)).
+- Client reports a broken transport from a stdio subprocess: something wrote to stdout, such as `console.log`, or a layer provided around `runStdio` did, through the default logger without `Logger.LogToStderr` outermost, or through `Console` or a logger such as `Logger.consoleJson`, which `LogToStderr` does not move. Remove the write, provide `LogToStderr`, or log JSON with `Logger.withConsoleError(Logger.formatJson)`.
+- An MCP client cannot connect over HTTP: a request answers `400` with JSON-RPC error `-32020`. The client opens with `initialize`, as the 2025 revisions do, and HTTP serves only 2026-07-28. Pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio. Codex is such a client: it opens HTTP with `initialize` (measured on 0.159.0), so serve it over stdio.
 - An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.
 - A disallowed Origin receives 401 instead: wrapping authentication rejected it before the native Origin check. Put any required pre-authentication Host/Origin policy in outer host middleware.
 - Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.

@@ -59,7 +59,7 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { actors, CurrentActor } from "./authorization.js";
 
 // DEMO ONLY: a token is an actor's name. Verify real tokens with your authorization
-// server's library instead.
+// server's library instead, their audience included: issued for this resource.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
 // Router middleware providing CurrentActor per request. Like a handler builder, its Effect
@@ -169,6 +169,114 @@ export const authenticate = logCaller
   .layer.pipe(Layer.provide(Verifier.layer));
 ```
 
+### One URL for signed-out callers
+
+One MCP endpoint serving public and protected tools, so an end user adds one server: the
+identity is optional, and each protected implementation's hook answers a signed-out caller with
+the 401 an MCP client signs in on ([Rules](#rules)). The example app keeps its public tool on an
+endpoint of its own instead ([ActionMcp.md](ActionMcp.md#canonical)), the default.
+
+```ts
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+
+interface Actor {
+  readonly id: string;
+  readonly permissions: ReadonlyArray<string>;
+}
+
+/** DEMO ONLY: a token is an actor's name. */
+const actors = new Map<string, Actor>([
+  ["alice", { id: "alice", permissions: ["notes:read", "notes:write"] }],
+  ["reader", { id: "reader", permissions: ["notes:read"] }],
+]);
+
+/** Provided per request: the signed-in actor, or none for a caller who has not signed in. */
+export class Caller extends Context.Service<Caller, Option.Option<Actor>>()("example/Caller") {}
+
+/** The signed-in actor. Signed out, `Unauthenticated`: the 401 an MCP client signs in on. */
+export const signedIn = Effect.flatMap(
+  Caller,
+  Effect.fromOption(() => new Action.Unauthenticated({ message: "Sign in to use this tool." })),
+);
+
+/** The hook of every protected implementation: signed in, and allowed what the action does. */
+const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
+  const permission = action.access === "read" ? "notes:read" : "notes:write";
+  const actor = yield* signedIn;
+
+  if (!actor.permissions.includes(permission)) {
+    return yield* new Action.Forbidden({
+      message: `Requires ${permission}.`,
+      scopes: [permission],
+    });
+  }
+});
+
+// Only the credential is optional: without a token the caller is signed out, and a token
+// that does not verify is still a 401. Verify a real token's audience too.
+const authentication = Authentication.make(
+  Caller,
+  Effect.succeed(
+    Effect.gen(function* () {
+      const token = yield* Effect.option(Authentication.bearerToken);
+
+      if (Option.isNone(token)) return Option.none();
+
+      const actor = actors.get(Redacted.value(token.value));
+
+      if (actor === undefined) {
+        return yield* new Action.Unauthenticated({ message: "Unknown demo token." });
+      }
+
+      return Option.some(actor);
+    }),
+  ),
+  {
+    resource: "http://localhost:3000/mcp",
+    authorizationServers: ["https://auth.example.com"],
+    scopesSupported: ["notes:read", "notes:write"],
+    scopesRequired: ["notes:read"],
+  },
+);
+
+const Search = Action.make("search", {
+  description: "Search the public notes.",
+  input: { query: Schema.String },
+  success: Schema.Array(Schema.String),
+  access: "read",
+});
+
+const Save = Action.make("save", {
+  description: "Save a note of your own.",
+  input: { text: Schema.String },
+  success: Schema.String,
+  access: "write",
+});
+
+// Public: no rule, and no identity read, so a signed-out caller may call it.
+const search = Action.implement(
+  Search,
+  ({ query }) => Effect.succeed([`A public note about ${query}.`]),
+  Action.allowAll,
+);
+
+// Protected: the hook refuses a signed-out caller before the handler reads the actor.
+const save = Action.implement(
+  Save,
+  ({ text }) => Effect.map(signedIn, ({ id }) => `${id} saved: ${text}`),
+  authorize,
+);
+
+// One URL for both: listing and `search` answer anyone; `save` answers a signed-out caller
+// with the 401 an MCP client signs in on, and a reader with the 403 it steps up on.
+export const layer = ActionMcp.layerHttp([search, save], { name: "notes", version: "1.0.0" }).pipe(
+  Layer.provide(authentication.layer),
+);
+```
+
 ## Rules
 
 - The per-request authentication succeeds with the identity value or fails with a refusal. `Unauthenticated` is sent as its JSON with **401**; `Forbidden` as its JSON with **403**. Both are the bodies every endpoint declares, so typed clients decode them. An `HttpServerResponse` is sent with its own status and headers, for a status or header that varies per refusal.
@@ -185,10 +293,13 @@ export const authenticate = logCaller
 - It authenticates any credential: the per-request authentication is any Effect, reading a bearer token, a session cookie or an API key. For another scheme, fail with an `HttpServerResponse` carrying its own challenge, which is kept; a 401 without one gets `Bearer`. A 401 carries a challenge only under `make`.
 - The per-request authentication can fail with nothing else: any other error is a type error. Map a verifier's failure to a refusal.
 - `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. The token is `Redacted`, as `HttpApiSecurity.bearer` gives it, so a log, span or error holding it prints `<redacted>`; read it with `Redacted.value(token)` where it is verified. Verifying the token stays the host's.
+- Verify that a token was issued for this resource, its audience `resource`, as MCP authorization requires (RFC 8707): one issued for another resource fails with `Unauthenticated`, as any token that does not verify. `make` publishes `resource` in its discovery, but reads no token.
 - `build` runs when the middleware's layer is built, once per layer graph however many layers and compositions use it, as a handler builder does ([guarantees.md](guarantees.md#dependency-lifetimes)). The services it yields are startup requirements of the middleware's layer: `authentication.layer.pipe(Layer.provide(Verifier.layer))`, or provided above it. A resource it acquires lives as long as the layer; a failure of `build` fails the layer, so the server does not start.
 - The services the per-request authentication yields, beyond what the router provides, such as the request and its scope, are request requirements, as a handler's are. Middleware combined before it provides them: `authentication.combine(resolveTenant).layer`. A startup service, such as a verifier, is yielded in `build` instead, never per request.
 - Middleware that reads the identity is combined after it, `accessLog.combine(authentication).layer`, and runs only for requests it authenticated; both at once is `accessLog.combine(authentication.combine(resolveTenant)).layer`. In `a.combine(b)`, `b` runs first, around `a`, and provides to it.
 - Its layer, provided to a layer, covers that layer's routes, before decoding, and no others: `ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate))` beside a public `ActionHttp.layer(Http, open)` keeps the public routes public. An MCP endpoint is one route: provided to `ActionMcp.layerHttp`, it covers every tool of it.
+- One MCP URL serves signed-out callers beside signed-in ones under an optional identity, a service holding an `Option` of the actor ([One URL](#one-url-for-signed-out-callers)). Only the credential is optional, `Effect.option(Authentication.bearerToken)`: a token that is presented is verified as before, so one that does not verify is still a 401, as MCP authorization requires. The hook of each protected implementation refuses a signed-out caller with `Unauthenticated`, which `make` answers with the 401 and challenge an MCP client signs in on, then retries the call; the official client does, with an OAuth provider. Whether another host signs in on a tool call's 401, rather than when it connects, is the host's. A `Forbidden` naming no scopes, or a refusal after a handler's notification, is a tool result instead ([guarantees.md](guarantees.md#authorization)), on which no host signs in. A handler reading the actor through the same accessor refuses too, should its hook not. A local caller provides `Option.some(actor)`, and a test `Option.none()` for a signed-out one; never either at startup.
+- An optional identity lets signed-out callers past the route: they list every tool, get a protected tool's input errors before its 401, as input decodes before the hook, and call every implementation whose hook and handlers do not refuse them, `Action.allowAll`'s included. Separate endpoints stay the default: the public tools on an endpoint of their own leave the protected ones unlisted, refused before decoding, and closed whatever their hook.
 - It removes the identity from the covered layer's request requirements: [guarantees.md](guarantees.md#authorization).
 - Other native router middleware providing the identity covers the surfaces the same way, but without `make`'s challenges, step-up answers and discovery.
 - A local surface has no remote caller: the host provides the identity service itself, as `Effect.provideService(CurrentActor, actor)`, or on a CLI command, `Command.provideSync(CurrentActor, actor)`. The `before` hook still runs.
@@ -204,9 +315,13 @@ export const authenticate = logCaller
 ## Failure modes
 
 - A route no authentication covers answers every caller as one actor: an identity tag was provided at startup. Remove it from every startup layer; provide it only through the authentication.
-- Type error `HttpRouter.Request.From<"Requires", CurrentActor>` unsatisfied: no authentication is provided around the layer serving a handler or hook that reads the identity. Provide it, `Layer.provide(authenticate)`.
+- `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched, at `Layer.launch` or `NodeRuntime.runMain`, `Expected 2 arguments, but got 1` at a web handler's `handler(request)`, or `Request<"Requires", CurrentActor>` in a layer's type: a handler or hook reads the identity, and no authentication is provided around the layer serving it. Provide it, `Layer.provide(authenticate)`. **Never satisfy it by providing an identity at startup**, around `HttpRouter.serve` or the program, or by passing one as every `handler(request, context)` call's context: it compiles, and every request then runs as that identity, one without credentials included ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
 - An action that must be authenticated answers without credentials: its layer has no authentication around it, and nothing it runs reads the identity, so no type asks for one. Provide the authentication around that layer too. Or a public layer serves it, given the implementation holding it beside public actions: give each layer an `Action.share` of its own actions ([ActionHttp.md](ActionHttp.md#rules)); authentication around that layer would also lock its public actions.
-- A public action demands credentials: it is served by a layer the authentication covers, such as one MCP endpoint with the protected tools. Serve it from a layer of its own, given an `Action.share` of the public actions where their implementation holds protected ones too ([ActionHttp.md](ActionHttp.md#rules)).
+- A public action demands credentials: it is served by a layer the authentication covers, such as one MCP endpoint with the protected tools. Serve it from a layer of its own, given an `Action.share` of the public actions where their implementation holds protected ones too ([ActionHttp.md](ActionHttp.md#rules)), or, for one MCP URL, authenticate an optional identity ([One URL](#one-url-for-signed-out-callers)).
+- A protected tool answers a signed-out caller on one URL: under an optional identity, its implementation's hook does not refuse a signed-out caller, as `Action.allowAll` does not, and its handlers read no identity. Give it the hook that reads the identity.
+- A token that does not verify is served as a signed-out caller: the optional authentication wraps the verification in `Effect.option`, where only reading the credential belongs. A presented token that does not verify fails with `Unauthenticated`.
+- An MCP host shows a signed-out caller's refusal as text instead of signing in: the refusal is a `Forbidden` naming no scopes, or a handler's after its notification started the response. Refuse with `Unauthenticated`, in the hook.
+- An MCP host asks for sign-in when it connects, or reports an error on a tool call's 401 instead of signing in: signing in is the host's. Serve the protected tools on an endpoint that requires a token.
 - Type error at `make` that the identity is not an `Effect` (`... is missing the following properties from type 'Effect<...>'`, or `Type 'string' is not assignable to type 'Effect<...>'`): the second argument is the per-request authentication itself. Return it from `build`, or wrap it, `Effect.succeed(authenticate)`.
 - `No overload matches this call` at `Layer.provide`, naming `Middleware<{ provides: CurrentActor; ... }>`: the middleware itself was provided. Provide its `.layer`.
 - Type error at `make`: the per-request authentication may fail with an error that is neither a refusal nor an `HttpServerResponse`. Map it to a refusal.

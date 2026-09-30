@@ -407,7 +407,7 @@ const entry = () =>
  * holding none of the binding's is refused. It mounts only the routes of the actions it
  * serves, so one binding may be served by several layers, such as public routes beside
  * authenticated ones: middleware provided to a layer covers its routes only. Each
- * implementation's builder runs once however many layers serve it.
+ * implementation's builder runs once per layer graph however many layers serve it.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
  * each implementation's hook needs and the handlers of the actions it serves, until

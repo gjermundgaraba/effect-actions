@@ -209,14 +209,12 @@ describe("ActionToolkit", () => {
     expect(Object.keys(binding.toolkit.tools)).toEqual(["double"]);
 
     const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tools = yield* binding.toolkit;
-          const calls = yield* tools.handle("double", { value: "21" });
+      Effect.gen(function* () {
+        const tools = yield* binding.toolkit;
+        const calls = yield* tools.handle("double", { value: "21" });
 
-          return yield* Stream.runCollect(calls);
-        }).pipe(Effect.provide(binding.layer)),
-      ),
+        return yield* Stream.runCollect(calls);
+      }).pipe(Effect.provide(binding.layer)),
     );
 
     expect(result).toMatchObject([{ result: 42, encodedResult: 42, isFailure: false }]);
@@ -246,15 +244,13 @@ describe("ActionToolkit", () => {
     );
 
     const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tools = yield* binding.toolkit;
+      Effect.gen(function* () {
+        const tools = yield* binding.toolkit;
 
-          return yield* Stream.runCollect(
-            yield* tools.handle("schedule", { at: "2026-09-29T00:00:00.000Z", note: null }),
-          );
-        }).pipe(Effect.provide(binding.layer)),
-      ),
+        return yield* Stream.runCollect(
+          yield* tools.handle("schedule", { at: "2026-09-29T00:00:00.000Z", note: null }),
+        );
+      }).pipe(Effect.provide(binding.layer)),
     );
 
     expect(received).toEqual([{ at: new Date("2026-09-29T00:00:00.000Z"), note: undefined }]);
@@ -278,13 +274,11 @@ describe("ActionToolkit", () => {
     );
 
     const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tools = yield* binding.toolkit;
+      Effect.gen(function* () {
+        const tools = yield* binding.toolkit;
 
-          return yield* Stream.runCollect(yield* tools.handle("find", { id: "n1" }));
-        }).pipe(Effect.provide(binding.layer)),
-      ),
+        return yield* Stream.runCollect(yield* tools.handle("find", { id: "n1" }));
+      }).pipe(Effect.provide(binding.layer)),
     );
 
     const notFound = new NotFound({ id: "n1" });
@@ -314,11 +308,9 @@ describe("ActionToolkit", () => {
     );
 
     const [returned] = await Effect.runPromise(
-      Effect.scoped(
-        Effect.flatMap(binding.toolkit, (tools) =>
-          Effect.flatMap(tools.handle("echo", { value: "one" }), Stream.runCollect),
-        ).pipe(Effect.provide(binding.layer)),
-      ),
+      Effect.flatMap(binding.toolkit, (tools) =>
+        Effect.flatMap(tools.handle("echo", { value: "one" }), Stream.runCollect),
+      ).pipe(Effect.provide(binding.layer)),
     );
 
     expect(returned).toMatchObject({ isFailure: true, failureOrigin: "parameters" });
@@ -346,10 +338,8 @@ describe("ActionToolkit", () => {
 
     const [own, lacking] = await Effect.runPromise(
       // @ts-expect-error The second call lacks the Principal its tool requires.
-      Effect.scoped(
-        Effect.all([call.pipe(Effect.provideService(Principal, "caller")), call]).pipe(
-          Effect.provide(startup),
-        ),
+      Effect.all([call.pipe(Effect.provideService(Principal, "caller")), call]).pipe(
+        Effect.provide(startup),
       ),
     );
 
@@ -577,16 +567,14 @@ describe("ActionToolkit", () => {
     });
 
     const response = await Effect.runPromise(
-      Effect.scoped(
-        LanguageModel.generateText({
-          prompt: "go",
-          toolkit: Toolkit.merge(actions.toolkit, native),
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(actions.layer, native.toLayer({ now: () => Effect.succeed(7) })),
-          ),
-          Effect.provideServiceEffect(LanguageModel.LanguageModel, model),
+      LanguageModel.generateText({
+        prompt: "go",
+        toolkit: Toolkit.merge(actions.toolkit, native),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(actions.layer, native.toLayer({ now: () => Effect.succeed(7) })),
         ),
+        Effect.provideServiceEffect(LanguageModel.LanguageModel, model),
       ),
     );
 
@@ -618,14 +606,12 @@ describe("ActionToolkit", () => {
     const binding = ActionToolkit.make(app);
 
     await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tools = yield* binding.toolkit;
-          const calls = yield* tools.handle("two", {});
-          yield* Stream.runDrain(calls);
-          expect(acquired).toBe(1);
-        }).pipe(Effect.provide(binding.layer)),
-      ),
+      Effect.gen(function* () {
+        const tools = yield* binding.toolkit;
+        const calls = yield* tools.handle("two", {});
+        yield* Stream.runDrain(calls);
+        expect(acquired).toBe(1);
+      }).pipe(Effect.provide(binding.layer)),
     );
 
     expect(released).toBe(1);

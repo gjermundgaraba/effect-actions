@@ -17,7 +17,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `make(name, options)`                          | Define a pure contract; literal names and access stay typed.                           |
 | `implement(action, handler, before)`           | Bind one handler behind its hook; returns one `Implementation`.                        |
 | `implement([actions], handlers, before)`       | Bind a record of handlers keyed by action name; returns one `Implementation` of all.   |
-| `implement(target, builder, before)`           | Either form, with an Effect that builds the handler or record once per host build.     |
+| `implement(target, builder, before)`           | Either form, with an Effect that builds the handler or record once per layer graph.    |
 | `allowAll`                                     | The hook for no action-level rule: every caller the surface admits may call.           |
 | `share(target, implementation, before?)`       | Some of an implementation's actions, sharing its builder, behind its hook or `before`. |
 | `layer(implementations)`                       | Their builders as one layer: provided above every surface, each runs once for all.     |
@@ -123,6 +123,55 @@ export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
   success: { changes: Schema.Array(Change) },
   access: "read",
+});
+```
+
+### Identity and hook
+
+The module the implementations, the authentication and every local caller import: the
+identity, `CurrentActor`, which authentication provides per request, and the hook,
+`authorize`, which reads each action's `access`. Its demo actors stand in for the identities a
+token verifier returns.
+
+```ts
+import { Context, Effect } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+
+export type Permission = "users:read" | "users:write";
+
+export interface Actor {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly permissions: ReadonlyArray<Permission>;
+}
+
+/** DEMO ONLY: fixed credentials, not OAuth or a production token verifier. */
+export const actors = {
+  alice: { id: "alice", tenantId: "acme", permissions: ["users:read", "users:write"] },
+  reader: { id: "reader", tenantId: "acme", permissions: ["users:read"] },
+  bob: { id: "bob", tenantId: "other", permissions: ["users:read", "users:write"] },
+} as const satisfies Readonly<Record<string, Actor>>;
+
+/** Provided per request by the host's authentication middleware. */
+export class CurrentActor extends Context.Service<CurrentActor, Actor>()("example/CurrentActor") {}
+
+/**
+ * One authorization rule for every guarded surface, derived from each contract's own
+ * `access`. An implementation binds it as its `before` hook, so every surface serving it
+ * runs it before every handler and no handler contains authorization code. Its `Forbidden` is
+ * built in: every endpoint and tool declares it, and every client decodes it. Naming the
+ * missing scope makes it the `insufficient_scope` challenge an OAuth client steps up on.
+ */
+export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
+  const permission: Permission = action.access === "read" ? "users:read" : "users:write";
+  const actor = yield* CurrentActor;
+
+  if (!actor.permissions.includes(permission)) {
+    return yield* new Action.Forbidden({
+      message: `Requires ${permission}.`,
+      scopes: [permission],
+    });
+  }
 });
 ```
 
@@ -310,7 +359,7 @@ console.log(
 - A handler's input is typed from its action however it is written: an arrow, a function typed `Action.Handler`, or a generator, `Effect.fn(function* (input) { ... })` or `Effect.fnUntraced`, alone or in a record, a builder's included. The builder must itself be `implement`'s argument: through `.pipe(...)`, or a wrapper such as `Effect.withSpan(builder, name)`, an `Effect.fn` it returns takes an `any` input, so annotate the input there.
 - Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.access` ([guarantees.md](guarantees.md#observability)). Leave `Effect.fn` unnamed: don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
 - `before` sees `action` typed as the implementation's own actions, in a built hook too. As for a builder, an `Effect.fn` hook returned through `.pipe(...)` or a wrapper takes an `any` action: annotate it, `(action: Action.Any)`.
-- To pass a subset of an implementation's actions to a surface, such as dashboard-only writes kept off MCP, use `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, Action.allowAll)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per host build however many share it. A hook given to a share, built or not, is its own: its source's is neither built nor run for its actions.
+- To pass a subset of an implementation's actions to a surface, such as dashboard-only writes kept off MCP, use `share([Write], users)`, which keeps `users`' hook, and pass each surface the ones it serves. The same handlers under another hook are `share(actions, users, trustAdmin)`, such as for a trusted admin CLI; public actions beside authenticated ones are `share([Poll], users, Action.allowAll)`. Leaving the hook out never drops authorization. The builder is the source's, which runs once per layer graph however many share it. A hook given to a share, built or not, is its own: its source's is neither built nor run for its actions.
 - A shared implementation owes, per request, what its source's handlers owe for its actions, and what its hook owes: its source's, or the one given, whose services replace the source's. At startup it owes its source's services, its source's hook builder's included, and those of a hook it builds. `share` refuses an action its source does not implement: a type error, and `Not implemented by this implementation: <names>` from plain JavaScript.
 - A helper over implementations is generic, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, so each implementation's requirements reach the surface it passes them to, `ActionHttp.layer` included, whose binding decides what it serves. Beside the helper's own implementations, spread the parameter, `[...apps, double]`: `ActionHttp.layer` and MCP refuse a type parameter listed as one element. `ActionHttp.layer` also refuses a binding or a share the helper makes from generic actions: take the binding as a type parameter, and pass the share in. `AnyImplementation` erases every channel to `unknown`: a value or a parameter typed with it owes `unknown`, which no surface can be given.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
@@ -354,6 +403,9 @@ console.log(
 - `Type 'CurrentActor' is not assignable to type 'never'` where a program calling a client runs: a call reads the caller, and nothing provides one around it. Provide it around the call, or around the calls it makes; provided around the acquisition, it reaches no call. Never provide it to a layer or a builder acquiring the client.
 - A type error that a program still requires `Scope`: acquiring a client builds, as a layer does. Acquire it in a builder or a layer, or run the program in `Effect.scoped`.
 - A builder runs on every request, or a route owes `HttpRouter.Request<"Requires", X>` for `X`, a service its builder yields: a handler acquires a client per request. Acquire it in the builder, and call it in the handler.
+- A builder runs twice, or a job, an agent or a second server reads other state than the routes, such as an empty in-memory store: it is merged beside `HttpRouter.serve`, whose layer graph built the builder first. Put it inside the layer the server serves, or provide `Action.layer` and the services they share above both ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
+- Surfaces given startup services of their own, provided around each or to an `Action.layer` of each, all answer with one surface's: a builder runs once per layer graph, with the services of its first build. Wrap each surface in `Layer.fresh`, or give each an implementation of its own ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
 - `'<name>' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer` (TS7022) at `implement`, or, with the types bypassed, an acquisition that never completes: a builder acquires a client of its own implementation, directly or through another builder. Call the services both use instead.
 - A call dies with a `SchemaError`: the handler's success, or what the handler or the hook fails with, does not pass through its codec, which an HTTP caller sees as an empty 500. Return what the success schema accepts, and fail with an error the action declares, as its schema accepts it.
 - `InvalidInput` with `Expected <Class>` from a call given a plain object: the input is a class, which encodes only its instances. Pass `new Class({ ... })`, or leave out an argument whose fields are all optional.
+- `Not an implementation made by this Action.implement: is effect-actions installed twice?` thrown by a surface, `client`, `share` or `layer`, or by a local CLI command when it runs: another installed copy of the package made the implementation, and only that copy serves, shares and calls it. Install one copy of the package; contracts and bindings still cross copies.

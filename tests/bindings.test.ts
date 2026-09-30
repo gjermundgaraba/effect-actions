@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Stream, Tracer } from "effect";
+import { NodeHttpServer } from "@effect/platform-node";
 import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -48,7 +49,7 @@ it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transp
   }
 });
 
-it("builds an implementation once per host build, however many adapters serve it", async () => {
+it("builds an implementation once per layer graph, however many surfaces serve it", async () => {
   let acquired = 0;
   let finalized = 0;
 
@@ -411,19 +412,169 @@ it("builds once beside routes served apart, when Action.layer is provided above 
     ).pipe(Layer.provide(Action.layer(app)), Layer.provide(Layer.succeed(Start, 0)));
 
     await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const client = yield* ActionHttp.client(ActionHttp.make([Count]));
-          const toolkit = yield* tools.toolkit;
+      Effect.gen(function* () {
+        const client = yield* ActionHttp.client(ActionHttp.make([Count]));
+        const toolkit = yield* tools.toolkit;
 
-          yield* client.count();
-          yield* Stream.runCollect(yield* toolkit.handle("count", {}));
-        }).pipe(Effect.provide(layers)),
-      ),
+        yield* client.count();
+        yield* Stream.runCollect(yield* toolkit.handle("count", {}));
+      }).pipe(Effect.provide(layers)),
     );
 
     expect([order, built, hooked]).toEqual([order, 1, 1]);
   }
+});
+
+describe("a builder beside HttpRouter.serve", () => {
+  const Count = Action.make("count", { description: "", access: "read", success: Schema.Finite });
+
+  const Http = ActionHttp.make([Count]);
+
+  /** An implementation counting its calls in the state its builder makes, and its builds. */
+  const counted = () => {
+    const builds = { count: 0 };
+
+    const app = Action.implement(
+      Count,
+      Effect.sync(() => {
+        builds.count += 1;
+        let calls = 0;
+
+        return () => Effect.sync(() => ++calls);
+      }),
+      Action.allowAll,
+    );
+
+    return { app, builds };
+  };
+
+  it.each(["routes first", "job first"] as const)(
+    "builds once for a job inside the served layer, which shares the routes' state (%s)",
+    async (order) => {
+      const { app, builds } = counted();
+      const tools = ActionToolkit.make(app);
+
+      // A job the process runs beside its routes: it calls the implementation once, as a tool.
+      const job = Layer.effectDiscard(
+        Effect.flatMap(tools.toolkit, (toolkit) =>
+          Effect.flatMap(toolkit.handle("count", {}), Stream.runDrain),
+        ),
+      ).pipe(Layer.provide(tools.layer));
+
+      const routes = ActionHttp.layer(Http, app);
+
+      const server = HttpRouter.serve(
+        order === "routes first" ? Layer.mergeAll(routes, job) : Layer.mergeAll(job, routes),
+        { disableLogger: true, disableListenLog: true },
+      ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+
+      const count = await Effect.flatMap(ActionHttp.client(Http), (client) => client.count()).pipe(
+        Effect.provide(server),
+        Effect.runPromise,
+      );
+
+      // The route counts the job's call: one build, one state.
+      expect([builds.count, count]).toEqual([1, 2]);
+    },
+  );
+
+  it.each(["HTTP first", "MCP first"] as const)(
+    "builds once per surface under Layer.fresh, each with its own startup services (%s)",
+    async (order) => {
+      const builds = { count: 0 };
+
+      const Greet = Action.make("greet", {
+        description: "",
+        access: "read",
+        success: Schema.String,
+      });
+
+      const app = Action.implement(
+        Greet,
+        Effect.map(Greeting, (greeting) => {
+          builds.count += 1;
+
+          return () => Effect.succeed(greeting);
+        }),
+        Action.allowAll,
+      );
+
+      const http = Layer.fresh(
+        ActionHttp.layer(ActionHttp.make([Greet]), app).pipe(
+          Layer.provide(Layer.succeed(Greeting, "http")),
+        ),
+      );
+
+      const mcp = Layer.fresh(
+        ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
+          Layer.provide(Layer.succeed(Greeting, "mcp")),
+        ),
+      );
+
+      const greetings = await Effect.gen(function* () {
+        const client = yield* ActionHttp.client(ActionHttp.make([Greet]));
+        const tools = yield* Testing.mcpClient([Greet]);
+
+        return [yield* client.greet(), yield* tools.greet()];
+      }).pipe(
+        Effect.provide(
+          Testing.layer(
+            order === "HTTP first" ? Layer.mergeAll(http, mcp) : Layer.mergeAll(mcp, http),
+          ),
+        ),
+        Effect.runPromise,
+      );
+
+      expect([builds.count, greetings]).toEqual([2, ["http", "mcp"]]);
+    },
+  );
+
+  it.each(["route first", "MCP first"] as const)(
+    "builds a Toolkit's handlers once for a route whose builder yields its toolkit, beside another surface (%s)",
+    async (order) => {
+      const { app, builds } = counted();
+      const tools = ActionToolkit.make(app);
+
+      // A model loop in a route: its builder yields the toolkit, and the route's layer takes
+      // the toolkit's handler layer, built in the routes' layer graph, as the endpoint's is.
+      const Chat = Action.make("chat", { description: "", access: "read", success: Schema.Finite });
+
+      const chat = Action.implement(
+        Chat,
+        Effect.map(
+          tools.toolkit,
+          (toolkit) => () =>
+            Effect.gen(function* () {
+              const [called] = yield* Stream.runCollect(yield* toolkit.handle("count", {}));
+
+              return Number(called?.result);
+            }).pipe(Effect.orDie),
+        ),
+        Action.allowAll,
+      );
+
+      const ChatHttp = ActionHttp.make([Chat]);
+      const route = ActionHttp.layer(ChatHttp, chat).pipe(Layer.provide(tools.layer));
+      const mcp = ActionMcp.layerHttp(app, { name: "test", version: "0" });
+
+      const counts = await Effect.gen(function* () {
+        const client = yield* ActionHttp.client(ChatHttp);
+        const endpoint = yield* Testing.mcpClient([Count]);
+
+        return [yield* client.chat(), yield* endpoint.count(), yield* client.chat()];
+      }).pipe(
+        Effect.provide(
+          Testing.layer(
+            order === "route first" ? Layer.mergeAll(route, mcp) : Layer.mergeAll(mcp, route),
+          ),
+        ),
+        Effect.runPromise,
+      );
+
+      // The route's tool calls and the endpoint's call count in one state: one build.
+      expect([builds.count, counts]).toEqual([1, [1, 2, 3]]);
+    },
+  );
 });
 
 it("serves a copy of a binding like the binding itself", async () => {
@@ -477,6 +628,70 @@ it("keeps same-contract implementations apart over MCP", async () => {
       );
     });
   }
+});
+
+it("records a tool call's arguments on its span, a Schema.Redacted value included, where HTTP records no body", async () => {
+  const Login = Action.make("login", {
+    description: "",
+    access: "write",
+    input: { password: Schema.Redacted(Schema.String) },
+    success: Schema.String,
+  });
+
+  const app = Action.implement(Login, () => Effect.succeed("in"), Action.allowAll);
+
+  // What every span of a call carries: each attribute, as the tracer receives it.
+  const recorded = async <A>(call: (tracer: Tracer.Tracer) => Promise<A>) => {
+    const spans: Tracer.Span[] = [];
+
+    await call(
+      Tracer.make({
+        span(options) {
+          const span = Tracer.nativeTracer.span(options);
+          spans.push(span);
+
+          return span;
+        },
+      }),
+    );
+
+    return spans.flatMap((span) => [...span.attributes.values()]);
+  };
+
+  const web = serveWithContext(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([Login]), app),
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+    ),
+  );
+
+  const tools = ActionToolkit.make(app);
+  const sent = { password: "hunter2" };
+
+  const http = await recorded((tracer) =>
+    web.handler(post("/api/login", sent), Context.make(Tracer.Tracer, tracer)),
+  );
+
+  const mcp = await recorded((tracer) =>
+    web.handler(rawToolCall("login", sent), Context.make(Tracer.Tracer, tracer)),
+  );
+
+  const toolkit = await recorded((tracer) =>
+    Effect.flatMap(tools.toolkit, (handled) =>
+      Effect.flatMap(handled.handle("login", sent), Stream.runDrain),
+    ).pipe(
+      Effect.withSpan("caller"),
+      Effect.provide(tools.layer),
+      Effect.provideService(Tracer.Tracer, tracer),
+      Effect.runPromise,
+    ),
+  );
+
+  // The action's span is recorded on every surface; only a tool call's carries the input.
+  expect(http).toContain("login");
+  expect(http).not.toContainEqual(sent);
+  expect(mcp).toContainEqual(sent);
+  expect(toolkit).toContainEqual(sent);
 });
 
 describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (transport) => {

@@ -2,11 +2,12 @@ import { spawnSync } from "node:child_process";
 import { format } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Console, Effect, Predicate, Schema, Stdio } from "effect";
+import { Console, Deferred, Effect, Predicate, Schema, Sink, Stdio, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import { statelessRequest } from "../src/internal/mcp.js";
 import { everyConsoleMethod } from "./console-methods.js";
 import { rawToolCall } from "./requests.js";
 import { serve } from "./serve.js";
@@ -266,6 +267,57 @@ describe("runStdio's successes", () => {
     });
     expect((await http.text()).trimEnd()).toBe(current);
     expect(JSON.parse(earlier)).toEqual({ jsonrpc: "2.0", id: 1, result: own });
+  });
+});
+
+it("leaves a line of stdin that is not JSON unanswered, and answers the request after it", async () => {
+  const Ping = Action.make("ping", {
+    description: "Answer pong",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const ping = Action.implement(Ping, () => Effect.succeed("pong"), Action.allowAll);
+
+  const request = {
+    ...statelessRequest("tools/call", { name: "ping", arguments: {} }).body,
+    id: 1,
+  };
+
+  const written = await Effect.gen(function* () {
+    const answered = yield* Deferred.make<void>();
+    const decoder = new TextDecoder();
+    let output = "";
+
+    // Two lines no JSON parser reads, then a request; stdin closes once a line is answered.
+    const stdin = Stream.make("not json\n", "{\n", `${JSON.stringify(request)}\n`).pipe(
+      Stream.concat(Stream.fromEffectDrain(Deferred.await(answered))),
+      Stream.encodeText,
+    );
+
+    const stdout = () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.suspend(() => {
+          output += Predicate.isString(chunk) ? chunk : decoder.decode(chunk, { stream: true });
+
+          return output.endsWith("\n") ? Deferred.succeed(answered, undefined) : Effect.void;
+        }),
+      );
+
+    yield* ActionMcp.runStdio(ping, { name: "ping", version: "0" }).pipe(
+      Effect.provide(Stdio.layerTest({ stdin, stdout })),
+    );
+
+    return output;
+  }).pipe(Effect.runPromise);
+
+  // One line, the request's answer: nothing answers the lines before it.
+  const lines = written.trimEnd().split("\n");
+
+  expect(lines).toHaveLength(1);
+  expect(JSON.parse(lines[0] ?? "")).toMatchObject({
+    id: 1,
+    result: { structuredContent: "pong" },
   });
 });
 

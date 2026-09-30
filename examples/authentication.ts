@@ -4,7 +4,7 @@ import * as Authentication from "../src/Authentication.js";
 import { actors, CurrentActor } from "./authorization.js";
 
 // DEMO ONLY: a token is an actor's name. Verify real tokens with your authorization
-// server's library instead.
+// server's library instead, their audience included: issued for this resource.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
 // Router middleware providing CurrentActor per request. Like a handler builder, its Effect

@@ -17,11 +17,15 @@ export interface SkillFile {
   readonly content: string;
 }
 
+// Read from the repository whatever version a project installs; the package's docs/ match it.
 export const frontmatter = `---
 name: effect-actions
 description: >
   Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
   which defines Effect action contracts once for HTTP, MCP, native Toolkits, and CLIs.
+  These pages follow the repository's main branch, which can be ahead of the latest
+  release; where the package is installed, read the same pages in
+  node_modules/@gjermundgaraba/effect-actions/docs/, which describe the installed version.
 ---
 
 `;

@@ -1,5 +1,10 @@
 import { inspect } from "node:util";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import {
+  Client,
+  ClientCredentialsProvider,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { Context, Deferred, Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
   HttpClient,
@@ -18,6 +23,7 @@ import { authenticate as tenantAuthentication } from "../examples/authentication
 import { Http as ExampleHttp } from "../examples/binding.js";
 import { WhoAmI as ExampleWhoAmI } from "../examples/contracts.js";
 import { userActions } from "../examples/handlers.js";
+import { layer as signIn } from "../examples/mcp-sign-in.js";
 import { Users } from "../examples/users.js";
 import { against, httpClient, serve } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
@@ -953,7 +959,6 @@ describe("authentication around a surface", () => {
     }).pipe(
       Effect.provideService(Identity, { id: "host" }),
       Effect.provide(layer),
-      Effect.scoped,
       Effect.runPromise,
     );
 
@@ -1231,5 +1236,135 @@ describe("Authentication.make combined with other middleware", () => {
     );
 
     expect(await against(web, bob)).toEqual({ id: "bob", tenantId: "other" });
+  });
+});
+
+describe("an optional identity on one MCP URL", () => {
+  const issuer = "https://auth.example.com";
+
+  /**
+   * The documented example's endpoint, behind an OAuth authorization server in memory that
+   * issues `alice`'s token for a write scope and `reader`'s otherwise, logging what each
+   * side is asked.
+   */
+  const deployment = () => {
+    const web = serve(signIn);
+    const log: string[] = [];
+
+    const authorizationServer = async (request: Request): Promise<Response> => {
+      const { pathname } = new URL(request.url);
+
+      if (pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["client_credentials"],
+          token_endpoint_auth_methods_supported: ["client_secret_basic"],
+        });
+      }
+
+      const form = new URLSearchParams(await request.text());
+      const scope = form.get("scope") ?? "";
+
+      log.push(`token ${scope} for ${form.get("resource")}`);
+
+      return Response.json({
+        access_token: scope.split(" ").includes("notes:write") ? "alice" : "reader",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope,
+      });
+    };
+
+    const fetch = async (request: Request): Promise<Response> => {
+      if (request.url.startsWith(issuer)) return authorizationServer(request);
+
+      const response = await web.handler(request);
+      const called = request.headers.get("mcp-name") ?? request.headers.get("mcp-method");
+
+      log.push(
+        `${called ?? new URL(request.url).pathname} ${request.headers.get("authorization") ?? "signed out"}: ${response.status}`,
+      );
+
+      return response;
+    };
+
+    return { web, log, fetch };
+  };
+
+  it("serves a signed-out caller its listing and public tools, and signs the official client in on a protected one", async () => {
+    const { log, fetch } = deployment();
+
+    const client = new Client(
+      { name: "test", version: "0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL("http://localhost:3000/mcp"), {
+          fetch: (input, init) => fetch(new Request(input, init)),
+          authProvider: new ClientCredentialsProvider({ clientId: "host", clientSecret: "secret" }),
+        }),
+      );
+
+      const listed = await client.listTools();
+      const found = await client.callTool({ name: "search", arguments: { query: "effect" } });
+      const saved = await client.callTool({ name: "save", arguments: { text: "hi" } });
+
+      expect(listed.tools.map((tool) => tool.name)).toEqual(["search", "save"]);
+      expect(found.structuredContent).toEqual(["A public note about effect."]);
+      expect(saved.structuredContent).toBe("alice saved: hi");
+    } finally {
+      await client.close();
+    }
+
+    // Signed out, the listing and the public tool answer; the protected one's hook answers
+    // 401, on which the client signs in for the scope it names, then 403 naming the scope a
+    // write needs, on which it steps up. Each token is requested for this resource.
+    expect(log).toEqual([
+      "server/discover signed out: 200",
+      "tools/list signed out: 200",
+      "search signed out: 200",
+      "save signed out: 401",
+      "/.well-known/oauth-protected-resource/mcp signed out: 200",
+      "token notes:read for http://localhost:3000/mcp",
+      "save Bearer reader: 403",
+      "/.well-known/oauth-protected-resource/mcp signed out: 200",
+      "token notes:read notes:write for http://localhost:3000/mcp",
+      "save Bearer alice: 200",
+    ]);
+  });
+
+  it("still refuses a token that does not verify, on a public tool too, and decodes a protected tool's input first", async () => {
+    const { web } = deployment();
+
+    const forged = await web.handler(
+      mcpRequest({
+        method: "tools/call",
+        params: { name: "search", arguments: { query: "effect" } },
+        headers: { authorization: "Bearer forged" },
+      }),
+    );
+
+    expect(forged.status).toBe(401);
+    expect(forged.headers.get("www-authenticate")).toContain('error="invalid_token"');
+
+    // A signed-out caller reaches the protected tool's input decoding, before its hook.
+    const malformed = await web.handler(rawToolCall("save", { text: 1 }));
+
+    expect(malformed.status).toBe(200);
+    expect(await malformed.json()).toMatchObject({ result: { isError: true } });
+
+    const refused = await web.handler(rawToolCall("save", { text: "hi" }));
+
+    expect(refused.status).toBe(401);
+    expect(await refused.json()).toEqual(
+      Schema.encodeSync(Action.Unauthenticated)(
+        new Action.Unauthenticated({ message: "Sign in to use this tool." }),
+      ),
+    );
   });
 });

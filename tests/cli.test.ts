@@ -15,7 +15,6 @@ import {
   Runtime,
   Schema,
   SchemaGetter,
-  type Scope,
 } from "effect";
 import { TestConsole } from "effect/testing";
 import { CliError, Command, Flag, GlobalFlag } from "effect/cli";
@@ -30,10 +29,9 @@ import { clientLayer, serve } from "./serve.js";
 
 /** Run `command` with `args` on the test CLI services. */
 const exec = <Name extends string, Input, Context, E>(
-  command: Command.Command<Name, Input, Context, E, Scope.Scope>,
+  command: Command.Command<Name, Input, Context, E, never>,
   args: ReadonlyArray<string>,
-) =>
-  Effect.scoped(Command.runWith(command, { version: "0" })(args)).pipe(Effect.provide(cliServices));
+) => Command.runWith(command, { version: "0" })(args).pipe(Effect.provide(cliServices));
 
 const run = flow(exec, Effect.runPromise);
 
@@ -924,7 +922,7 @@ it("runs any action locally, scopes every invocation, and exposes aggregate subc
   let released = 0;
   const inputs: string[] = [];
 
-  // Bound to no HTTP or MCP adapter: the CLI still runs it.
+  // Bound to no HTTP or MCP surface: the CLI still runs it.
   const Local = Action.make("local", {
     description: "Runs locally",
     access: "write",

@@ -8,9 +8,9 @@ Installation, version pins, entry points, a minimal program, and package boundar
 pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
 ```
 
-| Need                           | Add                                  |
-| ------------------------------ | ------------------------------------ |
-| Node HTTP server or stdio host | `@effect/platform-node@4.0.0-rc.118` |
+| Need                                | Add                                  |
+| ----------------------------------- | ------------------------------------ |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@4.0.0-rc.118` |
 
 Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer; earlier versions are not
 supported. ESM only.

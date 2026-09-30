@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Latch, Layer, Option, Schema, type Scope, Stream } from "effect";
+import { Context, Effect, Latch, Layer, Option, Schema, Stream } from "effect";
 import { Command } from "effect/cli";
 import { McpServer } from "effect/ai";
 import { HttpRouter } from "effect/http";
@@ -338,15 +338,13 @@ describe("the pre-handler hook", () => {
 
     const call = (name: "read" | "write") =>
       Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const tools = yield* binding.toolkit;
+        Effect.gen(function* () {
+          const tools = yield* binding.toolkit;
 
-            return yield* Stream.runCollect(
-              yield* tools.handle(name, name === "write" ? { value: "x" } : {}),
-            );
-          }).pipe(Effect.provide(binding.layer), Effect.provide(readOnly)),
-        ),
+          return yield* Stream.runCollect(
+            yield* tools.handle(name, name === "write" ? { value: "x" } : {}),
+          );
+        }).pipe(Effect.provide(binding.layer), Effect.provide(readOnly)),
       );
 
     expect(await call("read")).toMatchObject([{ isFailure: false, result: "read ok" }]);
@@ -372,15 +370,13 @@ describe("the pre-handler hook", () => {
     const { app, hooks, handlers } = make();
 
     const run = <Name extends string, Input, Services, E>(
-      command: Command.Command<Name, Input, Services, E, Scope.Scope | Scopes>,
+      command: Command.Command<Name, Input, Services, E, Scopes>,
       argv: ReadonlyArray<string>,
     ) =>
       Effect.runPromise(
-        Effect.scoped(
-          logged(Command.runWith(command, { version: "0" })([...argv]).pipe(Effect.exit)).pipe(
-            Effect.provide(cliServices),
-            Effect.provide(readOnly),
-          ),
+        logged(Command.runWith(command, { version: "0" })([...argv]).pipe(Effect.exit)).pipe(
+          Effect.provide(cliServices),
+          Effect.provide(readOnly),
         ),
       );
 
@@ -535,13 +531,11 @@ describe("the pre-handler hook", () => {
     const tools = ActionToolkit.make(app);
 
     const returned = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const toolkit = yield* tools.toolkit;
+      Effect.gen(function* () {
+        const toolkit = yield* tools.toolkit;
 
-          return yield* Stream.runCollect(yield* toolkit.handle("poke", { value: "x" }));
-        }).pipe(Effect.provide(tools.layer)),
-      ),
+        return yield* Stream.runCollect(yield* toolkit.handle("poke", { value: "x" }));
+      }).pipe(Effect.provide(tools.layer)),
     );
 
     expect(returned).toMatchObject([
@@ -555,13 +549,11 @@ describe("the pre-handler hook", () => {
 
     // A local command fails with Effect CLI's `UserError`, whose cause it is.
     const [local] = await Effect.runPromise(
-      Effect.scoped(
-        logged(
-          Command.runWith(ActionCli.command(app, Poke), { version: "0" })(["--value", "x"]).pipe(
-            Effect.exit,
-          ),
-        ).pipe(Effect.provide(cliServices)),
-      ),
+      logged(
+        Command.runWith(ActionCli.command(app, Poke), { version: "0" })(["--value", "x"]).pipe(
+          Effect.exit,
+        ),
+      ).pipe(Effect.provide(cliServices)),
     );
 
     expect(causeOf(local)).toBeInstanceOf(RateLimited);

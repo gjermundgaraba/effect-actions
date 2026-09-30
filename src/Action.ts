@@ -414,8 +414,9 @@ const hookOf = (before: ErasedHook) =>
 /**
  * Bind handlers to contracts, behind a hook. Pass one action and its handler, or a list of
  * actions and a record of handlers keyed by action name. Either may instead be an Effect
- * that builds them: its services are startup requirements, resolved once however many
- * surfaces serve the result, while services a handler yields are per-request requirements.
+ * that builds them: its services are startup requirements, resolved once per layer graph
+ * however many surfaces serve the result, while services a handler yields are per-request
+ * requirements.
  *
  * `before` is the implementation's hook, which every surface serving it runs before each
  * handler: whether the caller may call. It is required: `Action.allowAll` says every caller
@@ -503,7 +504,7 @@ export function implement(
  * Serve some of `app`'s actions with its handlers, behind its hook, or `before` instead:
  * `share([Poll], users)` for a surface serving fewer actions, `share(actions, users,
  * trustAdmin)` for an admin CLI, `share([Poll], users, Action.allowAll)` for a public one.
- * The result shares `app`'s builder, which runs once per host build however many
+ * The result shares `app`'s builder, which runs once per layer graph however many
  * implementations share it; `before` may be built, as `implement`'s may. Per request, it owes
  * what `app`'s handlers owe for its actions, and what its hook owes, `app`'s or `before`'s.
  */
@@ -565,8 +566,8 @@ export function share(
 
 /**
  * The builders of `implementations`, as one layer providing nothing. Surfaces build them
- * themselves, but routes under `HttpRouter.serve` or `Testing.layer` are built apart from the
- * rest of the host's layers: provided above both, it runs each builder once for every
+ * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
+ * are built in a graph of their own: provided above both, it runs each builder once for every
  * surface, with the services it is given.
  */
 export function layer<const Apps extends Served>(

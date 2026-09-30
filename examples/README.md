@@ -35,8 +35,9 @@ by two `ActionHttp.layer` calls, the protected one with the authentication aroun
 binding decides what HTTP serves, so `listChanges`, which it leaves out, has no route, though
 `userActions` holds it. The `Users` builder runs once, though HTTP and MCP both serve
 `userActions`. An MCP endpoint is a single
-route, so authentication around it covers every tool. That is why the public tool has its own
-endpoint.
+route, so authentication around it covers every tool: the public tool has an endpoint of its
+own, which keeps the protected tools unlisted to signed-out callers.
+[mcp-sign-in.ts](mcp-sign-in.ts) serves both kinds from one URL instead.
 The OpenAPI document (`/api/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`, which states the bearer scheme on every
 route but `status`.
@@ -90,10 +91,10 @@ For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with
 
 Without a token, a protected route or the `/mcp` endpoint answers 401
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
-`WWW-Authenticate: Bearer resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"`;
-with an unknown one, the message is `Unknown demo token.`. An MCP client then finds the
-authorization server at that URL, which
-is public.
+`WWW-Authenticate: Bearer scope="users:read", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"`;
+with an unknown one, the message is `Unknown demo token.`, and the challenge also names
+`error="invalid_token"` first. An MCP client then finds the authorization server at that URL,
+which is public.
 
 ## Application structure
 
@@ -108,6 +109,7 @@ is public.
 - [authentication-tenant.ts](authentication-tenant.ts): authentication combined with other middleware, not served by the app: a verifier built once at startup, each request's tenant from middleware combined before it, and middleware reading the identity combined after it.
 - [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the protected MCP endpoints.
+- [mcp-sign-in.ts](mcp-sign-in.ts): one MCP URL for signed-out and signed-in callers, not served by the app: an optional identity, a public tool, and a protected one whose hook answers a signed-out caller with the 401 an MCP client signs in on.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
 - [app.ts](app.ts): every surface of the host, under that policy.
 - [server.ts](server.ts): the Node HTTP server, its request body limit, and shutdown handling.
@@ -119,7 +121,8 @@ is public.
 ```text
 HTTP /api/getUser / MCP tool getUser
   → the authentication around the route provides CurrentActor
-  → the surface decodes input (invalid input is a 400 InvalidInput; the hook and handler never run)
+  → the surface decodes input (invalid input is a 400 InvalidInput over HTTP and an isError
+    result over MCP; the hook and handler never run)
   → before hook reads access: "read" and checks users:read
   → handler calls Users.get(actor.tenantId, id)
   → the surface encodes the user or the declared error
@@ -170,14 +173,15 @@ use `--help` for their options. Each prints its result on stdout, and a failure 
 the JSON HTTP sends, such as `{"_tag":"UserNotFound","id":"9"}` for `get-user --id 9`.
 [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
-stdout for JSON-RPC and routes Effect logs to stderr, those of services provided around
-`runStdio` through `Logger.LogToStderr`.
+stdout for JSON-RPC: `runStdio` writes its program's Effect logs and `Console` output to
+stderr, and `Logger.LogToStderr` moves the default logger there for the layers provided
+around it. Keep the global `console.log` and other direct writes off stdout.
 
 [toolkit.ts](toolkit.ts) prints a native Toolkit result.
 [mcp-browser.ts](mcp-browser.ts) exports public stateless MCP routes with an explicit Origin
 allowlist and separate router CORS configuration; mount them with a platform server.
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
-authorization hook and a per-invocation principal.
+authorization hook and the caller's identity provided per invocation.
 [toolkit-approval.ts](toolkit-approval.ts) asks a model's caller to approve its writes, one
 check over every call reading the call and the caller.
 Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-memory HTTP and

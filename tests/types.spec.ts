@@ -579,7 +579,7 @@ export const builtInErrorTypes = Effect.gen(function* () {
     .pipe(Effect.catchTag("Unrelated", () => Effect.succeed(0)));
 });
 
-export const configuredAdapterTypes = () => {
+export const configuredSurfaceTypes = () => {
   const Bound = ActionHttp.make(Actions, { prefix: "/rpc" });
   // @ts-expect-error A configured binding must preserve acquisition requirements.
   HttpRouter.toWebHandler(ActionHttp.layer(Bound, App).pipe(services));
@@ -688,7 +688,7 @@ export const layerTypes = () => {
     Context.add(CurrentActor, { id: "alice", tenantId: "acme", permissions: [] }),
   );
 
-  // Checked per adapter: over a union of both, one's requirements would hide the other's absence.
+  // Checked per surface: over a union of both, one's requirements would hide the other's absence.
   const mergedHttp = HttpRouter.toWebHandler(
     Layer.mergeAll(ActionHttp.layer(Both, App), ActionHttp.layer(Both, billingApp)).pipe(
       Layer.provide(Users.layerMemory),
@@ -711,7 +711,7 @@ export const layerTypes = () => {
   void mergedMcp.handler(new Request("http://localhost"), Context.make(Tenant, "acme"));
   void mergedMcp.handler(new Request("http://localhost"), both);
 
-  // Implementing inline must not let the adapter's parameter type erase requirements.
+  // Implementing inline must not let the surface's parameter type erase requirements.
   const inline = HttpRouter.toWebHandler(
     ActionHttp.layer(
       ActionHttp.make([Invoice]),

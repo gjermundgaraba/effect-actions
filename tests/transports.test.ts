@@ -240,7 +240,7 @@ describe("one implementation, both transports", () => {
     expect((await app.handler(crossOrigin)).status).toBe(403);
   });
 
-  it("uses the documented HTTP input error statuses", async () => {
+  it("uses the documented input error statuses, on HTTP routes and the MCP endpoint", async () => {
     const malformed = new Request(request("/api/double", "alice", {}), {
       method: "POST",
       body: "{",
@@ -251,6 +251,31 @@ describe("one implementation, both transports", () => {
 
     expect((await app.handler(malformed)).status).toBe(400);
     expect((await app.handler(wrongType)).status).toBe(415);
+
+    // The MCP endpoint answers invalid JSON with a JSON-RPC parse error, and a request not
+    // typed as JSON with an empty 415.
+    const call = mcpRequest({
+      method: "tools/call",
+      params: { name: "double", arguments: { value: "21" } },
+      headers: { authorization: "Bearer alice" },
+    });
+
+    const unparsed = await app.handler(new Request(call, { method: "POST", body: "{" }));
+    expect(unparsed.status).toBe(200);
+    expect(await unparsed.json()).toMatchObject({ error: { code: -32700 } });
+
+    for (const type of ["text/plain", undefined]) {
+      const untyped = new Request(call, {
+        method: "POST",
+        body: new Blob([await call.clone().text()]),
+      });
+
+      if (type === undefined) untyped.headers.delete("content-type");
+      else untyped.headers.set("content-type", type);
+
+      const refused = await app.handler(untyped);
+      expect([refused.status, await refused.text()]).toEqual([415, ""]);
+    }
   });
 
   it("derives OpenAPI request/response contracts, including declared errors", async () => {

@@ -11,17 +11,17 @@ import type { Refusal } from "./errors.js";
  */
 export const uniqueKey = (): string => Math.random().toString(36).slice(2);
 
-/** Decoded values at the adapter dispatch boundary. */
+/** Decoded values at the dispatch boundary every surface shares. */
 export type ErasedValue = Action.Any["input"]["Type"];
 
-// Method extraction intentionally makes the argument bivariant. An adapter
+// Method extraction intentionally makes the argument bivariant. A surface
 // selects the action before it invokes a handler, so its decoded input is the
 // matching handler input; handlers must not be widened at their public API.
 export type ErasedHandler<R> = {
   handle(input: ErasedValue): Effect.Effect<ErasedValue, ErasedValue, R>;
 }["handle"];
 
-/** An adapter's erased view of a record of handlers, keyed by action name. */
+/** A surface's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
 /** The errors the actions `A` declare: each action's, in turn. */
@@ -91,8 +91,8 @@ export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>
 
 /**
  * What a layer builds once per layer graph, under a key private to it: an implementation's
- * handlers, or its hook. Effect memoizes a layer by reference within one build of the host's
- * layers, so everything holding this one shares one run.
+ * handlers, or its hook. Effect memoizes a layer by reference within one layer graph, so
+ * everything in the graph holding this one shares one run.
  */
 export interface Memoized<S, E, R> {
   readonly key: Context.Key<S, S>;
@@ -175,8 +175,8 @@ export class Implementation<
 
   /**
    * The builders of `app`, its handlers' and its hook's, as a layer. Effect memoizes each
-   * by reference within one build of the host's layers, so every adapter serving `app`, and
-   * every implementation sharing its builder, shares one run. Static, so it stays off the
+   * by reference within one layer graph, so every surface serving `app` there, and every
+   * implementation sharing its builder, shares one run. Static, so it stays off the
    * public instance type.
    */
   static layerOf(app: AnyImplementation): Layer.Layer<Bound | ErasedBefore, unknown, unknown> {
@@ -276,7 +276,7 @@ export const servedActions = (
 
 /**
  * Provide `layer` the handlers of `apps`. Each implementation's layer is memoized, so its
- * builder runs once per host build however many adapters serve it.
+ * builder runs once per layer graph however many surfaces serve it.
  */
 export const provideHandlers =
   (apps: ReadonlyArray<AnyImplementation>) =>

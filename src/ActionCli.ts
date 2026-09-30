@@ -145,8 +145,8 @@ const project = (
  * HTTP through its `ActionHttp.client` method, on the host's `HttpClient`, and fails as the
  * method does. From implementations, it runs the handler in process, behind its
  * implementation's `before` hook, and needs what its handler, hook and builder need; the
- * host provides the identity. Its stdout is the result; a failure is a `Failure`, which
- * `Command.run` prints on stderr.
+ * host provides the identity. It prints the result on stdout; a failure is a `Failure`,
+ * which `Command.run` prints on stderr.
  */
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,

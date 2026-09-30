@@ -5,8 +5,8 @@ import { double, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-// An MCP endpoint is one route, so authentication covers all of its tools: a public
-// tool gets an endpoint of its own.
+// An MCP endpoint is one route, so authentication covers all of its tools. The public tool
+// gets an endpoint of its own, which keeps the protected tools unlisted to signed-out callers.
 const publicMcp = ActionMcp.layerHttp(status, {
   name: "effect-actions-public",
   version: "0.0.0",

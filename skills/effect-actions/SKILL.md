@@ -3,6 +3,9 @@ name: effect-actions
 description: >
   Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
   which defines Effect action contracts once for HTTP, MCP, native Toolkits, and CLIs.
+  These pages follow the repository's main branch, which can be ahead of the latest
+  release; where the package is installed, read the same pages in
+  node_modules/@gjermundgaraba/effect-actions/docs/, which describe the installed version.
 ---
 
 # effect-actions reference
@@ -18,21 +21,22 @@ Package facts that apply everywhere:
 
 - Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
 - The `effect` peer accepts any 4.0 release candidate from `4.0.0-rc.118` on (`>=4.0.0-rc.118 <4.0.0`). The package is built and tested against `4.0.0-rc.118`.
-- Action contracts are pure values. Defining contracts and implementations runs neither handlers nor builder Effects. Builder services are acquired when a layer is built or a local CLI command runs; see [dependency lifetimes](guarantees.md#dependency-lifetimes).
+- Action contracts are pure values. Defining contracts and implementations runs neither handlers nor builder Effects. Builder services are acquired when a layer is built, an `Action.client` is acquired, or a local CLI command runs; see [dependency lifetimes](guarantees.md#dependency-lifetimes).
 
 ## Pages
 
-| Read                                   | When you need to                                                                                          |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries    |
-| [Action.md](Action.md)                 | define a contract (input, success, errors, access, hints), bind its handler and hook, built-in errors     |
-| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                             |
-| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                              |
-| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                          |
-| [Authentication.md](Authentication.md) | authenticate the callers of HTTP surfaces, refuse with 401/403, publish RFC 9728 discovery                |
-| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                |
-| [guarantees.md](guarantees.md)         | cross-cutting rules: builder lifetimes, wire formats, spans, request context, scope                       |
+| Read                                   | When you need to                                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                         |
+| [Action.md](Action.md)                 | define a contract, bind its handler and hook, use built-in errors, call or test implementations in process (`Action.client`)   |
+| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                      |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                  |
+| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                   |
+| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                               |
+| [Authentication.md](Authentication.md) | authenticate HTTP surfaces' callers, refuse with 401/403, publish RFC 9728 discovery, let signed-out callers share one MCP URL |
+| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                     |
+| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                  |
+| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                   |
 
 ## Choose a surface
 
