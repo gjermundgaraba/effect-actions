@@ -1,6 +1,7 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { type HttpApiClient, OpenApi } from "effect/http-api";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
@@ -56,7 +57,12 @@ const served = await Effect.gen(function* () {
   const called = yield* mcp.greet({ name: "Ada" });
   const listed = yield* Testing.mcpRequest("tools/list");
 
-  return { greeting, called, listed: listed.status };
+  const raw = yield* Testing.mcpRequest("tools/call", {
+    name: "greet",
+    arguments: { name: "Ada" },
+  });
+
+  return { greeting, called, listed: listed.status, raw: yield* raw.text };
 }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
 if (served.greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${served.greeting}`);
@@ -64,6 +70,47 @@ if (served.greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${s
 if (served.called !== "Hello, Ada!") throw new Error("MCP tool call failed");
 
 if (served.listed !== 200) throw new Error("MCP request failed");
+
+// A tool sends its encoded success itself as structured content.
+if (!served.raw.includes('"structuredContent":"Hello, Ada!"'))
+  throw new Error(`Unexpected MCP result: ${served.raw}`);
+
+const Page = Action.make("page", {
+  description: "Read a page",
+  access: "read",
+  success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
+});
+
+const page = Action.implement(Page, () => Effect.succeed({ markdown: "# Page", next: "2" }));
+
+const tools = { page: { text: "markdown" } } as const;
+
+const checkMcpTypes = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps) => {
+  // @ts-expect-error Published tool options name a string field of the success.
+  ActionMcp.layerHttp(page, { name: "pages", version: "0", tools: { page: { text: "body" } } });
+
+  // A helper's own type parameter spread beside its implementation keeps that entry typed.
+  ActionMcp.layerHttp([...apps, page], { name: "pages", version: "0", tools });
+};
+
+void checkMcpTypes;
+
+// The text field is sent raw, and a client given the same `tools` puts it back.
+const texts = await Effect.gen(function* () {
+  const mcp = yield* Testing.mcpClient([Page], { tools });
+  const raw = yield* Testing.mcpRequest("tools/call", { name: "page", arguments: {} });
+
+  return { read: yield* mcp.page(), raw: yield* raw.text };
+}).pipe(
+  Effect.provide(Testing.layer(ActionMcp.layerHttp(page, { name: "pages", version: "0", tools }))),
+  Effect.runPromise,
+);
+
+if (texts.read.markdown !== "# Page" || texts.read.next !== "2")
+  throw new Error("Published text field lost the page");
+
+if (!texts.raw.includes('"content":[{"type":"text","text":"# Page"},'))
+  throw new Error(`Published text field was not sent raw: ${texts.raw}`);
 
 /** The status of a GET to `url`, answered in memory by `Testing.layer`. */
 const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>

@@ -1,8 +1,10 @@
-// Compile-only assertions on the input MCP serves, included by `vp check`: one object with
-// keys. `layerHttp` and `runStdio` refuse any other, naming its actions.
+// Compile-only assertions, included by `vp check`, on what MCP serves: input that is one
+// object with keys, which `layerHttp` and `runStdio` refuse otherwise, naming its actions;
+// and the `tools` they and `Testing.mcpClient` take.
 import { Effect, Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as Testing from "../src/Testing.js";
 import type { Equal } from "./equal.js";
 
 const options = { name: "t", version: "0" };
@@ -163,3 +165,112 @@ ActionMcp.layerHttp(debug ? [...served, scalar] : served, options);
 
 // @ts-expect-error No choice's input is one object with keys.
 ActionMcp.layerHttp(debug ? [scalar] : [array], options);
+
+// `tools` names served actions, and a tool's `text` a top-level string field of its
+// action's encoded success, an optional one too.
+const Page = Action.make("page", {
+  ...read,
+  success: {
+    markdown: Schema.String,
+    words: Schema.Finite,
+    note: Schema.optionalKey(Schema.String),
+  },
+});
+
+// Each member has `body`, but the union's JSON Schema has no top-level property.
+const Either = Action.make("either", {
+  ...read,
+  success: Schema.Union([
+    Schema.Struct({ body: Schema.String, kind: Schema.Literal("a") }),
+    Schema.Struct({ body: Schema.String, kind: Schema.Literal("b") }),
+  ]),
+});
+
+const Scalar = Action.make("text", { ...read, success: Schema.String });
+
+const Dictionary = Action.make("dictionary", {
+  ...read,
+  success: Schema.Record(Schema.String, Schema.String),
+});
+
+// A struct with rest: its declared field is a top-level property, its record's keys are not.
+const Rest = Action.make("rest", {
+  ...read,
+  success: Schema.StructWithRest(Schema.Struct({ markdown: Schema.String }), [
+    Schema.Record(Schema.String, Schema.String),
+  ]),
+});
+
+const pages = Action.implement([Page, Either, Scalar, Dictionary, Rest], {
+  page: () => Effect.succeed({ markdown: "", words: 0 }),
+  either: () => Effect.succeed({ body: "", kind: "a" as const }),
+  text: () => Effect.succeed(""),
+  dictionary: () => Effect.succeed({}),
+  rest: () => Effect.succeed({ markdown: "" }),
+});
+
+ActionMcp.layerHttp(pages, { ...options, tools: { page: { text: "markdown" } } });
+
+ActionMcp.runStdio(pages, { ...options, tools: { page: { text: "note" } } });
+
+// @ts-expect-error `words` is a number.
+ActionMcp.layerHttp(pages, { ...options, tools: { page: { text: "words" } } });
+
+// @ts-expect-error The success has no such field.
+ActionMcp.layerHttp(pages, { ...options, tools: { page: { text: "missing" } } });
+
+// @ts-expect-error No served action has that name.
+ActionMcp.layerHttp(pages, { ...options, tools: { other: { text: "markdown" } } });
+
+// @ts-expect-error A union of structs has no field of its own.
+ActionMcp.layerHttp(pages, { ...options, tools: { either: { text: "body" } } });
+
+// @ts-expect-error A string success has no fields.
+ActionMcp.runStdio(pages, { ...options, tools: { text: { text: "length" } } });
+
+// @ts-expect-error Nor has a record a field of its own.
+ActionMcp.layerHttp(pages, { ...options, tools: { dictionary: { text: "body" } } });
+
+ActionMcp.layerHttp(pages, { ...options, tools: { rest: { text: "markdown" } } });
+
+// @ts-expect-error A key only the rest allows is no declared field.
+ActionMcp.layerHttp(pages, { ...options, tools: { rest: { text: "extra" } } });
+
+/** The tool options `tools` accepts for the actions `A`, by name. */
+type ToolsOf<A extends Action.Any> = NonNullable<ActionMcp.Options<A>["tools"]>;
+
+const texts: [
+  Equal<NonNullable<ToolsOf<typeof Page>["page"]>["text"], "markdown" | "note" | undefined>,
+  Equal<NonNullable<ToolsOf<typeof Either>["either"]>["text"], undefined>,
+  Equal<NonNullable<ToolsOf<typeof Dictionary>["dictionary"]>["text"], undefined>,
+  // The types cannot read an erased success: any name, which the layer build checks.
+  Equal<NonNullable<ToolsOf<Action.Any>[string]>["text"], string | undefined>,
+] = [true, true, true, true];
+
+void texts;
+
+// `Testing.mcpClient` takes the endpoint's `tools`, typed alike.
+Testing.mcpClient([Page], { tools: { page: { text: "markdown" } } });
+
+// @ts-expect-error `words` is a number.
+Testing.mcpClient([Page], { tools: { page: { text: "words" } } });
+
+// A helper's own type parameter spread beside its own implementations: `tools` checks the
+// entries of the helper's actions, and leaves any other name to the call and the layer build.
+export const serveWithPages = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(
+  apps: Apps,
+) => ActionMcp.layerHttp([...apps, pages], { ...options, tools: { page: { text: "markdown" } } });
+
+export const serveWithWords = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(
+  apps: Apps,
+) =>
+  // @ts-expect-error `words` is a number.
+  ActionMcp.layerHttp([...apps, pages], { ...options, tools: { page: { text: "words" } } });
+
+// So does `Testing.mcpClient`'s, for a helper's actions spread beside its own.
+export const pagesClient = <const Actions extends ReadonlyArray<Action.Any>>(actions: Actions) =>
+  Testing.mcpClient([...actions, Page], { tools: { page: { text: "markdown" } } });
+
+export const wordsClient = <const Actions extends ReadonlyArray<Action.Any>>(actions: Actions) =>
+  // @ts-expect-error `words` is a number.
+  Testing.mcpClient([...actions, Page], { tools: { page: { text: "words" } } });

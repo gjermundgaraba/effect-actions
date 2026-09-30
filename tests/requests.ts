@@ -37,6 +37,9 @@ export const mcpRequest = ({
   });
 };
 
-/** A raw `tools/call` request, for tests that assert the wire envelope `Testing.mcpClient` removes. */
+/**
+ * A raw `tools/call` request, for tests asserting on the JSON-RPC response as sent: the tool
+ * result's fields and content blocks, which `Testing.mcpClient` decodes away.
+ */
 export const rawToolCall = (name: string, args: Schema.Json = {}): Request =>
   mcpRequest({ method: "tools/call", params: { name, arguments: args } });

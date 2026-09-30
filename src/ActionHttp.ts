@@ -226,9 +226,10 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   );
 
   // The one native group is top level, so its client methods are not nested. Its name
-  // is its OpenAPI tag, and `HttpApi.addHttpApi` keys groups by it, so it is the mount
-  // path, `/` at the root, which no segment contains: two bindings on different prefixes
-  // combine side by side, when no action name, and so no operation ID, repeats across them.
+  // is its OpenAPI tag, and the native `addHttpApi` method keys groups by it, so it is
+  // the mount path, `/` at the root, which no segment contains: two bindings on different
+  // prefixes combine side by side, when no action name, and so no operation ID, repeats
+  // across them.
   const api = apiOf(mount.join("/") || "/", endpoints);
 
   return { actions, errors, api };

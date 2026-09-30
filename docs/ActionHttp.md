@@ -193,9 +193,9 @@ elsewhere, give `baseUrl`.
 - The binding is plain data: `layer` and `client` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
 - Middleware, authentication included, is per layer call: provided to a `layer` call, it covers that call's routes, before decoding, and no others. Public and authenticated actions go in separate `layer` calls over the same binding, merged with `Layer.mergeAll`; they still share one binding, one document and one client.
 - The hook, builders, request-time services and headers follow [guarantees.md](guarantees.md): `ActionHttp` itself sets no header.
-- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `HttpApi.addHttpApi` to combine with other APIs, `HttpApiClient.make`.
+- `Http.api` is a plain `HttpApi`. Anything Effect can do with an `HttpApi` works: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `Http.api.addHttpApi(other)` to combine with other APIs, `HttpApiClient.make`.
 - The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`.
-- Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them. An operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
+- Bindings combine into one host API with the native `addHttpApi` method, `HttpApi.make("app").addHttpApi(Http.api)`, for one document or one native client, only when their prefixes differ and no action name repeats across them. An operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
 - Serve the OpenAPI document as a native route: `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
 - A route runs only a request typed as JSON: any other type, or none, is a 415, as on an MCP endpoint. So no request a page on another origin can send without a CORS preflight reaches a handler, whatever credentials, cookies included, it carries; one typed as JSON is preflighted, and the host's CORS policy decides.
 - Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
@@ -241,8 +241,8 @@ elsewhere, give `baseUrl`.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.
 - Type error listing `HttpRouter.Request.From<"Requires", CurrentActor>` as unsatisfied: a handler or the hook yields a request service that no middleware around the layer provides. Provide the authentication around it, `layer.pipe(Layer.provide(authenticate))` ([Authentication.md](Authentication.md)), or other router middleware.
-- 400 `InvalidInput` on a valid-looking request: its `message` names each field that did not decode. An action without input takes only `{}`, and a body.
-- 415: the request is not typed as JSON. It has another content type, such as `fetch`'s default `text/plain` for a string body, or none, as for a `Blob` body. Send `Content-Type: application/json`, as the clients do.
+- 400 `InvalidInput` on a valid-looking request: its `message` names each field that did not decode, or that the action does not declare, such as a misspelling. An action without input takes only `{}`, and a body.
+- 415 `Unsupported content-type: <type>` (`none` when it has none): the request is not typed as JSON. It has another content type, such as `fetch`'s default `text/plain` for a string body, or none, as for a `Blob` body. Send `Content-Type: application/json`, as the clients do.
 - Empty 500: a defect, or a handler result that does not match the success schema. The cause is in the server's logs.
 
 ### Client methods

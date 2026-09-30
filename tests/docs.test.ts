@@ -149,6 +149,6 @@ it("serves browser preflight and MCP calls with the documented CORS configuratio
   expect(response.status).toBe(200);
   expect(response.headers.get("access-control-allow-origin")).toBe("https://ui.example.com");
   expect(await response.json()).toMatchObject({
-    result: { structuredContent: { value: "Hello, Ada!" } },
+    result: { structuredContent: "Hello, Ada!" },
   });
 });

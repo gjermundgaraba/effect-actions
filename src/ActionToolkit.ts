@@ -90,7 +90,7 @@ export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const suffix = uniqueKey();
 
   // A model speaks JSON: each tool takes and gives the JSON encoding its schema advertises,
-  // as an MCP tool does, without MCP's envelope. Handlers and callers see decoded values.
+  // as an MCP tool does, the whole success. Handlers and callers see decoded values.
   const { toolkit, layer } = bindTools(served, {
     label: "tool",
     tool: (action, errors) =>

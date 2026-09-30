@@ -50,7 +50,7 @@ const mcpAs = (token?: string) =>
   Testing.mcpClient([GetUser, RenameUser, Double, WhoAmI], as(token));
 
 describe("mcpClient", () => {
-  it("encodes the input and decodes the success, without the `{ value }` envelope", async () => {
+  it("encodes the input and decodes the success from the structured content", async () => {
     const results = await againstHost(
       Effect.gen(function* () {
         const mcp = yield* mcpAs();
@@ -322,7 +322,7 @@ describe("mcpClient", () => {
   const reply = {
     jsonrpc: "2.0",
     id: 1,
-    result: { content: [], structuredContent: { value: [1, 2] } },
+    result: { content: [{ type: "text", text: "[1,2]" }], structuredContent: [1, 2] },
   };
 
   /** `Listed` against a route answering `body` with `contentType`. */
@@ -394,6 +394,21 @@ describe("mcpRequest", () => {
     expect(refused.headers["www-authenticate"]).toContain('error="insufficient_scope"');
 
     expect(unknown.error.message).toContain("missing");
+  });
+
+  it("answers a JSON body its parsed message reproduces, less the final newline", async () => {
+    const text = await againstHost(
+      Effect.flatMap(
+        Testing.mcpRequest(
+          "tools/call",
+          { name: "double", arguments: { value: "21" } },
+          headersAs(),
+        ),
+        (response) => response.text,
+      ),
+    );
+
+    expect(`${JSON.stringify(JSON.parse(text))}\n`).toBe(text);
   });
 });
 

@@ -2,12 +2,15 @@ import { spawnSync } from "node:child_process";
 import { format } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Console, Effect, Stdio } from "effect";
+import { Console, Effect, Predicate, Schema, Stdio } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { everyConsoleMethod } from "./console-methods.js";
+import { rawToolCall } from "./requests.js";
+import { serve } from "./serve.js";
+import { converse } from "./stdio-host.js";
 
 /** A client of a stdio server in a real subprocess, speaking only `revision`. */
 const connect = async (revision: string, script = "examples/mcp-stdio.ts") => {
@@ -49,11 +52,11 @@ describe("MCP stdio example", () => {
         const called = await client.callTool({ name: "status", arguments: {} });
         const [text] = called.content.map((part) => (part.type === "text" ? part.text : ""));
 
-        // Every revision reads the same `{ value }` text; 2025-06-18 on also structures it.
+        // Every revision reads the success's JSON as text; 2025-06-18 on also structures it.
         expect(called.isError).toBe(false);
-        expect(JSON.parse(text ?? "")).toEqual({ value: { ready: true } });
+        expect(JSON.parse(text ?? "")).toEqual({ ready: true });
         expect(called.structuredContent).toEqual(
-          revision >= "2025-06-18" ? { value: { ready: true } } : undefined,
+          revision >= "2025-06-18" ? { ready: true } : undefined,
         );
 
         // Invalid arguments are a tool error from 2025-11-25 on, and a protocol error before.
@@ -131,6 +134,195 @@ describe("MCP stdio example", () => {
 
     expect(run.status).toBe(0);
   }, 30_000);
+});
+
+describe("runStdio's successes", () => {
+  const read = { description: "Succeeds with one kind of JSON value", access: "read" } as const;
+
+  const Ready = Action.make("ready", { ...read, success: { ready: Schema.Boolean } });
+  const Count = Action.make("count", { ...read, success: Schema.Finite });
+  const Greeting = Action.make("greeting", { ...read, success: Schema.String });
+  const List = Action.make("list", { ...read, success: Schema.Array(Schema.Finite) });
+  const Reset = Action.make("reset", read);
+
+  const shapes = Action.implement([Ready, Count, Greeting, List, Reset], {
+    ready: () => Effect.succeed({ ready: true }),
+    count: () => Effect.succeed(42),
+    greeting: () => Effect.succeed('say "hi"'),
+    list: () => Effect.succeed([1, 2]),
+    reset: () => Effect.void,
+  });
+
+  // Each tool's encoded success: an object, a number, a string, an array and `null`.
+  const successes = [
+    ["ready", { ready: true }],
+    ["count", 42],
+    ["greeting", 'say "hi"'],
+    ["list", [1, 2]],
+    ["reset", null],
+  ] as const;
+
+  const Listed = Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        tools: Schema.Array(
+          Schema.Struct({ name: Schema.String, outputSchema: Schema.optionalKey(Schema.Json) }),
+        ),
+      }),
+    }),
+  );
+
+  const Called = Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        isError: Schema.Boolean,
+        structuredContent: Schema.optionalKey(Schema.Json),
+        content: Schema.Array(Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })),
+      }),
+    }),
+  );
+
+  // The tools whose success a revision structures, and lists an output schema for: every
+  // one on 2026-07-28; only the object on the 2025 revisions with structured content; none
+  // before them.
+  it.each([
+    ["2026-07-28", ["ready", "count", "greeting", "list", "reset"]],
+    ["2025-11-25", ["ready"]],
+    ["2025-06-18", ["ready"]],
+    ["2025-03-26", []],
+    ["2024-11-05", []],
+  ] as const)("sends each success as it is to a %s host", async (revision, structured) => {
+    const [listed, ...called] = await converse(
+      ActionMcp.runStdio(shapes, { name: "shapes", version: "0" }),
+      revision,
+      [
+        { method: "tools/list" },
+        ...successes.map(([name]) => ({ method: "tools/call", params: { name, arguments: {} } })),
+      ],
+    );
+
+    const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+    const listing = tools.filter(({ outputSchema }) => outputSchema !== undefined);
+
+    expect(listing.map(({ name }) => name)).toEqual(structured);
+
+    for (const [index, [name, success]] of successes.entries()) {
+      const { result } = Schema.decodeUnknownSync(Called)(called[index]);
+      const isStructured = structured.some((tool) => tool === name);
+
+      expect(result.isError).toBe(false);
+
+      if (isStructured) {
+        expect(result.structuredContent).toEqual(success);
+      } else {
+        expect(result).not.toHaveProperty("structuredContent");
+      }
+
+      // The text is the success's JSON; a string sent as text alone is the string itself.
+      expect(result.content).toEqual([
+        {
+          type: "text",
+          text: !isStructured && Predicate.isString(success) ? success : JSON.stringify(success),
+        },
+      ]);
+    }
+  });
+
+  it("adds serverInfo and resultType to a 2026-07-28 result, over stdio as over HTTP, and neither before", async () => {
+    // The server information, as given; `instructions` is not part of it.
+    const serverInfo = {
+      name: "shapes",
+      version: "0",
+      description: "Every kind of success",
+      websiteUrl: "https://example.com",
+      icons: [{ src: "https://example.com/icon.png" }],
+    };
+
+    const options = { ...serverInfo, instructions: "Call any tool." };
+    const stdio = ActionMcp.runStdio(shapes, options);
+    const call = [{ method: "tools/call", params: { name: "ready", arguments: {} } }];
+    const [current = ""] = await converse(stdio, "2026-07-28", call);
+    const [earlier = ""] = await converse(stdio, "2025-11-25", call);
+    const http = await serve(ActionMcp.layerHttp(shapes, options)).handler(rawToolCall("ready"));
+
+    const own = {
+      isError: false,
+      structuredContent: { ready: true },
+      content: [{ type: "text", text: '{"ready":true}' }],
+    };
+
+    expect(JSON.parse(current)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        _meta: { "io.modelcontextprotocol/serverInfo": serverInfo },
+        resultType: "complete",
+        ...own,
+      },
+    });
+    expect((await http.text()).trimEnd()).toBe(current);
+    expect(JSON.parse(earlier)).toEqual({ jsonrpc: "2.0", id: 1, result: own });
+  });
+});
+
+describe("runStdio's input schemas", () => {
+  const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
+
+  const Put = Action.make("put", {
+    description: "Store an item",
+    access: "write",
+    input: { item: Item },
+  });
+
+  const put = Action.implement(Put, () => Effect.void);
+
+  const Listed = Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        tools: Schema.Array(Schema.Struct({ inputSchema: Schema.JsonObject })),
+      }),
+    }),
+  );
+
+  const open = {
+    type: "object",
+    properties: { item: { $ref: "#/$defs/Item" } },
+    required: ["item"],
+  };
+
+  const closed = {
+    ...open,
+    additionalProperties: false,
+    $defs: {
+      Item: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  // Closed, with the definitions its references name, from 2025-06-18 on. Effect's adapters for
+  // the revisions before list only the root's type, properties and required: open, and with a
+  // reference that resolves nowhere.
+  it.each([
+    ["2026-07-28", closed],
+    ["2025-11-25", closed],
+    ["2025-06-18", closed],
+    ["2025-03-26", open],
+    ["2024-11-05", open],
+  ] as const)("lists the input schema to a %s host", async (revision, schema) => {
+    const [listed] = await converse(
+      ActionMcp.runStdio(put, { name: "items", version: "0" }),
+      revision,
+      [{ method: "tools/list" }],
+    );
+
+    const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+
+    expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([schema]);
+  });
 });
 
 /** A host console recording every call, by method. */

@@ -96,7 +96,7 @@ it("builds an implementation once per host build, however many adapters serve it
         async (client) => {
           expect(
             (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-          ).toEqual({ value: "build/mcp" });
+          ).toBe("build/mcp");
         },
       );
       expect(acquired).toBe(runtime);
@@ -181,9 +181,9 @@ it("builds a shared implementation with one set of startup services, not one per
   const http = await (await web.handler(post("/api/identity"))).json();
 
   await withMcpClient({ fetch: web.handler }, async (client) => {
-    expect((await client.callTool({ name: "identity", arguments: {} })).structuredContent).toEqual({
-      value: http,
-    });
+    expect((await client.callTool({ name: "identity", arguments: {} })).structuredContent).toBe(
+      http,
+    );
   });
 });
 
@@ -277,9 +277,9 @@ it("keeps same-contract implementations apart over MCP", async () => {
 
   for (const name of ["a", "b", "a"]) {
     await withMcpClient({ fetch: web.handler, path: `/${name}` }, async (client) => {
-      expect(
-        (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-      ).toEqual({ value: name });
+      expect((await client.callTool({ name: "identity", arguments: {} })).structuredContent).toBe(
+        name,
+      );
     });
   }
 });
@@ -411,7 +411,7 @@ it.each(["HTTP", "MCP"])(
       expect(await response.json()).toBe("request");
     } else {
       expect(await response.json()).toMatchObject({
-        result: { structuredContent: { value: "request" } },
+        result: { structuredContent: "request" },
       });
     }
   },

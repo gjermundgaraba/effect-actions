@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
-import { LanguageModel, Tool, Toolkit } from "effect/ai";
+import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 
@@ -166,6 +166,68 @@ describe("ActionToolkit", () => {
       { result: notFound, encodedResult: Schema.encodeSync(NotFound)(notFound) },
     ]);
     expect(result[0]?.isFailure).toBe(true);
+  });
+
+  it("returns arguments that do not decode as a parameter failure, running neither hook nor handler", async () => {
+    const ran: string[] = [];
+
+    const Echo = Action.make("echo", {
+      description: "Echo a number.",
+      access: "read",
+      input: { value: Schema.Finite },
+      success: Schema.Finite,
+    });
+
+    const binding = ActionToolkit.make(
+      Action.implement(
+        Echo,
+        ({ value }) => Effect.sync(() => (ran.push("handler"), value)),
+        () => Effect.sync(() => void ran.push("hook")),
+      ),
+    );
+
+    const [returned] = await Effect.runPromise(
+      Effect.scoped(
+        Effect.flatMap(binding.toolkit, (tools) =>
+          Effect.flatMap(tools.handle("echo", { value: "one" }), Stream.runCollect),
+        ).pipe(Effect.provide(binding.layer)),
+      ),
+    );
+
+    expect(returned).toMatchObject({ isFailure: true, failureOrigin: "parameters" });
+    expect(AiError.isAiError(returned?.result) && returned.result.reason._tag).toBe(
+      "ToolParameterValidationError",
+    );
+    expect(ran).toEqual([]);
+  });
+
+  it("fills in an identity provided to layer for a call without one; a call's own wins", async () => {
+    const Who = Action.make("who", {
+      description: "Current principal",
+      access: "read",
+      success: Schema.String,
+    });
+
+    const binding = ActionToolkit.make(Action.implement(Who, () => Principal));
+
+    // What the docs warn against: an identity provided at startup.
+    const startup = binding.layer.pipe(Layer.provide(Layer.succeed(Principal, "startup")));
+
+    const call = Effect.flatMap(binding.toolkit, (tools) =>
+      Effect.flatMap(tools.handle("who", {}), Stream.runCollect),
+    );
+
+    const [own, lacking] = await Effect.runPromise(
+      // @ts-expect-error The second call lacks the Principal its tool requires.
+      Effect.scoped(
+        Effect.all([call.pipe(Effect.provideService(Principal, "caller")), call]).pipe(
+          Effect.provide(startup),
+        ),
+      ),
+    );
+
+    expect(own).toMatchObject([{ result: "caller" }]);
+    expect(lacking).toMatchObject([{ result: "startup" }]);
   });
 
   it("keeps each toolkit's handlers its own beside another with tools of the same names", async () => {

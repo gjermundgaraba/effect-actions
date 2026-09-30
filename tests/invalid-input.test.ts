@@ -2,11 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { McpSchema } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { OpenApi } from "effect/http-api";
+import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { httpClient, serve } from "./serve.js";
+import * as Testing from "../src/Testing.js";
+import { against, httpClient, serve } from "./serve.js";
 import { mcpRequest as rpc, rawToolCall } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
@@ -134,6 +135,28 @@ it("answers 415 to every body a page may send without a preflight, so a cross-si
   expect(calls.count).toBe(2);
 });
 
+it("names the content type a 415 refuses, or none", async () => {
+  const web = serve(ActionHttp.layer(Http, counted().app));
+
+  const send = async (headers: Record<string, string>) => {
+    const response = await web.handler(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        headers,
+        body: new Blob([JSON.stringify({ value: 1 })]),
+      }),
+    );
+
+    return [response.status, await response.text()];
+  };
+
+  expect(await send({})).toEqual([415, "Unsupported content-type: none"]);
+  expect(await send({ "content-type": "text/plain" })).toEqual([
+    415,
+    "Unsupported content-type: text/plain",
+  ]);
+});
+
 it("describes every issue of the input in the message", async () => {
   const Pair = Action.make("pair", {
     description: "Pair",
@@ -163,7 +186,7 @@ it("describes every issue of the input in the message", async () => {
   expect(message).toContain('at ["right"]');
 });
 
-it("refuses undeclared input fields on the server, nested ones too; the client drops them", async () => {
+it("refuses undeclared input fields on the server, nested ones too; every typed client drops them", async () => {
   const seen: Array<unknown> = [];
 
   const Save = Action.make("save", {
@@ -175,7 +198,23 @@ it("refuses undeclared input fields on the server, nested ones too; the client d
 
   const SaveHttp = ActionHttp.make([Save]);
   const app = Action.implement(Save, (input) => Effect.sync(() => seen.push(input)));
-  const web = serve(ActionHttp.layer(SaveHttp, app));
+
+  const web = serve(
+    Layer.merge(
+      ActionHttp.layer(SaveHttp, app),
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+    ),
+  );
+
+  // As the OpenAPI document says: the input is closed, at its root and nested.
+  const input = OpenApi.fromApi(SaveHttp.api).paths["/api/save"]?.post?.requestBody?.content[
+    "application/json"
+  ]?.schema;
+
+  expect(input).toMatchObject({
+    additionalProperties: false,
+    properties: { owner: { additionalProperties: false } },
+  });
 
   const save = (body: Schema.Json) =>
     web.handler(
@@ -196,14 +235,20 @@ it("refuses undeclared input fields on the server, nested ones too; the client d
 
   expect(seen).toEqual([]);
 
-  // A wider object type-checks, as TypeScript allows; the client sends only the declared fields.
+  // A wider object type-checks, as TypeScript allows; every typed client sends only the
+  // declared fields: this one, the native one and the MCP test client.
   const wider = { value: 1, owner: { id: "a", role: "admin" }, admin: true };
 
-  await Effect.flatMap(httpClient(SaveHttp, web), (client) => client.save(wider)).pipe(
-    Effect.runPromise,
+  await against(
+    web,
+    Effect.gen(function* () {
+      yield* (yield* ActionHttp.client(SaveHttp)).save(wider);
+      yield* (yield* HttpApiClient.make(SaveHttp.api)).save({ payload: wider });
+      yield* (yield* Testing.mcpClient([Save])).save(wider);
+    }),
   );
 
-  expect(seen).toEqual([{ value: 1, owner: { id: "a" } }]);
+  expect(seen).toEqual(Array.from({ length: 3 }, () => ({ value: 1, owner: { id: "a" } })));
 });
 
 it("refuses undeclared fields in the input only: a wider success is encoded to its fields", async () => {
@@ -385,7 +430,7 @@ it("keeps MCP's native argument and result handling", async () => {
 
   expect(calls).toBe(2); // Invalid arguments never reach the handler.
   const success = await web.handler(mcpRequest(7));
-  expect(decodeMcp(await success.json()).result.structuredContent).toEqual({ value: 7 });
+  expect(decodeMcp(await success.json()).result.structuredContent).toBe(7);
   const defect = await web.handler(mcpRequest(-2));
   expect(await defect.text()).not.toContain("private defect");
 });
@@ -431,7 +476,7 @@ it("executes each input/output transformation once per call", async () => {
   expect(await (await web.handler(request("7"))).json()).toBe("7");
   expect(
     decodeMcp(await (await web.handler(mcpRequest("7"))).json()).result.structuredContent,
-  ).toEqual({ value: "7" });
+  ).toBe("7");
   expect(decodes).toBe(2);
   expect(encodes).toBe(2);
 });
@@ -531,7 +576,7 @@ it("publishes `success: {}` as the closed empty object", async () => {
     result: {
       tools: [
         {
-          outputSchema: { properties: { value: { type: "object", additionalProperties: false } } },
+          outputSchema: { type: "object", additionalProperties: false },
         },
       ],
     },

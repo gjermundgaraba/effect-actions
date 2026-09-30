@@ -1,7 +1,7 @@
 # ActionToolkit
 
 Implementations as Effect's native AI `Toolkit`, for programs that call tools in-process
-with `LanguageModel` or by hand. No server, no MCP envelope.
+with `LanguageModel` or by hand. No server.
 
 ## API
 
@@ -77,7 +77,7 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 ## Rules
 
 - Every action of the implementations passed becomes a tool, named after the action, with its `hints`. `make(implementations)` accepts one implementation or a list, such as `[userActions, double]`.
-- A result's `result` is the action's decoded success or declared failure, and its `encodedResult` the JSON a model reads, such as `"42"` for a `BigInt`. There is no `{ value }` wrapper. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
+- A result's `result` is the action's decoded success or declared failure, and its `encodedResult` the JSON a model reads, such as `"42"` for a `BigInt`. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes JSON arguments, as a model sends them: an ISO string for a `Schema.Date`, `null` for an absent `Schema.optional` field. It returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - Builders and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and the hook the [authorization rules](guarantees.md#authorization): `layer` builds, and identity is supplied at invocation, never when building the layer.
 - Each tool carries only its own handler's request requirements, plus the hook's, not those of sibling actions.
@@ -93,6 +93,6 @@ result; the host answers it with a native `tool-approval-response` prompt part i
 - Tool missing from the toolkit: its implementation was not passed to `make`.
 - A defect when a tool handles a call: its own `layer` is not provided, only another `make` call's with tools of the same names, which the types accept. Provide the `layer` of the same `make` call.
 - `Duplicate tool: <name>` thrown at `make`: two implementations serve actions of the same name.
-- `Service not found` for a request tag at call time: it was provided only to the stream, or only to the layer. Provide it around the whole call effect.
+- `Service not found` for a request tag at call time: it was provided only to the stream. Provide it around the whole call effect. Providing it to `layer` does not fail: that startup value fills in for every call that lacks its own ([guarantees.md](guarantees.md#dependency-lifetimes)), so never provide an identity there.
+- A returned failure whose `result` is an `AiError` with reason `ToolParameterValidationError` (`failureOrigin: "parameters"`), not a declared error: the arguments did not decode. The hook and the handler did not run.
 - Type error on `layer` requirements: a build-time service is missing. Provide its Layer before `layer`.
-- Result is `{ value: ... }` when a plain value was expected: you are reading an MCP response, not a Toolkit result. The Toolkit never wraps.

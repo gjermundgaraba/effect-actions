@@ -41,13 +41,13 @@ const as = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
 });
 
-/** The structured value of a raw MCP tool call's response. */
-const McpValue = Schema.Struct({
-  result: Schema.Struct({ structuredContent: Schema.Struct({ value: Schema.Json }) }),
+/** A raw MCP tool call's response, holding the encoded success as its structured content. */
+const McpSuccess = Schema.Struct({
+  result: Schema.Struct({ structuredContent: Schema.Json }),
 });
 
 const valueOf = async (response: Response) =>
-  Schema.decodeUnknownSync(McpValue)(await response.json()).result.structuredContent.value;
+  Schema.decodeUnknownSync(McpSuccess)(await response.json()).result.structuredContent;
 
 describe("the identity authentication provides", () => {
   // A native route under the example's authentication, reading the identity as handlers do.
@@ -485,7 +485,7 @@ describe("over stdio", () => {
     }).pipe(Effect.runPromise);
 
     expect(JSON.parse(written.join(""))).toMatchObject({
-      result: { structuredContent: { value: "host" } },
+      result: { structuredContent: "host" },
     });
     expect(hooked).toEqual(["host"]);
   });
