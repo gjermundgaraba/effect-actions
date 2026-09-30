@@ -148,8 +148,8 @@ one caller around the layer.
 These examples use the same action contracts without changing their handlers:
 
 ```sh
-# Local execution; one flag per input field
-node --import tsx examples/cli.ts --value 21
+# Local execution; a subcommand per action, a flag per input field
+node --import tsx examples/cli.ts get-user --id 1
 
 # Public status action over HTTP; start `vp run example` first
 node --import tsx examples/cli-remote.ts
@@ -160,7 +160,9 @@ node --import tsx examples/toolkit.ts
 ```
 
 [cli.ts](cli.ts) and [cli-remote.ts](cli-remote.ts) return native Effect CLI commands;
-use `--help` for their options. [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
+use `--help` for their options. Each prints its result on stdout, and a failure on stderr as
+the JSON HTTP sends, such as `{"_tag":"UserNotFound","id":"9"}` for `get-user --id 9`.
+[mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
 stdout for JSON-RPC and routes Effect logs to stderr, those of services provided around
 `runStdio` through `Logger.LogToStderr`.

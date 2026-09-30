@@ -191,7 +191,7 @@ export const authenticate = logCaller
 - Its layer, provided to a layer, covers that layer's routes, before decoding, and no others: `ActionHttp.layer(Http, guarded).pipe(Layer.provide(authenticate))` beside a public `ActionHttp.layer(Http, open)` keeps the public routes public. An MCP endpoint is one route: provided to `ActionMcp.layerHttp`, it covers every tool of it.
 - It removes the identity from the covered layer's request requirements: [guarantees.md](guarantees.md#authorization).
 - Other native router middleware providing the identity covers the surfaces the same way, but without `make`'s challenges, step-up answers and discovery.
-- A local surface has no remote caller: the host provides the identity service itself, as `Effect.provideService(CurrentActor, actor)`. The `before` hook still runs.
+- A local surface has no remote caller: the host provides the identity service itself, as `Effect.provideService(CurrentActor, actor)`, or on a CLI command, `Command.provideSync(CurrentActor, actor)`. The `before` hook still runs.
 - Resources the per-request authentication acquires in the request scope live until that scope closes, including while the handler runs.
 - Downstream action errors are handled by their transport. They are never serialized as authentication failures.
 - Never provide `CurrentActor` or any identity or tenant tag in a startup layer or root context: [guarantees.md](guarantees.md#dependency-lifetimes).

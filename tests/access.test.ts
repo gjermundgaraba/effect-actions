@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Exit, Latch, Layer, Option, Schema, type Scope, Stream } from "effect";
+import { Context, Effect, Latch, Layer, Option, Schema, type Scope, Stream } from "effect";
 import { Command } from "effect/cli";
 import { McpServer } from "effect/ai";
 import { HttpRouter } from "effect/http";
@@ -9,7 +9,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { cliServices, logged } from "./cli-services.js";
+import { causeOf, cliServices, logged } from "./cli-services.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { clientLayer, httpClient, serve } from "./serve.js";
 
@@ -390,7 +390,7 @@ describe("the pre-handler hook", () => {
 
     const [refused] = await run(ActionCli.command(app, Write), ["--value", "x"]);
 
-    expect(Option.getOrUndefined(Exit.findErrorOption(refused))).toBeInstanceOf(Action.Forbidden);
+    expect(causeOf(refused)).toBeInstanceOf(Action.Forbidden);
 
     expect(hooks).toEqual(["read", "write"]);
     expect(handlers).toEqual(["read"]);
@@ -519,7 +519,7 @@ describe("the pre-handler hook", () => {
       },
     });
 
-    // A remote command decodes it, as `ActionHttp.client` does.
+    // A remote command decodes it, as `ActionHttp.client` does: the cause of its `UserError`.
     const [remote] = await Effect.runPromise(
       logged(
         Command.runWith(ActionCli.command(Http, Poke), { version: "0" })(["--value", "x"]).pipe(
@@ -528,8 +528,8 @@ describe("the pre-handler hook", () => {
       ).pipe(Effect.provide(clientLayer(web)), Effect.provide(cliServices)),
     );
 
-    expect(Option.getOrUndefined(Exit.findErrorOption(remote))).toEqual(limited);
-    expect(Option.getOrUndefined(Exit.findErrorOption(remote))).toBeInstanceOf(RateLimited);
+    expect(causeOf(remote)).toEqual(limited);
+    expect(causeOf(remote)).toBeInstanceOf(RateLimited);
 
     // The Toolkit returns it as the tool's failure.
     const tools = ActionToolkit.make(app);
@@ -553,7 +553,7 @@ describe("the pre-handler hook", () => {
     ]);
     expect(returned[0]?.result).toBeInstanceOf(RateLimited);
 
-    // A local command fails with it, typed.
+    // A local command fails with Effect CLI's `UserError`, whose cause it is.
     const [local] = await Effect.runPromise(
       Effect.scoped(
         logged(
@@ -564,6 +564,6 @@ describe("the pre-handler hook", () => {
       ),
     );
 
-    expect(Option.getOrUndefined(Exit.findErrorOption(local))).toBeInstanceOf(RateLimited);
+    expect(causeOf(local)).toBeInstanceOf(RateLimited);
   });
 });

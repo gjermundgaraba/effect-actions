@@ -1,7 +1,7 @@
 // Compile-only public CLI API assertions.
 import { Context, Effect, Schema } from "effect";
 import { HttpClient, type HttpClientError } from "effect/http";
-import type { Command } from "effect/cli";
+import { Command } from "effect/cli";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -76,11 +76,12 @@ const refusing = ActionCli.command(
   { render: (output) => output.toUpperCase() },
 );
 
-// Failures are the action's, the built-in ones and the CLI's own encoding error.
+// A command fails with Effect CLI's UserError, its cause the action's failure or a built-in
+// one: invalid input included, and no schema error of its own.
 const refusalErrors: [
-  Equal<Command.Error<typeof localOne>, Action.BuiltIn | Schema.SchemaError>,
-  Equal<Command.Error<typeof localGroup>, Action.BuiltIn | Schema.SchemaError>,
-  Equal<Command.Error<typeof refusing>, Action.BuiltIn | Schema.SchemaError>,
+  Equal<Command.Error<typeof localOne>, ActionCli.Failure<Action.BuiltIn>>,
+  Equal<Command.Error<typeof localGroup>, ActionCli.Failure<Action.BuiltIn>>,
+  Equal<Command.Error<typeof refusing>, ActionCli.Failure<Action.BuiltIn>>,
 ] = [true, true, true];
 
 // The hook's services are the command's too.
@@ -243,9 +244,9 @@ const boundErring = ActionCli.command(Bound, Erring);
 const boundAll = ActionCli.make(Bound, { name: "remote" });
 
 const remoteErrors: [
-  Equal<Command.Error<typeof boundPlain>, Action.BuiltIn | Transport>,
-  Equal<Command.Error<typeof boundErring>, Gone | Action.BuiltIn | Transport>,
-  Equal<Command.Error<typeof boundAll>, Gone | Action.BuiltIn | Transport>,
+  Equal<Command.Error<typeof boundPlain>, ActionCli.Failure<Action.BuiltIn | Transport>>,
+  Equal<Command.Error<typeof boundErring>, ActionCli.Failure<Gone | Action.BuiltIn | Transport>>,
+  Equal<Command.Error<typeof boundAll>, ActionCli.Failure<Gone | Action.BuiltIn | Transport>>,
 ] = [true, true, true];
 
 void remoteErrors;
@@ -260,8 +261,14 @@ const throttledPlain = ActionCli.command(Throttling, Plain);
 const throttledAll = ActionCli.make(Throttling, { name: "remote" });
 
 const bindingErrors: [
-  Equal<Command.Error<typeof throttledPlain>, Throttled | Action.BuiltIn | Transport>,
-  Equal<Command.Error<typeof throttledAll>, Throttled | Gone | Action.BuiltIn | Transport>,
+  Equal<
+    Command.Error<typeof throttledPlain>,
+    ActionCli.Failure<Throttled | Action.BuiltIn | Transport>
+  >,
+  Equal<
+    Command.Error<typeof throttledAll>,
+    ActionCli.Failure<Throttled | Gone | Action.BuiltIn | Transport>
+  >,
 ] = [true, true];
 
 void bindingErrors;
@@ -341,3 +348,46 @@ void noFields;
 
 // @ts-expect-error A union input has no positional fields, even shared ones.
 ActionCli.command(shapes, UnionInput, { positional: ["a"] });
+
+// A local command's cause is what its action, hook or builder fails with, or a built-in one.
+class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
+
+const Declares = Action.make("declares", {
+  description: "Declares an error",
+  access: "read",
+  success: Schema.String,
+  errors: [Domain],
+});
+
+const declares = ActionCli.command(
+  Action.implement(
+    Declares,
+    Effect.as(Effect.fail(new Unavailable()), () => Effect.succeed("declared")),
+    Action.allowAll,
+  ),
+  Declares,
+);
+
+const declaredErrors: Equal<
+  Command.Error<typeof declares>,
+  ActionCli.Failure<Domain | Unavailable | Action.BuiltIn>
+> = true;
+
+void declaredErrors;
+
+// Run, a command may fail with any `UserError`, so a host matches the cause itself.
+Command.runWith(declares, { version: "0" })([]).pipe(
+  Effect.catchTag("UserError", (error) => {
+    const unmatched: Equal<typeof error.cause, unknown> = true;
+
+    void unmatched;
+
+    return error.cause instanceof Domain ? Effect.succeed(error.cause._tag) : Effect.fail(error);
+  }),
+);
+
+const matched = (error: Command.Error<typeof declares>) =>
+  // @ts-expect-error `Failure` is a type only: `instanceof` would leave its cause `any`.
+  error instanceof ActionCli.Failure;
+
+void matched;

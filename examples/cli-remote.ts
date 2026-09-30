@@ -1,5 +1,5 @@
 import { Command } from "effect/cli";
-import { Cause, Console, Effect, Logger, Runtime } from "effect";
+import { Effect } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
@@ -7,22 +7,20 @@ import { Http } from "./binding.js";
 import { Status } from "./contracts.js";
 
 // From a binding rather than an implementation, the command calls the server instead.
-const command = ActionCli.command(Http, Status);
-
-Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
-  // The host's client is the connection: where it sends, and any credentials.
-  Effect.updateService(
+const command = ActionCli.command(Http, Status).pipe(
+  // Its client is the connection: where it sends, and any credentials. Provided on the
+  // command, it reaches no other request the program makes.
+  Command.provideEffect(
     HttpClient.HttpClient,
-    HttpClient.mapRequest(HttpClientRequest.prependUrl("http://127.0.0.1:3000")),
+    Effect.map(
+      HttpClient.HttpClient,
+      HttpClient.mapRequest(HttpClientRequest.prependUrl("http://127.0.0.1:3000")),
+    ),
   ),
-  // Report a failure as runMain would, but on stderr, and none the CLI has printed.
-  Effect.tapCause((cause) =>
-    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
-      ? Effect.void
-      : Console.error(Cause.pretty(cause)),
-  ),
-  Effect.provideService(Logger.LogToStderr, true),
+);
+
+Command.run(command, { version: "0.1.0" }).pipe(
   Effect.provide(NodeHttpClient.layerUndici),
   Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain({ disableErrorReporting: true }),
+  NodeRuntime.runMain,
 );

@@ -1,21 +1,32 @@
+import { spawnSync } from "node:child_process";
 import { expect, it, vi } from "vite-plus/test";
 import {
   Cause,
+  Console,
   Context,
+  Data,
   Effect,
   Exit,
   flow,
+  Layer,
+  Logger,
+  Match,
   Option,
+  Runtime,
   Schema,
   SchemaGetter,
   type Scope,
 } from "effect";
 import { TestConsole } from "effect/testing";
 import { CliError, Command, Flag, GlobalFlag } from "effect/cli";
+import { HttpClient } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import { cliServices } from "./cli-services.js";
+import { causeOf, cliServices, printed } from "./cli-services.js";
+import { post } from "./requests.js";
+import { clientLayer, serve } from "./serve.js";
 
 /** Run `command` with `args` on the test CLI services. */
 const exec = <Name extends string, Input, Context, E>(
@@ -194,12 +205,13 @@ it("derives each field's flag from its encoded JSON value", async () => {
     expect(slow.errors[0]).toBeInstanceOf(CliError.InvalidValue);
   }
 
-  // Any other flag takes JSON, or its text when it is not JSON, for the schema to decode.
+  // Any other flag takes JSON, or its text when it is not JSON, for the schema to decode:
+  // input it refuses is `InvalidInput`, as over HTTP.
   for (const args of [
     ["--tenant-id", "acme", "--count", "many", "--mode", "fast", "--tags", "[]", "--owner", "{}"],
     ["--tenant-id", "acme", "--tags", "[", ...required],
   ]) {
-    expect(failure(await runExit(command, args))).toBeInstanceOf(Schema.SchemaError);
+    expect(causeOf(await runExit(command, args))).toBeInstanceOf(Action.InvalidInput);
   }
 
   // A required field's flag is required by the parser, which shows help without it.
@@ -212,12 +224,12 @@ it("derives each field's flag from its encoded JSON value", async () => {
 
   // A JSON flag holding JSON of the wrong shape is invalid input as well.
   expect(
-    failure(await runExit(command, ["--tenant-id", "acme", "--tags", "[1]", ...required])),
-  ).toBeInstanceOf(Schema.SchemaError);
+    causeOf(await runExit(command, ["--tenant-id", "acme", "--tags", "[1]", ...required])),
+  ).toBeInstanceOf(Action.InvalidInput);
 
   // An undeclared field in a JSON flag is refused, not dropped: a misspelling is an error.
   expect(
-    failure(
+    causeOf(
       await runExit(command, [
         "--tenant-id",
         "acme",
@@ -231,7 +243,7 @@ it("derives each field's flag from its encoded JSON value", async () => {
         '{"id":"a","nmae":"Ada"}',
       ]),
     ),
-  ).toBeInstanceOf(Schema.SchemaError);
+  ).toBeInstanceOf(Action.InvalidInput);
 
   expect(inputs).toHaveLength(2);
 });
@@ -257,18 +269,22 @@ it("keeps JSON that breaks a rule as JSON, for the schema to report the rule and
   const valid = ["--width", "2", "--owner", '{"id":"a"}'];
 
   // Four tags break the rule: invalid input, never the JSON's text taken as a string.
-  const tags = failure(await runExit(command, ["--tags", '["a","b","c","d"]', ...valid]));
-  expect(tags).toBeInstanceOf(Schema.SchemaError);
+  const tags = causeOf(await runExit(command, ["--tags", '["a","b","c","d"]', ...valid]));
+  expect(tags).toBeInstanceOf(Action.InvalidInput);
 
   // The schema's own message and path, not "Expected number" or "Expected object".
-  const width = failure(
+  const width = causeOf(
     await runExit(command, ["--tags", "x", "--width", "1.5", "--owner", '{"id":"a"}']),
   );
 
-  expect(String(width)).toContain("Expected an integer");
+  expect(width).toBeInstanceOf(Action.InvalidInput);
 
-  const owner = failure(await runExit(command, ["--tags", "x", "--width", "2", "--owner", "{}"]));
-  expect(String(owner)).toContain('["owner"]["id"]');
+  if (width instanceof Action.InvalidInput) expect(width.message).toContain("Expected an integer");
+
+  const owner = causeOf(await runExit(command, ["--tags", "x", "--width", "2", "--owner", "{}"]));
+  expect(owner).toBeInstanceOf(Action.InvalidInput);
+
+  if (owner instanceof Action.InvalidInput) expect(owner.message).toContain('["owner"]["id"]');
 
   // Text of a kind the field does not take is still text: a plain string here.
   await run(command, ["--tags", "a,b", ...valid]);
@@ -305,8 +321,8 @@ it("takes an enum's value and a template literal's text as they are, not as JSON
 
   // The template's pattern is the action's schema's to check.
   expect(
-    failure(await runExit(command, ["--color", "red", "--level", "2", "--id", "seven"])),
-  ).toBeInstanceOf(Schema.SchemaError);
+    causeOf(await runExit(command, ["--color", "red", "--level", "2", "--id", "seven"])),
+  ).toBeInstanceOf(Action.InvalidInput);
 });
 
 it("maps flag strings to codecs whose original encoding is not JSON", async () => {
@@ -364,8 +380,8 @@ it("rejects invalid input before acquiring or invoking the handler", async () =>
 
   const command = ActionCli.command(app, NumberAction);
 
-  expect(failure(await runExit(command, ["--value", "not-a-number"]))).toBeInstanceOf(
-    Schema.SchemaError,
+  expect(causeOf(await runExit(command, ["--value", "not-a-number"]))).toBeInstanceOf(
+    Action.InvalidInput,
   );
   expect(builds).toBe(0);
   expect(calls).toBe(0);
@@ -421,8 +437,8 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
   // Text that is not JSON is taken as a string: the scalar's plain text, or a shape's error.
   await run(ActionCli.command(app, Scalar), ["--input", "plain"]);
 
-  expect(failure(await runExit(ActionCli.command(app, Shape), ["--input", "{"]))).toBeInstanceOf(
-    Schema.SchemaError,
+  expect(causeOf(await runExit(ActionCli.command(app, Shape), ["--input", "{"]))).toBeInstanceOf(
+    Action.InvalidInput,
   );
 
   // No field of a union member is a flag of its own.
@@ -431,17 +447,17 @@ it("takes an input that is not a struct of fields as one --input JSON flag", asy
   ).toBeInstanceOf(CliError.ShowHelp);
   // A misspelled key of a union member is refused, not dropped.
   expect(
-    failure(
+    causeOf(
       await runExit(ActionCli.command(app, Shape), [
         "--input",
         '{"kind":"square","side":2,"sied":3}',
       ]),
     ),
-  ).toBeInstanceOf(Schema.SchemaError);
+  ).toBeInstanceOf(Action.InvalidInput);
 
   // Omitted, the input is `{}`: no shape, so invalid input, but a valid record.
-  expect(failure(await runExit(ActionCli.command(app, Shape), []))).toBeInstanceOf(
-    Schema.SchemaError,
+  expect(causeOf(await runExit(ActionCli.command(app, Shape), []))).toBeInstanceOf(
+    Action.InvalidInput,
   );
   await run(ActionCli.command(app, Scores), []);
 
@@ -528,8 +544,10 @@ it("keeps custom renderer JSON output and validates success before rendering", a
 
   const exit = await runExit(ActionCli.command(invalid, Invalid, { render: invalidRenderer }), []);
 
-  // A success its schema does not encode fails the command, before anything renders it.
-  expect(Schema.isSchemaError(failure(exit))).toBe(true);
+  // A success its schema does not encode is a defect, as a server's 500 is, before anything
+  // renders it.
+  expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+  expect(failure(exit)).toBeUndefined();
   expect(invalidRenderer).not.toHaveBeenCalled();
 });
 
@@ -1070,7 +1088,7 @@ it("builds a built hook per invocation, as the builder, and runs it with the cal
 
   await Effect.runPromise(as("alice"));
 
-  expect(failure(await Effect.runPromiseExit(as("bob")))).toBeInstanceOf(Action.Forbidden);
+  expect(causeOf(await Effect.runPromiseExit(as("bob")))).toBeInstanceOf(Action.Forbidden);
   expect(log).toEqual(["hook built", "hook released", "hook built", "hook released"]);
 });
 
@@ -1252,7 +1270,7 @@ it("names commands and flags in kebab case, unless a name is given", async () =>
   );
 });
 
-it("runs the implementation's before hook first, and its refusal is the command's typed failure", async () => {
+it("runs the implementation's before hook first, and its refusal is the cause of the command's failure", async () => {
   const seen: string[] = [];
   let calls = 0;
 
@@ -1284,13 +1302,13 @@ it("runs the implementation's before hook first, and its refusal is the command'
 
   await run(ActionCli.command(app, Read), []);
 
-  const refused = failure(await runExit(ActionCli.command(app, Write), []));
+  const refused = causeOf(await runExit(ActionCli.command(app, Write), []));
   expect(refused).toBeInstanceOf(Action.Forbidden);
   expect(refused).toEqual(new Action.Forbidden({ message: "Requires users:write." }));
 
   const aggregate = ActionCli.make(app, { name: "tool" });
   await run(aggregate, ["read"]);
-  expect(failure(await runExit(aggregate, ["write"]))).toBeInstanceOf(Action.Forbidden);
+  expect(causeOf(await runExit(aggregate, ["write"]))).toBeInstanceOf(Action.Forbidden);
 
   // Refused, the handler never runs.
   expect(seen).toEqual(["read", "write", "read", "write"]);
@@ -1509,3 +1527,346 @@ it("gives a subcommand of an aggregate the options command takes, by action name
     ActionCli.make(app, { name: "files", commands: { readFile: { name: "size" } } }),
   ).toThrow("Duplicate command: size");
 });
+
+it("fails with Effect CLI's UserError, which the runner prints on stderr as the JSON HTTP sends", async () => {
+  class Gone extends Schema.TaggedError<Gone>()("Gone", { id: Schema.String }) {
+    override readonly [Runtime.errorExitCode] = 3;
+  }
+
+  class Missing extends Schema.TaggedError<Missing>()(
+    "Missing",
+    { id: Schema.String },
+    { httpApiStatus: 404 },
+  ) {}
+
+  // Fields whose JSON is not their value: HTTP sends a bigint as a string, an Option tagged.
+  class Over extends Schema.TaggedError<Over>()("Over", {
+    limit: Schema.BigInt,
+    hint: Schema.Option(Schema.String),
+  }) {}
+
+  const Read = Action.make("read", {
+    description: "Reads a record",
+    access: "read",
+    input: { id: Schema.String.check(Schema.isMinLength(1)) },
+    success: Schema.String,
+    errors: [Gone, Missing, Over],
+  });
+
+  const over = new Over({ limit: 10n, hint: Option.some("lower it") });
+
+  const Write = Action.make("write", { description: "Writes", access: "write" });
+
+  const app = Action.implement(
+    [Read, Write],
+    {
+      read: ({ id }) =>
+        Match.value(id).pipe(
+          Match.when("gone", () => Effect.fail(new Gone({ id }))),
+          Match.when("over", () => Effect.fail(over)),
+          Match.orElse(() => Effect.fail(new Missing({ id }))),
+        ),
+      write: () => Effect.void,
+    },
+    (action) =>
+      action.access === "read"
+        ? Effect.void
+        : Effect.fail(new Action.Forbidden({ message: "Requires write.", scopes: ["write"] })),
+  );
+
+  const cli = ActionCli.make(app, { name: "records" });
+  const web = serve(ActionHttp.layer(ActionHttp.make([Read, Write]), app));
+
+  const cases = [
+    {
+      args: ["read", "--id", "gone"],
+      body: { id: "gone" },
+      cause: new Gone({ id: "gone" }),
+      code: 3,
+    },
+    { args: ["read", "--id", "x"], body: { id: "x" }, cause: new Missing({ id: "x" }), code: 1 },
+    { args: ["read", "--id", "over"], body: { id: "over" }, cause: over, code: 1 },
+    {
+      args: ["write"],
+      body: {},
+      cause: new Action.Forbidden({ message: "Requires write.", scopes: ["write"] }),
+      code: 1,
+    },
+  ];
+
+  for (const { args, body, cause, code } of cases) {
+    const [exit, stdout, stderr] = await Command.runWith(cli, { version: "0" })(args).pipe(
+      printed,
+      Effect.provide(cliServices),
+      Effect.runPromise,
+    );
+
+    const [name = ""] = args;
+    const sent = await (await web.handler(post(`/api/${name}`, body))).text();
+
+    expect(causeOf(exit)).toEqual(cause);
+    // Nothing on stdout, and on stderr the body HTTP answers with, once.
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([expect.stringContaining(sent)]);
+    expect(sent).toContain(`"_tag":"${cause._tag}"`);
+
+    // `runMain` exits with the cause's own code, and does not print it again.
+    const reported = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+
+    expect(Runtime.getErrorExitCode(reported)).toBe(code);
+    expect(Runtime.getErrorReported(reported)).toBe(false);
+  }
+
+  // Input that does not decode is the `InvalidInput` HTTP answers, before the hook runs.
+  const [invalid, , stderr] = await Command.runWith(cli, { version: "0" })([
+    "read",
+    "--id",
+    "",
+  ]).pipe(printed, Effect.provide(cliServices), Effect.runPromise);
+
+  const sent = await (await web.handler(post("/api/read", { id: "" }))).text();
+
+  expect(causeOf(invalid)).toBeInstanceOf(Action.InvalidInput);
+  expect(sent).toContain('"_tag":"InvalidInput"');
+  expect(stderr).toEqual([expect.stringContaining(sent)]);
+
+  // With `renderErrors: false` the runner prints nothing and leaves the failure unmarked,
+  // so `runMain` still reports it: the library never marks a failure reported itself.
+  const [unrendered, quietOut, quietErr] = await Command.runWith(cli, {
+    version: "0",
+    renderErrors: false,
+  })(["read", "--id", "x"]).pipe(printed, Effect.provide(cliServices), Effect.runPromise);
+
+  expect(causeOf(unrendered)).toEqual(new Missing({ id: "x" }));
+  expect([quietOut, quietErr]).toEqual([[], []]);
+  expect(
+    Runtime.getErrorReported(
+      Exit.isFailure(unrendered) ? Cause.squash(unrendered.cause) : undefined,
+    ),
+  ).toBe(true);
+});
+
+it("describes a failure no schema encodes by its tag or an error's name, its message and causes, never its fields", async () => {
+  class Unreachable extends Data.TaggedError("Unreachable")<{
+    readonly url: string;
+    readonly cause: Error;
+  }> {}
+
+  // Plain tagged objects, as code outside Effect may fail or throw with.
+  const DbDown = Schema.TaggedStruct("DbDown", { url: Schema.String });
+  const UserExists = Schema.TaggedStruct("UserExists", { name: Schema.String });
+
+  const Status = Action.make("status", { description: "Status", access: "read" });
+  const url = "postgres://admin:hunter2@db";
+
+  // A builder's failure, and what it prints: an error, or plain objects, whose fields no
+  // schema says are safe to show, their `name` among them.
+  const failures = [
+    [
+      new Unreachable({ url, cause: new Error("connect ECONNREFUSED 10.0.0.1:5432") }),
+      "Unreachable: Error: connect ECONNREFUSED 10.0.0.1:5432",
+    ],
+    [DbDown.make({ url }), "DbDown"],
+    [UserExists.make({ name: url }), "UserExists"],
+    [{ name: url, message: "db unreachable" }, "Error: db unreachable"],
+    [new Error("db unreachable", { cause: { url } }), "Error: db unreachable: Error"],
+  ] as const;
+
+  for (const [failure, description] of failures) {
+    const app = Action.implement(
+      Status,
+      Effect.as(Effect.fail(failure), () => Effect.void),
+      Action.allowAll,
+    );
+
+    const [exit, stdout, stderr] = await Command.runWith(ActionCli.command(app, Status), {
+      version: "0",
+    })([]).pipe(printed, Effect.provide(cliServices), Effect.runPromise);
+
+    expect(causeOf(exit)).toBe(failure);
+    expect(stdout).toEqual([]);
+    // The description is the last line, beneath Effect's own heading.
+    expect(stderr.map((text) => String(text).trim().split("\n").at(-1)?.trim())).toEqual([
+      description,
+    ]);
+    expect(stderr.join("\n")).not.toContain("hunter2");
+  }
+});
+
+it("writes the logs and console output of what a command runs to stderr, and only its result to stdout", async () => {
+  const Noisy = Action.make("noisy", {
+    description: "Logs",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const noise = (source: string) =>
+    Effect.andThen(Effect.log(`${source} log`), Console.log(`${source} console`));
+
+  const app = Action.implement(
+    Noisy,
+    Effect.as(noise("builder"), () => Effect.as(noise("handler"), "quiet")),
+    () => noise("hook"),
+  );
+
+  const command = ActionCli.command(app, Noisy);
+
+  // The default logger, and a console logger, which writes through `Console.log`.
+  for (const logger of [Layer.empty, Logger.layer([Logger.consoleJson])]) {
+    const [exit, stdout, stderr] = await Command.runWith(command, { version: "0" })([]).pipe(
+      printed,
+      Effect.provide(logger),
+      Effect.provide(cliServices),
+      Effect.runPromise,
+    );
+
+    const written = stderr.map(String).join("\n");
+
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(stdout).toEqual(['"quiet"']);
+
+    for (const source of ["builder", "hook", "handler"]) {
+      expect(written).toContain(`${source} log`);
+      expect(written).toContain(`${source} console`);
+    }
+  }
+
+  // A remote command's client too, configured on the command, which logs as it sends.
+  const Http = ActionHttp.make([Noisy]);
+
+  const web = serve(
+    ActionHttp.layer(
+      Http,
+      Action.implement(Noisy, () => Effect.succeed("quiet"), Action.allowAll),
+    ),
+  );
+
+  const remote = ActionCli.command(Http, Noisy).pipe(
+    Command.provideEffect(
+      HttpClient.HttpClient,
+      Effect.map(
+        HttpClient.HttpClient,
+        HttpClient.tapRequest(() => noise("client")),
+      ),
+    ),
+  );
+
+  const [exit, stdout, stderr] = await Command.runWith(remote, { version: "0" })([]).pipe(
+    printed,
+    Effect.provide(clientLayer(web.handler)),
+    Effect.provide(cliServices),
+    Effect.runPromise,
+  );
+
+  const written = stderr.map(String).join("\n");
+
+  expect(Exit.isSuccess(exit)).toBe(true);
+  expect(stdout).toEqual(['"quiet"']);
+  expect(written).toContain("client log");
+  expect(written).toContain("client console");
+});
+
+it("builds what a command is provided when an action runs, never for help or a parse error", async () => {
+  class Database extends Context.Service<Database, string>()("cli-test/Database") {}
+
+  class Caller extends Context.Service<Caller, string>()("cli-test/Caller") {}
+
+  const log: Array<string> = [];
+
+  const Write = Action.make("write", {
+    description: "Writes",
+    access: "write",
+    input: { value: Schema.String },
+    success: Schema.String,
+  });
+
+  const app = Action.implement(
+    Write,
+    Effect.map(
+      Database,
+      (database) =>
+        ({ value }: { readonly value: string }) =>
+          Effect.map(Caller, (caller) => `${caller} wrote ${value} to ${database}`),
+    ),
+    Action.allowAll,
+  );
+
+  const database = Layer.effect(
+    Database,
+    Effect.acquireRelease(
+      Effect.sync(() => (log.push("connect"), "db")),
+      () => Effect.sync(() => log.push("disconnect")),
+    ),
+  );
+
+  const caller = Effect.sync(() => (log.push("read caller"), "alice"));
+
+  // On the command, not around the run: built when an action runs.
+  const cli = ActionCli.make(app, { name: "tool" }).pipe(
+    Command.provide(database),
+    Command.provideEffect(Caller, caller),
+  );
+
+  const single = ActionCli.command(app, Write).pipe(
+    Command.provide(database),
+    Command.provideEffect(Caller, caller),
+  );
+
+  await run(cli, ["--help"]);
+  await run(cli, ["write", "--help"]);
+  await run(single, ["--help"]);
+  expect(failure(await runExit(cli, ["write"]))).toBeInstanceOf(CliError.ShowHelp);
+  expect(failure(await runExit(cli, ["writ", "--value", "x"]))).toBeInstanceOf(CliError.ShowHelp);
+  expect(failure(await runExit(single, ["--valu", "x"]))).toBeInstanceOf(CliError.ShowHelp);
+  expect(log).toEqual([]);
+
+  expect(await lines(cli, ["write", "--value", "x"])).toEqual(['"alice wrote x to db"']);
+  expect(log).toEqual(["read caller", "connect", "disconnect"]);
+
+  // The documented limit: the aggregate alone runs its own handler, under the provisions,
+  // before showing its help.
+  expect(failure(await runExit(cli, []))).toBeInstanceOf(CliError.ShowHelp);
+  expect(log).toEqual([
+    "read caller",
+    "connect",
+    "disconnect",
+    "read caller",
+    "connect",
+    "disconnect",
+  ]);
+});
+
+// A real subprocess compiles TypeScript at startup, which can outlast the default timeout
+// under load.
+it("runs under Effect's own runner: the result on stdout, a failure's JSON once on stderr, and its exit code", () => {
+  const users = (...args: ReadonlyArray<string>) =>
+    spawnSync(process.execPath, ["--import", "tsx", "examples/cli.ts", ...args], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+  const found = users("get-user", "--id", "1");
+
+  expect(found.status).toBe(0);
+  expect(JSON.parse(found.stdout)).toEqual({ id: "1", name: "Ada" });
+  expect(found.stderr).toBe("");
+
+  const missing = users("get-user", "--id", "9");
+
+  expect(missing.status).toBe(1);
+  expect(missing.stdout).toBe("");
+  expect(missing.stderr.trim().split("\n").at(-1)?.trim()).toBe('{"_tag":"UserNotFound","id":"9"}');
+  expect(missing.stderr.match(/UserNotFound/g)).toHaveLength(1);
+
+  const invalid = users("rename-user", "--id", "1", "--name", "");
+
+  expect(invalid.status).toBe(1);
+  expect(invalid.stdout).toBe("");
+  expect(invalid.stderr).toContain('{"_tag":"InvalidInput","message":"Expected a value with');
+
+  const help = users("--help");
+
+  expect(help.status).toBe(0);
+  expect(help.stdout).toContain("rename-user");
+  expect(help.stderr).toBe("");
+}, 30_000);

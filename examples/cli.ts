@@ -1,25 +1,24 @@
-import { Cause, Console, Effect, Logger, Runtime } from "effect";
+import { Effect } from "effect";
 import { Command } from "effect/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
 import { actors, CurrentActor } from "./authorization.js";
-import { Double } from "./contracts.js";
-import { double } from "./handlers.js";
+import { userActions } from "./handlers.js";
+import { Users } from "./users.js";
 
-// `double --value 21`: one flag per input field. The implementation's hook runs here as
-// on the servers; a local caller is not trusted more.
-const command = ActionCli.command(double, Double);
-
-Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
-  // Report a failure as runMain would, but on stderr, and none the CLI has printed.
-  Effect.tapCause((cause) =>
-    Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
-      ? Effect.void
-      : Console.error(Cause.pretty(cause)),
-  ),
-  Effect.provideService(Logger.LogToStderr, true),
+// `users get-user --id 1`: a subcommand per action, a flag per input field. The
+// implementation's hook runs here as on the servers; a local caller is not trusted more.
+const cli = ActionCli.make(userActions, { name: "users" }).pipe(
+  // Services go on the command: built when an action runs, never for `--help` or a
+  // mistyped flag.
+  Command.provide(Users.layerMemory),
   // No remote caller to authenticate: the host supplies the identity the hook reads.
-  Effect.provideService(CurrentActor, actors.alice),
+  Command.provideSync(CurrentActor, actors.alice),
+);
+
+// Effect's own runner: the result goes to stdout, and a failure to stderr as the JSON HTTP
+// sends, such as `{"_tag":"UserNotFound","id":"9"}`, exiting 1.
+Command.run(cli, { version: "0.1.0" }).pipe(
   Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain({ disableErrorReporting: true }),
+  NodeRuntime.runMain,
 );

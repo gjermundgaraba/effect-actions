@@ -1,9 +1,14 @@
-import { Effect, Predicate, type Schema } from "effect";
+import { Effect, Predicate } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient } from "effect/http";
 import type * as Action from "./Action.js";
 import { assertDistinct } from "./internal/actions.js";
-import { kebab, command as makeCommand, type Options as CommandOptions } from "./internal/cli.js";
+import {
+  type Failure,
+  kebab,
+  command as makeCommand,
+  type Options as CommandOptions,
+} from "./internal/cli.js";
 import { type AnyHttp, assertInBinding, type MethodError, methods } from "./internal/client.js";
 import {
   acquire,
@@ -20,6 +25,13 @@ import {
 
 /** How one command of `A` is named, takes its input and prints its result. */
 export type { Options as CommandOptions } from "./internal/cli.js";
+
+/**
+ * What a command fails with when its action fails: Effect CLI's `UserError`, whose `cause`
+ * is the action's failure and whose message is its JSON, which `Command.run` prints on
+ * stderr. A type only: after `Command.run`, match the cause, `error.cause instanceof X`.
+ */
+export type { Failure } from "./internal/cli.js";
 
 /** An aggregate command of the actions `A`: its name, and its subcommands' options. */
 export interface Options<A extends Action.Any = Action.Any> {
@@ -40,9 +52,9 @@ type Selected<App, A extends Action.Any> = App extends unknown
   : never;
 
 /**
- * What one local command of `A` runs: its implementation's hook, then its handler. A CLI
- * serializes no failure, so a refusal or another built-in failure is a typed failure of the
- * command effect.
+ * What one local command of `A` runs: its implementation's builder and hook, then its
+ * handler. Any hook may refuse and any handler fail with a built-in error, so every one
+ * fails with `Action.BuiltIn` too.
  */
 type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
@@ -55,7 +67,7 @@ type LocalCommand<App, A extends Action.Any, Subcommands = never> = Command.Comm
   string,
   Subcommands,
   {},
-  Effect.Error<Local<App, A>> | Schema.SchemaError,
+  Failure<Effect.Error<Local<App, A>>>,
   Effect.Services<Local<App, A>>
 >;
 
@@ -64,7 +76,7 @@ type RemoteCommand<H extends AnyHttp, A extends Action.Any, Subcommands = never>
   string,
   Subcommands,
   {},
-  MethodError<A, H["errors"][number]>,
+  Failure<MethodError<A, H["errors"][number]>>,
   HttpClient.HttpClient
 >;
 
@@ -109,7 +121,10 @@ const select = (apps: ReadonlyArray<AnyImplementation>, action: Action.Any): Any
   return app;
 };
 
-/** One command calling `action` through the binding's client, on the host's `HttpClient`. */
+/**
+ * One command calling `action` through the binding's client, on the host's `HttpClient`,
+ * whose failures include the binding's errors.
+ */
 const remote = (
   http: AnyHttp,
   action: Action.Any,
@@ -121,6 +136,7 @@ const remote = (
     action,
     (input) => Effect.flatMap(methods(http), (methodOf) => methodOf(action)(input)),
     options,
+    http.errors,
   );
 };
 
@@ -146,7 +162,8 @@ const project = (
  * JSON when it is not a struct. From an HTTP binding, the command calls the action over
  * HTTP through its `ActionHttp.client` method, on the host's `HttpClient`. From
  * implementations, it runs the handler in process, behind its implementation's `before`
- * hook; the host provides the identity.
+ * hook; the host provides the identity. Its stdout is the result; a failure is a
+ * `Failure`, which `Command.run` prints on stderr.
  */
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,

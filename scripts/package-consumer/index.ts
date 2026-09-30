@@ -180,9 +180,14 @@ const Write = Action.make("write", {
   success: Schema.String,
 });
 
-const checkCliTypes = () => {
+const checkCliTypes = (failure: ActionCli.Failure<Action.Forbidden>) => {
   // @ts-expect-error Remote commands accept only the binding's own actions.
   ActionCli.command(Http, Read);
+
+  // A command fails with Effect CLI's `UserError`, whose cause is the action's failure.
+  const refused: Action.Forbidden = failure.cause;
+
+  void refused;
 };
 
 void checkCliTypes;

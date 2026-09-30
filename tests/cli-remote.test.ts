@@ -1,11 +1,11 @@
 import { expect, it } from "vite-plus/test";
-import { Effect, Exit, Option, Schema } from "effect";
+import { Config, ConfigProvider, Effect, flow, Schema } from "effect";
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { cliServices, logged } from "./cli-services.js";
+import { causeOf, cliServices, logged, printed } from "./cli-services.js";
 import { clientLayer, serve } from "./serve.js";
 
 class Domain extends Schema.TaggedError<Domain>()(
@@ -172,14 +172,7 @@ it("names the same subcommands as a local aggregate for the same actions", () =>
   expect(names(local)).toEqual(names(remote));
 });
 
-/** The typed failure of a run that must fail. */
-const failed = <A, E>(exit: Exit.Exit<A, E>): E =>
-  Option.getOrThrowWith(
-    Exit.findErrorOption(exit),
-    () => new Error(`Expected a typed failure: ${String(exit)}`),
-  );
-
-it("propagates domain, refusal and transport failures as typed failures", async () => {
+it("fails with the domain error, refusal or transport failure it received, beneath Effect CLI's UserError", async () => {
   const refusing = serve(
     ActionHttp.layer(
       Http,
@@ -202,10 +195,10 @@ it("propagates domain, refusal and transport failures as typed failures", async 
 
   decodedInputs.length = 0;
 
-  expect(failed(await run(open, "0"))).toEqual(new Domain({ message: "zero" }));
+  expect(causeOf(await run(open, "0"))).toEqual(new Domain({ message: "zero" }));
 
   // The server's hook refuses; the client decodes its refusal as a typed failure.
-  expect(failed(await run(refusing, "21"))).toEqual(
+  expect(causeOf(await run(refusing, "21"))).toEqual(
     new Action.Forbidden({ message: "Requires users:write." }),
   );
 
@@ -225,7 +218,7 @@ it("propagates domain, refusal and transport failures as typed failures", async 
     Effect.runPromiseExit,
   );
 
-  expect(HttpClientError.isHttpClientError(failed(unavailable))).toBe(true);
+  expect(HttpClientError.isHttpClientError(causeOf(unavailable))).toBe(true);
   expect(transportAttempts).toBe(1);
 
   // Input that does not decode is refused locally, before any request.
@@ -235,6 +228,111 @@ it("propagates domain, refusal and transport failures as typed failures", async 
     Effect.runPromiseExit,
   );
 
-  expect(failed(invalid)).toBeInstanceOf(Schema.SchemaError);
+  expect(causeOf(invalid)).toBeInstanceOf(Action.InvalidInput);
   expect(transportAttempts).toBe(1);
+});
+
+it("prints a binding's error as its JSON, and a transport failure with the causes beneath it", async () => {
+  class Throttled extends Schema.TaggedError<Throttled>()(
+    "Throttled",
+    { retryAfter: Schema.Finite },
+    { httpApiStatus: 429 },
+  ) {}
+
+  const Throttling = ActionHttp.make([Remote], { errors: [Throttled] });
+  const command = ActionCli.command(Throttling, Remote);
+
+  const stderrOf = (answer: (request: Request) => Promise<Response>) =>
+    Command.runWith(command, { version: "0" })(["--value", "21"]).pipe(
+      printed,
+      Effect.provide(clientLayer(answer)),
+      Effect.provide(cliServices),
+      Effect.runPromise,
+    );
+
+  // The binding's error, as a server answers it, which the client decodes from its status.
+  const [throttled, , throttledErr] = await stderrOf(async () =>
+    Response.json(Schema.encodeSync(Throttled)(new Throttled({ retryAfter: 5 })), {
+      status: 429,
+    }),
+  );
+
+  expect(causeOf(throttled)).toEqual(new Throttled({ retryAfter: 5 }));
+  expect(throttledErr).toEqual([expect.stringContaining('{"_tag":"Throttled","retryAfter":5}')]);
+
+  // No schema encodes a transport failure: it is described, down to its root cause.
+  const [refused, , refusedErr] = await stderrOf(async () => {
+    throw new Error("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:1") });
+  });
+
+  expect(HttpClientError.isHttpClientError(causeOf(refused))).toBe(true);
+  expect(refusedErr).toEqual([
+    expect.stringMatching(
+      /HttpClientError: .*POST http:\/\/localhost\/api\/remote.*: Error: fetch failed: Error: connect ECONNREFUSED 127\.0\.0\.1:1/,
+    ),
+  ]);
+});
+
+it("nests under a host's own tree, with a connection of its own that no other command's requests take", async () => {
+  const web = serve(ActionHttp.layer(Http, app));
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+
+  const fetchLayer = clientLayer(async (request) => {
+    requests.push({ url: request.url, authorization: request.headers.get("authorization") });
+
+    return request.url.startsWith("https://auth.example.com/")
+      ? Response.json({ code: "device" })
+      : web.handler(request);
+  });
+
+  // The remote commands' URL and token, read when one of them runs.
+  const api = ActionCli.make(Http, { name: "api" }).pipe(
+    Command.provideEffect(
+      HttpClient.HttpClient,
+      Effect.gen(function* () {
+        const url = yield* Config.String("ACME_URL");
+        const token = yield* Config.Redacted("ACME_TOKEN");
+
+        return HttpClient.mapRequest(
+          yield* HttpClient.HttpClient,
+          flow(HttpClientRequest.prependUrl(url), HttpClientRequest.bearerToken(token)),
+        );
+      }),
+    ),
+  );
+
+  // A command of the host's own, calling another service through the host's plain client.
+  const login = Command.make("login", {}, () =>
+    Effect.asVoid(
+      Effect.flatMap(HttpClient.HttpClient, (client) =>
+        client.get("https://auth.example.com/device/code"),
+      ),
+    ),
+  );
+
+  const cli = Command.make("acme").pipe(Command.withSubcommands([api, login]));
+
+  const runWith = (env: Record<string, string>, args: ReadonlyArray<string>) =>
+    logged(Command.runWith(cli, { version: "0" })(args)).pipe(
+      Effect.provide(fetchLayer),
+      Effect.provide(cliServices),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
+      Effect.runPromise,
+    );
+
+  const env = { ACME_URL: "http://api.example.com", ACME_TOKEN: "secret" };
+
+  const [, output] = await runWith(env, ["api", "remote", "--value", "21"]);
+  await runWith(env, ["login"]);
+
+  expect(output).toEqual(['"42"']);
+  expect(requests).toEqual([
+    { url: "http://api.example.com/api/remote", authorization: "Bearer secret" },
+    { url: "https://auth.example.com/device/code", authorization: null },
+  ]);
+
+  // Help reads no configuration and sends nothing.
+  await runWith({}, ["api", "--help"]);
+  await runWith({}, ["api", "remote", "--help"]);
+  expect(requests).toHaveLength(2);
 });

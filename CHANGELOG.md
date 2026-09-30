@@ -6,11 +6,12 @@ One contract, one `implement`, one binding, one hook. `ActionGroup` is gone: act
 implemented directly, HTTP binds a flat list of actions, and every client calls an action with
 its input. Every implementation states its `before` hook, which every surface runs. The library
 owns the failures a surface answers with: `InvalidInput` (400), `Unauthenticated` (401) and
-`Forbidden` (403). CLI flags come from each action's input. Clients and `Testing` are
-Effect-only, the client modules merge into `ActionHttp` and `ActionCli`, and `ActionCatalog`
-and `TestingClient` are removed. `mcp.text` moves from the action to `ActionMcp`'s `tools`
-option, and stdio also serves the revisions before 2026-07-28, back to 2024-11-05, so Claude
-Code and Codex connect.
+`Forbidden` (403). CLI flags come from each action's input, and a command runs on Effect's own
+`NodeRuntime.runMain`, printing a failure on stderr as the JSON HTTP sends. Clients and
+`Testing` are Effect-only, the client modules merge into `ActionHttp` and `ActionCli`, and
+`ActionCatalog` and `TestingClient` are removed. `mcp.text` moves from the action to
+`ActionMcp`'s `tools` option, and stdio also serves the revisions before 2026-07-28, back to
+2024-11-05, so Claude Code and Codex connect.
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.118`. The `effect`
 peer range is unchanged (`>=4.0.0-rc.118 <4.0.0`). TypeScript 7 or newer is supported; earlier
@@ -67,9 +68,11 @@ ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: 
 | `HttpApiClient.make(Http.api)`'s `client.users.getUser({ payload })`                                                                      | `ActionHttp.client(Http)`'s `client.getUser(input)`; natively `client.getUser({ payload })`                                                                                                                   |
 | `ActionHttpClient.promise(Http, options)`                                                                                                 | A client built once with `FetchHttpClient.layer`, each call `Effect.runPromise`d ([ActionHttp.md](docs/ActionHttp.md#promise-callers))                                                                        |
 | `ActionHttpClient.Client`, `Method`, `Options`                                                                                            | `ActionHttp.Client`, `ActionHttp.ClientOptions`; `fetch` is `FetchHttpClient.Fetch`                                                                                                                           |
-| `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                         | `ActionCli.command(Http, GetUser)`, `ActionCli.make(Http, { name })`, on a host `HttpClient` that prepends the URL                                                                                            |
+| `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                         | `ActionCli.command(Http, GetUser)`, `ActionCli.make(Http, { name })`, on a host `HttpClient` that prepends the URL, provided on the command: `Command.provideEffect(HttpClient.HttpClient, ...)`              |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                                  | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                     |
 | `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                                 | `ActionCli.CommandOptions` of `command`, local or remote; `ActionCli.Options` is `make`'s; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success              |
+| A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                            | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` is the failure: `Effect.catchTag("UserError", (error) => error.cause instanceof UserNotFound ? ... : Effect.fail(error))`             |
+| `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith`          | `Command.run(cli, { version })` on `NodeRuntime.runMain`                                                                                                                                                      |
 | `--input '<json>'`, `--input-file`, `parameters` and its `input` mapper                                                                   | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct                                                                                                         |
 | `Testing.httpClient`, `Testing.Handler`                                                                                                   | `Testing.layer(routes)`, an in-memory `HttpClient` for every client                                                                                                                                           |
 | `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient?, tools? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. Given the endpoint's `tools`, a text field is put back under its field |
@@ -97,12 +100,13 @@ Behavior that changes without a rename:
   `before: enabled ? authorize : undefined` becomes `enabled ? authorize : Action.allowAll`.
 - A hook fails with a refusal, or with an error every action of its implementation declares,
   which every surface declares for that action and every client decodes: HTTP answers with its
-  status and JSON, MCP with an `isError` tool result, the Toolkit and the CLI with a typed
-  failure. Only a refusal steps up under `Authentication.make`. 0.8.0's hook failed with its
-  surface's `errors`, which that surface alone declared, and a CLI's with any error: move a limit
-  from a surface's `errors` into each guarded action's `errors`, spreading one array, or keep a
-  limit applied before decoding in HTTP middleware, with `ActionHttp.make`'s `errors`. An
-  action that lacks the error is a type error naming `Refusal`, not the action.
+  status and JSON, MCP with an `isError` tool result, the Toolkit with a typed failure, and a
+  CLI command with the same JSON on stderr. Only a refusal steps up under
+  `Authentication.make`. 0.8.0's hook failed with its surface's `errors`, which that surface
+  alone declared, and a CLI's with any error: move a limit from a surface's `errors` into each
+  guarded action's `errors`, spreading one array, or keep a limit applied before decoding in
+  HTTP middleware, with `ActionHttp.make`'s `errors`. An action that lacks the error is a type
+  error naming `Refusal`, not the action.
 - A record has exactly one handler per action: an extra key is a compile error, which 0.8.0
   ignored. `implement` throws `Missing handlers: <names>` or `Unknown handlers: <keys>`; a
   builder's record is checked when its layer builds.
@@ -189,8 +193,34 @@ Behavior that changes without a rename:
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
   remote command takes no client options: it calls through the host's `HttpClient`.
-- A command refuses an undeclared field in `--input` or a flag's JSON with a `SchemaError`;
-  0.8.0 dropped it.
+- A command whose action fails prints the failure on stderr as the JSON HTTP sends for it, such
+  as `{"_tag":"UserNotFound","id":"9"}`, through Effect's CLI formatter, and exits 1, or with
+  the failure's `Runtime.errorExitCode`. It fails with Effect CLI's `UserError`, whose `cause`
+  is the action's failure, which `Command.run` prints and marks reported, so `runMain` does not
+  print it again. 0.8.0 failed the command with the action's failure itself, which `runMain`
+  printed on stdout with a stack and without its fields, and the documented program printed the
+  raw `Cause` on stderr instead; delete that block. A failure no schema encodes, a builder's or
+  the transport's, prints as its tag, or an error's name, and its message, and each cause's,
+  never its other fields. `Command.run` prints a command's failure before a host's
+  `Effect.catchTag("UserError", ...)` runs, so a host that recovered silently or printed its
+  own text provides a `formatError` through `CliOutput.layer`, or runs with
+  `renderErrors: false`.
+- A command refuses input that does not decode with `Action.InvalidInput`, as HTTP does,
+  printed as the body of HTTP's 400, an undeclared field in `--input` or a flag's JSON
+  included, which 0.8.0 dropped. 0.8.0's parser refused an `--input` or `--input-file` value
+  that did not decode and showed the command's help (`ShowHelp` containing `InvalidValue`);
+  an omitted input that did not decode, or the input a `parameters` mapping made, failed with
+  a `SchemaError`.
+- A success that does not encode is a defect, as it is HTTP's empty 500, and nothing prints it
+  as a result; 0.8.0 failed the command with a `SchemaError`.
+- What a command runs, the builder, hook and handler, or a remote command's client call, writes
+  its Effect logs and `Console` output to stderr, whatever logger prints them, so stdout
+  carries the result alone. 0.8.0 wrote them to stdout unless the program provided
+  `Logger.LogToStderr`, which leaves `Console` output and `Logger.consoleJson` on stdout.
+  `runMain` still reports a defect, and a failure of a layer the host provides, on stdout: a
+  CLI whose stdout feeds scripts keeps `Logger.LogToStderr` outermost and
+  `disableErrorReporting`, and reports on stderr itself
+  ([ActionCli.md](docs/ActionCli.md#rules)).
 - A Toolkit tool takes and gives JSON, as MCP's does: `tools.handle` takes JSON arguments, and
   a tool's schemas are `Schema.toCodecJson` of the action's. 0.8.0 decoded a model's JSON with
   the action's schemas, refusing an ISO string for a `Schema.Date`.
@@ -247,7 +277,7 @@ Behavior that changes without a rename:
   widens to `string`. One constant serves the endpoint and every `Testing.mcpClient` that
   calls one of its actions, as a client reads only the entries of the actions it calls; give
   a client that calls none of them no `tools`.
-- A local command's error channel includes `Action.BuiltIn`.
+- A local command's `Failure` includes `Action.BuiltIn`, whatever its implementation's hook.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
 - `Action.make` refuses an action name over 128 characters, which 0.8.0 refused only as a tool
   name, and `hints.destructive` on a read; it also refuses hints typed by a helper's type
@@ -325,6 +355,18 @@ Behavior that changes without a rename:
   on those revisions reads a non-object success from the text.
 - `ActionMcp.Options<A>`, `ActionMcp.LayerHttpOptions<A>` and `Testing.McpClientOptions<A>`
   take the served actions as `A`, which types `tools`. `A` defaults to any action.
+
+### Other changes
+
+- The docs and examples provide a command's services and caller on the command,
+  `Command.provide(Users.layer)` and `Command.provideSync(CurrentActor, actor)`, built or read
+  when the command runs, before its input is decoded, so input the action's schema refuses is
+  refused after they are built; `--help` and the parser's errors, such as a missing or unknown
+  flag, never build them. Provided around the run, as 0.8.0 showed, they are built before the
+  arguments are parsed. A remote command's `HttpClient` is configured on the command too,
+  `Command.provideEffect(HttpClient.HttpClient, ...)`, so no other request of the program takes
+  its URL or credentials. `make`'s aggregate run alone still builds its provisions before
+  showing its help, and fails instead if one fails.
 
 ## 0.8.0
 
