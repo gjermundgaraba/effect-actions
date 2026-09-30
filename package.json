@@ -59,6 +59,11 @@
       "name": "pnpm",
       "version": "12.5.1",
       "onFail": "download"
+    },
+    "runtime": {
+      "name": "node",
+      "version": "^22.18.0 || ^24.11.0 || >=26.0.0",
+      "onFail": "error"
     }
   },
   "engines": {

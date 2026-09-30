@@ -312,22 +312,24 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
   ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
 
   const handlers = Layer.unwrap(
-    Effect.map(acquire(apps), (bound) =>
-      HttpApiBuilder.group(api, name, (builder) =>
+    Effect.map(acquire(apps), (bound) => {
+      // Own properties, so an action named `__proto__` is a route, not a prototype.
+      const byName = Object.fromEntries(
+        bound.map(([action, run]) => [
+          action.name,
+          (request: Request) => recordStepUp(run(request.payload)),
+        ]),
+      );
+
+      return HttpApiBuilder.group(api, name, (builder) =>
         builder.handleAll(
           // SAFETY: the native router selects the endpoint, and so the action, before
           // its handler runs; `layer`'s signature restores every channel.
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary.
-          Object.fromEntries(
-            // Own properties, so an action named `__proto__` is a route, not a prototype.
-            bound.map(([action, run]) => [
-              action.name,
-              (request: Request) => recordStepUp(run(request.payload)),
-            ]),
-          ) as never,
+          byName as never,
         ),
-      ).pipe(Layer.provide(schemaErrors), buildAlone),
-    ),
+      ).pipe(Layer.provide(schemaErrors), buildAlone);
+    }),
   ).pipe(provideHandlers(apps));
 
   return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(entry()));

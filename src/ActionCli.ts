@@ -206,10 +206,12 @@ export function make(
     ({ action }) => `action ${action.name}`,
   );
 
+  const group = Command.make(options.name).pipe(
+    Command.withSubcommands(subcommands.map(({ command }) => command)),
+  );
+
   // SAFETY: every subcommand runs or calls one action, so the aggregate's channels are
   // the unions `Local` and `RemoteCommand` state over them.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list.
-  return Command.make(options.name).pipe(
-    Command.withSubcommands(subcommands.map(({ command }) => command)),
-  ) as never;
+  return group as never;
 }
