@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted } from "effect";
+import { type Context, Effect, Redacted, type Scope } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
@@ -91,58 +91,83 @@ const settle = (
   });
 
 /**
- * RFC 9728 discovery of `options` at its metadata URL. It answers before routing, so no
- * route middleware, authentication included, ever covers it.
+ * RFC 9728 discovery of `options` at its metadata URL, as global router middleware: it
+ * answers before routing, so no route middleware, authentication included, ever covers it.
+ * The metadata is public to every origin, as a browser client needs it after a 401: it
+ * carries `Access-Control-Allow-Origin: *`, and discovery answers its own CORS preflight.
+ * Where the host's CORS middleware runs before it, that policy answers the preflight and
+ * adds its headers to reads, which keep the `*` where it sets no origin.
  */
 const discovery = (options: Options) => {
   const discoveryUrl = metadataUrl(options);
   const target = discoveryUrl.href.slice(discoveryUrl.origin.length);
 
   // `undefined` fields are dropped by JSON serialization.
-  const response = HttpServerResponse.jsonUnsafe({
-    resource: options.resource,
-    authorization_servers: options.authorizationServers,
-    bearer_methods_supported: ["header"],
-    scopes_supported: options.scopesSupported,
-    resource_name: options.resourceName,
-  });
+  const metadata = HttpServerResponse.jsonUnsafe(
+    {
+      resource: options.resource,
+      authorization_servers: options.authorizationServers,
+      bearer_methods_supported: ["header"],
+      scopes_supported: options.scopesSupported,
+      resource_name: options.resourceName,
+    },
+    { headers: { "access-control-allow-origin": "*" } },
+  );
+
+  /** The preflight of a cross-origin read, allowing the headers it asks for. */
+  const preflight = (request: HttpServerRequest.HttpServerRequest) => {
+    const requested = request.headers["access-control-request-headers"];
+
+    return HttpServerResponse.empty({
+      status: 204,
+      headers: {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, HEAD, OPTIONS",
+        ...(requested === undefined
+          ? {}
+          : { "access-control-allow-headers": requested, vary: "Access-Control-Request-Headers" }),
+      },
+    });
+  };
 
   // Resource paths and queries are literal URLs, not router patterns. Leave nonmatches
   // to the host, including other discovery documents on the same router.
-  const layer = HttpRouter.middleware(
-    (next) =>
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
+  const middleware = <E, R>(next: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+      // A request no URL parses, such as `//[x`, is no discovery request: the host answers it.
+      const targeted =
+        URL.canParse(request.url, discoveryUrl.origin) &&
+        new URL(request.url, discoveryUrl.origin).href.slice(discoveryUrl.origin.length) === target;
 
-        // A request no URL parses, such as `//[x`, is no discovery request: the host answers it.
-        if (
-          (request.method === "GET" || request.method === "HEAD") &&
-          URL.canParse(request.url, discoveryUrl.origin) &&
-          new URL(request.url, discoveryUrl.origin).href.slice(discoveryUrl.origin.length) ===
-            target
-        )
-          return response;
+      if (targeted && (request.method === "GET" || request.method === "HEAD"))
+        return Effect.succeed(metadata);
 
-        return yield* next;
-      }),
-    { global: true },
-  );
+      if (targeted && request.method === "OPTIONS") return Effect.succeed(preflight(request));
 
-  return { url: discoveryUrl.href, layer };
+      return next;
+    });
+
+  return { url: discoveryUrl.href, middleware };
 };
 
 /**
- * How a remote caller proves who they are: router middleware that authenticates each
- * request and provides its identity to the handler. Provide it to the HTTP surfaces
- * serving guarded implementations, `ActionHttp.layer` and `ActionMcp.layerHttp`, as to
- * any native route: it covers the routes of the layer it is provided to, before decoding,
- * and removes the identity from that layer's request requirements.
+ * How a remote caller proves who they are: Effect's router middleware, which authenticates
+ * each request and provides its identity to the routes it covers. Provide its `.layer` to the
+ * HTTP surfaces serving guarded implementations, `ActionHttp.layer` and
+ * `ActionMcp.layerHttp`, as to any native route: it covers the routes of the layer it is
+ * provided to, before decoding, and removes the identity from that layer's request
+ * requirements.
  *
- * `authenticate` fails with `Unauthenticated` (a 401) or `Forbidden` (a 403), each sent as
- * the JSON every client decodes, or with the response to send instead. It reads the request
- * the router provides; the other services it yields, such as a token verifier, are
- * startup requirements of the layer, captured when it is built. Acquired resources live
- * until the request scope closes, including while the handler is running.
+ * `build` is a builder, like the one `Action.implement` takes: an Effect yielding startup
+ * services, such as a token verifier, that returns the per-request authentication. It runs
+ * once per layer graph, when the middleware's layer is built, and what it yields that layer
+ * requires. The per-request authentication succeeds with the identity, or fails with
+ * `Unauthenticated` (a 401) or `Forbidden` (a 403), each sent as the JSON every client
+ * decodes, or with the response to send instead. It reads the request the router provides;
+ * another service it reads per request comes from middleware combined before it,
+ * `authentication.combine(resolveTenant)`, and middleware reading the identity combines after
+ * it, `accessLog.combine(authentication)`. Resources it acquires live until the request scope
+ * closes, including while the handler is running.
  *
  * Every response of the routes it covers is marked `Cache-Control: no-store`, unless its
  * route states its own caching, and a failure serialized by enclosing middleware always is.
@@ -150,19 +175,27 @@ const discovery = (options: Options) => {
  * the request presented a bearer token. A call under it refused with `Unauthenticated`, or
  * with a `Forbidden` naming scopes, by a hook or a handler, is answered with that refusal's
  * status, JSON and challenge, whatever its route answered, as OAuth step-up and MCP
- * authorization require. Given an OAuth protected resource, it also publishes the
- * resource's RFC 9728 discovery, once however many layers it covers, public and before
- * routing; every challenge names its metadata URL, and a 401's names `scopesRequired`.
+ * authorization require. Given an OAuth protected resource, building it also publishes the
+ * resource's RFC 9728 discovery, once per layer graph whatever composition builds it, public
+ * and before routing; every challenge names its metadata URL, and a 401's names
+ * `scopesRequired`.
  */
-export const make = <I, A, R>(
+export const make = <I, A, R, EX, RX>(
   service: Context.Key<I, A>,
-  authenticate: Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
+  build: Effect.Effect<
+    Effect.Effect<NoInfer<A>, HttpServerResponse.HttpServerResponse | Refusal, R>,
+    EX,
+    RX
+  >,
   protectedResource?: Options,
-): Layer.Layer<
-  HttpRouter.Request.From<"Requires", I>,
-  never,
-  HttpRouter.HttpRouter | Exclude<R, HttpRouter.Provided>
-> => {
+): HttpRouter.Middleware<{
+  provides: I;
+  handles: never;
+  error: never;
+  requires: Exclude<R, HttpRouter.Provided>;
+  layerError: EX;
+  layerRequires: HttpRouter.HttpRouter | Exclude<RX, Scope.Scope>;
+}> => {
   assertScopes(protectedResource);
 
   const published = protectedResource === undefined ? undefined : discovery(protectedResource);
@@ -175,24 +208,17 @@ export const make = <I, A, R>(
     Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
   );
 
-  // Its services beyond the request are captured once, when the layer is built.
-  // SAFETY: what is left of each request's requirements is what the router provides every
-  // request; native middleware types its layer by generic differences, of `R`, the identity
-  // and the step-up slot, that TypeScript cannot reduce, and asks for more middleware.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native middleware boundary.
-  const middleware = HttpRouter.middleware<{ provides: I }>()(
-    Effect.map(Effect.context<Exclude<R, HttpRouter.Provided>>(), (startup) => {
-      // The request's own services, its scope included, win over those captured at startup.
-      const authenticated = Effect.updateContext(
-        authenticate,
-        (request: Context.Context<HttpRouter.Provided>) =>
-          // SAFETY: `R` is what startup captured and what the router provides each request.
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Generic context boundary.
-          Context.merge(startup, request) as Context.Context<R>,
-      );
+  return HttpRouter.middleware<{ provides: I }>()(
+    Effect.gen(function* () {
+      const router = yield* HttpRouter.HttpRouter;
 
-      return (httpEffect) =>
-        authenticated.pipe(
+      // Published where the middleware is built, so every composition of it publishes it.
+      if (published !== undefined) yield* router.addGlobalMiddleware(published.middleware);
+
+      const authenticate = yield* build;
+
+      return (route) =>
+        authenticate.pipe(
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.succeed(
@@ -201,10 +227,9 @@ export const make = <I, A, R>(
                   : answer(error, published?.url),
               ),
             onSuccess: (identity) =>
-              answerStepUp(
-                Effect.provideService(httpEffect, service, identity),
-                published?.url,
-              ).pipe(Effect.onError(() => failed)),
+              answerStepUp(Effect.provideService(route, service, identity), published?.url).pipe(
+                Effect.onError(() => failed),
+              ),
           }),
           HttpEffect.withPreResponseHandler((request, response) =>
             Effect.succeed(
@@ -216,11 +241,5 @@ export const make = <I, A, R>(
           ),
         );
     }),
-  ).layer as Layer.Layer<
-    HttpRouter.Request.From<"Requires", I>,
-    never,
-    Exclude<R, HttpRouter.Provided>
-  >;
-
-  return published === undefined ? middleware : Layer.merge(middleware, published.layer);
+  );
 };

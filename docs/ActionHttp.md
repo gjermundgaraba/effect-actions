@@ -87,7 +87,7 @@ const documentation = Layer.mergeAll(
 export const layer = Layer.mergeAll(routes, documentation);
 ```
 
-Serve with `HttpRouter.serve(layer).pipe(Layer.provide(NodeHttpServer.layer(createServer, { port })), Layer.launch)`.
+Serve with `HttpRouter.serve(layer).pipe(Layer.provide(NodeHttpServer.layer(createServer, { port })), Layer.launch)`, and set a request body limit ([guarantees.md](guarantees.md#wire-behavior)).
 
 A large API, or two actions that would share a name, gets one binding per area, each with its
 own `prefix` and client, served by one host:
@@ -146,8 +146,8 @@ await Effect.runPromise(
 ```
 
 The argument may be omitted when `{}` is a valid input, such as for an action declared without
-`input` (`client.whoAmI()`) or one whose fields are all optional; omitting it sends `{}`. Other
-headers also go through `transformClient`
+`input` (`client.whoAmI()`) or one whose fields are all optional, in a struct or a class;
+omitting it sends the input `{}` decodes to. Other headers also go through `transformClient`
 (`HttpClient.mapRequest(HttpClientRequest.setHeader("x-agent", agent))`). The options are the
 native `HttpApiClient.make` options except `transformResponse`, which may change a call's
 success, failure or required services, which the method types cannot follow; use
@@ -197,6 +197,7 @@ elsewhere, give `baseUrl`.
 - The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`.
 - Bindings combine into one host API with `HttpApi.addHttpApi`, for one document or one native client, only when their prefixes differ and no action name repeats across them. An operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
 - Serve the OpenAPI document as a native route: `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
+- A route runs only a request typed as JSON: any other type, or none, is a 415, as on an MCP endpoint. So no request a page on another origin can send without a CORS preflight reaches a handler, whatever credentials, cookies included, it carries; one typed as JSON is preflighted, and the host's CORS policy decides.
 - Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
 
 ### Binding errors
@@ -241,7 +242,7 @@ elsewhere, give `baseUrl`.
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.
 - Type error listing `HttpRouter.Request.From<"Requires", CurrentActor>` as unsatisfied: a handler or the hook yields a request service that no middleware around the layer provides. Provide the authentication around it, `layer.pipe(Layer.provide(authenticate))` ([Authentication.md](Authentication.md)), or other router middleware.
 - 400 `InvalidInput` on a valid-looking request: its `message` names each field that did not decode. An action without input takes only `{}`, and a body.
-- 415: a content type other than JSON, such as `fetch`'s default `text/plain` for a string body. A request without one is read as JSON.
+- 415: the request is not typed as JSON. It has another content type, such as `fetch`'s default `text/plain` for a string body, or none, as for a `Blob` body. Send `Content-Type: application/json`, as the clients do.
 - Empty 500: a defect, or a handler result that does not match the success schema. The cause is in the server's logs.
 
 ### Client methods
@@ -252,4 +253,5 @@ elsewhere, give `baseUrl`.
 - Property does not exist on the client: the action is not in the binding.
 - `Expected 1 arguments`: `{}` is not a valid input for the action, so it needs its input.
 - Type error passing `undefined` to a method whose argument may be omitted: leave the argument out instead.
+- Fails with `SchemaError` `Expected Filters` given a plain object, which TypeScript may let through: the input is a class, `Filters`, which encodes only its instances. Pass `new Filters({ ... })`, or leave out an argument whose fields are all optional.
 - Type error passing `{ payload: ... }`: that is the native client's shape. These methods take the input itself.

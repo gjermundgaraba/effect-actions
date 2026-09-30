@@ -18,7 +18,7 @@ class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-te
 class Caller extends Context.Service<Caller, string>()("access-test/Caller") {}
 
 /** Authentication accepting every request: what OAuth step-up answers under. */
-const anyone = Authentication.make(Caller, Effect.succeed("anyone"));
+const anyone = Authentication.make(Caller, Effect.succeed(Effect.succeed("anyone"))).layer;
 
 const Read = Action.make("read", {
   description: "Read the resource",

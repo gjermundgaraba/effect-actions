@@ -1,9 +1,9 @@
-import { Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, Scope } from "effect";
 import { isUnion, resolveAt } from "effect/SchemaAST";
-import type { HttpClient } from "effect/http";
+import type { Etag, HttpClient, HttpPlatform } from "effect/http";
 import type { FileSystem } from "effect/FileSystem";
 import type { Path } from "effect/Path";
-import type { Etag, HttpPlatform, HttpRouter } from "effect/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { status } from "effect/http-api/HttpApiSchema";
 import * as OpenApi from "effect/http-api/OpenApi";
@@ -235,11 +235,50 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
 }
 
 /**
+ * `group`, built in an empty context rather than the one around it: `HttpApiBuilder` lays
+ * the context a group is built in over every request's, where a startup value would replace
+ * what middleware provides for the request. `entry` puts that context beneath it instead.
+ */
+const buildAlone = <A, E>(group: Layer.Layer<A, E>): Layer.Layer<A, E> =>
+  Layer.fromBuild((memoMap, scope) =>
+    Effect.setContext(Layer.buildWithMemoMap(group, memoMap, scope), Context.empty()),
+  );
+
+/**
+ * Route middleware of one `layer` call, run after the middleware around it. A request
+ * without a content type is a 415, as on an MCP endpoint, where `HttpApi` would read it as
+ * JSON: a page on any origin sends one, credentials included, without a CORS preflight.
+ * Any other request runs over what its routes were built with, which fills in only what
+ * the request lacks: what middleware provides per request, authentication included, wins,
+ * as on a native route and in a `Toolkit` call.
+ */
+const entry = () =>
+  HttpRouter.middleware(
+    Effect.map(Effect.context<unknown>(), (built) => {
+      // Never the layer's scope: a call acquires in its request's.
+      const startup = Context.omit(Scope.Scope)(built);
+
+      return (route) =>
+        Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+          request.headers["content-type"] === undefined
+            ? Effect.succeed(
+                HttpServerResponse.text("Unsupported content-type: none", { status: 415 }),
+              )
+            : Effect.updateContext(route, (current: Context.Context<never>) =>
+                Context.merge(startup, current),
+              ),
+        );
+    }),
+  ).layer;
+
+/**
  * Serve implementations of a binding's actions in one layer, each implementation's `before`
  * hook running after decoding, before each handler. It mounts only the routes of the
  * actions it serves, so one binding may be served by several layers, such as public
  * routes beside authenticated ones: middleware provided to a layer covers its routes
- * only. Each implementation's builder runs once however many layers serve it.
+ * only. Each implementation's builder runs once however many layers serve it. Its routes
+ * take only requests typed as JSON, and what middleware provides per request wins over what
+ * the layer was built with.
  */
 export function layer<
   const H extends AnyHttp,
@@ -287,11 +326,11 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
             ]),
           ) as never,
         ),
-      ),
+      ).pipe(Layer.provide(schemaErrors), buildAlone),
     ),
   ).pipe(provideHandlers(apps));
 
-  return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(schemaErrors));
+  return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(entry()));
 }
 
 /**

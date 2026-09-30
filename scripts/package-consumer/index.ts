@@ -140,7 +140,7 @@ class Identity extends Context.Service<Identity, string>()("consumer/Identity") 
 // A token is its own identity here; a real host verifies it.
 const token = Effect.map(Authentication.bearerToken, Redacted.value);
 
-const authenticate = Authentication.make(Identity, token);
+const authenticate = Authentication.make(Identity, Effect.succeed(token)).layer;
 
 const guarded = Action.implement(
   [Read, Write],
@@ -175,10 +175,10 @@ const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(
 // An OAuth protected resource's authentication publishes its discovery, public.
 const published = ActionHttp.layer(GuardedHttp, guarded).pipe(
   Layer.provide(
-    Authentication.make(Identity, token, {
+    Authentication.make(Identity, Effect.succeed(token), {
       resource: "http://localhost/mcp",
       authorizationServers: ["https://example.com/auth"],
-    }),
+    }).layer,
   ),
 );
 

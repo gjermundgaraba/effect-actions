@@ -286,6 +286,47 @@ it("sends a no-input call as {}, and any given input encoded as given, through t
   expect(bodies).toEqual([{ value: "21" }, {}, {}, { value: 3 }, null, {}, "absent", {}]);
 });
 
+it("takes a left-out argument as the input {} decodes to, an input class's instance", async () => {
+  class Filters extends Schema.Class<Filters>("Filters")({
+    tag: Schema.optionalKey(Schema.String),
+  }) {}
+
+  const List = Action.make("list", {
+    description: "List notes, all of them without a tag",
+    access: "read",
+    input: Filters,
+    success: Schema.String,
+  });
+
+  const Lists = ActionHttp.make([List]);
+
+  const bodies: Array<unknown> = [];
+
+  const web = serve(
+    ActionHttp.layer(
+      Lists,
+      Action.implement(List, (filters) =>
+        Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
+      ),
+    ),
+  );
+
+  const handler = async (request: Request) => {
+    bodies.push(await request.clone().json());
+
+    return web.handler(request);
+  };
+
+  const results = await Effect.flatMap(
+    ActionHttp.client(Lists, { baseUrl: "http://localhost" }),
+    (client) => Effect.all([client.list(), client.list(new Filters({ tag: "x" }))]),
+  ).pipe(Effect.provide(clientLayer(handler)), Effect.runPromise);
+
+  // The client decodes `{}` before it encodes it, so the class sends `{}` as a struct would.
+  expect(results).toEqual(["true: all", "true: x"]);
+  expect(bodies).toEqual([{}, { tag: "x" }]);
+});
+
 it("decodes two errors that share a status by their tag", async () => {
   class Rejected extends Schema.TaggedError<Rejected>()(
     "Rejected",

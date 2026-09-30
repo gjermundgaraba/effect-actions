@@ -7,6 +7,7 @@ import {
   HttpRouter,
   HttpServer,
   HttpServerRequest,
+  HttpServerResponse,
 } from "effect/http";
 import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -363,7 +364,8 @@ export const implementTypes = () => {
   Testing.layer(ActionHttp.layer(ActionHttp.make([Headers]), readsRequest));
 
   // In memory as under `HttpRouter.serve`: what the routes still require is the layer's own,
-  // a builder's services, and a per-request service no middleware of theirs provides.
+  // a builder's services, and a per-request service no middleware of theirs provides,
+  // including one a global middleware reads.
   const guardedRoutes = ActionHttp.layer(
     ActionHttp.make([GetUser, RenameUser, WhoAmI]),
     userActions,
@@ -372,10 +374,25 @@ export const implementTypes = () => {
   const authenticated = Testing.layer(guardedRoutes.pipe(Layer.provide(authenticate)));
   const asCaller = Testing.layer(guardedRoutes);
 
+  class Tenant extends Context.Service<Tenant, string>()("types-spec/Tenant") {}
+
+  const audited = Testing.layer(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([Headers]), readsRequest),
+      HttpRouter.middleware((route) => Effect.flatMap(Tenant, () => route), { global: true }),
+    ),
+  );
+
+  // The platform services, which the layer supplies, are never required: not even the
+  // `HttpPlatform` a file route reads per request.
+  const file = Testing.layer(HttpRouter.add("GET", "/file", HttpServerResponse.file("file.txt")));
+
   const inMemoryServices: [
     Equal<Layer.Services<typeof authenticated>, Users>,
     Equal<Layer.Services<typeof asCaller>, Users | CurrentActor>,
-  ] = [true, true];
+    Equal<Layer.Services<typeof audited>, Tenant>,
+    Equal<Layer.Services<typeof file>, never>,
+  ] = [true, true, true, true];
 
   void inMemoryServices;
 
@@ -734,6 +751,86 @@ export const authenticationTypes = () => {
   void toolOwed;
 };
 
+export const authenticationBuildTypes = () => {
+  class Identity extends Context.Service<Identity, { readonly id: string }>()("types/Identity") {}
+
+  class Tenant extends Context.Service<Tenant, string>()("types/Tenant") {}
+
+  class Verifier extends Context.Service<
+    Verifier,
+    {
+      readonly verify: (
+        tenant: string,
+        url: string,
+      ) => Effect.Effect<{ readonly id: string }, Action.Unauthenticated>;
+    }
+  >()("types/Verifier") {}
+
+  const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
+    Effect.provideService(route, Tenant, "acme"),
+  );
+
+  const accessLog = HttpRouter.middleware()((route) => Effect.flatMap(Identity, () => route));
+
+  // What the build yields is the layer's, built at startup, its scope the layer's own. What
+  // the per-request authentication yields is each request's, but the router's request and scope.
+  const authentication = Authentication.make(
+    Identity,
+    Effect.gen(function* () {
+      const { verify } = yield* Verifier;
+      yield* Effect.addFinalizer(() => Effect.void);
+
+      return Effect.gen(function* () {
+        const tenant = yield* Tenant;
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        yield* Effect.addFinalizer(() => Effect.void);
+
+        return yield* verify(tenant, request.url);
+      });
+    }),
+  );
+
+  type Config = typeof authentication extends HttpRouter.Middleware<infer C> ? C : never;
+
+  const classified: [
+    Equal<Config["provides"], Identity>,
+    Equal<Config["requires"], Tenant>,
+    Equal<Config["layerRequires"], HttpRouter.HttpRouter | Verifier>,
+    Equal<Config["error"], never>,
+  ] = [true, true, true, true];
+
+  // Uncombined, it still needs the tenant per request, so its layer is Effect's refusal.
+  const refused: typeof authentication.layer extends `Need to .combine(middleware)${string}`
+    ? true
+    : false = true;
+
+  // Combined with middleware providing it, before it, or reading the identity, after it,
+  // each request owes nothing; the layer owes its startup services.
+  const tenanted = authentication.combine(resolveTenant).layer;
+  const logged = accessLog.combine(authentication.combine(resolveTenant)).layer;
+
+  const combined: [
+    Equal<Layer.Services<typeof tenanted>, HttpRouter.HttpRouter | Verifier>,
+    Equal<Layer.Services<typeof logged>, HttpRouter.HttpRouter | Verifier>,
+  ] = [true, true];
+
+  // A service the per-request authentication yields is a request requirement, even one a
+  // startup layer could provide: the build is where startup services are read.
+  const unbuilt = Authentication.make(
+    Identity,
+    Effect.succeed(Effect.flatMap(Verifier, ({ verify }) => verify("acme", "/"))),
+  );
+
+  type Unbuilt = typeof unbuilt extends HttpRouter.Middleware<infer C> ? C : never;
+
+  const perRequest: [
+    Equal<Unbuilt["requires"], Verifier>,
+    Equal<Unbuilt["layerRequires"], HttpRouter.HttpRouter>,
+  ] = [true, true];
+
+  void [classified, refused, combined, perRequest];
+};
+
 export const voidSuccessTypes = () => {
   const Reset = Action.make("reset", { description: "Reset", access: "write" });
 
@@ -760,6 +857,85 @@ export const voidSuccessTypes = () => {
   Action.implement(Explicit, () => Effect.succeed(1));
 
   void success;
+};
+
+export const hintTypes = (built: Action.Hints, dangerous: boolean) => {
+  // Every hint a write may state, a read's without `destructive`, and hints built ahead.
+  Action.make("write", {
+    description: "Every hint",
+    access: "write",
+    hints: { destructive: false, idempotent: true, openWorld: false },
+  });
+
+  Action.make("read", {
+    description: "A read's hints",
+    access: "read",
+    hints: { idempotent: true, openWorld: false },
+  });
+
+  Action.make("built", { description: "Hints built ahead", access: "write", hints: built });
+
+  Action.make("typo", {
+    description: "A misspelled hint",
+    access: "write",
+    // @ts-expect-error A misspelled hint is refused beside a valid one, not silently ignored.
+    hints: { destructive: false, idempotnt: true },
+  });
+
+  Action.make("readOnly", {
+    description: "A read-only hint",
+    access: "write",
+    // @ts-expect-error A tool is read-only exactly when its action reads, beside other hints too.
+    hints: { readOnly: true, idempotent: true },
+  });
+
+  const loose = { openWorld: false, idempotnt: true };
+
+  Action.make("loose", {
+    description: "A misspelled hint built ahead",
+    access: "read",
+    // @ts-expect-error A misspelled hint is refused in a value built ahead too.
+    hints: loose,
+  });
+
+  // Hints given by a condition, spread or chosen, are checked in every branch.
+  Action.make("spread", {
+    description: "Hints spread by a condition",
+    access: "write",
+    ...(dangerous ? { hints: { destructive: true, idempotent: true } } : {}),
+  });
+
+  // @ts-expect-error A misspelled hint in a conditional spread is refused too.
+  Action.make("spreadTypo", {
+    description: "A misspelled hint spread by a condition",
+    access: "write",
+    ...(dangerous ? { hints: { destructive: true, idempotnt: true } } : {}),
+  });
+
+  const valid = { idempotent: true };
+
+  Action.make("chosenTypo", {
+    description: "A misspelled hint in one branch",
+    access: "write",
+    // @ts-expect-error A misspelled hint in either branch is refused.
+    hints: dangerous ? loose : valid,
+  });
+
+  // The check cannot read hints a helper's type parameter stands for, so it refuses them. An
+  // action's type carries no hint types: a helper typing its parameter `Action.Hints` compiles.
+  const generic = <const H extends Action.Hints>(hints: H) =>
+    Action.make("generic", {
+      description: "Hints of a type parameter",
+      access: "write",
+      // @ts-expect-error Type 'H' is not assignable to type 'H & ...'.
+      hints,
+    });
+
+  const typed = (hints: Action.Hints) =>
+    Action.make("typed", { description: "Hints of a helper", access: "write", hints });
+
+  void generic;
+  void typed;
 };
 
 export const servedRequirementTypes = () => {

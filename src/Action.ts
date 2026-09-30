@@ -113,10 +113,21 @@ export interface Options {
 }
 
 /**
- * No key beyond `Known`, so a misspelled option is refused rather than ignored. Checked
- * after inference, as `Exact` is.
+ * No key beyond `Keys`, so a misspelled option or hint is refused rather than ignored.
+ * Checked after inference, as `Exact` is.
  */
 type Known<O, Keys> = { readonly [K in Exclude<keyof O, keyof Keys>]: never };
+
+/**
+ * The keys beyond `Hints` in the hints of any member of `O`, given or optional, so a
+ * misspelled hint in a conditional spread or in one branch of a ternary is refused too.
+ */
+type UnknownHints<O> = O extends { readonly hints?: infer H }
+  ? Exclude<H extends unknown ? keyof H : never, keyof Hints>
+  : never;
+
+/** No hint beyond `Hints`, whichever member of `O` gives it. */
+type KnownHints<O> = { readonly hints?: { readonly [K in UnknownHints<O>]: never } };
 
 /**
  * The built-in errors, refused in `errors`: every surface declares them already. A
@@ -129,14 +140,15 @@ type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
   : unknown;
 
 /**
- * The rules `make` checks beyond `Options`: every option known, a read never destructive,
- * and no built-in error listed. Options that fail `Options` itself infer as `Options`, whose
- * error the compiler already reports, so they are not checked again.
+ * The rules `make` checks beyond `Options`: every option and hint known, a read never
+ * destructive, and no built-in error listed. Options that fail `Options` itself infer as
+ * `Options`, whose error the compiler already reports, so they are not checked again.
  */
 type Rules<O> = Options extends O
   ? unknown
   : Known<O, Options> &
       OwnErrors<O> &
+      KnownHints<O> &
       (O extends { readonly access: "read" }
         ? { readonly hints?: { readonly destructive?: never } }
         : unknown);

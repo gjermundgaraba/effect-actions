@@ -3,6 +3,7 @@ import { type DateTime, Effect, Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as Testing from "../src/Testing.js";
 import type { Equal } from "./equal.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
@@ -104,6 +105,46 @@ export const effectClientTypes = Effect.gen(function* () {
   methods.get(null);
   // @ts-expect-error Methods take the input itself, not a native payload wrapper.
   methods.get({ payload: { id: "a" } });
+});
+
+// An input class follows the same rule, on a client and `Testing.mcpClient` alike: left out
+// when its fields are all optional, sending the instance `{}` decodes to.
+class Filters extends Schema.Class<Filters>("Filters")({
+  tag: Schema.optionalKey(Schema.String),
+}) {}
+
+class Lookup extends Schema.Class<Lookup>("Lookup")({ id: Schema.String }) {}
+
+const Filter = Action.make("filter", {
+  description: "Filter notes",
+  access: "read",
+  input: Filters,
+  success: Schema.Array(Schema.String),
+});
+
+const Find = Action.make("find", {
+  description: "Find a note",
+  access: "read",
+  input: Lookup,
+  success: Schema.String,
+});
+
+export const classInputTypes = Effect.gen(function* () {
+  const methods = yield* ActionHttp.client(ActionHttp.make([Filter, Find]));
+  const mcp = yield* Testing.mcpClient([Filter, Find]);
+
+  const all: ReadonlyArray<string> = yield* methods.filter();
+  const tagged: ReadonlyArray<string> = yield* methods.filter(new Filters({ tag: "x" }));
+  const tool: ReadonlyArray<string> = yield* mcp.filter();
+
+  void all;
+  void tagged;
+  void tool;
+
+  // @ts-expect-error A class with a required field needs its argument, as a struct does.
+  methods.find();
+  // @ts-expect-error So does its tool call.
+  void mcp.find();
 });
 
 ActionHttp.client(ActionHttp.make(Notes), {

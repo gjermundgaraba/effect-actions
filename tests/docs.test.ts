@@ -25,6 +25,7 @@ const snippets = [
   ["docs/ActionHttp.md", "### Client", ["client.ts"]],
   ["docs/ActionHttp.md", "### Promise callers", ["promise-client.ts"]],
   ["docs/Authentication.md", "## Canonical", ["authentication.ts"]],
+  ["docs/Authentication.md", "### Combined with other middleware", ["authentication-tenant.ts"]],
   ["docs/ActionMcp.md", "## Canonical", ["mcp.ts"]],
   ["docs/ActionCli.md", "## Canonical", ["cli.ts"]],
   ["docs/ActionCli.md", "### Over HTTP", ["cli-remote.ts"]],

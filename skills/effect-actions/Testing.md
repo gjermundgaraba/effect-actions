@@ -28,7 +28,8 @@ action's decoded success. It fails with the action's declared errors and the bui
 decoded values, `SchemaError`, `HttpClientError`, or `McpCallError` for any other answer.
 Only a tool result carries the action's own errors; any other response decodes only as a
 refusal, as authentication and a hook send. The input may be left out when `{}` is a valid
-input, sending `{}`, and a given input is sent as given, as for a client's method.
+input, sending the input `{}` decodes to, and a given input is sent as given, as for a client's
+method.
 
 ## Canonical
 
@@ -89,7 +90,8 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
 
 ## Rules
 
-- `layer(routes)` builds the routes with `HttpServer.layerServices` provided and request logging off, and releases them with the layer's scope. What the routes still require is the layer's, as under `HttpRouter.serve`: their builders' services, and any per-request service no middleware of theirs provides. Provide them around it, with `Layer.provideMerge` where the program reads them too, so the handlers and the program share one instance. A per-request service provided there, such as a caller, reaches every request; authentication among the routes still provides its own. Each `layer` builds the routes anew, builders included, unless `Action.layer` built them above it. Requests run in the context the layer is built in, as under `HttpRouter.serve`: a `TestClock` or a reference provided around the program reaches middleware and handlers.
+- `layer(routes)` builds the routes with request logging off, and releases them with the layer's scope. What the routes still require is the layer's, as under `HttpRouter.serve`: their builders' services, and any per-request service no middleware of theirs provides, including one a global middleware reads. Provide them around it, with `Layer.provideMerge` where the program reads them too, so the handlers and the program share one instance. A per-request service provided there, such as a caller, reaches every request; authentication among the routes still provides its own. Each `layer` builds the routes anew, builders included, unless `Action.layer` built them above it. Requests run in the context the layer is built in, as under `HttpRouter.serve`: a `TestClock` or a reference provided around the program reaches middleware and handlers.
+- `layer` never requires the platform services `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`, but they follow the same rule: at build and per request, the routes get the ones provided around `layer`, and `HttpServer.layerServices`' defaults for the rest, whose `FileSystem` is a no-op. The default `HttpPlatform` reads files through the `FileSystem` provided around `layer`.
 - A relative URL resolves against `http://localhost`, once any `baseUrl` a client adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl` under `layer`, and one given is kept. Every request on this client is answered by the routes, whatever its host, so the native `HttpApiClient` and a remote `ActionCli` command work in memory too.
 - A client method sends one stateless `tools/call` for the action's tool, at the protocol version `ActionMcp.layerHttp` serves, 2026-07-28, in both the header and `_meta`. It encodes the input with the action's schema, and decodes the success from `structuredContent.value`, as `ActionHttp.client` does for a route. It reads a JSON or an event-stream response.
 - A declared error, the action's own or a built-in one, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication or a hook, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
@@ -108,5 +110,6 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
 - 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
 - The program reads a service the handlers never changed: it was provided inside the routes and again to the program, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
 - Type error that the program still requires an identity, such as `CurrentActor`: a route needs it per request and no authentication among the routes provides it. Provide the authentication around the routes, or the caller around `layer` ([One caller](#one-caller)).
+- A builder or handler finds no file where one exists, failing with `NotFound: FileSystem.<method> (<path>)`, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it, with `Layer.provideMerge` where the program reads files too.
 - `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
 - An `HttpClientError` whose reason is `InvalidUrlError`, from a client method on an `HttpClient` other than `layer`'s: a relative `url` resolves only under `layer`. Pass an absolute `url`.

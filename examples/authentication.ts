@@ -7,20 +7,24 @@ import { actors, CurrentActor } from "./authorization.js";
 // server's library instead.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
-// Provides CurrentActor per request, to the routes of every layer it is provided to. A
-// missing or unknown token is the built-in `Unauthenticated`: a 401 every client decodes.
-// As an OAuth protected resource, it publishes RFC 9728 discovery, public, and every
-// challenge names it, so an MCP client that was refused finds the server issuing its tokens.
-// A first login requests read only; a write refused for its scope steps up.
-export const authenticate = Authentication.make(
+// Router middleware providing CurrentActor per request. Like a handler builder, its Effect
+// yields startup services, such as a token verifier, and returns the per-request
+// authentication; this demo needs none. A missing or unknown token is the built-in
+// `Unauthenticated`: a 401 every client decodes. As an OAuth protected resource, it
+// publishes RFC 9728 discovery, public, and every challenge names it, so an MCP client
+// that was refused finds the server issuing its tokens. A first login requests read only;
+// a write refused for its scope steps up.
+export const authentication = Authentication.make(
   CurrentActor,
-  Effect.flatMap(Authentication.bearerToken, (token) => {
-    const name = Redacted.value(token);
+  Effect.succeed(
+    Effect.flatMap(Authentication.bearerToken, (token) => {
+      const name = Redacted.value(token);
 
-    return isActorToken(name)
-      ? Effect.succeed(actors[name])
-      : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
-  }),
+      return isActorToken(name)
+        ? Effect.succeed(actors[name])
+        : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
+    }),
+  ),
   {
     resource: "http://localhost:3000/mcp",
     authorizationServers: ["https://auth.example.com"],
@@ -28,3 +32,7 @@ export const authenticate = Authentication.make(
     scopesRequired: ["users:read"],
   },
 );
+
+// Provided to every layer whose routes it authenticates. Combine the middleware first when
+// it reads another middleware's service, or another reads the identity.
+export const authenticate = authentication.layer;

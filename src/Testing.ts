@@ -1,14 +1,25 @@
-import { Effect, Layer, Option, Predicate, Schema, type Scope } from "effect";
+import {
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  type Scope,
+} from "effect";
 import { identity } from "effect/Function";
 import {
+  Etag,
   type Headers,
   HttpClient,
   type HttpClientError,
   HttpClientRequest,
   type HttpClientResponse,
   HttpEffect,
+  HttpPlatform,
   HttpRouter,
-  HttpServer,
   type HttpServerRequest,
 } from "effect/http";
 import { Sse } from "effect/encoding";
@@ -22,31 +33,54 @@ import { clientOf, type Served } from "./internal/memory.js";
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
- * released with its scope, without request logs, with the platform services
- * `HttpServer.layerServices` provides. What they still require is this layer's, as under
- * `HttpRouter.serve`: a builder's services, and a per-request service no middleware of theirs
- * provides, such as the caller a test stands in for authentication. Provided around it, the
- * test program shares them. A relative URL resolves against `http://localhost`.
+ * released with its scope, without request logs. What they still require is this layer's, as
+ * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
+ * theirs provides, including one a global middleware reads, such as the caller a test stands
+ * in for authentication. Provided around it, the test program shares them. It never requires
+ * the platform services, `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`: one
+ * provided around it is the routes' too, and `HttpServer.layerServices`' defaults stand in for
+ * the rest, whose `FileSystem` is a no-op. A relative URL resolves against `http://localhost`.
  */
 export function layer<A, E, R>(
   routes: Layer.Layer<A, E, R>,
 ): Layer.Layer<
   HttpClient.HttpClient,
   E,
-  Exclude<HttpRouter.Request.Without<R> | HttpRouter.Request.Only<"Requires", R>, Served>
+  Exclude<
+    | HttpRouter.Request.Without<R>
+    | HttpRouter.Request.Only<"Requires", R>
+    | HttpRouter.Request.Only<"GlobalRequires", R>,
+    Served
+  >
 >;
 export function layer(
   routes: Layer.Layer<unknown, unknown, unknown>,
 ): Layer.Layer<HttpClient.HttpClient, unknown, unknown> {
-  // Requests run in the context the layer is built in, as under `HttpRouter.serve`: a
-  // `TestClock` or reference provided around the program reaches middleware and handlers.
   return Layer.unwrap(
     Effect.gen(function* () {
-      const app = yield* HttpRouter.toHttpEffect(
-        routes.pipe(Layer.provide(HttpServer.layerServices)),
+      // The platform services `HttpServer.layerServices` has, beneath the program's own at
+      // build and per request, so one provided around the layer wins. Supplied rather than
+      // required: every `ActionHttp.layer` declares them, so every test would owe them. The
+      // default `HttpPlatform` serves files from the program's `FileSystem`, or else from a
+      // no-op one; built fresh, so that no platform built elsewhere in the program, on another
+      // `FileSystem`, stands in for it.
+      const fileSystem = Option.getOrElse(yield* Effect.serviceOption(FileSystem.FileSystem), () =>
+        FileSystem.makeNoop({}),
       );
 
-      const context = yield* Effect.context<never>();
+      const platform = yield* Layer.build(
+        Layer.fresh(
+          Layer.mergeAll(HttpPlatform.layer, Path.layer, Etag.layerWeak).pipe(
+            Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem)),
+          ),
+        ),
+      );
+
+      // Requests run in the context the layer is built in, as under `HttpRouter.serve`: a
+      // `TestClock` or reference provided around the program reaches middleware and handlers.
+      const context = Context.merge(platform, yield* Effect.context<never>());
+
+      const app = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provideContext(context));
 
       return clientOf(
         HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
@@ -236,7 +270,7 @@ export function mcpClient(
       actions.map((action) => [
         action.name,
         (...args: ReadonlyArray<Action.Any["input"]["Type"]>) =>
-          callTool(client, url, action, inputOf(args)),
+          Effect.flatMap(inputOf(action, args), (input) => callTool(client, url, action, input)),
       ]),
     );
   });

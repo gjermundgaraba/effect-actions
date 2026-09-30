@@ -14,7 +14,7 @@ Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.118`. Th
 peer range is now `>=4.0.0-rc.118 <4.0.0`: rc.118 moved Effect's unstable modules to the top
 level, so import `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai` instead of
 `effect/unstable/http`, `effect/unstable/httpapi`, `effect/unstable/cli` and
-`effect/unstable/ai`.
+`effect/unstable/ai`. TypeScript 7 or newer is supported; earlier versions are not.
 
 ### Breaking changes
 
@@ -45,7 +45,7 @@ ActionHttp.layer(Http, users);
 | `errors`, `schemaError`, `SchemaErrorPolicy` on any surface                                   | The built-in `Action.InvalidInput`, `Action.Unauthenticated` and `Action.Forbidden`                                                     |
 | `before` on any surface, `ActionToolkit.make`'s second argument                               | `Action.implement(actions, handlers, before)`                                                                                           |
 | A hook failing with an application error                                                      | A hook failing with `Action.Refusal`, `Unauthenticated` or `Forbidden`                                                                  |
-| `Authentication.middleware(tag, authenticate).layer`                                          | `Authentication.make(tag, authenticate, resource?)`, provided as it is; `authenticate` may fail with a refusal                          |
+| `Authentication.middleware(tag, authenticate).layer`                                          | `Authentication.make(tag, Effect.succeed(authenticate), resource?).layer`; `authenticate` may fail with a refusal                       |
 | `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`                           | `Authentication.Options`, `make`'s third argument                                                                                       |
 | `Authentication.protectedResource`, `challenge()`                                             | `make`'s third argument, which publishes discovery and names it in every challenge                                                      |
 | A 401 challenge naming a scope                                                                | `scopesRequired` in `make`'s third argument                                                                                             |
@@ -98,15 +98,39 @@ Behavior that changes without a rename:
 - `Authentication.make` gives every 401 it covers without a challenge a `Bearer` one, naming
   `scopesRequired` and the metadata URL of a protected resource, and `invalid_token` when the
   request presented a bearer token.
-- The services `authenticate` yields, other than the request, are startup requirements of
-  `make`'s layer: `make(...).pipe(Layer.provide(Verifier.layer))`. 0.7.0 kept them as request
-  requirements, for `HttpRouter.provideRequest`.
+- `Authentication.make`'s second argument is a builder, as `implement`'s may be: what it
+  yields is a startup requirement of the middleware's layer, built once per layer graph
+  (`authentication.layer.pipe(Layer.provide(Verifier.layer))`), and it returns the
+  per-request authentication. What that yields beyond the request is still a request
+  requirement, which only middleware combined before it supplies
+  (`authentication.combine(resolveTenant).layer`). 0.7.0's `authenticate` had no startup
+  phase: every service it yielded was a request requirement.
+- A protected resource's discovery is published by the middleware's layer, once per layer
+  graph, whichever composition builds it. It carries `Access-Control-Allow-Origin: *` and
+  answers its own CORS preflight (204, allowing `GET`, `HEAD` and `OPTIONS` and the requested
+  headers), so a browser MCP client reads it after a 401. Where the host's CORS middleware
+  runs first, its policy answers discovery's preflight and adds its headers to discovery's
+  reads, which keep the `*` where it sets no origin.
 - Middleware covers the routes of the layer it is provided to: serve public and authenticated
   actions of one binding in separate `ActionHttp.layer` calls.
+- `ActionHttp` answers a request without a content type with 415, as an MCP endpoint does;
+  0.7.0 read it as JSON. A page on any origin can send such a body, with the caller's cookies,
+  without a CORS preflight. The library's clients send `Content-Type: application/json`; a raw
+  caller adds it.
+- On `ActionHttp` and `ActionMcp`, a value a request gets from authentication,
+  `HttpRouter.provideRequest` or other router middleware wins over one the routes were built
+  with under the same tag, as on native routes and in a Toolkit call; a startup value only
+  fills in one the request lacks. 0.7.0 let the startup value win: an identity provided at a
+  server's root replaced the authenticated caller, and routes built inside a span parented
+  their action spans to it. A value provided around `HttpRouter.serve` or the program is the
+  request's too, so it also wins over one provided to a single surface's layer, which 0.7.0
+  let override it there; scope such a value with `HttpRouter.provideRequest`. Still never
+  provide an identity at startup: a route no authentication covers serves every caller as it.
 - `Authentication.make` marks its routes' responses `Cache-Control: no-store` unless the route
   states its own caching; a failure enclosing middleware serializes is always `no-store`.
-- A client's argument may be omitted exactly when `{}` is a valid input. A given argument is
-  sent as given; 0.7.0 sent `{}` for `undefined` or `null`.
+- A client's argument may be omitted exactly when `{}` is a valid input, and then sends the
+  input `{}` decodes to, so an input class whose fields are all optional may be left out. A
+  given argument is sent as given; 0.7.0 sent `{}` for `undefined` or `null`.
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
   remote command takes no client options: it calls through the host's `HttpClient`.
@@ -128,15 +152,37 @@ Behavior that changes without a rename:
 - `Testing.layer` runs requests in the context it is built in, as `HttpRouter.serve` does.
 - What `Testing.layer`'s routes still require is its own, as under `HttpRouter.serve`: a
   builder's services, which the test program then shares, and a per-request service no
-  middleware of theirs provides, such as the caller a test stands in for authentication.
-- `runStdio` gives its program a `Console` writing to stderr, so console loggers such as
-  `Logger.consoleJson`, and `Console.log`, in its builders, hooks and handlers never corrupt
-  the protocol. Layers provided around it log outside it: provide `Logger.LogToStderr`
-  outermost.
+  middleware of theirs provides, including one a global middleware reads, such as the caller a
+  test stands in for authentication.
+- `Testing.layer` never requires the platform services `FileSystem`, `Path`, `HttpPlatform`
+  and `Etag.Generator`, and one provided around it is the routes' own, at build and per
+  request: a builder, a handler and a file route read files through the `FileSystem` a test
+  provides. `HttpServer.layerServices`' defaults stand in for the rest, whose `FileSystem` is
+  a no-op.
+- `runStdio` gives its program a `Console` whose every method writes to stderr, so console
+  loggers such as `Logger.consoleJson`, `Console.log`, and the counters, timers and group
+  labels Node's console prints on stdout never corrupt the protocol from its builders, hooks
+  and handlers. It counts, times and warns with the labels of Node's console, and indents
+  inside a group; `dir` takes no inspect options, `table` prints its data without a grid or
+  column filter, and `clear` does nothing. Layers provided around it log outside it: provide
+  `Logger.LogToStderr` outermost.
+- `ActionMcp.layerHttp` and `runStdio` refuse an implementation whose action's input is not
+  one object with keys, a union, an array, a scalar, or an object without keys such as a given
+  `Schema.Struct({})`, as a type error naming the actions:
+  `Property '"MCP tool input must be one object with keys, such as a struct"' is missing`. Such
+  input compiled, and the layer build died. Input the types do not check, erased, a helper's
+  own type parameter, or one choice of an argument chosen by a condition when another passes,
+  still dies when the layer builds, with `McpServer cannot register tool '<name>'`; when no
+  choice passes, it is a type error. A helper listing an implementation typed by its
+  type parameter (`[app, status]`), or generic over actions (`Action.AnyImplementation<A>`),
+  no longer compiles: take the implementations as its type parameter,
+  `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spread them,
+  `[...apps, status]`.
 - A local command's error channel includes `Action.BuiltIn`.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`.
-- `Action.make` refuses a misspelled key, a name over 128 characters, and `hints.destructive`
-  on a read.
+- `Action.make` refuses a misspelled key, in `hints` too, a name over 128 characters, and
+  `hints.destructive` on a read; it also refuses hints typed by a helper's type parameter, so
+  type that parameter `Action.Hints`.
 - Each module exports `Options` for its main function, `<Function>Options` for another's, and
   `Any` for its erased value. `Action.Codec`, `ActionHttp.Api`, `ActionHttp.LayerOptions`, the
   `ActionHttpClient` and `ActionCliClient` types, and `Testing`'s `McpCallOptions`,

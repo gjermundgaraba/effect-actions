@@ -11,7 +11,7 @@ import {
   Result,
   Schema,
 } from "effect";
-import { McpSchema, Tool } from "effect/ai";
+import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -513,36 +513,66 @@ describe("projection boundaries", () => {
     expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
   });
 
+  /** What building an MCP endpoint dies with: a defect, not a typed failure, so no tag catches it. */
+  const buildDefect = async (layer: Layer.Layer<never, unknown, HttpRouter.HttpRouter>) => {
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Layer.build(
+          layer.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
+        ),
+      ),
+    );
+
+    const defect = Result.getOrUndefined(Exit.findDefect(exit));
+
+    return defect instanceof Error ? defect.message : defect;
+  };
+
+  // The types refuse such input where they see it (mcp-types.spec.ts); the native server
+  // refuses what they cannot see when the layer is built.
   it.each([
     Schema.String,
     // Compiles to a `$ref` root, which the native server inlines and still rejects.
     Schema.String.annotate({ identifier: "Named" }),
-  ])("the native server refuses non-object MCP input: the layer build dies", async (input) => {
-    const Invalid = Action.make("invalid", {
-      description: "Unusable MCP input",
+  ])(
+    "the native server refuses erased non-object MCP input: the layer build dies",
+    async (input) => {
+      const Invalid = Action.make("invalid", {
+        description: "Unusable MCP input",
+        access: "write",
+        input,
+        success: Schema.String,
+      });
+
+      // Erased, as in a list of implementations typed as any: the types see no input.
+      const apps: Action.Implementation<
+        Action.Any,
+        { readonly [name: string]: never },
+        never,
+        never
+      > = Action.implement([Invalid], {
+        invalid: () => Effect.succeed("unused"),
+      });
+
+      expect(
+        await buildDefect(ActionMcp.layerHttp(apps, { name: "test", version: "0" })),
+      ).toContain("McpServer cannot register tool 'invalid'");
+    },
+  );
+
+  it("the native server refuses a union of one struct, which the types let through", async () => {
+    const Single = Action.make("single", {
+      description: "A union of one struct: an object to the types, `anyOf` to MCP",
       access: "write",
-      input,
-      success: Schema.String,
+      input: Schema.Union([Schema.Struct({ id: Schema.String })]),
     });
 
-    const apps = Action.implement([Invalid], {
-      invalid: () => Effect.succeed("unused"),
-    });
-
-    const layer = ActionMcp.layerHttp(apps, {
-      name: "test",
-      version: "0",
-      path: "/mcp",
-    }).pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices));
-
-    // A defect, not a typed failure: it cannot be caught by tag.
-    const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(layer)));
-
-    const defect = Result.getOrUndefined(Exit.findDefect(exit));
-
-    expect(defect instanceof Error ? defect.message : defect).toMatch(
-      /Expected "object"|Missing key/,
+    const layer = ActionMcp.layerHttp(
+      Action.implement(Single, () => Effect.void),
+      { name: "test", version: "0" },
     );
+
+    expect(await buildDefect(layer)).toContain("McpServer cannot register tool 'single'");
   });
 
   it("serves `{}` as no input, the object root MCP requires", async () => {
@@ -566,6 +596,33 @@ describe("projection boundaries", () => {
     );
 
     expect((await listTools(web.handler))[0]?.inputSchema).toMatchObject({ type: "object" });
+  });
+
+  // An endpoint's registry is its own: native features merged beside it register elsewhere.
+  it("serves no native resource, prompt or tool merged beside an endpoint", async () => {
+    const Ping = Action.make("ping", { description: "Ping", access: "read" });
+    const Native = Toolkit.make(Tool.make("native", { success: Schema.String }));
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionMcp.layerHttp(
+          Action.implement(Ping, () => Effect.void),
+          { name: "test", version: "0" },
+        ),
+        McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("#") }),
+        McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
+        McpServer.toolkit(Native).pipe(
+          Layer.provide(Native.toLayer({ native: () => Effect.succeed("native") })),
+        ),
+      ),
+    );
+
+    const resources = await web.handler(mcpRequest({ method: "resources/list" }));
+    const prompts = await web.handler(mcpRequest({ method: "prompts/list" }));
+
+    expect((await listTools(web.handler)).map(({ name }) => name)).toEqual(["ping"]);
+    expect(await resources.json()).toMatchObject({ result: { resources: [] } });
+    expect(await prompts.json()).toMatchObject({ error: { code: -32601 } });
   });
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {

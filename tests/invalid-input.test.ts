@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Effect, Layer, Schema, SchemaTransformation } from "effect";
+import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { McpSchema } from "effect/ai";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -73,6 +74,64 @@ it("answers a request that does not decode with InvalidInput and the schema's me
   expect(await invalidInput(invalidJson)).not.toContain("secret");
   // The handler never sees input that does not decode.
   expect(calls.count).toBe(0);
+});
+
+it("answers 415 to every body a page may send without a preflight, so a cross-site write never runs", async () => {
+  class Session extends Context.Service<Session, string>()("invalid-input/Session") {}
+
+  // A dashboard on another site, signed in with a session cookie that CORS lets it send.
+  const cookie = HttpRouter.middleware<{ provides: Session }>()((route) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      request.cookies["session"] === "s3cr3t"
+        ? Effect.provideService(route, Session, "alice")
+        : Effect.succeed(HttpServerResponse.empty({ status: 401 })),
+    ),
+  );
+
+  const { app, calls } = counted();
+
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(Http, app).pipe(Layer.provide(cookie.layer)),
+      HttpRouter.cors({ allowedOrigins: ["https://app.example.com"], credentials: true }),
+    ),
+  );
+
+  const body = JSON.stringify({ value: 1 });
+
+  const from = (origin: string, headers: Record<string, string> = {}, sent: Blob | string = body) =>
+    new Request("http://localhost/api/echo", {
+      method: "POST",
+      headers: { origin, cookie: "session=s3cr3t", ...headers },
+      body: sent,
+    });
+
+  // `fetch` sends no content type at all for an untyped `Blob`, and so no preflight.
+  const untyped = from("https://evil.example.com", {}, new Blob([body]));
+  expect(untyped.headers.get("content-type")).toBeNull();
+  expect((await web.handler(untyped)).status).toBe(415);
+
+  // Nor for the other types a page sends without a preflight.
+  for (const type of [
+    "text/plain",
+    "application/x-www-form-urlencoded",
+    "multipart/form-data; boundary=x",
+  ]) {
+    expect(
+      (await web.handler(from("https://evil.example.com", { "content-type": type }))).status,
+    ).toBe(415);
+  }
+
+  expect(calls.count).toBe(0);
+
+  // Typed as JSON, a page on another origin is preflighted, and CORS decides; the call runs,
+  // whatever parameters the type carries.
+  for (const type of ["application/json", "application/json; charset=utf-8"]) {
+    const typed = from("https://app.example.com", { "content-type": type });
+    expect((await web.handler(typed)).status).toBe(200);
+  }
+
+  expect(calls.count).toBe(2);
 });
 
 it("describes every issue of the input in the message", async () => {
@@ -436,10 +495,12 @@ describe.each([
 
     expect((await call({ headers: json, body: "{}" })).status).toBe(200);
     expect((await call({ headers: json, body: '{"x":1}' })).status).toBe(400);
-    const missing = await call({});
+    const missing = await call({ headers: json });
     expect(missing.status).toBe(400);
     // The body decodes as the built-in `InvalidInput`, not any other 400.
     await expect(invalidInput(missing)).resolves.not.toBe("");
+    // Without a content type, the request is not JSON at all.
+    expect((await call({})).status).toBe(415);
   });
 
   it("is a closed object tool over MCP", async () => {

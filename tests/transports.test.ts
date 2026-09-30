@@ -458,16 +458,18 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
 
   const authentication = Authentication.make(
     Identity,
-    Effect.gen(function* () {
-      authentications++;
-      const request = yield* HttpServerRequest.HttpServerRequest;
+    Effect.succeed(
+      Effect.gen(function* () {
+        authentications++;
+        const request = yield* HttpServerRequest.HttpServerRequest;
 
-      if (request.headers.authorization !== "Bearer accepted") {
-        return yield* Effect.fail(HttpServerResponse.empty({ status: 401 }));
-      }
+        if (request.headers.authorization !== "Bearer accepted") {
+          return yield* Effect.fail(HttpServerResponse.empty({ status: 401 }));
+        }
 
-      return "caller";
-    }),
+        return "caller";
+      }),
+    ),
   );
 
   const web = serve(
@@ -475,7 +477,7 @@ it("runs wrapping authentication before the native MCP Origin check", async () =
       name: "origin-order",
       version: "0",
       allowedOrigins: ["https://allowed.example"],
-    }).pipe(Layer.provide(authentication)),
+    }).pipe(Layer.provide(authentication.layer)),
   );
 
   const rejected = await web.handler(

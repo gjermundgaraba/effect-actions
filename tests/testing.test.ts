@@ -1,13 +1,18 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Layer, Schema, SchemaGetter } from "effect";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { Context, Effect, FileSystem, Layer, Path, Schema, SchemaGetter } from "effect";
 import { Command } from "effect/cli";
 import {
+  Etag,
   FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
   HttpClientResponse,
   HttpRouter,
+  HttpServer,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
@@ -197,6 +202,32 @@ describe("mcpClient", () => {
     }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
     expect(results).toEqual([undefined, undefined]);
+  });
+
+  it("takes a left-out argument as the input {} decodes to, an input class's instance", async () => {
+    class Filters extends Schema.Class<Filters>("Filters")({
+      tag: Schema.optionalKey(Schema.String),
+    }) {}
+
+    const List = Action.make("list", {
+      description: "List notes, all of them without a tag",
+      access: "read",
+      input: Filters,
+      success: Schema.String,
+    });
+
+    const list = Action.implement(List, (filters) =>
+      Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
+    );
+
+    const results = await Effect.flatMap(Testing.mcpClient([List]), (mcp) =>
+      Effect.all([mcp.list(), mcp.list(new Filters({ tag: "x" }))]),
+    ).pipe(
+      Effect.provide(Testing.layer(ActionMcp.layerHttp(list, { name: "test", version: "0" }))),
+      Effect.runPromise,
+    );
+
+    expect(results).toEqual(["true: all", "true: x"]);
   });
 
   it("fails with an McpCallError holding any other answer", async () => {
@@ -646,5 +677,203 @@ describe("layer", () => {
     );
 
     expect(answered).toBe("1");
+  });
+
+  it("serves a global middleware the per-request service provided around it", async () => {
+    // Around every route, reading its service per request, as a rate limit does.
+    const counted = HttpRouter.middleware(
+      (route) =>
+        Effect.flatMap(Visits, (seen) =>
+          Effect.map(route, (response) =>
+            HttpServerResponse.setHeader(response, "x-visits", String(++seen.count)),
+          ),
+        ),
+      { global: true },
+    );
+
+    const routes = Layer.mergeAll(HttpRouter.add("GET", "/", HttpServerResponse.empty()), counted);
+
+    const visits = await HttpClient.get("/").pipe(
+      Effect.map((response) => [response.status, response.headers["x-visits"]]),
+      Effect.provide(
+        Testing.layer(routes).pipe(Layer.provide(Layer.succeed(Visits, { count: 0 }))),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(visits).toEqual([204, "1"]);
+  });
+
+  it("gives builders and handlers the platform services provided around it, the program's own", async () => {
+    let built = 0;
+
+    // A fake file system, naming the instance that read.
+    const files = Layer.sync(FileSystem.FileSystem, () => {
+      const instance = ++built;
+
+      return FileSystem.makeNoop({
+        readFileString: (file) => Effect.succeed(`${instance}:${file}`),
+      });
+    });
+
+    const Read = Action.make("read", {
+      description: "Reads a file with its builder's services and with its request's.",
+      access: "read",
+      input: { name: Schema.String },
+      success: Schema.Array(Schema.String),
+    });
+
+    /** `name` in the `data` directory, read with `fs`, joined with `path`'s separator. */
+    const readData = (fs: FileSystem.FileSystem, path: Path.Path, name: string) =>
+      fs.readFileString(path.join("data", name));
+
+    const read = Action.implement(
+      Read,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        return ({ name }) =>
+          Effect.gen(function* () {
+            const atStartup = yield* readData(fs, path, name);
+
+            const perRequest = yield* readData(
+              yield* FileSystem.FileSystem,
+              yield* Path.Path,
+              name,
+            );
+
+            return [atStartup, perRequest];
+          }).pipe(Effect.orDie);
+      }),
+    );
+
+    const Http = ActionHttp.make([Read]);
+
+    const answered = await Effect.gen(function* () {
+      const client = yield* ActionHttp.client(Http);
+      const fs = yield* FileSystem.FileSystem;
+
+      return [...(yield* client.read({ name: "a.txt" })), yield* fs.readFileString("a.txt")];
+    }).pipe(
+      Effect.provide(
+        Testing.layer(ActionHttp.layer(Http, read)).pipe(
+          Layer.provide(NodePath.layerWin32),
+          Layer.provideMerge(files),
+        ),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(answered).toEqual(["1:data\\a.txt", "1:data\\a.txt", "1:a.txt"]);
+    expect(built).toBe(1);
+  });
+
+  const packageJson = fileURLToPath(new URL("../package.json", import.meta.url));
+
+  /** A route answering with the package's `package.json`, as a server's platform reads it. */
+  const fileRoute = HttpRouter.add("GET", "/package.json", HttpServerResponse.file(packageJson));
+
+  /** The file route's status and body. */
+  const getFile = Effect.flatMap(HttpClient.get("/package.json"), (response) =>
+    Effect.map(response.text, (body) => [response.status, body]),
+  );
+
+  it("reads files through the FileSystem provided around it, or else a no-op one", async () => {
+    const Exists = Action.make("exists", {
+      description: "Whether a file exists, to its builder's file system and to its request's.",
+      access: "read",
+      input: { path: Schema.String },
+      success: Schema.Array(Schema.Boolean),
+    });
+
+    const exists = Action.implement(
+      Exists,
+      Effect.map(
+        FileSystem.FileSystem,
+        (fs) =>
+          ({ path }) =>
+            Effect.flatMap(FileSystem.FileSystem, (perRequest) =>
+              Effect.all([fs.exists(path), perRequest.exists(path)]),
+            ).pipe(Effect.orDie),
+      ),
+    );
+
+    const Http = ActionHttp.make([Exists]);
+    const routes = Layer.mergeAll(ActionHttp.layer(Http, exists), fileRoute);
+
+    const program = Effect.gen(function* () {
+      const client = yield* ActionHttp.client(Http);
+
+      return [yield* client.exists({ path: packageJson }), yield* getFile];
+    });
+
+    const real = await program.pipe(
+      Effect.provide(Testing.layer(routes).pipe(Layer.provide(NodeFileSystem.layer))),
+      Effect.runPromise,
+    );
+
+    expect(real).toEqual([
+      [true, true],
+      [200, readFileSync(packageJson, "utf8")],
+    ]);
+
+    // Nothing provided around it: a no-op file system, which holds no file.
+    const none = await program.pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
+
+    expect(none).toEqual([
+      [false, false],
+      [500, expect.any(String)],
+    ]);
+  });
+
+  it("gives the routes HttpServer.layerServices' defaults, per request too, when nothing provides them", async () => {
+    // Read per request: the platform serving a web file, the path separator, the ETag kind.
+    const routes = HttpRouter.add(
+      "GET",
+      "/defaults",
+      Effect.gen(function* () {
+        const file = new File(["hello"], "hello.txt");
+        const path = yield* Path.Path;
+        const etag = yield* Effect.flatMap(Etag.Generator, (etags) => etags.fromFileWeb(file));
+        const response = yield* HttpServerResponse.fileWeb(file);
+
+        return HttpServerResponse.setHeaders(response, {
+          "x-separator": path.sep,
+          "x-etag": Etag.toString(etag),
+        });
+      }),
+    );
+
+    const answered = await HttpClient.get("/defaults").pipe(
+      Effect.flatMap((response) =>
+        Effect.map(response.text, (body) => [
+          response.status,
+          body,
+          response.headers["x-separator"],
+          response.headers["x-etag"],
+        ]),
+      ),
+      Effect.provide(Testing.layer(routes)),
+      Effect.runPromise,
+    );
+
+    expect(answered).toEqual([200, "hello", "/", expect.stringMatching(/^W\//)]);
+  });
+
+  it("serves files from the FileSystem provided around it, whatever platform the program built elsewhere", async () => {
+    // Built before the layer, on its own no-op file system, and provided to nothing.
+    const elsewhere = Layer.effectDiscard(Effect.void).pipe(
+      Layer.provide(HttpServer.layerServices),
+    );
+
+    const answered = await getFile.pipe(
+      Effect.provide(
+        Testing.layer(fileRoute).pipe(Layer.provide(Layer.merge(NodeFileSystem.layer, elsewhere))),
+      ),
+      Effect.runPromise,
+    );
+
+    expect(answered).toEqual([200, readFileSync(packageJson, "utf8")]);
   });
 });

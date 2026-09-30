@@ -1,4 +1,4 @@
-import { Effect, type Schema } from "effect";
+import { Effect, Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
@@ -17,8 +17,8 @@ export type Options = Omit<
 
 /**
  * A call of `A` answering `R`. It may leave its input out when `{}` is a valid input, such
- * as for an action declared without `input`, and then sends `{}`. The client and
- * `Testing.mcpClient` share this rule.
+ * as for an action declared without `input`, and then sends the input `{}` decodes to. The
+ * client and `Testing.mcpClient` share this rule.
  */
 export type Call<A extends Action.Any, R> = {} extends A["input"]["Type"]
   ? (...input: [] | [input: A["input"]["Type"]]) => R
@@ -75,16 +75,18 @@ type NativeMethod = (request: {
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
 /**
- * Build the native client of a binding once and look up each action's method, taking the
- * action's input directly. Every binding API is a native `HttpApi` of one top-level
- * group built from `http.actions`, so each action has a native method of its name.
+ * The input a method of `action` sends for the arguments it was called with: a given
+ * argument as given, and none as the input `{}` decodes to, as a server decodes the `{}` it
+ * receives. `Call` allows none only when `{}` is a valid input; decoding makes it one of
+ * the input's own values, such as an instance of an input class.
  */
-/**
- * The input a client method sends for the arguments it was called with: `Call` allows none
- * only when `{}` is a valid input, and a given argument is sent as given.
- */
-export const inputOf = (args: ReadonlyArray<ErasedValue>): ErasedValue =>
-  args.length === 0 ? {} : args[0];
+export const inputOf = (
+  action: Action.Any,
+  args: ReadonlyArray<ErasedValue>,
+): Effect.Effect<ErasedValue, Schema.SchemaError> =>
+  args.length === 0
+    ? Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))({})
+    : Effect.succeed(args[0]);
 
 /** Refuse an action `http` does not bind, matched by identity, as a surface serving it would. */
 export const assertInBinding = (http: AnyHttp, action: Action.Any): void => {
@@ -93,6 +95,11 @@ export const assertInBinding = (http: AnyHttp, action: Action.Any): void => {
   }
 };
 
+/**
+ * Build the native client of a binding once and look up each action's method, taking the
+ * action's input directly. Every binding API is a native `HttpApi` of one top-level
+ * group built from `http.actions`, so each action has a native method of its name.
+ */
 export const methods = (
   http: AnyHttp,
   options: Options = {},
@@ -110,7 +117,7 @@ export const methods = (
 
         if (method === undefined) throw new Error(`No client method for ${action.name}`);
 
-        return (...args) => method({ payload: inputOf(args) });
+        return (...args) => Effect.flatMap(inputOf(action, args), (payload) => method({ payload }));
       };
     },
   );

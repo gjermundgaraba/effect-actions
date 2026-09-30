@@ -99,12 +99,13 @@ is public.
 - [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the protected implementations name.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the protected ones.
-- [authentication.ts](authentication.ts): `Authentication.make` for an OAuth protected resource, publishing its RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
+- [authentication.ts](authentication.ts): `Authentication.make`'s router middleware for an OAuth protected resource, and its layer `authenticate`, publishing its RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
+- [authentication-tenant.ts](authentication-tenant.ts): authentication combined with other middleware, not served by the app: a verifier built once at startup, each request's tenant from middleware combined before it, and middleware reading the identity combined after it.
 - [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the protected MCP endpoints.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, plain router middleware.
 - [app.ts](app.ts): every surface of the host, under that policy.
-- [server.ts](server.ts): the Node HTTP server and shutdown handling.
+- [server.ts](server.ts): the Node HTTP server, its request body limit, and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 - [promise-client.ts](promise-client.ts): the client built once for code that does not run Effects, each call a promise.
 
@@ -135,9 +136,10 @@ See [dependency lifetimes](../docs/guarantees.md#dependency-lifetimes) for how t
 handlers share `Users` while resolving `CurrentActor` on each request.
 
 Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
-Never provide `CurrentActor` at a server's startup: surfaces retain native Effect context
-semantics, not an extra identity-isolation boundary. Authentication establishes it on each
-request. In memory, [testing-caller.ts](testing-caller.ts) provides one caller around the layer.
+Authentication establishes `CurrentActor` on each request, over any value provided at startup.
+Never provide it at a server's startup all the same: a route no authentication covers would
+serve every caller as that actor. In memory, [testing-caller.ts](testing-caller.ts) provides
+one caller around the layer.
 
 ## Other surfaces
 

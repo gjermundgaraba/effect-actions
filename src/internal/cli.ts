@@ -1,10 +1,7 @@
 import { Console, Effect, Option, Predicate, Record, Schema, SchemaAST } from "effect";
 import { Command, Flag, Param } from "effect/cli";
 import type * as Action from "../Action.js";
-import { assertDistinct } from "./actions.js";
-
-/** Whether `T` is a union of several types. */
-type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
+import { assertDistinct, type IsUnion } from "./actions.js";
 
 /**
  * The fields of `A`'s input that may be positional: the named top-level fields of a struct

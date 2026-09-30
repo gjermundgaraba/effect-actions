@@ -12,7 +12,8 @@ pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
 | ------------------------------ | ------------------------------------ |
 | Node HTTP server or stdio host | `@effect/platform-node@4.0.0-rc.118` |
 
-Node `^22.12.0 || ^24.0.0 || >=26.0.0`. ESM only.
+Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer; earlier versions are not
+supported. ESM only.
 
 ## Entry points
 
@@ -67,7 +68,7 @@ export const routes = Layer.mergeAll(
 );
 ```
 
-Serve `routes` with `HttpRouter.serve` and a platform server layer. Result: `POST /api/greet` and an MCP tool `greet` at `/mcp`.
+Serve `routes` with `HttpRouter.serve` and a platform server layer, with a request body limit ([guarantees.md](guarantees.md#wire-behavior)). Result: `POST /api/greet` and an MCP tool `greet` at `/mcp`.
 
 ## Browser
 
