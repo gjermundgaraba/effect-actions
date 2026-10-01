@@ -1,5 +1,15 @@
-import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from "effect";
-import type { Stdio as StdioService } from "effect/Stdio";
+import {
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Schema,
+  type Stdio,
+} from "effect";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
 import type { HttpRouter } from "effect/http";
 import type * as Action from "./Action.js";
@@ -340,8 +350,8 @@ export function layerHttp(apps: Served, { tools, ...options }: LayerHttpOptions)
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
  * 2026-07-28 or any earlier revision back to 2024-11-05, as the host negotiates: the whole
- * program of an MCP subprocess, which succeeds when the host closes its side. A signal
- * interrupts it.
+ * program of an MCP subprocess, which succeeds once the host closes its side and the calls in
+ * flight, which that interrupts, have stopped. A signal interrupts it.
  *
  * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
  * `Stdio` service and the identity. Arguments are tool input only and never establish
@@ -353,7 +363,7 @@ export function runStdio<const Apps extends Served>(
 ): Effect.Effect<
   void,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
-  BuildContext<Member<Apps>> | StdioService | ToolRequestContext<RequestContext<Member<Apps>>>
+  BuildContext<Member<Apps>> | Stdio.Stdio | ToolRequestContext<RequestContext<Member<Apps>>>
 >;
 export function runStdio(apps: Served, { tools, ...options }: Options) {
   const transport = server(

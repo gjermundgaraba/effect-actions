@@ -1,5 +1,4 @@
-import { type Context, Effect, Redacted, type Scope } from "effect";
-import type { NonEmptyReadonlyArray } from "effect/Array";
+import { type Array as Arr, type Context, Effect, Redacted, type Scope } from "effect";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
 import { answer, answerStepUp, bearer } from "./internal/refusal.js";
@@ -31,7 +30,7 @@ export interface Options {
   /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
   /** Where clients get tokens: nonempty. */
-  readonly authorizationServers: NonEmptyReadonlyArray<string>;
+  readonly authorizationServers: Arr.NonEmptyReadonlyArray<string>;
   /** Every scope the resource accepts, which a client requests when a 401 names none. */
   readonly scopesSupported?: ReadonlyArray<string>;
   /**
@@ -39,7 +38,7 @@ export interface Options {
    * authenticates, rather than every scope supported. A `Forbidden` naming scopes asks for
    * more when a call needs them.
    */
-  readonly scopesRequired?: NonEmptyReadonlyArray<string>;
+  readonly scopesRequired?: Arr.NonEmptyReadonlyArray<string>;
   readonly resourceName?: string;
 }
 

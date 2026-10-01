@@ -17,7 +17,7 @@ import {
   SchemaGetter,
 } from "effect";
 import { TestConsole } from "effect/testing";
-import { CliError, Command, Flag, GlobalFlag } from "effect/cli";
+import { CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -1642,6 +1642,29 @@ it("fails with Effect CLI's UserError, which the runner prints on stderr as the 
       Exit.isFailure(unrendered) ? Cause.squash(unrendered.cause) : undefined,
     ),
   ).toBe(true);
+});
+
+it("prints a failure as the host's formatError writes it, on a copy of Effect's formatter", async () => {
+  class Gone extends Schema.TaggedError<Gone>()("Gone", { id: Schema.String }) {}
+
+  const Remove = Action.make("remove", { description: "Removes", access: "write", errors: [Gone] });
+  const app = Action.implement(Remove, () => Effect.fail(new Gone({ id: "x" })), Action.allowAll);
+  const formatError = (error: CliError.CliError) => `refused: ${error.message}`;
+
+  // The form ActionCli.md gives, which leaves the default formatter as it is.
+  const [exit, stdout, stderr] = await Command.runWith(ActionCli.command(app, Remove), {
+    version: "0",
+  })([]).pipe(
+    printed,
+    Effect.provide(
+      CliOutput.layer(Object.assign({}, CliOutput.defaultFormatter(), { formatError })),
+    ),
+    Effect.provide(cliServices),
+    Effect.runPromise,
+  );
+
+  expect(causeOf(exit)).toEqual(new Gone({ id: "x" }));
+  expect([stdout, stderr]).toEqual([[], ['refused: {"_tag":"Gone","id":"x"}']]);
 });
 
 it("describes a failure no schema encodes by its tag or an error's name, its message and causes, never its fields", async () => {

@@ -3,7 +3,8 @@ import { Effect, Layer, Predicate } from "effect";
 import { type HttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { AnyHttp, Client } from "../src/internal/client.js";
-import { clientOf, type Served } from "../src/internal/memory.js";
+import type { Served } from "../src/internal/memory.js";
+import * as Testing from "../src/Testing.js";
 
 /** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
 export type Handler = (request: Request) => Promise<Response>;
@@ -61,9 +62,9 @@ export const httpClient = <const H extends AnyHttp>(
 ): Effect.Effect<Client<H>> =>
   ActionHttp.client(http, options).pipe(Effect.provide(clientLayer(server)));
 
-/** The native `HttpClient`, answered by `server` in memory, as `Testing.layer` answers it. */
+/** The native `HttpClient`, answered by `server` in memory: `Testing.layer` of its handler. */
 export const clientLayer = (server: Server | Handler): Layer.Layer<HttpClient.HttpClient> =>
-  clientOf(handlerOf(server));
+  Testing.layer(handlerOf(server));
 
 /** `effect`, such as a `Testing.mcpClient`, on an `HttpClient` answered by `server` in memory. */
 export const against = <A, E>(

@@ -1,5 +1,4 @@
-import { Cause, Effect, type Layer, Predicate, Schema } from "effect";
-import { ensure } from "effect/Array";
+import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import {
   assertDistinct,
@@ -146,8 +145,9 @@ type UnknownHints<O> = O extends { readonly hints?: infer H }
 type KnownHints<O> = { readonly hints?: { readonly [K in UnknownHints<O>]: never } };
 
 /**
- * The built-in errors, refused in `errors`: every surface declares them already. A
- * look-alike of your own, which the types cannot tell by its tag, `implement` refuses.
+ * The built-in errors, refused in `errors`: every surface declares them already. The types
+ * refuse only the built-ins themselves; `implement` refuses, at startup, an error of your own
+ * that encodes with a built-in `_tag`.
  */
 type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
   ? [Extract<E, BuiltIns>] extends [never]
@@ -453,7 +453,7 @@ export function implement(
   build: Built | Effect.Effect<Built, unknown, unknown>,
   before: ErasedHook,
 ): Implementation<Any, {}, unknown, unknown> {
-  const actions = ensure(target);
+  const actions = Arr.ensure(target);
   const names = actions.map((action) => action.name);
 
   assertDistinct("action", actions, (action) => action.name);
@@ -546,7 +546,7 @@ export function share(
   app: AnyImplementation,
   ...before: [] | [ErasedHook]
 ): Implementation<Any, {}, unknown, unknown> {
-  const actions = ensure(target);
+  const actions = Arr.ensure(target);
 
   assertDistinct("action", actions, (action) => action.name);
 

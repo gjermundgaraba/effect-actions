@@ -228,13 +228,21 @@ describe("one implementation, both transports", () => {
 
     expect((await app.handler(foreign)).status).toBe(403);
 
-    // The policy is the host's outermost layer, so it covers the credential-free group too.
+    // The policy is global middleware, so it covers the credential-free group too, and,
+    // merged first, the discovery the authentication publishes.
     const foreignPublic = new Request(
       "http://attacker.example/api/status",
       anonymous("/api/status", {}),
     );
 
     expect((await app.handler(foreignPublic)).status).toBe(403);
+
+    const discovery = (host: string) =>
+      app.handler(new Request(`http://${host}/.well-known/oauth-protected-resource/mcp`));
+
+    expect((await discovery("attacker.example")).status).toBe(403);
+    expect((await discovery("localhost")).status).toBe(200);
+
     const crossOrigin = request("/api/getUser", "alice", { id: "1" });
     crossOrigin.headers.set("origin", "https://evil.example");
     expect((await app.handler(crossOrigin)).status).toBe(403);

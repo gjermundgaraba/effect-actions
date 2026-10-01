@@ -24,6 +24,7 @@ import { Http as ExampleHttp } from "../examples/binding.js";
 import { WhoAmI as ExampleWhoAmI } from "../examples/contracts.js";
 import { userActions } from "../examples/handlers.js";
 import { layer as signIn } from "../examples/mcp-sign-in.js";
+import { requestPolicy } from "../examples/request-policy.js";
 import { Users } from "../examples/users.js";
 import { against, httpClient, serve } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
@@ -1237,6 +1238,111 @@ describe("Authentication.make combined with other middleware", () => {
 
     expect(await against(web, bob)).toEqual({ id: "bob", tenantId: "other" });
   });
+
+  it("refuses a foreign Host or Origin under the example's global policy before the tenant example's combined authentication", async () => {
+    const web = serve(
+      Layer.mergeAll(
+        requestPolicy,
+        Layer.mergeAll(
+          ActionHttp.layer(ExampleHttp, userActions),
+          ActionMcp.layerHttp(userActions, { name: "tenants", version: "0" }),
+        ).pipe(Layer.provide(tenantAuthentication)),
+      ).pipe(Layer.provide(Users.layerMemory)),
+    );
+
+    /** The status, challenge and text of a POST of `{}` to `url`. */
+    const answer = async (url: string, headers: Record<string, string> = {}) => {
+      const response = await web.handler(
+        new Request(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body: "{}",
+        }),
+      );
+
+      return [response.status, response.headers.get("www-authenticate"), await response.text()];
+    };
+
+    // Refused before routing: no part of the combination read a credential, so no 401.
+    expect(await answer("http://evil.example/api/whoAmI")).toEqual([403, null, "Host not allowed"]);
+    expect(await answer("http://evil.example/mcp", { authorization: "Bearer forged" })).toEqual([
+      403,
+      null,
+      "Host not allowed",
+    ]);
+    expect(await answer("http://localhost/api/whoAmI", { origin: "https://evil.example" })).toEqual(
+      [403, null, "Origin not allowed"],
+    );
+
+    // What the policy lets through, the authentication answers.
+    expect((await answer("http://localhost/api/whoAmI")).slice(0, 2)).toEqual([401, "Bearer"]);
+  });
+
+  /** What the Host check below saw of the tenant, once per request it refused. */
+  const seen: Array<string> = [];
+
+  /** A Host check, route middleware: refuses a foreign Host, noting the tenant resolved by then. */
+  const hostCheck = HttpRouter.middleware()((route) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = HttpServerRequest.toURL(request.modify({ url: request.originalUrl }));
+
+      if (Option.isSome(url) && url.value.hostname === "api.example.com") return yield* route;
+
+      seen.push(Option.getOrElse(yield* Effect.serviceOption(Tenant), () => "no tenant"));
+
+      return HttpServerResponse.text("Host not allowed", { status: 403 });
+    }),
+  );
+
+  /** `whoAmI`'s route under `authenticated`, the Host check provided around both. */
+  const guarded = <ROut, E, R>(authenticated: Layer.Layer<ROut, E, R>) =>
+    ActionHttp.layer(Http, whoAmI).pipe(
+      Layer.provide(authenticated),
+      Layer.provide(hostCheck.layer),
+      Layer.provide(verifiers().layer),
+    );
+
+  const bearer = Authentication.make(Identity, Effect.succeed(authenticateToken));
+
+  it.each([
+    ["alone", () => serve(guarded(bearer.layer)), 403, ["no tenant"]],
+    [
+      "combined with resolveTenant",
+      () => serve(guarded(authentication.combine(resolveTenant).layer)),
+      403,
+      ["acme"],
+    ],
+    [
+      "the b of accessLog.combine(b)",
+      () => serve(guarded(accessLog.combine(bearer).layer)),
+      401,
+      [],
+    ],
+    [
+      "inside the b of accessLog.combine(b)",
+      () => serve(guarded(accessLog.combine(authentication.combine(resolveTenant)).layer)),
+      401,
+      [],
+    ],
+  ])(
+    "runs a Host check provided around routes before their authentication only while it is not combined into other middleware: %s",
+    async (_, web, status, refused) => {
+      seen.length = 0;
+
+      const response = await web().handler(
+        new Request("https://evil.example/api/whoAmI", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-tenant": "acme" },
+          body: "{}",
+        }),
+      );
+
+      // A 403 is the Host check's, run before the authentication; a 401 the authentication's,
+      // run first, where the check never ran.
+      expect([response.status, seen]).toEqual([status, refused]);
+    },
+  );
 });
 
 describe("an optional identity on one MCP URL", () => {

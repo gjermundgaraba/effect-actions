@@ -1,5 +1,4 @@
-import { isString } from "effect/Predicate";
-import { type AST, isLiteral, isObjects, isUnion, toEncoded } from "effect/SchemaAST";
+import { Predicate, SchemaAST } from "effect";
 import type * as Action from "../Action.js";
 import { builtIns, statuses } from "./errors.js";
 
@@ -53,16 +52,18 @@ export const assertDistinct = <T>(
 };
 
 /** The `_tag`s a schema's encoding carries, one per member of a union. */
-const tagsOf = (ast: AST): ReadonlyArray<string> => {
-  const encoded = toEncoded(ast);
+const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> => {
+  const encoded = SchemaAST.toEncoded(ast);
 
-  if (isUnion(encoded)) return encoded.types.flatMap(tagsOf);
+  if (SchemaAST.isUnion(encoded)) return encoded.types.flatMap(tagsOf);
 
-  const tag = isObjects(encoded)
+  const tag = SchemaAST.isObjects(encoded)
     ? encoded.propertySignatures.find((property) => property.name === "_tag")?.type
     : undefined;
 
-  return tag !== undefined && isLiteral(tag) && isString(tag.literal) ? [tag.literal] : [];
+  return tag !== undefined && SchemaAST.isLiteral(tag) && Predicate.isString(tag.literal)
+    ? [tag.literal]
+    : [];
 };
 
 /**

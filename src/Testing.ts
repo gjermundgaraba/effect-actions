@@ -2,6 +2,7 @@ import {
   Context,
   Effect,
   FileSystem,
+  identity,
   Layer,
   Option,
   Path,
@@ -9,7 +10,6 @@ import {
   Schema,
   type Scope,
 } from "effect";
-import { identity } from "effect/Function";
 import {
   Etag,
   type Headers,
@@ -37,6 +37,19 @@ import {
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
+ * The native `HttpClient`, answered by `handler` instead of the network: a web handler the
+ * test serves, which other tests may share, such as
+ * `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices))).handler`,
+ * the routes' platform services provided, as `layer(routes)` provides them itself. It is the
+ * client `layer(routes)` gives, without building anything: the test owns the handler, and
+ * disposes of it.
+ */
+export function layer(
+  handler: (request: Request) => Promise<Response>,
+): Layer.Layer<HttpClient.HttpClient>;
+// Last: TypeScript reports a call matching no overload by the last one's error alone, so an
+// argument that is neither form is reported against the routes.
+/**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
  * released with its scope, without request logs. What they still require is this layer's, as
@@ -46,6 +59,8 @@ import { clientOf, type Served } from "./internal/memory.js";
  * the platform services, `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`: one
  * provided around it is the routes' too, and `HttpServer.layerServices`' defaults stand in for
  * the rest, whose `FileSystem` is a no-op. A relative URL resolves against `http://localhost`.
+ * The client is the layer's own: the program's other HTTP clients get none of its requests,
+ * and it none of theirs.
  */
 export function layer<A, E, R>(
   routes: Layer.Layer<A, E, R>,
@@ -60,8 +75,11 @@ export function layer<A, E, R>(
   >
 >;
 export function layer(
-  routes: Layer.Layer<unknown, unknown, unknown>,
+  routes: Layer.Layer<unknown, unknown, unknown> | ((request: Request) => Promise<Response>),
 ): Layer.Layer<HttpClient.HttpClient, unknown, unknown> {
+  // A web handler the test serves, which builds and releases its routes itself.
+  if (!Layer.isLayer(routes)) return clientOf(routes);
+
   return Layer.unwrap(
     Effect.gen(function* () {
       // The platform services `HttpServer.layerServices` has, beneath the program's own at

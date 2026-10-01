@@ -10,8 +10,12 @@ const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> =>
   for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
     if (seen.has(file)) continue;
 
+    // The specifier of each import or export declaration that has one, and of no other
+    // string: no quote or semicolon comes before its `from`.
     const specifiers = [
-      ...readFileSync(file, "utf8").matchAll(/^(?:import|export)\b[^;"]*"([^"]+)"/gms),
+      ...readFileSync(file, "utf8").matchAll(
+        /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm,
+      ),
     ].flatMap(([, specifier]) => (specifier === undefined ? [] : [specifier]));
 
     seen.set(file, specifiers);
@@ -26,18 +30,21 @@ const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> =>
   return seen;
 };
 
+/** The Effect specifiers a browser client imports: all a page's import map has to serve. */
+const browserEffect = ["effect", "effect/http", "effect/http-api"];
+
 // A browser client imports `Action` and `ActionHttp`: they and what they import must load
-// there, so none imports anything specific to Node or a server platform.
+// there, so none imports anything specific to Node or a server platform, and Effect only
+// through the barrels above, since a page whose import map serves them bundles a second copy
+// of Effect for any other specifier.
 it.each(["src/Action.ts", "src/ActionHttp.ts"])("%s imports nothing a browser lacks", (entry) => {
-  const platform = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
+  const outside = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
     specifiers
-      .filter(
-        (specifier) => specifier.startsWith("node:") || specifier.startsWith("@effect/platform"),
-      )
+      .filter((specifier) => !specifier.startsWith(".") && !browserEffect.includes(specifier))
       .map((specifier) => `${file}: ${specifier}`),
   );
 
-  expect(platform).toEqual([]);
+  expect(outside).toEqual([]);
   // It followed the imports: the check is not vacuous.
   expect(modulesOf(entry).size).toBeGreaterThan(3);
 });

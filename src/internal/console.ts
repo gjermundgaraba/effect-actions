@@ -1,5 +1,4 @@
-import { Clock, Console, Effect, Predicate } from "effect";
-import { constVoid } from "effect/Function";
+import { Clock, Console, Effect, Function, Predicate } from "effect";
 
 /** What a group indents the output inside it by, as Node's console does. */
 const groupIndentation = "  ";
@@ -78,7 +77,7 @@ const stderrConsole = (console: Console.Console, clock: Clock.Clock): Console.Co
       }
     },
     // Node clears only a terminal on stdout, which here carries data.
-    clear: constVoid,
+    clear: Function.constVoid,
     count: (label = "default") => {
       const count = (counts.get(label) ?? 0) + 1;
 

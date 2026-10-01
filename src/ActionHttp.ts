@@ -1,8 +1,14 @@
-import { Context, Effect, Layer, Schema, Scope } from "effect";
-import { isUnion, resolveAt } from "effect/SchemaAST";
+import {
+  Context,
+  Effect,
+  type FileSystem,
+  Layer,
+  type Path,
+  Schema,
+  SchemaAST,
+  Scope,
+} from "effect";
 import type { Etag, HttpClient, HttpPlatform } from "effect/http";
-import type { FileSystem } from "effect/FileSystem";
-import type { Path } from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
@@ -10,10 +16,10 @@ import {
   HttpApiEndpoint,
   HttpApiGroup,
   HttpApiMiddleware,
+  HttpApiSchema,
   type HttpApiSecurity,
+  OpenApi,
 } from "effect/http-api";
-import { status } from "effect/http-api/HttpApiSchema";
-import * as OpenApi from "effect/http-api/OpenApi";
 import type * as Action from "./Action.js";
 import {
   assertDistinct,
@@ -272,7 +278,7 @@ const servedBy = (
 };
 
 /** The status an error schema states, as `HttpApi` reads it. */
-const statusOf = resolveAt<number>("httpApiStatus");
+const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 
 type Declared = Action.Any["errors"][number];
 
@@ -288,11 +294,11 @@ const declared = (error: Declared): ReadonlyArray<Declared> => {
 
   if (statusOf(ast) !== undefined) return [error];
 
-  if (isUnion(ast) && ast.checks === undefined && ast.encoding === undefined) {
+  if (SchemaAST.isUnion(ast) && ast.checks === undefined && ast.encoding === undefined) {
     return ast.types.flatMap((member) => declared(Schema.make<Declared>(member)));
   }
 
-  return [status(422)(error)];
+  return [HttpApiSchema.status(422)(error)];
 };
 
 /**
@@ -428,9 +434,9 @@ export function layer<const H extends AnyHttp, const Apps extends Served>(
       Exclude<ServedRequest<Member<Apps>, H["actions"][number]>, HttpRouter.Provided>
     >
   | Etag.Generator
-  | FileSystem
+  | FileSystem.FileSystem
   | HttpPlatform.HttpPlatform
-  | Path
+  | Path.Path
 >;
 export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
   // Checked where the binding is served: a client holds it too.

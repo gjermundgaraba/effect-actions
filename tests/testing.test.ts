@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Context, Effect, FileSystem, Layer, Path, Schema, SchemaGetter } from "effect";
+import { Context, Effect, FileSystem, Layer, Path, Schema, SchemaGetter, Stream } from "effect";
 import { Command } from "effect/cli";
 import {
   Etag,
@@ -521,6 +521,44 @@ describe("layer", () => {
     expect(JSON.parse(output.join("\n"))).toEqual({ service: "effect-actions", users: 2 });
   });
 
+  it("answers through a web handler the test serves, which it neither builds nor disposes", async () => {
+    // As a harness serves the host for its Promise tests too: built once, by the handler.
+    const web = HttpRouter.toWebHandler(host.pipe(Layer.provide(HttpServer.layerServices)), {
+      disableLogger: true,
+    });
+
+    /** `program` on a client answered by the handler. */
+    const run = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
+      program.pipe(Effect.provide(Testing.layer(web.handler)), Effect.runPromise);
+
+    try {
+      const renamed = await run(
+        Effect.flatMap(ActionHttp.client(Http, as()), (client) =>
+          client.renameUser({ id: "1", name: "Grace" }),
+        ),
+      );
+
+      // A second layer on the same handler: the rename stands, and every client answers.
+      const answered = await run(
+        Effect.gen(function* () {
+          const client = yield* ActionHttp.client(Http, as());
+          const listed = yield* Testing.mcpRequest("tools/list", {}, headersAs());
+
+          return [
+            yield* client.getUser({ id: "1" }),
+            yield* (yield* mcpAs()).getUser({ id: "1" }),
+            listed.status,
+          ];
+        }),
+      );
+
+      expect(renamed).toEqual({ id: "1", name: "Grace" });
+      expect(answered).toEqual([{ id: "1", name: "Grace" }, { id: "1", name: "Grace" }, 200]);
+    } finally {
+      await web.dispose();
+    }
+  });
+
   it("resolves a relative URL against http://localhost, and answers any origin in memory", async () => {
     const routes = HttpRouter.add(
       "GET",
@@ -590,6 +628,130 @@ describe("layer", () => {
     ]).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
     expect(hosts).toEqual(["localhost", "api.example.com:8443", "given"]);
+  });
+
+  /** A `fetch` standing in for the network, answering every request with `network`. */
+  const network: typeof globalThis.fetch = () => Promise.resolve(new Response("network"));
+
+  /** The text of a GET of `url`. */
+  const textOf = (url: string) => Effect.flatMap(HttpClient.get(url), (response) => response.text);
+
+  /** Another client of the program, such as an exporter's, on `FetchHttpClient.layer`. */
+  class Probe extends Context.Service<
+    Probe,
+    Effect.Effect<string, HttpClientError.HttpClientError>
+  >()("testing/Probe") {}
+
+  /** `Probe`, sending through its own `fetch`, given when it is built. */
+  const probe = Layer.effect(
+    Probe,
+    Effect.map(HttpClient.HttpClient, (client) =>
+      textOf("https://elsewhere.example/").pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    ),
+  ).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, network)),
+  );
+
+  const where = Layer.merge(
+    HttpRouter.add("GET", "/where", HttpServerResponse.text("routes")),
+    // Reads the body before answering, so a streamed one has run.
+    HttpRouter.add(
+      "POST",
+      "/where",
+      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+        Effect.as(request.text, HttpServerResponse.text("routes")),
+      ),
+    ),
+  );
+
+  /** The routes' answer under `layer`, and `Probe`'s. */
+  const probed = Effect.all([textOf("/where"), Effect.flatten(Probe)]);
+
+  /** The routes' answer under `layer`, and another request of the program's, outside it. */
+  const around = Effect.all([
+    textOf("/where").pipe(Effect.provide(Testing.layer(where))),
+    textOf("https://elsewhere.example/"),
+  ]);
+
+  /**
+   * The routes' answer to a request whose mapping calls `Probe`, as fetching a token might,
+   * and `Probe`'s answer there.
+   */
+  const mapped = Effect.gen(function* () {
+    const answers: Array<string> = [];
+    const call = yield* Probe;
+
+    const client = HttpClient.mapRequestEffect(yield* HttpClient.HttpClient, (request) =>
+      call.pipe(
+        Effect.tap((answer) => Effect.sync(() => answers.push(answer))),
+        Effect.as(request),
+      ),
+    );
+
+    const answer = yield* textOf("/where").pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+    );
+
+    return [answer, ...answers];
+  });
+
+  /**
+   * The routes' answer to a request whose streamed body calls `Probe`, as a proxied upload
+   * might, and `Probe`'s answer there.
+   */
+  const streamed = Effect.gen(function* () {
+    const answers: Array<string> = [];
+    const call = yield* Probe;
+
+    const body = Stream.fromEffect(
+      call.pipe(Effect.tap((answer) => Effect.sync(() => answers.push(answer)))),
+    ).pipe(Stream.encodeText);
+
+    const answer = yield* HttpClient.execute(
+      HttpClientRequest.post("/where").pipe(HttpClientRequest.bodyStream(body)),
+    ).pipe(Effect.flatMap((response) => response.text));
+
+    return [answer, ...answers];
+  });
+
+  it.each([
+    [
+      "a FetchHttpClient merged after it",
+      probed.pipe(Effect.provide(Layer.mergeAll(Testing.layer(where), probe))),
+    ],
+    [
+      "a FetchHttpClient merged before it",
+      probed.pipe(Effect.provide(Layer.mergeAll(probe, Testing.layer(where)))),
+    ],
+    [
+      "FetchHttpClient.layer provided around the program",
+      around.pipe(
+        Effect.provide(
+          FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, network))),
+        ),
+      ),
+    ],
+    [
+      "FetchHttpClient.Fetch provided around the program",
+      around.pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, network),
+      ),
+    ],
+    [
+      "a FetchHttpClient called while mapping its request",
+      mapped.pipe(Effect.provide(Layer.mergeAll(probe, Testing.layer(where)))),
+    ],
+    [
+      "a FetchHttpClient called while its streamed body is read",
+      streamed.pipe(Effect.provide(Layer.mergeAll(probe, Testing.layer(where)))),
+    ],
+  ])("keeps its client apart from %s", async (_, program) => {
+    // The routes answer the layer's requests, and the network every other.
+    expect(await Effect.runPromise(program)).toEqual(["routes", "network"]);
   });
 
   it("serves routes with the services their middleware provides, until its scope closes", async () => {

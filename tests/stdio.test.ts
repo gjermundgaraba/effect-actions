@@ -321,6 +321,51 @@ it("leaves a line of stdin that is not JSON unanswered, and answers the request 
   });
 });
 
+it("interrupts a call when stdin closes, and ends once its uninterruptible work completes", async () => {
+  const Commit = Action.make("commit", { description: "Commit a write", access: "write" });
+  const call = { ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body, id: 1 };
+
+  const [committed, written] = await Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const decoder = new TextDecoder();
+    let committed = false;
+    let written = "";
+
+    // Still running when stdin closes, which it does once the call has started.
+    const commit = Action.implement(
+      Commit,
+      () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.sleep(100)),
+          Effect.andThen(Effect.sync(() => (committed = true))),
+          Effect.uninterruptible,
+        ),
+      Action.allowAll,
+    );
+
+    const stdin = Stream.make(`${JSON.stringify(call)}\n`).pipe(
+      Stream.concat(Stream.fromEffectDrain(Deferred.await(started))),
+      Stream.encodeText,
+    );
+
+    const stdout = () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
+      );
+
+    yield* ActionMcp.runStdio(commit, { name: "commit", version: "0" }).pipe(
+      Effect.provide(Stdio.layerTest({ stdin, stdout })),
+    );
+
+    // As `runStdio` ends.
+    return [committed, written] as const;
+  }).pipe(Effect.runPromise);
+
+  expect(committed).toBe(true);
+  // No result for the call: no answer, or a JSON-RPC error.
+  expect(written).not.toContain('"result"');
+});
+
 describe("runStdio's input schemas", () => {
   const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
 

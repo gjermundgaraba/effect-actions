@@ -93,11 +93,18 @@ module they import, into the browser bundle: bundlers keep the call as written, 
 Split it. A page on another origin also needs CORS on the host, outside authentication: see
 the browser example in [ActionMcp.md](ActionMcp.md#cross-origin-browsers).
 
+`Action` and `ActionHttp`, and every module they import, import Effect through three
+specifiers alone: `effect`, `effect/http` and `effect/http-api`. A page that loads Effect from
+an import map rather than its bundle maps those three. A map pointing at Effect 4.0.0's
+published files maps `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` too,
+to the same files the `effect` barrel loads, as Effect's own `Runtime` module imports them by
+name; a build or CDN that resolves Effect's own imports needs only the three.
+
 Companion Effect modules you will import alongside: `effect/http-api` (`HttpApiClient`, `OpenApi`, `HttpApiSwagger`, `HttpApiScalar`), `effect/http` (`HttpRouter`, `HttpServerResponse`, `FetchHttpClient`, `HttpClientError`), `effect/cli` (`Command`, `Flag`, `Argument`).
 
 ## Rules
 
-- Install a single `effect` version within the peer range, and keep every `@effect/*` package on that same release candidate. Mixed rc versions fail at the type level in ways that look like library bugs.
+- Install a single `effect` version within the peer range, and keep every `@effect/*` package on that same release. Mixed versions can fail at the type level in ways that look like library bugs.
 - Never import from `dist/` paths or from a package root. Only the subpaths above are public.
 - Schemas passed to `Action.make` must be service-free (`Schema.Codec<_, _, never, never>`). Handlers may require services.
 
@@ -109,6 +116,8 @@ What the package does and does not do: [guarantees.md](guarantees.md#scope).
 
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath.
 - A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a module that also holds server code, such as a contract beside its `Action.implement`. Move the contracts and the binding to a module that imports no server code.
+- A page that loads Effect from an import map still bundles a second copy of Effect, or of some of its modules: a module of the page imports an Effect specifier the map does not serve, such as `effect/Schema`. Serve `effect`, `effect/http` and `effect/http-api`, all `Action` and `ActionHttp` import, and import Effect through them in the page's own modules too.
+- A page loading Effect from an import map fails before its modules run, with `Failed to resolve module specifier "effect/Cause"` in Chromium: the map points at Effect's published files and lacks a specifier Effect imports itself. Map `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` to the same files, or serve Effect from a build that resolves its own imports.
 - Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` 4.x release for every package.
 - `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): Effect `4.0.0-rc.118` moved these modules to `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`. Import the new paths.
 - `Cannot find module 'effect/http'` (or `effect/http-api`, `effect/cli`, `effect/ai`), or at run time `Cannot find module '…/node_modules/effect/dist/http-api.js'` (or `http.js`, `ai.js`, `cli.js`): `effect` is a release candidate older than `4.0.0-rc.118`, which moved these modules out of `effect/unstable/*`. Install `effect` 4.0.0 or later.
