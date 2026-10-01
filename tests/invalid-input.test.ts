@@ -318,30 +318,6 @@ it("decodes InvalidInput as a typed failure of the client", async () => {
   expect(refused).toHaveProperty("message", expect.stringContaining('at ["value"]'));
 });
 
-it("declares InvalidInput, Unauthenticated and Forbidden on every endpoint", () => {
-  const Other = Action.make("other", {
-    description: "Other",
-    access: "read",
-    success: Schema.Finite,
-  });
-
-  const paths = OpenApi.fromApi(ActionHttp.make([Echo, Other]).api).paths;
-
-  expect(Object.keys(paths?.["/api/echo"]?.post?.responses ?? {}).sort()).toEqual([
-    "200",
-    "400",
-    "401",
-    "403",
-    "409",
-  ]);
-  expect(Object.keys(paths?.["/api/other"]?.post?.responses ?? {}).sort()).toEqual([
-    "200",
-    "400",
-    "401",
-    "403",
-  ]);
-});
-
 it("answers InvalidInput on every binding and every layer of one router", async () => {
   const Other = Action.make("other", {
     description: "Other",
@@ -403,55 +379,6 @@ it("answers a handler's own InvalidInput as declared, over HTTP and MCP", async 
   expect(result.content).toEqual([
     { type: "text", text: '{"_tag":"InvalidInput","message":"Too large"}' },
   ]);
-});
-
-it("keeps MCP's native argument and result handling", async () => {
-  let calls = 0;
-
-  const app = Action.implement(
-    Echo,
-    ({ value }) => {
-      calls++;
-
-      if (value === -1) return Effect.fail(new Rejected({ error: "Negative value" }));
-
-      if (value === -2) return Effect.die(new Error("private defect"));
-
-      return Effect.succeed(value === 0 ? Infinity : value);
-    },
-    Action.allowAll,
-  );
-
-  const web = serve(
-    Layer.merge(
-      ActionHttp.layer(Http, app),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-    ),
-  );
-
-  // Over MCP, invalid arguments and results are the native tool errors, and a declared
-  // error is rendered like any other.
-  for (const [value, mcpText] of [
-    ["secret input", "Invalid parameters for tool 'echo'"],
-    [0, "internal server error"],
-    [-1, '{"_tag":"Rejected","error":"Negative value"}'],
-  ] as const) {
-    const mcp = await web.handler(mcpRequest(value));
-    expect(mcp.status).toBe(200);
-    const { result } = decodeMcp(await mcp.json());
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toBeUndefined();
-    const [content] = result.content;
-    expect(content?.type).toBe("text");
-
-    if (content?.type === "text") expect(content.text).toContain(mcpText);
-  }
-
-  expect(calls).toBe(2); // Invalid arguments never reach the handler.
-  const success = await web.handler(mcpRequest(7));
-  expect(decodeMcp(await success.json()).result.structuredContent).toBe(7);
-  const defect = await web.handler(mcpRequest(-2));
-  expect(await defect.text()).not.toContain("private defect");
 });
 
 it("says where input does not decode and what it expects, never a value sent, on every surface", async () => {

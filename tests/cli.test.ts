@@ -15,6 +15,7 @@ import {
   Runtime,
   Schema,
   SchemaGetter,
+  SchemaTransformation,
 } from "effect";
 import { TestConsole } from "effect/testing";
 import { CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
@@ -1543,12 +1544,25 @@ it("fails with Effect CLI's UserError, which the runner prints on stderr as the 
     hint: Schema.Option(Schema.String),
   }) {}
 
+  // Encoded by an Effect that completes later, as a codec may be.
+  class Busy extends Schema.TaggedError<Busy>()("Busy", {
+    reason: Schema.String.pipe(
+      Schema.decodeTo(
+        Schema.String,
+        SchemaTransformation.transformEffect({
+          decode: (reason) => Effect.succeed(reason),
+          encode: (reason) => Effect.as(Effect.sleep("1 millis"), reason),
+        }),
+      ),
+    ),
+  }) {}
+
   const Read = Action.make("read", {
     description: "Reads a record",
     access: "read",
     input: { id: Schema.String.check(Schema.isMinLength(1)) },
     success: Schema.String,
-    errors: [Gone, Missing, Over],
+    errors: [Gone, Missing, Over, Busy],
   });
 
   const over = new Over({ limit: 10n, hint: Option.some("lower it") });
@@ -1562,6 +1576,7 @@ it("fails with Effect CLI's UserError, which the runner prints on stderr as the 
         Match.value(id).pipe(
           Match.when("gone", () => Effect.fail(new Gone({ id }))),
           Match.when("over", () => Effect.fail(over)),
+          Match.when("busy", () => Effect.fail(new Busy({ reason: "full" }))),
           Match.orElse(() => Effect.fail(new Missing({ id }))),
         ),
       write: () => Effect.void,
@@ -1584,6 +1599,12 @@ it("fails with Effect CLI's UserError, which the runner prints on stderr as the 
     },
     { args: ["read", "--id", "x"], body: { id: "x" }, cause: new Missing({ id: "x" }), code: 1 },
     { args: ["read", "--id", "over"], body: { id: "over" }, cause: over, code: 1 },
+    {
+      args: ["read", "--id", "busy"],
+      body: { id: "busy" },
+      cause: new Busy({ reason: "full" }),
+      code: 1,
+    },
     {
       args: ["write"],
       body: {},
@@ -1680,6 +1701,11 @@ it("describes a failure no schema encodes by its tag or an error's name, its mes
   const Status = Action.make("status", { description: "Status", access: "read" });
   const url = "postgres://admin:hunter2@db";
 
+  // A cause leading back to a failure already described ends the description.
+  const looping = new Error("db unreachable");
+
+  looping.cause = looping;
+
   // A builder's failure, and what it prints: an error, or plain objects, whose fields no
   // schema says are safe to show, their `name` among them.
   const failures = [
@@ -1691,6 +1717,7 @@ it("describes a failure no schema encodes by its tag or an error's name, its mes
     [UserExists.make({ name: url }), "UserExists"],
     [{ name: url, message: "db unreachable" }, "Error: db unreachable"],
     [new Error("db unreachable", { cause: { url } }), "Error: db unreachable: Error"],
+    [looping, "Error: db unreachable"],
   ] as const;
 
   for (const [failure, description] of failures) {
@@ -1747,6 +1774,57 @@ it("writes the logs and console output of what a command runs to stderr, and onl
     expect(stdout).toEqual(['"quiet"']);
 
     for (const source of ["builder", "hook", "handler"]) {
+      expect(written).toContain(`${source} log`);
+      expect(written).toContain(`${source} console`);
+    }
+  }
+
+  // Its codecs too: the input's as it decodes, the success's and a failure's as they encode.
+  const logged = (source: string) =>
+    Schema.String.pipe(
+      Schema.decodeTo(
+        Schema.String,
+        SchemaTransformation.transformEffect({
+          decode: (value) => Effect.as(noise(`${source} decode`), value),
+          encode: (value) => Effect.as(noise(`${source} encode`), value),
+        }),
+      ),
+    );
+
+  class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: logged("failure") }) {}
+
+  const Coded = Action.make("coded", {
+    description: "Logs in its codecs",
+    access: "read",
+    input: { word: logged("input") },
+    success: logged("success"),
+    errors: [Refused],
+  });
+
+  const coded = ActionCli.command(
+    Action.implement(
+      Coded,
+      ({ word }) =>
+        word === "no" ? Effect.fail(new Refused({ reason: word })) : Effect.succeed(word),
+      Action.allowAll,
+    ),
+    Coded,
+  );
+
+  for (const [word, sources, result] of [
+    ["yes", ["input decode", "success encode"], ['"yes"']],
+    ["no", ["input decode", "failure encode"], []],
+  ] as const) {
+    const [, stdout, stderr] = await Command.runWith(coded, { version: "0" })([
+      "--word",
+      word,
+    ]).pipe(printed, Effect.provide(cliServices), Effect.runPromise);
+
+    const written = stderr.map(String).join("\n");
+
+    expect(stdout).toEqual(result);
+
+    for (const source of sources) {
       expect(written).toContain(`${source} log`);
       expect(written).toContain(`${source} console`);
     }

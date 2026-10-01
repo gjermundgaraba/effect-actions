@@ -17,7 +17,8 @@ export interface SkillFile {
   readonly content: string;
 }
 
-// Read from the repository whatever version a project installs; the package's docs/ match it.
+// The skill's header. Its pages follow the main branch, so it sends a project that installs the
+// package to the installed version's own docs/.
 export const frontmatter = `---
 name: effect-actions
 description: >

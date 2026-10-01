@@ -923,8 +923,9 @@ export const hookErrorTypes = () => {
 
   const builtChannels: [
     Equal<(typeof built)["~request"]["~hook"], never>,
-    Equal<(typeof built)["~buildContext"], Limiter>,
-  ] = [true, true];
+    Equal<(typeof built)["~buildContext"], never>,
+    Equal<(typeof built)["~hookBuildContext"], Limiter>,
+  ] = [true, true, true];
 
   void builtChannels;
 
@@ -1303,8 +1304,8 @@ export const builtHookTypes = () => {
       (typeof guarded)["~request"],
       { readonly lookup: never; readonly rename: never; readonly "~hook": Actor }
     >,
-    Equal<(typeof guarded)["~buildError"], Unavailable>,
-    Equal<(typeof guarded)["~buildContext"], Permissions>,
+    Equal<(typeof guarded)["~hookBuildError"], Unavailable>,
+    Equal<(typeof guarded)["~hookBuildContext"], Permissions>,
   ] = [true, true, true];
 
   void channels;
@@ -1332,7 +1333,8 @@ export const builtHookTypes = () => {
     Effect.succeed(() => Effect.fail(new Unavailable())),
   );
 
-  // A share given a built hook owes its startup services beside its source's.
+  // A share given a built hook owes its startup services and its source's handlers', never
+  // those of its source's hook, which it never builds.
   const admin = Action.share(
     [Rename],
     guarded,
@@ -1342,10 +1344,14 @@ export const builtHookTypes = () => {
     ),
   );
 
+  const adminBuilders = Action.layer(admin);
+
   const adminChannels: [
     Equal<(typeof admin)["~request"], { readonly rename: never; readonly "~hook": never }>,
-    Equal<(typeof admin)["~buildContext"], Permissions | Actor>,
-  ] = [true, true];
+    Equal<(typeof admin)["~hookBuildContext"], Actor>,
+    Equal<Layer.Services<typeof adminBuilders>, Actor>,
+    Equal<Layer.Error<typeof adminBuilders>, never>,
+  ] = [true, true, true, true];
 
   void adminChannels;
 
@@ -1359,7 +1365,7 @@ export const builtHookTypes = () => {
 
   const servicedChannels: [
     Equal<(typeof serviced)["~request"]["~hook"], Actor>,
-    Equal<(typeof serviced)["~buildContext"], Guard>,
+    Equal<(typeof serviced)["~hookBuildContext"], Guard>,
   ] = [true, true];
 
   void servicedChannels;
@@ -1434,14 +1440,15 @@ export const builtHookTypes = () => {
       (typeof generated)["~request"],
       { readonly lookup: never; readonly rename: never; readonly "~hook": Actor }
     >,
-    Equal<(typeof generated)["~buildError"], Unavailable>,
-    Equal<(typeof generated)["~buildContext"], Permissions>,
+    Equal<(typeof generated)["~hookBuildError"], Unavailable>,
+    Equal<(typeof generated)["~hookBuildContext"], Permissions>,
     Equal<(typeof single)["~request"], { readonly lookup: never; readonly "~hook": Actor }>,
-    Equal<(typeof single)["~buildError"], never>,
-    Equal<(typeof single)["~buildContext"], Permissions>,
+    Equal<(typeof single)["~hookBuildError"], never>,
+    Equal<(typeof single)["~hookBuildContext"], Permissions>,
     Equal<(typeof reviewed)["~request"], { readonly rename: never; readonly "~hook": Actor }>,
-    Equal<(typeof reviewed)["~buildError"], Unavailable>,
-    Equal<(typeof reviewed)["~buildContext"], Permissions>,
+    // Its own hook's, never its source's, whose build may fail with `Unavailable`.
+    Equal<(typeof reviewed)["~hookBuildError"], never>,
+    Equal<(typeof reviewed)["~hookBuildContext"], Permissions>,
   ] = [true, true, true, true, true, true, true, true, true];
 
   void generatedChannels;

@@ -327,24 +327,22 @@ const inputFlag = (encoded: SchemaAST.AST) =>
   );
 
 /**
- * Print a success on stdout, as JSON or `render`'s text. It is validated and encoded first,
- * so human output cannot conceal an invalid success, which is a defect, as on a server.
+ * What a success prints on stdout: its JSON, or `render`'s text. It is validated and encoded
+ * first, so human output cannot conceal an invalid success, which is a defect, as on a server.
+ * An action that returns nothing prints nothing, rather than its encoding, `null`.
  */
 const output = <A extends Action.Any>(
   action: A,
   value: A["success"]["Type"],
   render: ((output: A["success"]["Type"]) => string) | undefined,
-) =>
-  Effect.gen(function* () {
-    const encoded = yield* Effect.orDie(
-      Schema.encodeEffect(Schema.toCodecJson(action.success))(value),
-    );
-
-    // An action that returns nothing prints nothing, rather than its encoding, `null`.
-    if (render === undefined && SchemaAST.isVoid(action.success.ast)) return;
-
-    yield* Console.log(render === undefined ? JSON.stringify(encoded, null, 2) : render(value));
-  });
+): Effect.Effect<Option.Option<string>> =>
+  Effect.map(
+    Effect.orDie(Schema.encodeEffect(Schema.toCodecJson(action.success))(value)),
+    (encoded) =>
+      render === undefined && SchemaAST.isVoid(action.success.ast)
+        ? Option.none()
+        : Option.some(render === undefined ? JSON.stringify(encoded, null, 2) : render(value)),
+  );
 
 /**
  * What a command fails with when its action fails: Effect CLI's own error for a handler's
@@ -372,39 +370,40 @@ const text = <E>(error: E, key: "_tag" | "message"): string | undefined => {
 /**
  * A failure no projected schema encodes, without a stack: its tag or an error's name, and
  * its message, or the failure itself when it is a string, then each cause's, so a transport
- * error keeps the refused connection beneath it. Its other fields are left out, a plain
- * object's `name` too: no schema says they are safe to show, and a builder's failure may
- * hold a connection string.
+ * error keeps the refused connection beneath it, up to one already described, as a cycle
+ * repeats it. Its other fields are left out, a plain object's `name` too: no schema says
+ * they are safe to show, and a builder's failure may hold a connection string.
  */
-const described = <E>(error: E): string => {
+const described = <E>(error: E, seen: Set<unknown> = new Set()): string => {
   const name = text(error, "_tag") ?? (error instanceof Error ? error.name : "Error");
   const message = Predicate.isString(error) ? error : (text(error, "message") ?? "");
   const named = message === "" ? name : `${name}: ${message}`;
 
-  return Predicate.hasProperty(error, "cause") && error.cause !== undefined
-    ? `${named}: ${described(error.cause)}`
+  seen.add(error);
+
+  return Predicate.hasProperty(error, "cause") &&
+    error.cause !== undefined &&
+    !seen.has(error.cause)
+    ? `${named}: ${described(error.cause, seen)}`
     : named;
 };
 
 /**
  * The `Failure` of each failure of `action`, its message the JSON HTTP sends for it: encoded
  * by the first schema that takes it among the built-in errors, the action's and the
- * surface's own `errors`. A failure none takes, such as a builder's or the transport's, is
- * described instead.
+ * surface's own `errors`, as an Effect, as HTTP encodes it. A failure none takes, such as a
+ * builder's or the transport's, is described instead.
  */
 const failureOf = <E>(action: Action.Any, errors: Action.Any["errors"]) => {
-  const encode = Schema.encodeUnknownOption(
-    Schema.toCodecJson(Schema.Union(projectedErrors(action, errors))),
+  const encode = Schema.encodeUnknownEffect(
+    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(projectedErrors(action, errors)))),
   );
 
   return (error: E) =>
-    new Failure<E>({
-      cause: error,
-      userMessage: Option.match(encode(error), {
-        onNone: () => described(error),
-        onSome: (json) => JSON.stringify(json),
-      }),
-    });
+    encode(error).pipe(
+      Effect.orElseSucceed(() => described(error)),
+      Effect.flatMap((userMessage) => Effect.fail(new Failure<E>({ cause: error, userMessage }))),
+    );
 };
 
 /** An action's input as native flags and positional arguments, and how to decode them. */
@@ -501,12 +500,16 @@ export const command = <A extends Action.Any, E, R>(
     ),
   });
 
+  // Everything the command runs writes to stderr, its codecs included: stdout carries only
+  // the result, printed last.
   const run = (parsed: Parsed, rendered: ((output: A["success"]["Type"]) => string) | undefined) =>
     decode(parsed).pipe(
       Effect.mapError(({ message }) => new InvalidInput({ message })),
-      Effect.flatMap((input) => onStderr(execute(input))),
-      Effect.mapError(failure),
+      Effect.flatMap(execute),
+      Effect.catch(failure),
       Effect.flatMap((value) => output(action, value, rendered)),
+      onStderr,
+      Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Console.log })),
     );
 
   const command =

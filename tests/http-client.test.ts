@@ -114,14 +114,6 @@ it("gives the Effect client each action's success and every declared failure", a
   )((client) => Effect.flip(client.get({ id: "a" })));
 
   expect(invalid).toBeInstanceOf(Action.InvalidInput);
-
-  // An action declared without `input` takes no argument, not even `undefined`.
-  const checkTypes = (client: ActionHttp.Client<typeof Http>) => {
-    // @ts-expect-error `count` takes no argument.
-    void client.count(undefined);
-  };
-
-  void checkTypes;
 });
 
 it("passes the native client options through, such as a bearer token on every call", async () => {

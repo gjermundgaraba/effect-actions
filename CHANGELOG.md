@@ -66,7 +66,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | 0.8.0                                                                                        | 0.10.0                                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, before)`, with `Action.allowAll` where 0.8.0 passed no `before`                                                                                  |
-| `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`; a group is a list of actions                                                                                                                              |
+| `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`, inferred, never spelled out: a helper takes implementations as a type parameter ([Action.md](docs/Action.md#rules)); a group is a list of actions         |
 | `ActionGroup.contracts(...groups)`, `Contracts`                                              | The actions themselves, or a binding's `Http.actions`                                                                                                                              |
 | `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                 |
 | `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its hook, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer` |
@@ -361,10 +361,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   print it again. 0.8.0 failed the command with the action's failure itself, which `runMain`
   printed on stdout with a stack and without its fields, and the documented program printed the
   raw `Cause` on stderr instead; delete that block. A failure no schema encodes, a builder's or
-  the transport's, prints as its tag, or an error's name, and its message, and each cause's,
-  never its other fields. `Command.run` prints a command's failure before a host's
-  `Effect.catchTag("UserError", ...)` runs, so a host that recovered silently or printed its
-  own text provides a `formatError` through `CliOutput.layer`, or runs with
+  the transport's, prints as its tag, or an error's name, and its message, and each cause's, up
+  to one already printed, never its other fields. `Command.run` prints a command's failure
+  before a host's `Effect.catchTag("UserError", ...)` runs, so a host that recovered silently or
+  printed its own text provides a `formatError` through `CliOutput.layer`, or runs with
   `renderErrors: false`.
 - A command refuses input that does not decode with `Action.InvalidInput`, as HTTP does,
   printed as the body of HTTP's 400, an undeclared field in `--input` or a flag's JSON
@@ -374,16 +374,17 @@ Each area below lists what is renamed or removed, then what changes without a re
   a `SchemaError`.
 - A success that does not encode is a defect, as it is HTTP's empty 500, and nothing prints it
   as a result; 0.8.0 failed the command with a `SchemaError`.
-- What a command runs, the builder, hook and handler, or a remote command's client call, writes
-  its Effect logs and `Console` output to stderr, whatever logger prints them, and the command
-  writes only its result to stdout. 0.8.0 wrote them to stdout unless the program provided
-  `Logger.LogToStderr`, which moves only the default logger. The global `console.log` and other
-  direct writes bypass Effect and still reach stdout: keep them off stdout. Layers the host
-  provides, on the command or around the run, log outside the command, and `runMain` reports a
-  defect, and a failure of such a layer, on stdout: a CLI whose stdout feeds scripts keeps
-  `Logger.LogToStderr` outermost, which moves those layers' default logger but not their
-  `Console` output or `Logger.consoleJson`, runs `runMain` with `disableErrorReporting`, and
-  reports on stderr itself ([ActionCli.md](docs/ActionCli.md#rules)).
+- What a command runs, the builder, hook and handler, or a remote command's client call, and the
+  codecs of its input, success and failures, writes its Effect logs and `Console` output to
+  stderr, whatever logger prints them, and the command writes only its result to stdout. 0.8.0
+  wrote them to stdout unless the program provided `Logger.LogToStderr`, which moves only the
+  default logger. The global `console.log` and other direct writes bypass Effect and still reach
+  stdout: keep them off stdout. Layers the host provides, on the command or around the run, log
+  outside the command, and `runMain` reports a defect, and a failure of such a layer, on stdout:
+  a CLI whose stdout feeds scripts keeps `Logger.LogToStderr` outermost, which moves those
+  layers' default logger but not their `Console` output or `Logger.consoleJson`, runs `runMain`
+  with `disableErrorReporting`, and reports on stderr itself
+  ([ActionCli.md](docs/ActionCli.md#rules)).
 - A local command's `Failure` includes `Action.BuiltIn`, whatever its implementation's hook.
 
 #### Testing
@@ -418,22 +419,24 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `Action.share(actions, implementation, before?)` serves some of an implementation's actions
   behind its hook, or `before` instead, sharing its builder's one run per layer graph. `before`
   may be `Action.allowAll`, for a public subset, or built, as `implement`'s may; given one, the
-  source's hook is neither built nor run for its actions.
+  source's hook is neither built nor run for its actions, and its startup services are not
+  required.
 - `Action.client(implementations)` calls implementations in process: one method per action,
   taking its input directly, as `ActionHttp.client`'s methods do, so moving between an
   in-process and a remote caller changes the line acquiring it. A call runs as a remote one
   does, through the dispatch every surface shares: its input passes through its JSON codec,
-  encoded then decoded, the hook and the handler run in a scope of their own, and the success
-  or the failure passes through its codec too. It fails with the action's errors and the
-  built-in ones, as a remote caller decodes them: input that does not pass is `InvalidInput`,
-  before the hook, and a success or a failure that does not, an error the action does not
-  declare included, is a defect, as it is an empty 500 over HTTP. Each call owes what the hook
-  and the handler read, the caller's identity included, provided around the call, never
-  around the acquisition. Acquiring it builds the implementations into the layer graph around
-  it, as a layer does, sharing each builder's run with the surfaces of that graph: acquire it
-  in a builder, a layer or a scoped program, never per request. It is how an implementation's
-  own behavior is tested, several callers in one test, an action no binding holds included;
-  `Testing.layer` tests what a surface adds. `Action.Client<Apps>` is its type.
+  encoded to JSON text then decoded, the hook and the handler run in a scope of their own, and
+  the success or the failure passes through its codec too. It fails with the action's errors and
+  the built-in ones, as a remote caller decodes them: input that does not pass is
+  `InvalidInput`, before the hook, and a success or a failure that does not, an error the action
+  does not declare included, is a defect, as it is an empty 500 over HTTP: its `SchemaError`,
+  then the failure itself. Each call owes what the hook and the handler read, the caller's
+  identity included, provided around the call, never around the acquisition. Acquiring it builds
+  the implementations into the layer graph around it, as a layer does, sharing each builder's
+  run with the surfaces of that graph: acquire it in a builder, a layer or a scoped program,
+  never per request. It is how an implementation's own behavior is tested, several callers in
+  one test, an action no binding holds included; `Testing.layer` tests what a surface adds.
+  `Action.Client<Apps>` is its type.
 
   ```ts
   const asAlice = Effect.provideService(CurrentActor, alice); // each call's caller

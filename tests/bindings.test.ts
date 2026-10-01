@@ -155,56 +155,6 @@ it("releases what an HTTP call acquires when the call ends, before route middlew
   ]);
 });
 
-it("shares an implementation's builder with some of its actions, behind its hook or another", async () => {
-  let built = 0;
-
-  const secret = Action.make("secret", {
-    description: "Only for the trusted",
-    access: "read",
-    success: Schema.String,
-  });
-
-  // The source refuses every call.
-  const app = Action.implement(
-    [identity, secret],
-    Effect.sync(() => {
-      built++;
-
-      return { identity: () => Effect.succeed("shared"), secret: () => Effect.succeed("hidden") };
-    }),
-    () => Effect.fail(new Action.Forbidden()),
-  );
-
-  // Without a hook of its own, a shared implementation keeps its source's; with one, that
-  // one runs instead.
-  const kept = Action.share([identity], app);
-  const open = Action.share([identity], app, Action.allowAll);
-
-  expect(open.actions).toEqual([identity]);
-
-  const web = serve(
-    Layer.mergeAll(
-      ActionHttp.layer(ActionHttp.make([identity, secret]), app),
-      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/kept" }), kept),
-      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
-    ),
-  );
-
-  expect((await web.handler(post("/api/secret"))).status).toBe(403);
-  expect((await web.handler(post("/kept/identity"))).status).toBe(403);
-  expect(await (await web.handler(post("/open/identity"))).json()).toBe("shared");
-  // Three implementations, one builder run.
-  expect(built).toBe(1);
-
-  // Plain JavaScript may pass an action the source does not implement.
-  const stranger: Action.Any = Action.make("stranger", { description: "", access: "read" });
-
-  // @ts-expect-error Only the source's own actions.
-  expect(() => Action.share([stranger], open)).toThrow(
-    "Not implemented by this implementation: stranger",
-  );
-});
-
 describe("sharing an implementation's builder", () => {
   const secret = Action.make("secret", {
     description: "Only for the trusted",
@@ -266,6 +216,21 @@ describe("sharing an implementation's builder", () => {
     expect(await call(web, "/mcp/open", "identity")).toBe("shared");
     // Five implementations on three surfaces, one builder run.
     expect(runs.built).toBe(1);
+  });
+
+  it("holds only the actions it is given, and refuses one its source does not implement", () => {
+    const { app } = counted(() => Effect.void);
+    const open = Action.share([identity], app, Action.allowAll);
+
+    expect(open.actions).toEqual([identity]);
+
+    // Plain JavaScript may pass an action the source does not implement.
+    const stranger: Action.Any = Action.make("stranger", { description: "", access: "read" });
+
+    // @ts-expect-error Only the source's own actions.
+    expect(() => Action.share([stranger], open)).toThrow(
+      "Not implemented by this implementation: stranger",
+    );
   });
 
   it("runs each hook for its own actions, without building the shared handlers again", async () => {

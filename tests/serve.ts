@@ -1,5 +1,5 @@
 import { onTestFinished } from "vite-plus/test";
-import { Effect, Layer, Predicate } from "effect";
+import { Effect, Exit, Layer, Predicate, Result } from "effect";
 import { type HttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { AnyHttp, Client } from "../src/internal/client.js";
@@ -71,3 +71,21 @@ export const against = <A, E>(
   server: Server | Handler,
   effect: Effect.Effect<A, E, HttpClient.HttpClient>,
 ): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(clientLayer(server))));
+
+/**
+ * What building `layer`'s routes dies with, such as an MCP endpoint's: a defect, not a typed
+ * failure, so no tag catches it. An error's message, or the defect itself.
+ */
+export const buildDefect = async (layer: Layer.Layer<never, unknown, HttpRouter.HttpRouter>) => {
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Layer.build(
+        layer.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
+      ),
+    ),
+  );
+
+  const defect = Result.getOrUndefined(Exit.findDefect(exit));
+
+  return defect instanceof Error ? defect.message : defect;
+};

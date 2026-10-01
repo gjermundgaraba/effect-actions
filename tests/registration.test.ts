@@ -1,16 +1,5 @@
-import { HttpRouter, HttpServer } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  Context,
-  Deferred,
-  Effect,
-  Exit,
-  JsonPointer,
-  Layer,
-  Predicate,
-  Result,
-  Schema,
-} from "effect";
+import { Context, Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -20,7 +9,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { against, serve } from "./serve.js";
+import { against, buildDefect, serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
   const web = serve(
@@ -533,21 +522,6 @@ describe("projection boundaries", () => {
     expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
   });
 
-  /** What building an MCP endpoint dies with: a defect, not a typed failure, so no tag catches it. */
-  const buildDefect = async (layer: Layer.Layer<never, unknown, HttpRouter.HttpRouter>) => {
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        Layer.build(
-          layer.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
-        ),
-      ),
-    );
-
-    const defect = Result.getOrUndefined(Exit.findDefect(exit));
-
-    return defect instanceof Error ? defect.message : defect;
-  };
-
   // The types refuse such input where they see it (mcp-types.spec.ts); the native server
   // refuses what they cannot see when the layer is built.
   it.each([
@@ -707,11 +681,18 @@ describe("projection boundaries", () => {
       success: Schema.Finite,
     });
 
+    let calls = 0;
+
     const web = makeTestMcp(
       Action.implement(
         [Echo],
         {
-          echo: ({ value }) => Effect.succeed(value),
+          echo: ({ value }) =>
+            Effect.sync(() => {
+              calls++;
+
+              return value;
+            }),
         },
         Action.allowAll,
       ),
@@ -722,6 +703,8 @@ describe("projection boundaries", () => {
     expect(reply).toMatchObject({ result: { isError: true } });
     expect(reply).not.toHaveProperty("result.structuredContent");
     expect(JSON.stringify(reply)).toContain('[\\"value\\"]');
+    // Invalid arguments never reach the handler.
+    expect(calls).toBe(0);
   });
 
   it("turns invalid output and defects into sanitized native failures on both transports", async () => {

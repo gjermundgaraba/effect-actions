@@ -6,6 +6,7 @@ import { FetchHttpClient } from "effect/http";
 import { routes } from "../examples/quickstart-server.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
+import manifest from "../package.json" with { type: "json" };
 import { published } from "../scripts/published.mjs";
 import { docsDirectory } from "../scripts/skill.ts";
 import { mcpRequest } from "./requests.js";
@@ -70,6 +71,24 @@ it("pairs every canonical snippet with a type-checked example", () => {
   );
 
   expect(paired).toEqual(expect.arrayContaining(pages.map((page) => `docs/${page}`)));
+});
+
+// The entry points a consumer imports are the modules the package exports, each once.
+it("lists every module the package exports under docs/setup.md's entry points", () => {
+  const section = read("docs/setup.md").split("\n## Entry points\n")[1] ?? "";
+
+  const [block = ""] = Array.from(
+    section.matchAll(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/g),
+    ([, code]) => code,
+  );
+
+  const modules = Object.keys(manifest.exports).flatMap((path) =>
+    path === "./package.json" ? [] : [path.slice("./".length)],
+  );
+
+  expect(block.split("\n").toSorted()).toEqual(
+    modules.map((module) => `import * as ${module} from "${manifest.name}/${module}";`).toSorted(),
+  );
 });
 
 // Docs describe behavior, and ship as the skill: no page names this repository's sources.

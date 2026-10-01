@@ -445,14 +445,16 @@ export function implement<
       Scope.Scope
     >;
   },
-  Deferred<EX | EB>,
-  Deferred<Exclude<RX | RBX, Scope.Scope>>
+  Deferred<EX>,
+  Deferred<Exclude<RX, Scope.Scope>>,
+  Deferred<EB>,
+  Deferred<Exclude<RBX, Scope.Scope>>
 >;
 export function implement(
   target: Target,
   build: Built | Effect.Effect<Built, unknown, unknown>,
   before: ErasedHook,
-): Implementation<Any, {}, unknown, unknown> {
+): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
   const actions = Arr.ensure(target);
   const names = actions.map((action) => action.name);
 
@@ -506,7 +508,8 @@ export function implement(
  * trustAdmin)` for an admin CLI, `share([Poll], users, Action.allowAll)` for a public one.
  * The result shares `app`'s builder, which runs once per layer graph however many
  * implementations share it; `before` may be built, as `implement`'s may. Per request, it owes
- * what `app`'s handlers owe for its actions, and what its hook owes, `app`'s or `before`'s.
+ * what `app`'s handlers owe for its actions, and what its hook owes, `app`'s or `before`'s; at
+ * startup, what `app`'s builder needs, and what building its hook does, `app`'s or `before`'s.
  */
 export function share<
   App extends AnyImplementation,
@@ -518,7 +521,9 @@ export function share<
   ActionsOf<T>,
   { readonly [K in NamesOf<T> | "~hook"]: App["~request"][K & keyof App["~request"]] },
   App["~buildError"],
-  App["~buildContext"]
+  App["~buildContext"],
+  App["~hookBuildError"],
+  App["~hookBuildContext"]
 >;
 export function share<
   App extends AnyImplementation,
@@ -538,14 +543,16 @@ export function share<
       ? Exclude<RB, Scope.Scope>
       : App["~request"][K & keyof App["~request"]];
   },
-  App["~buildError"] | Deferred<EB>,
-  App["~buildContext"] | Deferred<Exclude<RBX, Scope.Scope>>
+  App["~buildError"],
+  App["~buildContext"],
+  Deferred<EB>,
+  Deferred<Exclude<RBX, Scope.Scope>>
 >;
 export function share(
   target: Target,
   app: AnyImplementation,
   ...before: [] | [ErasedHook]
-): Implementation<Any, {}, unknown, unknown> {
+): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
   const actions = Arr.ensure(target);
 
   assertDistinct("action", actions, (action) => action.name);
@@ -603,11 +610,12 @@ type ErasedMethod = (
 ) => Effect.Effect<ErasedValue, unknown, unknown>;
 
 /**
- * A value through `schema`'s JSON codec, as a wire carries it: encoded, then decoded, so what
- * comes out is what a remote call's other side decodes. Every issue is reported.
+ * A value through `schema`'s JSON codec, as a wire carries it: encoded to JSON text, then
+ * decoded, so what comes out is what a remote call's other side decodes, `-0` as `0`. Every
+ * issue is reported.
  */
 const wire = (schema: Codec) => {
-  const codec = Schema.toCodecJson(schema);
+  const codec = Schema.fromJsonString(Schema.toCodecJson(schema));
   const encode = Schema.encodeUnknownEffect(codec, { errors: "all" });
   const decode = Schema.decodeUnknownEffect(codec, { errors: "all" });
 
@@ -615,43 +623,53 @@ const wire = (schema: Codec) => {
 };
 
 /**
- * A failure of `action` through the JSON codec of every error it declares, the built-in ones
- * included, as `wire` passes a value, keeping the stack of where it was made, where the
- * decoded error's would be the codec's. One that does not pass, such as an error the action
- * does not declare, throws, and the call dies with it, as it is an empty 500 over HTTP.
+ * `cause` with each failure passed through `failure` where it stands, so it keeps its
+ * annotations, the span it failed in among them; failed anew, it would lose them. One that
+ * passes keeps the stack of where it was made, where the decoded error's would be the codec's.
+ * One that does not, such as an error the action does not declare, is a defect: its
+ * `SchemaError`, then the failure itself.
  */
-const failureOf = (action: Any) => {
-  const codec = Schema.toCodecJson(Schema.Union(projectedErrors(action)));
-  const encode = Schema.encodeUnknownSync(codec, { errors: "all" });
-  const decode = Schema.decodeUnknownSync(codec, { errors: "all" });
-
-  return (error: ErasedValue): ErasedValue => {
-    const decoded = decode(encode(error));
-
-    return Predicate.isError(error) && Predicate.isError(decoded)
-      ? Object.assign(decoded, { stack: error.stack })
-      : decoded;
-  };
-};
+const mapFailures = (
+  cause: Cause.Cause<unknown>,
+  failure: (error: ErasedValue) => Effect.Effect<ErasedValue, Schema.SchemaError>,
+): Effect.Effect<Cause.Cause<unknown>> =>
+  Effect.map(
+    Effect.forEach(cause.reasons, (reason) =>
+      Cause.isFailReason(reason)
+        ? Effect.match(failure(reason.error), {
+            onFailure: (refused) => Cause.combine(Cause.die(refused), Cause.die(reason.error)),
+            onSuccess: (decoded) =>
+              Cause.fail(
+                Predicate.isError(reason.error) && Predicate.isError(decoded)
+                  ? Object.assign(decoded, { stack: reason.error.stack })
+                  : decoded,
+              ),
+          }).pipe(Effect.map((mapped) => Cause.annotate(mapped, Cause.reasonAnnotations(reason))))
+        : Effect.succeed(Cause.fromReasons([reason])),
+    ),
+    (causes) => Cause.fromReasons(causes.flatMap(({ reasons }) => reasons)),
+  );
 
 /**
  * `action`'s method, running `run`, its handler behind its hook, as a remote call runs: input
  * that does not pass through its codec is `InvalidInput`, and the hook and the handler never
  * run; a success or a failure that does not is a defect, as it is an empty 500 over HTTP,
- * since the handler or the hook broke its contract. A failure is mapped within its cause,
- * which keeps the span it failed in; failed anew, it would lose it.
+ * since the handler or the hook broke its contract. A failure passes through the codec of
+ * every error the action declares, the built-in ones included.
  */
 const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
   const input = wire(action.input);
   const success = wire(action.success);
-  const failure = failureOf(action);
+  const failure = wire(Schema.Union(projectedErrors(action)));
 
   return (...args) =>
     inputOf(action, args).pipe(
       Effect.flatMap(input),
       Effect.mapError(({ message }) => new InvalidInput({ message })),
       Effect.flatMap((value) =>
-        Effect.catchCause(run(value), (cause) => Effect.failCause(Cause.map(cause, failure))),
+        Effect.catchCause(run(value), (cause) =>
+          Effect.flatMap(mapFailures(cause, failure), Effect.failCause),
+        ),
       ),
       Effect.flatMap((value) => Effect.orDie(success(value))),
     );

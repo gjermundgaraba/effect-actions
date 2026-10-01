@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Context, Effect, Exit, Layer, Result, Schema, Stream } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { Context, Effect, Layer, Schema, Stream } from "effect";
+import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
 import { mcpRequest, rawToolCall } from "./requests.js";
-import { serve } from "./serve.js";
+import { buildDefect, serve } from "./serve.js";
 import { converse } from "./stdio-host.js";
 
 class Principal extends Context.Service<Principal, string>()("text-test/Principal") {}
@@ -325,19 +325,6 @@ describe("MCP text fields", () => {
 });
 
 describe("a text field MCP cannot send", () => {
-  /** What building `layer` dies with: a defect, not a typed failure, so no tag catches it. */
-  const buildDefect = async (layer: Layer.Layer<never, unknown, HttpRouter.HttpRouter>) => {
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        Layer.build(
-          layer.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
-        ),
-      ),
-    );
-
-    return Result.getOrUndefined(Exit.findDefect(exit));
-  };
-
   const cannot = (name: string) =>
     `MCP tool '${name}' cannot send 'body' as text: it is not a top-level property of its success`;
 

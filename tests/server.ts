@@ -9,7 +9,14 @@ import { serve } from "./serve.js";
 export const makeTestApp = () => serve(layer);
 
 /** An implementation that owes nothing per request or to build, as `serve` requires. */
-type Free = Implementation<Action.Any, { readonly [name: string]: never }, unknown, never>;
+type Free = Implementation<
+  Action.Any,
+  { readonly [name: string]: never },
+  unknown,
+  never,
+  unknown,
+  never
+>;
 
 /** What the helpers serve: one free implementation, or a list of them. */
 type Frees = Free | ReadonlyArray<Free>;

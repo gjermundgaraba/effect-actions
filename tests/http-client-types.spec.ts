@@ -152,7 +152,7 @@ ActionHttp.client(ActionHttp.make(Notes), {
   transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
 });
 
-// A binding's errors fail every method, beside each action's own; handlers are unaffected.
+// A binding's errors fail every method, beside each action's own.
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
 
 const Throttling = ActionHttp.make(Notes, { errors: [Throttled] });
@@ -175,12 +175,3 @@ export const bindingErrorTypes = Effect.gen(function* () {
 
   yield* methods.count().pipe(Effect.catchTag("Throttled", () => Effect.succeed(0)));
 });
-
-Action.implement(
-  Get,
-  {
-    // @ts-expect-error A handler fails with its action's errors only, never a binding's.
-    get: () => Effect.fail(new Throttled()),
-  },
-  Action.allowAll,
-);

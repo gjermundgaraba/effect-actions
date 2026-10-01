@@ -116,24 +116,31 @@ export const memoized = <S, E, R>(
  * including one made by spreading an implementation, is not an implementation.
  * `R` maps each action name to its handler's per-request requirements, and `~hook`, which
  * no action name can be, to its hook's; `EX` and `RX` are the failures and services of its
- * builders, the handlers' and the hook's.
+ * handlers' builder, and `EH` and `RH` of its hook's, which a share behind another hook
+ * leaves out. A plain hook builds nothing.
  */
 export class Implementation<
   A extends Action.Any,
   R extends { readonly [name: string]: unknown },
   EX,
   RX,
+  EH = never,
+  RH = never,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
   /** Type-only: each action's handler's per-request requirements, and the hook's. */
   declare readonly "~request": R;
-  /** Type-only: what building its handlers and its hook fails with. */
+  /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
-  /** Type-only: what building its handlers and its hook needs. */
+  /** Type-only: what building its handlers needs. */
   declare readonly "~buildContext": RX;
+  /** Type-only: what building its hook fails with. */
+  declare readonly "~hookBuildError": EH;
+  /** Type-only: what building its hook needs. */
+  declare readonly "~hookBuildContext": RH;
 
   readonly #handlers: Memoized<Bound, EX, RX>;
-  readonly #hook: Memoized<ErasedBefore, EX, RX>;
+  readonly #hook: Memoized<ErasedBefore, EH, RH>;
 
   constructor(
     /** The contracts this implementation answers. */
@@ -141,7 +148,7 @@ export class Implementation<
     /** Builds each action paired with its handler: its own builder, or the one it shares. */
     handlers: Memoized<Bound, EX, RX>,
     /** Builds its hook. */
-    hook: Memoized<ErasedBefore, EX, RX>,
+    hook: Memoized<ErasedBefore, EH, RH>,
   ) {
     this.#handlers = handlers;
     this.#hook = hook;
@@ -220,6 +227,8 @@ export type AnyImplementation<A extends Action.Any = Action.Any> = Implementatio
   // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Type-only requirements by action name, erased to the top type.
   { readonly [name: string]: unknown },
   unknown,
+  unknown,
+  unknown,
   unknown
 >;
 
@@ -255,11 +264,21 @@ export type RequestOf<App, A extends Action.Any> = App extends {
 /** Per-request requirements of the implementations a surface can invoke. */
 export type RequestContext<App> = App extends { readonly "~request": infer R } ? R[keyof R] : never;
 
-/** Builder failures of the implementations a surface builds. */
-export type BuildError<App> = App extends { readonly "~buildError": infer EX } ? EX : never;
+/** Builder failures of the implementations a surface builds, their hooks' included. */
+export type BuildError<App> = App extends {
+  readonly "~buildError": infer EX;
+  readonly "~hookBuildError": infer EH;
+}
+  ? EX | EH
+  : never;
 
-/** Builder requirements of the implementations a surface builds. */
-export type BuildContext<App> = App extends { readonly "~buildContext": infer RX } ? RX : never;
+/** Builder requirements of the implementations a surface builds, their hooks' included. */
+export type BuildContext<App> = App extends {
+  readonly "~buildContext": infer RX;
+  readonly "~hookBuildContext": infer RH;
+}
+  ? RX | RH
+  : never;
 
 /** Every action `apps` serve, each once: a name served twice is refused. */
 export const servedActions = (

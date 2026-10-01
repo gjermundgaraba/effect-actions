@@ -1,14 +1,8 @@
 import { NodeRuntime } from "@effect/platform-node";
-import { Console, Effect, Schema, Stream } from "effect";
+import { Console, Effect, Stream } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-
-const Double = Action.make("double", {
-  description: "Double a finite number.",
-  input: { value: Schema.FiniteFromString },
-  success: Schema.Finite,
-  access: "read",
-});
+import { Double } from "./contracts.js";
 
 const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), Action.allowAll);
 

@@ -135,12 +135,21 @@ describe("Action.client", () => {
       success: Schema.String,
     });
 
+    // JSON has no `-0`: a remote handler gets `0`, and so does a remote caller.
+    const Zero = Action.make("zero", {
+      description: "Zero",
+      access: "read",
+      input: { value: Schema.Number },
+      success: Schema.Array(Schema.Number),
+    });
+
     const app = Action.implement(
-      [Double, Search, Greet],
+      [Double, Search, Greet, Zero],
       {
         double: ({ value }) => Effect.succeed(value * 2),
         search: (filters) => Effect.succeed(filters instanceof Filters ? "instance" : "plain"),
         greet: ({ name }) => Effect.succeed(`Hello, ${name}`),
+        zero: ({ value }) => Effect.succeed([value, -0]),
       },
       Action.allowAll,
     );
@@ -151,6 +160,7 @@ describe("Action.client", () => {
       return {
         doubled: yield* client.double({ value: 21 }),
         greeted: yield* client.greet({ name: " Bea " }),
+        zeros: yield* client.zero({ value: -0 }),
         // Left out, the input is what `{}` decodes to: an instance of the class.
         all: yield* client.search(),
         plain: yield* Effect.flip(client.search({ tag: "x" })),
@@ -159,6 +169,7 @@ describe("Action.client", () => {
 
     expect(result.doubled).toBe(42);
     expect(result.greeted).toBe("Hello, Bea");
+    expect(result.zeros.map((zero) => Object.is(zero, 0))).toEqual([true, true]);
     expect(result.all).toBe("instance");
     // A class encodes only its instances, as over HTTP.
     expect(result.plain).toBeInstanceOf(Action.InvalidInput);
@@ -299,6 +310,19 @@ describe("Action.client", () => {
 
     const Missing = Schema.TaggedStruct("Missing", { id: Schema.String });
 
+    // Encoded by an Effect that completes later, as a codec may be.
+    class Busy extends Schema.TaggedError<Busy>()("Busy", {
+      reason: Schema.String.pipe(
+        Schema.decodeTo(
+          Schema.String,
+          SchemaTransformation.transformEffect({
+            decode: (reason) => Effect.succeed(reason),
+            encode: (reason) => Effect.as(Effect.sleep("1 millis"), reason),
+          }),
+        ),
+      ),
+    }) {}
+
     const Label = Action.make("label", {
       description: "A label",
       access: "read",
@@ -311,24 +335,32 @@ describe("Action.client", () => {
       errors: [Missing],
     });
 
+    const Queue = Action.make("queue", {
+      description: "A queue",
+      access: "read",
+      errors: [Busy],
+    });
+
     // Wider than the error declares, as TypeScript lets a variable through.
     const missing = { ...Missing.make({ id: "1" }), secret: "s" };
 
     const app = Action.implement(
-      [Label, Profile],
+      [Label, Profile, Queue],
       {
         label: () => Effect.fail(new Mislabeled({ label: " Bea " })),
         profile: () => Effect.fail(missing),
+        queue: () => Effect.fail(new Busy({ reason: "full" })),
       },
       Action.allowAll,
     );
 
-    const { mislabeled, notFound } = await Effect.gen(function* () {
+    const { mislabeled, notFound, busy } = await Effect.gen(function* () {
       const client = yield* Action.client(app);
 
       return {
         mislabeled: yield* Effect.flip(Effect.sandbox(client.label())),
         notFound: yield* Effect.flip(client.profile()),
+        busy: yield* Effect.flip(client.queue()),
       };
     }).pipe(Effect.scoped, Effect.runPromise);
 
@@ -338,6 +370,7 @@ describe("Action.client", () => {
     // undeclared field is dropped.
     expect(error).toEqual(new Mislabeled({ label: "Bea" }));
     expect(notFound).toEqual(Missing.make({ id: "1" }));
+    expect(busy).toEqual(new Busy({ reason: "full" }));
     // Its trace is the handler's: where it failed, then its action's span.
     expect(Predicate.isError(error) && error.stack).toContain("client.test.ts");
     expect(Cause.pretty(mislabeled)).toMatch(/^\s+at label$/m);
@@ -369,10 +402,17 @@ describe("Action.client", () => {
       Effect.flatMap(Action.client(app), pick).pipe(Effect.scoped);
 
     const unencoded = await defectOf(call((client) => client.count()));
-    const undeclared = await defectOf(call((client) => client.ping()));
+    const undeclared = await Effect.runPromiseExit(call((client) => client.ping()));
+
+    // Its `SchemaError`, then the failure itself, which the `SchemaError` does not name.
+    const defects = Exit.isFailure(undeclared)
+      ? undeclared.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
+      : [];
 
     expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain('at ["count"]');
-    expect(Schema.isSchemaError(undeclared)).toBe(true);
+    expect(defects).toHaveLength(2);
+    expect(Schema.isSchemaError(defects[0])).toBe(true);
+    expect(defects[1]).toBeInstanceOf(Unlisted);
   });
 
   it("runs each handler in its action's span, a child of the caller's, never the acquisition's", async () => {
