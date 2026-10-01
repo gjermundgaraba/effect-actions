@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.0`, the first stable
+release of Effect 4. The `effect` peer is now `^4.0.0`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.0.0 or a later 4.x release.** Release candidates no
+longer satisfy it. Nothing in this package's API or behaviour changed.
+
+- Migrate: install `effect` and `@effect/platform-node` `4.0.0` or later. Effect's own 4.0.0
+  release notes list its changes since rc.118; this package needed none of them.
+
 ## 0.8.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.118`. The `effect`

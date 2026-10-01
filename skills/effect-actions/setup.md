@@ -5,12 +5,12 @@ Install, version pins, entry points, and the boundaries of the package.
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
+pnpm add @gjermundgaraba/effect-actions effect@^4.0.0
 ```
 
 | Need                           | Add                                                   |
 | ------------------------------ | ----------------------------------------------------- |
-| Node HTTP server or stdio host | `@effect/platform-node@4.0.0-rc.118`                  |
+| Node HTTP server or stdio host | `@effect/platform-node@^4.0.0`                        |
 | `TestingClient.withMcpClient`  | `@modelcontextprotocol/client@^2.0.0` (optional peer) |
 
 Node `^22.12.0 || ^24.0.0 || >=26.0.0`. ESM only.
@@ -60,6 +60,6 @@ What the package does, and nothing else:
 ## Failure modes
 
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath.
-- Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` release candidate within the peer range for every package.
-- `Cannot find module 'effect/http'` (or `effect/http-api`, `effect/cli`, `effect/ai`): `effect` is older than `4.0.0-rc.118`, which moved these modules out of `effect/unstable/*`. Install a release candidate within the peer range, and import from the new paths.
+- Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` 4.x release for every package.
+- `Cannot find module 'effect/http'` (or `effect/http-api`, `effect/cli`, `effect/ai`): `effect` is a release candidate older than `4.0.0-rc.118`, which moved these modules out of `effect/unstable/*`. Install `effect` 4.0.0 or later, and import from the new paths.
 - `@modelcontextprotocol/client` resolution errors in a server build: something imported `TestingClient`. Only tests should.
