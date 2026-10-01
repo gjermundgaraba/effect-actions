@@ -88,10 +88,10 @@ const greeting = Effect.gen(function* () {
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
+pnpm add @gjermundgaraba/effect-actions effect@^4.0.0
 ```
 
-Add `@effect/platform-node@4.0.0-rc.118` to serve or run a CLI from Node. Every module is a
+Add `@effect/platform-node@^4.0.0` to serve or run a CLI from Node. Every module is a
 subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
 contracts-only bundle never loads a server.
 
@@ -117,8 +117,8 @@ release; in a project that installs the package, point the agent at
 
 ## Status
 
-The `effect` peer accepts any Effect 4.0 release candidate from `4.0.0-rc.118` on; the package
-is built and tested against the release candidate in its `devDependencies` (see [docs/setup.md](docs/setup.md)). Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
+The `effect` peer is `^4.0.0`; the package is built and tested against the Effect release in
+its `devDependencies` (see [docs/setup.md](docs/setup.md)). Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
 Token verification and the authorization rule belong to the application; the library supplies the authentication seam, the hook and the refusals. See [docs/setup.md](docs/setup.md).
 
 ## Acknowledgements

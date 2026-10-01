@@ -11,3 +11,9 @@ peerDependencyRules:
 
 allowBuilds:
   esbuild: true
+
+# Effect 4.0.0 is newer than pnpm's default one-day release age; drop these once it is not.
+minimumReleaseAgeExclude:
+  - effect@4.0.0
+  - "@effect/platform-node@4.0.0"
+  - "@effect/platform-node-shared@4.0.0"

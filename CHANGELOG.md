@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0
+## 0.10.0
 
 One contract, one implementation, one hook. `ActionGroup` is gone: `Action.implement` binds
 handlers to actions behind a `before` hook, which every implementation states, `Action.allowAll`
@@ -17,9 +17,9 @@ to `ActionMcp`'s `tools` option, and stdio also serves the revisions back to 202
 Claude Code and Codex connect. The docs say where builders and your own services are built, and
 show one MCP URL for signed-out and signed-in callers.
 
-Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.118`. The `effect`
-peer range is unchanged (`>=4.0.0-rc.118 <4.0.0`). TypeScript 7 or newer is supported; earlier
-versions are not.
+Built and tested against `effect` and `@effect/platform-node` `4.0.0`. The `effect` peer is
+unchanged since 0.9.0 (`^4.0.0`). TypeScript 7 or newer is supported; earlier versions are not.
+0.9.0 kept 0.8.0's API and behavior, so these notes compare with 0.8.0.
 
 ### Breaking changes
 
@@ -33,7 +33,7 @@ const ReadPage = Action.make("readPage", { ..., mcp: { name: "read_page", text: 
 const pages = ActionGroup.make({ name: "pages" }, ReadPage).implement({ readPage: read });
 ActionMcp.layerHttp([users, pages], { name, version, path: "/mcp", errors, before: authorize });
 
-// 0.9.0
+// 0.10.0
 const users = Action.implement([GetUser, RenameUser], build, authorize);
 const Http = ActionHttp.make([GetUser, RenameUser]);
 ActionHttp.layer(Http, users);
@@ -46,7 +46,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Contracts
 
-| 0.8.0                                                                     | 0.9.0                                                                                                                                                                                                                          |
+| 0.8.0                                                                     | 0.10.0                                                                                                                                                                                                                         |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                                               |
 | `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command |
@@ -63,7 +63,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Implementations and hooks
 
-| 0.8.0                                                                                        | 0.9.0                                                                                                                                                                              |
+| 0.8.0                                                                                        | 0.10.0                                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, before)`, with `Action.allowAll` where 0.8.0 passed no `before`                                                                                  |
 | `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`; a group is a list of actions                                                                                                                              |
@@ -164,7 +164,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### HTTP
 
-| 0.8.0                                                                                  | 0.9.0                                                                                                                                                                                                                                                                      |
+| 0.8.0                                                                                  | 0.10.0                                                                                                                                                                                                                                                                     |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, errors? })`: `prefix: "/api/users"` keeps `/api/users/getUser`                                                                                                                                                                        |
 | The `ActionHttp.Http` type, `Http.groups`                                              | `ActionHttp.Binding`, `Http.actions`                                                                                                                                                                                                                                       |
@@ -230,7 +230,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Authentication
 
-| 0.8.0                                                                            | 0.9.0                                                                                                             |
+| 0.8.0                                                                            | 0.10.0                                                                                                            |
 | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `Authentication.middleware(tag, authenticate).layer`                             | `Authentication.make(tag, Effect.succeed(authenticate), resource?).layer`; `authenticate` may fail with a refusal |
 | `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.Options`, `make`'s third argument                                                                 |
@@ -266,7 +266,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### MCP
 
-| 0.8.0                                                                              | 0.9.0                                                                                                               |
+| 0.8.0                                                                              | 0.10.0                                                                                                              |
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `ActionMcp.Options<Errors, R>` of `layerHttp`, `ActionMcp.StdioOptions<Errors, R>` | `ActionMcp.LayerHttpOptions<A>`; `ActionMcp.Options<A>` is the server's, which `layerHttp` and `runStdio` both take |
 | `Layer.launch(ActionMcp.layerStdio(implementations, options))`                     | `ActionMcp.runStdio(implementations, options)`, which succeeds when the host closes stdin                           |
@@ -311,7 +311,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Toolkit
 
-| 0.8.0                                                                    | 0.9.0                                                                                                                                                                       |
+| 0.8.0                                                                    | 0.10.0                                                                                                                                                                      |
 | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionToolkit.Binding<Tools, E, R>`, `ActionToolkit.Options<Errors, R>` | `ActionToolkit.Tools<T, E, R>`, the same `{ toolkit, layer }`, each type argument required; `ActionToolkit.Options<A>`, over the served actions, holds only `needsApproval` |
 
@@ -333,7 +333,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### CLI
 
-| 0.8.0                                                                                                                            | 0.9.0                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 0.8.0                                                                                                                            | 0.10.0                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.command(Http, GetUser)`, `ActionCli.make(Http, { name })`, on a host `HttpClient` that prepends the URL, provided on the command: `Command.provideEffect(HttpClient.HttpClient, ...)`                                                                                                                                                                                                                                                    |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                                                                                                                                                                                                                                                           |
@@ -381,7 +381,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Testing
 
-| 0.8.0                                                                                                                                     | 0.9.0                                                                                                                                                                                                                                                                                                                                            |
+| 0.8.0                                                                                                                                     | 0.10.0                                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Testing.httpClient`, `Testing.Handler`                                                                                                   | `Testing.layer(routes)`, an in-memory `HttpClient` for every client                                                                                                                                                                                                                                                                              |
 | `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient?, tools? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. Given the endpoint's `tools`, a text field is put back under its field                                                                                                                                    |
@@ -575,6 +575,19 @@ Each area below lists what is renamed or removed, then what changes without a re
   source, and startup services.
 - The examples implement the agent-only `listChanges` beside the other user actions, which
   HTTP's binding leaves out, and document the bearer scheme in the OpenAPI document.
+
+## 0.9.0
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.0`, the first stable
+release of Effect 4. The `effect` peer is now `^4.0.0`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.0.0 or a later 4.x release.** Release candidates no
+longer satisfy it. Nothing in this package's API or behaviour changed.
+
+- Migrate: install `effect` and `@effect/platform-node` `4.0.0` or later. Effect's own 4.0.0
+  release notes list its changes since rc.118; this package needed none of them.
 
 ## 0.8.0
 

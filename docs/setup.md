@@ -5,12 +5,12 @@ Installation, version pins, entry points, a minimal program, and package boundar
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@4.0.0-rc.118
+pnpm add @gjermundgaraba/effect-actions effect@^4.0.0
 ```
 
-| Need                                | Add                                  |
-| ----------------------------------- | ------------------------------------ |
-| Node HTTP server, stdio host or CLI | `@effect/platform-node@4.0.0-rc.118` |
+| Need                                | Add                            |
+| ----------------------------------- | ------------------------------ |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@^4.0.0` |
 
 Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer; earlier versions are not
 supported. ESM only.
@@ -109,6 +109,6 @@ What the package does and does not do: [guarantees.md](guarantees.md#scope).
 
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath.
 - A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a module that also holds server code, such as a contract beside its `Action.implement`. Move the contracts and the binding to a module that imports no server code.
-- Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` release candidate within the peer range for every package.
+- Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` 4.x release for every package.
 - `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): Effect `4.0.0-rc.118` moved these modules to `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`. Import the new paths.
-- `Cannot find module 'effect/http'` (or `effect/http-api`, `effect/cli`, `effect/ai`), or at run time `Cannot find module '…/node_modules/effect/dist/http-api.js'` (or `http.js`, `ai.js`, `cli.js`): `effect` is older than `4.0.0-rc.118`, which moved these modules out of `effect/unstable/*`. Install a release candidate within the peer range.
+- `Cannot find module 'effect/http'` (or `effect/http-api`, `effect/cli`, `effect/ai`), or at run time `Cannot find module '…/node_modules/effect/dist/http-api.js'` (or `http.js`, `ai.js`, `cli.js`): `effect` is a release candidate older than `4.0.0-rc.118`, which moved these modules out of `effect/unstable/*`. Install `effect` 4.0.0 or later.
