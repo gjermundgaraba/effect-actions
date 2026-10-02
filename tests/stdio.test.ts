@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { format } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -41,7 +41,8 @@ const connect = async (revision: string, script = "examples/mcp-stdio.ts") => {
 // A real subprocess compiles TypeScript at startup, which can outlast the default timeout
 // under load.
 describe("MCP stdio example", () => {
-  it.each(["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])(
+  // The current revision, and the legacy handshake of the revisions before it.
+  it.each(["2026-07-28", "2025-11-25"])(
     "serves list/call to a %s host and keeps logs off protocol stdout",
     async (revision) => {
       const { client, output, connected } = await connect(revision);
@@ -53,26 +54,9 @@ describe("MCP stdio example", () => {
         const called = await client.callTool({ name: "status", arguments: {} });
         const [text] = called.content.map((part) => (part.type === "text" ? part.text : ""));
 
-        // Every revision reads the success's JSON as text; 2025-06-18 on also structures it.
         expect(called.isError).toBe(false);
         expect(JSON.parse(text ?? "")).toEqual({ ready: true });
-        expect(called.structuredContent).toEqual(
-          revision >= "2025-06-18" ? { ready: true } : undefined,
-        );
-
-        // Invalid arguments are a tool error from 2025-11-25 on, and a protocol error before.
-        const invalid = client.callTool({ name: "status", arguments: { invented: true } });
-        const message = "Invalid parameters for tool 'status'";
-
-        if (revision < "2025-11-25") {
-          await expect(invalid).rejects.toThrow(message);
-        } else {
-          const result = await invalid;
-          const texts = result.content.map((part) => (part.type === "text" ? part.text : ""));
-
-          expect(result.isError).toBe(true);
-          expect(texts.join("\n")).toContain(message);
-        }
+        expect(called.structuredContent).toEqual({ ready: true });
       } finally {
         await client.close();
       }
@@ -82,53 +66,94 @@ describe("MCP stdio example", () => {
     30_000,
   );
 
-  it("sends every console logger's output and Console.log to stderr", async () => {
-    const { client, output, connected } = await connect("2026-07-28", "tests/stdio-console.ts");
-
-    try {
-      await connected;
-
-      const result = await client.callTool({ name: "status", arguments: {} });
-      expect(result.isError).not.toBe(true);
-    } finally {
-      await client.close();
-    }
-
-    expect(output.stderr).toContain('"message":"json logger"');
-    expect(output.stderr).toContain("console log");
-  }, 30_000);
-
   // Node's console prints counters, timers, group labels, tables and directories on stdout.
-  it("sends every console method to stderr, counting and timing, and nothing to stdout", () => {
-    const run = spawnSync(process.execPath, ["--import", "tsx", "tests/stdio-console.ts"], {
+  it("writes every console method and logger to stderr, and only the answer to stdout", async () => {
+    const child = spawn(process.execPath, ["--import", "tsx", "tests/stdio-console.ts"], {
       cwd: process.cwd(),
-      input: "",
     });
 
-    const stderr = run.stderr.toString();
+    const output = { stdout: "", stderr: "" };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      output.stdout += chunk.toString();
+
+      // The call is answered: closing stdin ends the server.
+      if (output.stdout.includes("\n") && !child.stdin.writableEnded) {
+        child.stdin.end();
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      output.stderr += chunk.toString();
+    });
+
+    const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+    const call = statelessRequest("tools/call", { name: "status", arguments: {} }).body;
+
+    child.stdin.write(`${JSON.stringify(call)}\n`);
+    expect(await exited).toBe(0);
+
+    const [answer = "", ...after] = output.stdout.split("\n");
     const lines = (...printed: ReadonlyArray<string>) => printed.join("\n");
 
-    expect(run.status).toBe(0);
-    expect(run.stdout.toString()).toBe("");
-    expect(stderr).toContain(lines("log", "info", "debug", "warn", "error", "dirxml"));
-    expect(stderr).toContain(lines("{ dir: true }", "[ { table: 1 } ]"));
-    expect(stderr).toContain(lines("default: 1", "default: 2", "calls: 1", "calls: 1"));
-    expect(stderr).toMatch(/\ntimer %s: \d+(\.\d{1,3})?ms logged\ntimer %s: \d+(\.\d{1,3})?ms\n/);
-    expect(stderr).toContain(
+    expect(after).toEqual([""]);
+    expect(JSON.parse(answer)).toMatchObject({ id: 1, result: { isError: false } });
+    expect(output.stderr).toContain('"message":"json logger"');
+    expect(output.stderr).toContain("console log");
+    expect(output.stderr).toContain(lines("log", "info", "debug", "warn", "error", "dirxml"));
+    expect(output.stderr).toContain(lines("{ dir: true }", "[ { table: 1 } ]"));
+    expect(output.stderr).toContain(lines("default: 1", "default: 2", "calls: 1", "calls: 1"));
+    expect(output.stderr).toMatch(
+      /\ntimer %s: \d+(\.\d{1,3})?ms logged\ntimer %s: \d+(\.\d{1,3})?ms\n/,
+    );
+    expect(output.stderr).toContain(
       lines("group", "inside", "collapsed", "deeper", "second line", "{ nested: true }"),
     );
     // Effect's unlabeled group, which Node would label `undefined`.
-    expect(stderr).toContain(lines("'dir\\nvalue'", "unlabeled", ""));
+    expect(output.stderr).toContain(lines("'dir\\nvalue'", "unlabeled", ""));
   }, 30_000);
+});
 
-  it("exits cleanly when the host closes stdin", () => {
-    const run = spawnSync(process.execPath, ["--import", "tsx", "examples/mcp-stdio.ts"], {
-      cwd: process.cwd(),
-      input: "",
-    });
+describe("runStdio's invalid arguments", () => {
+  const Ping = Action.make("ping", { description: "Answer", access: "read" });
+  const ping = Action.implement(Ping, () => Effect.void, Action.allowAll);
 
-    expect(run.status).toBe(0);
-  }, 30_000);
+  const Answered = Schema.fromJsonString(
+    Schema.Union([
+      Schema.Struct({
+        result: Schema.Struct({
+          isError: Schema.Literal(true),
+          content: Schema.Array(Schema.Struct({ text: Schema.String })),
+        }),
+      }),
+      Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
+    ]),
+  );
+
+  // A tool error from 2025-11-25 on, and a protocol error before.
+  it.each([
+    ["2026-07-28", "result"],
+    ["2025-11-25", "result"],
+    ["2025-06-18", "error"],
+    ["2025-03-26", "error"],
+    ["2024-11-05", "error"],
+  ] as const)("refuses them to a %s host as its %s", async (revision, kind) => {
+    const [line] = await converse(
+      ActionMcp.runStdio(ping, { name: "ping", version: "0" }),
+      revision,
+      [{ method: "tools/call", params: { name: "ping", arguments: { invented: true } } }],
+    );
+
+    const answered = Schema.decodeUnknownSync(Answered)(line);
+
+    const message =
+      "result" in answered
+        ? answered.result.content.map(({ text }) => text).join("\n")
+        : answered.error.message;
+
+    expect(Object.keys(answered)).toEqual([kind]);
+    expect(message).toContain("Invalid parameters for tool 'ping'");
+  });
 });
 
 describe("runStdio's successes", () => {

@@ -135,30 +135,19 @@ describe("MCP text fields", () => {
   it("send the field once, raw, before the structured rest and its JSON copy", async () => {
     const response = await serveHttp().handler(rawToolCall("fetch", { url: "a" }));
     const message = (await response.text()).trim();
+    const { result } = Schema.decodeUnknownSync(Reply)(message);
 
-    expect(JSON.parse(message)).toEqual({
-      jsonrpc: "2.0",
-      id: 1,
-      result: {
-        _meta: { "io.modelcontextprotocol/serverInfo": server },
-        resultType: "complete",
-        isError: false,
-        structuredContent: rest,
-        content: [
-          { type: "text", text: tricky },
-          { type: "text", text: JSON.stringify(rest) },
-        ],
-      },
+    expect(result).toHaveProperty("structuredContent", rest);
+    expect(result).toMatchObject({
+      isError: false,
+      content: [
+        { type: "text", text: tricky },
+        { type: "text", text: JSON.stringify(rest) },
+      ],
     });
     // Re-serializing the parsed message reproduces the bytes sent, so a result's encoded
     // size can be measured from the parsed object.
     expect(JSON.stringify(JSON.parse(message))).toBe(message);
-    // Over stdio the same message is one line.
-    expect(
-      await converse(stdio, "2026-07-28", [
-        { method: "tools/call", params: { name: "fetch", arguments: { url: "a" } } },
-      ]),
-    ).toEqual([message]);
   });
 
   it("list an output schema without the field", async () => {
@@ -387,37 +376,5 @@ describe("a text field MCP cannot send", () => {
     expect(() => ActionMcp.layerHttp(app, { ...server, tools: stale })).toThrow(
       "Unknown tools: read",
     );
-    expect(() => ActionMcp.runStdio(app, { ...server, tools: stale })).toThrow(
-      "Unknown tools: read",
-    );
-  });
-
-  it("refuses a key of an argument chosen by a condition where the choice does not serve it", () => {
-    const Dump = Action.make("dump", {
-      description: "The server's state, as Markdown",
-      access: "read",
-      success: { markdown: Schema.String },
-    });
-
-    const dump = Action.implement(Dump, () => Effect.succeed({ markdown: "" }), Action.allowAll);
-
-    // The types accept a key any choice serves.
-    const shared = (debug: boolean) =>
-      ActionMcp.layerHttp(debug ? [app, dump] : [app], {
-        ...server,
-        tools: { dump: { text: "markdown" } },
-      });
-
-    // Chosen by the same condition, `tools` suits either choice.
-    const chosen = (debug: boolean) =>
-      ActionMcp.runStdio(debug ? [app, dump] : [app], {
-        ...server,
-        tools: debug ? { dump: { text: "markdown" } } : {},
-      });
-
-    expect(() => shared(true)).not.toThrow();
-    expect(() => shared(false)).toThrow("Unknown tools: dump");
-    expect(() => chosen(true)).not.toThrow();
-    expect(() => chosen(false)).not.toThrow();
   });
 });

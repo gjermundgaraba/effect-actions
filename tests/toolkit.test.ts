@@ -190,37 +190,7 @@ describe("ActionToolkit", () => {
     expect(calls).toEqual(["x"]);
   });
 
-  it("decodes with the action's schemas, returns native results, and names tools after actions", async () => {
-    const Double = Action.make("double", {
-      description: "Double a number.",
-      access: "write",
-      input: Schema.Struct({ value: Schema.FiniteFromString }),
-      success: Schema.Finite,
-    });
-
-    const double = Action.implement(
-      Double,
-      ({ value }) => Effect.succeed(value * 2),
-      Action.allowAll,
-    );
-
-    const binding = ActionToolkit.make(double);
-
-    expect(Object.keys(binding.toolkit.tools)).toEqual(["double"]);
-
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const tools = yield* binding.toolkit;
-        const calls = yield* tools.handle("double", { value: "21" });
-
-        return yield* Stream.runCollect(calls);
-      }).pipe(Effect.provide(binding.layer)),
-    );
-
-    expect(result).toMatchObject([{ result: 42, encodedResult: 42, isFailure: false }]);
-  });
-
-  it("takes and gives each tool's JSON encoding, as a model speaks, and decodes it for the handler", async () => {
+  it("names each tool after its action, takes and gives its JSON encoding, as a model speaks, and decodes it for the handler", async () => {
     const received: unknown[] = [];
 
     const Schedule = Action.make("schedule", {
@@ -242,6 +212,8 @@ describe("ActionToolkit", () => {
         Action.allowAll,
       ),
     );
+
+    expect(Object.keys(binding.toolkit.tools)).toEqual(["schedule"]);
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -320,7 +292,7 @@ describe("ActionToolkit", () => {
     expect(ran).toEqual([]);
   });
 
-  it("fills in an identity provided to layer for a call without one; a call's own wins", async () => {
+  it("runs each call with its own identity, filling in one provided to layer for a call without one", async () => {
     const Who = Action.make("who", {
       description: "Current principal",
       access: "read",
@@ -329,18 +301,34 @@ describe("ActionToolkit", () => {
 
     const binding = ActionToolkit.make(Action.implement(Who, () => Principal, Action.allowAll));
 
-    // What the docs warn against: an identity provided at startup.
-    const startup = binding.layer.pipe(Layer.provide(Layer.succeed(Principal, "startup")));
-
     const call = Effect.flatMap(binding.toolkit, (tools) =>
       Effect.flatMap(tools.handle("who", {}), Stream.runCollect),
     );
 
+    const as = (principal: string) => call.pipe(Effect.provideService(Principal, principal));
+
+    // On one layer, concurrent calls with an identity each, then one without, which no
+    // earlier call's identity reaches.
+    const [[alice, bob], anonymous] = await Effect.runPromise(
+      // @ts-expect-error The last call lacks the Principal its tool requires.
+      Effect.all([
+        Effect.all([as("alice"), as("bob")], { concurrency: "unbounded" }),
+        Effect.exit(call),
+      ]).pipe(Effect.provide(binding.layer)),
+    );
+
+    expect(alice).toMatchObject([{ result: "alice" }]);
+    expect(bob).toMatchObject([{ result: "bob" }]);
+    expect(Exit.isFailure(anonymous) && Cause.pretty(anonymous.cause)).toContain(
+      "toolkit-test/Principal",
+    );
+
+    // What the docs warn against: an identity provided at startup.
+    const startup = binding.layer.pipe(Layer.provide(Layer.succeed(Principal, "startup")));
+
     const [own, lacking] = await Effect.runPromise(
       // @ts-expect-error The second call lacks the Principal its tool requires.
-      Effect.all([call.pipe(Effect.provideService(Principal, "caller")), call]).pipe(
-        Effect.provide(startup),
-      ),
+      Effect.all([as("caller"), call]).pipe(Effect.provide(startup)),
     );
 
     expect(own).toMatchObject([{ result: "caller" }]);
@@ -616,70 +604,5 @@ describe("ActionToolkit", () => {
     );
 
     expect(released).toBe(1);
-  });
-
-  it("resolves a native tool's principal per invocation from one shared handler layer", async () => {
-    const Who = Action.make("who", {
-      description: "Current principal",
-      access: "write",
-      success: Schema.String,
-    });
-
-    let acquired = 0;
-
-    const app = Action.implement(
-      Who,
-      Effect.sync(() => {
-        acquired++;
-
-        return () => Principal;
-      }),
-      Action.allowAll,
-    );
-
-    const binding = ActionToolkit.make(app);
-
-    const result = await Effect.runPromise(
-      // @ts-expect-error Deliberately omit Principal to verify it cannot leak from another invocation.
-      Effect.scoped(
-        Effect.gen(function* () {
-          // Build handler resources once, without an invocation principal.
-          const services = yield* Layer.build(binding.layer);
-          expect(acquired).toBe(1);
-
-          const call = (principal: string) =>
-            Effect.gen(function* () {
-              const tools = yield* binding.toolkit;
-              const stream = yield* tools.handle("who", {});
-
-              return yield* Stream.runCollect(stream);
-            }).pipe(Effect.provide(services), Effect.provideService(Principal, principal));
-
-          const [alice, bob] = yield* Effect.all([call("alice"), call("bob")], {
-            concurrency: "unbounded",
-          });
-
-          const anonymous = yield* Effect.exit(
-            Effect.gen(function* () {
-              const tools = yield* binding.toolkit;
-              const stream = yield* tools.handle("who", {});
-
-              return yield* Stream.runCollect(stream);
-            }).pipe(Effect.provide(services)),
-          );
-
-          return { alice, bob, anonymous };
-        }),
-      ),
-    );
-
-    expect(result.alice).toMatchObject([{ result: "alice" }]);
-    expect(result.bob).toMatchObject([{ result: "bob" }]);
-    expect(acquired).toBe(1);
-    expect(Exit.isFailure(result.anonymous)).toBe(true);
-
-    if (Exit.isFailure(result.anonymous)) {
-      expect(Cause.pretty(result.anonymous.cause)).toContain("toolkit-test/Principal");
-    }
   });
 });

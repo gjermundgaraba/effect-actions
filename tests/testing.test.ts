@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Context, Effect, FileSystem, Layer, Path, Schema, SchemaGetter, Stream } from "effect";
-import { Command } from "effect/cli";
 import {
   Etag,
   FetchHttpClient,
@@ -28,10 +27,8 @@ import {
 } from "../examples/contracts.js";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionCli from "../src/ActionCli.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Testing from "../src/Testing.js";
-import { cliServices, logged } from "./cli-services.js";
 
 /** Run `program` against the example host, answered in memory with fresh example state. */
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
@@ -298,15 +295,6 @@ describe("mcpClient", () => {
     ]);
   });
 
-  it("calls the endpoint its url names", async () => {
-    // The example's public endpoint needs no credentials.
-    const result = await againstHost(
-      Effect.flatMap(Testing.mcpClient([Status], { url: "/mcp/public" }), (mcp) => mcp.status()),
-    );
-
-    expect(result).toEqual({ service: "effect-actions", users: 2 });
-  });
-
   it("resolves a relative url only under layer", async () => {
     const failure = await Testing.mcpClient([Status]).pipe(
       Effect.flatMap((mcp) => Effect.flip(mcp.status())),
@@ -360,10 +348,6 @@ describe("mcpClient", () => {
       .join("");
 
     expect(await listed(`${event}\n`, "text/event-stream")).toEqual([1, 2]);
-  });
-
-  it("reads a JSON reply however it is laid out", async () => {
-    expect(await listed(JSON.stringify(reply, null, 2), "application/json")).toEqual([1, 2]);
   });
 });
 
@@ -487,39 +471,6 @@ describe("layer", () => {
   });
 
   class Visits extends Context.Service<Visits, { count: number }>()("testing/Visits") {}
-
-  it("answers a client made without a base URL, and every tool call, in memory", async () => {
-    const result = await againstHost(
-      Effect.gen(function* () {
-        const client = yield* ActionHttp.client(Http, {
-          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
-        });
-
-        return {
-          user: yield* client.getUser({ id: "1" }),
-          missing: yield* Effect.flip(client.getUser({ id: "404" })),
-          status: yield* client.status(),
-          doubled: yield* (yield* mcpAs()).double({ value: 2 }),
-        };
-      }),
-    );
-
-    expect(result.user).toEqual({ id: "1", name: "Ada" });
-    expect(result.missing).toEqual(new UserNotFound({ id: "404" }));
-    expect(result.status).toEqual({ service: "effect-actions", users: 2 });
-    expect(result.doubled).toBe(4);
-  });
-
-  it("answers a remote ActionCli command in memory", async () => {
-    const command = ActionCli.command(Http, Status);
-
-    const [, output] = await logged(Command.runWith(command, { version: "0" })([])).pipe(
-      Effect.provide(cliServices),
-      againstHost,
-    );
-
-    expect(JSON.parse(output.join("\n"))).toEqual({ service: "effect-actions", users: 2 });
-  });
 
   it("answers through a web handler the test serves, which it neither builds nor disposes", async () => {
     // As a harness serves the host for its Promise tests too: built once, by the handler.

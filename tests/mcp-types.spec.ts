@@ -168,3 +168,23 @@ export const listedClient = Effect.map(Testing.mcpClient(listed.actions), (mcp) 
 
   return methods;
 });
+
+// Implementations chosen by a condition: `tools` takes a key any choice serves, which
+// `layerHttp` refuses for a choice that does not, or `tools` chosen by the same condition.
+const dump = Action.implement(
+  Action.make("dump", { ...read, success: { markdown: Schema.String } }),
+  () => Effect.succeed({ markdown: "" }),
+  Action.allowAll,
+);
+
+export const servedWhen = (debug: boolean) =>
+  ActionMcp.layerHttp(debug ? [status, dump] : [status], {
+    ...options,
+    tools: { dump: { text: "markdown" } },
+  });
+
+export const chosenWhen = (debug: boolean) =>
+  ActionMcp.runStdio(debug ? [status, dump] : [status], {
+    ...options,
+    tools: debug ? { dump: { text: "markdown" } } : {},
+  });
