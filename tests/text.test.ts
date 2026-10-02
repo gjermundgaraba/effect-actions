@@ -232,42 +232,41 @@ describe("MCP text fields", () => {
     }),
   );
 
-  it("are put back under their field by mcpClient, given the endpoint's tools", async () => {
-    const whole = { body: tricky, ...rest };
-
-    const results = await Effect.gen(function* () {
+  it.effect("are put back under their field by mcpClient, given the endpoint's tools", () =>
+    Effect.gen(function* () {
+      const whole = { body: tricky, ...rest };
       const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt], { tools });
 
-      return [
+      const results = [
         yield* mcp.fetch({ url: "a" }),
         yield* mcp.fetchJson({ url: "a" }),
         yield* mcp.head({ url: "a" }),
         yield* mcp.excerpt({ url: "a" }),
         yield* mcp.excerpt({ url: "none" }),
       ];
+
+      expect(results).toEqual([
+        whole,
+        whole,
+        { markdown: tricky },
+        { markdown: tricky, url: "a" },
+        { url: "none" },
+      ]);
     }).pipe(
       Effect.provide(Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada")))),
-      Effect.runPromise,
-    );
+    ),
+  );
 
-    expect(results).toEqual([
-      whole,
-      whole,
-      { markdown: tricky },
-      { markdown: tricky, url: "a" },
-      { url: "none" },
-    ]);
-  });
+  it.effect("are missing from the success mcpClient decodes without the endpoint's tools", () =>
+    Effect.gen(function* () {
+      const mcp = yield* Testing.mcpClient([Fetch]);
+      const failure = yield* Effect.flip(mcp.fetch({ url: "a" }));
 
-  it("are missing from the success mcpClient decodes without the endpoint's tools", async () => {
-    const failure = await Testing.mcpClient([Fetch]).pipe(
-      Effect.flatMap((mcp) => Effect.flip(mcp.fetch({ url: "a" }))),
+      expect(Schema.isSchemaError(failure) && failure.message).toContain('at ["body"]');
+    }).pipe(
       Effect.provide(Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada")))),
-      Effect.runPromise,
-    );
-
-    expect(Schema.isSchemaError(failure) && failure.message).toContain('at ["body"]');
-  });
+    ),
+  );
 
   it("are accepted by the official client, which checks results against the listed schema", async () => {
     const web = serveHttp();
@@ -299,20 +298,15 @@ describe("MCP text fields", () => {
     ]);
   });
 
-  it("leave the Toolkit serving the whole success", async () => {
+  it.effect("leave the Toolkit serving the whole success", () => {
     const binding = ActionToolkit.make(app);
 
-    const called = await Effect.gen(function* () {
+    return Effect.gen(function* () {
       const handled = yield* binding.toolkit;
+      const called = yield* Stream.runCollect(yield* handled.handle("fetch", { url: "a" }));
 
-      return yield* Stream.runCollect(yield* handled.handle("fetch", { url: "a" }));
-    }).pipe(
-      Effect.provide(binding.layer),
-      Effect.provideService(Principal, "ada"),
-      Effect.runPromise,
-    );
-
-    expect(called).toMatchObject([{ result: { body: tricky, ...rest }, isFailure: false }]);
+      expect(called).toMatchObject([{ result: { body: tricky, ...rest }, isFailure: false }]);
+    }).pipe(Effect.provide(binding.layer), Effect.provideService(Principal, "ada"));
   });
 });
 
