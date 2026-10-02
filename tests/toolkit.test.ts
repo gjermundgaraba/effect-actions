@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
 import { actors } from "../examples/authorization.js";
@@ -349,9 +349,8 @@ describe("ActionToolkit", () => {
 
     expect(alice).toMatchObject([{ result: "alice" }]);
     expect(bob).toMatchObject([{ result: "bob" }]);
-    expect(Exit.isFailure(anonymous) && Cause.pretty(anonymous.cause)).toContain(
-      "toolkit-test/Principal",
-    );
+    assert(Exit.isFailure(anonymous));
+    expect(Cause.pretty(anonymous.cause)).toContain("toolkit-test/Principal");
 
     // What the docs warn against: an identity provided at startup.
     const startup = binding.layer.pipe(Layer.provide(Layer.succeed(Principal, "startup")));

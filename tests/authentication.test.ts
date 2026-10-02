@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { describe, expect, expectTypeOf, it, onTestFinished } from "@effect/vitest";
 import {
   Client,
@@ -485,6 +486,15 @@ describe("Authentication.bearerToken", () => {
     }),
   );
 
+  it.effect("keeps the token out of anything that prints it", () =>
+    Effect.gen(function* () {
+      const token = yield* withAuthorization("Bearer alice");
+
+      expect(inspect(token)).not.toContain("alice");
+      expect(JSON.stringify({ token })).not.toContain("alice");
+    }),
+  );
+
   it.effect("fails without an authorization, with another scheme, or without a token", () =>
     Effect.gen(function* () {
       expect(yield* tokenOf()).toEqual(Option.none());
@@ -544,6 +554,8 @@ describe("authentication around a surface", () => {
       const verify = Authentication.make(
         Identity,
         Effect.gen(function* () {
+          built++;
+
           const { prefix } = yield* Tokens;
 
           return Effect.map(Authentication.bearerToken, (token) => ({
@@ -558,19 +570,14 @@ describe("authentication around a surface", () => {
         HttpRouter.HttpRouter | Tokens
       >();
 
-      const tokens = Layer.effect(
-        Tokens,
-        Effect.sync(() => {
-          built++;
-
-          return { prefix: "actor:" };
-        }),
-      );
-
       const routes = Layer.mergeAll(
         ActionHttp.layer(Http, guarded),
         ActionMcp.layerHttp(guarded, { name: "test", version: "0" }),
-      ).pipe(Layer.provide(verify.layer.pipe(Layer.provide(tokens))));
+      ).pipe(
+        Layer.provide(
+          verify.layer.pipe(Layer.provide(Layer.succeed(Tokens, { prefix: "actor:" }))),
+        ),
+      );
 
       const web = serve(routes);
 

@@ -102,7 +102,8 @@ describe("descriptions", () => {
   });
 });
 
-const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
+/** Every `$ref` of a tool schema points into its own `$defs`, and resolves there. */
+const expectReferencesResolve = (document: Schema.Json) => {
   const refs: string[] = [];
 
   const visit = (value: Schema.Json | undefined) => {
@@ -122,7 +123,7 @@ const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
   expect(refs.length).toBeGreaterThan(0);
 
   for (const ref of refs) {
-    expect(ref.startsWith(prefix)).toBe(true);
+    expect(ref.startsWith("#/$defs/")).toBe(true);
     const path = JsonPointer.parseUriFragment(ref);
 
     if (path === undefined) throw new Error(`Invalid JSON pointer: ${ref}`);
@@ -436,8 +437,8 @@ describe("projection boundaries", () => {
       );
 
       expect(definitions[identifier]).toMatchObject({ type: "object" });
-      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema), "#/$defs/");
-      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
+      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema));
+      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema));
 
       const value = { name: "root", children: [{ name: "leaf", children: [] }] };
       const response = await web.handler(rawToolCall("tree", value));

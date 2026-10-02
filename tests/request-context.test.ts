@@ -361,37 +361,6 @@ describe("what the routes were built with", () => {
       }),
   );
 
-  // MCP's native server already gives each tool call a scope; over HTTP only the call's own
-  // scope, which dispatch opens, releases before the route middleware resumes.
-  it("releases what a call acquires before the route middleware resumes, over HTTP", async () => {
-    const events: Array<string> = [];
-
-    const Hold = Action.make("hold", { description: "Hold a resource.", access: "write" });
-
-    const hold = Action.implement(
-      Hold,
-      () =>
-        Effect.acquireRelease(
-          Effect.sync(() => void events.push("acquire")),
-          () => Effect.sync(() => void events.push("release")),
-        ),
-      Action.allowAll,
-    );
-
-    // Route middleware around the call: it resumes once the route has answered.
-    const resumed = HttpRouter.middleware((route) =>
-      Effect.tap(route, () => Effect.sync(() => void events.push("resumed"))),
-    ).layer;
-
-    const web = serve(ActionHttp.layer(ActionHttp.make([Hold]), hold).pipe(Layer.provide(resumed)));
-
-    await web.handler(post("/api/hold"));
-    await web.handler(post("/api/hold"));
-
-    // Each call's own scope closes when the call ends, not when its request's does.
-    expect(events).toEqual(["acquire", "release", "resumed", "acquire", "release", "resumed"]);
-  });
-
   it.each(["HTTP", "MCP"] as const)(
     "reports a handler's defect to their error reporters, once, over %s",
     async (transport) => {

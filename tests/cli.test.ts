@@ -592,7 +592,7 @@ it.effect("validates a success before rendering it", () =>
 
     // A success its schema does not encode is a defect, as a server's 500 is, before anything
     // renders it.
-    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    expect(Exit.hasDies(exit)).toBe(true);
     expect(failure(exit)).toBeUndefined();
     expect(invalidRenderer).not.toHaveBeenCalled();
   }),

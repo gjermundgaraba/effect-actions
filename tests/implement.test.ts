@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, Layer, Schema, Stdio } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
@@ -541,7 +541,8 @@ describe("builder acquisition", () => {
         ),
       );
 
-      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(Unavailable);
+      assert(Exit.isFailure(exit));
+      expect(Cause.squash(exit.cause)).toBeInstanceOf(Unavailable);
     }),
   );
 

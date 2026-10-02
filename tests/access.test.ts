@@ -10,7 +10,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
-import { causeOf, exec, logged } from "./cli-services.js";
+import { causeOf, exec, printed } from "./cli-services.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { httpClient, serve } from "./serve.js";
 
@@ -391,7 +391,7 @@ describe("the pre-handler hook", () => {
       const run = <Name extends string, Input, Services, E>(
         command: Command.Command<Name, Input, Services, E, Scopes>,
         argv: ReadonlyArray<string>,
-      ) => logged(Effect.exit(exec(command, argv))).pipe(Effect.provide(readOnly));
+      ) => printed(exec(command, argv)).pipe(Effect.provide(readOnly));
 
       const [read, output] = yield* run(ActionCli.command(app, Read), []);
       expect(read._tag).toBe("Success");

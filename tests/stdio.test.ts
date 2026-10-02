@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { format } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Console, Deferred, Effect, Predicate, Schema, Sink, Stdio, Stream } from "effect";
 import { TestClock } from "effect/testing";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, onTestFinished } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { statelessRequest } from "../src/internal/mcp.js";
@@ -72,6 +73,9 @@ describe("MCP stdio example", () => {
       cwd: process.cwd(),
     });
 
+    // A server that never exits ends with its test.
+    onTestFinished(() => void child.kill());
+
     const output = { stdout: "", stderr: "" };
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -87,11 +91,12 @@ describe("MCP stdio example", () => {
       output.stderr += chunk.toString();
     });
 
-    const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+    // Its exit code and signal; a process that fails to start rejects instead.
+    const exited = once(child, "close");
     const call = statelessRequest("tools/call", { name: "status", arguments: {} }).body;
 
     child.stdin.write(`${JSON.stringify(call)}\n`);
-    expect(await exited).toBe(0);
+    expect(await exited).toEqual([0, null]);
 
     const [answer = "", ...after] = output.stdout.split("\n");
     const lines = (...printed: ReadonlyArray<string>) => printed.join("\n");

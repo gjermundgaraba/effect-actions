@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Effect,
@@ -66,7 +66,8 @@ describe("Action.client", () => {
       acquiredAsAlice((users) => users.whoAmI()),
     );
 
-    expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("example/CurrentActor");
+    assert(Exit.isFailure(exit));
+    expect(Cause.pretty(exit.cause)).toContain("example/CurrentActor");
   });
 
   it.effect(
