@@ -523,35 +523,39 @@ describe("builder acquisition", () => {
     }),
   );
 
-  it("fails runStdio with a builder's failure, rather than ending as the host closing", async () => {
-    class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
+  it.effect("fails runStdio with a builder's failure, rather than ending as the host closing", () =>
+    Effect.gen(function* () {
+      class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 
-    const Solo = Action.make("solo", { description: "", access: "read" });
+      const Solo = Action.make("solo", { description: "", access: "read" });
 
-    const failing = Action.implement(
-      Solo,
-      Effect.as(Effect.fail(new Unavailable()), () => Effect.void),
-      Action.allowAll,
-    );
+      const failing = Action.implement(
+        Solo,
+        Effect.as(Effect.fail(new Unavailable()), () => Effect.void),
+        Action.allowAll,
+      );
 
-    const exit = await Effect.runPromiseExit(
-      ActionMcp.runStdio(failing, { name: "test", version: "0" }).pipe(
-        Effect.provide(Stdio.layerTest({})),
-      ),
-    );
+      const exit = yield* Effect.exit(
+        ActionMcp.runStdio(failing, { name: "test", version: "0" }).pipe(
+          Effect.provide(Stdio.layerTest({})),
+        ),
+      );
 
-    expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(Unavailable);
-  });
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(Unavailable);
+    }),
+  );
 
-  it("runs a builder again for a host built separately", async () => {
-    const { built, pair } = fixture();
-    const toolkit = ActionToolkit.make(pair);
+  it.effect("runs a builder again for a host built separately", () =>
+    Effect.gen(function* () {
+      const { built, pair } = fixture();
+      const toolkit = ActionToolkit.make(pair);
 
-    await Effect.runPromise(Effect.scoped(Layer.build(toolkit.layer)));
-    await Effect.runPromise(Effect.scoped(Layer.build(toolkit.layer)));
+      yield* Effect.scoped(Layer.build(toolkit.layer));
+      yield* Effect.scoped(Layer.build(toolkit.layer));
 
-    expect(built).toEqual(["pair", "pair"]);
-  });
+      expect(built).toEqual(["pair", "pair"]);
+    }),
+  );
 });
 
 describe("HTTP bindings", () => {
