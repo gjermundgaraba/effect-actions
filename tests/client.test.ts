@@ -176,45 +176,6 @@ describe("Action.client", () => {
     expect(result.plain.message).toContain("Expected Filters");
   });
 
-  it("fails with a hook's refusal, or with an error every action of it declares", async () => {
-    class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
-      retryAfter: Schema.Finite,
-    }) {}
-
-    const Read = Action.make("read", {
-      description: "Read",
-      access: "read",
-      success: Schema.String,
-      errors: [RateLimited],
-    });
-
-    const Write = Action.make("write", {
-      description: "Write",
-      access: "write",
-      success: Schema.String,
-      errors: [RateLimited],
-    });
-
-    const app = Action.implement(
-      [Read, Write],
-      { read: () => Effect.succeed("read"), write: () => Effect.succeed("written") },
-      (action) =>
-        action.access === "write"
-          ? Effect.fail(new Action.Unauthenticated())
-          : Effect.fail(new RateLimited({ retryAfter: 30 })),
-    );
-
-    const [limited, refused] = await Effect.gen(function* () {
-      const client = yield* Action.client(app);
-
-      return [yield* Effect.flip(client.read()), yield* Effect.flip(client.write())] as const;
-    }).pipe(Effect.scoped, Effect.runPromise);
-
-    expect(limited).toBeInstanceOf(RateLimited);
-    expect(limited).toMatchObject({ retryAfter: 30 });
-    expect(refused).toBeInstanceOf(Action.Unauthenticated);
-  });
-
   it("gives each call a scope of its own, and releases the builders with the client's", async () => {
     const log: Array<string> = [];
 

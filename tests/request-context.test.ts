@@ -2,15 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
   Context,
-  Deferred,
   Effect,
   ErrorReporter,
   Layer,
   Option,
   References,
   Schema,
-  Sink,
-  Stdio,
   Stream,
   Tracer,
 } from "effect";
@@ -31,10 +28,10 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
-import { statelessRequest } from "../src/internal/mcp.js";
-import { withMcpClient } from "./mcp-client.js";
+import { httpProtocol } from "../src/internal/mcp.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { serve, serveWithContext } from "./serve.js";
+import { converse } from "./stdio-host.js";
 
 /** Client options sending `token`, a demo actor's name, as its bearer token. */
 const as = (token: string) => ({
@@ -356,39 +353,36 @@ describe("what the routes were built with", () => {
     },
   );
 
-  it.each(["HTTP", "MCP"] as const)(
-    "never holds what a call acquires: its request releases it, over %s",
-    async (transport) => {
-      const events: Array<string> = [];
+  // MCP's native server already gives each tool call a scope; over HTTP only the call's own
+  // scope, which dispatch opens, releases before the route middleware resumes.
+  it("releases what a call acquires before the route middleware resumes, over HTTP", async () => {
+    const events: Array<string> = [];
 
-      const Hold = Action.make("hold", { description: "Hold a resource.", access: "write" });
+    const Hold = Action.make("hold", { description: "Hold a resource.", access: "write" });
 
-      const hold = Action.implement(
-        Hold,
-        () =>
-          Effect.acquireRelease(
-            Effect.sync(() => void events.push("acquire")),
-            () => Effect.sync(() => void events.push("release")),
-          ),
-        Action.allowAll,
-      );
+    const hold = Action.implement(
+      Hold,
+      () =>
+        Effect.acquireRelease(
+          Effect.sync(() => void events.push("acquire")),
+          () => Effect.sync(() => void events.push("release")),
+        ),
+      Action.allowAll,
+    );
 
-      const routes =
-        transport === "HTTP"
-          ? ActionHttp.layer(ActionHttp.make([Hold]), hold)
-          : ActionMcp.layerHttp(hold, { name: "test", version: "0" });
+    // Route middleware around the call: it resumes once the route has answered.
+    const resumed = HttpRouter.middleware((route) =>
+      Effect.tap(route, () => Effect.sync(() => void events.push("resumed"))),
+    ).layer;
 
-      const web = serve(routes);
+    const web = serve(ActionHttp.layer(ActionHttp.make([Hold]), hold).pipe(Layer.provide(resumed)));
 
-      const call = () =>
-        web.handler(transport === "HTTP" ? post("/api/hold") : rawToolCall("hold"));
+    await web.handler(post("/api/hold"));
+    await web.handler(post("/api/hold"));
 
-      await call();
-      await call();
-
-      expect(events).toEqual(["acquire", "release", "acquire", "release"]);
-    },
-  );
+    // Each call's own scope closes when the call ends, not when its request's does.
+    expect(events).toEqual(["acquire", "release", "resumed", "acquire", "release", "resumed"]);
+  });
 
   it.each(["HTTP", "MCP"] as const)(
     "reports a handler's defect to their error reporters, once, over %s",
@@ -437,13 +431,7 @@ describe("what the routes were built with", () => {
       const web = serveWithContext(routes.pipe(Layer.withSpan("startup")));
       const context = Context.make(Tracer.Tracer, tracer);
 
-      if (transport === "HTTP") {
-        await web.handler(post("/api/level"), context);
-      } else {
-        await withMcpClient({ fetch: (request) => web.handler(request, context) }, (client) =>
-          client.callTool({ name: "level", arguments: {} }),
-        );
-      }
+      await web.handler(transport === "HTTP" ? post("/api/level") : rawToolCall("level"), context);
 
       expect(parents.get("level")).toMatch(
         transport === "HTTP" ? /^http\.server POST$/ : /^McpServer\..*tools\/call$/,
@@ -470,38 +458,15 @@ describe("over stdio", () => {
       () => Effect.flatMap(Actor, (actor) => Effect.sync(() => void hooked.push(actor))),
     );
 
-    const { body } = statelessRequest("tools/call", { name: "who", arguments: {} });
-    const written: Array<string> = [];
-    const decoder = new TextDecoder();
-
-    await Effect.gen(function* () {
-      const answered = yield* Deferred.make<void>();
-
-      // The host keeps stdin open until the answer is written, then closes it: the server ends.
-      const stdin = Stream.concat(
-        Stream.encodeText(Stream.make(`${JSON.stringify(body)}\n`)),
-        Stream.fromEffectDrain(Deferred.await(answered)),
-      );
-
-      const stdout = () =>
-        Sink.forEach((chunk: string | Uint8Array) =>
-          Effect.andThen(
-            Effect.sync(() =>
-              written.push(chunk instanceof Uint8Array ? decoder.decode(chunk) : chunk),
-            ),
-            Deferred.succeed(answered, undefined),
-          ),
-        );
-
-      yield* ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
+    const [answer] = await converse(
+      ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
         Effect.provideService(Actor, "host"),
-        Effect.provide(Stdio.layerTest({ stdin, stdout })),
-      );
-    }).pipe(Effect.runPromise);
+      ),
+      httpProtocol.protocolVersion,
+      [{ method: "tools/call", params: { name: "who", arguments: {} } }],
+    );
 
-    expect(JSON.parse(written.join(""))).toMatchObject({
-      result: { structuredContent: "host" },
-    });
+    expect(JSON.parse(answer ?? "")).toMatchObject({ result: { structuredContent: "host" } });
     expect(hooked).toEqual(["host"]);
   });
 });

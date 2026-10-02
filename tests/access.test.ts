@@ -86,23 +86,6 @@ const serveHttp = (app: App, granted: Layer.Layer<Scopes>) =>
   serve(ActionHttp.layer(Http, app).pipe(HttpRouter.provideRequest(granted)));
 
 describe("action access", () => {
-  it("is declared by every action, and is the only source of a tool's read-only hint", () => {
-    const read: "read" = Read.access;
-    const write: "write" = Write.access;
-
-    expect([read, write]).toEqual(["read", "write"]);
-    expect(Read.hints).toMatchObject({ destructive: false });
-    expect(Write.hints).toMatchObject({ destructive: true });
-
-    Action.make("advertised", {
-      description: "A write the model may call without approval",
-      access: "write",
-      success: Schema.String,
-      // @ts-expect-error A tool is read-only exactly when its action reads.
-      hints: { readOnly: true },
-    });
-  });
-
   it("refuses a value the contract does not define, so plain JavaScript cannot skip a rule", () => {
     expect(() =>
       Action.make("unclassified", {
@@ -401,14 +384,6 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("is skipped by no action of its implementation", async () => {
-    const { app, hooks } = make();
-    const web = serveHttp(app, Layer.succeed(Scopes, ["read", "write"]));
-
-    expect((await web.handler(post("/api/write", { value: "x" }))).status).toBe(200);
-    expect(hooks).toEqual(["write"]);
-  });
-
   it("is bound per implementation, so implementations without it skip it", async () => {
     const hooks: Array<string> = [];
     const handlers: Array<string> = [];
@@ -535,6 +510,16 @@ describe("the pre-handler hook", () => {
 
     expect(causeOf(remote)).toEqual(limited);
     expect(causeOf(remote)).toBeInstanceOf(RateLimited);
+
+    // `Action.client` fails with it, as an HTTP client decodes it.
+    const called = await Effect.runPromise(
+      Effect.scoped(
+        Effect.flatMap(Action.client(app), (client) => Effect.flip(client.poke({ value: "x" }))),
+      ),
+    );
+
+    expect(called).toEqual(limited);
+    expect(called).toBeInstanceOf(RateLimited);
 
     // The Toolkit returns it as the tool's failure.
     const tools = ActionToolkit.make(app);

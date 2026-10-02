@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio, Stream } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio } from "effect";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
-import { against, httpClient, serve as serveRoutes, serveWithContext } from "./serve.js";
+import { against, clientLayer, serve as serveRoutes, serveWithContext } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
 import { Permissions, whoAmI as storedWhoAmI } from "../examples/authorization-built.js";
@@ -154,7 +154,7 @@ describe("implement", () => {
     if (bye !== undefined) expect(await (await handler(post("/api/bye"))).json()).toBe(bye);
   });
 
-  it("returns one implementation of every action it binds", () => {
+  it("returns one implementation of every action it binds, with its actions as its only data", () => {
     const app = Action.implement(
       [Hello, Bye],
       {
@@ -164,10 +164,12 @@ describe("implement", () => {
       Action.allowAll,
     );
 
+    const one = Action.implement(Hello, () => Effect.succeed("hi"), Action.allowAll);
+
     expect(app.actions).toEqual([Hello, Bye]);
-    expect(Action.implement(Hello, () => Effect.succeed("hi"), Action.allowAll).actions).toEqual([
-      Hello,
-    ]);
+    expect(one.actions).toEqual([Hello]);
+    expect(Object.keys(app)).toEqual(["actions"]);
+    expect(Object.keys(one)).toEqual(["actions"]);
   });
 
   it("refuses duplicate actions at implement", () => {
@@ -311,21 +313,6 @@ describe("hooks", () => {
     const unbuilt = Action.implement(Hello, hello, Effect.succeed("allowAll"));
 
     expect(await defectOf(ActionToolkit.make(unbuilt).layer)).toMatchObject({ message: missing });
-  });
-
-  it("lets every caller call under Action.allowAll, and runs a refusing hook", async () => {
-    const refuse = () => Effect.fail(new Action.Forbidden());
-
-    const statuses = await Promise.all(
-      [Action.allowAll, refuse].map(async (before) => {
-        const app = Action.implement(Hello, hello, before);
-        const handler = handlerOf(ActionHttp.layer(ActionHttp.make([Hello]), app));
-
-        return (await handler(post("/api/hello"))).status;
-      }),
-    );
-
-    expect(statuses).toEqual([200, 403]);
   });
 
   it("builds a hook once per layer graph for every surface, and runs what it built per call", async () => {
@@ -552,24 +539,6 @@ describe("builder acquisition", () => {
 });
 
 describe("HTTP bindings", () => {
-  it("serves a list at the top level of its client and document", async () => {
-    const handler = serve();
-
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const client = yield* httpClient(Http, handler);
-
-        return [yield* client.whoAmI(), yield* client.invoice({ amount: 21 })];
-      }),
-    );
-
-    expect(result).toEqual(["ada@acme", 42]);
-
-    const document = OpenApi.fromApi(Http.api);
-    expect(Object.keys(document.paths)).toEqual(["/api/whoAmI", "/api/invoice", "/api/audit"]);
-    expect(document.paths["/api/whoAmI"]?.post?.operationId).toBe("whoAmI");
-  });
-
   it.each([
     { prefix: undefined, mounted: "/api", route: "/api/whoAmI" },
     { prefix: "/", mounted: "/", route: "/whoAmI" },
@@ -992,12 +961,7 @@ describe("documented security", () => {
           yield* client.whoAmI({ payload: {} }),
           yield* client.invoice({ payload: { amount: 3 } }),
         ];
-      }).pipe(
-        Effect.provide(
-          Layer.succeed(FetchHttpClient.Fetch, (input, init) => handler(new Request(input, init))),
-        ),
-        Effect.provide(FetchHttpClient.layer),
-      ),
+      }).pipe(Effect.provide(clientLayer(handler))),
     );
 
     expect(answers).toEqual(["ada@acme", 6]);
@@ -1069,30 +1033,5 @@ describe("MCP registration", () => {
         options,
       ),
     ).not.toThrow();
-  });
-
-  it("returns a tool's success through the native Toolkit from a shared builder", async () => {
-    const shared = Action.implement(
-      [Invoice, Audit],
-      Effect.map(Tenant, (tenant) => ({
-        invoice: ({ amount }: { readonly amount: number }) => Effect.succeed(amount * 2),
-        audit: () => Effect.succeed(`clean@${tenant}`),
-      })),
-      Action.allowAll,
-    );
-
-    const toolkit = ActionToolkit.make(shared);
-
-    const results = await Effect.runPromise(
-      Effect.gen(function* () {
-        const tools = yield* toolkit.toolkit;
-        const invoice = yield* Stream.runCollect(yield* tools.handle("invoice", { amount: "5" }));
-        const audit = yield* Stream.runCollect(yield* tools.handle("audit", {}));
-
-        return [...invoice, ...audit].map((result) => result.result);
-      }).pipe(Effect.provide(toolkit.layer.pipe(Layer.provide(Layer.succeed(Tenant, "acme"))))),
-    );
-
-    expect(results).toEqual([10, "clean@acme"]);
   });
 });

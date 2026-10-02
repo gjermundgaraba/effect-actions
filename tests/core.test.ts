@@ -4,25 +4,14 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { makeTestHttp } from "./server.js";
 import { post } from "./requests.js";
-import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
+import { GetUser, RenameUser } from "../examples/contracts.js";
 import { serve } from "./serve.js";
 
 describe("contracts", () => {
-  it("defaults to no input and errors to none", () => {
-    expect(Schema.is(WhoAmI.input)({})).toBe(true);
-    expect(Schema.is(WhoAmI.input)({ unexpected: 1 })).toBe(false);
-    expect(WhoAmI.errors).toEqual([]);
-    expect(Double.errors).toEqual([]);
-  });
-
-  it("defaults an omitted success to Schema.Void", () => {
+  it("defaults to no input, Schema.Void and no errors, an undefined option as an omitted one", () => {
     const Reset = Action.make("reset", { description: "Reset", access: "write" });
 
-    expect(Reset.success).toBe(Schema.Void);
-  });
-
-  it("takes an undefined option as an omitted one", () => {
-    const Reset = Action.make("reset", {
+    const Undefined = Action.make("reset", {
       description: "Reset",
       access: "write",
       input: undefined,
@@ -30,9 +19,12 @@ describe("contracts", () => {
       errors: undefined,
     });
 
-    expect(Schema.is(Reset.input)({})).toBe(true);
-    expect(Reset.success).toBe(Schema.Void);
-    expect(Reset.errors).toEqual([]);
+    for (const action of [Reset, Undefined]) {
+      expect(Schema.is(action.input)({})).toBe(true);
+      expect(Schema.is(action.input)({ unexpected: 1 })).toBe(false);
+      expect(action.success).toBe(Schema.Void);
+      expect(action.errors).toEqual([]);
+    }
   });
 
   it("derives tool hints: destructive follows access, and only a write may state it", () => {
@@ -53,6 +45,10 @@ describe("contracts", () => {
       success: Schema.String,
     });
 
+    // The access is kept as its literal.
+    const access: "write" = Write.access;
+
+    expect(access).toBe("write");
     expect(Write.hints).toEqual({
       destructive: true,
       idempotent: false,
@@ -68,6 +64,14 @@ describe("contracts", () => {
     });
 
     expect(Read.hints.destructive).toBe(false);
+
+    Action.make("advertised", {
+      description: "A write the model may call without approval",
+      access: "write",
+      success: Schema.String,
+      // @ts-expect-error A tool is read-only exactly when its action reads.
+      hints: { readOnly: true },
+    });
   });
 
   it("owns the built-in failures, each with a default message", () => {
@@ -86,10 +90,12 @@ describe("contracts", () => {
       ).toThrow("Invalid action name");
     }
 
-    expect(
-      Action.make("x".repeat(128), { description: "", access: "write", success: Schema.String })
-        .name,
-    ).toHaveLength(128);
+    // A leading digit or underscore is fine.
+    for (const name of ["x".repeat(128), "1st", "_private"]) {
+      expect(
+        Action.make(name, { description: "", access: "write", success: Schema.String }).name,
+      ).toBe(name);
+    }
   });
 
   it("refuses an error with a built-in error's tag, the built-in itself included", () => {
@@ -232,20 +238,6 @@ describe("contracts", () => {
     );
   });
 
-  it("accepts names that start with a digit or an underscore", () => {
-    expect(
-      Action.make("1st", { description: "", access: "write", success: Schema.String }).name,
-    ).toBe("1st");
-    expect(
-      Action.make("_private", { description: "", access: "write", success: Schema.String }).name,
-    ).toBe("_private");
-    expect(
-      ActionHttp.make([
-        Action.make("9_action", { description: "", access: "write", success: Schema.String }),
-      ]).actions.map((action) => action.name),
-    ).toEqual(["9_action"]);
-  });
-
   it("accepts struct fields wherever a struct schema is accepted", () => {
     const Fields = Action.make("fields", {
       description: "Fields shorthand",
@@ -321,27 +313,6 @@ describe("implementations", () => {
     success: Schema.String,
   });
 
-  const request = (path: string) =>
-    new Request(`http://localhost${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Ada" }),
-    });
-
-  it("binds a plain handler, with its actions as its only data", async () => {
-    const app = Action.implement(
-      Hello,
-      ({ name }) => Effect.succeed(`hi ${name}`),
-      Action.allowAll,
-    );
-
-    expect(Object.keys(app)).toEqual(["actions"]);
-    expect(app.actions).toEqual([Hello]);
-    const web = makeTestHttp(app);
-
-    expect(await (await web.handler(request("/api/hello"))).json()).toBe("hi Ada");
-  });
-
   it("keeps same-contract implementations apart", async () => {
     const appA = Action.implement(Hello, () => Effect.succeed("from A"), Action.allowAll);
     const appB = Action.implement(Hello, () => Effect.succeed("from B"), Action.allowAll);
@@ -353,8 +324,8 @@ describe("implementations", () => {
       ),
     );
 
-    expect(await (await web.handler(request("/a/hello"))).json()).toBe("from A");
-    expect(await (await web.handler(request("/b/hello"))).json()).toBe("from B");
+    expect(await (await web.handler(post("/a/hello", { name: "Ada" }))).json()).toBe("from A");
+    expect(await (await web.handler(post("/b/hello", { name: "Ada" }))).json()).toBe("from B");
   });
 
   const Proto = Action.make("__proto__", {
@@ -376,13 +347,7 @@ describe("implementations", () => {
   ])("routes prototype-sensitive action names through native HTTP: $form", async ({ make }) => {
     const web = makeTestHttp(make());
 
-    const response = await web.handler(
-      new Request("http://localhost/api/__proto__", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }),
-    );
+    const response = await web.handler(post("/api/__proto__"));
 
     expect(await response.json()).toBe("safe");
   });

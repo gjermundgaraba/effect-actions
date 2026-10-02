@@ -77,6 +77,7 @@ built-in errors are `Action.InvalidInput` (400), `Action.Unauthenticated` (401) 
 
 - Each handler runs in a span named after its action, a child of the transport's request span, or of its caller's through `Action.client`, with attributes `action.name` and `action.access`. Every log line the handler writes carries the same two annotations. Names are unique per binding; the request span's route tells two bindings' same-named actions apart. The pre-handler hook, decoding and encoding happen outside the handler span.
 - MCP defects and encoding failures are logged with their cause and answered generically.
+- Over `ActionHttp` and `ActionMcp.layerHttp`, a handler's defect reaches the `ErrorReporter`s provided to the surface's layer once.
 - Every MCP tool call, over HTTP and over stdio, and every Toolkit call runs through Effect's `Toolkit.handle`, which records the call's arguments as sent on the current span, as the attribute `parameters`: a tracer the host installs receives them, a `Schema.Redacted` field's value included, which a handler's logs print `<redacted>`. HTTP records no request body. Where a tracer exports spans, keep an action that takes a secret off tools ([Action.md](Action.md#contracts)).
 
 ## MCP transport
