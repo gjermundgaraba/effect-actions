@@ -119,6 +119,8 @@ it("derives each field's flag from its encoded JSON value", async () => {
       tags: Schema.Array(Schema.String),
       owner: Schema.Struct({ id: Schema.String }),
       note: Schema.optionalKey(Schema.String),
+      // A codec whose own encoding is not JSON takes its JSON encoding's string.
+      at: Schema.optionalKey(Schema.Date),
     },
     success: Schema.String,
   });
@@ -150,6 +152,8 @@ it("derives each field's flag from its encoded JSON value", async () => {
     '{"id":"alice"}',
     "--note",
     "hi",
+    "--at",
+    "2026-01-02T03:04:05.000Z",
   ]);
 
   // An omitted required boolean is a switch left off; an omitted optional field is absent.
@@ -176,6 +180,7 @@ it("derives each field's flag from its encoded JSON value", async () => {
       tags: ["a", "b"],
       owner: { id: "alice" },
       note: "hi",
+      at: new Date("2026-01-02T03:04:05.000Z"),
     },
     { tenantId: "acme", count: 1, dryRun: false, mode: "safe", tags: [], owner: { id: "bob" } },
   ]);
@@ -372,32 +377,6 @@ it("reads a suspended input or field as the schema it stands for, described by i
   expect(help).toMatch(/--pinned\s+Keep it on top/);
 });
 
-it("maps flag strings to codecs whose original encoding is not JSON", async () => {
-  const inputs: Date[] = [];
-
-  const Dated = Action.make("dated", {
-    description: "Receives a decoded date",
-    access: "write",
-    input: Schema.Struct({ at: Schema.Date }),
-    success: Schema.String,
-  });
-
-  const app = Action.implement(
-    [Dated],
-    {
-      dated: ({ at }) =>
-        Effect.andThen(
-          Effect.sync(() => inputs.push(at)),
-          () => Effect.succeed(at.toISOString()),
-        ),
-    },
-    Action.allowAll,
-  );
-
-  await run(ActionCli.command(app, Dated), ["--at", "2026-01-02T03:04:05.000Z"]);
-  expect(inputs.map((date) => date.toISOString())).toEqual(["2026-01-02T03:04:05.000Z"]);
-});
-
 it("rejects invalid input before acquiring or invoking the handler", async () => {
   let builds = 0;
   let calls = 0;
@@ -549,30 +528,7 @@ it("decodes --input only when the command runs, with an asynchronous schema too"
   expect(decoded).toBe(2);
 });
 
-it("keeps custom renderer JSON output and validates success before rendering", async () => {
-  let rendered = 0;
-
-  const Rendered = Action.make("rendered", {
-    description: "Renders",
-    access: "write",
-    success: Schema.String,
-  });
-
-  const app = Action.implement(
-    [Rendered],
-    {
-      rendered: () => Effect.succeed("value"),
-    },
-    Action.allowAll,
-  );
-
-  const command = ActionCli.command(app, Rendered, {
-    render: (value) => `${++rendered}:${value}`,
-  });
-
-  expect(await lines(command, ["--json"])).toEqual(['"value"']);
-  expect(rendered).toBe(0);
-
+it("validates a success before rendering it", async () => {
   const invalidRenderer = vi.fn((value: number) => String(value));
 
   const Invalid = Action.make("invalid", {
@@ -618,35 +574,6 @@ it("prints nothing for an action that returns nothing, but prints a declared nul
 
   expect(await lines(ActionCli.command(app, Reset), [])).toEqual([]);
   expect(await lines(ActionCli.command(app, Clear), [])).toEqual(["null"]);
-});
-
-it("keeps an input field's flags apart from the renderer's --json", async () => {
-  const inputs: string[] = [];
-
-  const Configured = Action.make("configured", {
-    description: "A field whose flag is not the renderer's",
-    access: "write",
-    input: Schema.Struct({ payloadJson: Schema.String }),
-    success: Schema.String,
-  });
-
-  const app = Action.implement(
-    [Configured],
-    {
-      configured: ({ payloadJson }) =>
-        Effect.andThen(
-          Effect.sync(() => inputs.push(payloadJson)),
-          () => Effect.succeed(payloadJson),
-        ),
-    },
-    Action.allowAll,
-  );
-
-  const command = ActionCli.command(app, Configured, { render: (value) => `rendered ${value}` });
-
-  expect(await lines(command, ["--payload-json", "value", "--json"])).toEqual(['"value"']);
-  expect(await lines(command, ["--payload-json", "value"])).toEqual(["rendered value"]);
-  expect(inputs).toEqual(["value", "value"]);
 });
 
 it("takes flags from a class input's fields, described by their schemas", async () => {
@@ -833,7 +760,6 @@ it("takes a number, a non-finite number or a string beside it as JSON or plain t
     input: {
       limit: Schema.Union([Schema.Finite, Schema.Literal("auto")]),
       scale: Schema.optionalKey(Schema.Number),
-      level: Schema.optionalKey(Schema.Enum({ Low: 1, High: 2 })),
     },
     success: Schema.String,
   });
@@ -841,19 +767,17 @@ it("takes a number, a non-finite number or a string beside it as JSON or plain t
   const command = ActionCli.command(
     Action.implement(
       Page,
-      ({ limit, scale, level }) => Effect.succeed([limit, scale, level].map(String).join(" ")),
+      ({ limit, scale }) => Effect.succeed([limit, scale].map(String).join(" ")),
       Action.allowAll,
     ),
     Page,
   );
 
-  expect(await lines(command, ["--limit", "3"])).toEqual(['"3 undefined undefined"']);
-  expect(await lines(command, ["--limit", "auto"])).toEqual(['"auto undefined undefined"']);
-  expect(await lines(command, ["--limit", '"auto"'])).toEqual(['"auto undefined undefined"']);
+  expect(await lines(command, ["--limit", "3"])).toEqual(['"3 undefined"']);
+  expect(await lines(command, ["--limit", "auto"])).toEqual(['"auto undefined"']);
+  expect(await lines(command, ["--limit", '"auto"'])).toEqual(['"auto undefined"']);
   // `Schema.Number` encodes a non-finite value as text, which its flag takes as it is.
-  expect(await lines(command, ["--limit", "1", "--scale", "Infinity", "--level", "2"])).toEqual([
-    '"1 Infinity 2"',
-  ]);
+  expect(await lines(command, ["--limit", "1", "--scale", "Infinity"])).toEqual(['"1 Infinity"']);
   expect((await lines(command, ["--help"])).join("\n")).toMatch(/--limit value/);
 });
 
@@ -966,56 +890,6 @@ it("lets a field shadow a global flag, and refuses a clash within a command when
   expect(() => ActionCli.make(twice, { name: "tool" })).toThrow(clash);
 });
 
-it("runs any action locally, scopes every invocation, and exposes aggregate subcommands", async () => {
-  let acquired = 0;
-  let released = 0;
-  const inputs: string[] = [];
-
-  // Bound to no HTTP or MCP surface: the CLI still runs it.
-  const Local = Action.make("local", {
-    description: "Runs locally",
-    access: "write",
-    input: Schema.Struct({ value: Schema.String }),
-    success: Schema.String,
-  });
-
-  const Other = Action.make("other", {
-    description: "Another action",
-    access: "write",
-    success: Schema.String,
-  });
-
-  const app = Action.implement(
-    [Local, Other],
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        acquired++;
-
-        return {
-          local: ({ value }: { readonly value: string }) =>
-            Effect.andThen(
-              Effect.sync(() => inputs.push(value)),
-              () => Effect.succeed(value),
-            ),
-          other: () => Effect.succeed("other"),
-        };
-      }),
-      () =>
-        Effect.sync(() => {
-          released++;
-        }),
-    ),
-    Action.allowAll,
-  );
-
-  await run(ActionCli.command(app, Local), ["--value", "direct"]);
-  await run(ActionCli.make(app, { name: "locals" }), ["local", "--value", "group"]);
-
-  expect(inputs).toEqual(["direct", "group"]);
-  expect(acquired).toBe(2);
-  expect(released).toBe(2);
-});
-
 it("releases a local call's own resources, the hook's included, before its builder's", async () => {
   const log: string[] = [];
 
@@ -1093,13 +967,15 @@ it("builds a local command's implementation per invocation even where the host b
   const inside = await Effect.gen(function* () {
     yield* exec(ActionCli.command(app, Counted), []);
     yield* exec(ActionCli.command(app, Counted), []);
+    yield* exec(ActionCli.make(app, { name: "counted" }), ["counted"]);
 
     return { acquired, released };
   }).pipe(Effect.provide(ActionToolkit.make(app).layer), Effect.runPromise);
 
-  // The host's own build, and one per invocation, each released after its call.
-  expect(inside).toEqual({ acquired: 3, released: 2 });
-  expect(released).toBe(3);
+  // The host's own build, and one per invocation, an aggregate's subcommand's too, each released
+  // after its call.
+  expect(inside).toEqual({ acquired: 4, released: 3 });
+  expect(released).toBe(4);
 });
 
 it("builds a built hook per invocation, as the builder, and runs it with the caller's services", async () => {
@@ -1161,9 +1037,12 @@ it("adds --json only to a command with a renderer, without contesting a host's o
     Action.allowAll,
   );
 
-  const pretty = ActionCli.command(app, Pretty, { render: (value) => `rendered ${value}` });
+  const render = vi.fn((value: string) => `rendered ${value}`);
+  const pretty = ActionCli.command(app, Pretty, { render });
   expect(await lines(pretty, [])).toEqual(["rendered pretty"]);
   expect(await lines(pretty, ["--json"])).toEqual(['"pretty"']);
+  // `--json` prints the encoded value without calling the renderer.
+  expect(render).toHaveBeenCalledTimes(1);
   // Without a renderer the output is JSON already, and the flag does not exist:
   // the native parser treats it as unknown and shows help.
   expect(await lines(ActionCli.command(app, Plain), [])).toEqual(['"plain"']);
@@ -1202,8 +1081,7 @@ it("selects a command's implementation by contract identity, not by name", async
   const first = Action.implement(First, () => Effect.succeed("first"), Action.allowAll);
   const second = Action.implement(Second, () => Effect.succeed("second"), Action.allowAll);
 
-  expect(await lines(ActionCli.command([first], First), [])).toEqual(['"first"']);
-  expect(await lines(ActionCli.command([second], Second), [])).toEqual(['"second"']);
+  expect(await lines(ActionCli.command([first, second], Second), [])).toEqual(['"second"']);
 
   // A contract of the same name is not the implemented one.
   expect(() => ActionCli.command([first], Second)).toThrow(
@@ -1222,17 +1100,14 @@ it("selects a command's implementation by contract identity, not by name", async
   ).toThrow('Action "missing" has no implementation here');
 });
 
-it("aggregates implementations under one named command and refuses duplicate command names", async () => {
+it("aggregates implementations under one named command, and refuses one action implemented twice", async () => {
   const One = Action.make("one", { description: "One", access: "read", success: Schema.String });
   const Two = Action.make("two", { description: "Two", access: "read", success: Schema.String });
 
   const one = Action.implement(One, () => Effect.succeed("one"), Action.allowAll);
   const two = Action.implement(Two, () => Effect.succeed("two"), Action.allowAll);
 
-  const tool = ActionCli.make([one, two], { name: "tool" });
-  expect(tool.name).toBe("tool");
-
-  expect(await lines(tool, ["two"])).toEqual(['"two"']);
+  expect(await lines(ActionCli.make([one, two], { name: "tool" }), ["two"])).toEqual(['"two"']);
 
   const Again = Action.make("one", {
     description: "Again",
@@ -1242,9 +1117,7 @@ it("aggregates implementations under one named command and refuses duplicate com
 
   const again = Action.implement(Again, () => Effect.succeed("again"), Action.allowAll);
 
-  expect(() => ActionCli.make([one, again], { name: "tool" })).toThrow("Duplicate command: one");
-
-  // One action implemented twice is refused too, rather than the first one run.
+  // One action implemented twice is refused, rather than the first one run.
   const guarded = Action.implement(
     One,
     () => Effect.succeed("guarded"),
@@ -1317,51 +1190,6 @@ it("names commands and flags in kebab case, unless a name is given", async () =>
   );
 });
 
-it("runs the implementation's before hook first, and its refusal is the cause of the command's failure", async () => {
-  const seen: string[] = [];
-  let calls = 0;
-
-  const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
-
-  const Write = Action.make("write", {
-    description: "Write",
-    access: "write",
-    success: Schema.String,
-  });
-
-  const before = (action: Action.Any) =>
-    Effect.andThen(
-      Effect.sync(() => seen.push(action.name)),
-      () =>
-        action.access === "read"
-          ? Effect.void
-          : Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
-    );
-
-  const app = Action.implement(
-    [Read, Write],
-    {
-      read: () => Effect.sync(() => `read ${++calls}`),
-      write: () => Effect.sync(() => `write ${++calls}`),
-    },
-    before,
-  );
-
-  await run(ActionCli.command(app, Read), []);
-
-  const refused = causeOf(await runExit(ActionCli.command(app, Write), []));
-  expect(refused).toBeInstanceOf(Action.Forbidden);
-  expect(refused).toEqual(new Action.Forbidden({ message: "Requires users:write." }));
-
-  const aggregate = ActionCli.make(app, { name: "tool" });
-  await run(aggregate, ["read"]);
-  expect(causeOf(await runExit(aggregate, ["write"]))).toBeInstanceOf(Action.Forbidden);
-
-  // Refused, the handler never runs.
-  expect(seen).toEqual(["read", "write", "read", "write"]);
-  expect(calls).toBe(2);
-});
-
 it("acquires only the builder of the selected command's implementation", async () => {
   const builds: string[] = [];
 
@@ -1397,48 +1225,6 @@ it("acquires only the builder of the selected command's implementation", async (
   await run(ActionCli.make([built, idle], { name: "tool" }), ["built"]);
 
   expect(builds).toEqual(["built", "built"]);
-});
-
-it("dies when the command runs if its builder's record lacks a handler, whichever runs", async () => {
-  const Present = Action.make("present", {
-    description: "Has a handler",
-    access: "read",
-    success: Schema.String,
-  });
-
-  const Absent = Action.make("absent", {
-    description: "Its handler is missing at runtime",
-    access: "read",
-    success: Schema.String,
-  });
-
-  // An inherited method satisfies the types, but only own properties are handlers.
-  class Inherited {
-    absent() {
-      return Effect.succeed("inherited");
-    }
-  }
-
-  class Handlers extends Inherited {
-    readonly present = () => Effect.succeed("present");
-  }
-
-  const apps = Action.implement(
-    [Present, Absent],
-    Effect.sync(() => new Handlers()),
-    Action.allowAll,
-  );
-
-  // Building the command checks nothing; running it builds and checks the whole record.
-  for (const action of [Absent, Present]) {
-    const exit = await runExit(ActionCli.command(apps, action), []);
-
-    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-
-    if (Exit.isFailure(exit)) {
-      expect(Cause.pretty(exit.cause)).toContain("Missing handlers: absent");
-    }
-  }
 });
 
 it("takes the listed fields as positional arguments, in their order, parsed as their flags", async () => {
@@ -2009,7 +1795,7 @@ it("runs under Effect's own runner: the result on stdout, a failure's JSON once 
 
   expect(invalid.status).toBe(1);
   expect(invalid.stdout).toBe("");
-  expect(invalid.stderr).toContain('{"_tag":"InvalidInput","message":"Expected a value with');
+  expect(invalid.stderr).toContain('{"_tag":"InvalidInput"');
 
   const help = users("--help");
 

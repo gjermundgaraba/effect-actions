@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio } from "effect";
+import { Command } from "effect/cli";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
+import { cliServices } from "./cli-services.js";
 import { against, clientLayer, serve as serveRoutes, serveWithContext } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
@@ -251,6 +254,20 @@ describe("implement", () => {
     expect(await defectOf(ActionToolkit.make(app).layer)).toMatchObject({
       message: "Missing handlers: bye",
     });
+
+    // Building a command checks nothing; running either one builds and checks the whole record.
+    for (const [action, args] of [
+      [Hello, ["--name", "Ada"]],
+      [Bye, []],
+    ] as const) {
+      const exit = await Command.runWith(ActionCli.command(app, action), { version: "0" })(
+        args,
+      ).pipe(Effect.provide(cliServices), Effect.runPromiseExit);
+
+      expect(Result.getOrUndefined(Exit.findDefect(exit))).toMatchObject({
+        message: "Missing handlers: bye",
+      });
+    }
   });
 
   it("refuses a record key that names no action: a plain one at implement", async () => {
