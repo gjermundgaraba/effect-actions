@@ -74,72 +74,80 @@ describe("the identity authentication provides", () => {
     ActionMcp.layerHttp(caller, { name: "public", version: "0", path: "/mcp/caller" }),
   );
 
-  it("wins over a caller provided around Testing.layer, which reaches only the other routes", async () => {
-    // One caller for the routes no authentication covers, and tokens for the rest.
-    const harness = Testing.layer(Layer.mergeAll(host, native, uncovered)).pipe(
-      Layer.provide(Layer.succeed(CurrentActor, actors.reader)),
-    );
+  it.effect(
+    "wins over a caller provided around Testing.layer, which reaches only the other routes",
+    () =>
+      Effect.gen(function* () {
+        // One caller for the routes no authentication covers, and tokens for the rest.
+        const harness = Testing.layer(Layer.mergeAll(host, native, uncovered)).pipe(
+          Layer.provide(Layer.succeed(CurrentActor, actors.reader)),
+        );
 
-    const answered = await Effect.gen(function* () {
-      const http = yield* ActionHttp.client(Http, as("alice"));
-      const mcp = yield* Testing.mcpClient([WhoAmI, RenameUser], as("alice"));
+        const answered = yield* Effect.gen(function* () {
+          const http = yield* ActionHttp.client(Http, as("alice"));
+          const mcp = yield* Testing.mcpClient([WhoAmI, RenameUser], as("alice"));
 
-      const nativeId = yield* HttpClient.execute(
-        HttpClientRequest.post("/native/whoAmI").pipe(HttpClientRequest.bearerToken("alice")),
-      ).pipe(Effect.flatMap((response) => response.text));
+          const nativeId = yield* HttpClient.execute(
+            HttpClientRequest.post("/native/whoAmI").pipe(HttpClientRequest.bearerToken("alice")),
+          ).pipe(Effect.flatMap((response) => response.text));
 
-      const identities = {
-        http: (yield* http.whoAmI()).id,
-        mcp: (yield* mcp.whoAmI()).id,
-        native: nativeId,
-      };
+          const identities = {
+            http: (yield* http.whoAmI()).id,
+            mcp: (yield* mcp.whoAmI()).id,
+            native: nativeId,
+          };
 
-      // The hook reads the identity too: alice may write, where the caller may only read.
-      const renamed = [
-        yield* http.renameUser({ id: "1", name: "Bea" }),
-        yield* mcp.renameUser({ id: "1", name: "Cy" }),
-      ];
+          // The hook reads the identity too: alice may write, where the caller may only read.
+          const renamed = [
+            yield* http.renameUser({ id: "1", name: "Bea" }),
+            yield* mcp.renameUser({ id: "1", name: "Cy" }),
+          ];
 
-      const anonymous = {
-        http: yield* Effect.flatMap(ActionHttp.client(Public), (client) => client.caller()),
-        mcp: yield* Effect.flatMap(Testing.mcpClient([Caller], { url: "/mcp/caller" }), (mcp) =>
-          mcp.caller(),
-        ),
-      };
+          const anonymous = {
+            http: yield* Effect.flatMap(ActionHttp.client(Public), (client) => client.caller()),
+            mcp: yield* Effect.flatMap(Testing.mcpClient([Caller], { url: "/mcp/caller" }), (mcp) =>
+              mcp.caller(),
+            ),
+          };
 
-      return { identities, renamed, anonymous };
-    }).pipe(Effect.provide(harness), Effect.runPromise);
+          return { identities, renamed, anonymous };
+        }).pipe(Effect.provide(harness));
 
-    expect(answered).toEqual({
-      identities: { http: "alice", mcp: "alice", native: "alice" },
-      renamed: [
-        { id: "1", name: "Bea" },
-        { id: "1", name: "Cy" },
-      ],
-      anonymous: { http: "reader", mcp: "reader" },
-    });
-  });
+        expect(answered).toEqual({
+          identities: { http: "alice", mcp: "alice", native: "alice" },
+          renamed: [
+            { id: "1", name: "Bea" },
+            { id: "1", name: "Cy" },
+          ],
+          anonymous: { http: "reader", mcp: "reader" },
+        });
+      }),
+  );
 
-  it("wins over an identity provided at a server's startup, so a caller reads its own tenant", async () => {
-    // The documented mistake: an identity at the root of the server, as for a background job.
-    const server = HttpRouter.serve(host, { disableLogger: true, disableListenLog: true }).pipe(
-      Layer.provide(Layer.succeed(CurrentActor, actors.bob)),
-      Layer.provideMerge(NodeHttpServer.layerTest),
-    );
+  it.effect(
+    "wins over an identity provided at a server's startup, so a caller reads its own tenant",
+    () =>
+      Effect.gen(function* () {
+        // The documented mistake: an identity at the root of the server, as for a background job.
+        const server = HttpRouter.serve(host, { disableLogger: true, disableListenLog: true }).pipe(
+          Layer.provide(Layer.succeed(CurrentActor, actors.bob)),
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        );
 
-    const users = await Effect.gen(function* () {
-      const http = yield* ActionHttp.client(Http, as("alice"));
-      const mcp = yield* Testing.mcpClient([GetUser], as("alice"));
+        const users = yield* Effect.gen(function* () {
+          const http = yield* ActionHttp.client(Http, as("alice"));
+          const mcp = yield* Testing.mcpClient([GetUser], as("alice"));
 
-      return [yield* http.getUser({ id: "1" }), yield* mcp.getUser({ id: "1" })];
-    }).pipe(Effect.provide(server), Effect.runPromise);
+          return [yield* http.getUser({ id: "1" }), yield* mcp.getUser({ id: "1" })];
+        }).pipe(Effect.provide(server));
 
-    // Alice's tenant's user, never the one of bob's tenant.
-    expect(users).toEqual([
-      { id: "1", name: "Ada" },
-      { id: "1", name: "Ada" },
-    ]);
-  });
+        // Alice's tenant's user, never the one of bob's tenant.
+        expect(users).toEqual([
+          { id: "1", name: "Ada" },
+          { id: "1", name: "Ada" },
+        ]);
+      }),
+  );
 });
 
 describe("a value provided per request", () => {
@@ -284,73 +292,72 @@ describe("what the routes were built with", () => {
     );
   });
 
-  it.each(["HTTP", "MCP"] as const)(
+  it.effect.each(["HTTP", "MCP"] as const)(
     "yields to what the server runs in, unless HttpRouter.provideRequest gives it to its requests, over %s",
-    async (transport) => {
-      const Stage = Context.Reference<string>("request-context/Stage", {
-        defaultValue: () => "default",
-      });
+    (transport) =>
+      Effect.gen(function* () {
+        const Stage = Context.Reference<string>("request-context/Stage", {
+          defaultValue: () => "default",
+        });
 
-      const Probe = Action.make("probe", {
-        description: "Name the stage and the log level.",
-        access: "read",
-        success: { stage: Schema.String, level: Schema.String },
-      });
+        const Probe = Action.make("probe", {
+          description: "Name the stage and the log level.",
+          access: "read",
+          success: { stage: Schema.String, level: Schema.String },
+        });
 
-      const probe = Action.implement(
-        Probe,
-        () =>
-          Effect.all({
-            stage: Effect.service(Stage),
-            level: Effect.service(References.CurrentLogLevel),
-          }),
-        Action.allowAll,
-      );
+        const probe = Action.implement(
+          Probe,
+          () =>
+            Effect.all({
+              stage: Effect.service(Stage),
+              level: Effect.service(References.CurrentLogLevel),
+            }),
+          Action.allowAll,
+        );
 
-      const bindings = {
-        "/built": ActionHttp.make([Probe], { prefix: "/built" }),
-        "/scoped": ActionHttp.make([Probe], { prefix: "/scoped" }),
-      };
+        const bindings = {
+          "/built": ActionHttp.make([Probe], { prefix: "/built" }),
+          "/scoped": ActionHttp.make([Probe], { prefix: "/scoped" }),
+        };
 
-      const surface = (path: keyof typeof bindings) =>
-        transport === "HTTP"
-          ? ActionHttp.layer(bindings[path], probe)
-          : ActionMcp.layerHttp(probe, { name: "test", version: "0", path });
+        const surface = (path: keyof typeof bindings) =>
+          transport === "HTTP"
+            ? ActionHttp.layer(bindings[path], probe)
+            : ActionMcp.layerHttp(probe, { name: "test", version: "0", path });
 
-      // One surface is built with its own stage, the other gets a stage and a log level with
-      // each request. The native MCP server drops the log level from the context it registers
-      // tools in, so only an ordinary reference shows whether that context is laid over calls.
-      const routes = Layer.mergeAll(
-        surface("/built").pipe(Layer.provide(Layer.succeed(Stage, "built"))),
-        surface("/scoped").pipe(
-          HttpRouter.provideRequest(
-            Layer.mergeAll(
-              Layer.succeed(Stage, "scoped"),
-              Layer.succeed(References.CurrentLogLevel, "Debug"),
+        // One surface is built with its own stage, the other gets a stage and a log level with
+        // each request. The native MCP server drops the log level from the context it registers
+        // tools in, so only an ordinary reference shows whether that context is laid over calls.
+        const routes = Layer.mergeAll(
+          surface("/built").pipe(Layer.provide(Layer.succeed(Stage, "built"))),
+          surface("/scoped").pipe(
+            HttpRouter.provideRequest(
+              Layer.mergeAll(
+                Layer.succeed(Stage, "scoped"),
+                Layer.succeed(References.CurrentLogLevel, "Debug"),
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      const probeAt = (path: keyof typeof bindings) =>
-        transport === "HTTP"
-          ? Effect.flatMap(ActionHttp.client(bindings[path]), (client) => client.probe())
-          : Effect.flatMap(Testing.mcpClient([Probe], { url: path }), (mcp) => mcp.probe());
+        const probeAt = (path: keyof typeof bindings) =>
+          transport === "HTTP"
+            ? Effect.flatMap(ActionHttp.client(bindings[path]), (client) => client.probe())
+            : Effect.flatMap(Testing.mcpClient([Probe], { url: path }), (mcp) => mcp.probe());
 
-      const answers = await Effect.runPromise(
-        Effect.all([probeAt("/built"), probeAt("/scoped")]).pipe(
+        const answers = yield* Effect.all([probeAt("/built"), probeAt("/scoped")]).pipe(
           Effect.provide(Testing.layer(routes)),
           // What the server runs in, as values provided around `HttpRouter.serve` are.
           Effect.provideService(Stage, "server"),
           Effect.provideService(References.CurrentLogLevel, "Warn"),
-        ),
-      );
+        );
 
-      expect(answers).toEqual([
-        { stage: "server", level: "Warn" },
-        { stage: "scoped", level: "Debug" },
-      ]);
-    },
+        expect(answers).toEqual([
+          { stage: "server", level: "Warn" },
+          { stage: "scoped", level: "Debug" },
+        ]);
+      }),
   );
 
   // MCP's native server already gives each tool call a scope; over HTTP only the call's own
