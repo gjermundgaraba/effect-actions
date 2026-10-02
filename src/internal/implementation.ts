@@ -169,14 +169,14 @@ export class Implementation<
   }
 
   /**
-   * What runs a call of `app`'s actions: its handlers' builder and its hook's. A share that
-   * keeps its source's hook has its source's pair; one behind another hook does not. Static,
-   * so it stays off the public instance type.
+   * The key of what runs a call of `app`'s actions: its handlers' builder's and its hook's,
+   * each unique to its memoized layer. A share that keeps its source's hook has its source's
+   * key; one behind another hook does not. Static, so it stays off the public instance type.
    */
-  static identity(app: AnyImplementation): Identity {
+  static runKey(app: AnyImplementation): string {
     const source = Implementation.own(app);
 
-    return [source.#handlers, source.#hook];
+    return `${source.#handlers.key.key}+${source.#hook.key.key}`;
   }
 
   /**
@@ -231,12 +231,6 @@ export type AnyImplementation<A extends Action.Any = Action.Any> = Implementatio
   unknown,
   unknown
 >;
-
-/** What runs a call of an implementation's actions: its handlers' builder and its hook's. */
-export type Identity = readonly [
-  Memoized<Bound, unknown, unknown>,
-  Memoized<ErasedBefore, unknown, unknown>,
-];
 
 /** What a surface serves: one implementation, or a list of them. */
 export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;

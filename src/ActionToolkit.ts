@@ -5,17 +5,14 @@ import type { BuiltIns } from "./internal/errors.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type ActionOf,
-  type AnyImplementation,
   type BuildContext,
   type BuildError,
-  type Identity,
   Implementation,
   type Member,
   provideHandlers,
   type RequestOf,
   type Served,
   toList,
-  uniqueKey,
 } from "./internal/implementation.js";
 
 /** A native tool named after its action, taking and giving JSON. */
@@ -86,30 +83,6 @@ export interface Options<A extends Action.Any> {
 type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 
 /**
- * The key of what runs a call, an implementation's handlers and hook, which its tools' ids
- * carry: Effect finds a tool's handler by the tool's `id`, so any `layer` of an
- * implementation serves any `toolkit` of it, and of an `Action.share` of it keeping its hook,
- * while two implementations, such as one and an `Action.share` of it behind another hook,
- * never run each other's handlers.
- */
-const keys = new WeakMap<Identity[0], WeakMap<Identity[1], string>>();
-
-const keyOf = (app: AnyImplementation): string => {
-  const [handlers, hook] = Implementation.identity(app);
-  const hooks = keys.get(handlers) ?? new WeakMap<Identity[1], string>();
-  const known = hooks.get(hook);
-
-  if (known !== undefined) return known;
-
-  const key = uniqueKey();
-
-  hooks.set(hook, key);
-  keys.set(handlers, hooks);
-
-  return key;
-};
-
-/**
  * Project implementations into Effect's native AI toolkit: one tool per action, keyed by its
  * name.
  *
@@ -141,7 +114,12 @@ export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
           : tool.setNeedsApproval((input, context) =>
               needsApproval({ name: action.name, action, input }, context),
             ),
-        { id: `effect-actions/Tools/${keyOf(app)}/${action.name}` },
+        // Effect finds a tool's handler by its `id`, which carries the key of what runs a
+        // call, its implementation's handlers and hook: any `layer` of an implementation
+        // serves any `toolkit` of it, and of an `Action.share` of it keeping its hook, while
+        // two implementations, such as one and a share behind another hook, never run each
+        // other's handlers.
+        { id: `${Implementation.runKey(app)}/${action.name}` },
       ),
     handler: (run) => run,
   });
