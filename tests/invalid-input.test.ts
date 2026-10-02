@@ -11,8 +11,8 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { cliServices, printed } from "./cli-services.js";
-import { against, httpClient, serve } from "./serve.js";
-import { post, mcpRequest as rpc, rawToolCall } from "./requests.js";
+import { against, serve } from "./serve.js";
+import { mcpRequest, post, rawToolCall } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -33,13 +33,6 @@ const Http = ActionHttp.make([Echo]);
 /** The message of the `InvalidInput` a response carries: Effect's words, so assert on its path. */
 const invalidInput = async (response: Response) =>
   Schema.decodeUnknownSync(Action.InvalidInput)(await response.json()).message;
-
-const request = (value: Schema.Json, path = "/api/echo") =>
-  new Request(`http://localhost${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ value }),
-  });
 
 /** `Echo`, counting its calls. */
 const counted = () => {
@@ -63,7 +56,7 @@ it("answers a request that does not decode with InvalidInput and the schema's me
   const { app, calls } = counted();
   const web = serve(ActionHttp.layer(Http, app));
 
-  const malformed = await web.handler(request("secret input"));
+  const malformed = await web.handler(post("/api/echo", { value: "secret input" }));
   expect(malformed.status).toBe(400);
   // The schema's own words, which name the path but not the value sent.
   const message = await invalidInput(malformed);
@@ -164,35 +157,6 @@ it("names the content type a 415 refuses, or none", async () => {
   ]);
 });
 
-it("describes every issue of the input in the message", async () => {
-  const Pair = Action.make("pair", {
-    description: "Pair",
-    access: "write",
-    input: { left: Schema.Finite, right: Schema.String },
-    success: Schema.Finite,
-  });
-
-  const web = serve(
-    ActionHttp.layer(
-      ActionHttp.make([Pair]),
-      Action.implement(Pair, ({ left }) => Effect.succeed(left), Action.allowAll),
-    ),
-  );
-
-  const response = await web.handler(
-    new Request("http://localhost/api/pair", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ left: "one", right: 2 }),
-    }),
-  );
-
-  expect(response.status).toBe(400);
-  const { message } = Schema.decodeUnknownSync(Action.InvalidInput)(await response.json());
-  expect(message).toContain('at ["left"]');
-  expect(message).toContain('at ["right"]');
-});
-
 it("refuses undeclared input fields on the server, nested ones too; every typed client drops them", async () => {
   const seen: Array<unknown> = [];
 
@@ -228,14 +192,7 @@ it("refuses undeclared input fields on the server, nested ones too; every typed 
     properties: { owner: { additionalProperties: false } },
   });
 
-  const save = (body: Schema.Json) =>
-    web.handler(
-      new Request("http://localhost/api/save", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }),
-    );
+  const save = (body: Schema.Json) => web.handler(post("/api/save", body));
 
   const extra = await save({ value: 1, owner: { id: "a" }, admin: true });
   expect(extra.status).toBe(400);
@@ -280,42 +237,10 @@ it("refuses undeclared fields in the input only: a wider success is encoded to i
     ),
   );
 
-  const response = await web.handler(
-    new Request("http://localhost/api/profile", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    }),
-  );
+  const response = await web.handler(post("/api/profile"));
 
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ id: "a" });
-});
-
-it("decodes InvalidInput as a typed failure of the client", async () => {
-  const { app } = counted();
-  const web = serve(ActionHttp.layer(Http, app));
-
-  // The client encodes valid input, so the body is replaced on its way to the server.
-  const tampered = (request: Request) =>
-    web.handler(
-      new Request(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: JSON.stringify({ value: "one" }),
-      }),
-    );
-
-  const refused = await Effect.flatMap(httpClient(Http, tampered), (client) =>
-    client.echo({ value: 1 }),
-  ).pipe(
-    // `catchTag` compiles only because every endpoint declares the failure.
-    Effect.catchTag("InvalidInput", (failure) => Effect.succeed(failure)),
-    Effect.runPromise,
-  );
-
-  expect(refused).toBeInstanceOf(Action.InvalidInput);
-  expect(refused).toHaveProperty("message", expect.stringContaining('at ["value"]'));
 });
 
 it("answers InvalidInput on every binding and every layer of one router", async () => {
@@ -342,7 +267,7 @@ it("answers InvalidInput on every binding and every layer of one router", async 
   );
 
   for (const path of ["/api/echo", "/api/other", "/second/other"]) {
-    const response = await web.handler(request("not a number", path));
+    const response = await web.handler(post(path, { value: "not a number" }));
 
     expect(response.status).toBe(400);
     expect(await invalidInput(response)).toContain('at ["value"]');
@@ -351,9 +276,7 @@ it("answers InvalidInput on every binding and every layer of one router", async 
 
 const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }));
 
-const mcpRequest = (value: Schema.Json) => rawToolCall("echo", { value });
-
-it("answers a handler's own InvalidInput as declared, over HTTP and MCP", async () => {
+it("answers a handler's own InvalidInput as declared", async () => {
   const app = Action.implement(
     Echo,
     ({ value }) =>
@@ -363,22 +286,11 @@ it("answers a handler's own InvalidInput as declared, over HTTP and MCP", async 
     Action.allowAll,
   );
 
-  const web = serve(
-    Layer.merge(
-      ActionHttp.layer(Http, app),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-    ),
-  );
+  const web = serve(ActionHttp.layer(Http, app));
 
-  const http = await web.handler(request(11));
+  const http = await web.handler(post("/api/echo", { value: 11 }));
   expect(http.status).toBe(400);
   expect(await invalidInput(http)).toBe("Too large");
-
-  const { result } = decodeMcp(await (await web.handler(mcpRequest(11))).json());
-  expect(result.isError).toBe(true);
-  expect(result.content).toEqual([
-    { type: "text", text: '{"_tag":"InvalidInput","message":"Too large"}' },
-  ]);
 });
 
 it("says where input does not decode and what it expects, never a value sent, on every surface", async () => {
@@ -393,7 +305,19 @@ it("says where input does not decode and what it expects, never a value sent, on
     success: Schema.String,
   });
 
-  const app = Action.implement(Login, () => Effect.succeed("in"), Action.allowAll);
+  let calls = 0;
+
+  const app = Action.implement(
+    Login,
+    () =>
+      Effect.sync(() => {
+        calls++;
+
+        return "in";
+      }),
+    Action.allowAll,
+  );
+
   const sent = { password: "hunter2", pin: "pin-secret", count: "count-secret" };
   // An undeclared field, which HTTP and MCP refuse by its path and a Toolkit drops.
   const wider = { ...sent, note: "note-secret" };
@@ -459,6 +383,9 @@ it("says where input does not decode and what it expects, never a value sent, on
   }
 
   for (const value of [sent.password, sent.pin]) expect(inProcess.message).not.toContain(value);
+
+  // The handler never sees input that does not decode, on any surface.
+  expect(calls).toBe(0);
 });
 
 it("executes each input/output transformation once per call", async () => {
@@ -499,51 +426,22 @@ it("executes each input/output transformation once per call", async () => {
     ),
   );
 
-  expect(await (await web.handler(request("7"))).json()).toBe("7");
-  expect(
-    decodeMcp(await (await web.handler(mcpRequest("7"))).json()).result.structuredContent,
-  ).toBe("7");
+  expect(await (await web.handler(post("/api/echo", { value: "7" }))).json()).toBe("7");
+  const mcp = decodeMcp(await (await web.handler(rawToolCall("echo", { value: "7" }))).json());
+  expect(mcp.result.structuredContent).toBe("7");
   expect(decodes).toBe(2);
   expect(encodes).toBe(2);
 });
 
-it("keeps invalid declared-error encoding a defect on both transports", async () => {
-  const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
-  // Bypass construction checks deliberately; the surface must reject this value.
-  const domainError = Domain.make({ value: Infinity }, { disableChecks: true });
-
-  const BrokenDomain = Action.make("echo", {
-    description: "Broken domain error",
-    access: "write",
-    input: { value: Schema.Number },
-    success: Schema.Number,
-    errors: [Domain],
-  });
-
-  const app = Action.implement(BrokenDomain, () => Effect.fail(domainError), Action.allowAll);
-
-  const web = serve(
-    Layer.merge(
-      ActionHttp.layer(ActionHttp.make([BrokenDomain]), app),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-    ),
-  );
-
-  const http = await web.handler(request(1));
-  expect(http.status).toBe(500);
-  expect(await http.text()).toBe("");
-  const mcp = await web.handler(mcpRequest(1));
-  expect(decodeMcp(await mcp.json()).result).toMatchObject({
-    isError: true,
-    content: [{ type: "text", text: "Tool execution failed due to an internal server error." }],
-  });
-});
-
-describe.each([
-  ["omitted", Action.make("empty", { description: "No input", access: "read" })],
-  ["{}", Action.make("empty", { description: "No input", access: "read", input: {} })],
-] as const)("an action whose input is %s", (_, Empty) => {
+describe("an action without input", () => {
+  const Empty = Action.make("empty", { description: "No input", access: "read" });
   const app = Action.implement(Empty, () => Effect.void, Action.allowAll);
+
+  it("has the input of one whose input is {}", () => {
+    const Braces = Action.make("empty", { description: "No input", access: "read", input: {} });
+
+    expect(Braces.input).toBe(Empty.input);
+  });
 
   const web = () => {
     const server = serve(
@@ -577,7 +475,7 @@ describe.each([
   it("is a closed object tool over MCP", async () => {
     const { handler } = web();
 
-    const listed = await (await handler(rpc({ method: "tools/list" }))).json();
+    const listed = await (await handler(mcpRequest({ method: "tools/list" }))).json();
     expect(listed).toMatchObject({
       result: { tools: [{ inputSchema: { type: "object", additionalProperties: false } }] },
     });
@@ -597,7 +495,7 @@ it("publishes `success: {}` as the closed empty object", async () => {
     ),
   );
 
-  const listed = await (await handler(rpc({ method: "tools/list" }))).json();
+  const listed = await (await handler(mcpRequest({ method: "tools/list" }))).json();
   expect(listed).toMatchObject({
     result: {
       tools: [

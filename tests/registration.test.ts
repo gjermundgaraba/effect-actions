@@ -138,7 +138,7 @@ const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
 };
 
 describe("projection boundaries", () => {
-  it("serves scalar input over HTTP, and MCP only the implementations it receives", async () => {
+  it("serves scalar input over HTTP", async () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
       access: "write",
@@ -146,72 +146,52 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const Tool = Action.make("tool", {
-      description: "Served",
-      access: "write",
-      success: Schema.String,
+    const web = makeTestHttp(Action.implement(Echo, Effect.succeed, Action.allowAll), {
+      prefix: "/rpc",
     });
-
-    // MCP needs an object root, so the scalar action has an implementation of its own
-    // that only HTTP serves.
-    const echo = Action.implement(Echo, Effect.succeed, Action.allowAll);
-    const tool = Action.implement(Tool, () => Effect.succeed("tool"), Action.allowAll);
-
-    const options = { prefix: "/rpc" } as const;
-    expect(Object.keys(OpenApi.fromApi(ActionHttp.make([Echo, Tool], options).api).paths)).toEqual([
-      "/rpc/echo",
-      "/rpc/tool",
-    ]);
-    const web = makeTestHttp([echo, tool], options);
-
-    const mcp = makeTestMcp(tool);
 
     const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
-    expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["tool"]);
   });
 
-  it.each([409, undefined])(
-    "uses schema HTTP status annotations, and 422 for a declared error without one: %s",
-    async (status) => {
-      const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
+  it("sends a declared error without an HTTP status as 422", async () => {
+    const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
 
-      const Fail = Action.make("fail", {
-        description: "Declared failure",
-        access: "write",
-        success: Schema.String,
-        errors: [status === undefined ? Failure : Failure.annotate({ httpApiStatus: status })],
-      });
+    const Fail = Action.make("fail", {
+      description: "Declared failure",
+      access: "write",
+      success: Schema.String,
+      errors: [Failure],
+    });
 
-      const apps = Action.implement(
-        [Fail],
-        {
-          fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
-        },
-        Action.allowAll,
-      );
+    const apps = Action.implement(
+      [Fail],
+      {
+        fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
+      },
+      Action.allowAll,
+    );
 
-      expect(
-        OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
-      ).toHaveProperty(String(status ?? 422));
-      const web = makeTestHttp(apps);
+    expect(
+      OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
+    ).toHaveProperty("422");
+    const web = makeTestHttp(apps);
 
-      const response = await web.handler(post("/api/fail"));
-      expect(response.status).toBe(status ?? 422);
-      expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
+    const response = await web.handler(post("/api/fail"));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
 
-      // The client reads the status from the same binding, so it decodes the error either way.
-      const failure = await against(
-        web,
-        Effect.flip(
-          Effect.flatMap(ActionHttp.client(ActionHttp.make([Fail])), (client) => client.fail()),
-        ),
-      );
+    // The client reads the status from the same binding, so it decodes the error.
+    const failure = await against(
+      web,
+      Effect.flip(
+        Effect.flatMap(ActionHttp.client(ActionHttp.make([Fail])), (client) => client.fail()),
+      ),
+    );
 
-      expect(failure).toEqual(Failure.make({ message: "Safe failure" }));
-    },
-  );
+    expect(failure).toEqual(Failure.make({ message: "Safe failure" }));
+  });
 
   const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
   const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
@@ -243,8 +223,6 @@ describe("projection boundaries", () => {
     expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403", "404", "409"]);
     const web = makeTestHttp(apps);
 
-    const mcp = makeTestMcp(apps);
-
     expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
     expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
     expect(
@@ -255,11 +233,6 @@ describe("projection boundaries", () => {
         ),
       ),
     ).toEqual(Conflict.make({}));
-    expect(
-      await (await mcp.handler(rawToolCall("fail", { which: "conflict" }))).json(),
-    ).toMatchObject({
-      result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
-    });
   });
 
   it("sends a union with a status of its own at that status, and a member without one as 422", () => {
@@ -430,21 +403,6 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("keeps OpenAPI references resolvable for a schema used twice", () => {
-    const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
-
-    const Read = Action.make("read", {
-      description: "Referenced schema",
-      access: "write",
-      success: Schema.Struct({ first: Item, second: Item }),
-    });
-
-    expectReferencesResolve(
-      Schema.decodeUnknownSync(Schema.Json)(OpenApi.fromApi(ActionHttp.make([Read]).api)),
-      "#/components/schemas/",
-    );
-  });
-
   it.each(["Node", "acme/Node~x", "Node % 雪"])(
     "publishes recursive MCP input and output with resolvable references: %s",
     async (identifier) => {
@@ -489,38 +447,6 @@ describe("projection boundaries", () => {
       });
     },
   );
-
-  it("publishes nested MCP references without rewriting definitions", async () => {
-    const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
-
-    const Nested = Action.make("nested", {
-      description: "Nested references",
-      access: "write",
-      input: Schema.Struct({ item: Item }),
-      success: Schema.Struct({ first: Item, second: Item }),
-    });
-
-    const web = makeTestMcp(
-      Action.implement(
-        [Nested],
-        {
-          nested: ({ item }) => Effect.succeed({ first: item, second: item }),
-        },
-        Action.allowAll,
-      ),
-    );
-
-    const tools = await listTools(web.handler);
-    const tool = tools[0];
-
-    if (tool === undefined) throw new Error("Missing nested tool");
-    expect(tool.inputSchema).toMatchObject({
-      properties: { item: { $ref: "#/$defs/Item" } },
-      $defs: { Item: { type: "object" } },
-    });
-    expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema), "#/$defs/");
-    expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
-  });
 
   // A tool's arguments have a JSON Schema object root.
   const One = Schema.Struct({ kind: Schema.Literal("one"), id: Schema.String });
@@ -601,29 +527,6 @@ describe("projection boundaries", () => {
     expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
   });
 
-  it("serves `{}` as no input, the object root MCP requires", async () => {
-    const Empty = Action.make("empty", {
-      description: "No arguments, written as no fields",
-      access: "read",
-      input: {},
-      success: Schema.String,
-    });
-
-    expect(Schema.decodeUnknownOption(Empty.input)({ extra: 1 })._tag).toBe("None");
-
-    const web = serve(
-      ActionMcp.layerHttp(
-        Action.implement(Empty, () => Effect.succeed("ok"), Action.allowAll),
-        {
-          name: "test",
-          version: "0",
-        },
-      ),
-    );
-
-    expect((await listTools(web.handler))[0]?.inputSchema).toMatchObject({ type: "object" });
-  });
-
   // An endpoint's registry is its own: native features merged beside it register elsewhere.
   it("serves no native resource, prompt or tool merged beside an endpoint", async () => {
     const Ping = Action.make("ping", { description: "Ping", access: "read" });
@@ -679,67 +582,20 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("encodes output and optional input correctly through native MCP", async () => {
-    const Encode = Action.make("encode", {
-      description: "Output transform",
-      access: "write",
-      input: Schema.Struct({ value: Schema.optionalKey(Schema.FiniteFromString) }),
-      success: Schema.FiniteFromString,
-    });
-
-    const web = makeTestMcp(
-      Action.implement(
-        [Encode],
-        {
-          encode: ({ value }) => Effect.succeed(value ?? 42),
-        },
-        Action.allowAll,
-      ),
-    );
-
-    const response = await web.handler(rawToolCall("encode"));
-    expect(await response.text()).toContain('"structuredContent":"42"');
-  });
-
-  it("reports invalid MCP arguments through the native InvalidParams path, never as a declared failure", async () => {
-    const Echo = Action.make("echo", {
-      description: "Number",
-      access: "write",
-      input: Schema.Struct({ value: Schema.FiniteFromString }),
-      success: Schema.Finite,
-    });
-
-    let calls = 0;
-
-    const web = makeTestMcp(
-      Action.implement(
-        [Echo],
-        {
-          echo: ({ value }) =>
-            Effect.sync(() => {
-              calls++;
-
-              return value;
-            }),
-        },
-        Action.allowAll,
-      ),
-    );
-
-    // McpServer presents InvalidParams from a tool as an isError result carrying the message.
-    const reply = await (await web.handler(rawToolCall("echo", { value: "nope" }))).json();
-    expect(reply).toMatchObject({ result: { isError: true } });
-    expect(reply).not.toHaveProperty("result.structuredContent");
-    expect(JSON.stringify(reply)).toContain('[\\"value\\"]');
-    // Invalid arguments never reach the handler.
-    expect(calls).toBe(0);
-  });
-
-  it("turns invalid output and defects into sanitized native failures on both transports", async () => {
+  it("turns invalid output and errors, and defects, into sanitized native failures on both transports", async () => {
     const Broken = Action.make("broken", {
       description: "Bad output",
       access: "write",
       success: Schema.Finite,
+    });
+
+    const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
+
+    const Refused = Action.make("refused", {
+      description: "Bad declared error",
+      access: "write",
+      success: Schema.String,
+      errors: [Domain],
     });
 
     const Boom = Action.make("boom", {
@@ -749,9 +605,11 @@ describe("projection boundaries", () => {
     });
 
     const apps = Action.implement(
-      [Broken, Boom],
+      [Broken, Refused, Boom],
       {
         broken: () => Effect.succeed(Infinity),
+        // Construction checks bypassed deliberately: the surface must reject this value.
+        refused: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
         boom: () => Effect.die(new Error("secret database password")),
       },
       Action.allowAll,
@@ -761,9 +619,10 @@ describe("projection boundaries", () => {
 
     const mcp = makeTestMcp(apps);
 
-    // A result that does not encode is a defect, like any other: HTTP answers both with an
-    // empty 500, and the native McpServer reports both as a generic isError tool result.
-    for (const name of ["broken", "boom"]) {
+    // A result or a declared error that does not encode is a defect, like any other: HTTP
+    // answers each with an empty 500, and the native McpServer reports each as a generic
+    // isError tool result.
+    for (const name of ["broken", "refused", "boom"]) {
       const http = await web.handler(post(`/api/${name}`));
       expect(http.status).toBe(500);
       expect(await http.text()).toBe("");

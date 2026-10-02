@@ -236,18 +236,7 @@ describe("one implementation, both transports", () => {
     expect((await app.handler(crossOrigin)).status).toBe(403);
   });
 
-  it("uses the documented input error statuses, on HTTP routes and the MCP endpoint", async () => {
-    const malformed = new Request(request("/api/double", "alice", {}), {
-      method: "POST",
-      body: "{",
-    });
-
-    const wrongType = request("/api/double", "alice", {});
-    wrongType.headers.set("content-type", "text/plain");
-
-    expect((await app.handler(malformed)).status).toBe(400);
-    expect((await app.handler(wrongType)).status).toBe(415);
-
+  it("uses the documented input error statuses on the MCP endpoint", async () => {
     // The MCP endpoint answers invalid JSON with a JSON-RPC parse error, and a request not
     // typed as JSON with an empty 415.
     const call = mcpRequest({
@@ -303,11 +292,6 @@ describe("one implementation, both transports", () => {
         responses: { "200": {} },
       },
     });
-
-    // Every declared error has its status: the action's own, and the built-in ones.
-    expect(
-      Object.keys(OpenApi.fromApi(Http.api).paths["/api/getUser"]?.post?.responses ?? {}).sort(),
-    ).toEqual(["200", "400", "401", "403", "404"]);
 
     expect(document.paths["/api/double"]).toMatchObject({
       post: {

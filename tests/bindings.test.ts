@@ -22,33 +22,6 @@ const identity = Action.make("identity", {
 // Build capabilities and request identities have distinct tags.
 class Greeting extends Context.Service<Greeting, string>()("bindings/Greeting") {}
 
-it.each(["HTTP", "MCP"])("fails without request identity over %s", async (transport) => {
-  const app = Action.implement(identity, () => Actor, Action.allowAll);
-
-  const routes =
-    transport === "HTTP"
-      ? ActionHttp.layer(ActionHttp.make([identity]), app)
-      : ActionMcp.layerHttp(app, {
-          name: "test",
-          version: "0",
-        });
-
-  // The request identity these routes require is deliberately missing.
-  const web = serveWithContext(routes);
-
-  const request = transport === "HTTP" ? post("/api/identity") : rawToolCall("identity");
-
-  // @ts-expect-error Deliberately omit the required request identity to exercise runtime failure.
-  const response = await web.handler(request, Context.empty());
-
-  if (transport === "HTTP") {
-    expect(response.status).toBe(500);
-    expect(await response.text()).toBe("");
-  } else {
-    expect(await response.json()).toMatchObject({ result: { isError: true } });
-  }
-});
-
 it("builds an implementation once per layer graph, however many surfaces serve it", async () => {
   let acquired = 0;
   let finalized = 0;

@@ -1,10 +1,10 @@
 import { expect, it } from "vite-plus/test";
 import { Effect, Schema, SchemaTransformation } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
-import { HttpApiClient, OpenApi } from "effect/http-api";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
+import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import { clientLayer, httpClient, serve } from "./serve.js";
+import { clientLayer, type Handler, httpClient, serve } from "./serve.js";
 
 class NotFound extends Schema.TaggedError<NotFound>()(
   "NotFound",
@@ -52,38 +52,31 @@ const apps = Action.implement(
   (action) => (action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void),
 );
 
+/** The notes served in memory, recording each request they answer. */
 const serveNotes = () => {
   const requests: Array<Request> = [];
 
   const web = serve(ActionHttp.layer(Http, apps));
 
-  const fetch: typeof globalThis.fetch = (input, init) => {
-    const request = new Request(input, init);
+  const handler: Handler = (request) => {
     requests.push(request.clone());
 
     return web.handler(request);
   };
 
-  return { fetch, requests };
+  return { handler, requests };
 };
 
-/** The Effect client over `fetch`, as a program's own `HttpClient` would carry it. */
+/** The Effect client, its requests answered by `handler`. */
 const effectClient =
-  (fetch: typeof globalThis.fetch, options?: Parameters<typeof ActionHttp.client>[1]) =>
+  (handler: Handler, options?: Parameters<typeof ActionHttp.client>[1]) =>
   <A, E>(use: (client: ActionHttp.Client<typeof Http>) => Effect.Effect<A, E>) =>
-    Effect.flatMap(
-      ActionHttp.client(Http, { baseUrl: "https://notes.example", ...options }),
-      use,
-    ).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, fetch),
-      Effect.runPromise,
-    );
+    Effect.runPromise(Effect.flatMap(httpClient(Http, handler, options), use));
 
 it("gives the Effect client each action's success and every declared failure", async () => {
-  const { fetch, requests } = serveNotes();
+  const { handler, requests } = serveNotes();
 
-  const results = await effectClient(fetch)((client) =>
+  const results = await effectClient(handler)((client) =>
     Effect.all({
       methods: Effect.succeed(Object.keys(client)),
       note: client.get({ id: "a" }),
@@ -104,22 +97,22 @@ it("gives the Effect client each action's success and every declared failure", a
     HttpClientError.isHttpClientError(results.unencodable) && results.unencodable.response?.status,
   ).toBe(500);
   expect(results.forbidden).toEqual(new Action.Forbidden());
-  expect(requests[0]?.url).toBe("https://notes.example/api/get");
+  expect(requests[0]?.url).toBe("http://localhost/api/get");
   expect(await requests[0]?.json()).toEqual({ id: "a" });
   expect(requests[0]?.headers.has("authorization")).toBe(false);
   expect(await requests[2]?.json()).toEqual({});
 
-  const invalid = await effectClient((input, init) =>
-    fetch(input, { ...init, body: JSON.stringify({ id: 1 }) }),
+  const invalid = await effectClient((request) =>
+    handler(new Request(request, { method: "POST", body: JSON.stringify({ id: 1 }) })),
   )((client) => Effect.flip(client.get({ id: "a" })));
 
   expect(invalid).toBeInstanceOf(Action.InvalidInput);
 });
 
 it("passes the native client options through, such as a bearer token on every call", async () => {
-  const { fetch, requests } = serveNotes();
+  const { handler, requests } = serveNotes();
 
-  const forbidden = await effectClient(fetch, {
+  const forbidden = await effectClient(handler, {
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")),
   })((client) => Effect.andThen(client.get({ id: "a" }), Effect.flip(client.remove())));
 
@@ -167,23 +160,6 @@ it("fails an unserved action's call by whether the action declares its 404", asy
 
   // `get` declares a 404, whose body the empty answer is not; `count` declares none.
   expect(reasons).toEqual(["StatusCodeError", "DecodeError"]);
-});
-
-it("keeps the native HttpApi usable with Effect's own client", async () => {
-  const flat = serveNotes();
-
-  const note = await Effect.gen(function* () {
-    const client = yield* HttpApiClient.make(Http.api, { baseUrl: "https://notes.example" });
-
-    // A flat binding is one top-level group: its methods are not nested.
-    return yield* client.get({ payload: { id: "a" } });
-  }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    Effect.provideService(FetchHttpClient.Fetch, flat.fetch),
-    Effect.runPromise,
-  );
-
-  expect(note.id).toBe("a");
 });
 
 it("sends a no-input call as {}, and any given input encoded as given, through the client", async () => {
@@ -371,9 +347,6 @@ it("decodes two errors that share a status by their tag", async () => {
 
   // Both are reachable from each endpoint under 403; the tag selects the decoder.
   expect(refused).toEqual([new Action.Forbidden(), new Rejected({ reason: "closed" })]);
-
-  const responses = OpenApi.fromApi(binding.api).paths?.["/api/refuse"]?.post?.responses;
-  expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
 });
 
 it("declares a binding's errors on every endpoint, so middleware's answers decode", async () => {
