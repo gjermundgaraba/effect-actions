@@ -2,10 +2,10 @@
 // `runStdio` and `Testing.mcpClient` take. Input is checked when a server is made
 // (registration.test.ts), so the types take any implementations, a helper's own included.
 import { Effect, Schema } from "effect";
+import { expectTypeOf } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Testing from "../src/Testing.js";
-import type { Equal } from "./equal.js";
 
 const options = { name: "t", version: "0" };
 
@@ -108,10 +108,9 @@ ActionMcp.layerHttp(pages, { ...options, tools: { rest: { text: "extra" } } });
 type ToolsOf<A extends Action.Any> = NonNullable<ActionMcp.Options<A>["tools"]>;
 
 // The types cannot read an erased success: any name, which the layer build checks.
-const erasedText: Equal<NonNullable<ToolsOf<Action.Any>[string]>["text"], string | undefined> =
-  true;
-
-void erasedText;
+expectTypeOf<NonNullable<ToolsOf<Action.Any>[string]>["text"]>().toEqualTypeOf<
+  string | undefined
+>();
 
 // `Testing.mcpClient` takes the endpoint's `tools`, typed alike.
 Testing.mcpClient([Page], { tools: { page: { text: "markdown" } } });
@@ -154,9 +153,7 @@ const listed = Action.implement(
 );
 
 export const listedClient = Effect.map(Testing.mcpClient(listed.actions), (mcp) => {
-  const methods: Equal<keyof typeof mcp, "first" | "second"> = true;
-
-  return methods;
+  expectTypeOf<keyof typeof mcp>().toEqualTypeOf<"first" | "second">();
 });
 
 // Implementations chosen by a condition: `tools` takes a key any choice serves, which

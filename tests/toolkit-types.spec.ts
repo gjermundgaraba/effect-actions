@@ -1,9 +1,9 @@
 // Compile-only native Toolkit assertions, included by `vp check`.
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Tool } from "effect/ai";
+import { expectTypeOf } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import type { Equal } from "./equal.js";
 
 class Principal extends Context.Service<Principal, string>()("toolkit-types/Principal") {}
 
@@ -38,10 +38,9 @@ const app = Action.implement(
 const binding = ActionToolkit.make(app);
 
 // Every action is a tool, named after it.
-const toolNames: Equal<keyof typeof binding.toolkit.tools, "named" | "service_free" | "guarded"> =
-  true;
-
-void toolNames;
+expectTypeOf<keyof typeof binding.toolkit.tools>().toEqualTypeOf<
+  "named" | "service_free" | "guarded"
+>();
 
 const exactNamedSuccess: Tool.Success<typeof binding.toolkit.tools.named> = "principal";
 
@@ -66,12 +65,11 @@ const fetched = ActionToolkit.make(
 );
 
 // Every tool declares its action's errors plus the built-in ones.
-const toolFailures: [
-  Equal<Tool.Failure<typeof fetched.toolkit.tools.fetch>, Gone | Action.BuiltIn>,
-  Equal<Tool.Failure<typeof binding.toolkit.tools.named>, Action.BuiltIn>,
-] = [true, true];
+expectTypeOf<Tool.Failure<typeof fetched.toolkit.tools.fetch>>().toEqualTypeOf<
+  Gone | Action.BuiltIn
+>();
 
-void toolFailures;
+expectTypeOf<Tool.Failure<typeof binding.toolkit.tools.named>>().toEqualTypeOf<Action.BuiltIn>();
 
 class Clock extends Context.Service<Clock, number>()("toolkit-types/Clock") {}
 
@@ -84,12 +82,9 @@ const hooked = ActionToolkit.make(
   ),
 );
 
-const hookedServices: Equal<
-  Tool.HandlerServices<typeof hooked.toolkit.tools.service_free>,
-  Clock
-> = true;
-
-void hookedServices;
+expectTypeOf<
+  Tool.HandlerServices<typeof hooked.toolkit.tools.service_free>
+>().toEqualTypeOf<Clock>();
 
 export const toolkitTypes = Effect.gen(function* () {
   const tools = yield* binding.toolkit;
@@ -261,21 +256,16 @@ const writesApproved = <
 ) =>
   ActionToolkit.make(implementations, { needsApproval: (call) => call.action.access === "write" });
 
-const helped: Equal<
-  typeof writesApproved<[typeof app, typeof eraser]>,
+expectTypeOf<typeof writesApproved<[typeof app, typeof eraser]>>().toEqualTypeOf<
   (
     implementations: [typeof app, typeof eraser],
   ) => ReturnType<typeof ActionToolkit.make<[typeof app, typeof eraser]>>
-> = true;
-
-void helped;
+>();
 
 // Approval changes no tool's type or requirements.
 const approved = ActionToolkit.make(app, { needsApproval: () => true });
 
-const sameTools: Equal<typeof approved, typeof binding> = true;
-
-void sameTools;
+expectTypeOf<typeof approved>().toEqualTypeOf<typeof binding>();
 
 // Each call has a scope of its own: what a hook or a handler acquires never asks its caller
 // for a `Scope`.
@@ -287,6 +277,4 @@ const scoped = ActionToolkit.make(
   ),
 );
 
-const scopedServices: Equal<Tool.HandlerServices<typeof scoped.toolkit.tools.named>, never> = true;
-
-void scopedServices;
+expectTypeOf<Tool.HandlerServices<typeof scoped.toolkit.tools.named>>().toBeNever();

@@ -1,5 +1,6 @@
 // Compile-only assertions on `Action.client`, included by `vp check`.
 import { Effect, Schema, type Scope } from "effect";
+import { expectTypeOf } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
@@ -8,16 +9,15 @@ import { Http } from "../examples/binding.js";
 import { GetUser, type User, type UserNotFound } from "../examples/contracts.js";
 import { double, status, userActions } from "../examples/handlers.js";
 import type { Users } from "../examples/users.js";
-import type { Equal } from "./equal.js";
 
 // Acquiring builds: it owes the builders' startup services and a scope, and fails as they do.
 const acquired = Action.client(userActions);
 
-export const acquisitionTypes: [
-  Equal<Effect.Success<typeof acquired>, Action.Client<typeof userActions>>,
-  Equal<Effect.Error<typeof acquired>, never>,
-  Equal<Effect.Services<typeof acquired>, Users | Scope.Scope>,
-] = [true, true, true];
+expectTypeOf<Effect.Success<typeof acquired>>().toEqualTypeOf<Action.Client<typeof userActions>>();
+
+expectTypeOf<Effect.Error<typeof acquired>>().toBeNever();
+
+expectTypeOf<Effect.Services<typeof acquired>>().toEqualTypeOf<Users | Scope.Scope>();
 
 export const methodTypes = Effect.gen(function* () {
   const users = yield* acquired;
@@ -25,13 +25,9 @@ export const methodTypes = Effect.gen(function* () {
 
   // The decoded success; the action's errors and the built-in ones, as an HTTP client decodes
   // them, without a transport's; and per call, what the handler and the hook read.
-  const renameTypes: [
-    Equal<Effect.Success<typeof renamed>, typeof User.Type>,
-    Equal<Effect.Error<typeof renamed>, UserNotFound | Action.BuiltIn>,
-    Equal<Effect.Services<typeof renamed>, CurrentActor>,
-  ] = [true, true, true];
-
-  void renameTypes;
+  expectTypeOf<Effect.Success<typeof renamed>>().toEqualTypeOf<typeof User.Type>();
+  expectTypeOf<Effect.Error<typeof renamed>>().toEqualTypeOf<UserNotFound | Action.BuiltIn>();
+  expectTypeOf<Effect.Services<typeof renamed>>().toEqualTypeOf<CurrentActor>();
 
   // @ts-expect-error An action with required input needs its argument.
   void users.getUser();
@@ -48,12 +44,8 @@ export const callerTypes = Effect.gen(function* () {
   const who = users.whoAmI();
   const provided = who.pipe(Effect.provideService(CurrentActor, actors.reader));
 
-  const owed: [
-    Equal<Effect.Services<typeof who>, CurrentActor>,
-    Equal<Effect.Services<typeof provided>, never>,
-  ] = [true, true];
-
-  void owed;
+  expectTypeOf<Effect.Services<typeof who>>().toEqualTypeOf<CurrentActor>();
+  expectTypeOf<Effect.Services<typeof provided>>().toBeNever();
 });
 
 // Several implementations: each method owes its own implementation's request services.
@@ -61,15 +53,11 @@ export const listTypes = Effect.gen(function* () {
   const many = Action.client([userActions, double, status]);
   const actions = yield* many;
 
-  const types: [
-    Equal<Effect.Services<typeof many>, Users | Scope.Scope>,
-    Equal<Effect.Services<ReturnType<typeof actions.status>>, never>,
-    Equal<Effect.Services<ReturnType<typeof actions.double>>, CurrentActor>,
-    Equal<Effect.Success<ReturnType<typeof actions.double>>, number>,
-    Equal<Effect.Error<ReturnType<typeof actions.status>>, Action.BuiltIn>,
-  ] = [true, true, true, true, true];
-
-  void types;
+  expectTypeOf<Effect.Services<typeof many>>().toEqualTypeOf<Users | Scope.Scope>();
+  expectTypeOf<Effect.Services<ReturnType<typeof actions.status>>>().toBeNever();
+  expectTypeOf<Effect.Services<ReturnType<typeof actions.double>>>().toEqualTypeOf<CurrentActor>();
+  expectTypeOf<Effect.Success<ReturnType<typeof actions.double>>>().toEqualTypeOf<number>();
+  expectTypeOf<Effect.Error<ReturnType<typeof actions.status>>>().toEqualTypeOf<Action.BuiltIn>();
 
   // A public action owing nothing per call runs as it is.
   const counted: { readonly service: string; readonly users: number } = yield* actions.status();
@@ -89,12 +77,8 @@ export const builtHookTypes = Effect.gen(function* () {
   const client = yield* stored;
   const who = client.whoAmI();
 
-  const types: [
-    Equal<Effect.Services<typeof stored>, Permissions | Scope.Scope>,
-    Equal<Effect.Services<typeof who>, CurrentActor>,
-  ] = [true, true];
-
-  void types;
+  expectTypeOf<Effect.Services<typeof stored>>().toEqualTypeOf<Permissions | Scope.Scope>();
+  expectTypeOf<Effect.Services<typeof who>>().toEqualTypeOf<CurrentActor>();
 });
 
 // A builder's failure is the acquisition's; calls never fail with it.
@@ -113,12 +97,8 @@ const failing = Action.client(
 export const buildErrorTypes = Effect.gen(function* () {
   const client = yield* failing;
 
-  const types: [
-    Equal<Effect.Error<typeof failing>, Unavailable>,
-    Equal<Effect.Error<ReturnType<typeof client.ping>>, Action.BuiltIn>,
-  ] = [true, true];
-
-  void types;
+  expectTypeOf<Effect.Error<typeof failing>>().toEqualTypeOf<Unavailable>();
+  expectTypeOf<Effect.Error<ReturnType<typeof client.ping>>>().toEqualTypeOf<Action.BuiltIn>();
 });
 
 // A share: its actions alone, its hook's requirements, its source's builder.
@@ -127,13 +107,9 @@ export const shareTypes = Effect.gen(function* () {
   const client = yield* trusted;
   const got = client.getUser({ id: "1" });
 
-  const types: [
-    Equal<Effect.Services<typeof trusted>, Users | Scope.Scope>,
-    // Its handler still reads the caller; its hook reads nothing.
-    Equal<Effect.Services<typeof got>, CurrentActor>,
-  ] = [true, true];
-
-  void types;
+  expectTypeOf<Effect.Services<typeof trusted>>().toEqualTypeOf<Users | Scope.Scope>();
+  // Its handler still reads the caller; its hook reads nothing.
+  expectTypeOf<Effect.Services<typeof got>>().toEqualTypeOf<CurrentActor>();
   // @ts-expect-error A share's client has only the share's actions.
   // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
   void client.renameUser({ id: "1", name: "Bea" });
@@ -157,12 +133,9 @@ export const hookErrorTypes = Effect.gen(function* () {
     ),
   );
 
-  const limited: Equal<
-    Effect.Error<ReturnType<typeof client.limited>>,
+  expectTypeOf<Effect.Error<ReturnType<typeof client.limited>>>().toEqualTypeOf<
     RateLimited | Action.BuiltIn
-  > = true;
-
-  void limited;
+  >();
 });
 
 // A handler acquiring a resource owes no scope per call: each call has its own.
@@ -175,9 +148,7 @@ export const scopeTypes = Effect.gen(function* () {
     ),
   );
 
-  const scoped: Equal<Effect.Services<ReturnType<typeof client.ping>>, never> = true;
-
-  void scoped;
+  expectTypeOf<Effect.Services<ReturnType<typeof client.ping>>>().toBeNever();
 });
 
 /** A lookup through either client: its methods share one shape. */
@@ -190,12 +161,8 @@ export const oneLineTypes = Effect.gen(function* () {
   const inProcess = lookup(yield* Action.client(userActions));
   const remote = lookup(yield* ActionHttp.client(Http));
 
-  const types: [
-    Equal<Effect.Services<typeof inProcess>, CurrentActor>,
-    Equal<Effect.Services<typeof remote>, never>,
-  ] = [true, true];
-
-  void types;
+  expectTypeOf<Effect.Services<typeof inProcess>>().toEqualTypeOf<CurrentActor>();
+  expectTypeOf<Effect.Services<typeof remote>>().toBeNever();
 });
 
 // A helper generic over implementations passes their requirements on; an erased one owes
@@ -210,11 +177,7 @@ export const genericTypes = <
   const helped = Action.client(apps);
   const unknownOwed = Action.client(erased);
 
-  const types: [
-    Equal<Effect.Services<typeof passed>, Users | Scope.Scope>,
-    Equal<Effect.Services<typeof unknownOwed>, unknown>,
-  ] = [true, true];
-
-  void types;
+  expectTypeOf<Effect.Services<typeof passed>>().toEqualTypeOf<Users | Scope.Scope>();
+  expectTypeOf<Effect.Services<typeof unknownOwed>>().toBeUnknown();
   void helped;
 };

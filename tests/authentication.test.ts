@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, expectTypeOf, it, onTestFinished } from "vite-plus/test";
 import {
   Client,
   ClientCredentialsProvider,
@@ -27,7 +27,6 @@ import { requestPolicy } from "../examples/request-policy.js";
 import { Users } from "../examples/users.js";
 import { against, serve } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import type { Equal } from "./equal.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
@@ -548,12 +547,9 @@ describe("authentication around a surface", () => {
 
     // What its build yields is a startup requirement of the layers it covers, not of each
     // request; the request is the router's.
-    const owesTokens: Equal<
-      Layer.Services<typeof verify.layer>,
+    expectTypeOf<Layer.Services<typeof verify.layer>>().toEqualTypeOf<
       HttpRouter.HttpRouter | Tokens
-    > = true;
-
-    void owesTokens;
+    >();
 
     const tokens = Layer.effect(
       Tokens,

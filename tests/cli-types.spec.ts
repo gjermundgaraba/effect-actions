@@ -2,10 +2,10 @@
 import { Context, Effect, Schema } from "effect";
 import { HttpClient, type HttpClientError } from "effect/http";
 import { Command } from "effect/cli";
+import { expectTypeOf } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import type { Equal } from "./equal.js";
 
 class Build extends Context.Service<Build, string>()("cli-types/Build") {}
 
@@ -50,11 +50,13 @@ const localTwo = ActionCli.command(local, Two, {
 const localGroup = ActionCli.make(local, { name: "local" });
 
 // Each command owes exactly its action's services and the builder's.
-const localServices: [
-  Equal<Command.Services<typeof localOne>, Build | OneRequest>,
-  Equal<Command.Services<typeof localTwo>, Build | TwoRequest>,
-  Equal<Command.Services<typeof localGroup>, Build | OneRequest | TwoRequest>,
-] = [true, true, true];
+expectTypeOf<Command.Services<typeof localOne>>().toEqualTypeOf<Build | OneRequest>();
+
+expectTypeOf<Command.Services<typeof localTwo>>().toEqualTypeOf<Build | TwoRequest>();
+
+expectTypeOf<Command.Services<typeof localGroup>>().toEqualTypeOf<
+  Build | OneRequest | TwoRequest
+>();
 
 // Any implementation may refuse, and any handler fail with a built-in error: every local
 // command fails with `BuiltIn`, beside the action's own failures, whatever its hook.
@@ -74,20 +76,14 @@ const refusing = ActionCli.command(
 
 // A command fails with Effect CLI's UserError, its cause the action's failure or a built-in
 // one: invalid input included, and no schema error of its own.
-const refusalErrors: [
-  Equal<Command.Error<typeof localOne>, ActionCli.Failure<Action.BuiltIn>>,
-  Equal<Command.Error<typeof localGroup>, ActionCli.Failure<Action.BuiltIn>>,
-  Equal<Command.Error<typeof refusing>, ActionCli.Failure<Action.BuiltIn>>,
-] = [true, true, true];
+expectTypeOf<Command.Error<typeof localOne>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
+
+expectTypeOf<Command.Error<typeof localGroup>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
+
+expectTypeOf<Command.Error<typeof refusing>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
 
 // The hook's services are the command's too.
-const refusingHooked: Equal<Command.Services<typeof refusing>, Hooked> = true;
-
-void localServices;
-
-void refusalErrors;
-
-void refusingHooked;
+expectTypeOf<Command.Services<typeof refusing>>().toEqualTypeOf<Hooked>();
 
 const Plain = Action.make("plain", {
   description: "Plain",
@@ -101,12 +97,9 @@ const plainCommand = ActionCli.command(noService, Plain);
 
 const plainGroup = ActionCli.make(noService, { name: "plain" });
 
-const plainServices: [
-  Equal<Command.Services<typeof plainCommand>, never>,
-  Equal<Command.Services<typeof plainGroup>, never>,
-] = [true, true];
+expectTypeOf<Command.Services<typeof plainCommand>>().toBeNever();
 
-void plainServices;
+expectTypeOf<Command.Services<typeof plainGroup>>().toBeNever();
 
 // An implementation written inside the list owes nothing, as every surface's list keeps it:
 // inferring from the list's erased element would make it owe `unknown`.
@@ -115,29 +108,21 @@ const inlineGroup = ActionCli.make(
   { name: "inline" },
 );
 
-const inlineServices: Equal<
-  Command.Services<typeof inlineGroup>,
+expectTypeOf<Command.Services<typeof inlineGroup>>().toEqualTypeOf<
   Build | OneRequest | TwoRequest
-> = true;
-
-void inlineServices;
+>();
 
 // TypeScript reports a call no overload matches by the last overload's error alone, so the
 // last, for `make` as for `command`, takes a binding or implementations and is reached only
 // when both precise forms fail: a mistake in either form is named, such as a misspelled
 // `commands` key, `Did you mean to write 'one'?`, rather than reported against the other form.
-const lastOverloads: [
-  Equal<
-    Parameters<typeof ActionCli.make>[0],
-    ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
-  >,
-  Equal<
-    Parameters<typeof ActionCli.command>[0],
-    ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
-  >,
-] = [true, true];
+expectTypeOf<Parameters<typeof ActionCli.make>[0]>().toEqualTypeOf<
+  ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
+>();
 
-void lastOverloads;
+expectTypeOf<Parameters<typeof ActionCli.command>[0]>().toEqualTypeOf<
+  ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
+>();
 
 const Scoped = Action.make("scoped", {
   description: "Scoped",
@@ -159,12 +144,9 @@ const scopedCommand = ActionCli.command(scoped, Scoped);
 const scopedGroup = ActionCli.make(scoped, { name: "scoped" });
 
 // A builder's scope is the command's own, not a service it owes.
-const scopedServices: [
-  Equal<Command.Services<typeof scopedCommand>, never>,
-  Equal<Command.Services<typeof scopedGroup>, never>,
-] = [true, true];
+expectTypeOf<Command.Services<typeof scopedCommand>>().toBeNever();
 
-void scopedServices;
+expectTypeOf<Command.Services<typeof scopedGroup>>().toBeNever();
 
 const ScopedHandler = Action.make("scopedHandler", {
   description: "Scoped handler",
@@ -183,12 +165,9 @@ const scopedHandlerCommand = ActionCli.command(scopedHandler, ScopedHandler);
 const scopedHandlerGroup = ActionCli.make(scopedHandler, { name: "scoped-handler" });
 
 // So is a handler's.
-const scopedHandlerServices: [
-  Equal<Command.Services<typeof scopedHandlerCommand>, never>,
-  Equal<Command.Services<typeof scopedHandlerGroup>, never>,
-] = [true, true];
+expectTypeOf<Command.Services<typeof scopedHandlerCommand>>().toBeNever();
 
-void scopedHandlerServices;
+expectTypeOf<Command.Services<typeof scopedHandlerGroup>>().toBeNever();
 
 // @ts-expect-error A local command selects an action implemented by `apps`.
 ActionCli.command(local, Plain);
@@ -231,12 +210,9 @@ const remoteCount = ActionCli.command(http, Count, {
 const remoteGroup = ActionCli.make(http, { name: "remote" });
 
 // A remote command owes only the client; its failures are checked below.
-const remoteServices: [
-  Equal<Command.Services<typeof remote>, HttpClient.HttpClient>,
-  Equal<Command.Services<typeof remoteGroup>, HttpClient.HttpClient>,
-] = [true, true];
+expectTypeOf<Command.Services<typeof remote>>().toEqualTypeOf<HttpClient.HttpClient>();
 
-void remoteServices;
+expectTypeOf<Command.Services<typeof remoteGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
 
 void remoteCount;
 
@@ -267,13 +243,17 @@ const boundErring = ActionCli.command(Bound, Erring);
 
 const boundAll = ActionCli.make(Bound, { name: "remote" });
 
-const remoteErrors: [
-  Equal<Command.Error<typeof boundPlain>, ActionCli.Failure<Action.BuiltIn | Transport>>,
-  Equal<Command.Error<typeof boundErring>, ActionCli.Failure<Gone | Action.BuiltIn | Transport>>,
-  Equal<Command.Error<typeof boundAll>, ActionCli.Failure<Gone | Action.BuiltIn | Transport>>,
-] = [true, true, true];
+expectTypeOf<Command.Error<typeof boundPlain>>().toEqualTypeOf<
+  ActionCli.Failure<Action.BuiltIn | Transport>
+>();
 
-void remoteErrors;
+expectTypeOf<Command.Error<typeof boundErring>>().toEqualTypeOf<
+  ActionCli.Failure<Gone | Action.BuiltIn | Transport>
+>();
+
+expectTypeOf<Command.Error<typeof boundAll>>().toEqualTypeOf<
+  ActionCli.Failure<Gone | Action.BuiltIn | Transport>
+>();
 
 // A binding's own errors are every remote command's failures too.
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
@@ -284,18 +264,13 @@ const throttledPlain = ActionCli.command(Throttling, Plain);
 
 const throttledAll = ActionCli.make(Throttling, { name: "remote" });
 
-const bindingErrors: [
-  Equal<
-    Command.Error<typeof throttledPlain>,
-    ActionCli.Failure<Throttled | Action.BuiltIn | Transport>
-  >,
-  Equal<
-    Command.Error<typeof throttledAll>,
-    ActionCli.Failure<Throttled | Gone | Action.BuiltIn | Transport>
-  >,
-] = [true, true];
+expectTypeOf<Command.Error<typeof throttledPlain>>().toEqualTypeOf<
+  ActionCli.Failure<Throttled | Action.BuiltIn | Transport>
+>();
 
-void bindingErrors;
+expectTypeOf<Command.Error<typeof throttledAll>>().toEqualTypeOf<
+  ActionCli.Failure<Throttled | Gone | Action.BuiltIn | Transport>
+>();
 
 // @ts-expect-error An aggregate remote command needs a name.
 ActionCli.make(Bound, {});
@@ -356,15 +331,13 @@ const shapes = Action.implement(
 );
 
 // Only named fields of one struct may be positional: none for a scalar, a union or no input.
-const noFields: [
-  Equal<
-    ActionCli.CommandOptions<typeof ScalarInput>["positional"],
-    ReadonlyArray<never> | undefined
-  >,
-  Equal<ActionCli.CommandOptions<typeof Other>["positional"], ReadonlyArray<never> | undefined>,
-] = [true, true];
+expectTypeOf<ActionCli.CommandOptions<typeof ScalarInput>["positional"]>().toEqualTypeOf<
+  ReadonlyArray<never> | undefined
+>();
 
-void noFields;
+expectTypeOf<ActionCli.CommandOptions<typeof Other>["positional"]>().toEqualTypeOf<
+  ReadonlyArray<never> | undefined
+>();
 
 // @ts-expect-error A union input has no positional fields, even shared ones.
 ActionCli.command(shapes, UnionInput, { positional: ["a"] });
@@ -388,19 +361,14 @@ const declares = ActionCli.command(
   Declares,
 );
 
-const declaredErrors: Equal<
-  Command.Error<typeof declares>,
+expectTypeOf<Command.Error<typeof declares>>().toEqualTypeOf<
   ActionCli.Failure<Domain | Unavailable | Action.BuiltIn>
-> = true;
-
-void declaredErrors;
+>();
 
 // Run, a command may fail with any `UserError`, so a host matches the cause itself.
 Command.runWith(declares, { version: "0" })([]).pipe(
   Effect.catchTag("UserError", (error) => {
-    const unmatched: Equal<typeof error.cause, unknown> = true;
-
-    void unmatched;
+    expectTypeOf<typeof error.cause>().toBeUnknown();
 
     return error.cause instanceof Domain ? Effect.succeed(error.cause._tag) : Effect.fail(error);
   }),

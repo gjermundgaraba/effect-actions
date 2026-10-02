@@ -1,8 +1,8 @@
 // Compile-only assertions over large implementations, included by `vp check`: a file of
 // their own, checked beside the others rather than after them.
 import { Effect, Schema } from "effect";
+import { expectTypeOf } from "vite-plus/test";
 import * as Action from "../src/Action.js";
-import type { Equal } from "./equal.js";
 
 /** The limit every action of the large fixtures declares. */
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
@@ -61,12 +61,9 @@ export const largeHookTypes = (
 ) => {
   // What every action declares is found one error at a time: an intersection of the sixty
   // unions would multiply out to 4^60 members, past what TypeScript represents (TS2590).
-  const common: Equal<
-    Effect.Error<ReturnType<Action.Before<Sixty[number]>>>,
+  expectTypeOf<Effect.Error<ReturnType<Action.Before<Sixty[number]>>>>().toEqualTypeOf<
     Action.Refusal | Throttled
-  > = true;
-
-  void common;
+  >();
 
   Action.implement(sixty, sixtyHandlers, Action.allowAll);
   Action.implement(sixty, sixtyHandlers, (action) =>

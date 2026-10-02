@@ -1,10 +1,10 @@
 // Compile-only client assertions, included by `vp check`.
 import { type DateTime, Effect, Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
+import { expectTypeOf } from "vite-plus/test";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as Testing from "../src/Testing.js";
-import type { Equal } from "./equal.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
 
@@ -42,10 +42,7 @@ type BuiltIn =
 // The Effect client: one method per action, input directly, the native `HttpClient` required.
 const made = ActionHttp.client(ActionHttp.make(Notes), { baseUrl: "http://localhost" });
 
-export const effectClientRequires: Equal<
-  Effect.Services<typeof made>,
-  HttpClient.HttpClient
-> = true;
+expectTypeOf<Effect.Services<typeof made>>().toEqualTypeOf<HttpClient.HttpClient>();
 
 export const effectClientTypes = Effect.gen(function* () {
   const methods = yield* made;
@@ -53,16 +50,12 @@ export const effectClientTypes = Effect.gen(function* () {
 
   // Failures: the action's own, the built-in refusals and bad input, then transport
   // and encoding failures.
-  const failures: Equal<Effect.Error<typeof get>, Missing | BuiltIn> = true;
-
-  void failures;
+  expectTypeOf<Effect.Error<typeof get>>().toEqualTypeOf<Missing | BuiltIn>();
 
   const count = methods.count();
 
   // An action without declared errors fails only with the built-in ones and the transport's.
-  const countFailures: Equal<Effect.Error<typeof count>, BuiltIn> = true;
-
-  void countFailures;
+  expectTypeOf<Effect.Error<typeof count>>().toEqualTypeOf<BuiltIn>();
 
   // Each built-in failure is typed, so a caller catches it by its tag.
   yield* count.pipe(
@@ -75,12 +68,10 @@ export const effectClientTypes = Effect.gen(function* () {
   yield* count.pipe(Effect.catchTag("Missing", () => Effect.succeed(0)));
 
   // The success is the decoded type, not its JSON encoding.
-  const decoded: Equal<
-    Effect.Success<typeof get>,
-    { readonly id: string; readonly at: DateTime.Utc }
-  > = true;
-
-  void decoded;
+  expectTypeOf<Effect.Success<typeof get>>().toEqualTypeOf<{
+    readonly id: string;
+    readonly at: DateTime.Utc;
+  }>();
 
   const at: DateTime.Utc = (yield* get).at;
   void at;
@@ -160,18 +151,13 @@ const Throttling = ActionHttp.make(Notes, { errors: [Throttled] });
 export const bindingErrorTypes = Effect.gen(function* () {
   const methods = yield* ActionHttp.client(Throttling);
 
-  const getFailures: Equal<
-    Effect.Error<ReturnType<typeof methods.get>>,
+  expectTypeOf<Effect.Error<ReturnType<typeof methods.get>>>().toEqualTypeOf<
     Missing | Throttled | BuiltIn
-  > = true;
+  >();
 
-  const countFailures: Equal<
-    Effect.Error<ReturnType<typeof methods.count>>,
+  expectTypeOf<Effect.Error<ReturnType<typeof methods.count>>>().toEqualTypeOf<
     Throttled | BuiltIn
-  > = true;
-
-  void getFailures;
-  void countFailures;
+  >();
 
   yield* methods.count().pipe(Effect.catchTag("Throttled", () => Effect.succeed(0)));
 });
