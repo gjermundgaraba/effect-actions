@@ -7,7 +7,8 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
 import { mcpRequest, rawToolCall } from "./requests.js";
-import { buildDefect, serve } from "./serve.js";
+import { defectOf } from "./defect.js";
+import { serve } from "./serve.js";
 import { converse } from "./stdio-host.js";
 
 class Principal extends Context.Service<Principal, string>()("text-test/Principal") {}
@@ -207,27 +208,29 @@ describe("MCP text fields", () => {
     });
   });
 
-  it("send the field as text on a 2025 revision over stdio, with the rest structured", async () => {
-    const [listed = "", called = ""] = await converse(stdio, "2025-06-18", [
-      { method: "tools/list" },
-      { method: "tools/call", params: { name: "fetch", arguments: { url: "a" } } },
-    ]);
+  it.effect("send the field as text on a 2025 revision over stdio, with the rest structured", () =>
+    Effect.gen(function* () {
+      const [listed = "", called = ""] = yield* converse(stdio, "2025-06-18", [
+        { method: "tools/list" },
+        { method: "tools/call", params: { name: "fetch", arguments: { url: "a" } } },
+      ]);
 
-    expect(outputSchemas(listed).get("fetch")).toMatchObject({ required: ["end", "owner"] });
-    expect(outputSchemas(listed).get("fetch")).not.toHaveProperty("properties.body");
-    expect(JSON.parse(called)).toEqual({
-      jsonrpc: "2.0",
-      id: 2,
-      result: {
-        isError: false,
-        structuredContent: rest,
-        content: [
-          { type: "text", text: tricky },
-          { type: "text", text: JSON.stringify(rest) },
-        ],
-      },
-    });
-  });
+      expect(outputSchemas(listed).get("fetch")).toMatchObject({ required: ["end", "owner"] });
+      expect(outputSchemas(listed).get("fetch")).not.toHaveProperty("properties.body");
+      expect(JSON.parse(called)).toEqual({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          isError: false,
+          structuredContent: rest,
+          content: [
+            { type: "text", text: tricky },
+            { type: "text", text: JSON.stringify(rest) },
+          ],
+        },
+      });
+    }),
+  );
 
   it("are put back under their field by mcpClient, given the endpoint's tools", async () => {
     const whole = { body: tricky, ...rest };
@@ -317,24 +320,30 @@ describe("a text field MCP cannot send", () => {
   const cannot = (name: string) =>
     `MCP tool '${name}' cannot send 'body' as text: it is not a top-level property of its success`;
 
-  it("fails the layer build when its success has no such top-level property", async () => {
-    // A union of one struct: an object to the types, `anyOf` to its JSON Schema.
-    const Single = Action.make("single", {
-      description: "A page, as a union of one struct",
-      access: "read",
-      success: Schema.Union([Schema.Struct({ body: Schema.String })]),
-    });
+  it.effect("fails the layer build when its success has no such top-level property", () =>
+    Effect.gen(function* () {
+      // A union of one struct: an object to the types, `anyOf` to its JSON Schema.
+      const Single = Action.make("single", {
+        description: "A page, as a union of one struct",
+        access: "read",
+        success: Schema.Union([Schema.Struct({ body: Schema.String })]),
+      });
 
-    const single = Action.implement(Single, () => Effect.succeed({ body: "x" }), Action.allowAll);
+      const single = Action.implement(Single, () => Effect.succeed({ body: "x" }), Action.allowAll);
 
-    expect(
-      await buildDefect(
-        ActionMcp.layerHttp(single, { ...server, tools: { single: { text: "body" } } }),
-      ),
-    ).toBe(cannot("single"));
-  });
+      expect(
+        yield* defectOf(
+          Layer.build(
+            ActionMcp.layerHttp(single, { ...server, tools: { single: { text: "body" } } }).pipe(
+              Layer.provide(HttpRouter.layer),
+            ),
+          ),
+        ),
+      ).toBe(cannot("single"));
+    }),
+  );
 
-  it.each([
+  it.effect.each([
     [
       "a union's",
       Schema.Union([
@@ -343,31 +352,37 @@ describe("a text field MCP cannot send", () => {
       ]),
     ],
     ["a missing", Schema.Struct({ title: Schema.String })],
-  ])("fails the layer build for %s field of an erased success", async (_, success) => {
-    const Erased = Action.make("erased", {
-      description: "A success the types cannot read",
-      access: "read",
-      success,
-    });
+  ] as const)("fails the layer build for %s field of an erased success", ([, success]) =>
+    Effect.gen(function* () {
+      const Erased = Action.make("erased", {
+        description: "A success the types cannot read",
+        access: "read",
+        success,
+      });
 
-    // Erased, as in a list of implementations typed as any: any field compiles.
-    const erased: Action.Implementation<
-      Action.Any,
-      { readonly [name: string]: never },
-      never,
-      never
-    > = Action.implement(
-      Erased,
-      () => Effect.succeed({ body: "x", kind: "a" as const }),
-      Action.allowAll,
-    );
+      // Erased, as in a list of implementations typed as any: any field compiles.
+      const erased: Action.Implementation<
+        Action.Any,
+        { readonly [name: string]: never },
+        never,
+        never
+      > = Action.implement(
+        Erased,
+        () => Effect.succeed({ body: "x", kind: "a" as const }),
+        Action.allowAll,
+      );
 
-    expect(
-      await buildDefect(
-        ActionMcp.layerHttp(erased, { ...server, tools: { erased: { text: "body" } } }),
-      ),
-    ).toBe(cannot("erased"));
-  });
+      expect(
+        yield* defectOf(
+          Layer.build(
+            ActionMcp.layerHttp(erased, { ...server, tools: { erased: { text: "body" } } }).pipe(
+              Layer.provide(HttpRouter.layer),
+            ),
+          ),
+        ),
+      ).toBe(cannot("erased"));
+    }),
+  );
 
   it("refuses a tools key no served action has, where a plain object slips past the types", () => {
     // Widened, as plain JavaScript passes it.

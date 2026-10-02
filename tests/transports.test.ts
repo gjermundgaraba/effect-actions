@@ -350,39 +350,37 @@ describe("actions under their own middleware", () => {
     );
   });
 
-  it("calls every action through one flat client, which decodes the built-in refusals", async () => {
-    const as = (token?: string) =>
-      httpClient(
-        Http,
-        app.handler,
-        token === undefined
-          ? {}
-          : { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) },
-      );
+  it.effect("calls every action through one flat client, which decodes the built-in refusals", () =>
+    Effect.gen(function* () {
+      const as = (token?: string) =>
+        httpClient(
+          Http,
+          app.handler,
+          token === undefined
+            ? {}
+            : { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) },
+        );
 
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const client = yield* as("alice");
+      const client = yield* as("alice");
 
-        return {
-          status: yield* client.status(),
-          identity: yield* client.whoAmI(),
-          // The authentication middleware's 401 and the hook's 403, as typed failures.
-          unauthenticated: yield* Effect.flip((yield* as()).whoAmI()),
-          forbidden: yield* Effect.flip(
-            (yield* as("reader")).renameUser({ id: "1", name: "Reader" }),
-          ),
-        };
-      }),
-    );
+      const result = {
+        status: yield* client.status(),
+        identity: yield* client.whoAmI(),
+        // The authentication middleware's 401 and the hook's 403, as typed failures.
+        unauthenticated: yield* Effect.flip((yield* as()).whoAmI()),
+        forbidden: yield* Effect.flip(
+          (yield* as("reader")).renameUser({ id: "1", name: "Reader" }),
+        ),
+      };
 
-    expect(result.status.users).toBe(2);
-    expect(result.identity).toEqual({ id: "alice", tenantId: "acme" });
-    expect(result.unauthenticated).toBeInstanceOf(Action.Unauthenticated);
-    expect(result.unauthenticated).toMatchObject({ message: "A bearer token is required." });
-    expect(result.forbidden).toBeInstanceOf(Action.Forbidden);
-    expect(result.forbidden).toMatchObject({ message: "Requires users:write." });
-  });
+      expect(result.status.users).toBe(2);
+      expect(result.identity).toEqual({ id: "alice", tenantId: "acme" });
+      expect(result.unauthenticated).toBeInstanceOf(Action.Unauthenticated);
+      expect(result.unauthenticated).toMatchObject({ message: "A bearer token is required." });
+      expect(result.forbidden).toBeInstanceOf(Action.Forbidden);
+      expect(result.forbidden).toMatchObject({ message: "Requires users:write." });
+    }),
+  );
 
   it("splits MCP access by endpoint, since middleware covers every tool of one", async () => {
     const tools = await withMcpClient(

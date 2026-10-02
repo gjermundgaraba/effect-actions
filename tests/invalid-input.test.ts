@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema, SchemaTransformation, Stream } from "effect";
 import { McpSchema } from "effect/ai";
-import { Command } from "effect/cli";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -10,8 +9,8 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
-import { cliServices, printed } from "./cli-services.js";
-import { against, serve } from "./serve.js";
+import { exec, printed } from "./cli-services.js";
+import { serve } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
@@ -208,13 +207,12 @@ it("refuses undeclared input fields on the server, nested ones too; every typed 
   // declared fields: this one, the native one and the MCP test client.
   const wider = { value: 1, owner: { id: "a", role: "admin" }, admin: true };
 
-  await against(
-    web,
+  await Effect.runPromise(
     Effect.gen(function* () {
       yield* (yield* ActionHttp.client(SaveHttp)).save(wider);
       yield* (yield* HttpApiClient.make(SaveHttp.api)).save({ payload: wider });
       yield* (yield* Testing.mcpClient([Save])).save(wider);
-    }),
+    }).pipe(Effect.provide(Testing.layer(web.handler))),
   );
 
   expect(seen).toEqual(Array.from({ length: 3 }, () => ({ value: 1, owner: { id: "a" } })));
@@ -293,100 +291,108 @@ it("answers a handler's own InvalidInput as declared", async () => {
   expect(await invalidInput(http)).toBe("Too large");
 });
 
-it("says where input does not decode and what it expects, never a value sent, on every surface", async () => {
-  const Login = Action.make("login", {
-    description: "Log in",
-    access: "write",
-    input: {
-      password: Schema.Redacted(Schema.String.check(Schema.isMinLength(12))),
-      pin: Schema.String.check(Schema.isPattern(/^\d{4}$/)),
-      count: Schema.Finite,
-    },
-    success: Schema.String,
-  });
+it.effect(
+  "says where input does not decode and what it expects, never a value sent, on every surface",
+  () =>
+    Effect.gen(function* () {
+      const Login = Action.make("login", {
+        description: "Log in",
+        access: "write",
+        input: {
+          password: Schema.Redacted(Schema.String.check(Schema.isMinLength(12))),
+          pin: Schema.String.check(Schema.isPattern(/^\d{4}$/)),
+          count: Schema.Finite,
+        },
+        success: Schema.String,
+      });
 
-  let calls = 0;
+      let calls = 0;
 
-  const app = Action.implement(
-    Login,
-    () =>
-      Effect.sync(() => {
-        calls++;
+      const app = Action.implement(
+        Login,
+        () =>
+          Effect.sync(() => {
+            calls++;
 
-        return "in";
-      }),
-    Action.allowAll,
-  );
+            return "in";
+          }),
+        Action.allowAll,
+      );
 
-  const sent = { password: "hunter2", pin: "pin-secret", count: "count-secret" };
-  // An undeclared field, which HTTP and MCP refuse by its path and a Toolkit drops.
-  const wider = { ...sent, note: "note-secret" };
+      const sent = { password: "hunter2", pin: "pin-secret", count: "count-secret" };
+      // An undeclared field, which HTTP and MCP refuse by its path and a Toolkit drops.
+      const wider = { ...sent, note: "note-secret" };
 
-  const web = serve(
-    Layer.merge(
-      ActionHttp.layer(ActionHttp.make([Login]), app),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-    ),
-  );
+      const web = serve(
+        Layer.merge(
+          ActionHttp.layer(ActionHttp.make([Login]), app),
+          ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+        ),
+      );
 
-  const http = await (await web.handler(post("/api/login", wider))).text();
-  const mcp = await (await web.handler(rawToolCall("login", wider))).text();
-  const tools = ActionToolkit.make(app);
+      const http = yield* Effect.promise(async () =>
+        (await web.handler(post("/api/login", wider))).text(),
+      );
 
-  const [called] = await Effect.runPromise(
-    Effect.flatMap(tools.toolkit, (toolkit) =>
-      Effect.flatMap(toolkit.handle("login", wider), Stream.runCollect),
-    ).pipe(Effect.provide(tools.layer)),
-  );
+      const mcp = yield* Effect.promise(async () =>
+        (await web.handler(rawToolCall("login", wider))).text(),
+      );
 
-  const [, , stderr] = await Command.runWith(ActionCli.command(app, Login), { version: "0" })([
-    "--password",
-    sent.password,
-    "--pin",
-    sent.pin,
-    "--count",
-    sent.count,
-  ]).pipe(printed, Effect.provide(cliServices), Effect.runPromise);
+      const tools = ActionToolkit.make(app);
 
-  // In process, the caller passes the input's own type: values of it that fail its checks.
-  const inProcess = await Effect.gen(function* () {
-    const client = yield* Action.client(app);
+      const [called] = yield* Effect.flatMap(tools.toolkit, (toolkit) =>
+        Effect.flatMap(toolkit.handle("login", wider), Stream.runCollect),
+      ).pipe(Effect.provide(tools.layer));
 
-    return yield* Effect.flip(
-      client.login({ password: Redacted.make(sent.password), pin: sent.pin, count: Number.NaN }),
-    );
-  }).pipe(Effect.scoped, Effect.runPromise);
+      const [, , stderr] = yield* printed(
+        exec(ActionCli.command(app, Login), [
+          "--password",
+          sent.password,
+          "--pin",
+          sent.pin,
+          "--count",
+          sent.count,
+        ]),
+      );
 
-  // What each sends back, as JSON: HTTP's body, MCP's tool result, the Toolkit's result for
-  // the model, and what the CLI prints. HTTP and MCP describe every issue, the others the first.
-  const answers = [http, mcp, JSON.stringify(called?.encodedResult), stderr.join("\n")];
+      // In process, the caller passes the input's own type: values of it that fail its checks.
+      const client = yield* Action.client(app);
 
-  for (const answer of answers) {
-    expect(answer).toContain(
-      'Expected a value with a length of at least 12\\n  at [\\"password\\"]',
-    );
+      const inProcess = yield* Effect.flip(
+        client.login({ password: Redacted.make(sent.password), pin: sent.pin, count: Number.NaN }),
+      );
 
-    for (const value of Object.values(wider)) expect(answer).not.toContain(value);
-  }
+      // What each sends back, as JSON: HTTP's body, MCP's tool result, the Toolkit's result for
+      // the model, and what the CLI prints. HTTP and MCP describe every issue, the others the first.
+      const answers = [http, mcp, JSON.stringify(called?.encodedResult), stderr.join("\n")];
 
-  for (const answer of [http, mcp]) {
-    expect(answer).toContain('at [\\"pin\\"]');
-    expect(answer).toContain('at [\\"count\\"]');
-    expect(answer).toContain('at [\\"note\\"]');
-  }
+      for (const answer of answers) {
+        expect(answer).toContain(
+          'Expected a value with a length of at least 12\\n  at [\\"password\\"]',
+        );
 
-  // `Action.client` describes every issue too, each by its path.
-  expect(inProcess).toBeInstanceOf(Action.InvalidInput);
+        for (const value of Object.values(wider)) expect(answer).not.toContain(value);
+      }
 
-  for (const path of ['at ["password"]', 'at ["pin"]', 'at ["count"]']) {
-    expect(inProcess.message).toContain(path);
-  }
+      for (const answer of [http, mcp]) {
+        expect(answer).toContain('at [\\"pin\\"]');
+        expect(answer).toContain('at [\\"count\\"]');
+        expect(answer).toContain('at [\\"note\\"]');
+      }
 
-  for (const value of [sent.password, sent.pin]) expect(inProcess.message).not.toContain(value);
+      // `Action.client` describes every issue too, each by its path.
+      expect(inProcess).toBeInstanceOf(Action.InvalidInput);
 
-  // The handler never sees input that does not decode, on any surface.
-  expect(calls).toBe(0);
-});
+      for (const path of ['at ["password"]', 'at ["pin"]', 'at ["count"]']) {
+        expect(inProcess.message).toContain(path);
+      }
+
+      for (const value of [sent.password, sent.pin]) expect(inProcess.message).not.toContain(value);
+
+      // The handler never sees input that does not decode, on any surface.
+      expect(calls).toBe(0);
+    }),
+);
 
 it("executes each input/output transformation once per call", async () => {
   let decodes = 0;

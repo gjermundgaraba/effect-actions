@@ -9,7 +9,7 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
 import { post, rawToolCall } from "./requests.js";
-import { against, type Server, serve, serveWithContext } from "./serve.js";
+import { type Server, serve, serveWithContext } from "./serve.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
@@ -160,36 +160,39 @@ describe("sharing an implementation's builder", () => {
 
   /** A tool call on `path`, as the value it returned or the tag it failed with. */
   const call = (web: Server, path: string, name: "identity" | "secret") =>
-    against(
-      web,
-      Effect.flatMap(Testing.mcpClient([identity, secret], { url: path }), (mcp) =>
-        mcp[name]().pipe(Effect.catchTag("Forbidden", ({ _tag }) => Effect.succeed(_tag))),
-      ),
-    );
+    Effect.flatMap(Testing.mcpClient([identity, secret], { url: path }), (mcp) =>
+      mcp[name]().pipe(Effect.catchTag("Forbidden", ({ _tag }) => Effect.succeed(_tag))),
+    ).pipe(Effect.provide(Testing.layer(web.handler)));
 
-  it("runs the builder once for an implementation and its shares, with and without another hook, on every surface", async () => {
-    const { runs, app } = counted(() => Effect.fail(new Action.Forbidden()));
-    const kept = Action.share([identity], app);
-    const open = Action.share([identity], app, Action.allowAll);
+  it.effect(
+    "runs the builder once for an implementation and its shares, with and without another hook, on every surface",
+    () =>
+      Effect.gen(function* () {
+        const { runs, app } = counted(() => Effect.fail(new Action.Forbidden()));
+        const kept = Action.share([identity], app);
+        const open = Action.share([identity], app, Action.allowAll);
 
-    const web = serve(
-      Layer.mergeAll(
-        ActionHttp.layer(Http, app),
-        ActionHttp.layer(ActionHttp.make([identity], { prefix: "/kept" }), kept),
-        ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
-        ActionMcp.layerHttp(kept, { name: "kept", version: "0", path: "/mcp/kept" }),
-        ActionMcp.layerHttp(open, { name: "open", version: "0", path: "/mcp/open" }),
-        ActionToolkit.make([kept, Action.share([secret], app, Action.allowAll)]).layer,
-      ),
-    );
+        const web = serve(
+          Layer.mergeAll(
+            ActionHttp.layer(Http, app),
+            ActionHttp.layer(ActionHttp.make([identity], { prefix: "/kept" }), kept),
+            ActionHttp.layer(ActionHttp.make([identity], { prefix: "/open" }), open),
+            ActionMcp.layerHttp(kept, { name: "kept", version: "0", path: "/mcp/kept" }),
+            ActionMcp.layerHttp(open, { name: "open", version: "0", path: "/mcp/open" }),
+            ActionToolkit.make([kept, Action.share([secret], app, Action.allowAll)]).layer,
+          ),
+        );
 
-    expect((await web.handler(post("/kept/identity"))).status).toBe(403);
-    expect(await (await web.handler(post("/open/identity"))).json()).toBe("shared");
-    expect(await call(web, "/mcp/kept", "identity")).toBe("Forbidden");
-    expect(await call(web, "/mcp/open", "identity")).toBe("shared");
-    // Five implementations on three surfaces, one builder run.
-    expect(runs.built).toBe(1);
-  });
+        expect((yield* Effect.promise(() => web.handler(post("/kept/identity")))).status).toBe(403);
+        expect(
+          yield* Effect.promise(async () => (await web.handler(post("/open/identity"))).json()),
+        ).toBe("shared");
+        expect(yield* call(web, "/mcp/kept", "identity")).toBe("Forbidden");
+        expect(yield* call(web, "/mcp/open", "identity")).toBe("shared");
+        // Five implementations on three surfaces, one builder run.
+        expect(runs.built).toBe(1);
+      }),
+  );
 
   it("holds only the actions it is given, and refuses one its source does not implement", () => {
     const { app } = counted(() => Effect.void);
@@ -205,36 +208,44 @@ describe("sharing an implementation's builder", () => {
     );
   });
 
-  it("runs each hook for its own actions, without building the shared handlers again", async () => {
-    const hooks: Array<string> = [];
+  it.effect("runs each hook for its own actions, without building the shared handlers again", () =>
+    Effect.gen(function* () {
+      const hooks: Array<string> = [];
 
-    const { runs, app } = counted((action) =>
-      Effect.sync(() => {
-        hooks.push(`source ${action.name}`);
-      }),
-    );
+      const { runs, app } = counted((action) =>
+        Effect.sync(() => {
+          hooks.push(`source ${action.name}`);
+        }),
+      );
 
-    const admin = Action.share([secret], app, (action) =>
-      Effect.sync(() => {
-        hooks.push(`admin ${action.name}`);
-      }),
-    );
+      const admin = Action.share([secret], app, (action) =>
+        Effect.sync(() => {
+          hooks.push(`admin ${action.name}`);
+        }),
+      );
 
-    const web = serve(
-      Layer.mergeAll(
-        ActionHttp.layer(Http, app),
-        ActionHttp.layer(ActionHttp.make([secret], { prefix: "/admin" }), admin),
-        ActionMcp.layerHttp(admin, { name: "admin", version: "0" }),
-      ),
-    );
+      const web = serve(
+        Layer.mergeAll(
+          ActionHttp.layer(Http, app),
+          ActionHttp.layer(ActionHttp.make([secret], { prefix: "/admin" }), admin),
+          ActionMcp.layerHttp(admin, { name: "admin", version: "0" }),
+        ),
+      );
 
-    expect(await (await web.handler(post("/api/identity"))).json()).toBe("shared");
-    expect(await (await web.handler(post("/api/secret"))).json()).toBe("hidden");
-    expect(await (await web.handler(post("/admin/secret"))).json()).toBe("hidden");
-    expect(await call(web, "/mcp", "secret")).toBe("hidden");
-    expect(hooks).toEqual(["source identity", "source secret", "admin secret", "admin secret"]);
-    expect(runs.built).toBe(1);
-  });
+      expect(
+        yield* Effect.promise(async () => (await web.handler(post("/api/identity"))).json()),
+      ).toBe("shared");
+      expect(
+        yield* Effect.promise(async () => (await web.handler(post("/api/secret"))).json()),
+      ).toBe("hidden");
+      expect(
+        yield* Effect.promise(async () => (await web.handler(post("/admin/secret"))).json()),
+      ).toBe("hidden");
+      expect(yield* call(web, "/mcp", "secret")).toBe("hidden");
+      expect(hooks).toEqual(["source identity", "source secret", "admin secret", "admin secret"]);
+      expect(runs.built).toBe(1);
+    }),
+  );
 
   it("builds a share's own built hook once, and never runs its source's builder again for it", async () => {
     const builds = { sourceHook: 0, openHook: 0 };
@@ -273,7 +284,7 @@ describe("sharing an implementation's builder", () => {
     expect((await both.handler(post("/api/identity"))).status).toBe(403);
     expect((await both.handler(post("/kept/identity"))).status).toBe(403);
     expect(await (await both.handler(post("/open/identity"))).json()).toBe("shared");
-    expect(await call(both, "/mcp", "identity")).toBe("shared");
+    expect(await Effect.runPromise(call(both, "/mcp", "identity"))).toBe("shared");
     expect({ ...runs, ...builds }).toEqual({ built: 1, sourceHook: 1, openHook: 1 });
 
     // Served alone, a share with a hook of its own builds its source's handlers, not its hook.

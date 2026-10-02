@@ -441,32 +441,34 @@ describe("what the routes were built with", () => {
 });
 
 describe("over stdio", () => {
-  it("gives a tool call the identity the host provides around runStdio", async () => {
-    class Actor extends Context.Service<Actor, string>()("request-context/StdioActor") {}
+  it.effect("gives a tool call the identity the host provides around runStdio", () =>
+    Effect.gen(function* () {
+      class Actor extends Context.Service<Actor, string>()("request-context/StdioActor") {}
 
-    const Who = Action.make("who", {
-      description: "Name the caller.",
-      access: "read",
-      success: Schema.String,
-    });
+      const Who = Action.make("who", {
+        description: "Name the caller.",
+        access: "read",
+        success: Schema.String,
+      });
 
-    const hooked: Array<string> = [];
+      const hooked: Array<string> = [];
 
-    const who = Action.implement(
-      Who,
-      () => Actor,
-      () => Effect.flatMap(Actor, (actor) => Effect.sync(() => void hooked.push(actor))),
-    );
+      const who = Action.implement(
+        Who,
+        () => Actor,
+        () => Effect.flatMap(Actor, (actor) => Effect.sync(() => void hooked.push(actor))),
+      );
 
-    const [answer] = await converse(
-      ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
-        Effect.provideService(Actor, "host"),
-      ),
-      httpProtocol.protocolVersion,
-      [{ method: "tools/call", params: { name: "who", arguments: {} } }],
-    );
+      const [answer] = yield* converse(
+        ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
+          Effect.provideService(Actor, "host"),
+        ),
+        httpProtocol.protocolVersion,
+        [{ method: "tools/call", params: { name: "who", arguments: {} } }],
+      );
 
-    expect(JSON.parse(answer ?? "")).toMatchObject({ result: { structuredContent: "host" } });
-    expect(hooked).toEqual(["host"]);
-  });
+      expect(JSON.parse(answer ?? "")).toMatchObject({ result: { structuredContent: "host" } });
+      expect(hooked).toEqual(["host"]);
+    }),
+  );
 });

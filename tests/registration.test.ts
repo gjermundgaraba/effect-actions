@@ -7,9 +7,10 @@ import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { against, serve } from "./serve.js";
+import { serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
   const web = serve(
@@ -183,11 +184,10 @@ describe("projection boundaries", () => {
     expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
 
     // The client reads the status from the same binding, so it decodes the error.
-    const failure = await against(
-      web,
+    const failure = await Effect.runPromise(
       Effect.flip(
         Effect.flatMap(ActionHttp.client(ActionHttp.make([Fail])), (client) => client.fail()),
-      ),
+      ).pipe(Effect.provide(Testing.layer(web.handler))),
     );
 
     expect(failure).toEqual(Failure.make({ message: "Safe failure" }));
@@ -226,11 +226,10 @@ describe("projection boundaries", () => {
     expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
     expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
     expect(
-      await against(
-        web,
+      await Effect.runPromise(
         Effect.flatMap(ActionHttp.client(Http), (client) =>
           Effect.flip(client.fail({ which: "conflict" })),
-        ),
+        ).pipe(Effect.provide(Testing.layer(web.handler))),
       ),
     ).toEqual(Conflict.make({}));
   });

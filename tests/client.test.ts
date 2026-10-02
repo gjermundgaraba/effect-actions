@@ -6,7 +6,6 @@ import {
   Layer,
   Option,
   Predicate,
-  Result,
   Schema,
   SchemaTransformation,
   Stream,
@@ -16,10 +15,7 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
 import { userActions } from "../examples/handlers.js";
 import { Users } from "../examples/users.js";
-
-/** The defect `effect` dies with; `undefined` when it succeeds or fails. */
-const defectOf = async <A, E>(effect: Effect.Effect<A, E>) =>
-  Result.getOrUndefined(Exit.findDefect(await Effect.runPromiseExit(effect)));
+import { defectOf } from "./defect.js";
 
 const asAlice = Effect.provideService(CurrentActor, actors.alice);
 
@@ -211,57 +207,57 @@ describe("Action.client", () => {
     expect(log.slice(-2).toSorted()).toEqual(released);
   });
 
-  it("dies with a success that does not pass through its codec, as a server's 500", async () => {
-    const Name = Action.make("name", {
-      description: "A name",
-      access: "read",
-      success: Schema.String.check(Schema.isMinLength(1)),
-    });
+  it.effect("dies with a success that does not pass through its codec, as a server's 500", () =>
+    Effect.gen(function* () {
+      const Name = Action.make("name", {
+        description: "A name",
+        access: "read",
+        success: Schema.String.check(Schema.isMinLength(1)),
+      });
 
-    const Profile = Action.make("profile", {
-      description: "A profile",
-      access: "read",
-      success: { id: Schema.String },
-    });
+      const Profile = Action.make("profile", {
+        description: "A profile",
+        access: "read",
+        success: { id: Schema.String },
+      });
 
-    const Nothing = Action.make("nothing", { description: "Returns nothing", access: "write" });
+      const Nothing = Action.make("nothing", { description: "Returns nothing", access: "write" });
 
-    // Trimmed when decoded, and sent as given: a remote caller gets it trimmed.
-    const Label = Action.make("label", {
-      description: "A label",
-      access: "read",
-      success: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())),
-    });
+      // Trimmed when decoded, and sent as given: a remote caller gets it trimmed.
+      const Label = Action.make("label", {
+        description: "A label",
+        access: "read",
+        success: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())),
+      });
 
-    // Wider than the success declares, as TypeScript lets a variable through.
-    const stored = { id: "1", secret: "s" };
+      // Wider than the success declares, as TypeScript lets a variable through.
+      const stored = { id: "1", secret: "s" };
 
-    const app = Action.implement(
-      [Name, Profile, Nothing, Label],
-      {
-        name: () => Effect.succeed(""),
-        profile: () => Effect.succeed(stored),
-        nothing: () => Effect.void,
-        label: () => Effect.succeed(" Bea "),
-      },
-      Action.allowAll,
-    );
+      const app = Action.implement(
+        [Name, Profile, Nothing, Label],
+        {
+          name: () => Effect.succeed(""),
+          profile: () => Effect.succeed(stored),
+          nothing: () => Effect.void,
+          label: () => Effect.succeed(" Bea "),
+        },
+        Action.allowAll,
+      );
 
-    const call = <A, E>(pick: (client: Action.Client<typeof app>) => Effect.Effect<A, E>) =>
-      Effect.flatMap(Action.client(app), pick).pipe(Effect.scoped);
+      const client = yield* Action.client(app);
+      const defect = yield* defectOf(client.name());
 
-    const defect = await defectOf(call((client) => client.name()));
+      expect(Schema.isSchemaError(defect) && defect.message).toContain(
+        "Expected a value with a length of at least 1",
+      );
 
-    expect(Schema.isSchemaError(defect) && defect.message).toContain(
-      "Expected a value with a length of at least 1",
-    );
-
-    // A success is what its encoding decodes to, as a remote caller gets it: the undeclared
-    // field is dropped, a void success is `undefined`, and a decoding transformation applies.
-    expect(await Effect.runPromise(call((client) => client.profile()))).toEqual({ id: "1" });
-    expect(await Effect.runPromise(call((client) => client.nothing()))).toBeUndefined();
-    expect(await Effect.runPromise(call((client) => client.label()))).toBe("Bea");
-  });
+      // A success is what its encoding decodes to, as a remote caller gets it: the undeclared
+      // field is dropped, a void success is `undefined`, and a decoding transformation applies.
+      expect(yield* client.profile()).toEqual({ id: "1" });
+      expect(yield* client.nothing()).toBeUndefined();
+      expect(yield* client.label()).toBe("Bea");
+    }),
+  );
 
   it("gives the caller a failure as a remote one decodes it, from where the handler failed", async () => {
     // Trimmed when decoded, and sent as given: a remote caller gets it trimmed.
@@ -337,44 +333,44 @@ describe("Action.client", () => {
     expect(Cause.pretty(mislabeled)).toMatch(/^\s+at label$/m);
   });
 
-  it("dies with a failure that does not pass through its codec, as a server's 500", async () => {
-    class Unlisted extends Schema.TaggedError<Unlisted>()("Unlisted", {}) {}
+  it.effect("dies with a failure that does not pass through its codec, as a server's 500", () =>
+    Effect.gen(function* () {
+      class Unlisted extends Schema.TaggedError<Unlisted>()("Unlisted", {}) {}
 
-    class Counted extends Schema.TaggedError<Counted>()("Counted", { count: Schema.Int }) {}
+      class Counted extends Schema.TaggedError<Counted>()("Counted", { count: Schema.Int }) {}
 
-    const Count = Action.make("count", {
-      description: "Count",
-      access: "read",
-      errors: [Counted],
-    });
+      const Count = Action.make("count", {
+        description: "Count",
+        access: "read",
+        errors: [Counted],
+      });
 
-    const app = Action.implement(
-      [Count, Ping],
-      {
-        // Made without its check, as TypeScript lets any number through.
-        count: () => Effect.fail(new Counted({ count: 1.5 }, { disableChecks: true })),
-        // @ts-expect-error `ping` does not declare `Unlisted`; plain JavaScript can still fail with it.
-        ping: () => Effect.fail(new Unlisted()),
-      },
-      Action.allowAll,
-    );
+      const app = Action.implement(
+        [Count, Ping],
+        {
+          // Made without its check, as TypeScript lets any number through.
+          count: () => Effect.fail(new Counted({ count: 1.5 }, { disableChecks: true })),
+          // @ts-expect-error `ping` does not declare `Unlisted`; plain JavaScript can still fail with it.
+          ping: () => Effect.fail(new Unlisted()),
+        },
+        Action.allowAll,
+      );
 
-    const call = <A, E>(pick: (client: Action.Client<typeof app>) => Effect.Effect<A, E>) =>
-      Effect.flatMap(Action.client(app), pick).pipe(Effect.scoped);
+      const client = yield* Action.client(app);
+      const unencoded = yield* defectOf(client.count());
+      const undeclared = yield* Effect.exit(client.ping());
 
-    const unencoded = await defectOf(call((client) => client.count()));
-    const undeclared = await Effect.runPromiseExit(call((client) => client.ping()));
+      // Its `SchemaError`, then the failure itself, which the `SchemaError` does not name.
+      const defects = Exit.isFailure(undeclared)
+        ? undeclared.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
+        : [];
 
-    // Its `SchemaError`, then the failure itself, which the `SchemaError` does not name.
-    const defects = Exit.isFailure(undeclared)
-      ? undeclared.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
-      : [];
-
-    expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain('at ["count"]');
-    expect(defects).toHaveLength(2);
-    expect(Schema.isSchemaError(defects[0])).toBe(true);
-    expect(defects[1]).toBeInstanceOf(Unlisted);
-  });
+      expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain('at ["count"]');
+      expect(defects).toHaveLength(2);
+      expect(Schema.isSchemaError(defects[0])).toBe(true);
+      expect(defects[1]).toBeInstanceOf(Unlisted);
+    }),
+  );
 
   it("runs each handler in its action's span, a child of the caller's, never the acquisition's", async () => {
     const Where = Action.make("where", {

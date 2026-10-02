@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio } from "effect";
-import { Command } from "effect/cli";
+import { Cause, Context, Effect, Exit, Layer, Schema, Stdio } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -9,18 +8,13 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
-import { cliServices } from "./cli-services.js";
-import { against, clientLayer, serve as serveRoutes, serveWithContext } from "./serve.js";
+import { exec } from "./cli-services.js";
+import { defectOf } from "./defect.js";
+import { serve as serveRoutes, serveWithContext } from "./serve.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
 import { Permissions, whoAmI as storedWhoAmI } from "../examples/authorization-built.js";
 import { WhoAmI as WhoAmIContract } from "../examples/contracts.js";
-
-/** The defect building `layer` dies with; `undefined` when it builds or fails. */
-const defectOf = async <A, E>(layer: Layer.Layer<A, E>) =>
-  Result.getOrUndefined(
-    Exit.findDefect(await Effect.runPromiseExit(Effect.scoped(Layer.build(layer)))),
-  );
 
 class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") {}
 
@@ -238,62 +232,62 @@ describe("implement", () => {
     expect(make).toThrow("Missing handlers: bye");
   });
 
-  it("dies at layer build, not at a request, for a builder's record missing a key", async () => {
-    const app = Action.implement(
-      [Hello, Bye],
-      Effect.sync(() => pair((h) => Reflect.deleteProperty(h, "bye"))),
-      Action.allowAll,
-    );
+  it.effect("dies at layer build, not at a request, for a builder's record missing a key", () =>
+    Effect.gen(function* () {
+      const app = Action.implement(
+        [Hello, Bye],
+        Effect.sync(() => pair((h) => Reflect.deleteProperty(h, "bye"))),
+        Action.allowAll,
+      );
 
-    const handler = handlerOf(ActionHttp.layer(ActionHttp.make([Hello, Bye]), app));
+      const handler = handlerOf(ActionHttp.layer(ActionHttp.make([Hello, Bye]), app));
 
-    // Even the action that has a handler is never served by an incomplete record.
-    await expect(handler(post("/api/hello", { name: "Ada" }))).rejects.toThrow(
-      "Missing handlers: bye",
-    );
-    expect(await defectOf(ActionToolkit.make(app).layer)).toMatchObject({
-      message: "Missing handlers: bye",
-    });
-
-    // Building a command checks nothing; running either one builds and checks the whole record.
-    for (const [action, args] of [
-      [Hello, ["--name", "Ada"]],
-      [Bye, []],
-    ] as const) {
-      const exit = await Command.runWith(ActionCli.command(app, action), { version: "0" })(
-        args,
-      ).pipe(Effect.provide(cliServices), Effect.runPromiseExit);
-
-      expect(Result.getOrUndefined(Exit.findDefect(exit))).toMatchObject({
+      // Even the action that has a handler is never served by an incomplete record.
+      expect(
+        yield* defectOf(Effect.promise(() => handler(post("/api/hello", { name: "Ada" })))),
+      ).toMatchObject({ message: "Missing handlers: bye" });
+      expect(yield* defectOf(Layer.build(ActionToolkit.make(app).layer))).toMatchObject({
         message: "Missing handlers: bye",
       });
-    }
-  });
 
-  it("refuses a record key that names no action: a plain one at implement", async () => {
-    expect(() =>
-      Action.implement(
+      // Building a command checks nothing; running either one builds and checks the whole record.
+      for (const [action, args] of [
+        [Hello, ["--name", "Ada"]],
+        [Bye, []],
+      ] as const) {
+        expect(yield* defectOf(exec(ActionCli.command(app, action), args))).toMatchObject({
+          message: "Missing handlers: bye",
+        });
+      }
+    }),
+  );
+
+  it.effect("refuses a record key that names no action: a plain one at implement", () =>
+    Effect.gen(function* () {
+      expect(() =>
+        Action.implement(
+          [Hello],
+          {
+            hello: () => Effect.succeed("hi"),
+            // @ts-expect-error A record names only its actions.
+            stale: () => Effect.succeed("stale"),
+          },
+          Action.allowAll,
+        ),
+      ).toThrow("Unknown handlers: stale");
+
+      const built = Action.implement(
         [Hello],
-        {
-          hello: () => Effect.succeed("hi"),
-          // @ts-expect-error A record names only its actions.
-          stale: () => Effect.succeed("stale"),
-        },
+        // @ts-expect-error A builder's record names only its actions.
+        Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
         Action.allowAll,
-      ),
-    ).toThrow("Unknown handlers: stale");
+      );
 
-    const built = Action.implement(
-      [Hello],
-      // @ts-expect-error A builder's record names only its actions.
-      Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
-      Action.allowAll,
-    );
-
-    expect(await defectOf(ActionToolkit.make(built).layer)).toMatchObject({
-      message: "Unknown handlers: stale",
-    });
-  });
+      expect(yield* defectOf(Layer.build(ActionToolkit.make(built).layer))).toMatchObject({
+        message: "Unknown handlers: stale",
+      });
+    }),
+  );
 });
 
 describe("hooks", () => {
@@ -308,29 +302,33 @@ describe("hooks", () => {
 
   class Actor extends Context.Service<Actor, string>()("implement-test/Actor") {}
 
-  it("refuses an implementation that states no hook, as plain JavaScript may write it", async () => {
-    // @ts-expect-error Every implementation states who may call.
-    expect(() => Action.implement(Hello, hello)).toThrow(missing);
-    // @ts-expect-error `undefined` is not a hook.
-    expect(() => Action.implement(Hello, hello, undefined)).toThrow(missing);
-    // @ts-expect-error Nor is anything else but a function or an Effect building one.
-    expect(() => Action.implement(Hello, hello, "allowAll")).toThrow(missing);
+  it.effect("refuses an implementation that states no hook, as plain JavaScript may write it", () =>
+    Effect.gen(function* () {
+      // @ts-expect-error Every implementation states who may call.
+      expect(() => Action.implement(Hello, hello)).toThrow(missing);
+      // @ts-expect-error `undefined` is not a hook.
+      expect(() => Action.implement(Hello, hello, undefined)).toThrow(missing);
+      // @ts-expect-error Nor is anything else but a function or an Effect building one.
+      expect(() => Action.implement(Hello, hello, "allowAll")).toThrow(missing);
 
-    // Left out, a share's hook is its source's; given, it is checked as `implement`'s.
-    const app = Action.implement(Hello, hello, Action.allowAll);
+      // Left out, a share's hook is its source's; given, it is checked as `implement`'s.
+      const app = Action.implement(Hello, hello, Action.allowAll);
 
-    expect(Action.share(Hello, app).actions).toEqual([Hello]);
-    // @ts-expect-error Not a hook.
-    expect(() => Action.share(Hello, app, null)).toThrow(missing);
-    // @ts-expect-error Given, `undefined` is not a hook either.
-    expect(() => Action.share(Hello, app, undefined)).toThrow(missing);
+      expect(Action.share(Hello, app).actions).toEqual([Hello]);
+      // @ts-expect-error Not a hook.
+      expect(() => Action.share(Hello, app, null)).toThrow(missing);
+      // @ts-expect-error Given, `undefined` is not a hook either.
+      expect(() => Action.share(Hello, app, undefined)).toThrow(missing);
 
-    // A built hook is checked when its layer builds, as a builder's record is.
-    // @ts-expect-error An Effect building something other than a hook.
-    const unbuilt = Action.implement(Hello, hello, Effect.succeed("allowAll"));
+      // A built hook is checked when its layer builds, as a builder's record is.
+      // @ts-expect-error An Effect building something other than a hook.
+      const unbuilt = Action.implement(Hello, hello, Effect.succeed("allowAll"));
 
-    expect(await defectOf(ActionToolkit.make(unbuilt).layer)).toMatchObject({ message: missing });
-  });
+      expect(yield* defectOf(Layer.build(ActionToolkit.make(unbuilt).layer))).toMatchObject({
+        message: missing,
+      });
+    }),
+  );
 
   it("builds a hook once per layer graph for every surface, and runs what it built per call", async () => {
     const called: Array<string> = [];
@@ -367,9 +365,10 @@ describe("hooks", () => {
     expect(await (await as("alice")(post("/api/hello"))).json()).toBe("hi");
     expect((await as("bob")(post("/api/hello"))).status).toBe(403);
     expect(
-      await against(
-        as("alice"),
-        Effect.flatMap(Testing.mcpClient([Hello]), (mcp) => mcp.hello()),
+      await Effect.runPromise(
+        Effect.flatMap(Testing.mcpClient([Hello]), (mcp) => mcp.hello()).pipe(
+          Effect.provide(Testing.layer(as("alice"))),
+        ),
       ),
     ).toBe("hi");
     expect({ built, called }).toEqual({
@@ -475,54 +474,54 @@ describe("builder acquisition", () => {
 
   type Fixture = ReturnType<typeof fixture>;
 
-  it.each([
+  it.effect.each([
     {
       surface: "ActionHttp.layer",
-      build: async ({ pair, solo }: Fixture) => {
-        const handler = handlerOf(
-          ActionHttp.layer(ActionHttp.make([One, Two, Solo]), [solo, pair]),
-        );
+      build: ({ pair, solo }: Fixture) =>
+        Effect.promise(async () => {
+          const handler = handlerOf(
+            ActionHttp.layer(ActionHttp.make([One, Two, Solo]), [solo, pair]),
+          );
 
-        expect(await (await handler(post("/api/one"))).json()).toBe(1);
-      },
+          expect(await (await handler(post("/api/one"))).json()).toBe(1);
+        }),
     },
     {
       surface: "ActionMcp.layerHttp",
-      build: async ({ pair, solo }: Fixture) => {
-        const handler = handlerOf(
-          ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
-        );
+      build: ({ pair, solo }: Fixture) =>
+        Effect.gen(function* () {
+          const handler = handlerOf(
+            ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
+          );
 
-        expect(
-          await against(
-            handler,
-            Effect.flatMap(Testing.mcpClient([One]), (mcp) => mcp.one()),
-          ),
-        ).toBe(1);
-      },
+          expect(
+            yield* Effect.flatMap(Testing.mcpClient([One]), (mcp) => mcp.one()).pipe(
+              Effect.provide(Testing.layer(handler)),
+            ),
+          ).toBe(1);
+        }),
     },
     {
       surface: "ActionMcp.runStdio",
       // A test host with nothing on stdin closes at once, so the server ends.
       build: ({ pair, solo }: Fixture) =>
-        Effect.runPromise(
-          ActionMcp.runStdio([solo, pair], { name: "test", version: "0" }).pipe(
-            Effect.provide(Stdio.layerTest({})),
-          ),
+        ActionMcp.runStdio([solo, pair], { name: "test", version: "0" }).pipe(
+          Effect.provide(Stdio.layerTest({})),
         ),
     },
     {
       surface: "ActionToolkit",
-      build: ({ pair, solo }: Fixture) =>
-        Effect.runPromise(Effect.scoped(Layer.build(ActionToolkit.make([solo, pair]).layer))),
+      build: ({ pair, solo }: Fixture) => Layer.build(ActionToolkit.make([solo, pair]).layer),
     },
-  ])("$surface runs the builder of each implementation it serves once", async ({ build }) => {
-    const fixed = fixture();
+  ])("$surface runs the builder of each implementation it serves once", ({ build }) =>
+    Effect.gen(function* () {
+      const fixed = fixture();
 
-    await build(fixed);
+      yield* build(fixed);
 
-    expect(fixed.built.sort()).toEqual(["pair", "solo"]);
-  });
+      expect(fixed.built.sort()).toEqual(["pair", "solo"]);
+    }),
+  );
 
   it("fails runStdio with a builder's failure, rather than ending as the host closing", async () => {
     class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
@@ -978,7 +977,7 @@ describe("documented security", () => {
           yield* client.whoAmI({ payload: {} }),
           yield* client.invoice({ payload: { amount: 3 } }),
         ];
-      }).pipe(Effect.provide(clientLayer(handler))),
+      }).pipe(Effect.provide(Testing.layer(handler))),
     );
 
     expect(answers).toEqual(["ada@acme", 6]);
@@ -1011,9 +1010,10 @@ describe("MCP registration", () => {
     ]);
 
     expect(
-      await against(
-        handler,
-        Effect.flatMap(Testing.mcpClient([WhoAmI]), (mcp) => mcp.whoAmI()),
+      await Effect.runPromise(
+        Effect.flatMap(Testing.mcpClient([WhoAmI]), (mcp) => mcp.whoAmI()).pipe(
+          Effect.provide(Testing.layer(handler)),
+        ),
       ),
     ).toBe("ada@acme");
   });

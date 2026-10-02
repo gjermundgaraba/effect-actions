@@ -131,29 +131,31 @@ describe("runStdio's invalid arguments", () => {
   );
 
   // A tool error from 2025-11-25 on, and a protocol error before.
-  it.each([
+  it.effect.each([
     ["2026-07-28", "result"],
     ["2025-11-25", "result"],
     ["2025-06-18", "error"],
     ["2025-03-26", "error"],
     ["2024-11-05", "error"],
-  ] as const)("refuses them to a %s host as its %s", async (revision, kind) => {
-    const [line] = await converse(
-      ActionMcp.runStdio(ping, { name: "ping", version: "0" }),
-      revision,
-      [{ method: "tools/call", params: { name: "ping", arguments: { invented: true } } }],
-    );
+  ] as const)("refuses them to a %s host as its %s", ([revision, kind]) =>
+    Effect.gen(function* () {
+      const [line] = yield* converse(
+        ActionMcp.runStdio(ping, { name: "ping", version: "0" }),
+        revision,
+        [{ method: "tools/call", params: { name: "ping", arguments: { invented: true } } }],
+      );
 
-    const answered = Schema.decodeUnknownSync(Answered)(line);
+      const answered = Schema.decodeUnknownSync(Answered)(line);
 
-    const message =
-      "result" in answered
-        ? answered.result.content.map(({ text }) => text).join("\n")
-        : answered.error.message;
+      const message =
+        "result" in answered
+          ? answered.result.content.map(({ text }) => text).join("\n")
+          : answered.error.message;
 
-    expect(Object.keys(answered)).toEqual([kind]);
-    expect(message).toContain("Invalid parameters for tool 'ping'");
-  });
+      expect(Object.keys(answered)).toEqual([kind]);
+      expect(message).toContain("Invalid parameters for tool 'ping'");
+    }),
+  );
 });
 
 describe("runStdio's successes", () => {
@@ -209,48 +211,50 @@ describe("runStdio's successes", () => {
   // The tools whose success a revision structures, and lists an output schema for: every
   // one on 2026-07-28; only the object on the 2025 revisions with structured content; none
   // before them.
-  it.each([
+  it.effect.each([
     ["2026-07-28", ["ready", "count", "greeting", "list", "reset"]],
     ["2025-11-25", ["ready"]],
     ["2025-06-18", ["ready"]],
     ["2025-03-26", []],
     ["2024-11-05", []],
-  ] as const)("sends each success as it is to a %s host", async (revision, structured) => {
-    const [listed, ...called] = await converse(
-      ActionMcp.runStdio(shapes, { name: "shapes", version: "0" }),
-      revision,
-      [
-        { method: "tools/list" },
-        ...successes.map(([name]) => ({ method: "tools/call", params: { name, arguments: {} } })),
-      ],
-    );
+  ] as const)("sends each success as it is to a %s host", ([revision, structured]) =>
+    Effect.gen(function* () {
+      const [listed, ...called] = yield* converse(
+        ActionMcp.runStdio(shapes, { name: "shapes", version: "0" }),
+        revision,
+        [
+          { method: "tools/list" },
+          ...successes.map(([name]) => ({ method: "tools/call", params: { name, arguments: {} } })),
+        ],
+      );
 
-    const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
-    const listing = tools.filter(({ outputSchema }) => outputSchema !== undefined);
+      const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+      const listing = tools.filter(({ outputSchema }) => outputSchema !== undefined);
 
-    expect(listing.map(({ name }) => name)).toEqual(structured);
+      expect(listing.map(({ name }) => name)).toEqual(structured);
 
-    for (const [index, [name, success]] of successes.entries()) {
-      const { result } = Schema.decodeUnknownSync(Called)(called[index]);
-      const isStructured = structured.some((tool) => tool === name);
+      for (const [index, [name, success]] of successes.entries()) {
+        const { result } = Schema.decodeUnknownSync(Called)(called[index]);
+        const isStructured = structured.some((tool) => tool === name);
 
-      expect(result.isError).toBe(false);
+        expect(result.isError).toBe(false);
 
-      if (isStructured) {
-        expect(result.structuredContent).toEqual(success);
-      } else {
-        expect(result).not.toHaveProperty("structuredContent");
+        if (isStructured) {
+          expect(result.structuredContent).toEqual(success);
+        } else {
+          expect(result).not.toHaveProperty("structuredContent");
+        }
+
+        // The text is the success's JSON; a string sent as text alone is the string itself.
+        expect(result.content).toEqual([
+          {
+            type: "text",
+            text: !isStructured && Predicate.isString(success) ? success : JSON.stringify(success),
+          },
+        ]);
       }
-
-      // The text is the success's JSON; a string sent as text alone is the string itself.
-      expect(result.content).toEqual([
-        {
-          type: "text",
-          text: !isStructured && Predicate.isString(success) ? success : JSON.stringify(success),
-        },
-      ]);
-    }
-  });
+    }),
+  );
 
   it("adds serverInfo and resultType to a 2026-07-28 result, over stdio as over HTTP, and neither before", async () => {
     // The server information, as given; `instructions` is not part of it.
@@ -265,8 +269,8 @@ describe("runStdio's successes", () => {
     const options = { ...serverInfo, instructions: "Call any tool." };
     const stdio = ActionMcp.runStdio(shapes, options);
     const call = [{ method: "tools/call", params: { name: "ready", arguments: {} } }];
-    const [current = ""] = await converse(stdio, "2026-07-28", call);
-    const [earlier = ""] = await converse(stdio, "2025-11-25", call);
+    const [current = ""] = await Effect.runPromise(converse(stdio, "2026-07-28", call));
+    const [earlier = ""] = await Effect.runPromise(converse(stdio, "2025-11-25", call));
     const http = await serve(ActionMcp.layerHttp(shapes, options)).handler(rawToolCall("ready"));
 
     const own = {
@@ -426,23 +430,25 @@ describe("runStdio's input schemas", () => {
   // Closed, with the definitions its references name, from 2025-06-18 on. Effect's adapters for
   // the revisions before list only the root's type, properties and required: open, and with a
   // reference that resolves nowhere.
-  it.each([
+  it.effect.each([
     ["2026-07-28", closed],
     ["2025-11-25", closed],
     ["2025-06-18", closed],
     ["2025-03-26", open],
     ["2024-11-05", open],
-  ] as const)("lists the input schema to a %s host", async (revision, schema) => {
-    const [listed] = await converse(
-      ActionMcp.runStdio(put, { name: "items", version: "0" }),
-      revision,
-      [{ method: "tools/list" }],
-    );
+  ] as const)("lists the input schema to a %s host", ([revision, schema]) =>
+    Effect.gen(function* () {
+      const [listed] = yield* converse(
+        ActionMcp.runStdio(put, { name: "items", version: "0" }),
+        revision,
+        [{ method: "tools/list" }],
+      );
 
-    const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+      const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
 
-    expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([schema]);
-  });
+      expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([schema]);
+    }),
+  );
 });
 
 /** A host console recording every call, by method. */

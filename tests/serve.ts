@@ -1,6 +1,6 @@
 import { onTestFinished } from "@effect/vitest";
-import { Effect, Exit, Layer, Predicate, Result } from "effect";
-import { type HttpClient, HttpRouter, HttpServer } from "effect/http";
+import { Effect, Layer } from "effect";
+import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
 import type { AnyHttp, Client } from "../src/internal/client.js";
 import type { Served } from "../src/internal/memory.js";
@@ -51,41 +51,10 @@ export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
   return { handler: (request) => web.handler(request), dispose: web.dispose };
 }
 
-const handlerOf = (target: Server | Handler): Handler =>
-  Predicate.isFunction(target) ? target : target.handler;
-
-/** `ActionHttp.client` for the binding, calling `server` in memory. */
+/** `ActionHttp.client` for the binding, calling `handler` in memory. */
 export const httpClient = <const H extends AnyHttp>(
   http: H,
-  server: Server | Handler,
+  handler: Handler,
   options?: Parameters<typeof ActionHttp.client>[1],
 ): Effect.Effect<Client<H>> =>
-  ActionHttp.client(http, options).pipe(Effect.provide(clientLayer(server)));
-
-/** The native `HttpClient`, answered by `server` in memory: `Testing.layer` of its handler. */
-export const clientLayer = (server: Server | Handler): Layer.Layer<HttpClient.HttpClient> =>
-  Testing.layer(handlerOf(server));
-
-/** `effect`, such as a `Testing.mcpClient`, on an `HttpClient` answered by `server` in memory. */
-export const against = <A, E>(
-  server: Server | Handler,
-  effect: Effect.Effect<A, E, HttpClient.HttpClient>,
-): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(clientLayer(server))));
-
-/**
- * What building `layer`'s routes dies with, such as an MCP endpoint's: a defect, not a typed
- * failure, so no tag catches it. An error's message, or the defect itself.
- */
-export const buildDefect = async (layer: Layer.Layer<never, unknown, HttpRouter.HttpRouter>) => {
-  const exit = await Effect.runPromiseExit(
-    Effect.scoped(
-      Layer.build(
-        layer.pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices)),
-      ),
-    ),
-  );
-
-  const defect = Result.getOrUndefined(Exit.findDefect(exit));
-
-  return defect instanceof Error ? defect.message : defect;
-};
+  ActionHttp.client(http, options).pipe(Effect.provide(Testing.layer(handler)));

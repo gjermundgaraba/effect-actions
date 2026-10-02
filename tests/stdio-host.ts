@@ -35,14 +35,14 @@ const initialize = (revision: string): HostRequest => ({
 /**
  * Run `server`, a program on `Stdio` such as `ActionMcp.runStdio`, for a host speaking
  * `revision`, and send it `requests`, as ids 1 on: before 2026-07-28, after the session's
- * `initialize`. Resolves with the line the server answered each request with, once it has
+ * `initialize`. Succeeds with the line the server answered each request with, once it has
  * ended, which it does when stdin closes after the last answer.
  */
 export const converse = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
   revision: string,
   requests: ReadonlyArray<HostRequest>,
-): Promise<ReadonlyArray<string>> =>
+): Effect.Effect<ReadonlyArray<string>, E> =>
   Effect.gen(function* () {
     const stateless = revision === httpProtocol.protocolVersion;
 
@@ -105,4 +105,4 @@ export const converse = <E>(
       pending.filter(({ id }) => id > 0),
       ({ reply }) => Deferred.await(reply),
     );
-  }).pipe(Effect.runPromise);
+  });

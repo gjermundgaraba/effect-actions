@@ -9,9 +9,10 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { causeOf, cliServices, logged } from "./cli-services.js";
+import * as Testing from "../src/Testing.js";
+import { causeOf, exec, logged } from "./cli-services.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { clientLayer, httpClient, serve } from "./serve.js";
+import { httpClient, serve } from "./serve.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
 
@@ -383,31 +384,27 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it("runs over the CLI, so a local caller supplies its services too", async () => {
-    const { app, hooks, handlers } = make();
+  it.effect("runs over the CLI, so a local caller supplies its services too", () =>
+    Effect.gen(function* () {
+      const { app, hooks, handlers } = make();
 
-    const run = <Name extends string, Input, Services, E>(
-      command: Command.Command<Name, Input, Services, E, Scopes>,
-      argv: ReadonlyArray<string>,
-    ) =>
-      Effect.runPromise(
-        logged(Command.runWith(command, { version: "0" })([...argv]).pipe(Effect.exit)).pipe(
-          Effect.provide(cliServices),
-          Effect.provide(readOnly),
-        ),
-      );
+      const run = <Name extends string, Input, Services, E>(
+        command: Command.Command<Name, Input, Services, E, Scopes>,
+        argv: ReadonlyArray<string>,
+      ) => logged(Effect.exit(exec(command, argv))).pipe(Effect.provide(readOnly));
 
-    const [read, output] = await run(ActionCli.command(app, Read), []);
-    expect(read._tag).toBe("Success");
-    expect(output).toEqual(['"read ok"']);
+      const [read, output] = yield* run(ActionCli.command(app, Read), []);
+      expect(read._tag).toBe("Success");
+      expect(output).toEqual(['"read ok"']);
 
-    const [refused] = await run(ActionCli.command(app, Write), ["--value", "x"]);
+      const [refused] = yield* run(ActionCli.command(app, Write), ["--value", "x"]);
 
-    expect(causeOf(refused)).toBeInstanceOf(Action.Forbidden);
+      expect(causeOf(refused)).toBeInstanceOf(Action.Forbidden);
 
-    expect(hooks).toEqual(["read", "write"]);
-    expect(handlers).toEqual(["read"]);
-  });
+      expect(hooks).toEqual(["read", "write"]);
+      expect(handlers).toEqual(["read"]);
+    }),
+  );
 
   it("is bound per implementation, so implementations without it skip it", async () => {
     const hooks: Array<string> = [];
@@ -454,7 +451,7 @@ describe("the pre-handler hook", () => {
 
       const refused = await Effect.runPromise(
         Effect.flip(
-          Effect.flatMap(httpClient(Http, web), (client) => client.write({ value: "x" })),
+          Effect.flatMap(httpClient(Http, web.handler), (client) => client.write({ value: "x" })),
         ),
       );
 
@@ -462,119 +459,119 @@ describe("the pre-handler hook", () => {
     },
   );
 
-  it("fails with an error every action it guards declares, answered as the action's own everywhere", async () => {
-    class RateLimited extends Schema.TaggedError<RateLimited>()(
-      "RateLimited",
-      { retryAfter: Schema.Finite },
-      { httpApiStatus: 429 },
-    ) {}
-
-    // One array, spread into each action the hook guards, so every surface declares it for each.
-    const limits = [RateLimited] as const;
-
-    const Ping = Action.make("ping", {
-      description: "Ping",
-      access: "read",
-      success: Schema.String,
-      errors: [...limits],
-    });
-
-    const Poke = Action.make("poke", {
-      description: "Poke",
-      access: "write",
-      input: { value: Schema.String },
-      success: Schema.String,
-      errors: [...limits],
-    });
-
-    const limited = new RateLimited({ retryAfter: 30 });
-
-    // Writes are over their quota; reads are not.
-    const app = Action.implement(
-      [Ping, Poke],
-      { ping: () => Effect.succeed("pong"), poke: ({ value }) => Effect.succeed(value) },
-      (action) => (action.access === "write" ? Effect.fail(limited) : Effect.void),
-    );
-
-    const Http = ActionHttp.make([Ping, Poke]);
-
-    // Under authentication, which answers a step-up refusal itself: a limit is no refusal.
-    const web = serve(
-      Layer.mergeAll(
-        ActionHttp.layer(Http, app),
-        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-      ).pipe(Layer.provide(anyone)),
-    );
-
-    expect((await web.handler(post("/api/ping"))).status).toBe(200);
-
-    // HTTP answers with the error's own status and JSON, and no challenge.
-    const answered = await web.handler(post("/api/poke", { value: "x" }));
-    expect(answered.status).toBe(429);
-    expect(answered.headers.get("www-authenticate")).toBeNull();
-    expect(await answered.json()).toEqual(Schema.encodeSync(RateLimited)(limited));
-
-    // MCP answers with a tool result the model reads, not an HTTP status.
-    const result = await web.handler(rawToolCall("poke", { value: "x" }));
-    expect(result.status).toBe(200);
-    expect(await result.json()).toMatchObject({
-      result: {
-        isError: true,
-        content: [{ type: "text", text: '{"_tag":"RateLimited","retryAfter":30}' }],
-      },
-    });
-
-    // A remote command decodes it, as `ActionHttp.client` does: the cause of its `UserError`.
-    const [remote] = await Effect.runPromise(
-      logged(
-        Command.runWith(ActionCli.command(Http, Poke), { version: "0" })(["--value", "x"]).pipe(
-          Effect.exit,
-        ),
-      ).pipe(Effect.provide(clientLayer(web)), Effect.provide(cliServices)),
-    );
-
-    expect(causeOf(remote)).toEqual(limited);
-    expect(causeOf(remote)).toBeInstanceOf(RateLimited);
-
-    // `Action.client` fails with it, as an HTTP client decodes it.
-    const called = await Effect.runPromise(
-      Effect.scoped(
-        Effect.flatMap(Action.client(app), (client) => Effect.flip(client.poke({ value: "x" }))),
-      ),
-    );
-
-    expect(called).toEqual(limited);
-    expect(called).toBeInstanceOf(RateLimited);
-
-    // The Toolkit returns it as the tool's failure.
-    const tools = ActionToolkit.make(app);
-
-    const returned = await Effect.runPromise(
+  it.effect(
+    "fails with an error every action it guards declares, answered as the action's own everywhere",
+    () =>
       Effect.gen(function* () {
-        const toolkit = yield* tools.toolkit;
+        class RateLimited extends Schema.TaggedError<RateLimited>()(
+          "RateLimited",
+          { retryAfter: Schema.Finite },
+          { httpApiStatus: 429 },
+        ) {}
 
-        return yield* Stream.runCollect(yield* toolkit.handle("poke", { value: "x" }));
-      }).pipe(Effect.provide(tools.layer)),
-    );
+        // One array, spread into each action the hook guards, so every surface declares it for each.
+        const limits = [RateLimited] as const;
 
-    expect(returned).toMatchObject([
-      {
-        isFailure: true,
-        result: limited,
-        encodedResult: Schema.encodeSync(RateLimited)(limited),
-      },
-    ]);
-    expect(returned[0]?.result).toBeInstanceOf(RateLimited);
+        const Ping = Action.make("ping", {
+          description: "Ping",
+          access: "read",
+          success: Schema.String,
+          errors: [...limits],
+        });
 
-    // A local command fails with Effect CLI's `UserError`, whose cause it is.
-    const [local] = await Effect.runPromise(
-      logged(
-        Command.runWith(ActionCli.command(app, Poke), { version: "0" })(["--value", "x"]).pipe(
-          Effect.exit,
-        ),
-      ).pipe(Effect.provide(cliServices)),
-    );
+        const Poke = Action.make("poke", {
+          description: "Poke",
+          access: "write",
+          input: { value: Schema.String },
+          success: Schema.String,
+          errors: [...limits],
+        });
 
-    expect(causeOf(local)).toBeInstanceOf(RateLimited);
-  });
+        const limited = new RateLimited({ retryAfter: 30 });
+
+        // Writes are over their quota; reads are not.
+        const app = Action.implement(
+          [Ping, Poke],
+          { ping: () => Effect.succeed("pong"), poke: ({ value }) => Effect.succeed(value) },
+          (action) => (action.access === "write" ? Effect.fail(limited) : Effect.void),
+        );
+
+        const Http = ActionHttp.make([Ping, Poke]);
+
+        // Under authentication, which answers a step-up refusal itself: a limit is no refusal.
+        const web = serve(
+          Layer.mergeAll(
+            ActionHttp.layer(Http, app),
+            ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+          ).pipe(Layer.provide(anyone)),
+        );
+
+        expect((yield* Effect.promise(() => web.handler(post("/api/ping")))).status).toBe(200);
+
+        // HTTP answers with the error's own status and JSON, and no challenge.
+        const answered = yield* Effect.promise(() =>
+          web.handler(post("/api/poke", { value: "x" })),
+        );
+
+        expect(answered.status).toBe(429);
+        expect(answered.headers.get("www-authenticate")).toBeNull();
+        expect(yield* Effect.promise(() => answered.json())).toEqual(
+          Schema.encodeSync(RateLimited)(limited),
+        );
+
+        // MCP answers with a tool result the model reads, not an HTTP status.
+        const result = yield* Effect.promise(() =>
+          web.handler(rawToolCall("poke", { value: "x" })),
+        );
+
+        expect(result.status).toBe(200);
+        expect(yield* Effect.promise(() => result.json())).toMatchObject({
+          result: {
+            isError: true,
+            content: [{ type: "text", text: '{"_tag":"RateLimited","retryAfter":30}' }],
+          },
+        });
+
+        // A remote command decodes it, as `ActionHttp.client` does: the cause of its `UserError`.
+        const remote = yield* Effect.exit(
+          exec(ActionCli.command(Http, Poke), ["--value", "x"]).pipe(
+            Effect.provide(Testing.layer(web.handler)),
+          ),
+        );
+
+        expect(causeOf(remote)).toEqual(limited);
+        expect(causeOf(remote)).toBeInstanceOf(RateLimited);
+
+        // `Action.client` fails with it, as an HTTP client decodes it.
+        const called = yield* Effect.flatMap(Action.client(app), (client) =>
+          Effect.flip(client.poke({ value: "x" })),
+        );
+
+        expect(called).toEqual(limited);
+        expect(called).toBeInstanceOf(RateLimited);
+
+        // The Toolkit returns it as the tool's failure.
+        const tools = ActionToolkit.make(app);
+
+        const returned = yield* Effect.gen(function* () {
+          const toolkit = yield* tools.toolkit;
+
+          return yield* Stream.runCollect(yield* toolkit.handle("poke", { value: "x" }));
+        }).pipe(Effect.provide(tools.layer));
+
+        expect(returned).toMatchObject([
+          {
+            isFailure: true,
+            result: limited,
+            encodedResult: Schema.encodeSync(RateLimited)(limited),
+          },
+        ]);
+        expect(returned[0]?.result).toBeInstanceOf(RateLimited);
+
+        // A local command fails with Effect CLI's `UserError`, whose cause it is.
+        const local = yield* Effect.exit(exec(ActionCli.command(app, Poke), ["--value", "x"]));
+
+        expect(causeOf(local)).toBeInstanceOf(RateLimited);
+      }),
+  );
 });
