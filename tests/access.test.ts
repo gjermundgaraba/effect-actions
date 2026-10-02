@@ -349,40 +349,40 @@ describe("the pre-handler hook", () => {
     expect(text).toContain(String.raw`\"_tag\":\"Forbidden\"`);
   });
 
-  it("runs over the native Toolkit", async () => {
-    const { app, hooks, handlers } = make();
+  it.effect("runs over the native Toolkit", () =>
+    Effect.gen(function* () {
+      const { app, hooks, handlers } = make();
 
-    const binding = ActionToolkit.make(app);
+      const binding = ActionToolkit.make(app);
 
-    const call = (name: "read" | "write") =>
-      Effect.runPromise(
+      const call = (name: "read" | "write") =>
         Effect.gen(function* () {
           const tools = yield* binding.toolkit;
 
           return yield* Stream.runCollect(
             yield* tools.handle(name, name === "write" ? { value: "x" } : {}),
           );
-        }).pipe(Effect.provide(binding.layer), Effect.provide(readOnly)),
-      );
+        }).pipe(Effect.provide(binding.layer), Effect.provide(readOnly));
 
-    expect(await call("read")).toMatchObject([{ isFailure: false, result: "read ok" }]);
+      expect(yield* call("read")).toMatchObject([{ isFailure: false, result: "read ok" }]);
 
-    const refused = await call("write");
-    const refusal = new Action.Forbidden({ message: "Requires write." });
+      const refused = yield* call("write");
+      const refusal = new Action.Forbidden({ message: "Requires write." });
 
-    // The refusal itself, encoded like a declared error.
-    expect(refused).toMatchObject([
-      {
-        isFailure: true,
-        result: refusal,
-        encodedResult: Schema.encodeSync(Action.Forbidden)(refusal),
-      },
-    ]);
-    expect(refused[0]?.result).toBeInstanceOf(Action.Forbidden);
+      // The refusal itself, encoded like a declared error.
+      expect(refused).toMatchObject([
+        {
+          isFailure: true,
+          result: refusal,
+          encodedResult: Schema.encodeSync(Action.Forbidden)(refusal),
+        },
+      ]);
+      expect(refused[0]?.result).toBeInstanceOf(Action.Forbidden);
 
-    expect(hooks).toEqual(["read", "write"]);
-    expect(handlers).toEqual(["read"]);
-  });
+      expect(hooks).toEqual(["read", "write"]);
+      expect(handlers).toEqual(["read"]);
+    }),
+  );
 
   it.effect("runs over the CLI, so a local caller supplies its services too", () =>
     Effect.gen(function* () {
