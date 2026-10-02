@@ -45,6 +45,7 @@ type Method<A extends Action.Any, E extends BindingError> = Call<
 export interface AnyHttp {
   readonly actions: ReadonlyArray<Action.Any>;
   readonly errors: ReadonlyArray<BindingError>;
+  readonly prefix: `/${string}`;
   readonly api: HttpApi.Constraint;
 }
 

@@ -571,10 +571,10 @@ describe("HTTP bindings", () => {
   });
 
   it.each([
-    { prefix: undefined, route: "/api/whoAmI" },
-    { prefix: "/", route: "/whoAmI" },
-    { prefix: "/v1/", route: "/v1/whoAmI" },
-    { prefix: "/v1/internal", route: "/v1/internal/whoAmI" },
+    { prefix: undefined, mounted: "/api", route: "/api/whoAmI" },
+    { prefix: "/", mounted: "/", route: "/whoAmI" },
+    { prefix: "/v1/", mounted: "/v1", route: "/v1/whoAmI" },
+    { prefix: "/v1/internal", mounted: "/v1/internal", route: "/v1/internal/whoAmI" },
   ] as const)("mounts routes and the document under prefix $prefix", async (mount) => {
     const binding = ActionHttp.make(
       [WhoAmI],
@@ -585,6 +585,7 @@ describe("HTTP bindings", () => {
       ActionHttp.layer(binding, whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
     );
 
+    expect(binding.prefix).toBe(mount.mounted);
     expect(await (await handler(post(mount.route))).json()).toBe("ada@acme");
     expect(Object.keys(OpenApi.fromApi(binding.api).paths)).toEqual([mount.route]);
   });

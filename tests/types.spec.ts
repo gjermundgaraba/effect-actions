@@ -543,8 +543,8 @@ export const builtInErrorTypes = Effect.gen(function* () {
 
   const bound = ActionHttp.make([Echo]);
 
-  // A binding is plain data: its actions, its errors and the native API.
-  const fields: Equal<keyof typeof bound, "actions" | "errors" | "api"> = true;
+  // A binding is plain data: its actions, its errors, its mount path and the native API.
+  const fields: Equal<keyof typeof bound, "actions" | "errors" | "prefix" | "api"> = true;
   void fields;
 
   // Any handler may fail with a built-in error, which every surface declares.

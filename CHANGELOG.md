@@ -456,6 +456,8 @@ Each area below lists what is renamed or removed, then what changes without a re
   });
   ```
 
+- A binding states where it mounts, `Http.prefix`: `/api` by default, `/` at the root, without
+  a trailing slash.
 - The package declares `"sideEffects": false`, so a bundler may drop what a browser client
   does not use. Keep contracts and bindings in modules that import no server code
   ([setup.md](docs/setup.md#browser)).

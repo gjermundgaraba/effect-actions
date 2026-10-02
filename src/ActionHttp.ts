@@ -152,6 +152,8 @@ export interface Binding<Actions extends ReadonlyArray<Action.Any>, E extends Er
   readonly actions: Actions;
   /** The errors every endpoint declares besides its action's own. */
   readonly errors: E;
+  /** Where its routes mount: `/api` by default, `/` at the root, without a trailing slash. */
+  readonly prefix: `/${string}`;
   readonly api: Api<Actions, E>;
 }
 
@@ -167,6 +169,12 @@ const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> 
 /** An absolute route from path segments. */
 const route = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
 
+/**
+ * The name of a binding's one native group: its OpenAPI tag, by which the native `addHttpApi`
+ * keys groups. It is the mount path, `/` at the root, which no segment contains.
+ */
+const groupName = (mount: ReadonlyArray<string>): string => mount.join("/") || "/";
+
 /** A native API of one top-level group of `endpoints`. */
 const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>) => {
   const empty = HttpApiGroup.make(group, { topLevel: true });
@@ -175,36 +183,6 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
   return HttpApi.make("actions")
     .annotate(HttpApi.ParseOptions, { errors: "all" })
     .add(first === undefined ? empty : empty.add(first, ...rest));
-};
-
-/** A binding's API as the native helpers read it. */
-const native = (api: HttpApi.Constraint): HttpApi.Top =>
-  // SAFETY: every binding API is a native `HttpApi` of one group; only its invariant
-  // group map is erased.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary.
-  api as HttpApi.Top;
-
-/** The binding's one native group, as `make` built it. */
-const groupOf = (api: HttpApi.Constraint): HttpApiGroup.Top => {
-  const [group] = Object.values(native(api).groups);
-
-  if (group === undefined) throw new Error("Not an HTTP binding made by ActionHttp.make");
-
-  return group;
-};
-
-/** Whether `path` is an absolute route, as `HttpApiEndpoint` takes one. */
-const isRoute = (path: string): path is `/${string}` => path.startsWith("/");
-
-/** Where the binding's group mounts `action`. */
-const pathOf = (group: HttpApiGroup.Top, action: Action.Any): `/${string}` => {
-  const path = group.endpoints[action.name]?.path;
-
-  if (path === undefined || !isRoute(path)) {
-    throw new Error("Not an HTTP binding made by ActionHttp.make");
-  }
-
-  return path;
 };
 
 /**
@@ -323,14 +301,12 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
       : endpoint.middleware(security);
   });
 
-  // The one native group is top level, so its client methods are not nested. Its name
-  // is its OpenAPI tag, and the native `addHttpApi` method keys groups by it, so it is
-  // the mount path, `/` at the root, which no segment contains: two bindings on different
-  // prefixes combine side by side, when no action name, and so no operation ID, repeats
-  // across them.
-  const api = apiOf(mount.join("/") || "/", endpoints);
+  // The one native group is top level, so its client methods are not nested. Named after
+  // the mount path, two bindings on different prefixes combine side by side, when no action
+  // name, and so no operation ID, repeats across them.
+  const api = apiOf(groupName(mount), endpoints);
 
-  return { actions, errors, api };
+  return { actions, errors, prefix: route(mount), api };
 }
 
 /**
@@ -416,17 +392,17 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
     ]);
   }
 
-  const group = groupOf(http.api);
-  const name = group.identifier;
+  const mount = mountSegments(http.prefix);
+  const name = groupName(mount);
 
-  // Each endpoint anew, at the binding's path: the binding's own carry what documents its
+  // Each endpoint anew, at the binding's paths: the binding's own carry what documents its
   // security, which enforces nothing. The server refuses undeclared payload fields; a client,
   // on the binding's own API, drops them when it encodes, as TypeScript lets a wider value
   // through.
   const api = apiOf(
     name,
     actions.map((action) =>
-      endpointOf(action, pathOf(group, action), http.errors).middleware(SchemaErrors),
+      endpointOf(action, route([...mount, action.name]), http.errors).middleware(SchemaErrors),
     ),
   ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
 

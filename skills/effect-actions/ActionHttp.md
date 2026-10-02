@@ -15,6 +15,7 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `make(actions, options?)`      | Bind a list of actions; returns a `Binding`.                                                 |
 | `Http.actions`                 | The exact bound actions.                                                                     |
 | `Http.errors`                  | The errors every endpoint declares besides its action's own.                                 |
+| `Http.prefix`                  | Where the routes mount: `/api` by default, `/` at the root, without a trailing slash.        |
 | `Http.api`                     | Native Effect `HttpApi` for clients and OpenAPI.                                             |
 | `layer(Http, implementations)` | Mount the routes of the bound actions these implementations hold, behind their hooks.        |
 | `client(Http, options?)`       | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
