@@ -23,6 +23,14 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior: the 415, CORS preflight, the generic MCP defect text.
 - Every file in `examples/` is listed in `examples/README.md`, which `tests/docs.test.ts` checks; `docs/README.md` links there rather than keeping a list of its own.
 
+## Tests
+
+- Tests import Vitest through `@effect/vitest`, which re-exports it. `vitest` is pinned to the version Vite+ depends on (`vp toolchain vitest`), so both run one Vitest.
+- A test running an Effect is `it.effect`, which provides a scope, a `TestClock` and a `TestConsole`: it acquires its server in its scope and reads what a command printed from the console. A test whose handler or codec waits on real time is `it.live`.
+- A test stays `async` where what it drives is a Promise: a web handler's `fetch`, the official MCP client, a subprocess. So does a test of an Effect run under no layer, since `it.effect` provides its services as one, and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead.
+- Each test provides the layers whose state or builds it reads, such as `Users.layerMemory`, rather than sharing one through `it.layer`.
+- Type pins in `*.spec.ts` use `expectTypeOf`; a compile failure is an expression under `@ts-expect-error`.
+
 ## Design notes
 
 - HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. Only `layer`'s own API carries it: a client encodes with Effect's default, dropping a field the input does not declare, as TypeScript lets a wider value through. This reverses 0.8.0, whose typed clients failed with `SchemaError` before sending such a call, one the compiler had accepted. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
@@ -145,7 +153,8 @@ code exactly as unsafe.
 - **Reflection** (`no-reflect-apply`, `no-reflect-get`): prefer typed access; keep a concrete
   exception only where receiver or getter semantics matter.
 - **Module mocking** (`no-module-mocking`): replace dependencies through real seams. The rule
-  recognizes `vi` from `vite-plus/test`, this repository's test import, as well as `vitest`.
+  recognizes `vi` from `@effect/vitest`, this repository's test import, and `vite-plus/test`, as
+  well as `vitest`.
 - **Compile-failure fixtures** (`tests/types.spec.ts`): an expression under `@ts-expect-error`
   yields an error type, which the `no-unsafe-*` rules see as `any`. Those lines carry a directive
   stating that nothing runs; the fixture's purpose is the compile failure itself.
@@ -165,7 +174,7 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
   with an accepted and a still-rejected case for each correction.
 - `tools/oxlint/tests/configuration.test.ts` runs `vp lint` once on fixtures inside the
   repository, so the probes go through the registered plugin and the effective configuration:
-  unknown parameters named `cause`, module mocking via `vite-plus/test`, `typeof` inside and
+  unknown parameters named `cause`, module mocking via `@effect/vitest`, `typeof` inside and
   outside predicates, literal evidence in destructured bindings, a justified
   `no-unknown-parameters` directive and its unused counterpart, and maintained JavaScript.
 

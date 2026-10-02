@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { OpenApi } from "effect/http-api";

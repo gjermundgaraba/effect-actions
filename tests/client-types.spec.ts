@@ -1,6 +1,6 @@
 // Compile-only assertions on `Action.client`, included by `vp check`.
 import { Effect, Schema, type Scope } from "effect";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import { actors, CurrentActor } from "../examples/authorization.js";

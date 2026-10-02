@@ -1,4 +1,4 @@
-import { onTestFinished } from "vite-plus/test";
+import { onTestFinished } from "@effect/vitest";
 import { Effect, Exit, Layer, Predicate, Result } from "effect";
 import { type HttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";

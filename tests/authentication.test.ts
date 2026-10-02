@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, expectTypeOf, it, onTestFinished } from "@effect/vitest";
 import {
   Client,
   ClientCredentialsProvider,

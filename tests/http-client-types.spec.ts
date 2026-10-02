@@ -1,7 +1,7 @@
 // Compile-only client assertions, included by `vp check`.
 import { type DateTime, Effect, Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as Testing from "../src/Testing.js";

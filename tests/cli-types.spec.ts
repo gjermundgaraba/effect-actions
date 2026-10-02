@@ -2,7 +2,7 @@
 import { Context, Effect, Schema } from "effect";
 import { HttpClient, type HttpClientError } from "effect/http";
 import { Command } from "effect/cli";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";

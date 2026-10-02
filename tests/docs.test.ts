@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { routes } from "../examples/quickstart-server.js";

@@ -1,7 +1,7 @@
 // Compile-only assertions over large implementations, included by `vp check`: a file of
 // their own, checked beside the others rather than after them.
 import { Effect, Schema } from "effect";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 
 /** The limit every action of the large fixtures declares. */

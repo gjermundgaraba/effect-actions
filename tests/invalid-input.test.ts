@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema, SchemaTransformation, Stream } from "effect";
 import { McpSchema } from "effect/ai";
 import { Command } from "effect/cli";

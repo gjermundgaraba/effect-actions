@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
 import { Effect, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";

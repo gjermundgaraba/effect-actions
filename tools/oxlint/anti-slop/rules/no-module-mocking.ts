@@ -6,8 +6,8 @@ import type { ESTree, SourceCode } from "vite-plus/lint/plugins";
 
 const moduleMockMethods = new Set(["doMock", "mock", "unstable_mockModule"]);
 
-/** Modules exporting Vitest's `vi`; Vite+ re-exports it from `vite-plus/test`. */
-const vitestSources = new Set(["vitest", "vite-plus/test"]);
+/** Modules exporting Vitest's `vi`; Vite+ re-exports it from `vite-plus/test`, Effect from `@effect/vitest`. */
+const vitestSources = new Set(["vitest", "vite-plus/test", "@effect/vitest"]);
 
 function importedName(node: ESTree.Node): string | null {
   if (node.type !== "ImportSpecifier") return null;

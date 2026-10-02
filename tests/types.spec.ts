@@ -10,7 +10,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { HttpApiSecurity } from "effect/http-api";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";

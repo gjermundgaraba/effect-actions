@@ -1,4 +1,4 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Effect, flow, Schema } from "effect";
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { expect, it } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
 
 /** The modules `entry` imports, itself included, following relative imports. */
 const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> => {

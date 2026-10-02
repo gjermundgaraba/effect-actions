@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
-import { afterAll, beforeAll, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, expect, it } from "@effect/vitest";
 
 // Probes of the effective configuration in vite.config.ts, through one `vp lint` run itself.
 // Each case pairs an accepted fixture with one the toolchain must still reject, so a
@@ -38,10 +38,10 @@ const cases = [
     findings: ["cause.ts: anti-slop(no-unknown-parameters)"],
   },
   {
-    name: "recognizes module mocking through the Vite+ test import",
+    name: "recognizes module mocking through the repository's test import",
     files: {
-      "spy.test.ts": "import { vi } from 'vite-plus/test';\n\nexport const spy = vi.fn();\n",
-      "mock.test.ts": "import { vi } from 'vite-plus/test';\n\nvi.mock('./users.js');\n",
+      "spy.test.ts": "import { vi } from '@effect/vitest';\n\nexport const spy = vi.fn();\n",
+      "mock.test.ts": "import { vi } from '@effect/vitest';\n\nvi.mock('./users.js');\n",
     },
     findings: ["mock.test.ts: anti-slop(no-module-mocking)"],
   },

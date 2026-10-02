@@ -1,7 +1,7 @@
 // Compile-only native Toolkit assertions, included by `vp check`.
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { Tool } from "effect/ai";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 

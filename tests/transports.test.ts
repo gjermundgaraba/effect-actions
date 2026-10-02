@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { type Client, InsufficientScopeError } from "@modelcontextprotocol/client";
 import { Context, Effect, Layer, Schema } from "effect";
 import { McpSchema } from "effect/ai";

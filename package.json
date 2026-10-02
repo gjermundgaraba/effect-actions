@@ -43,13 +43,15 @@
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0",
+    "@effect/vitest": "4.0.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.6.2",
     "effect": "4.0.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "5.0.1"
   },
   "peerDependencies": {
     "effect": "^4.0.0"

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Logger, Option, References, Schema, Stream, Tracer } from "effect";
 import { NodeHttpServer } from "@effect/platform-node";
 import { HttpRouter } from "effect/http";

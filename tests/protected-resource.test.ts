@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import * as Action from "../src/Action.js";

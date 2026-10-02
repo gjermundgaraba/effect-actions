@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "@effect/vitest";
 import {
   Cause,
   Console,

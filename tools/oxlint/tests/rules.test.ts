@@ -1,4 +1,4 @@
-import { describe, it } from "vite-plus/test";
+import { describe, it } from "@effect/vitest";
 import { RuleTester } from "vite-plus/lint/plugins-dev";
 import { noKnownValueWideningRule } from "../anti-slop/rules/no-known-value-widening.ts";
 import { noModuleMockingRule } from "../anti-slop/rules/no-module-mocking.ts";
@@ -35,10 +35,15 @@ tester.run("no-unknown-parameters", noUnknownParametersRule, {
 
 tester.run("no-module-mocking", noModuleMockingRule, {
   valid: [
-    "import { vi } from 'vite-plus/test'; vi.fn();",
+    "import { vi } from '@effect/vitest'; vi.fn();",
     "import { vi } from 'vite-plus/test'; vi.spyOn(console, 'log');",
   ],
   invalid: [
+    {
+      name: "the Effect re-export of vi is recognized",
+      code: "import { vi } from '@effect/vitest'; vi.mock('./users.js');",
+      errors: [{ messageId: "moduleMock" }],
+    },
     {
       name: "the Vite+ re-export of vi is recognized",
       code: "import { vi } from 'vite-plus/test'; vi.mock('./users.js');",

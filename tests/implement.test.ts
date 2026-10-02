@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, Layer, Result, Schema, Stdio } from "effect";
 import { Command } from "effect/cli";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";

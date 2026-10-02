@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Console, Deferred, Effect, Predicate, Schema, Sink, Stdio, Stream } from "effect";
 import { TestClock } from "effect/testing";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { statelessRequest } from "../src/internal/mcp.js";

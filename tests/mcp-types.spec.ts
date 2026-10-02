@@ -2,7 +2,7 @@
 // `runStdio` and `Testing.mcpClient` take. Input is checked when a server is made
 // (registration.test.ts), so the types take any implementations, a helper's own included.
 import { Effect, Schema } from "effect";
-import { expectTypeOf } from "vite-plus/test";
+import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Testing from "../src/Testing.js";

@@ -27,9 +27,9 @@ Preserve these when updating from upstream.
 
 - `rules/no-unknown-parameters.ts`: removed the name-based exemption for parameters named
   `cause`. A name grants no evidence; thrown-value boundaries use an explained directive.
-- `rules/no-module-mocking.ts`: `vi` imported from `vite-plus/test` (this repository's test
-  import, Vite+'s re-export of Vitest) is recognized alongside `vitest`. Without this the
-  rule was enabled but never matched a real test file here.
+- `rules/no-module-mocking.ts`: `vi` imported from `@effect/vitest` (this repository's test
+  import, Effect's re-export of Vitest) or `vite-plus/test` (Vite+'s) is recognized alongside
+  `vitest`. Without this the rule was enabled but never matched a real test file here.
 - `rules/no-known-value-widening.ts`: a destructured `const` binding now resolves to the
   property or element it selects from a literal initializer (`selectFromPattern`), instead of
   inheriting the whole initializer object's evidence. A spread that could supply or override

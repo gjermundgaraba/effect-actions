@@ -32,6 +32,7 @@ Library: `@gjermundgaraba/effect-actions`. Define Effect action contracts once a
 onto HTTP, MCP, native Toolkits, and CLIs. Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md).
 Use [lint policy](CONTRIBUTING.md#lint-policy) for lint decisions,
 [documentation rules](CONTRIBUTING.md#documentation-rules) when changing docs,
+[test rules](CONTRIBUTING.md#tests) when writing tests,
 [design notes](CONTRIBUTING.md#design-notes) when revisiting recorded decisions,
 and [release instructions](CONTRIBUTING.md#release) when releasing.
 
