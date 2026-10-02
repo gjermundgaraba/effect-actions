@@ -528,7 +528,7 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
   }),
 );
 
-it.live("decodes --input only when the command runs, with an asynchronous schema too", () =>
+it.effect("decodes --input only when the command runs, with an asynchronous schema too", () =>
   Effect.gen(function* () {
     let decoded = 0;
 
@@ -538,12 +538,9 @@ it.live("decodes --input only when the command runs, with an asynchronous schema
       input: Schema.Record(Schema.String, Schema.Finite).pipe(
         Schema.decode({
           decode: SchemaGetter.transformEffect((scores: Readonly<Record<string, number>>) =>
-            Effect.delay(
-              Effect.as(
-                Effect.sync(() => void decoded++),
-                scores,
-              ),
-              "1 millis",
+            Effect.promise(() => Promise.resolve()).pipe(
+              Effect.andThen(Effect.sync(() => void decoded++)),
+              Effect.as(scores),
             ),
           ),
           encode: SchemaGetter.passthrough(),
@@ -1491,7 +1488,7 @@ it.effect("gives a subcommand of an aggregate the options command takes, by acti
   }),
 );
 
-it.live(
+it.effect(
   "fails with Effect CLI's UserError, which the runner prints on stderr as the JSON HTTP sends",
   () =>
     Effect.gen(function* () {
@@ -1518,7 +1515,11 @@ it.live(
             Schema.String,
             SchemaTransformation.transformEffect({
               decode: (reason) => Effect.succeed(reason),
-              encode: (reason) => Effect.as(Effect.sleep("1 millis"), reason),
+              encode: (reason) =>
+                Effect.as(
+                  Effect.promise(() => Promise.resolve()),
+                  reason,
+                ),
             }),
           ),
         ),

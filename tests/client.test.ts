@@ -263,7 +263,7 @@ describe("Action.client", () => {
     }),
   );
 
-  it.live(
+  it.effect(
     "gives the caller a failure as a remote one decodes it, from where the handler failed",
     () =>
       Effect.gen(function* () {
@@ -281,7 +281,11 @@ describe("Action.client", () => {
               Schema.String,
               SchemaTransformation.transformEffect({
                 decode: (reason) => Effect.succeed(reason),
-                encode: (reason) => Effect.as(Effect.sleep("1 millis"), reason),
+                encode: (reason) =>
+                  Effect.as(
+                    Effect.promise(() => Promise.resolve()),
+                    reason,
+                  ),
               }),
             ),
           ),

@@ -159,12 +159,15 @@ describe("mcpClient", () => {
     }),
   );
 
-  it.live("decodes a declared error whose schema decodes asynchronously", () =>
+  it.effect("decodes a declared error whose schema decodes asynchronously", () =>
     Effect.gen(function* () {
       const Later = Schema.String.pipe(
         Schema.decodeTo(Schema.String, {
           decode: SchemaGetter.transformEffect((reason: string) =>
-            Effect.as(Effect.sleep(1), reason),
+            Effect.as(
+              Effect.promise(() => Promise.resolve()),
+              reason,
+            ),
           ),
           encode: SchemaGetter.passthrough(),
         }),
