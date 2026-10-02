@@ -293,101 +293,105 @@ describe("runStdio's successes", () => {
   });
 });
 
-it("leaves a line of stdin that is not JSON unanswered, and answers the request after it", async () => {
-  const Ping = Action.make("ping", {
-    description: "Answer pong",
-    access: "read",
-    success: Schema.String,
-  });
+it.effect(
+  "leaves a line of stdin that is not JSON unanswered, and answers the request after it",
+  () =>
+    Effect.gen(function* () {
+      const Ping = Action.make("ping", {
+        description: "Answer pong",
+        access: "read",
+        success: Schema.String,
+      });
 
-  const ping = Action.implement(Ping, () => Effect.succeed("pong"), Action.allowAll);
+      const ping = Action.implement(Ping, () => Effect.succeed("pong"), Action.allowAll);
 
-  const request = {
-    ...statelessRequest("tools/call", { name: "ping", arguments: {} }).body,
-    id: 1,
-  };
+      const request = {
+        ...statelessRequest("tools/call", { name: "ping", arguments: {} }).body,
+        id: 1,
+      };
 
-  const written = await Effect.gen(function* () {
-    const answered = yield* Deferred.make<void>();
-    const decoder = new TextDecoder();
-    let output = "";
+      const answered = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
+      let output = "";
 
-    // Two lines no JSON parser reads, then a request; stdin closes once a line is answered.
-    const stdin = Stream.make("not json\n", "{\n", `${JSON.stringify(request)}\n`).pipe(
-      Stream.concat(Stream.fromEffectDrain(Deferred.await(answered))),
-      Stream.encodeText,
-    );
-
-    const stdout = () =>
-      Sink.forEach((chunk: string | Uint8Array) =>
-        Effect.suspend(() => {
-          output += Predicate.isString(chunk) ? chunk : decoder.decode(chunk, { stream: true });
-
-          return output.endsWith("\n") ? Deferred.succeed(answered, undefined) : Effect.void;
-        }),
+      // Two lines no JSON parser reads, then a request; stdin closes once a line is answered.
+      const stdin = Stream.make("not json\n", "{\n", `${JSON.stringify(request)}\n`).pipe(
+        Stream.concat(Stream.fromEffectDrain(Deferred.await(answered))),
+        Stream.encodeText,
       );
 
-    yield* ActionMcp.runStdio(ping, { name: "ping", version: "0" }).pipe(
-      Effect.provide(Stdio.layerTest({ stdin, stdout })),
-    );
+      const stdout = () =>
+        Sink.forEach((chunk: string | Uint8Array) =>
+          Effect.suspend(() => {
+            output += Predicate.isString(chunk) ? chunk : decoder.decode(chunk, { stream: true });
 
-    return output;
-  }).pipe(Effect.runPromise);
+            return output.endsWith("\n") ? Deferred.succeed(answered, undefined) : Effect.void;
+          }),
+        );
 
-  // One line, the request's answer: nothing answers the lines before it.
-  const lines = written.trimEnd().split("\n");
-
-  expect(lines).toHaveLength(1);
-  expect(JSON.parse(lines[0] ?? "")).toMatchObject({
-    id: 1,
-    result: { structuredContent: "pong" },
-  });
-});
-
-it("interrupts a call when stdin closes, and ends once its uninterruptible work completes", async () => {
-  const Commit = Action.make("commit", { description: "Commit a write", access: "write" });
-  const call = { ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body, id: 1 };
-
-  const [committed, written] = await Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const decoder = new TextDecoder();
-    let committed = false;
-    let written = "";
-
-    // Still running when stdin closes, which it does once the call has started.
-    const commit = Action.implement(
-      Commit,
-      () =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.sleep(100)),
-          Effect.andThen(Effect.sync(() => (committed = true))),
-          Effect.uninterruptible,
-        ),
-      Action.allowAll,
-    );
-
-    const stdin = Stream.make(`${JSON.stringify(call)}\n`).pipe(
-      Stream.concat(Stream.fromEffectDrain(Deferred.await(started))),
-      Stream.encodeText,
-    );
-
-    const stdout = () =>
-      Sink.forEach((chunk: string | Uint8Array) =>
-        Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
+      yield* ActionMcp.runStdio(ping, { name: "ping", version: "0" }).pipe(
+        Effect.provide(Stdio.layerTest({ stdin, stdout })),
       );
 
-    yield* ActionMcp.runStdio(commit, { name: "commit", version: "0" }).pipe(
-      Effect.provide(Stdio.layerTest({ stdin, stdout })),
-    );
+      // One line, the request's answer: nothing answers the lines before it.
+      const lines = output.trimEnd().split("\n");
 
-    // As `runStdio` ends.
-    return [committed, written] as const;
-  }).pipe(Effect.runPromise);
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0] ?? "")).toMatchObject({
+        id: 1,
+        result: { structuredContent: "pong" },
+      });
+    }),
+);
 
-  expect(committed).toBe(true);
-  // No result for the call: no answer, or a JSON-RPC error.
-  expect(written).not.toContain('"result"');
-});
+it.live(
+  "interrupts a call when stdin closes, and ends once its uninterruptible work completes",
+  () =>
+    Effect.gen(function* () {
+      const Commit = Action.make("commit", { description: "Commit a write", access: "write" });
+
+      const call = {
+        ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
+        id: 1,
+      };
+
+      const started = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
+      let committed = false;
+      let written = "";
+
+      // Still running when stdin closes, which it does once the call has started.
+      const commit = Action.implement(
+        Commit,
+        () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.sleep(100)),
+            Effect.andThen(Effect.sync(() => (committed = true))),
+            Effect.uninterruptible,
+          ),
+        Action.allowAll,
+      );
+
+      const stdin = Stream.make(`${JSON.stringify(call)}\n`).pipe(
+        Stream.concat(Stream.fromEffectDrain(Deferred.await(started))),
+        Stream.encodeText,
+      );
+
+      const stdout = () =>
+        Sink.forEach((chunk: string | Uint8Array) =>
+          Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
+        );
+
+      yield* ActionMcp.runStdio(commit, { name: "commit", version: "0" }).pipe(
+        Effect.provide(Stdio.layerTest({ stdin, stdout })),
+      );
+
+      // As `runStdio` ends.
+      expect(committed).toBe(true);
+      // No result for the call: no answer, or a JSON-RPC error.
+      expect(written).not.toContain('"result"');
+    }),
+);
 
 describe("runStdio's input schemas", () => {
   const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
@@ -487,57 +491,56 @@ const recording = () => {
 };
 
 describe("runStdio's console", () => {
-  it("writes every method through the host console's error", async () => {
-    const host = recording();
-    const Status = Action.make("status", { description: "Report", access: "read" });
+  it.effect("writes every method through the host console's error", () =>
+    Effect.gen(function* () {
+      const host = recording();
+      const Status = Action.make("status", { description: "Report", access: "read" });
 
-    // The builder runs when the server starts; a host with nothing on stdin then closes it.
-    const status = Action.implement(
-      Status,
-      Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void),
-      Action.allowAll,
-    );
+      // The builder runs when the server starts; a host with nothing on stdin then closes it.
+      const status = Action.implement(
+        Status,
+        Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void),
+        Action.allowAll,
+      );
 
-    await Effect.runPromise(
-      ActionMcp.runStdio(status, { name: "console", version: "0" }).pipe(
+      yield* ActionMcp.runStdio(status, { name: "console", version: "0" }).pipe(
         Effect.provideService(Console.Console, host.console),
         Effect.provide(Stdio.layerTest({})),
-        Effect.provide(TestClock.layer()),
-      ),
-    );
+      );
 
-    expect(host.calls.filter(({ method }) => method !== "error")).toEqual([]);
-    expect(host.calls.map(({ args }) => format(...args))).toEqual([
-      "log",
-      "info",
-      "debug",
-      "warn",
-      "error",
-      "dirxml",
-      "{ dir: true }",
-      "[ { table: 1 } ]",
-      "Assertion failed: assert failed",
-      "Trace: trace",
-      // From the caller's frame on, as Node's own trace.
-      expect.stringMatching(/^ {4}at .*console-methods\.ts/),
-      "default: 1",
-      "default: 2",
-      "calls: 1",
-      "calls: 1",
-      // A timer started again restarts; one ended prints nothing more.
-      "timer %s: 250ms logged",
-      "timer %s: 1500ms",
-      // A group prints its label, and indents nothing.
-      "group",
-      "inside",
-      "collapsed",
-      "deeper\nsecond line",
-      "{ nested: true }",
-      "'dir\\nvalue'",
-      // Effect's unlabeled group, which Node would label `undefined`.
-      "unlabeled",
-      "scoped: 250ms",
-      "after",
-    ]);
-  });
+      expect(host.calls.filter(({ method }) => method !== "error")).toEqual([]);
+      expect(host.calls.map(({ args }) => format(...args))).toEqual([
+        "log",
+        "info",
+        "debug",
+        "warn",
+        "error",
+        "dirxml",
+        "{ dir: true }",
+        "[ { table: 1 } ]",
+        "Assertion failed: assert failed",
+        "Trace: trace",
+        // From the caller's frame on, as Node's own trace.
+        expect.stringMatching(/^ {4}at .*console-methods\.ts/),
+        "default: 1",
+        "default: 2",
+        "calls: 1",
+        "calls: 1",
+        // A timer started again restarts; one ended prints nothing more.
+        "timer %s: 250ms logged",
+        "timer %s: 1500ms",
+        // A group prints its label, and indents nothing.
+        "group",
+        "inside",
+        "collapsed",
+        "deeper\nsecond line",
+        "{ nested: true }",
+        "'dir\\nvalue'",
+        // Effect's unlabeled group, which Node would label `undefined`.
+        "unlabeled",
+        "scoped: 250ms",
+        "after",
+      ]);
+    }),
+  );
 });
