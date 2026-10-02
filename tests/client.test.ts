@@ -431,6 +431,7 @@ describe("Action.client", () => {
 
       const trusted = Action.share([Write], source, Action.allowAll);
 
+      // Both acquired in the test's layer graph, where the builder runs once.
       const guarded = yield* Action.client(source);
       const admin = yield* Action.client(trusted);
       const refused = yield* Effect.flip(guarded.write());
@@ -440,7 +441,7 @@ describe("Action.client", () => {
       expect(written).toBeUndefined();
       expect(Object.keys(admin)).toEqual(["write"]);
       expect(built).toBe(1);
-    }).pipe(Effect.provide(Layer.empty)),
+    }),
   );
 
   it("builds once when acquired, for every call, into the graph it is acquired in", async () => {
