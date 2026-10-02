@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
+  Cause,
   Context,
   Effect,
   ErrorReporter,
@@ -395,7 +396,13 @@ describe("what the routes were built with", () => {
     "reports a handler's defect to their error reporters, once, over %s",
     async (transport) => {
       const reported: Array<string> = [];
-      const reporter = ErrorReporter.make(({ error }) => void reported.push(error.message));
+
+      // Written out, it records every report: one `ErrorReporter.make` builds skips a cause
+      // or a defect it has seen, so a second report would go unnoticed.
+      const reporter: ErrorReporter.ErrorReporter = {
+        [ErrorReporter.TypeId]: ErrorReporter.TypeId,
+        report: ({ cause }) => void reported.push(Cause.pretty(cause)),
+      };
 
       const boom = Action.implement(Boom, () => Effect.die(new Error("boom")), Action.allowAll);
 
@@ -408,7 +415,7 @@ describe("what the routes were built with", () => {
 
       await web.handler(transport === "HTTP" ? post("/api/boom") : rawToolCall("boom"));
 
-      expect(reported).toEqual(["boom"]);
+      expect(reported).toEqual([expect.stringContaining("Error: boom")]);
     },
   );
 
