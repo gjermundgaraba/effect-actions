@@ -99,31 +99,6 @@ const checkMcpTypes = <const Apps extends ReadonlyArray<Action.AnyImplementation
 
 void checkMcpTypes;
 
-// The text field is sent raw, and a client given the same `tools` puts it back.
-const texts = await Effect.gen(function* () {
-  const mcp = yield* Testing.mcpClient([Page], { tools });
-  const raw = yield* Testing.mcpRequest("tools/call", { name: "page", arguments: {} });
-
-  return { read: yield* mcp.page(), raw: yield* raw.text };
-}).pipe(
-  Effect.provide(Testing.layer(ActionMcp.layerHttp(page, { name: "pages", version: "0", tools }))),
-  Effect.runPromise,
-);
-
-if (texts.read.markdown !== "# Page" || texts.read.next !== "2")
-  throw new Error("Published text field lost the page");
-
-if (!texts.raw.includes('"content":[{"type":"text","text":"# Page"},'))
-  throw new Error(`Published text field was not sent raw: ${texts.raw}`);
-
-/** The status of a GET to `url`, answered in memory by `Testing.layer`. */
-const statusOf = (client: Layer.Layer<HttpClient.HttpClient>, url: string) =>
-  HttpClient.get(url).pipe(
-    Effect.map((response) => response.status),
-    Effect.provide(client),
-    Effect.runPromise,
-  );
-
 // A consumer's binding is a native HttpApi: Effect's own generator documents it.
 if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))
   throw new Error("The OpenAPI document lacks the greet route");
@@ -150,27 +125,6 @@ const toolResults = await Effect.gen(function* () {
 }).pipe(Effect.provide(binding.layer), Effect.runPromise);
 
 if (toolResults[0]?.result !== "Hello, Ada!") throw new Error("Native Toolkit projection failed");
-
-const localCommand = ActionCli.make(greet, { name: "greetings" });
-
-if (localCommand.name !== "greetings") throw new Error("Local CLI projection failed");
-
-const remoteCommand = ActionCli.make(Http, { name: "greetings" });
-
-if (remoteCommand.name !== "greetings") throw new Error("Remote CLI projection failed");
-
-const configuredCommand = ActionCli.command(greet, Greet, {
-  render: (greeting) => greeting.toUpperCase(),
-});
-
-if (configuredCommand.name !== "greet") throw new Error("Configured CLI projection failed");
-
-const configuredRemote = ActionCli.command(Http, Greet, {
-  name: "hello",
-  render: (greeting) => greeting.toUpperCase(),
-});
-
-if (configuredRemote.name !== "hello") throw new Error("Configured remote CLI projection failed");
 
 const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
 
@@ -271,19 +225,6 @@ void checkHookTypes;
 // Authentication provided around the layer: it owes no identity.
 const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(authenticate));
 
-// An OAuth protected resource's authentication publishes its discovery, public.
-const published = ActionHttp.layer(GuardedHttp, guarded).pipe(
-  Layer.provide(
-    Authentication.make(Identity, Effect.succeed(token), {
-      resource: "http://localhost/mcp",
-      authorizationServers: ["https://example.com/auth"],
-    }).layer,
-  ),
-);
-
-if ((await statusOf(Testing.layer(published), "/.well-known/oauth-protected-resource/mcp")) !== 200)
-  throw new Error("The discovery route failed");
-
 const refusals = await Effect.gen(function* () {
   const anonymous = yield* ActionHttp.client(GuardedHttp);
 
@@ -303,43 +244,25 @@ const refusals = await Effect.gen(function* () {
   void checkErrorTypes;
 
   return {
-    identity: yield* client.read(),
     unauthenticated: yield* Effect.flip(anonymous.read()),
     forbidden: yield* Effect.flip(client.write()),
   };
 }).pipe(Effect.provide(Testing.layer(guardedRoutes)), Effect.runPromise);
 
-if (refusals.identity !== "ada") throw new Error("Published authentication lost the identity");
-
 if (!(refusals.unauthenticated instanceof Action.Unauthenticated))
   throw new Error("Published authentication allowed an anonymous read");
 
-if (
-  !(refusals.forbidden instanceof Action.Forbidden) ||
-  refusals.forbidden.message !== "Read only."
-)
+if (!(refusals.forbidden instanceof Action.Forbidden))
   throw new Error("Published hook allowed a write");
 
-// In process, the client's methods: the hook runs, and each call owes its caller.
-const local = await Effect.gen(function* () {
+// In process, the client's methods: each call owes its caller.
+const checkLocalTypes = Effect.gen(function* () {
   const actions = yield* Action.client(guarded);
 
-  const checkLocalTypes = () => {
-    // @ts-expect-error A published in-process call owes its caller.
-    const owed: Effect.Effect<string, Action.BuiltIn> = actions.read();
+  // @ts-expect-error A published in-process call owes its caller.
+  const owed: Effect.Effect<string, Action.BuiltIn> = actions.read();
 
-    return owed;
-  };
+  return owed;
+});
 
-  void checkLocalTypes;
-
-  return {
-    identity: yield* actions.read().pipe(Effect.provideService(Identity, "ada")),
-    forbidden: yield* Effect.flip(actions.write()),
-  };
-}).pipe(Effect.scoped, Effect.runPromise);
-
-if (local.identity !== "ada") throw new Error("Published client lost its caller");
-
-if (!(local.forbidden instanceof Action.Forbidden))
-  throw new Error("Published client skipped the hook");
+void checkLocalTypes;

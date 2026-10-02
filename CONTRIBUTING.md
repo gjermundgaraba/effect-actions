@@ -163,11 +163,11 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
 
 - `tools/oxlint/tests/rules.test.ts` runs the corrected rules through Oxlint's `RuleTester`,
   with an accepted and a still-rejected case for each correction.
-- `tools/oxlint/tests/configuration.test.ts` runs `vp lint` on fixtures inside the repository, so
-  the probes go through the registered plugin and the effective configuration: unknown parameters
-  named `cause`, module mocking via `vite-plus/test`, `typeof` inside and outside predicates, a
-  justified `no-unknown-parameters` directive and its unused counterpart, maintained JavaScript,
-  and the three disabled rules.
+- `tools/oxlint/tests/configuration.test.ts` runs `vp lint` once on fixtures inside the
+  repository, so the probes go through the registered plugin and the effective configuration:
+  unknown parameters named `cause`, module mocking via `vite-plus/test`, `typeof` inside and
+  outside predicates, literal evidence in destructured bindings, a justified
+  `no-unknown-parameters` directive and its unused counterpart, and maintained JavaScript.
 
 ### History
 

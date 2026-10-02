@@ -166,15 +166,27 @@ describe("the pre-handler hook", () => {
       access: "write",
     });
 
+    const Plain = Action.make("plain", {
+      description: "Refused by its hook, naming no scope",
+      access: "write",
+    });
+
     const app = Action.implement(
-      [Hooked, Handled],
-      { hooked: () => Effect.void, handled: () => Effect.fail(needsWrite) },
-      (action) => (action === Hooked ? Effect.fail(needsWrite) : Effect.void),
+      [Hooked, Handled, Plain],
+      {
+        hooked: () => Effect.void,
+        handled: () => Effect.fail(needsWrite),
+        plain: () => Effect.void,
+      },
+      (action) =>
+        action === Handled
+          ? Effect.void
+          : Effect.fail(action === Hooked ? needsWrite : new Action.Forbidden()),
     );
 
     const web = serve(
       Layer.mergeAll(
-        ActionHttp.layer(ActionHttp.make([Hooked, Handled]), app),
+        ActionHttp.layer(ActionHttp.make([Hooked, Handled, Plain]), app),
         ActionMcp.layerHttp(app, { name: "test", version: "0" }),
       ).pipe(Layer.provide(anyone)),
     );
@@ -196,6 +208,11 @@ describe("the pre-handler hook", () => {
       expect(await refused.json()).toEqual(Schema.encodeSync(Action.Forbidden)(needsWrite));
     }
 
+    // A refusal naming no scope has no challenge: re-authorizing would not help.
+    const plain = await web.handler(post("/api/plain"));
+    expect(plain.status).toBe(403);
+    expect(plain.headers.get("www-authenticate")).toBeNull();
+
     // Unauthenticated is a 401 over MCP too: a client authenticates on it.
     const { app: guarded } = make();
 
@@ -215,7 +232,15 @@ describe("the pre-handler hook", () => {
       ),
     );
 
-    // Without authentication there is no OAuth client to step up: the model reads a result.
+    // Without authentication there is no OAuth client to step up: HTTP answers the refusal
+    // as it is, unchallenged, and over MCP the model reads a result.
+    const open = await serve(
+      ActionHttp.layer(ActionHttp.make([Hooked, Handled, Plain]), app),
+    ).handler(post("/api/hooked"));
+
+    expect(open.status).toBe(403);
+    expect(open.headers.get("www-authenticate")).toBeNull();
+
     const result = await serve(
       ActionMcp.layerHttp(guarded, { name: "test", version: "0" }).pipe(noScopes),
     ).handler(rawToolCall("read"));

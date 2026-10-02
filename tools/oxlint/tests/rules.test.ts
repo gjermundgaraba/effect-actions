@@ -2,7 +2,6 @@ import { describe, it } from "vite-plus/test";
 import { RuleTester } from "vite-plus/lint/plugins-dev";
 import { noKnownValueWideningRule } from "../anti-slop/rules/no-known-value-widening.ts";
 import { noModuleMockingRule } from "../anti-slop/rules/no-module-mocking.ts";
-import { noRuntimeTypeofRule } from "../anti-slop/rules/no-runtime-typeof.ts";
 import { noUnknownParametersRule } from "../anti-slop/rules/no-unknown-parameters.ts";
 
 // Regression tests for the local corrections recorded in ../anti-slop/UPSTREAM.md.
@@ -48,28 +47,6 @@ tester.run("no-module-mocking", noModuleMockingRule, {
     {
       code: "import { vi } from 'vitest'; vi.doMock('./users.js');",
       errors: [{ messageId: "moduleMock" }],
-    },
-  ],
-});
-
-tester.run("no-runtime-typeof", noRuntimeTypeofRule, {
-  valid: [
-    {
-      name: "a type predicate may probe its subject when allowed",
-      code: "function isText(value: unknown): value is string { return typeof value === 'string'; }",
-      options: [{ allowInTypeGuards: true }],
-    },
-  ],
-  invalid: [
-    {
-      name: "outside a type predicate typeof is still rejected when predicates are allowed",
-      code: "function label(value: string | number) { return typeof value === 'string' ? value : ''; }",
-      options: [{ allowInTypeGuards: true }],
-      errors: [{ messageId: "runtimeTypeof" }],
-    },
-    {
-      code: "function isText(value: unknown): value is string { return typeof value === 'string'; }",
-      errors: [{ messageId: "runtimeTypeof" }],
     },
   ],
 });

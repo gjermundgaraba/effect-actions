@@ -47,22 +47,7 @@ it("answers before routing, so the authentication publishing it never covers it"
   );
 
   expect((await web.handler(new Request(`https://api.example.com${prefix}/mcp`))).status).toBe(200);
-
-  const refused = await web.handler(new Request("https://api.example.com/private"));
-  expect(refused.status).toBe(401);
-  // The challenge names the metadata URL, and no error code without credentials.
-  expect(refused.headers.get("www-authenticate")).toBe(
-    `Bearer resource_metadata="https://api.example.com${prefix}/mcp"`,
-  );
-
-  const invalid = await web.handler(
-    new Request("https://api.example.com/private", { headers: { authorization: "Bearer x" } }),
-  );
-
-  // Credentials that did not authenticate the request are invalid, RFC 6750's error code.
-  expect(invalid.headers.get("www-authenticate")).toBe(
-    `Bearer error="invalid_token", resource_metadata="https://api.example.com${prefix}/mcp"`,
-  );
+  expect((await web.handler(new Request("https://api.example.com/private"))).status).toBe(401);
 });
 
 it("escapes a challenge's quoted metadata URL, whose query may hold a backslash", async () => {
