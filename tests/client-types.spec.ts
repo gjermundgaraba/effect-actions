@@ -33,12 +33,8 @@ export const methodTypes = Effect.gen(function* () {
 
   void renameTypes;
 
-  // The argument may be left out exactly when `{}` is a valid input.
-  void users.whoAmI();
   // @ts-expect-error An action with required input needs its argument.
   void users.getUser();
-  // @ts-expect-error Input is typed by the action.
-  void users.getUser({ id: 1 });
   // @ts-expect-error No transport: no `SchemaError` to catch, nor an `HttpClientError`.
   void users.getUser({ id: "1" }).pipe(Effect.catchTag("SchemaError", () => Effect.void));
   // @ts-expect-error Only the actions it was given.

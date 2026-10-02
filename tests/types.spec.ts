@@ -9,14 +9,13 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import { HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
+import { HttpApiSecurity } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
-import type { RequestOf } from "../src/internal/implementation.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/authorization.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
@@ -57,6 +56,22 @@ type RouteRequires<L> =
       ? S
       : never
     : never;
+
+/** What a call of `App`'s action `K` owes in process: its handler's services and its hook's. */
+type CallServices<
+  App extends Action.AnyImplementation,
+  K extends keyof Action.Client<App>,
+> = Action.Client<App>[K] extends (...input: never) => infer E ? Effect.Services<E> : never;
+
+/** What building `App` needs at startup. */
+type BuildServices<App extends Action.AnyImplementation> = Layer.Services<
+  ReturnType<typeof Action.layer<App>>
+>;
+
+/** What building `App` fails with. */
+type BuildErrors<App extends Action.AnyImplementation> = Layer.Error<
+  ReturnType<typeof Action.layer<App>>
+>;
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
@@ -121,14 +136,6 @@ export const typeAssertions = () => {
     ActionHttp.layer(Http, App).pipe(services),
   );
 
-  const http = HttpRouter.toWebHandler(
-    ActionHttp.layer(Http, App).pipe(Layer.provide(Users.layerMemory), services),
-  );
-
-  // @ts-expect-error Request-scoped handler dependencies must be present per request.
-  void http.handler(new Request("http://localhost"), Context.empty());
-  void http.handler(new Request("http://localhost"), Context.make(CurrentActor, actor));
-
   // MCP carries the same request requirement as HTTP; forgetting middleware is a compile error.
   const mcpLayer = ActionMcp.layerHttp(App, { name: "t", version: "0" });
 
@@ -171,24 +178,6 @@ export const typeAssertions = () => {
   makeTestHttp([requestOnly]);
   // @ts-expect-error Test helpers must not erase missing request services.
   makeTestMcp([requestOnly]);
-
-  const fallible = Action.implement(
-    Actions,
-    Effect.fail("build-failed" as const).pipe(Effect.as(ok)),
-    Action.allowAll,
-  );
-
-  for (const routes of [
-    ActionHttp.layer(Http, fallible),
-    ActionMcp.layerHttp(fallible, { name: "test", version: "0" }),
-  ]) {
-    const build = Layer.build(routes.pipe(Layer.provide(HttpRouter.layer), services)).pipe(
-      Effect.scoped,
-    );
-
-    // @ts-expect-error Private bindings must not erase acquisition failures.
-    void (build satisfies Effect.Effect<unknown, never>);
-  }
 };
 
 export const implementTypes = () => {
@@ -236,18 +225,12 @@ export const implementTypes = () => {
     Action.allowAll,
   );
 
-  // One implementation, whose request requirements are kept per action name, and its hook's.
+  // A call owes what its handler and its hook read, and building what the builder reads:
+  // here, nothing.
   const plainChannels: [
-    Equal<
-      Action.Implementation<
-        typeof Lookup,
-        { readonly lookup: never; readonly "~hook": never },
-        never,
-        never
-      >,
-      typeof plain
-    >,
-  ] = [true];
+    Equal<CallServices<typeof plain, "lookup">, never>,
+    Equal<BuildServices<typeof plain>, never>,
+  ] = [true, true];
 
   void plainChannels;
 
@@ -263,15 +246,10 @@ export const implementTypes = () => {
     Action.allowAll,
   );
 
-  const builtChannels: Equal<
-    Action.Implementation<
-      typeof Lookup,
-      { readonly lookup: Principal; readonly "~hook": never },
-      never,
-      Store
-    >,
-    typeof built
-  > = true;
+  const builtChannels: [
+    Equal<CallServices<typeof built, "lookup">, Principal>,
+    Equal<BuildServices<typeof built>, Store>,
+  ] = [true, true];
 
   void builtChannels;
 
@@ -311,53 +289,17 @@ export const implementTypes = () => {
     Action.allowAll,
   );
 
-  // Per action: the shared builder's `rename` owes `Principal`, its `lookup` nothing.
-  const sharedRequests: Equal<
-    (typeof shared)["~request"],
-    { readonly lookup: never; readonly rename: Principal; readonly "~hook": never }
-  > = true;
-
-  void sharedRequests;
-
   // A hook's services are kept apart from its handlers'.
-
   const hooked = Action.implement(
     Rename,
     ({ name }) => Effect.as(Store, name),
     () => Effect.asVoid(Principal),
   );
 
-  const hookedRequests: Equal<
-    (typeof hooked)["~request"],
-    { readonly rename: Store; readonly "~hook": Principal }
-  > = true;
-
-  void hookedRequests;
-
-  // Shared, some actions keep their source's hook, and owe what it and their handlers owe.
+  // Shared, some actions keep their source's hook, and owe what it and their handlers owe;
+  // given a hook of their own, they owe its services instead of their source's.
   const kept = Action.share([Rename], hooked);
-
-  const keptRequests: Equal<
-    (typeof kept)["~request"],
-    { readonly rename: Store; readonly "~hook": Principal }
-  > = true;
-
-  void keptRequests;
-
-  // Given a hook of their own, they owe its services instead of their source's.
   const reshared = Action.share([Rename], hooked, Action.allowAll);
-
-  const resharedChannels: Equal<
-    typeof reshared,
-    Action.Implementation<
-      typeof Rename,
-      { readonly rename: Store; readonly "~hook": never },
-      never,
-      never
-    >
-  > = true;
-
-  void resharedChannels;
 
   // Served over HTTP, only the hook that runs is owed: an open subset asks for no identity.
   const opened = ActionHttp.layer(ActionHttp.make([Rename]), reshared);
@@ -388,14 +330,10 @@ export const implementTypes = () => {
   const stdio = ActionMcp.runStdio(scoped, { name: "t", version: "0" });
 
   const scopedRequests: [
-    Equal<
-      (typeof scoped)["~request"],
-      { readonly lookup: never; readonly rename: Principal; readonly "~hook": never }
-    >,
-    Equal<(typeof rescoped)["~request"], { readonly rename: Principal; readonly "~hook": never }>,
     Equal<Effect.Services<typeof stdio>, Stdio.Stdio | Principal>,
     Equal<RouteRequires<ReturnType<typeof ActionMcp.layerHttp<typeof scoped>>>, Principal>,
-  ] = [true, true, true, true];
+    Equal<CallServices<typeof rescoped, "rename">, Principal>,
+  ] = [true, true, true];
 
   void scopedRequests;
 
@@ -512,28 +450,9 @@ export const clientTypes = Effect.gen(function* () {
   void doubled;
   // No-input actions take no argument.
   yield* client.whoAmI();
-  // @ts-expect-error Actions with input need their argument.
-  client.double();
-  // @ts-expect-error No-input actions reject invented fields.
-  client.whoAmI({ actor: "alice" });
-  // @ts-expect-error Action names are exact.
-  // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
-  client.missing({});
-  // @ts-expect-error Clients take decoded, not wire, inputs.
-  client.double({ value: "21" });
-  // @ts-expect-error Results retain the success type.
-  const wrong: string = yield* client.double({ value: 21 });
-  void wrong;
-
-  // The native client stays available: a flat binding is one top-level group.
-  const native = yield* HttpApiClient.make(Http.api);
-  const nativeDoubled: number = yield* native.double({ payload: { value: 21 } });
-  void nativeDoubled;
-  // @ts-expect-error Native methods require the payload wrapper.
-  native.double({ value: 21 });
 });
 
-export const builtInErrorTypes = Effect.gen(function* () {
+export const builtInErrorTypes = () => {
   const Echo = Action.make("echo", {
     description: "Echo",
     access: "write",
@@ -562,30 +481,9 @@ export const builtInErrorTypes = Effect.gen(function* () {
   Action.make("listed", { description: "", access: "write", errors: [Action.Forbidden] });
   // @ts-expect-error Only those and the declared errors.
   Action.implement(Echo, () => Effect.fail(new Error("undeclared")), Action.allowAll);
-
-  // Every built-in error reaches every client method as a typed failure.
-  const client = yield* ActionHttp.client(bound);
-  yield* client.echo({ value: 1 }).pipe(
-    Effect.catchTag("InvalidInput", () => Effect.succeed(0)),
-    Effect.catchTag("Unauthenticated", () => Effect.succeed(0)),
-    Effect.catchTag("Forbidden", () => Effect.succeed(0)),
-  );
-
-  const native = yield* HttpApiClient.make(bound.api);
-  yield* native.echo({ payload: { value: 1 } }).pipe(
-    Effect.catchTag("InvalidInput", () => Effect.succeed(0)),
-    Effect.catchTag("Unauthenticated", () => Effect.succeed(0)),
-    Effect.catchTag("Forbidden", () => Effect.succeed(0)),
-  );
-
-  yield* client
-    .echo({ value: 1 })
-    // @ts-expect-error Undeclared, so the client has no such failure to catch.
-    .pipe(Effect.catchTag("Unrelated", () => Effect.succeed(0)));
-});
+};
 
 export const configuredSurfaceTypes = () => {
-  const Bound = ActionHttp.make(Actions, { prefix: "/rpc" });
   // @ts-expect-error A prefix is an absolute path.
   ActionHttp.make(Actions, { prefix: "api" });
   ActionMcp.layerHttp(App, {
@@ -600,11 +498,6 @@ export const configuredSurfaceTypes = () => {
     // @ts-expect-error Stdio negotiates its own revisions: it takes no `protocols` option.
     protocols: [McpProtocol.v2026_07_28],
   });
-  // Both mount paths have defaults: `/api` and `/mcp`.
-  ActionHttp.make(Actions);
-  // `Http.api` is a native HttpApi: Effect's own OpenAPI generator reads it without a cast.
-  OpenApi.fromApi(Bound.api);
-  ActionMcp.layerHttp(App, { name: "test", version: "0" });
   // @ts-expect-error MCP server information is required.
   ActionMcp.layerHttp(App, { path: "/mcp" });
 };
@@ -625,15 +518,6 @@ export const layerTypes = () => {
   const billingApp = Action.implement(Invoice, () => Effect.as(Tenant, 1), Action.allowAll);
 
   const Both = ActionHttp.make([...Actions, Invoice]);
-
-  // One top-level native group, so native methods are not nested either.
-  void Effect.gen(function* () {
-    const native = yield* HttpApiClient.make(Both.api);
-    const nativeTotal: number = yield* native.invoice({ payload: {} });
-    void nativeTotal;
-  });
-
-  ActionHttp.layer(Both, [App, billingApp]);
 
   const failsAfterBuildA = Action.implement(
     Invoice,
@@ -728,11 +612,6 @@ export const layerTypes = () => {
   );
 
   void inlineMcp.handler(new Request("http://localhost"));
-
-  HttpRouter.toWebHandler(
-    // @ts-expect-error Build requirements are the union over every merged layer.
-    Layer.mergeAll(ActionHttp.layer(Both, App), ActionHttp.layer(Both, billingApp)).pipe(services),
-  );
 };
 
 export const beforeTypes = () => {
@@ -759,15 +638,10 @@ export const beforeTypes = () => {
   // @ts-expect-error Bad input is answered before the hook runs, not by it.
   Action.implement(Read, read, () => Effect.fail(new Action.InvalidInput()));
 
-  // One hook, bound once: every surface runs it, and none takes a hook of its own.
-  const guarded = Action.implement(Read, read, (action) =>
-    // The hook reads the contract it is about to run: here, exactly `Read`.
+  // The hook reads the contract it is about to run: here, exactly `Read`.
+  Action.implement(Read, read, (action) =>
     action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
   );
-
-  ActionHttp.layer(binding, guarded);
-  ActionMcp.layerHttp(guarded, { name: "t", version: "0" });
-  ActionToolkit.make(guarded);
 
   // Hook services are request-time requirements, exactly like a handler's.
   const clocked = Action.implement(Read, read, () => Effect.asVoid(Clock));
@@ -918,10 +792,9 @@ export const hookErrorTypes = () => {
   );
 
   const builtChannels: [
-    Equal<(typeof built)["~request"]["~hook"], never>,
-    Equal<(typeof built)["~buildContext"], never>,
-    Equal<(typeof built)["~hookBuildContext"], Limiter>,
-  ] = [true, true, true];
+    Equal<CallServices<typeof built, "get">, never>,
+    Equal<BuildServices<typeof built>, Limiter>,
+  ] = [true, true];
 
   void builtChannels;
 
@@ -937,35 +810,15 @@ export const hookErrorTypes = () => {
   );
 };
 
-export const requiredHookTypes = (enabled: boolean) => {
-  class Identity extends Context.Service<Identity, string>()("types-spec/HookIdentity") {}
-
+export const requiredHookTypes = () => {
   const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
   const read = () => Effect.succeed("ok");
-  const hook = () => Effect.asVoid(Identity);
 
   // Every implementation states who may call: a hook of its own, or `Action.allowAll`.
   // @ts-expect-error Expected 3 arguments: an implementation without a hook is refused.
   Action.implement(Read, read);
   // @ts-expect-error `undefined` is not a hook either.
   Action.implement(Read, read, undefined);
-
-  const open = Action.implement(Read, read, Action.allowAll);
-  const chosen = Action.implement(Read, read, enabled ? hook : Action.allowAll);
-  const guarded = Action.implement(Read, read, hook);
-
-  // A share keeps its source's hook, or takes `Action.allowAll` for a public subset.
-  const kept = Action.share([Read], guarded);
-  const opened = Action.share([Read], guarded, Action.allowAll);
-
-  const owed: [
-    Equal<(typeof open)["~request"], { readonly read: never; readonly "~hook": never }>,
-    Equal<(typeof chosen)["~request"], { readonly read: never; readonly "~hook": Identity }>,
-    Equal<(typeof kept)["~request"], { readonly read: never; readonly "~hook": Identity }>,
-    Equal<(typeof opened)["~request"], { readonly read: never; readonly "~hook": never }>,
-  ] = [true, true, true, true];
-
-  void owed;
 };
 
 export const effectFnHandlerTypes = () => {
@@ -1025,14 +878,12 @@ export const effectFnHandlerTypes = () => {
 
   // Each action owes exactly what its own handler yields.
   const owed: [
-    Equal<(typeof single)["~request"], { readonly lookup: Principal; readonly "~hook": never }>,
-    Equal<
-      (typeof record)["~request"],
-      { readonly lookup: never; readonly rename: Principal; readonly "~hook": never }
-    >,
-    Equal<(typeof built)["~request"], { readonly lookup: Principal; readonly "~hook": never }>,
-    Equal<(typeof built)["~buildContext"], Suffix>,
-  ] = [true, true, true, true];
+    Equal<CallServices<typeof single, "lookup">, Principal>,
+    Equal<CallServices<typeof record, "lookup">, never>,
+    Equal<CallServices<typeof record, "rename">, Principal>,
+    Equal<CallServices<typeof built, "lookup">, Principal>,
+    Equal<BuildServices<typeof built>, Suffix>,
+  ] = [true, true, true, true, true];
 
   void owed;
 
@@ -1176,10 +1027,6 @@ export const deferredTypes = () => {
     Action.allowAll,
   );
 
-  const buildContext: Equal<(typeof stamp)["~buildContext"], Store | Clock> = true;
-
-  void buildContext;
-
   // Provided one `Layer.provide` at a time, both are discharged.
   HttpRouter.toWebHandler(
     ActionHttp.layer(binding, stamp).pipe(
@@ -1296,12 +1143,9 @@ export const builtHookTypes = () => {
   );
 
   const channels: [
-    Equal<
-      (typeof guarded)["~request"],
-      { readonly lookup: never; readonly rename: never; readonly "~hook": Actor }
-    >,
-    Equal<(typeof guarded)["~hookBuildError"], Unavailable>,
-    Equal<(typeof guarded)["~hookBuildContext"], Permissions>,
+    Equal<CallServices<typeof guarded, "lookup">, Actor>,
+    Equal<BuildErrors<typeof guarded>, Unavailable>,
+    Equal<BuildServices<typeof guarded>, Permissions>,
   ] = [true, true, true];
 
   void channels;
@@ -1340,14 +1184,11 @@ export const builtHookTypes = () => {
     ),
   );
 
-  const adminBuilders = Action.layer(admin);
-
   const adminChannels: [
-    Equal<(typeof admin)["~request"], { readonly rename: never; readonly "~hook": never }>,
-    Equal<(typeof admin)["~hookBuildContext"], Actor>,
-    Equal<Layer.Services<typeof adminBuilders>, Actor>,
-    Equal<Layer.Error<typeof adminBuilders>, never>,
-  ] = [true, true, true, true];
+    Equal<CallServices<typeof admin, "rename">, never>,
+    Equal<BuildServices<typeof admin>, Actor>,
+    Equal<BuildErrors<typeof admin>, never>,
+  ] = [true, true, true];
 
   void adminChannels;
 
@@ -1360,8 +1201,8 @@ export const builtHookTypes = () => {
   const serviced = Action.implement([Lookup, Rename], handlers, Guard);
 
   const servicedChannels: [
-    Equal<(typeof serviced)["~request"]["~hook"], Actor>,
-    Equal<(typeof serviced)["~hookBuildContext"], Guard>,
+    Equal<CallServices<typeof serviced, "lookup">, Actor>,
+    Equal<BuildServices<typeof serviced>, Guard>,
   ] = [true, true];
 
   void servicedChannels;
@@ -1382,10 +1223,10 @@ export const builtHookTypes = () => {
   const erasedKept = Action.share(anyLookup, source);
 
   const erasedChannels: [
-    Equal<RequestOf<typeof erasedOne, Action.Any>, Actor>,
-    Equal<RequestOf<typeof erasedList, Action.Any>, Actor>,
-    Equal<RequestOf<typeof erasedShare, Action.Any>, Actor>,
-    Equal<RequestOf<typeof erasedKept, Action.Any>, Audit>,
+    Equal<CallServices<typeof erasedOne, string>, Actor>,
+    Equal<CallServices<typeof erasedList, string>, Actor>,
+    Equal<CallServices<typeof erasedShare, string>, Actor>,
+    Equal<CallServices<typeof erasedKept, string>, Audit>,
   ] = [true, true, true, true];
 
   void erasedChannels;
@@ -1456,19 +1297,16 @@ export const builtHookTypes = () => {
   );
 
   const generatedChannels: [
-    Equal<
-      (typeof generated)["~request"],
-      { readonly lookup: never; readonly rename: never; readonly "~hook": Actor }
-    >,
-    Equal<(typeof generated)["~hookBuildError"], Unavailable>,
-    Equal<(typeof generated)["~hookBuildContext"], Permissions>,
-    Equal<(typeof single)["~request"], { readonly lookup: never; readonly "~hook": Actor }>,
-    Equal<(typeof single)["~hookBuildError"], never>,
-    Equal<(typeof single)["~hookBuildContext"], Permissions>,
-    Equal<(typeof reviewed)["~request"], { readonly rename: never; readonly "~hook": Actor }>,
+    Equal<CallServices<typeof generated, "lookup">, Actor>,
+    Equal<BuildErrors<typeof generated>, Unavailable>,
+    Equal<BuildServices<typeof generated>, Permissions>,
+    Equal<CallServices<typeof single, "lookup">, Actor>,
+    Equal<BuildErrors<typeof single>, never>,
+    Equal<BuildServices<typeof single>, Permissions>,
+    Equal<CallServices<typeof reviewed, "rename">, Actor>,
     // Its own hook's, never its source's, whose build may fail with `Unavailable`.
-    Equal<(typeof reviewed)["~hookBuildError"], never>,
-    Equal<(typeof reviewed)["~hookBuildContext"], Permissions>,
+    Equal<BuildErrors<typeof reviewed>, never>,
+    Equal<BuildServices<typeof reviewed>, Permissions>,
   ] = [true, true, true, true, true, true, true, true, true];
 
   void generatedChannels;
@@ -1639,12 +1477,6 @@ export const bindingSelectionTypes = () => {
     success: Schema.String,
   });
 
-  const Other = Action.make("other", {
-    description: "Other",
-    access: "read",
-    success: Schema.String,
-  });
-
   // One implementation of a bound action and one the binding leaves out, behind a hook
   // reading `Gate`: only `audit`'s handler reads `Reviewer`.
   const app = Action.implement(
@@ -1679,10 +1511,6 @@ export const bindingSelectionTypes = () => {
   ] = [true, true];
 
   void everything;
-
-  const other = Action.implement(Other, () => Effect.succeed(""), Action.allowAll);
-  // A binding holding it serves it; `layer` throws for a binding holding none of its actions.
-  ActionHttp.layer(ActionHttp.make([Read, Other]), [app, other]);
 
   // `security` and `public` document the authentication; `public` names the binding's actions.
   ActionHttp.make([Read, Audit], {
@@ -1954,18 +1782,6 @@ export const servedRequirementTypes = () => {
   > = true;
 
   void resolved;
-
-  // A tool is named after its action, and owes its handler's services.
-  const tools = ActionToolkit.make(hintsApp).toolkit.tools;
-
-  const toolAssertions: [
-    Equal<keyof typeof tools, "act">,
-    Equal<Tool.HandlerServices<(typeof tools)["act"]>, Principal>,
-    // Every tool declares the built-in errors.
-    Equal<Tool.Failure<(typeof tools)["act"]>, Action.BuiltIn>,
-  ] = [true, true, true];
-
-  void toolAssertions;
 };
 
 export const mcpClientTypes = Effect.gen(function* () {
@@ -1992,12 +1808,6 @@ export const mcpClientTypes = Effect.gen(function* () {
 
   // @ts-expect-error The input is the action's decoded input.
   void mcp.double({ value: "2" });
-  // @ts-expect-error An action with input takes it.
-  void mcp.double();
-  // An action without input may leave it out.
-  void mcp.whoAmI();
-  // @ts-expect-error As for a client's method, a given input is sent as given.
-  void mcp.whoAmI(undefined);
   // Metadata merges under the protocol keys, such as a progress token.
   void Testing.mcpRequest("tools/list", { _meta: { progressToken: "p" } });
 

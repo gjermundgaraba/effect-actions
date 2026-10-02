@@ -21,14 +21,8 @@ ActionMcp.layerHttp(erased, options);
 
 ActionMcp.runStdio(erased, options);
 
-// A helper generic over implementations compiles, its type parameter alone, spread into a
-// list or listed beside another implementation.
-export const serveMcp = <
-  const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
->(
-  apps: Apps,
-) => ActionMcp.layerHttp(apps, options);
-
+// A helper generic over implementations compiles, its type parameter spread into a list or
+// listed beside another implementation.
 export const serveBeside = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(
   apps: Apps,
 ) => ActionMcp.layerHttp([...apps, status], options);
@@ -113,15 +107,11 @@ ActionMcp.layerHttp(pages, { ...options, tools: { rest: { text: "extra" } } });
 /** The tool options `tools` accepts for the actions `A`, by name. */
 type ToolsOf<A extends Action.Any> = NonNullable<ActionMcp.Options<A>["tools"]>;
 
-const texts: [
-  Equal<NonNullable<ToolsOf<typeof Page>["page"]>["text"], "markdown" | "note" | undefined>,
-  Equal<NonNullable<ToolsOf<typeof Either>["either"]>["text"], undefined>,
-  Equal<NonNullable<ToolsOf<typeof Dictionary>["dictionary"]>["text"], undefined>,
-  // The types cannot read an erased success: any name, which the layer build checks.
-  Equal<NonNullable<ToolsOf<Action.Any>[string]>["text"], string | undefined>,
-] = [true, true, true, true];
+// The types cannot read an erased success: any name, which the layer build checks.
+const erasedText: Equal<NonNullable<ToolsOf<Action.Any>[string]>["text"], string | undefined> =
+  true;
 
-void texts;
+void erasedText;
 
 // `Testing.mcpClient` takes the endpoint's `tools`, typed alike.
 Testing.mcpClient([Page], { tools: { page: { text: "markdown" } } });

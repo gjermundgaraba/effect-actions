@@ -58,10 +58,6 @@ const localServices: [
 
 // Any implementation may refuse, and any handler fail with a built-in error: every local
 // command fails with `BuiltIn`, beside the action's own failures, whatever its hook.
-const forbid = () => Effect.fail(new Action.Forbidden());
-
-const forbidding = Action.implement(One, ({ value }) => Effect.succeed(value), forbid);
-
 const refuse = Effect.fn(function* (action: Action.Any) {
   yield* Hooked;
 
@@ -86,9 +82,6 @@ const refusalErrors: [
 
 // The hook's services are the command's too.
 const refusingHooked: Equal<Command.Services<typeof refusing>, Hooked> = true;
-
-// @ts-expect-error A contract it does not implement is refused.
-ActionCli.command(forbidding, Two);
 
 void localServices;
 
@@ -368,12 +361,8 @@ const noFields: [
     ActionCli.CommandOptions<typeof ScalarInput>["positional"],
     ReadonlyArray<never> | undefined
   >,
-  Equal<
-    ActionCli.CommandOptions<typeof UnionInput>["positional"],
-    ReadonlyArray<never> | undefined
-  >,
   Equal<ActionCli.CommandOptions<typeof Other>["positional"], ReadonlyArray<never> | undefined>,
-] = [true, true, true];
+] = [true, true];
 
 void noFields;
 

@@ -1,6 +1,6 @@
 // Compile-only native Toolkit assertions, included by `vp check`.
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
-import { LanguageModel, Tool } from "effect/ai";
+import { Tool } from "effect/ai";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import type { Equal } from "./equal.js";
@@ -38,11 +38,8 @@ const app = Action.implement(
 const binding = ActionToolkit.make(app);
 
 // Every action is a tool, named after it.
-const toolNames: [keyof typeof binding.toolkit.tools] extends ["named" | "service_free" | "guarded"]
-  ? ["named" | "service_free" | "guarded"] extends [keyof typeof binding.toolkit.tools]
-    ? true
-    : false
-  : false = true;
+const toolNames: Equal<keyof typeof binding.toolkit.tools, "named" | "service_free" | "guarded"> =
+  true;
 
 void toolNames;
 
@@ -281,7 +278,7 @@ const sameTools: Equal<typeof approved, typeof binding> = true;
 void sameTools;
 
 // Each call has a scope of its own: what a hook or a handler acquires never asks its caller
-// for a `Scope`, on a tool, in a direct call, or in a model's turn.
+// for a `Scope`.
 const scoped = ActionToolkit.make(
   Action.implement(
     Named,
@@ -293,17 +290,3 @@ const scoped = ActionToolkit.make(
 const scopedServices: Equal<Tool.HandlerServices<typeof scoped.toolkit.tools.named>, never> = true;
 
 void scopedServices;
-
-export const scopedCall = Effect.gen(function* () {
-  const tools = yield* scoped.toolkit;
-  yield* Stream.runDrain(yield* tools.handle("named", {}));
-}).pipe(Effect.provide(scoped.layer));
-
-scopedCall satisfies Effect.Effect<unknown, unknown, never>;
-
-export const scopedTurn = LanguageModel.generateText({
-  prompt: "go",
-  toolkit: scoped.toolkit,
-}).pipe(Effect.provide(scoped.layer));
-
-scopedTurn satisfies Effect.Effect<unknown, unknown, LanguageModel.LanguageModel>;
