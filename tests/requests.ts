@@ -1,5 +1,9 @@
 import type { Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { type Params, statelessRequest } from "../src/internal/mcp.js";
+
+/** Send a web request with the `HttpClient` in context, such as `Testing.layer(routes)`'s. */
+export const send = (request: Request) => HttpClient.execute(HttpClientRequest.fromWeb(request));
 
 export const post = (path: string, body: Schema.Json = {}): Request =>
   new Request(`http://localhost${path}`, {

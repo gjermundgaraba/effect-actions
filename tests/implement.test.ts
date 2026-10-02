@@ -11,7 +11,7 @@ import * as Testing from "../src/Testing.js";
 import { exec } from "./cli-services.js";
 import { defectOf } from "./defect.js";
 import { serve as serveRoutes, serveWithContext } from "./serve.js";
-import { mcpRequest, post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall, send } from "./requests.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
 import { Permissions, whoAmI as storedWhoAmI } from "../examples/authorization-built.js";
 import { WhoAmI as WhoAmIContract } from "../examples/contracts.js";
@@ -62,14 +62,12 @@ type Routes<E> = Layer.Layer<
 
 const handlerOf = <E>(routes: Routes<E>) => serveRoutes(routes).handler;
 
-const serve = () =>
-  handlerOf(
-    Layer.mergeAll(
-      ActionHttp.layer(Http, whoAmI),
-      ActionHttp.layer(Http, billing),
-      ActionMcp.layerHttp([whoAmI, billing], { name: "test", version: "0" }),
-    ).pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
-  );
+/** Both implementations, over HTTP and as the tools of one MCP endpoint. */
+const routes = Layer.mergeAll(
+  ActionHttp.layer(Http, whoAmI),
+  ActionHttp.layer(Http, billing),
+  ActionMcp.layerHttp([whoAmI, billing], { name: "test", version: "0" }),
+).pipe(Layer.provide(Layer.succeed(Tenant, "acme")));
 
 describe("implement", () => {
   const Hello = Action.make("hello", {
@@ -240,11 +238,13 @@ describe("implement", () => {
         Action.allowAll,
       );
 
-      const handler = handlerOf(ActionHttp.layer(ActionHttp.make([Hello, Bye]), app));
+      const routes = ActionHttp.layer(ActionHttp.make([Hello, Bye]), app);
 
       // Even the action that has a handler is never served by an incomplete record.
       expect(
-        yield* defectOf(Effect.promise(() => handler(post("/api/hello", { name: "Ada" })))),
+        yield* defectOf(
+          send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
+        ),
       ).toMatchObject({ message: "Missing handlers: bye" });
       expect(yield* defectOf(Layer.build(ActionToolkit.make(app).layer))).toMatchObject({
         message: "Missing handlers: bye",
@@ -478,28 +478,26 @@ describe("builder acquisition", () => {
     {
       surface: "ActionHttp.layer",
       build: ({ pair, solo }: Fixture) =>
-        Effect.promise(async () => {
-          const handler = handlerOf(
-            ActionHttp.layer(ActionHttp.make([One, Two, Solo]), [solo, pair]),
-          );
-
-          expect(await (await handler(post("/api/one"))).json()).toBe(1);
-        }),
+        Effect.gen(function* () {
+          expect(yield* (yield* send(post("/api/one"))).json).toBe(1);
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionHttp.layer(ActionHttp.make([One, Two, Solo]), [solo, pair])),
+          ),
+        ),
     },
     {
       surface: "ActionMcp.layerHttp",
       build: ({ pair, solo }: Fixture) =>
         Effect.gen(function* () {
-          const handler = handlerOf(
-            ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" }),
-          );
+          const mcp = yield* Testing.mcpClient([One]);
 
-          expect(
-            yield* Effect.flatMap(Testing.mcpClient([One]), (mcp) => mcp.one()).pipe(
-              Effect.provide(Testing.layer(handler)),
-            ),
-          ).toBe(1);
-        }),
+          expect(yield* mcp.one()).toBe(1);
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionMcp.layerHttp([solo, pair], { name: "test", version: "0" })),
+          ),
+        ),
     },
     {
       surface: "ActionMcp.runStdio",
@@ -963,30 +961,28 @@ describe("documented security", () => {
     expect(() => OpenApi.fromApi(conflicting)).toThrow("Conflicting OpenAPI security scheme");
   });
 
-  it("enforces nothing: served without authentication, every route answers any caller", async () => {
-    const handler = handlerOf(
-      ActionHttp.layer(Secured, [whoAmI, billing]).pipe(
-        Layer.provide(Layer.succeed(Tenant, "acme")),
+  it.effect("enforces nothing: served without authentication, every route answers any caller", () =>
+    Effect.gen(function* () {
+      expect(yield* (yield* send(post("/api/invoice", { amount: "2" }))).json).toBe(4);
+      expect(yield* (yield* send(post("/api/audit"))).json).toBe("clean");
+
+      // The native client of the documented API calls it as it calls any binding.
+      const client = yield* HttpApiClient.make(Secured.api, { baseUrl: "http://localhost" });
+
+      expect([
+        yield* client.whoAmI({ payload: {} }),
+        yield* client.invoice({ payload: { amount: 3 } }),
+      ]).toEqual(["ada@acme", 6]);
+    }).pipe(
+      Effect.provide(
+        Testing.layer(
+          ActionHttp.layer(Secured, [whoAmI, billing]).pipe(
+            Layer.provide(Layer.succeed(Tenant, "acme")),
+          ),
+        ),
       ),
-    );
-
-    expect(await (await handler(post("/api/invoice", { amount: "2" }))).json()).toBe(4);
-    expect(await (await handler(post("/api/audit"))).json()).toBe("clean");
-
-    // The native client of the documented API calls it as it calls any binding.
-    const answers = await Effect.runPromise(
-      Effect.gen(function* () {
-        const client = yield* HttpApiClient.make(Secured.api, { baseUrl: "http://localhost" });
-
-        return [
-          yield* client.whoAmI({ payload: {} }),
-          yield* client.invoice({ payload: { amount: 3 } }),
-        ];
-      }).pipe(Effect.provide(Testing.layer(handler))),
-    );
-
-    expect(answers).toEqual(["ada@acme", 6]);
-  });
+    ),
+  );
 
   it("refuses a public action outside the binding, as plain JavaScript may pass one", () => {
     expect(() =>
@@ -997,31 +993,27 @@ describe("documented security", () => {
 });
 
 describe("MCP registration", () => {
-  it("serves several implementations as the tools of one endpoint", async () => {
-    const handler = serve();
+  it.effect("serves several implementations as the tools of one endpoint", () =>
+    Effect.gen(function* () {
+      const response = yield* send(mcpRequest({ method: "tools/list" }));
 
-    const response = await handler(mcpRequest({ method: "tools/list" }));
+      const reply = Schema.decodeUnknownSync(
+        Schema.Struct({
+          result: Schema.Struct({ tools: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+        }),
+      )(yield* response.json);
 
-    const reply = Schema.decodeUnknownSync(
-      Schema.Struct({
-        result: Schema.Struct({ tools: Schema.Array(Schema.Struct({ name: Schema.String })) }),
-      }),
-    )(await response.json());
+      expect(reply.result.tools.map((tool) => tool.name).sort()).toEqual([
+        "audit",
+        "invoice",
+        "whoAmI",
+      ]);
 
-    expect(reply.result.tools.map((tool) => tool.name).sort()).toEqual([
-      "audit",
-      "invoice",
-      "whoAmI",
-    ]);
+      const mcp = yield* Testing.mcpClient([WhoAmI]);
 
-    expect(
-      await Effect.runPromise(
-        Effect.flatMap(Testing.mcpClient([WhoAmI]), (mcp) => mcp.whoAmI()).pipe(
-          Effect.provide(Testing.layer(handler)),
-        ),
-      ),
-    ).toBe("ada@acme");
-  });
+      expect(yield* mcp.whoAmI()).toBe("ada@acme");
+    }).pipe(Effect.provide(Testing.layer(routes))),
+  );
 
   it("names each tool after its action, and checks names where tools are served", () => {
     const same = () =>

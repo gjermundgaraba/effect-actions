@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema, SchemaTransformation, Stream } from "effect";
 import { McpSchema } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiClient, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -11,7 +11,7 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { exec, printed } from "./cli-services.js";
 import { serve } from "./serve.js";
-import { mcpRequest, post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall, send } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -156,67 +156,72 @@ it("names the content type a 415 refuses, or none", async () => {
   ]);
 });
 
-it("refuses undeclared input fields on the server, nested ones too; every typed client drops them", async () => {
-  const seen: Array<unknown> = [];
-
-  const Save = Action.make("save", {
-    description: "Save",
-    access: "write",
-    input: { value: Schema.Finite, owner: Schema.Struct({ id: Schema.String }) },
-    success: Schema.Finite,
-  });
-
-  const SaveHttp = ActionHttp.make([Save]);
-
-  const app = Action.implement(
-    Save,
-    (input) => Effect.sync(() => seen.push(input)),
-    Action.allowAll,
-  );
-
-  const web = serve(
-    Layer.merge(
-      ActionHttp.layer(SaveHttp, app),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-    ),
-  );
-
-  // As the OpenAPI document says: the input is closed, at its root and nested.
-  const input = OpenApi.fromApi(SaveHttp.api).paths["/api/save"]?.post?.requestBody?.content[
-    "application/json"
-  ]?.schema;
-
-  expect(input).toMatchObject({
-    additionalProperties: false,
-    properties: { owner: { additionalProperties: false } },
-  });
-
-  const save = (body: Schema.Json) => web.handler(post("/api/save", body));
-
-  const extra = await save({ value: 1, owner: { id: "a" }, admin: true });
-  expect(extra.status).toBe(400);
-  expect(await invalidInput(extra)).toContain('at ["admin"]');
-
-  const nested = await save({ value: 1, owner: { id: "a", role: "admin" } });
-  expect(nested.status).toBe(400);
-  expect(await invalidInput(nested)).toContain('at ["owner"]["role"]');
-
-  expect(seen).toEqual([]);
-
-  // A wider object type-checks, as TypeScript allows; every typed client sends only the
-  // declared fields: this one, the native one and the MCP test client.
-  const wider = { value: 1, owner: { id: "a", role: "admin" }, admin: true };
-
-  await Effect.runPromise(
+it.effect(
+  "refuses undeclared input fields on the server, nested ones too; every typed client drops them",
+  () =>
     Effect.gen(function* () {
-      yield* (yield* ActionHttp.client(SaveHttp)).save(wider);
-      yield* (yield* HttpApiClient.make(SaveHttp.api)).save({ payload: wider });
-      yield* (yield* Testing.mcpClient([Save])).save(wider);
-    }).pipe(Effect.provide(Testing.layer(web.handler))),
-  );
+      const seen: Array<unknown> = [];
 
-  expect(seen).toEqual(Array.from({ length: 3 }, () => ({ value: 1, owner: { id: "a" } })));
-});
+      const Save = Action.make("save", {
+        description: "Save",
+        access: "write",
+        input: { value: Schema.Finite, owner: Schema.Struct({ id: Schema.String }) },
+        success: Schema.Finite,
+      });
+
+      const SaveHttp = ActionHttp.make([Save]);
+
+      const app = Action.implement(
+        Save,
+        (input) => Effect.sync(() => seen.push(input)),
+        Action.allowAll,
+      );
+
+      // As the OpenAPI document says: the input is closed, at its root and nested.
+      const input = OpenApi.fromApi(SaveHttp.api).paths["/api/save"]?.post?.requestBody?.content[
+        "application/json"
+      ]?.schema;
+
+      expect(input).toMatchObject({
+        additionalProperties: false,
+        properties: { owner: { additionalProperties: false } },
+      });
+
+      yield* Effect.gen(function* () {
+        const save = (body: Schema.Json) => send(post("/api/save", body));
+        const refusal = HttpClientResponse.schemaBodyJson(Action.InvalidInput);
+
+        const extra = yield* save({ value: 1, owner: { id: "a" }, admin: true });
+        expect(extra.status).toBe(400);
+        expect((yield* refusal(extra)).message).toContain('at ["admin"]');
+
+        const nested = yield* save({ value: 1, owner: { id: "a", role: "admin" } });
+        expect(nested.status).toBe(400);
+        expect((yield* refusal(nested)).message).toContain('at ["owner"]["role"]');
+
+        expect(seen).toEqual([]);
+
+        // A wider object type-checks, as TypeScript allows; every typed client sends only the
+        // declared fields: this one, the native one and the MCP test client.
+        const wider = { value: 1, owner: { id: "a", role: "admin" }, admin: true };
+
+        yield* (yield* ActionHttp.client(SaveHttp)).save(wider);
+        yield* (yield* HttpApiClient.make(SaveHttp.api)).save({ payload: wider });
+        yield* (yield* Testing.mcpClient([Save])).save(wider);
+      }).pipe(
+        Effect.provide(
+          Testing.layer(
+            Layer.merge(
+              ActionHttp.layer(SaveHttp, app),
+              ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+            ),
+          ),
+        ),
+      );
+
+      expect(seen).toEqual(Array.from({ length: 3 }, () => ({ value: 1, owner: { id: "a" } })));
+    }),
+);
 
 it("refuses undeclared fields in the input only: a wider success is encoded to its fields", async () => {
   const Profile = Action.make("profile", {
@@ -323,20 +328,19 @@ it.effect(
       // An undeclared field, which HTTP and MCP refuse by its path and a Toolkit drops.
       const wider = { ...sent, note: "note-secret" };
 
-      const web = serve(
-        Layer.merge(
-          ActionHttp.layer(ActionHttp.make([Login]), app),
-          ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-        ),
+      const routes = Layer.merge(
+        ActionHttp.layer(ActionHttp.make([Login]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
       );
 
-      const http = yield* Effect.promise(async () =>
-        (await web.handler(post("/api/login", wider))).text(),
-      );
+      /** The body the routes answer `request` with. */
+      const answered = (request: Request) =>
+        Effect.flatMap(send(request), (response) => response.text).pipe(
+          Effect.provide(Testing.layer(routes)),
+        );
 
-      const mcp = yield* Effect.promise(async () =>
-        (await web.handler(rawToolCall("login", wider))).text(),
-      );
+      const http = yield* answered(post("/api/login", wider));
+      const mcp = yield* answered(rawToolCall("login", wider));
 
       const tools = ActionToolkit.make(app);
 

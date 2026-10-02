@@ -25,8 +25,7 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { causeOf, exec, logged, printed } from "./cli-services.js";
-import { post } from "./requests.js";
-import { serve } from "./serve.js";
+import { post, send } from "./requests.js";
 
 /** Every line a successful run logs. */
 const lines = flow(
@@ -1556,7 +1555,13 @@ it.effect(
       );
 
       const cli = ActionCli.make(app, { name: "records" });
-      const web = serve(ActionHttp.layer(ActionHttp.make([Read, Write]), app));
+      const routes = ActionHttp.layer(ActionHttp.make([Read, Write]), app);
+
+      /** The body HTTP answers the same call with. */
+      const answered = (name: string, body: Schema.Json) =>
+        Effect.flatMap(send(post(`/api/${name}`, body)), (response) => response.text).pipe(
+          Effect.provide(Testing.layer(routes)),
+        );
 
       const cases = [
         {
@@ -1591,9 +1596,7 @@ it.effect(
 
         const [name = ""] = args;
 
-        const sent = yield* Effect.promise(async () =>
-          (await web.handler(post(`/api/${name}`, body))).text(),
-        );
+        const sent = yield* answered(name, body);
 
         expect(causeOf(exit)).toEqual(cause);
         // Nothing on stdout, and on stderr the body HTTP answers with, once.
@@ -1611,9 +1614,7 @@ it.effect(
       // Input that does not decode is the `InvalidInput` HTTP answers, before the hook runs.
       const [invalid, , stderr] = yield* printed(exec(cli, ["read", "--id", ""]));
 
-      const sent = yield* Effect.promise(async () =>
-        (await web.handler(post("/api/read", { id: "" }))).text(),
-      );
+      const sent = yield* answered("read", { id: "" });
 
       expect(causeOf(invalid)).toBeInstanceOf(Action.InvalidInput);
       expect(sent).toContain('"_tag":"InvalidInput"');
@@ -1815,11 +1816,9 @@ it.effect(
       // A remote command's client too, configured on the command, which logs as it sends.
       const Http = ActionHttp.make([Noisy]);
 
-      const web = serve(
-        ActionHttp.layer(
-          Http,
-          Action.implement(Noisy, () => Effect.succeed("quiet"), Action.allowAll),
-        ),
+      const routes = ActionHttp.layer(
+        Http,
+        Action.implement(Noisy, () => Effect.succeed("quiet"), Action.allowAll),
       );
 
       const remote = ActionCli.command(Http, Noisy).pipe(
@@ -1834,7 +1833,7 @@ it.effect(
 
       const [exit, stdout, stderr] = yield* exec(remote, []).pipe(
         printed,
-        Effect.provide(Testing.layer(web.handler)),
+        Effect.provide(Testing.layer(routes)),
       );
 
       const written = stderr.map(String).join("\n");

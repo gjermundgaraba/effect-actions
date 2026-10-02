@@ -11,8 +11,8 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { causeOf, exec, printed } from "./cli-services.js";
-import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { httpClient, serve } from "./serve.js";
+import { mcpRequest, post, rawToolCall, send } from "./requests.js";
+import { serve } from "./serve.js";
 
 class Scopes extends Context.Service<Scopes, ReadonlyArray<string>>()("access-test/Scopes") {}
 
@@ -341,7 +341,7 @@ describe("the pre-handler hook", () => {
     // The progress went out with a 200: the refusal can only follow it as the tool's result.
     expect(reply.status).toBe(200);
     expect(reply.headers.get("www-authenticate")).toBeNull();
-    Effect.runSync(streamed.open);
+    streamed.openUnsafe();
 
     const text = await reply.text();
     expect(text).toContain('"method":"notifications/progress"');
@@ -424,39 +424,36 @@ describe("the pre-handler hook", () => {
     expect(handlers).toEqual(["read"]);
   });
 
-  it.each([
+  it.effect.each([
     [new Action.Unauthenticated(), 401],
     [new Action.Forbidden({ message: "Requires write." }), 403],
-  ] as const)(
-    "answers its %s over HTTP with its status, and to the client",
-    async (refusal, status) => {
-      const web = serve(
-        ActionHttp.layer(
-          Http,
-          Action.implement(
-            Write,
-            ({ value }) => Effect.succeed(value),
-            () => Effect.fail(refusal),
-          ),
-        ),
-      );
-
-      const response = await web.handler(post("/api/write", { value: "x" }));
+  ] as const)("answers its %s over HTTP with its status, and to the client", ([refusal, status]) =>
+    Effect.gen(function* () {
+      const response = yield* send(post("/api/write", { value: "x" }));
       expect(response.status).toBe(status);
-      expect(await response.json()).toEqual(
+      expect(yield* response.json).toEqual(
         Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]))(refusal),
       );
       // Only authentication challenges, and none covers these routes.
-      expect(response.headers.has("www-authenticate")).toBe(false);
+      expect(response.headers).not.toHaveProperty("www-authenticate");
 
-      const refused = await Effect.runPromise(
-        Effect.flip(
-          Effect.flatMap(httpClient(Http, web.handler), (client) => client.write({ value: "x" })),
+      const client = yield* ActionHttp.client(Http);
+
+      expect(yield* Effect.flip(client.write({ value: "x" }))).toEqual(refusal);
+    }).pipe(
+      Effect.provide(
+        Testing.layer(
+          ActionHttp.layer(
+            Http,
+            Action.implement(
+              Write,
+              ({ value }) => Effect.succeed(value),
+              () => Effect.fail(refusal),
+            ),
+          ),
         ),
-      );
-
-      expect(refused).toEqual(refusal);
-    },
+      ),
+    ),
   );
 
   it.effect(
@@ -499,48 +496,40 @@ describe("the pre-handler hook", () => {
         const Http = ActionHttp.make([Ping, Poke]);
 
         // Under authentication, which answers a step-up refusal itself: a limit is no refusal.
-        const web = serve(
+        const served = Testing.layer(
           Layer.mergeAll(
             ActionHttp.layer(Http, app),
             ActionMcp.layerHttp(app, { name: "test", version: "0" }),
           ).pipe(Layer.provide(anyone)),
         );
 
-        expect((yield* Effect.promise(() => web.handler(post("/api/ping")))).status).toBe(200);
+        yield* Effect.gen(function* () {
+          expect((yield* send(post("/api/ping"))).status).toBe(200);
 
-        // HTTP answers with the error's own status and JSON, and no challenge.
-        const answered = yield* Effect.promise(() =>
-          web.handler(post("/api/poke", { value: "x" })),
-        );
+          // HTTP answers with the error's own status and JSON, and no challenge.
+          const answered = yield* send(post("/api/poke", { value: "x" }));
 
-        expect(answered.status).toBe(429);
-        expect(answered.headers.get("www-authenticate")).toBeNull();
-        expect(yield* Effect.promise(() => answered.json())).toEqual(
-          Schema.encodeSync(RateLimited)(limited),
-        );
+          expect(answered.status).toBe(429);
+          expect(answered.headers).not.toHaveProperty("www-authenticate");
+          expect(yield* answered.json).toEqual(Schema.encodeSync(RateLimited)(limited));
 
-        // MCP answers with a tool result the model reads, not an HTTP status.
-        const result = yield* Effect.promise(() =>
-          web.handler(rawToolCall("poke", { value: "x" })),
-        );
+          // MCP answers with a tool result the model reads, not an HTTP status.
+          const result = yield* send(rawToolCall("poke", { value: "x" }));
 
-        expect(result.status).toBe(200);
-        expect(yield* Effect.promise(() => result.json())).toMatchObject({
-          result: {
-            isError: true,
-            content: [{ type: "text", text: '{"_tag":"RateLimited","retryAfter":30}' }],
-          },
-        });
+          expect(result.status).toBe(200);
+          expect(yield* result.json).toMatchObject({
+            result: {
+              isError: true,
+              content: [{ type: "text", text: '{"_tag":"RateLimited","retryAfter":30}' }],
+            },
+          });
 
-        // A remote command decodes it, as `ActionHttp.client` does: the cause of its `UserError`.
-        const remote = yield* Effect.exit(
-          exec(ActionCli.command(Http, Poke), ["--value", "x"]).pipe(
-            Effect.provide(Testing.layer(web.handler)),
-          ),
-        );
+          // A remote command decodes it, as `ActionHttp.client` does: the cause of its `UserError`.
+          const remote = yield* Effect.exit(exec(ActionCli.command(Http, Poke), ["--value", "x"]));
 
-        expect(causeOf(remote)).toEqual(limited);
-        expect(causeOf(remote)).toBeInstanceOf(RateLimited);
+          expect(causeOf(remote)).toEqual(limited);
+          expect(causeOf(remote)).toBeInstanceOf(RateLimited);
+        }).pipe(Effect.provide(served));
 
         // `Action.client` fails with it, as an HTTP client decodes it.
         const called = yield* Effect.flatMap(Action.client(app), (client) =>

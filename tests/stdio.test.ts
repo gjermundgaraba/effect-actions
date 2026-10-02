@@ -8,10 +8,10 @@ import { TestClock } from "effect/testing";
 import { describe, expect, it, onTestFinished } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as Testing from "../src/Testing.js";
 import { statelessRequest } from "../src/internal/mcp.js";
 import { everyConsoleMethod } from "./console-methods.js";
-import { rawToolCall } from "./requests.js";
-import { serve } from "./serve.js";
+import { rawToolCall, send } from "./requests.js";
 import { converse } from "./stdio-host.js";
 
 /** A client of a stdio server in a real subprocess, speaking only `revision`. */
@@ -261,41 +261,49 @@ describe("runStdio's successes", () => {
     }),
   );
 
-  it("adds serverInfo and resultType to a 2026-07-28 result, over stdio as over HTTP, and neither before", async () => {
-    // The server information, as given; `instructions` is not part of it.
-    const serverInfo = {
-      name: "shapes",
-      version: "0",
-      description: "Every kind of success",
-      websiteUrl: "https://example.com",
-      icons: [{ src: "https://example.com/icon.png" }],
-    };
+  it.effect(
+    "adds serverInfo and resultType to a 2026-07-28 result, over stdio as over HTTP, and neither before",
+    () =>
+      Effect.gen(function* () {
+        // The server information, as given; `instructions` is not part of it.
+        const serverInfo = {
+          name: "shapes",
+          version: "0",
+          description: "Every kind of success",
+          websiteUrl: "https://example.com",
+          icons: [{ src: "https://example.com/icon.png" }],
+        };
 
-    const options = { ...serverInfo, instructions: "Call any tool." };
-    const stdio = ActionMcp.runStdio(shapes, options);
-    const call = [{ method: "tools/call", params: { name: "ready", arguments: {} } }];
-    const [current = ""] = await Effect.runPromise(converse(stdio, "2026-07-28", call));
-    const [earlier = ""] = await Effect.runPromise(converse(stdio, "2025-11-25", call));
-    const http = await serve(ActionMcp.layerHttp(shapes, options)).handler(rawToolCall("ready"));
+        const options = { ...serverInfo, instructions: "Call any tool." };
+        const stdio = ActionMcp.runStdio(shapes, options);
+        const call = [{ method: "tools/call", params: { name: "ready", arguments: {} } }];
+        const [current = ""] = yield* converse(stdio, "2026-07-28", call);
+        const [earlier = ""] = yield* converse(stdio, "2025-11-25", call);
 
-    const own = {
-      isError: false,
-      structuredContent: { ready: true },
-      content: [{ type: "text", text: '{"ready":true}' }],
-    };
+        const http = yield* Effect.flatMap(
+          send(rawToolCall("ready")),
+          (response) => response.text,
+        ).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(shapes, options))));
 
-    expect(JSON.parse(current)).toEqual({
-      jsonrpc: "2.0",
-      id: 1,
-      result: {
-        _meta: { "io.modelcontextprotocol/serverInfo": serverInfo },
-        resultType: "complete",
-        ...own,
-      },
-    });
-    expect((await http.text()).trimEnd()).toBe(current);
-    expect(JSON.parse(earlier)).toEqual({ jsonrpc: "2.0", id: 1, result: own });
-  });
+        const own = {
+          isError: false,
+          structuredContent: { ready: true },
+          content: [{ type: "text", text: '{"ready":true}' }],
+        };
+
+        expect(JSON.parse(current)).toEqual({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            _meta: { "io.modelcontextprotocol/serverInfo": serverInfo },
+            resultType: "complete",
+            ...own,
+          },
+        });
+        expect(http.trimEnd()).toBe(current);
+        expect(JSON.parse(earlier)).toEqual({ jsonrpc: "2.0", id: 1, result: own });
+      }),
+  );
 });
 
 it.effect(

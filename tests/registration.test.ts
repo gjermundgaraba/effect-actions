@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
+import { Context, Deferred, Effect, Fiber, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -9,7 +9,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
-import { mcpRequest, post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall, send } from "./requests.js";
 import { serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
@@ -157,83 +157,91 @@ describe("projection boundaries", () => {
     expect(await response.json()).toBe("hello");
   });
 
-  it("sends a declared error without an HTTP status as 422", async () => {
-    const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
+  it.effect("sends a declared error without an HTTP status as 422", () =>
+    Effect.gen(function* () {
+      const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
 
-    const Fail = Action.make("fail", {
-      description: "Declared failure",
-      access: "write",
-      success: Schema.String,
-      errors: [Failure],
-    });
+      const Fail = Action.make("fail", {
+        description: "Declared failure",
+        access: "write",
+        success: Schema.String,
+        errors: [Failure],
+      });
 
-    const apps = Action.implement(
-      [Fail],
-      {
-        fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
-      },
-      Action.allowAll,
-    );
+      const apps = Action.implement(
+        [Fail],
+        {
+          fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
+        },
+        Action.allowAll,
+      );
 
-    expect(
-      OpenApi.fromApi(ActionHttp.make([Fail]).api).paths["/api/fail"]?.post?.responses,
-    ).toHaveProperty("422");
-    const web = makeTestHttp(apps);
+      const Http = ActionHttp.make([Fail]);
 
-    const response = await web.handler(post("/api/fail"));
-    expect(response.status).toBe(422);
-    expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
+      expect(OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses).toHaveProperty("422");
 
-    // The client reads the status from the same binding, so it decodes the error.
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        Effect.flatMap(ActionHttp.client(ActionHttp.make([Fail])), (client) => client.fail()),
-      ).pipe(Effect.provide(Testing.layer(web.handler))),
-    );
+      yield* Effect.gen(function* () {
+        const response = yield* send(post("/api/fail"));
+        expect(response.status).toBe(422);
+        expect(yield* response.json).toEqual(Failure.make({ message: "Safe failure" }));
 
-    expect(failure).toEqual(Failure.make({ message: "Safe failure" }));
-  });
+        // The client reads the status from the same binding, so it decodes the error.
+        const client = yield* ActionHttp.client(Http);
+
+        expect(yield* Effect.flip(client.fail())).toEqual(
+          Failure.make({ message: "Safe failure" }),
+        );
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, apps))));
+    }),
+  );
 
   const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
   const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
 
-  it.each([
+  it.effect.each([
     ["listed", [Missing, Conflict]],
     ["in a union", [Schema.Union([Missing, Conflict])]],
-  ])("keeps each declared error's own HTTP status, %s", async (_, errors) => {
-    const Fail = Action.make("fail", {
-      description: "Two failures",
-      access: "write",
-      input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
-      success: Schema.String,
-      errors,
-    });
+  ] as const)("keeps each declared error's own HTTP status, %s", ([, errors]) =>
+    Effect.gen(function* () {
+      const Fail = Action.make("fail", {
+        description: "Two failures",
+        access: "write",
+        input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
+        success: Schema.String,
+        errors,
+      });
 
-    const apps = Action.implement(
-      [Fail],
-      {
-        fail: ({ which }) =>
-          which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
-      },
-      Action.allowAll,
-    );
+      const apps = Action.implement(
+        [Fail],
+        {
+          fail: ({ which }) =>
+            which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
+        },
+        Action.allowAll,
+      );
 
-    const Http = ActionHttp.make([Fail]);
-    const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
+      const Http = ActionHttp.make([Fail]);
+      const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
 
-    expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403", "404", "409"]);
-    const web = makeTestHttp(apps);
+      expect(Object.keys(responses ?? {}).sort()).toEqual([
+        "200",
+        "400",
+        "401",
+        "403",
+        "404",
+        "409",
+      ]);
 
-    expect((await web.handler(post("/api/fail", { which: "missing" }))).status).toBe(404);
-    expect((await web.handler(post("/api/fail", { which: "conflict" }))).status).toBe(409);
-    expect(
-      await Effect.runPromise(
-        Effect.flatMap(ActionHttp.client(Http), (client) =>
-          Effect.flip(client.fail({ which: "conflict" })),
-        ).pipe(Effect.provide(Testing.layer(web.handler))),
-      ),
-    ).toEqual(Conflict.make({}));
-  });
+      yield* Effect.gen(function* () {
+        expect((yield* send(post("/api/fail", { which: "missing" }))).status).toBe(404);
+        expect((yield* send(post("/api/fail", { which: "conflict" }))).status).toBe(409);
+
+        const client = yield* ActionHttp.client(Http);
+
+        expect(yield* Effect.flip(client.fail({ which: "conflict" }))).toEqual(Conflict.make({}));
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, apps))));
+    }),
+  );
 
   it("sends a union with a status of its own at that status, and a member without one as 422", () => {
     const Late = Schema.TaggedStruct("Late", {});
@@ -657,44 +665,37 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("passes HTTP cancellation to the running Effect and finalizes it", async () => {
-    const started = Effect.runSync(Deferred.make<void>());
-    const stopped = Effect.runSync(Deferred.make<void>());
+  it.effect("passes HTTP cancellation to the running Effect and finalizes it", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
 
-    const Slow = Action.make("slow", {
-      description: "Wait",
-      access: "write",
-      success: Schema.String,
-    });
+      const Slow = Action.make("slow", {
+        description: "Wait",
+        access: "write",
+        success: Schema.String,
+      });
 
-    const apps = Action.implement(
-      [Slow],
-      {
-        slow: () =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.ensuring(Deferred.succeed(stopped, undefined)),
-          ),
-      },
-      Action.allowAll,
-    );
+      const apps = Action.implement(
+        [Slow],
+        {
+          slow: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Deferred.succeed(stopped, undefined)),
+            ),
+        },
+        Action.allowAll,
+      );
 
-    const web = makeTestHttp(apps);
+      yield* Effect.gen(function* () {
+        const running = yield* Effect.forkChild(send(post("/api/slow")));
 
-    const abort = new AbortController();
-
-    const request = new Request("http://localhost/api/slow", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-      signal: abort.signal,
-    });
-
-    const running = web.handler(request);
-    await Effect.runPromise(Deferred.await(started));
-    abort.abort();
-    await running;
-    // The handler's finalizer ran: the request's interruption reached it.
-    await Effect.runPromise(Deferred.await(stopped).pipe(Effect.timeout("1 second")));
-  });
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(running);
+        // The handler's finalizer ran: the request's interruption reached it.
+        yield* Deferred.await(stopped);
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Slow]), apps))));
+    }),
+  );
 });

@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { describe, expect, expectTypeOf, it, onTestFinished } from "@effect/vitest";
+import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Client,
   ClientCredentialsProvider,
@@ -27,7 +27,7 @@ import { layer as signIn } from "../examples/mcp-sign-in.js";
 import { requestPolicy } from "../examples/request-policy.js";
 import { Users } from "../examples/users.js";
 import { serve } from "./serve.js";
-import { mcpRequest, post, rawToolCall } from "./requests.js";
+import { mcpRequest, post, rawToolCall, send } from "./requests.js";
 
 class Identity extends Context.Service<Identity, { readonly id: string }>()("test/Identity") {}
 
@@ -252,86 +252,87 @@ describe("Authentication.make", () => {
     expect(await response.text()).toBe("");
   });
 
-  it.each([
+  it.effect.each([
     ["an HTTP", "returns", 200],
     ["an HTTP", "dies", 500],
     ["an MCP", "returns", 200],
     ["an MCP", "dies", 200],
   ] as const)(
     "keeps the resources it acquires alive for %s handler that %s, releasing them after the response",
-    async (transport, outcome, status) => {
-      const events: string[] = [];
-      const releasing = Effect.runSync(Deferred.make<void>());
-      const allowRelease = Effect.runSync(Deferred.make<void>());
-      const released = Effect.runSync(Deferred.make<void>());
+    ([transport, outcome, status]) =>
+      Effect.gen(function* () {
+        const events: string[] = [];
+        const releasing = yield* Deferred.make<void>();
+        const allowRelease = yield* Deferred.make<void>();
+        const released = yield* Deferred.make<void>();
 
-      const auth = Authentication.make(
-        Identity,
-        Effect.succeed(
-          Effect.acquireRelease(
-            Effect.sync(() => {
-              events.push("acquire");
+        const auth = Authentication.make(
+          Identity,
+          Effect.succeed(
+            Effect.acquireRelease(
+              Effect.sync(() => {
+                events.push("acquire");
 
-              return { id: "alice" };
-            }),
-            () =>
-              Effect.gen(function* () {
-                yield* Deferred.succeed(releasing, undefined);
-                yield* Deferred.await(allowRelease);
-                events.push("release");
-                yield* Deferred.succeed(released, undefined);
+                return { id: "alice" };
               }),
-          ),
-        ),
-      );
-
-      const Identify = Action.make("identify", {
-        description: "Read the identity while its authentication resource is alive",
-        access: "write",
-        success: Schema.String,
-      });
-
-      const app = Action.implement(
-        Identify,
-        () =>
-          Effect.gen(function* () {
-            expect(events).toEqual(["acquire"]);
-            events.push("handler");
-            const { id } = yield* Identity;
-
-            return outcome === "returns" ? id : yield* Effect.die(new Error("handler failed"));
-          }),
-        Action.allowAll,
-      );
-
-      const web = serve(
-        transport === "an HTTP"
-          ? ActionHttp.layer(ActionHttp.make([Identify]), app).pipe(Layer.provide(auth.layer))
-          : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" }).pipe(
-              Layer.provide(auth.layer),
+              () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(releasing, undefined);
+                  yield* Deferred.await(allowRelease);
+                  events.push("release");
+                  yield* Deferred.succeed(released, undefined);
+                }),
             ),
-      );
+          ),
+        );
 
-      onTestFinished(async () => {
-        await Effect.runPromise(Deferred.succeed(allowRelease, undefined));
-        await web.dispose();
-      });
+        const Identify = Action.make("identify", {
+          description: "Read the identity while its authentication resource is alive",
+          access: "write",
+          success: Schema.String,
+        });
 
-      const response = await web.handler(
-        transport === "an HTTP" ? post("/api/identify") : rawToolCall("identify"),
-      );
+        const app = Action.implement(
+          Identify,
+          () =>
+            Effect.gen(function* () {
+              expect(events).toEqual(["acquire"]);
+              events.push("handler");
+              const { id } = yield* Identity;
 
-      expect(response.status).toBe(status);
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      expect((await response.text()).includes("alice")).toBe(outcome === "returns");
-      // Web handlers resolve the Response before asynchronous request finalizers
-      // finish; streaming responses begin cleanup when their body is consumed.
-      await Effect.runPromise(Deferred.await(releasing));
-      expect(events).toEqual(["acquire", "handler"]);
-      await Effect.runPromise(Deferred.succeed(allowRelease, undefined));
-      await Effect.runPromise(Deferred.await(released));
-      expect(events).toEqual(["acquire", "handler", "release"]);
-    },
+              return outcome === "returns" ? id : yield* Effect.die(new Error("handler failed"));
+            }),
+          Action.allowAll,
+        );
+
+        const routes =
+          transport === "an HTTP"
+            ? ActionHttp.layer(ActionHttp.make([Identify]), app).pipe(Layer.provide(auth.layer))
+            : ActionMcp.layerHttp(app, { name: "scope-test", version: "0" }).pipe(
+                Layer.provide(auth.layer),
+              );
+
+        yield* Effect.gen(function* () {
+          const response = yield* send(
+            transport === "an HTTP" ? post("/api/identify") : rawToolCall("identify"),
+          );
+
+          expect(response.status).toBe(status);
+          expect(response.headers["cache-control"]).toBe("no-store");
+          expect((yield* response.text).includes("alice")).toBe(outcome === "returns");
+          // Web handlers resolve the Response before asynchronous request finalizers
+          // finish; streaming responses begin cleanup when their body is consumed.
+          yield* Deferred.await(releasing);
+          expect(events).toEqual(["acquire", "handler"]);
+          yield* Deferred.succeed(allowRelease, undefined);
+          yield* Deferred.await(released);
+          expect(events).toEqual(["acquire", "handler", "release"]);
+        }).pipe(
+          // A failed test still lets the release finish, before the routes are released.
+          Effect.ensuring(Deferred.succeed(allowRelease, undefined)),
+          Effect.provide(Testing.layer(routes)),
+        );
+      }),
   );
 
   it("protects private errors serialized by enclosing middleware", async () => {
@@ -579,26 +580,20 @@ describe("authentication around a surface", () => {
         ),
       );
 
-      const web = serve(routes);
+      yield* Effect.gen(function* () {
+        const response = yield* send(call("secret", { note: "hi" }, "Bearer alice"));
 
-      const response = yield* Effect.promise(() =>
-        web.handler(call("secret", { note: "hi" }, "Bearer alice")),
-      );
+        expect(yield* response.json).toBe("actor:alice: hi");
 
-      expect(yield* Effect.promise(() => response.json())).toBe("actor:alice: hi");
-
-      const called = Effect.flatMap(
-        Testing.mcpClient([Secret], {
+        const mcp = yield* Testing.mcpClient([Secret], {
           transformClient: HttpClient.mapRequest(
             HttpClientRequest.setHeader("authorization", "Bearer alice"),
           ),
-        }),
-        (mcp) => mcp.secret({ note: "hi" }),
-      );
+        });
 
-      expect(yield* called.pipe(Effect.provide(Testing.layer(web.handler)))).toBe(
-        "actor:alice: hi",
-      );
+        expect(yield* mcp.secret({ note: "hi" })).toBe("actor:alice: hi");
+      }).pipe(Effect.provide(Testing.layer(routes)));
+
       expect(built).toBe(1);
     }),
   );
@@ -633,12 +628,6 @@ describe("authentication around a surface", () => {
 
   it.effect("authenticates an MCP endpoint as a whole, public tools included", () =>
     Effect.gen(function* () {
-      const web = serve(
-        ActionMcp.layerHttp([open, guarded], { name: "test", version: "0" }).pipe(
-          Layer.provide(authenticate),
-        ),
-      );
-
       // One route: every tool of it is authenticated.
       const anonymous = Testing.mcpClient([Secret, Public]);
 
@@ -646,23 +635,25 @@ describe("authentication around a surface", () => {
         Effect.flatMap(anonymous, (mcp) => mcp.secret({ note: "hi" })),
         Effect.flatMap(anonymous, (mcp) => mcp.public()),
       ]) {
-        expect(
-          yield* Effect.flip(refused).pipe(Effect.provide(Testing.layer(web.handler))),
-        ).toBeInstanceOf(Action.Unauthenticated);
+        expect(yield* Effect.flip(refused)).toBeInstanceOf(Action.Unauthenticated);
       }
 
-      const alice = Testing.mcpClient([Secret], {
+      const alice = yield* Testing.mcpClient([Secret], {
         transformClient: HttpClient.mapRequest(
           HttpClientRequest.setHeader("authorization", "alice"),
         ),
       });
 
-      expect(
-        yield* Effect.flatMap(alice, (mcp) => mcp.secret({ note: "hi" })).pipe(
-          Effect.provide(Testing.layer(web.handler)),
+      expect(yield* alice.secret({ note: "hi" })).toBe("alice: hi");
+    }).pipe(
+      Effect.provide(
+        Testing.layer(
+          ActionMcp.layerHttp([open, guarded], { name: "test", version: "0" }).pipe(
+            Layer.provide(authenticate),
+          ),
         ),
-      ).toBe("alice: hi");
-    }),
+      ),
+    ),
   );
 
   it.effect("leaves identity to the host on a local surface", () =>
@@ -786,52 +777,54 @@ describe("Authentication.make combined with other middleware", () => {
 
   const stepUp = `Bearer error="insufficient_scope", scope="admin", resource_metadata="${metadata}", error_description="Not allowed."`;
 
-  it("reads a request service from middleware combined before it, over HTTP and MCP", async () => {
-    const { layer } = verifiers();
+  it.effect("reads a request service from middleware combined before it, over HTTP and MCP", () =>
+    Effect.gen(function* () {
+      const acme = yield* send(call({ authorization: "Bearer alice", "x-tenant": "acme" }));
+      const globex = yield* send(call({ authorization: "Bearer bob", "x-tenant": "globex" }));
+      expect([yield* acme.json, yield* globex.json]).toEqual(["alice@acme", "bob@globex"]);
 
-    const web = serve(
-      Layer.mergeAll(
-        ActionHttp.layer(Http, whoAmI),
-        ActionMcp.layerHttp(whoAmI, { name: "test", version: "0" }),
-      ).pipe(Layer.provide(authentication.combine(resolveTenant).layer.pipe(Layer.provide(layer)))),
-    );
+      expect(yield* mcpCall({ authorization: "Bearer carol", "x-tenant": "initech" })).toBe(
+        "carol@initech",
+      );
 
-    const acme = await web.handler(call({ authorization: "Bearer alice", "x-tenant": "acme" }));
-    const globex = await web.handler(call({ authorization: "Bearer bob", "x-tenant": "globex" }));
-    expect([await acme.json(), await globex.json()]).toEqual(["alice@acme", "bob@globex"]);
+      // Its refusals and challenges are the same combined.
+      const anonymous = yield* send(call({ "x-tenant": "acme" }));
+      expect([anonymous.status, anonymous.headers["www-authenticate"]]).toEqual([
+        401,
+        `Bearer resource_metadata="${metadata}"`,
+      ]);
+      expect(anonymous.headers["cache-control"]).toBe("no-store");
 
-    expect(
-      await Effect.runPromise(
-        mcpCall({ authorization: "Bearer carol", "x-tenant": "initech" }).pipe(
-          Effect.provide(Testing.layer(web.handler)),
+      const invalid = yield* send(call({ authorization: "Bearer bad", "x-tenant": "acme" }));
+      expect([invalid.status, invalid.headers["www-authenticate"]]).toEqual([
+        401,
+        `Bearer error="invalid_token", resource_metadata="${metadata}"`,
+      ]);
+
+      // A hook's step-up refusal answers the request, over HTTP and over MCP.
+      const locked = yield* send(call({ authorization: "Bearer alice", "x-tenant": "locked" }));
+      expect([locked.status, locked.headers["www-authenticate"]]).toEqual([403, stepUp]);
+
+      const tool = mcpRequest({ method: "tools/call", params: { name: "whoAmI", arguments: {} } });
+      tool.headers.set("authorization", "Bearer alice");
+      tool.headers.set("x-tenant", "locked");
+      const lockedTool = yield* send(tool);
+      expect([lockedTool.status, lockedTool.headers["www-authenticate"]]).toEqual([403, stepUp]);
+    }).pipe(
+      Effect.provide(
+        Testing.layer(
+          Layer.mergeAll(
+            ActionHttp.layer(Http, whoAmI),
+            ActionMcp.layerHttp(whoAmI, { name: "test", version: "0" }),
+          ).pipe(
+            Layer.provide(
+              authentication.combine(resolveTenant).layer.pipe(Layer.provide(verifiers().layer)),
+            ),
+          ),
         ),
       ),
-    ).toBe("carol@initech");
-
-    // Its refusals and challenges are the same combined.
-    const anonymous = await web.handler(call({ "x-tenant": "acme" }));
-    expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([
-      401,
-      `Bearer resource_metadata="${metadata}"`,
-    ]);
-    expect(anonymous.headers.get("cache-control")).toBe("no-store");
-
-    const invalid = await web.handler(call({ authorization: "Bearer bad", "x-tenant": "acme" }));
-    expect([invalid.status, invalid.headers.get("www-authenticate")]).toEqual([
-      401,
-      `Bearer error="invalid_token", resource_metadata="${metadata}"`,
-    ]);
-
-    // A hook's step-up refusal answers the request, over HTTP and over MCP.
-    const locked = await web.handler(call({ authorization: "Bearer alice", "x-tenant": "locked" }));
-    expect([locked.status, locked.headers.get("www-authenticate")]).toEqual([403, stepUp]);
-
-    const tool = mcpRequest({ method: "tools/call", params: { name: "whoAmI", arguments: {} } });
-    tool.headers.set("authorization", "Bearer alice");
-    tool.headers.set("x-tenant", "locked");
-    const lockedTool = await web.handler(tool);
-    expect([lockedTool.status, lockedTool.headers.get("www-authenticate")]).toEqual([403, stepUp]);
-  });
+    ),
+  );
 
   it("provides the identity to middleware combined after it, which never runs for a refusal", async () => {
     const web = serve(
@@ -874,37 +867,33 @@ describe("Authentication.make combined with other middleware", () => {
           resource,
         );
 
-        const web = serve(
-          Layer.mergeAll(
-            ActionHttp.layer(Http, whoAmI).pipe(
-              Layer.provide(accessLog.combine(counted.combine(resolveTenant)).layer),
-            ),
-            ActionMcp.layerHttp(whoAmI, { name: "test", version: "0" }).pipe(
-              Layer.provide(counted.combine(resolveTenant).layer),
-            ),
-            ActionMcp.layerHttp(whoAmI, { name: "test", version: "0", path: "/other" }).pipe(
-              Layer.provide(counted.combine(resolveTenant).layer),
-            ),
-          ).pipe(Layer.provide(layer)),
-        );
-
-        for (const tenant of ["globex", "acme"]) {
-          const alice = yield* Effect.promise(() =>
-            web.handler(call({ authorization: "Bearer alice", "x-tenant": tenant })),
-          );
-
-          expect([
-            alice.status,
-            alice.headers.get("x-caller"),
-            yield* Effect.promise(() => alice.json()),
-          ]).toEqual([200, `alice@${tenant}`, `alice@${tenant}`]);
-        }
-
-        expect(
-          yield* mcpCall({ authorization: "Bearer bob", "x-tenant": "acme" }).pipe(
-            Effect.provide(Testing.layer(web.handler)),
+        const routes = Layer.mergeAll(
+          ActionHttp.layer(Http, whoAmI).pipe(
+            Layer.provide(accessLog.combine(counted.combine(resolveTenant)).layer),
           ),
-        ).toBe("bob@acme");
+          ActionMcp.layerHttp(whoAmI, { name: "test", version: "0" }).pipe(
+            Layer.provide(counted.combine(resolveTenant).layer),
+          ),
+          ActionMcp.layerHttp(whoAmI, { name: "test", version: "0", path: "/other" }).pipe(
+            Layer.provide(counted.combine(resolveTenant).layer),
+          ),
+        ).pipe(Layer.provide(layer));
+
+        yield* Effect.gen(function* () {
+          for (const tenant of ["globex", "acme"]) {
+            const alice = yield* send(call({ authorization: "Bearer alice", "x-tenant": tenant }));
+
+            expect([alice.status, alice.headers["x-caller"], yield* alice.json]).toEqual([
+              200,
+              `alice@${tenant}`,
+              `alice@${tenant}`,
+            ]);
+          }
+
+          expect(yield* mcpCall({ authorization: "Bearer bob", "x-tenant": "acme" })).toBe(
+            "bob@acme",
+          );
+        }).pipe(Effect.provide(Testing.layer(routes)));
 
         // Its builder ran once, and the verifier it yields was built once.
         expect([runs.count, builds.count]).toEqual([1, 1]);
@@ -913,65 +902,51 @@ describe("Authentication.make combined with other middleware", () => {
 
   it.effect("serves the documented tenant example over HTTP and MCP", () =>
     Effect.gen(function* () {
-      const web = serve(
-        Layer.mergeAll(
-          ActionHttp.layer(ExampleHttp, userActions),
-          ActionMcp.layerHttp(userActions, { name: "tenants", version: "0" }),
-        ).pipe(Layer.provide(tenantAuthentication), Layer.provide(Users.layerMemory)),
-      );
-
       const whoAmIAt = (host: string, token?: string) =>
-        Effect.promise(() =>
-          web.handler(
-            new Request(`http://${host}/api/whoAmI`, {
-              method: "POST",
-              headers: {
-                host,
-                "content-type": "application/json",
-                ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-              },
-              body: "{}",
-            }),
-          ),
+        send(
+          new Request(`http://${host}/api/whoAmI`, {
+            method: "POST",
+            headers: {
+              host,
+              "content-type": "application/json",
+              ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+            },
+            body: "{}",
+          }),
         );
 
       const alice = yield* whoAmIAt("acme.example.com", "alice");
-      expect([
-        alice.status,
-        alice.headers.get("x-actor"),
-        yield* Effect.promise(() => alice.json()),
-      ]).toEqual([200, "alice", { id: "alice", tenantId: "acme" }]);
+      expect([alice.status, alice.headers["x-actor"], yield* alice.json]).toEqual([
+        200,
+        "alice",
+        { id: "alice", tenantId: "acme" },
+      ]);
 
       // Another tenant's actor is refused by the authentication; the caller is never named.
       const outsider = yield* whoAmIAt("acme.example.com", "bob");
-      expect([outsider.status, outsider.headers.get("x-actor")]).toEqual([403, null]);
-      expect(yield* Effect.promise(() => outsider.json())).toMatchObject({
-        message: "Not a member of this tenant.",
-      });
+      expect([outsider.status, outsider.headers["x-actor"]]).toEqual([403, undefined]);
+      expect(yield* outsider.json).toMatchObject({ message: "Not a member of this tenant." });
 
       const anonymous = yield* whoAmIAt("acme.example.com");
-      expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([
-        401,
-        "Bearer",
-      ]);
+      expect([anonymous.status, anonymous.headers["www-authenticate"]]).toEqual([401, "Bearer"]);
 
-      const bob = Effect.flatMap(
-        Testing.mcpClient([ExampleWhoAmI], {
-          transformClient: HttpClient.mapRequest(
-            HttpClientRequest.setHeaders({
-              host: "other.example.com",
-              authorization: "Bearer bob",
-            }),
-          ),
-        }),
-        (mcp) => mcp.whoAmI(),
-      );
-
-      expect(yield* bob.pipe(Effect.provide(Testing.layer(web.handler)))).toEqual({
-        id: "bob",
-        tenantId: "other",
+      const bob = yield* Testing.mcpClient([ExampleWhoAmI], {
+        transformClient: HttpClient.mapRequest(
+          HttpClientRequest.setHeaders({ host: "other.example.com", authorization: "Bearer bob" }),
+        ),
       });
-    }),
+
+      expect(yield* bob.whoAmI()).toEqual({ id: "bob", tenantId: "other" });
+    }).pipe(
+      Effect.provide(
+        Testing.layer(
+          Layer.mergeAll(
+            ActionHttp.layer(ExampleHttp, userActions),
+            ActionMcp.layerHttp(userActions, { name: "tenants", version: "0" }),
+          ).pipe(Layer.provide(tenantAuthentication), Layer.provide(Users.layerMemory)),
+        ),
+      ),
+    ),
   );
 
   it("refuses a foreign Host or Origin under the example's global policy before the tenant example's combined authentication", async () => {

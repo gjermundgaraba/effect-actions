@@ -158,16 +158,14 @@ it.effect("fails with Effect's own errors when the contract cannot account for t
 
 it.effect("fails an unserved action's call by whether the action declares its 404", () =>
   Effect.gen(function* () {
-    const web = serve(ActionHttp.layer(Http, []));
-
     const reasonOf = <A, E>(call: Effect.Effect<A, E>) =>
       Effect.map(Effect.flip(call), (error) =>
         HttpClientError.isHttpClientError(error) ? error.reason._tag : "declared",
       );
 
-    const reasons = yield* Effect.flatMap(httpClient(Http, web.handler), (client) =>
+    const reasons = yield* Effect.flatMap(ActionHttp.client(Http), (client) =>
       Effect.all([reasonOf(client.get({ id: "a" })), reasonOf(client.count())]),
-    );
+    ).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, []))));
 
     // `get` declares a 404, whose body the empty answer is not; `count` declares none.
     expect(reasons).toEqual(["StatusCodeError", "DecodeError"]);
@@ -344,24 +342,21 @@ it.effect("decodes two errors that share a status by their tag", () =>
 
     const binding = ActionHttp.make([Refuse, Reject]);
 
-    const web = serve(
-      ActionHttp.layer(
-        binding,
-        Action.implement(
-          [Refuse, Reject],
-          {
-            refuse: () => Effect.succeed("unreachable"),
-            reject: () => Effect.fail(new Rejected({ reason: "closed" })),
-          },
-          (action) =>
-            action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
-        ),
+    const routes = ActionHttp.layer(
+      binding,
+      Action.implement(
+        [Refuse, Reject],
+        {
+          refuse: () => Effect.succeed("unreachable"),
+          reject: () => Effect.fail(new Rejected({ reason: "closed" })),
+        },
+        (action) => (action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden())),
       ),
     );
 
-    const refused = yield* Effect.flatMap(httpClient(binding, web.handler), (client) =>
+    const refused = yield* Effect.flatMap(ActionHttp.client(binding), (client) =>
       Effect.all([Effect.flip(client.refuse()), Effect.flip(client.reject())]),
-    );
+    ).pipe(Effect.provide(Testing.layer(routes)));
 
     // Both are reachable from each endpoint under 403; the tag selects the decoder.
     expect(refused).toEqual([new Action.Forbidden(), new Rejected({ reason: "closed" })]);
