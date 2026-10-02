@@ -278,7 +278,9 @@ describe("Authentication.make", () => {
               () =>
                 Effect.gen(function* () {
                   yield* Deferred.succeed(releasing, undefined);
-                  yield* Deferred.await(allowRelease);
+
+                  // Released before the handler, it skips the gate and fails the order checks.
+                  if (events.includes("handler")) yield* Deferred.await(allowRelease);
                   events.push("release");
                   yield* Deferred.succeed(released, undefined);
                 }),

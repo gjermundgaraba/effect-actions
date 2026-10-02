@@ -185,13 +185,13 @@ describe("projection boundaries", () => {
         expect(response.status).toBe(422);
         expect(yield* response.json).toEqual(Failure.make({ message: "Safe failure" }));
 
-        // The client reads the status from the same binding, so it decodes the error.
+        // The client reads the status from a binding of its own, as a remote one does.
         const client = yield* ActionHttp.client(Http);
 
         expect(yield* Effect.flip(client.fail())).toEqual(
           Failure.make({ message: "Safe failure" }),
         );
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, apps))));
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))));
     }),
   );
 
@@ -239,7 +239,7 @@ describe("projection boundaries", () => {
         const client = yield* ActionHttp.client(Http);
 
         expect(yield* Effect.flip(client.fail({ which: "conflict" }))).toEqual(Conflict.make({}));
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, apps))));
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))));
     }),
   );
 
