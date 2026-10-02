@@ -1,7 +1,6 @@
 import { Array as Arr, Context, Effect, Layer, Option } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
-import { assertDistinct } from "./actions.js";
 import type { Refusal } from "./errors.js";
 
 /**
@@ -115,9 +114,10 @@ export const memoized = <S, E, R>(
  * The private fields make this class nominal: a structurally similar object,
  * including one made by spreading an implementation, is not an implementation.
  * `R` maps each action name to its handler's per-request requirements, and `~hook`, which
- * no action name can be, to its hook's; `EX` and `RX` are the failures and services of its
- * handlers' builder, and `EH` and `RH` of its hook's, which a share behind another hook
- * leaves out. A plain hook builds nothing.
+ * no action name can be, to its hook's; names typed only as `string` absorb that key, and each
+ * then owes the hook's too. `EX` and `RX` are the failures and services of its handlers'
+ * builder, and `EH` and `RH` of its hook's, which a share behind another hook leaves out. A
+ * plain hook builds nothing.
  */
 export class Implementation<
   A extends Action.Any,
@@ -279,18 +279,6 @@ export type BuildContext<App> = App extends {
 }
   ? RX | RH
   : never;
-
-/** Every action `apps` serve, each once: a name served twice is refused. */
-export const servedActions = (
-  what: string,
-  apps: ReadonlyArray<AnyImplementation>,
-): ReadonlyArray<Action.Any> => {
-  const actions = apps.flatMap((app) => app.actions);
-
-  assertDistinct(what, actions, (action) => action.name);
-
-  return actions;
-};
 
 /**
  * Provide `layer` the handlers of `apps`. Each implementation's layer is memoized, so its

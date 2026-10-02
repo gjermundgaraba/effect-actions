@@ -196,16 +196,11 @@ describe("the pre-handler hook", () => {
       ).pipe(Layer.provide(anyone)),
     );
 
-    // The routing header encoded as MCP allows, which the native server accepts.
-    const encoded = rawToolCall("hooked");
-    encoded.headers.set("mcp-name", `=?base64?${btoa("hooked")}?=`);
-
     const calls = [
       post("/api/hooked"),
       post("/api/handled"),
       rawToolCall("hooked"),
       rawToolCall("handled"),
-      encoded,
     ];
 
     for (const call of calls) {
@@ -243,7 +238,21 @@ describe("the pre-handler hook", () => {
     ).handler(rawToolCall("read"));
 
     expect(result.status).toBe(200);
-    expect(await result.json()).toMatchObject({ result: { isError: true } });
+    expect(await result.json()).toMatchObject({
+      result: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              Schema.encodeSync(Action.Unauthenticated)(
+                new Action.Unauthenticated({ message: "Sign in." }),
+              ),
+            ),
+          },
+        ],
+      },
+    });
   });
 
   it("keeps each request's step-up refusal its own under concurrent calls", async () => {

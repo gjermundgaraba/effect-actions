@@ -99,7 +99,7 @@ describe("MCP stdio example", () => {
   }, 30_000);
 
   // Node's console prints counters, timers, group labels, tables and directories on stdout.
-  it("sends every console method to stderr, counting, timing and indenting, and nothing to stdout", () => {
+  it("sends every console method to stderr, counting and timing, and nothing to stdout", () => {
     const run = spawnSync(process.execPath, ["--import", "tsx", "tests/stdio-console.ts"], {
       cwd: process.cwd(),
       input: "",
@@ -113,18 +113,12 @@ describe("MCP stdio example", () => {
     expect(stderr).toContain(lines("log", "info", "debug", "warn", "error", "dirxml"));
     expect(stderr).toContain(lines("{ dir: true }", "[ { table: 1 } ]"));
     expect(stderr).toContain(lines("default: 1", "default: 2", "calls: 1", "calls: 1"));
-    expect(stderr).toMatch(/\ntimer: [\d.]+m?s logged\ntimer: [\d.]+m?s\n/);
+    expect(stderr).toMatch(/\ntimer %s: \d+(\.\d{1,3})?ms logged\ntimer %s: \d+(\.\d{1,3})?ms\n/);
     expect(stderr).toContain(
-      lines(
-        "group",
-        "  inside",
-        "  collapsed",
-        "    deeper",
-        "    second line",
-        "    { nested: true }",
-      ),
+      lines("group", "inside", "collapsed", "deeper", "second line", "{ nested: true }"),
     );
-    expect(stderr).toContain(lines("  unlabeled", ""));
+    // Effect's unlabeled group, which Node would label `undefined`.
+    expect(stderr).toContain(lines("'dir\\nvalue'", "unlabeled", ""));
   }, 30_000);
 
   it("exits cleanly when the host closes stdin", () => {
@@ -462,7 +456,7 @@ const recording = () => {
 };
 
 describe("runStdio's console", () => {
-  it("writes every method through the host console's error, as Node's console prints them", async () => {
+  it("writes every method through the host console's error", async () => {
     const host = recording();
     const Status = Action.make("status", { description: "Report", access: "read" });
 
@@ -499,21 +493,18 @@ describe("runStdio's console", () => {
       "default: 2",
       "calls: 1",
       "calls: 1",
-      "Warning: Count for 'missing' does not exist",
-      "Warning: Label 'timer' already exists for console.time()",
-      "timer: 250ms logged",
-      "timer: 1.500s",
-      "Warning: No such label 'timer' for console.timeEnd()",
-      "Warning: No such label 'timer' for console.timeLog()",
+      // A timer started again restarts; one ended prints nothing more.
+      "timer %s: 250ms logged",
+      "timer %s: 1500ms",
+      // A group prints its label, and indents nothing.
       "group",
-      "  inside",
-      "  collapsed",
-      "    deeper\n    second line",
-      "    { nested: true }",
-      // A value the console inspects is printed as it is, only its first line indented.
-      "    'dir\\nvalue'",
+      "inside",
+      "collapsed",
+      "deeper\nsecond line",
+      "{ nested: true }",
+      "'dir\\nvalue'",
       // Effect's unlabeled group, which Node would label `undefined`.
-      "  unlabeled",
+      "unlabeled",
       "scoped: 250ms",
       "after",
     ]);

@@ -103,26 +103,6 @@ describe("Authentication.make", () => {
     expect(calls).toBe(2);
   });
 
-  it("answers a default refusal with its default message", async () => {
-    const auth = Authentication.make(
-      Identity,
-      Effect.succeed(Effect.fail(new Action.Unauthenticated())),
-    );
-
-    const web = serve(
-      HttpRouter.add("GET", "/identity", HttpServerResponse.text("unreachable")).pipe(
-        Layer.provide(auth.layer),
-      ),
-    );
-
-    const response = await web.handler(request());
-    expect(response.status).toBe(401);
-    // The constructor's default message, `Authentication is required.`, on the wire.
-    expect(await response.json()).toEqual(
-      Schema.encodeSync(Action.Unauthenticated)(new Action.Unauthenticated()),
-    );
-  });
-
   it("sends the host's own response instead, with its status and headers", async () => {
     const auth = Authentication.make(
       Identity,

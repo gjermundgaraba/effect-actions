@@ -2,10 +2,9 @@ import { Effect, Predicate, type Schema } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "./Action.js";
-import { assertDistinct } from "./internal/actions.js";
+import { assertDistinct, assertKnown } from "./internal/actions.js";
 import {
   type Failure,
-  kebab,
   command as makeCommand,
   type Options as CommandOptions,
 } from "./internal/cli.js";
@@ -244,23 +243,26 @@ export function make(
 
   const actions = isHttp(target) ? target.actions : toList(target).flatMap((app) => app.actions);
 
-  // A key no action names is refused, so a stale option cannot outlive its action.
-  const names = actions.map((action) => action.name);
-  const unknown = Object.keys(commands).filter((key) => !names.includes(key));
+  assertKnown(
+    "commands",
+    Object.keys(commands),
+    actions.map((action) => action.name),
+  );
 
-  if (unknown.length > 0) throw new Error(`Unknown commands: ${unknown.join(", ")}`);
-
-  const subcommands = actions.map((action) => {
-    const own = Object.hasOwn(commands, action.name) ? commands[action.name] : undefined;
-
-    return { action, name: own?.name ?? kebab(action.name), command: project(target, action, own) };
-  });
+  const subcommands = actions.map((action) => ({
+    action,
+    command: project(
+      target,
+      action,
+      Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
+    ),
+  }));
 
   // An action served twice has one name twice, so this refuses it too.
   assertDistinct(
     "command",
     subcommands,
-    ({ name }) => name,
+    ({ command }) => command.name,
     ({ action }) => `action ${action.name}`,
   );
 

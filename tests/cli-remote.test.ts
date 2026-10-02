@@ -35,7 +35,7 @@ const remote = ({ value }: { readonly value: number }) =>
 
 const app = Action.implement([Remote], { remote }, Action.allowAll);
 
-it("projects commands through the HTTP client without a local fallback", async () => {
+it("projects commands through the HTTP client", async () => {
   const web = serve(ActionHttp.layer(Http, app));
 
   const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
@@ -102,7 +102,7 @@ it("takes positional arguments over HTTP as locally", async () => {
   expect(output).toEqual(['"42"']);
 });
 
-it("projects a flat binding as one kebab-case subcommand per action", async () => {
+it("projects a binding as one kebab-case subcommand per action", async () => {
   const Echo = Action.make("echoText", {
     description: "Echoes its input",
     access: "read",

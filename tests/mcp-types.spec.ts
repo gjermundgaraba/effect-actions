@@ -1,6 +1,6 @@
-// Compile-only assertions, included by `vp check`, on what MCP serves: input that is one
-// object with keys, which `layerHttp` and `runStdio` refuse otherwise, naming its actions;
-// and the `tools` they and `Testing.mcpClient` take.
+// Compile-only assertions, included by `vp check`, on the `tools` that `layerHttp`,
+// `runStdio` and `Testing.mcpClient` take. Input is checked when a server is made
+// (registration.test.ts), so the types take any implementations, a helper's own included.
 import { Effect, Schema } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -13,181 +13,28 @@ const read = { description: "", access: "read" } as const;
 
 const done = () => Effect.void;
 
-const One = Schema.Struct({ kind: Schema.Literal("one"), id: Schema.String });
+const status = Action.implement(Action.make("status", read), done, Action.allowAll);
 
-const Other = Schema.Struct({ kind: Schema.Literal("other"), code: Schema.Number });
-
-class Fields extends Schema.Class<Fields>("Fields")({ id: Schema.String }) {}
-
-class NoFields extends Schema.Class<NoFields>("NoFields")({}) {}
-
-interface Tree {
-  readonly name: string;
-  readonly children: ReadonlyArray<Tree>;
-}
-
-const Tree = Schema.Struct({
-  name: Schema.String,
-  children: Schema.Array(Schema.suspend((): Schema.Codec<Tree> => Tree)),
-});
-
-// No input, fields, a struct, identified or with only optional fields, a record, a class and
-// a recursive struct: each one object with keys.
-const served = [
-  Action.implement(Action.make("none", read), done, Action.allowAll),
-  Action.implement(
-    Action.make("fields", { ...read, input: { id: Schema.String } }),
-    done,
-    Action.allowAll,
-  ),
-  Action.implement(Action.make("struct", { ...read, input: One }), done, Action.allowAll),
-  Action.implement(
-    Action.make("identified", { ...read, input: One.annotate({ identifier: "One" }) }),
-    done,
-    Action.allowAll,
-  ),
-  Action.implement(
-    Action.make("optional", { ...read, input: Schema.Struct({ id: Schema.optionalKey(One) }) }),
-    done,
-    Action.allowAll,
-  ),
-  Action.implement(
-    Action.make("record", { ...read, input: Schema.Record(Schema.String, Schema.Number) }),
-    done,
-    Action.allowAll,
-  ),
-  Action.implement(Action.make("class", { ...read, input: Fields }), done, Action.allowAll),
-  Action.implement(Action.make("tree", { ...read, input: Tree }), done, Action.allowAll),
-] as const;
-
-ActionMcp.layerHttp(served, options);
-
-ActionMcp.runStdio(served, options);
-
-const union = Action.implement(
-  Action.make("union", { ...read, input: Schema.Union([One, Other]) }),
-  done,
-  Action.allowAll,
-);
-
-const nullable = Action.implement(
-  Action.make("nullable", { ...read, input: Schema.NullOr(One) }),
-  done,
-  Action.allowAll,
-);
-
-const scalar = Action.implement(
-  Action.make("scalar", { ...read, input: Schema.String }),
-  done,
-  Action.allowAll,
-);
-
-const array = Action.implement(
-  Action.make("array", { ...read, input: Schema.Array(One) }),
-  done,
-  Action.allowAll,
-);
-
-const tuple = Action.implement(
-  Action.make("tuple", { ...read, input: Schema.Tuple([Schema.String]) }),
-  done,
-  Action.allowAll,
-);
-
-const anything = Action.implement(
-  Action.make("anything", { ...read, input: Schema.Struct({}) }),
-  done,
-  Action.allowAll,
-);
-
-const fieldless = Action.implement(
-  Action.make("fieldless", { ...read, input: NoFields }),
-  done,
-  Action.allowAll,
-);
-
-// @ts-expect-error A union's JSON Schema root is `anyOf`, not an object.
-ActionMcp.layerHttp(union, options);
-
-// @ts-expect-error A nullable struct is a union too.
-ActionMcp.layerHttp(nullable, options);
-
-// @ts-expect-error A scalar is not an object.
-ActionMcp.layerHttp(scalar, options);
-
-// @ts-expect-error Nor is an array.
-ActionMcp.layerHttp(array, options);
-
-// @ts-expect-error Nor a tuple.
-ActionMcp.layerHttp(tuple, options);
-
-// @ts-expect-error `Schema.Struct({})` has no keys, and accepts any value but `null`.
-ActionMcp.layerHttp(anything, options);
-
-// @ts-expect-error Nor has a class without fields.
-ActionMcp.layerHttp(fieldless, options);
-
-// @ts-expect-error One refused action refuses the list serving it.
-ActionMcp.layerHttp([...served, scalar], options);
-
-// @ts-expect-error `runStdio` refuses what `layerHttp` does.
-ActionMcp.runStdio(union, options);
-
-/** What `layerHttp` asks of `Apps`: the implementations, and the rule on their input. */
-type Asked<Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>> =
-  Parameters<typeof ActionMcp.layerHttp<Apps>>[0];
-
-type Rule = "MCP tool input must be one object with keys, such as a struct";
-
-const mixed = [...served, scalar, anything, union] as const;
-
-const rule: [
-  // The refusal names every action whose input is not one object with keys, and no other.
-  Equal<Asked<typeof mixed>[Rule], "scalar" | "anything" | "union">,
-  Equal<Asked<typeof nullable>[Rule], "nullable">,
-  // Served input is asked nothing more.
-  Equal<Asked<typeof served>, typeof served>,
-] = [true, true, true];
-
-void rule;
-
-// Erased input passes; the native server refuses what the types cannot see.
 declare const erased: ReadonlyArray<Action.AnyImplementation>;
 
 ActionMcp.layerHttp(erased, options);
 
 ActionMcp.runStdio(erased, options);
 
-// A helper generic over implementations compiles.
+// A helper generic over implementations compiles, its type parameter alone, spread into a
+// list or listed beside another implementation.
 export const serveMcp = <
   const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
 >(
   apps: Apps,
 ) => ActionMcp.layerHttp(apps, options);
 
-export const runMcp = <App extends Action.AnyImplementation>(app: App) =>
-  ActionMcp.runStdio(app, options);
-
-// A helper's own type parameter, spread into a list, compiles too.
 export const serveBeside = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(
   apps: Apps,
-) => ActionMcp.layerHttp([...apps, ...served], options);
+) => ActionMcp.layerHttp([...apps, status], options);
 
-// A list holding a helper's type parameter is refused, the refusal naming `NotObjectInput`
-// rather than an action: the rule cannot read that input.
-export const serveListed = <App extends Action.AnyImplementation>(app: App) => {
-  // @ts-expect-error Nothing runs: the list's input is unread, so it is refused.
-  void ActionMcp.runStdio([app, ...served], options);
-};
-
-// An argument chosen by a condition passes when one choice's input does: the native server
-// refuses another's when the layer is built. When none does, it is refused.
-declare const debug: boolean;
-
-ActionMcp.layerHttp(debug ? [...served, scalar] : served, options);
-
-// @ts-expect-error No choice's input is one object with keys.
-ActionMcp.layerHttp(debug ? [scalar] : [array], options);
+export const runListed = <App extends Action.AnyImplementation>(app: App) =>
+  ActionMcp.runStdio([app, status], options);
 
 // `tools` names served actions, and a tool's `text` a top-level string field of its
 // action's encoded success, an optional one too.
@@ -293,6 +140,12 @@ export const serveWithWords = <const Apps extends ReadonlyArray<Action.AnyImplem
 ) =>
   // @ts-expect-error `words` is a number.
   ActionMcp.layerHttp([...apps, pages], { ...options, tools: { page: { text: "words" } } });
+
+// Listed rather than spread, a helper's type parameter leaves `tools` untyped: an entry of the
+// helper's own actions is refused, a valid one too.
+export const serveListedPages = <App extends Action.AnyImplementation>(app: App) =>
+  // @ts-expect-error The listed parameter's actions are unread.
+  ActionMcp.layerHttp([app, pages], { ...options, tools: { page: { text: "markdown" } } });
 
 // So does `Testing.mcpClient`'s, for a helper's actions spread beside its own.
 export const pagesClient = <const Actions extends ReadonlyArray<Action.Any>>(actions: Actions) =>

@@ -379,6 +379,7 @@ describe("ActionToolkit", () => {
       );
 
       expect(refused).toMatchObject([{ isFailure: true }]);
+      expect(refused?.[0]?.result).toBeInstanceOf(Action.Forbidden);
       expect(answered).toMatchObject([{ isFailure: false, result: "secret" }]);
     }
 

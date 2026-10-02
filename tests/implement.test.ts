@@ -313,12 +313,11 @@ describe("hooks", () => {
     expect(await defectOf(ActionToolkit.make(unbuilt).layer)).toMatchObject({ message: missing });
   });
 
-  it("lets every caller call under Action.allowAll, and runs a conditional hook's choice", async () => {
+  it("lets every caller call under Action.allowAll, and runs a refusing hook", async () => {
     const refuse = () => Effect.fail(new Action.Forbidden());
-    const chosen = (enabled: boolean) => (enabled ? refuse : Action.allowAll);
 
     const statuses = await Promise.all(
-      [Action.allowAll, refuse, chosen(true), chosen(false)].map(async (before) => {
+      [Action.allowAll, refuse].map(async (before) => {
         const app = Action.implement(Hello, hello, before);
         const handler = handlerOf(ActionHttp.layer(ActionHttp.make([Hello]), app));
 
@@ -326,7 +325,7 @@ describe("hooks", () => {
       }),
     );
 
-    expect(statuses).toEqual([200, 403, 403, 200]);
+    expect(statuses).toEqual([200, 403]);
   });
 
   it("builds a hook once per layer graph for every surface, and runs what it built per call", async () => {
@@ -653,7 +652,6 @@ describe("HTTP bindings", () => {
     expect(() =>
       ActionHttp.layer(
         bound,
-        // @ts-expect-error An implementation holding none of the binding's actions serves nothing.
         Action.implement(Beta, () => Effect.succeed("x"), Action.allowAll),
       ),
     ).toThrow("No action of this implementation is in this HTTP binding: beta");

@@ -1,9 +1,10 @@
 import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import {
-  assertDistinct,
   assertDistinctTags,
+  assertKnown,
   assertName,
+  assertOnce,
   assertOwnTags,
   projectedErrors,
 } from "./internal/actions.js";
@@ -28,7 +29,6 @@ import {
   memoized,
   type RequestOf,
   type Served,
-  servedActions,
   toList,
 } from "./internal/implementation.js";
 
@@ -271,8 +271,12 @@ export function make(name: string, options: Options): Any {
 /** What `implement` binds: one action, or several that share one builder. */
 type Target = Any | ReadonlyArray<Any>;
 
-/** The actions `T` stands for. */
-type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : T;
+/**
+ * The actions `T` stands for. One action is extracted rather than taken as it is, so where `T`
+ * is deferred, such as a list of a helper's type parameter, the actions are still actions to
+ * TypeScript, and a share of them reaches a surface.
+ */
+type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Extract<T, Any>;
 
 /**
  * A type holding `_T` without using it. TypeScript measures such a parameter as independent:
@@ -308,6 +312,13 @@ type FirstErrors<T extends Target> = T extends readonly [infer F extends Any, ..
 
 /** The names of the actions `T` stands for. */
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
+
+/**
+ * What a name `K` owes per request for the hook, `RB`, besides its handler's: nothing, as the
+ * hook's requirements have a key of their own, unless `K` is `string`. Names typed only as
+ * `string`, such as an `Action.Any`'s, absorb that key, so each owes the hook's too.
+ */
+type HookOwed<K, RB> = string extends K ? RB : never;
 
 /**
  * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
@@ -441,7 +452,8 @@ export function implement<
   // Each call has a scope of its own, so `Scope` is never a request-time requirement.
   {
     readonly [K in NamesOf<T> | "~hook"]: Exclude<
-      K extends "~hook" ? RB : T extends ReadonlyArray<Any> ? R[K & keyof R] : RS,
+      | (K extends "~hook" ? RB : T extends ReadonlyArray<Any> ? R[K & keyof R] : RS)
+      | HookOwed<K, RB>,
       Scope.Scope
     >;
   },
@@ -458,7 +470,7 @@ export function implement(
   const actions = Arr.ensure(target);
   const names = actions.map((action) => action.name);
 
-  assertDistinct("action", actions, (action) => action.name);
+  assertOnce("action", actions);
 
   // Checked where an action is served rather than where it is made, which a client does too.
   for (const action of actions) {
@@ -476,9 +488,7 @@ export function implement(
       ? Object.fromEntries(Array.isArray(target) ? [] : actions.map(({ name }) => [name, built]))
       : built;
 
-    const unknown = Object.keys(handlers).filter((key) => !names.includes(key));
-
-    if (unknown.length > 0) throw new Error(`Unknown handlers: ${unknown.join(", ")}`);
+    assertKnown("handlers", Object.keys(handlers), names);
 
     // Own-property functions only: an inherited method is not a handler.
     const bound = actions.flatMap((action) => {
@@ -511,10 +521,7 @@ export function implement(
  * what `app`'s handlers owe for its actions, and what its hook owes, `app`'s or `before`'s; at
  * startup, what `app`'s builder needs, and what building its hook does, `app`'s or `before`'s.
  */
-export function share<
-  App extends AnyImplementation,
-  const T extends Extract<ActionOf<App>, Any> | ReadonlyArray<Extract<ActionOf<App>, Any>>,
->(
+export function share<App extends AnyImplementation, const T extends Target>(
   target: T,
   app: App,
 ): Implementation<
@@ -527,7 +534,7 @@ export function share<
 >;
 export function share<
   App extends AnyImplementation,
-  const T extends Extract<ActionOf<App>, Any> | ReadonlyArray<Extract<ActionOf<App>, Any>>,
+  const T extends Target,
   RB = never,
   EB = never,
   RBX = never,
@@ -537,11 +544,14 @@ export function share<
   before: Hook<ActionsOf<T>, RB, EB, RBX, FirstErrors<T>>,
 ): Implementation<
   ActionsOf<T>,
-  // Each call has a scope of its own, so `Scope` is never a request-time requirement.
+  // Each call has a scope of its own, so `Scope` is never a request-time requirement. A name
+  // typed only as `string` reads every key but the source's hook's, which `before` replaces.
   {
     readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
       ? Exclude<RB, Scope.Scope>
-      : App["~request"][K & keyof App["~request"]];
+      :
+          | App["~request"][K & Exclude<keyof App["~request"], "~hook">]
+          | HookOwed<K, Exclude<RB, Scope.Scope>>;
   },
   App["~buildError"],
   App["~buildContext"],
@@ -555,9 +565,10 @@ export function share(
 ): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
   const actions = Arr.ensure(target);
 
-  assertDistinct("action", actions, (action) => action.name);
+  assertOnce("action", actions);
 
-  // The types admit only `app`'s own actions; plain JavaScript may pass others.
+  // Refused here rather than in the types, so a helper may share what its type parameters
+  // stand for.
   const unknown = actions.filter((action) => !app.actions.includes(action));
 
   if (unknown.length > 0) {
@@ -698,7 +709,10 @@ export function client(
   const apps = toList(served);
 
   // Checked where it is made, as a surface checks the names it serves.
-  servedActions("action", apps);
+  assertOnce(
+    "action",
+    apps.flatMap((app) => app.actions),
+  );
 
   return Effect.map(built(apps), (bound) =>
     Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),

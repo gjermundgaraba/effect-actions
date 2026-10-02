@@ -38,6 +38,9 @@ value:
 | union of string literals, or string enum | `--kind <choice>`, one of the values                      |
 | anything else, numbers included          | `--tags <value>`: JSON the field accepts, or the text     |
 
+A suspended input or field, as a recursive schema is written, counts as the schema it stands
+for, its description included.
+
 An input that is not a struct of named fields (a union, a record, a scalar) gets one
 `--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`, which the
 action's schema decodes when the command runs. A schema accepting `{}`, including a union

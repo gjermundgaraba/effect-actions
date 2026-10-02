@@ -1,6 +1,5 @@
-import type { Effect, Layer } from "effect";
-import { Schema } from "effect";
-import { Tool, Toolkit } from "effect/ai";
+import type { Effect, Layer, Schema } from "effect";
+import type { Tool, Toolkit } from "effect/ai";
 import type * as Action from "./Action.js";
 import type { BuiltIns } from "./internal/errors.js";
 import { bindTools } from "./internal/tools.js";
@@ -132,24 +131,16 @@ export function make(apps: Served, options?: Options<Action.Any>): ErasedTools {
   const served = toList(apps);
   const needsApproval = options?.needsApproval;
 
-  // A model speaks JSON: each tool takes and gives the JSON encoding its schema advertises,
-  // as an MCP tool does, the whole success. Handlers and callers see decoded values.
   const { toolkit, layer } = bindTools(served, {
     label: "tool",
-    tool: (action, errors, app) =>
+    tool: (tool, action, app) =>
       Object.assign(
-        Tool.make(action.name, {
-          description: action.description,
-          parameters: Schema.toCodecJson(action.input),
-          success: Schema.toCodecJson(action.success),
-          failure: Schema.toCodecJson(Schema.Union(errors)),
-          failureMode: "return",
-          // One check over every call: the native one of each tool hands it the call.
-          needsApproval:
-            needsApproval === undefined
-              ? undefined
-              : (input, context) => needsApproval({ name: action.name, action, input }, context),
-        }),
+        // One check over every call: the native one of each tool hands it the call.
+        needsApproval === undefined
+          ? tool
+          : tool.setNeedsApproval((input, context) =>
+              needsApproval({ name: action.name, action, input }, context),
+            ),
         { id: `effect-actions/Tools/${keyOf(app)}/${action.name}` },
       ),
     handler: (run) => run,

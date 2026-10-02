@@ -116,6 +116,10 @@ describe("contracts", () => {
       Action.Forbidden,
       Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]),
       Action.InvalidInput.annotate({ description: "Out of stock" }),
+      // Suspended, as a recursive error is written, or tagged by a union of literals or an enum.
+      Schema.suspend(() => Forbidden),
+      Schema.Struct({ _tag: Schema.Literals(["Busy", "Unauthenticated"]) }),
+      Schema.Struct({ _tag: Schema.Enum({ Forbidden: "Forbidden", Busy: "Busy" }) }),
     ];
 
     const tags = [
@@ -126,6 +130,9 @@ describe("contracts", () => {
       "Forbidden",
       "Unauthenticated",
       "InvalidInput",
+      "Forbidden",
+      "Unauthenticated",
+      "Forbidden",
     ];
 
     // The contract is plain data a client may hold; serving it is refused.
@@ -183,6 +190,18 @@ describe("contracts", () => {
 
     // One schema listed by both is one error.
     expect(() => ActionHttp.layer(ActionHttp.make([Once], { errors: [Busy] }), app)).not.toThrow();
+
+    // So is one schema whose `_tag` repeats: variants of one error, or an enum's aliases.
+    const Variants = Action.make("variants", {
+      description: "",
+      access: "write",
+      errors: [
+        Schema.Union([Busy, Schema.TaggedStruct("Busy", {})]),
+        Schema.Struct({ _tag: Schema.Enum({ Late: "Late", Delayed: "Late" }) }),
+      ],
+    });
+
+    expect(() => Action.implement(Variants, () => Effect.void, Action.allowAll)).not.toThrow();
   });
 
   it("answers a built-in error as itself beside a loose error schema of the action's", async () => {
@@ -225,17 +244,6 @@ describe("contracts", () => {
         Action.make("9_action", { description: "", access: "write", success: Schema.String }),
       ]).actions.map((action) => action.name),
     ).toEqual(["9_action"]);
-  });
-
-  it("rejects duplicate names where they are bound", () => {
-    expect(() => ActionHttp.make([GetUser, GetUser])).toThrow("Duplicate action: getUser");
-    expect(() =>
-      Action.implement(
-        [GetUser, GetUser],
-        { getUser: () => Effect.die("unused") },
-        Action.allowAll,
-      ),
-    ).toThrow("Duplicate action: getUser");
   });
 
   it("accepts struct fields wherever a struct schema is accepted", () => {

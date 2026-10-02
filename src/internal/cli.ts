@@ -1,7 +1,14 @@
 import { Console, Effect, Option, Predicate, Record, Runtime, Schema, SchemaAST } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../Action.js";
-import { assertDistinct, type IsUnion, projectedErrors } from "./actions.js";
+import {
+  assertDistinct,
+  type IsUnion,
+  literalValues,
+  members,
+  projectedErrors,
+  unsuspended,
+} from "./actions.js";
 import { onStderr } from "./console.js";
 import { InvalidInput } from "./errors.js";
 
@@ -61,16 +68,9 @@ const jsonFlag = Flag.Boolean("json").pipe(
 );
 
 /** The kinds of JSON value there are. */
-type JsonKind = "null" | "boolean" | "number" | "string" | "array" | "object";
+const jsonKinds = ["null", "boolean", "number", "string", "array", "object"] as const;
 
-const jsonKinds: ReadonlyArray<JsonKind> = [
-  "null",
-  "boolean",
-  "number",
-  "string",
-  "array",
-  "object",
-];
+type JsonKind = (typeof jsonKinds)[number];
 
 /** The kind of a JSON value, or of a literal's, which JSON has no bigint for. */
 const kindOf = (value: Schema.Json | SchemaAST.LiteralValue): JsonKind =>
@@ -87,30 +87,30 @@ const kindOf = (value: Schema.Json | SchemaAST.LiteralValue): JsonKind =>
             : "object";
 
 /**
- * The kinds of JSON value an encoded type accepts at its top: its checks and what it
- * nests aside, which the action's schema decodes. A type of no fixed kind accepts all.
+ * The kinds of JSON value an encoded type accepts at its top, each member's of a union and a
+ * suspended type's: its checks and what it nests aside, which the action's schema decodes.
+ * A type of no fixed kind accepts all.
  */
-const kindsOf = (ast: SchemaAST.AST): ReadonlyArray<JsonKind> => {
-  if (SchemaAST.isUnion(ast)) return ast.types.flatMap(kindsOf);
+const kindsOf = (ast: SchemaAST.AST): ReadonlyArray<JsonKind> =>
+  members(ast).flatMap((member): ReadonlyArray<JsonKind> => {
+    if (SchemaAST.isLiteral(member)) return [kindOf(member.literal)];
 
-  if (SchemaAST.isLiteral(ast)) return [kindOf(ast.literal)];
+    if (SchemaAST.isEnum(member)) return member.enums.map(([, value]) => kindOf(value));
 
-  if (SchemaAST.isEnum(ast)) return ast.enums.map(([, value]) => kindOf(value));
+    if (SchemaAST.isNull(member)) return ["null"];
 
-  if (SchemaAST.isNull(ast)) return ["null"];
+    if (SchemaAST.isBoolean(member)) return ["boolean"];
 
-  if (SchemaAST.isBoolean(ast)) return ["boolean"];
+    if (SchemaAST.isNumber(member)) return ["number"];
 
-  if (SchemaAST.isNumber(ast)) return ["number"];
+    if (SchemaAST.isString(member) || SchemaAST.isTemplateLiteral(member)) return ["string"];
 
-  if (SchemaAST.isString(ast) || SchemaAST.isTemplateLiteral(ast)) return ["string"];
+    if (SchemaAST.isArrays(member)) return ["array"];
 
-  if (SchemaAST.isArrays(ast)) return ["array"];
+    if (SchemaAST.isObjects(member)) return ["object"];
 
-  if (SchemaAST.isObjects(ast)) return ["object"];
-
-  return jsonKinds;
-};
+    return jsonKinds;
+  });
 
 /**
  * A flag's text as the JSON it holds when the field's `encoded` type accepts that kind of
@@ -130,21 +130,9 @@ const jsonOrText = (encoded: SchemaAST.AST) => {
   ]);
 };
 
-/** The values a literal or an enum accepts; nothing else has a fixed set. */
-const values = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
-  SchemaAST.isLiteral(ast)
-    ? [ast.literal]
-    : SchemaAST.isEnum(ast)
-      ? ast.enums.map(([, value]) => value)
-      : [undefined];
-
-/** The members of a union, those of nested unions included, or the one type otherwise. */
-const members = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> =>
-  SchemaAST.isUnion(ast) ? ast.types.flatMap(members) : [ast];
-
 /** The strings a union of string literals or a string enum accepts, if it is one. */
 const choices = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
-  const accepted = members(ast).flatMap(values);
+  const accepted = members(ast).flatMap(literalValues);
 
   return accepted.every(Predicate.isString) ? accepted : undefined;
 };
@@ -156,13 +144,11 @@ type Kind = Param.ParamKind;
  * The native flag or argument parsing one field's encoded JSON value: a string or boolean
  * for those, a choice for string literals and string enums, and JSON or text for anything
  * else, numbers included. A template literal is a string; the action's schema checks its
- * pattern. An argument is shown by its name, a flag's JSON or text as `value`.
+ * pattern. A suspended type is read as the type it stands for. An argument is shown by its
+ * name, a flag's JSON or text as `value`.
  */
-const valueParam = (
-  kind: Kind,
-  name: string,
-  encoded: SchemaAST.AST,
-): Param.Param<Kind, unknown> => {
+const valueParam = (kind: Kind, name: string, field: SchemaAST.AST): Param.Param<Kind, unknown> => {
+  const encoded = unsuspended(field);
   const literals = choices(encoded);
 
   if (literals !== undefined) return Param.Literals(kind, name, literals);
@@ -215,7 +201,7 @@ const fieldParam = (
   plain: SchemaAST.AST | undefined,
 ): Param.Param<Kind, Option.Option<unknown>> =>
   !SchemaAST.isOptional(encoded)
-    ? kind === Param.flagKind && SchemaAST.isBoolean(encoded)
+    ? kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded))
       ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
       : valueParam(kind, name, encoded).pipe(Param.map(Option.some))
     : Param.optional(
@@ -248,6 +234,11 @@ const fieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> =
 const transformedWhole = (ast: SchemaAST.AST): boolean =>
   (SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast)?.encoding !== undefined;
 
+/** A field's description: its own, or the first a suspension it stands for has. */
+const descriptionOf = (ast: SchemaAST.AST): string | undefined =>
+  SchemaAST.resolveDescription(ast) ??
+  (SchemaAST.isSuspend(ast) ? descriptionOf(ast.thunk()) : undefined);
+
 /**
  * One flag or argument per top-level field of a struct input, named after the field in
  * kebab case, parsed as its encoded value and described by its declared schema: an
@@ -274,8 +265,7 @@ const fieldParams = (
     const documented = declaredField ?? property.type;
 
     // Described as a whole, as `optional(X).annotate(...)`, or as its value.
-    const description =
-      SchemaAST.resolveDescription(documented) ?? SchemaAST.resolveDescription(present(documented));
+    const description = descriptionOf(documented) ?? descriptionOf(present(documented));
 
     return {
       field,
@@ -425,7 +415,8 @@ const inputConfig = <A extends Action.Any>(
   positional: ReadonlyArray<string>,
 ): InputConfig<A> => {
   const codec = Schema.toCodecJson(action.input);
-  const encoded = SchemaAST.toEncoded(codec.ast);
+  // A suspended input, as a recursive schema is written, is the input it stands for.
+  const encoded = unsuspended(SchemaAST.toEncoded(codec.ast));
   // Undeclared fields are refused, as over HTTP: a misspelled key is an error, not dropped.
   const decode = Schema.decodeUnknownEffect(codec, { onExcessProperty: "error" });
 
@@ -435,7 +426,7 @@ const inputConfig = <A extends Action.Any>(
     SchemaAST.isObjects(encoded) &&
     encoded.indexSignatures.every((signature) => SchemaAST.isNever(signature.type))
   ) {
-    const params = fieldParams(encoded, action.input.ast, positional);
+    const params = fieldParams(encoded, unsuspended(action.input.ast), positional);
 
     return {
       flags: Object.fromEntries(

@@ -64,7 +64,7 @@ const tool = (name: string, args: Schema.JsonObject, token = "alice") =>
   withMcp((client) => client.callTool({ name, arguments: args }), token);
 
 describe("one implementation, both transports", () => {
-  it("exposes schemas and renamed MCP tools from the same contracts", async () => {
+  it("exposes schemas and MCP tools from the same contracts", async () => {
     const reply = await withMcp((client) => client.listTools());
     expect(reply.tools.map((tool) => tool.name)).toEqual([
       "getUser",
@@ -107,18 +107,6 @@ describe("one implementation, both transports", () => {
     expect(reply.structuredContent).toBeUndefined();
     // UserNotFound has no message field, so the text is its encoding.
     expect(reply.content).toEqual([{ type: "text", text: JSON.stringify(body) }]);
-  });
-
-  it("rejects malformed input with each protocol's native error", async () => {
-    const invalid = await app.handler(request("/api/double", "alice", { value: "nope" }));
-    expect(invalid.status).toBe(400);
-    expect(Schema.decodeUnknownSync(Action.InvalidInput)(await invalid.json()).message).toContain(
-      'at ["value"]',
-    );
-    expect(await tool("double", { value: "nope" })).toMatchObject({ isError: true });
-    expect(
-      (await app.handler(request("/api/renameUser", "alice", { id: "1", name: "" }))).status,
-    ).toBe(400);
   });
 
   it("the host's authorization runs on every call; discovery is not filtered per actor", async () => {

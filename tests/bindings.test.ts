@@ -224,10 +224,9 @@ describe("sharing an implementation's builder", () => {
 
     expect(open.actions).toEqual([identity]);
 
-    // Plain JavaScript may pass an action the source does not implement.
-    const stranger: Action.Any = Action.make("stranger", { description: "", access: "read" });
+    // An action the source does not implement is refused when `share` is called.
+    const stranger = Action.make("stranger", { description: "", access: "read" });
 
-    // @ts-expect-error Only the source's own actions.
     expect(() => Action.share([stranger], open)).toThrow(
       "Not implemented by this implementation: stranger",
     );

@@ -29,14 +29,15 @@ export const everyConsoleMethod = (pause: (millis: number) => Effect.Effect<void
       console.count("calls");
       console.countReset("missing");
 
-      console.time("timer");
-      console.time("timer");
+      // A label holding a format specifier, printed as it is.
+      console.time("timer %s");
+      console.time("timer %s");
       yield* pause(250);
-      console.timeLog("timer", "logged");
+      console.timeLog("timer %s", "logged");
       yield* pause(1250);
-      console.timeEnd("timer");
-      console.timeEnd("timer");
-      console.timeLog("timer");
+      console.timeEnd("timer %s");
+      console.timeEnd("timer %s");
+      console.timeLog("timer %s");
 
       console.group("group");
       console.log("inside");

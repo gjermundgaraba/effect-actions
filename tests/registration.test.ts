@@ -9,7 +9,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall } from "./requests.js";
-import { against, buildDefect, serve } from "./serve.js";
+import { against, serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
   const web = serve(
@@ -430,7 +430,7 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("keeps schema refs valid when nesting documents in OpenAPI", () => {
+  it("keeps OpenAPI references resolvable for a schema used twice", () => {
     const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
 
     const Read = Action.make("read", {
@@ -522,55 +522,83 @@ describe("projection boundaries", () => {
     expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
   });
 
-  // The types refuse such input where they see it (mcp-types.spec.ts); the native server
-  // refuses what they cannot see when the layer is built.
-  it.each([
-    Schema.String,
-    // Compiles to a `$ref` root, which the native server inlines and still rejects.
-    Schema.String.annotate({ identifier: "Named" }),
-  ])(
-    "the native server refuses erased non-object MCP input: the layer build dies",
-    async (input) => {
-      const Invalid = Action.make("invalid", {
-        description: "Unusable MCP input",
-        access: "write",
-        input,
-        success: Schema.String,
-      });
+  // A tool's arguments have a JSON Schema object root.
+  const One = Schema.Struct({ kind: Schema.Literal("one"), id: Schema.String });
 
-      // Erased, as in a list of implementations typed as any: the types see no input.
-      const apps: Action.Implementation<
-        Action.Any,
-        { readonly [name: string]: never },
-        never,
-        never
-      > = Action.implement(
-        [Invalid],
-        {
-          invalid: () => Effect.succeed("unused"),
-        },
+  /** One read action per entry of `inputs`, named by its key, without input for `undefined`. */
+  const implementations = (inputs: Readonly<Record<string, Action.Any["input"] | undefined>>) =>
+    Object.entries(inputs).map(([name, input]) =>
+      Action.implement(
+        Action.make(name, { description: name, access: "read", input }),
+        () => Effect.void,
         Action.allowAll,
-      );
-
-      expect(
-        await buildDefect(ActionMcp.layerHttp(apps, { name: "test", version: "0" })),
-      ).toContain("McpServer cannot register tool 'invalid'");
-    },
-  );
-
-  it("the native server refuses a union of one struct, which the types let through", async () => {
-    const Single = Action.make("single", {
-      description: "A union of one struct: an object to the types, `anyOf` to MCP",
-      access: "write",
-      input: Schema.Union([Schema.Struct({ id: Schema.String })]),
-    });
-
-    const layer = ActionMcp.layerHttp(
-      Action.implement(Single, () => Effect.void, Action.allowAll),
-      { name: "test", version: "0" },
+      ),
     );
 
-    expect(await buildDefect(layer)).toContain("McpServer cannot register tool 'single'");
+  it("serves input whose JSON Schema is one object, a suspended or declared one included", async () => {
+    class Fields extends Schema.Class<Fields>("Fields")({ id: Schema.String }) {}
+
+    // A declared type whose value is JSON as it is, and whose JSON Schema its check states.
+    const Declared = Schema.declare(Schema.is(Schema.Struct({ id: Schema.String })), {
+      toCodecJson: () => undefined,
+    }).check(
+      Schema.makeFilter(() => true, {
+        toJsonSchema: () => ({ type: "object", properties: { id: { type: "string" } } }),
+      }),
+    );
+
+    const inputs = {
+      none: undefined,
+      struct: One,
+      identified: One.annotate({ identifier: "One" }),
+      optional: Schema.Struct({ id: Schema.optionalKey(One) }),
+      record: Schema.Record(Schema.String, Schema.Number),
+      class: Fields,
+      suspended: Schema.suspend(() => One),
+      declared: Declared,
+    };
+
+    const tools = await listTools(makeTestMcp(implementations(inputs)).handler);
+
+    expect(tools.map(({ name, inputSchema }) => [name, inputSchema.type])).toEqual(
+      Object.keys(inputs).map((name) => [name, "object"]),
+    );
+  });
+
+  // Checked when the server is made, where the native server would die building the layer.
+  it("refuses input that is not one object with keys, naming every such action", () => {
+    class NoFields extends Schema.Class<NoFields>("NoFields")({}) {}
+
+    const Other = Schema.Struct({ kind: Schema.Literal("other"), code: Schema.Number });
+
+    const inputs = {
+      union: Schema.Union([One, Other]),
+      nullable: Schema.NullOr(One),
+      // An object to TypeScript, `anyOf` to MCP.
+      single: Schema.Union([One]),
+      scalar: Schema.String,
+      // Compiles to a `$ref` root, which the native server inlines and still rejects.
+      named: Schema.String.annotate({ identifier: "Named" }),
+      array: Schema.Array(One),
+      tuple: Schema.Tuple([Schema.String]),
+      // No keys, and accepts any value but `null`.
+      anything: Schema.Struct({}),
+      fieldless: NoFields,
+    };
+
+    const refused = implementations(inputs);
+
+    const status = Action.implement(
+      Action.make("status", { description: "Status", access: "read" }),
+      () => Effect.void,
+      Action.allowAll,
+    );
+
+    const options = { name: "test", version: "0" };
+    const message = `MCP tool input must be one object with keys, such as a struct: ${Object.keys(inputs).join(", ")}`;
+
+    expect(() => ActionMcp.layerHttp([status, ...refused], options)).toThrow(message);
+    expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
   });
 
   it("serves `{}` as no input, the object root MCP requires", async () => {

@@ -205,12 +205,18 @@ it("derives each field's flag from its encoded JSON value", async () => {
   }
 
   // Any other flag takes JSON, or its text when it is not JSON, for the schema to decode:
-  // input it refuses is `InvalidInput`, as over HTTP.
-  for (const args of [
-    ["--tenant-id", "acme", "--count", "many", "--mode", "fast", "--tags", "[]", "--owner", "{}"],
-    ["--tenant-id", "acme", "--tags", "[", ...required],
-  ]) {
-    expect(causeOf(await runExit(command, args))).toBeInstanceOf(Action.InvalidInput);
+  // input it refuses is `InvalidInput`, as over HTTP, naming the field.
+  for (const [field, args] of [
+    // The required flags, `--count` given text that is not JSON.
+    ["count", ["--tenant-id", "acme", "--tags", "[]", ...required.with(1, "many")]],
+    ["tags", ["--tenant-id", "acme", "--tags", "[", ...required]],
+  ] as const) {
+    const refused = causeOf(await runExit(command, args));
+
+    expect(refused).toBeInstanceOf(Action.InvalidInput);
+
+    if (refused instanceof Action.InvalidInput)
+      expect(refused.message).toContain(`at ["${field}"]`);
   }
 
   // A required field's flag is required by the parser, which shows help without it.
@@ -322,6 +328,48 @@ it("takes an enum's value and a template literal's text as they are, not as JSON
   expect(
     causeOf(await runExit(command, ["--color", "red", "--level", "2", "--id", "seven"])),
   ).toBeInstanceOf(Action.InvalidInput);
+});
+
+// A suspended schema, as a recursive one is written, is read as the schema it stands for.
+it("reads a suspended input or field as the schema it stands for, described by it", async () => {
+  const inputs: unknown[] = [];
+
+  const Note = Action.make("note", {
+    description: "A suspended input of suspended fields",
+    access: "write",
+    input: Schema.suspend(() =>
+      Schema.Struct({
+        text: Schema.suspend(() => Schema.String.annotate({ description: "What to note" })),
+        // Described on the suspension it stands for, itself suspended.
+        pinned: Schema.suspend(() =>
+          Schema.suspend(() => Schema.Boolean).annotate({ description: "Keep it on top" }),
+        ),
+      }),
+    ),
+  });
+
+  const app = Action.implement(
+    Note,
+    (input) =>
+      Effect.sync(() => {
+        inputs.push(input);
+      }),
+    Action.allowAll,
+  );
+
+  // A string field takes `true` as text, a boolean one is a switch, and a field may be
+  // positional.
+  await run(ActionCli.command(app, Note), ["--text", "true", "--pinned"]);
+  await run(ActionCli.command(app, Note, { positional: ["text"] }), ["true"]);
+
+  expect(inputs).toStrictEqual([
+    { text: "true", pinned: true },
+    { text: "true", pinned: false },
+  ]);
+
+  const help = (await lines(ActionCli.command(app, Note), ["--help"])).join("\n");
+  expect(help).toMatch(/--text string\s+What to note/);
+  expect(help).toMatch(/--pinned\s+Keep it on top/);
 });
 
 it("maps flag strings to codecs whose original encoding is not JSON", async () => {

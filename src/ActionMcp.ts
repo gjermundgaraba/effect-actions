@@ -4,6 +4,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  JsonPointer,
   Layer,
   Option,
   Predicate,
@@ -13,7 +14,7 @@ import {
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
 import type { HttpRouter } from "effect/http";
 import type * as Action from "./Action.js";
-import type { IsUnion } from "./internal/actions.js";
+import { assertKnown } from "./internal/actions.js";
 import { defaultPath, httpProtocol, isJsonObject, type ToolOptions } from "./internal/mcp.js";
 import { recordStepUp } from "./internal/refusal.js";
 import { onStderr } from "./internal/console.js";
@@ -73,56 +74,6 @@ const stdioProtocols = [
 ] as const;
 
 /**
- * Whether an input encoding `E` is one object with keys, a record included, as the JSON
- * Schema root of a tool's arguments must be: not a union, an array, a scalar, nor an object
- * without keys, such as `Schema.Struct({})`'s. An erased input passes; the native server
- * refuses what the types cannot see when the layer is built.
- */
-type ObjectInput<E> = 0 extends 1 & E
-  ? true
-  : unknown extends E
-    ? true
-    : true extends IsUnion<E>
-      ? false
-      : E extends ReadonlyArray<unknown>
-        ? false
-        : E extends object
-          ? [keyof E] extends [never]
-            ? false
-            : true
-          : false;
-
-/** The names of the actions among `A` whose input is not one object with keys. */
-type NotObjectInput<A> = A extends Action.Any
-  ? ObjectInput<A["input"]["Encoded"]> extends true
-    ? never
-    : A["name"]
-  : never;
-
-/**
- * Nothing when every action `Apps` implement has input MCP can serve; otherwise a property no
- * implementation has, naming the actions whose input is not one object, so the call is a
- * type error that names them. The entry is selected by a key distributed over `Apps`, so
- * where `Apps` is a helper's own type parameter, alone or spread into a list, the compiler
- * reads the key through the helper's constraint, whose erased input is served; a conditional
- * type would instead demand that its `Apps` satisfy the refusal too. A list holding a type
- * parameter is refused, its input unread. A union argument takes each member's key, and so
- * passes when one member is served.
- */
-type McpInputs<Apps> = {
-  readonly served: unknown;
-  readonly refused: {
-    readonly "MCP tool input must be one object with keys, such as a struct": NotObjectInput<
-      ActionOf<Member<Apps>>
-    >;
-  };
-}[Apps extends unknown
-  ? [NotObjectInput<ActionOf<Member<Apps>>>] extends [never]
-    ? "served"
-    : "refused"
-  : never];
-
-/**
  * The options of a server of `Apps`, over HTTP and over stdio, whose `tools` the served actions
  * type. Each is read by a fixed key from a type distributed over `Apps`, so where `Apps` is a
  * helper's own type parameter, alone or spread into a list, the compiler reads the options
@@ -148,21 +99,44 @@ type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provi
 /**
  * MCP has a JSON-only wire contract. Success is the encoded success as structured content,
  * and its JSON as text; declared failures are returned as JSON text. The native server
- * refuses undeclared arguments, publishes closed input schemas, and rejects any input whose
- * JSON Schema root is not an object. A step-up refusal is recorded, so that under
- * `Authentication.make` it answers the request.
+ * refuses undeclared arguments and publishes closed input schemas. A step-up refusal is
+ * recorded, so that under `Authentication.make` it answers the request.
  */
 const projection: Projection = {
   label: "MCP tool",
-  tool: (action, errors) =>
-    Tool.make(action.name, {
-      description: action.description,
-      parameters: Schema.toCodecJson(action.input),
-      success: Schema.toCodecJson(action.success),
-      failure: Schema.toCodecJson(Schema.Union(errors)),
-      failureMode: "return",
-    }).annotate(Tool.Strict, true),
+  tool: (tool) => tool.annotate(Tool.Strict, true),
   handler: (run) => (input) => recordStepUp(run(input)),
+};
+
+/** Whether a JSON Schema is one the native server takes for a tool's arguments. */
+const isToolJson = Schema.is(McpSchema.ToolJson);
+
+/**
+ * Refuse an action whose input is not one object, as the JSON Schema root of a tool's
+ * arguments must be: not a union, an array, a scalar, nor `Schema.Struct({})`, which takes any
+ * value but `null`. It reads the JSON Schema the native server reads, a `$ref` at its root
+ * resolved, so it refuses what the native server would, but naming every such action, where
+ * the native server dies when the layer builds, suggesting `Tool.EmptyParams`.
+ */
+const assertObjectInputs = (apps: ReadonlyArray<AnyImplementation>): void => {
+  const refused = apps
+    .flatMap((app) => app.actions)
+    .filter((action) => {
+      const { schema, definitions } = Schema.toJsonSchemaDocument(Schema.toCodecJson(action.input));
+
+      const [scope, key] = Predicate.isString(schema.$ref)
+        ? (JsonPointer.parseUriFragment(schema.$ref) ?? [])
+        : [];
+
+      return !isToolJson(scope === "$defs" && key !== undefined ? definitions[key] : schema);
+    })
+    .map(({ name }) => name);
+
+  if (refused.length > 0) {
+    throw new Error(
+      `MCP tool input must be one object with keys, such as a struct: ${refused.join(", ")}`,
+    );
+  }
 };
 
 /** The native tool registry. */
@@ -272,10 +246,11 @@ const textFields = (
   apps: ReadonlyArray<AnyImplementation>,
   tools: ToolOptions<Action.Any>,
 ): ReadonlyMap<string, string> => {
-  const names = apps.flatMap((app) => app.actions.map((action) => action.name));
-  const unknown = Object.keys(tools).filter((key) => !names.includes(key));
-
-  if (unknown.length > 0) throw new Error(`Unknown tools: ${unknown.join(", ")}`);
+  assertKnown(
+    "tools",
+    Object.keys(tools),
+    apps.flatMap((app) => app.actions.map((action) => action.name)),
+  );
 
   return new Map(
     Object.entries(tools).flatMap(([name, options]) =>
@@ -291,6 +266,8 @@ const server = <Out, R>(
 ) => {
   const binding = bindTools(apps, projection);
   const texts = textFields(apps, tools);
+
+  assertObjectInputs(apps);
 
   // Registered with only the registry and the tool handlers: the native server lays the
   // context it registers in over every call's. Each handler keeps what it was built with,
@@ -326,7 +303,7 @@ const server = <Out, R>(
  * provide an identity at startup, which a route no authentication covers serves to anyone.
  */
 export function layerHttp<const Apps extends Served>(
-  implementations: Apps & NoInfer<McpInputs<Apps>>,
+  implementations: Apps,
   options: NoInfer<ServerOptions<Apps>["http"]>,
 ): Layer.Layer<
   never,
@@ -358,7 +335,7 @@ export function layerHttp(apps: Served, { tools, ...options }: LayerHttpOptions)
  * request identity or authority; each implementation's `before` hook runs.
  */
 export function runStdio<const Apps extends Served>(
-  implementations: Apps & NoInfer<McpInputs<Apps>>,
+  implementations: Apps,
   options: NoInfer<ServerOptions<Apps>["stdio"]>,
 ): Effect.Effect<
   void,

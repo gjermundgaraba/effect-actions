@@ -51,19 +51,60 @@ export const assertDistinct = <T>(
   }
 };
 
-/** The `_tag`s a schema's encoding carries, one per member of a union. */
+/** Refuse an action name `actions` hold twice. */
+export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void =>
+  assertDistinct(what, actions, (action) => action.name);
+
+/**
+ * Refuse a key of options keyed by action name, such as handlers, tools or commands, that no
+ * action of `names` has, so a stale option cannot outlive its action.
+ */
+export const assertKnown = (
+  what: string,
+  keys: ReadonlyArray<string>,
+  names: ReadonlyArray<string>,
+): void => {
+  const unknown = keys.filter((key) => !names.includes(key));
+
+  if (unknown.length > 0) throw new Error(`Unknown ${what}: ${unknown.join(", ")}`);
+};
+
+/** `ast` with any suspension at its top resolved, as a recursive schema's is. */
+export const unsuspended = (ast: SchemaAST.AST): SchemaAST.AST =>
+  SchemaAST.isSuspend(ast) ? unsuspended(ast.thunk()) : ast;
+
+/** The members of a union, nested and suspended ones included, or the one type otherwise. */
+export const members = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => {
+  const resolved = unsuspended(ast);
+
+  return SchemaAST.isUnion(resolved) ? resolved.types.flatMap(members) : [resolved];
+};
+
+/**
+ * The values a literal or an enum accepts, or `undefined` for any other type, which has no
+ * fixed set.
+ */
+export const literalValues = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
+  SchemaAST.isLiteral(ast)
+    ? [ast.literal]
+    : SchemaAST.isEnum(ast)
+      ? ast.enums.map(([, value]) => value)
+      : [undefined];
+
+/**
+ * The `_tag`s a schema's encoding carries, each once: each member's of a union, every value of
+ * a union of literals or of an enum, and a suspended schema's, as a recursive error is written.
+ */
 const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> => {
-  const encoded = SchemaAST.toEncoded(ast);
+  const tags = members(SchemaAST.toEncoded(ast)).flatMap((member) => {
+    const tag = SchemaAST.isObjects(member)
+      ? member.propertySignatures.find((property) => property.name === "_tag")?.type
+      : undefined;
 
-  if (SchemaAST.isUnion(encoded)) return encoded.types.flatMap(tagsOf);
+    return tag === undefined ? [] : members(tag).flatMap(literalValues).filter(Predicate.isString);
+  });
 
-  const tag = SchemaAST.isObjects(encoded)
-    ? encoded.propertySignatures.find((property) => property.name === "_tag")?.type
-    : undefined;
-
-  return tag !== undefined && SchemaAST.isLiteral(tag) && Predicate.isString(tag.literal)
-    ? [tag.literal]
-    : [];
+  return [...new Set(tags)];
 };
 
 /**

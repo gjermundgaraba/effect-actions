@@ -1,13 +1,8 @@
-import { Effect, type Layer } from "effect";
+import { Effect, type Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../Action.js";
-import { projectedErrors } from "./actions.js";
-import {
-  acquire,
-  type AnyImplementation,
-  type ErasedHandler,
-  servedActions,
-} from "./implementation.js";
+import { assertOnce, projectedErrors } from "./actions.js";
+import { acquire, type AnyImplementation, type ErasedHandler } from "./implementation.js";
 
 /** Native tools and their acquired action handlers, with dynamic names erased. */
 interface BoundTools {
@@ -17,18 +12,14 @@ interface BoundTools {
 }
 
 /**
- * How a surface projects an action as a tool: its tool's codecs and what a call of it
- * runs. Selection, dispatch, hints and binding are shared.
+ * How a surface projects an action as a tool: what it adds to the tool and what a call of it
+ * runs. Selection, codecs, dispatch, hints and binding are shared.
  */
 export interface Projection {
   /** What a tool is called in `Duplicate <label>: <name>`. */
   readonly label: string;
-  /** The tool of `action`, one of `app`'s, declaring `errors`: its own and the built-in ones. */
-  readonly tool: (
-    action: Action.Any,
-    errors: Action.Any["errors"],
-    app: AnyImplementation,
-  ) => Tool.Any;
+  /** The surface's own form of `tool`, the tool of `action`, one of `app`'s. */
+  readonly tool: (tool: Tool.Any, action: Action.Any, app: AnyImplementation) => Tool.Any;
   /** What a call of the tool runs, given the action's handler behind its hook. */
   readonly handler: (run: ErasedHandler<unknown>) => ErasedHandler<unknown>;
 }
@@ -42,6 +33,21 @@ const annotate = (tool: Tool.Any, { access, hints }: Action.Any) =>
     .annotate(Tool.OpenWorld, hints.openWorld);
 
 /**
+ * The native tool of `action`. A model and an MCP client speak JSON, so it takes and gives
+ * the JSON encoding its schemas advertise, the whole success; handlers and callers see decoded
+ * values. A hook refusal, or a handler's built-in failure, is the implementation's failure, so
+ * it declares the built-in errors alongside the action's own, and returns them as its result.
+ */
+const toolOf = (action: Action.Any) =>
+  Tool.make(action.name, {
+    description: action.description,
+    parameters: Schema.toCodecJson(action.input),
+    success: Schema.toCodecJson(action.success),
+    failure: Schema.toCodecJson(Schema.Union(projectedErrors(action))),
+    failureMode: "return",
+  });
+
+/**
  * Project actions as tools named after them, sharing each implementation's built handlers.
  */
 export const bindTools = (
@@ -49,15 +55,14 @@ export const bindTools = (
   projection: Projection,
 ): BoundTools => {
   // Fail before building handlers when two tools share a name.
-  servedActions(projection.label, apps);
+  assertOnce(
+    projection.label,
+    apps.flatMap((app) => app.actions),
+  );
 
-  // A hook refusal, or a handler's built-in failure, is the implementation's failure, so every
-  // tool declares the built-in errors alongside the action's own and returns them as such.
   const toolkit = Toolkit.make(
     ...apps.flatMap((app) =>
-      app.actions.map((action) =>
-        annotate(projection.tool(action, projectedErrors(action), app), action),
-      ),
+      app.actions.map((action) => annotate(projection.tool(toolOf(action), action, app), action)),
     ),
   );
 

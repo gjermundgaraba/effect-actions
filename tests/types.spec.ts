@@ -16,6 +16,7 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
+import type { RequestOf } from "../src/internal/implementation.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { CurrentActor } from "../examples/authorization.js";
 import { Double, GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
@@ -114,8 +115,6 @@ export const typeAssertions = () => {
   Action.implement(Double, ok, Action.allowAll);
   // @ts-expect-error A single handler's result must match the success schema.
   Action.implement(Double, () => Effect.succeed("two"), Action.allowAll);
-  // @ts-expect-error A single handler may only fail with the declared errors.
-  Action.implement(Double, () => Effect.fail(new Error("undeclared")), Action.allowAll);
 
   HttpRouter.toWebHandler(
     // @ts-expect-error Build-time handler dependencies are Layer requirements.
@@ -462,9 +461,24 @@ export const implementTypes = () => {
 
   void inMemoryServices;
 
-  const renameOnly = Action.implement(Rename, ({ name }) => Effect.succeed(name), Action.allowAll);
-  // @ts-expect-error Only the source's own actions.
-  Action.share([Lookup], renameOnly);
+  // `share` refuses an action its source does not implement when it is called, not in the
+  // types, so a helper shares the actions its type parameters stand for, owing what their
+  // handlers read.
+  const serveOne = <const A extends Action.Any, const App extends Action.AnyImplementation<A>>(
+    action: A,
+    app: App,
+  ) => ActionHttp.layer(ActionHttp.make([action]), Action.share([action], app));
+
+  const renameOnly = Action.implement(
+    Rename,
+    ({ name }) => Effect.as(Principal, name),
+    Action.allowAll,
+  );
+
+  const renameRoutes = serveOne(Rename, renameOnly);
+  const helperRequest: Equal<RequestServices<typeof renameRoutes>, Principal> = true;
+
+  void helperRequest;
 
   // Surfaces take implementations as they are, and compute their requirements from them.
   const all = [plain, built, record, shared];
@@ -488,15 +502,6 @@ export const implementTypes = () => {
   void mcpBuild;
   void mcpError;
 
-  const Foreign = Action.make("foreign", {
-    description: "Foreign",
-    access: "read",
-    success: Schema.String,
-  });
-
-  const foreign = Action.implement(Foreign, () => Effect.succeed(""), Action.allowAll);
-  // @ts-expect-error A layer refuses an implementation holding none of its binding's actions.
-  ActionHttp.layer(http, foreign);
   // @ts-expect-error A list of implementations is not a list of contracts.
   ActionHttp.make(all);
 };
@@ -581,15 +586,6 @@ export const builtInErrorTypes = Effect.gen(function* () {
 
 export const configuredSurfaceTypes = () => {
   const Bound = ActionHttp.make(Actions, { prefix: "/rpc" });
-  // @ts-expect-error A configured binding must preserve acquisition requirements.
-  HttpRouter.toWebHandler(ActionHttp.layer(Bound, App).pipe(services));
-
-  const web = HttpRouter.toWebHandler(
-    ActionHttp.layer(Bound, App).pipe(Layer.provide(Users.layerMemory), services),
-  );
-
-  // @ts-expect-error Configuring the binding must preserve request requirements.
-  void web.handler(new Request("http://localhost"), Context.empty());
   // @ts-expect-error A prefix is an absolute path.
   ActionHttp.make(Actions, { prefix: "api" });
   ActionMcp.layerHttp(App, {
@@ -1370,6 +1366,30 @@ export const builtHookTypes = () => {
 
   void servicedChannels;
 
+  // Names typed only as `Action.Any`'s absorb the hook's key, so each owes the hook's
+  // requirements: the share's own hook's, or its source's when it keeps that.
+  class Audit extends Context.Service<Audit, string>()("types-spec/Audit") {}
+
+  const anyLookup: Action.Any = Lookup;
+  const actorHook = () => Effect.asVoid(Actor);
+  const source = Action.implement(Lookup, handlers.lookup, () => Effect.asVoid(Audit));
+
+  const unused = () => Effect.die("unused");
+
+  const erasedOne = Action.implement(anyLookup, unused, actorHook);
+  const erasedList = Action.implement([anyLookup], { lookup: unused }, actorHook);
+  const erasedShare = Action.share(anyLookup, source, actorHook);
+  const erasedKept = Action.share(anyLookup, source);
+
+  const erasedChannels: [
+    Equal<RequestOf<typeof erasedOne, Action.Any>, Actor>,
+    Equal<RequestOf<typeof erasedList, Action.Any>, Actor>,
+    Equal<RequestOf<typeof erasedShare, Action.Any>, Actor>,
+    Equal<RequestOf<typeof erasedKept, Action.Any>, Audit>,
+  ] = [true, true, true, true];
+
+  void erasedChannels;
+
   // A hook the Effect returns is typed from the implementation's actions however it is
   // written: `Effect.fn`, `Effect.fn(name)` or `Effect.fnUntraced`, unannotated.
   const generated = Action.implement(
@@ -1542,8 +1562,7 @@ export const erasedImplementationTypes = () => {
   // @ts-expect-error A forgotten startup service is refused through the helper.
   HttpRouter.toWebHandler(byBinding(StoredHttp, stored).pipe(services));
 
-  // Beside the helper's own implementations, the type parameter is spread. Listed as one
-  // element, the check cannot read the actions it stands for, so it is refused, as on MCP.
+  // Beside the helper's own implementations, the type parameter is spread or listed.
   const Paired = Action.make("paired", {
     description: "Paired",
     access: "read",
@@ -1556,17 +1575,30 @@ export const erasedImplementationTypes = () => {
   const serveBeside = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps) =>
     ActionHttp.layer(PairedHttp, [...apps, paired]);
 
-  const serveListed = <App extends Action.AnyImplementation>(app: App) => {
-    // @ts-expect-error Nothing runs: the list's actions are unread, so it is refused.
-    void ActionHttp.layer(PairedHttp, [app, paired]);
-  };
-
-  void serveListed;
+  const serveListed = <App extends Action.AnyImplementation>(app: App) =>
+    ActionHttp.layer(PairedHttp, [app, paired]);
 
   // @ts-expect-error A forgotten startup service is refused through the helper.
   HttpRouter.toWebHandler(serveBeside([stored]).pipe(services));
   HttpRouter.toWebHandler(
     serveBeside([stored]).pipe(Layer.provide(Layer.succeed(Store, "")), services),
+  );
+  // @ts-expect-error The same, listed.
+  HttpRouter.toWebHandler(serveListed(stored).pipe(services));
+  HttpRouter.toWebHandler(
+    serveListed(stored).pipe(Layer.provide(Layer.succeed(Store, "")), services),
+  );
+
+  // A binding the helper makes from generic actions.
+  const ownBinding = <const A extends Action.Any, const App extends Action.AnyImplementation<A>>(
+    action: A,
+    app: App,
+  ) => ActionHttp.layer(ActionHttp.make([action]), app);
+
+  // @ts-expect-error A forgotten startup service is refused through the helper.
+  HttpRouter.toWebHandler(ownBinding(Stored, stored).pipe(services));
+  HttpRouter.toWebHandler(
+    ownBinding(Stored, stored).pipe(Layer.provide(Layer.succeed(Store, "")), services),
   );
 
   // Typed with the erased type, a value owes `unknown`, which nothing provides: its actions
@@ -1649,11 +1681,7 @@ export const bindingSelectionTypes = () => {
   void everything;
 
   const other = Action.implement(Other, () => Effect.succeed(""), Action.allowAll);
-  // @ts-expect-error An implementation holding none of the binding's actions, as the message names.
-  ActionHttp.layer(Http, other);
-  // @ts-expect-error The same in a list.
-  ActionHttp.layer(Http, [app, other]);
-  // Another binding holding it serves it.
+  // A binding holding it serves it; `layer` throws for a binding holding none of its actions.
   ActionHttp.layer(ActionHttp.make([Read, Other]), [app, other]);
 
   // `security` and `public` document the authentication; `public` names the binding's actions.

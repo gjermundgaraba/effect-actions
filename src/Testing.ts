@@ -24,7 +24,7 @@ import {
 } from "effect/http";
 import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
-import { assertDistinct, projectedErrors } from "./internal/actions.js";
+import { assertOnce, projectedErrors } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
 import { type BuiltIn, refusals } from "./internal/errors.js";
 import {
@@ -335,7 +335,7 @@ export function mcpClient(
   never,
   HttpClient.HttpClient
 > {
-  assertDistinct("action", actions, (action) => action.name);
+  assertOnce("action", actions);
 
   return Effect.map(HttpClient.HttpClient, (native) => {
     const client = transformClient(native);

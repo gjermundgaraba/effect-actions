@@ -22,8 +22,8 @@ import {
 } from "effect/http-api";
 import type * as Action from "./Action.js";
 import {
-  assertDistinct,
   assertDistinctTags,
+  assertOnce,
   assertOwnTags,
   projectedErrors,
 } from "./internal/actions.js";
@@ -134,42 +134,6 @@ type Serving<App, Bound extends Action.Any> = string extends ActionsOf<App>["nam
   ? ActionsOf<App>
   : Extract<ActionsOf<App>, Bound>;
 
-/** The implementations among `App` of which a layer of the actions `Bound` serves nothing. */
-type Idle<App, Bound extends Action.Any> = App extends unknown
-  ? [Serving<App, Bound>] extends [never]
-    ? App
-    : never
-  : never;
-
-/**
- * Nothing when every implementation `Apps` stands for holds an action of the binding `H`;
- * otherwise a property no implementation has, naming the actions of those holding none, so
- * the call is a type error that names them. The entry is selected by a key distributed over
- * `H` and `Apps`, so where either is a helper's own type parameter, the compiler reads the
- * key through the helper's constraint, which serves: an erased binding holds any action, and
- * an erased implementation may hold one, which `layer` checks when it is called. A list
- * holding a type parameter beside another implementation, or a binding or a share made of
- * generic actions, leaves the key deferred, and indexed by its constraint, both entries, the
- * parameter demands the refusal: such a helper spreads its type parameter, takes the binding
- * as one, or is passed the share.
- */
-type Serves<H extends AnyHttp, Apps> = {
-  readonly served: unknown;
-  readonly idle: {
-    readonly "serves no action of this binding": ActionsOf<
-      Idle<Member<Apps>, H["actions"][number]>
-    >["name"];
-  };
-}[H extends unknown
-  ? string extends H["actions"][number]["name"]
-    ? "served"
-    : Apps extends unknown
-      ? [Idle<Member<Apps>, H["actions"][number]>] extends [never]
-        ? "served"
-        : "idle"
-      : never
-  : never];
-
 /**
  * What each implementation among `App` owes per request where a layer of the actions `Bound`
  * serves it: its hook's services, and the handlers' of the actions it serves.
@@ -272,7 +236,7 @@ const servedBy = (
     return own;
   });
 
-  assertDistinct("served action", served, (action) => action.name);
+  assertOnce("served action", served);
 
   return served;
 };
@@ -337,7 +301,7 @@ export function make<const Actions extends ReadonlyArray<Action.Any>, const E ex
   options?: Options<E, Actions[number]>,
 ): Binding<Actions, E>;
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): AnyHttp {
-  assertDistinct("action", actions, (action) => action.name);
+  assertOnce("action", actions);
 
   const errors = options.errors ?? [];
   const open = options.public ?? [];
@@ -410,10 +374,10 @@ const entry = () =>
  * Serve the binding's actions among `implementations` in one layer, each implementation's
  * `before` hook running after decoding, before each handler. The binding decides what is
  * served: an implementation's actions the binding leaves out have no route here, and one
- * holding none of the binding's is refused. It mounts only the routes of the actions it
- * serves, so one binding may be served by several layers, such as public routes beside
- * authenticated ones: middleware provided to a layer covers its routes only. Each
- * implementation's builder runs once per layer graph however many layers serve it.
+ * holding none of the binding's is refused when `layer` is called. It mounts only the routes
+ * of the actions it serves, so one binding may be served by several layers, such as public
+ * routes beside authenticated ones: middleware provided to a layer covers its routes only.
+ * Each implementation's builder runs once per layer graph however many layers serve it.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
  * each implementation's hook needs and the handlers of the actions it serves, until
@@ -423,7 +387,7 @@ const entry = () =>
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   http: H,
-  implementations: Apps & NoInfer<Serves<H, Apps>>,
+  implementations: Apps,
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>>,
