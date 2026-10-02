@@ -475,27 +475,33 @@ describe("Authentication.bearerToken", () => {
     );
 
   const tokenOf = (authorization?: string) =>
-    Option.map(Effect.runSync(Effect.option(withAuthorization(authorization))), Redacted.value);
+    Effect.map(Effect.option(withAuthorization(authorization)), Option.map(Redacted.value));
 
-  it("reads the token of a Bearer authorization, whatever the scheme's case", () => {
-    expect(tokenOf("Bearer alice")).toEqual(Option.some("alice"));
-    expect(tokenOf("bearer alice")).toEqual(Option.some("alice"));
-    expect(tokenOf("BEARER alice")).toEqual(Option.some("alice"));
-  });
+  it.effect("reads the token of a Bearer authorization, whatever the scheme's case", () =>
+    Effect.gen(function* () {
+      expect(yield* tokenOf("Bearer alice")).toEqual(Option.some("alice"));
+      expect(yield* tokenOf("bearer alice")).toEqual(Option.some("alice"));
+      expect(yield* tokenOf("BEARER alice")).toEqual(Option.some("alice"));
+    }),
+  );
 
-  it("fails without an authorization, with another scheme, or without a token", () => {
-    expect(tokenOf()).toEqual(Option.none());
-    expect(tokenOf("Basic YWxpY2U6c2VjcmV0")).toEqual(Option.none());
-    expect(tokenOf("Bearer")).toEqual(Option.none());
-    expect(tokenOf("Bearer ")).toEqual(Option.none());
-    expect(tokenOf("Bearer two tokens")).toEqual(Option.none());
-  });
+  it.effect("fails without an authorization, with another scheme, or without a token", () =>
+    Effect.gen(function* () {
+      expect(yield* tokenOf()).toEqual(Option.none());
+      expect(yield* tokenOf("Basic YWxpY2U6c2VjcmV0")).toEqual(Option.none());
+      expect(yield* tokenOf("Bearer")).toEqual(Option.none());
+      expect(yield* tokenOf("Bearer ")).toEqual(Option.none());
+      expect(yield* tokenOf("Bearer two tokens")).toEqual(Option.none());
+    }),
+  );
 
-  it("fails with the built-in 401, so authentication needs no branch of its own", () => {
-    expect(Effect.runSync(Effect.flip(withAuthorization()))).toEqual(
-      new Action.Unauthenticated({ message: "A bearer token is required." }),
-    );
-  });
+  it.effect("fails with the built-in 401, so authentication needs no branch of its own", () =>
+    Effect.gen(function* () {
+      expect(yield* Effect.flip(withAuthorization())).toEqual(
+        new Action.Unauthenticated({ message: "A bearer token is required." }),
+      );
+    }),
+  );
 });
 
 describe("authentication around a surface", () => {
@@ -652,21 +658,19 @@ describe("authentication around a surface", () => {
     }),
   );
 
-  it("leaves identity to the host on a local surface", async () => {
-    const { toolkit, layer } = ActionToolkit.make(guarded);
+  it.effect("leaves identity to the host on a local surface", () =>
+    Effect.gen(function* () {
+      const { toolkit, layer } = ActionToolkit.make(guarded);
 
-    const results = await Effect.gen(function* () {
-      const tools = yield* toolkit;
+      const results = yield* Effect.gen(function* () {
+        const tools = yield* toolkit;
 
-      return yield* Stream.runCollect(yield* tools.handle("secret", { note: "hi" }));
-    }).pipe(
-      Effect.provideService(Identity, { id: "host" }),
-      Effect.provide(layer),
-      Effect.runPromise,
-    );
+        return yield* Stream.runCollect(yield* tools.handle("secret", { note: "hi" }));
+      }).pipe(Effect.provideService(Identity, { id: "host" }), Effect.provide(layer));
 
-    expect(results).toMatchObject([{ isFailure: false, result: "host: hi" }]);
-  });
+      expect(results).toMatchObject([{ isFailure: false, result: "host: hi" }]);
+    }),
+  );
 });
 
 describe("Authentication.make combined with other middleware", () => {
