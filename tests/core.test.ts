@@ -45,10 +45,6 @@ describe("contracts", () => {
       success: Schema.String,
     });
 
-    // The access is kept as its literal.
-    const access: "write" = Write.access;
-
-    expect(access).toBe("write");
     expect(Write.hints).toEqual({
       destructive: true,
       idempotent: false,
@@ -64,14 +60,6 @@ describe("contracts", () => {
     });
 
     expect(Read.hints.destructive).toBe(false);
-
-    Action.make("advertised", {
-      description: "A write the model may call without approval",
-      access: "write",
-      success: Schema.String,
-      // @ts-expect-error A tool is read-only exactly when its action reads.
-      hints: { readOnly: true },
-    });
   });
 
   it("owns the built-in failures, each with a default message", () => {

@@ -9,7 +9,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import { HttpApiSecurity } from "effect/http-api";
+import { HttpApiClient, HttpApiSecurity } from "effect/http-api";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -49,29 +49,11 @@ const App = Action.implement(
   Action.allowAll,
 );
 
-/** The request services a route layer requires. */
-type RouteRequires<L> =
-  L extends Layer.Layer<infer _A, infer _E, infer R>
-    ? R extends HttpRouter.Request<"Requires", infer S>
-      ? S
-      : never
-    : never;
-
 /** What a call of `App`'s action `K` owes in process: its handler's services and its hook's. */
 type CallServices<
   App extends Action.AnyImplementation,
   K extends keyof Action.Client<App>,
 > = Action.Client<App>[K] extends (...input: never) => infer E ? Effect.Services<E> : never;
-
-/** What building `App` needs at startup. */
-type BuildServices<App extends Action.AnyImplementation> = Layer.Services<
-  ReturnType<typeof Action.layer<App>>
->;
-
-/** What building `App` fails with. */
-type BuildErrors<App extends Action.AnyImplementation> = Layer.Error<
-  ReturnType<typeof Action.layer<App>>
->;
 
 export const typeAssertions = () => {
   const actor = { id: "alice", tenantId: "acme", permissions: [] };
@@ -188,6 +170,8 @@ export const implementTypes = () => {
 
   class Principal extends Context.Service<Principal, string>()("types-spec/ImplementPrincipal") {}
 
+  class Secret extends Context.Service<Secret, string>()("types-spec/ImplementSecret") {}
+
   class BuildFailed extends Schema.TaggedError<BuildFailed>()("BuildFailed", {}) {}
 
   // Fields shorthand: a record of fields stands for the struct of them, input and success.
@@ -225,7 +209,7 @@ export const implementTypes = () => {
   // A call owes what its handler and its hook read, and building what the builder reads:
   // here, nothing.
   expectTypeOf<CallServices<typeof plain, "lookup">>().toBeNever();
-  expectTypeOf<BuildServices<typeof plain>>().toBeNever();
+  expectTypeOf(Action.layer(plain)).toEqualTypeOf<Layer.Layer<never, never, never>>();
 
   // One action, one builder: startup services are separate from the handler's.
   const built = Action.implement(
@@ -240,7 +224,7 @@ export const implementTypes = () => {
   );
 
   expectTypeOf<CallServices<typeof built, "lookup">>().toEqualTypeOf<Principal>();
-  expectTypeOf<BuildServices<typeof built>>().toEqualTypeOf<Store>();
+  expectTypeOf(Action.layer(built)).toEqualTypeOf<Layer.Layer<never, never, Store>>();
 
   // Several actions, one record: each handler is typed from its own contract.
   const record = Action.implement(
@@ -294,8 +278,8 @@ export const implementTypes = () => {
   const opened = ActionHttp.layer(ActionHttp.make([Rename]), reshared);
   const closed = ActionHttp.layer(ActionHttp.make([Rename]), kept);
 
-  expectTypeOf<RouteRequires<typeof opened>>().toEqualTypeOf<Store>();
-  expectTypeOf<RouteRequires<typeof closed>>().toEqualTypeOf<Store | Principal>();
+  expectTypeOf<RequestServices<typeof opened>>().toEqualTypeOf<Store>();
+  expectTypeOf<RequestServices<typeof closed>>().toEqualTypeOf<Store | Principal>();
 
   // Each call has a scope of its own: what a handler or a hook acquires asks no `Scope` of the
   // caller, whether the hook is its implementation's or a share's, on any surface.
@@ -304,21 +288,33 @@ export const implementTypes = () => {
   const scoped = Action.implement(
     [Lookup, Rename],
     {
-      lookup: ({ id }) => acquired({ id, name: "" }),
+      lookup: ({ id }) => Effect.flatMap(Secret, () => acquired({ id, name: "" })),
       rename: ({ name }) => Effect.flatMap(Principal, () => acquired(name)),
     },
     () => Effect.asVoid(acquired(true)),
   );
 
-  const rescoped = Action.share([Rename], scoped, () => Effect.asVoid(acquired(true)));
-
   const stdio = ActionMcp.runStdio(scoped, { name: "t", version: "0" });
 
-  expectTypeOf<Effect.Services<typeof stdio>>().toEqualTypeOf<Stdio.Stdio | Principal>();
+  expectTypeOf<Effect.Services<typeof stdio>>().toEqualTypeOf<Stdio.Stdio | Principal | Secret>();
   expectTypeOf<
-    RouteRequires<ReturnType<typeof ActionMcp.layerHttp<typeof scoped>>>
-  >().toEqualTypeOf<Principal>();
-  expectTypeOf<CallServices<typeof rescoped, "rename">>().toEqualTypeOf<Principal>();
+    RequestServices<ReturnType<typeof ActionMcp.layerHttp<typeof scoped>>>
+  >().toEqualTypeOf<Principal | Secret>();
+
+  // A share, keeping its source's hook or behind its own, owes what its own actions read:
+  // `rename`'s `Principal`, never the `Secret` of `lookup`, which it does not serve.
+  const keptScoped = ActionMcp.runStdio(Action.share([Rename], scoped), {
+    name: "t",
+    version: "0",
+  });
+
+  const rescoped = ActionMcp.runStdio(
+    Action.share([Rename], scoped, () => Effect.asVoid(acquired(true))),
+    { name: "t", version: "0" },
+  );
+
+  expectTypeOf<Effect.Services<typeof keptScoped>>().toEqualTypeOf<Stdio.Stdio | Principal>();
+  expectTypeOf<Effect.Services<typeof rescoped>>().toEqualTypeOf<Stdio.Stdio | Principal>();
 
   // The router provides the request to every route: a handler reading it owes nothing more
   // over HTTP or MCP over HTTP.
@@ -335,12 +331,12 @@ export const implementTypes = () => {
   );
 
   expectTypeOf<
-    RouteRequires<
+    RequestServices<
       ReturnType<typeof ActionHttp.layer<ActionHttp.Binding<[typeof Headers]>, typeof readsRequest>>
     >
   >().toBeNever();
   expectTypeOf<
-    RouteRequires<ReturnType<typeof ActionMcp.layerHttp<typeof readsRequest>>>
+    RequestServices<ReturnType<typeof ActionMcp.layerHttp<typeof readsRequest>>>
   >().toBeNever();
 
   Testing.layer(ActionHttp.layer(ActionHttp.make([Headers]), readsRequest));
@@ -431,6 +427,13 @@ export const builtInErrorTypes = () => {
 
   // A binding is plain data: its actions, its errors, its mount path and the native API.
   expectTypeOf<keyof typeof bound>().toEqualTypeOf<"actions" | "errors" | "prefix" | "api">();
+
+  // The native client of its API declares every built-in error, catchable by its tag.
+  const native = HttpApiClient.make(bound.api);
+
+  expectTypeOf<Action.BuiltIn>().toExtend<
+    Effect.Error<ReturnType<Effect.Success<typeof native>["echo"]>>
+  >();
 
   // Any handler may fail with a built-in error, which every surface declares.
   Action.implement(
@@ -617,7 +620,7 @@ export const beforeTypes = () => {
 
   // The hook's services join what the stdio host owes, since nothing else supplies them.
   const stdio = ActionMcp.runStdio(clocked, { name: "t", version: "0" });
-  stdio satisfies Effect.Effect<void, unknown, Stdio.Stdio | Clock>;
+  expectTypeOf<Effect.Services<typeof stdio>>().toEqualTypeOf<Stdio.Stdio | Clock>();
 };
 
 export const hookErrorTypes = () => {
@@ -757,7 +760,7 @@ export const hookErrorTypes = () => {
   );
 
   expectTypeOf<CallServices<typeof built, "get">>().toBeNever();
-  expectTypeOf<BuildServices<typeof built>>().toEqualTypeOf<Limiter>();
+  expectTypeOf(Action.layer(built)).toEqualTypeOf<Layer.Layer<never, never, Limiter>>();
 
   Action.implement(
     [Get, Status],
@@ -842,7 +845,7 @@ export const effectFnHandlerTypes = () => {
   expectTypeOf<CallServices<typeof record, "lookup">>().toBeNever();
   expectTypeOf<CallServices<typeof record, "rename">>().toEqualTypeOf<Principal>();
   expectTypeOf<CallServices<typeof built, "lookup">>().toEqualTypeOf<Principal>();
-  expectTypeOf<BuildServices<typeof built>>().toEqualTypeOf<Suffix>();
+  expectTypeOf(Action.layer(built)).toEqualTypeOf<Layer.Layer<never, never, Suffix>>();
 
   Action.implement(
     Lookup,
@@ -1095,8 +1098,7 @@ export const builtHookTypes = () => {
   );
 
   expectTypeOf<CallServices<typeof guarded, "lookup">>().toEqualTypeOf<Actor>();
-  expectTypeOf<BuildErrors<typeof guarded>>().toEqualTypeOf<Unavailable>();
-  expectTypeOf<BuildServices<typeof guarded>>().toEqualTypeOf<Permissions>();
+  expectTypeOf(Action.layer(guarded)).toEqualTypeOf<Layer.Layer<never, Unavailable, Permissions>>();
 
   // Over HTTP, the startup service is provided as any other: no `HttpRouter.Request`.
   const routes = ActionHttp.layer(ActionHttp.make([Lookup, Rename]), guarded);
@@ -1133,8 +1135,7 @@ export const builtHookTypes = () => {
   );
 
   expectTypeOf<CallServices<typeof admin, "rename">>().toBeNever();
-  expectTypeOf<BuildServices<typeof admin>>().toEqualTypeOf<Actor>();
-  expectTypeOf<BuildErrors<typeof admin>>().toBeNever();
+  expectTypeOf(Action.layer(admin)).toEqualTypeOf<Layer.Layer<never, never, Actor>>();
 
   // A service of type `Before` is an Effect building the hook: built once per layer graph,
   // whatever implementations it guards.
@@ -1145,7 +1146,7 @@ export const builtHookTypes = () => {
   const serviced = Action.implement([Lookup, Rename], handlers, Guard);
 
   expectTypeOf<CallServices<typeof serviced, "lookup">>().toEqualTypeOf<Actor>();
-  expectTypeOf<BuildServices<typeof serviced>>().toEqualTypeOf<Guard>();
+  expectTypeOf(Action.layer(serviced)).toEqualTypeOf<Layer.Layer<never, never, Guard>>();
 
   // Names typed only as `Action.Any`'s absorb the hook's key, so each owes the hook's
   // requirements: the share's own hook's, or its source's when it keeps that.
@@ -1233,15 +1234,14 @@ export const builtHookTypes = () => {
   );
 
   expectTypeOf<CallServices<typeof generated, "lookup">>().toEqualTypeOf<Actor>();
-  expectTypeOf<BuildErrors<typeof generated>>().toEqualTypeOf<Unavailable>();
-  expectTypeOf<BuildServices<typeof generated>>().toEqualTypeOf<Permissions>();
+  expectTypeOf(Action.layer(generated)).toEqualTypeOf<
+    Layer.Layer<never, Unavailable, Permissions>
+  >();
   expectTypeOf<CallServices<typeof single, "lookup">>().toEqualTypeOf<Actor>();
-  expectTypeOf<BuildErrors<typeof single>>().toBeNever();
-  expectTypeOf<BuildServices<typeof single>>().toEqualTypeOf<Permissions>();
+  expectTypeOf(Action.layer(single)).toEqualTypeOf<Layer.Layer<never, never, Permissions>>();
   expectTypeOf<CallServices<typeof reviewed, "rename">>().toEqualTypeOf<Actor>();
   // Its own hook's, never its source's, whose build may fail with `Unavailable`.
-  expectTypeOf<BuildErrors<typeof reviewed>>().toBeNever();
-  expectTypeOf<BuildServices<typeof reviewed>>().toEqualTypeOf<Permissions>();
+  expectTypeOf(Action.layer(reviewed)).toEqualTypeOf<Layer.Layer<never, never, Permissions>>();
 
   // Written inside a surface's arguments too.
   const tools = ActionToolkit.make(
@@ -1576,17 +1576,21 @@ export const voidSuccessTypes = () => {
 
 export const hintTypes = (built: Action.Hints, dangerous: boolean) => {
   // Every hint a write may state, a read's without `destructive`, and hints built ahead.
-  Action.make("write", {
+  const Write = Action.make("write", {
     description: "Every hint",
     access: "write",
     hints: { destructive: false, idempotent: true, openWorld: false },
   });
 
-  Action.make("read", {
+  const Read = Action.make("read", {
     description: "A read's hints",
     access: "read",
     hints: { idempotent: true, openWorld: false },
   });
+
+  // The access is kept as its literal, so a rule switching on it narrows.
+  expectTypeOf<(typeof Write)["access"]>().toEqualTypeOf<"write">();
+  expectTypeOf<(typeof Read)["access"]>().toEqualTypeOf<"read">();
 
   Action.make("built", { description: "Hints built ahead", access: "write", hints: built });
 
@@ -1742,16 +1746,11 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
   // either way.
   const maybe = Action.implement(Who, who, enabled ? hook : Action.allowAll);
 
-  type Owed<L> =
-    L extends Layer.Layer<infer _A, infer _E, infer R>
-      ? Extract<R, HttpRouter.Request.From<"Requires", any>>
-      : never;
-
   const Http = ActionHttp.make([Who]);
 
   expectTypeOf<
-    Owed<ReturnType<typeof ActionHttp.layer<typeof Http, typeof maybe>>>
-  >().toEqualTypeOf<HttpRouter.Request.From<"Requires", Identity>>();
+    RequestServices<ReturnType<typeof ActionHttp.layer<typeof Http, typeof maybe>>>
+  >().toEqualTypeOf<Identity>();
 };
 
 export const widenedOptionTypes = () => {

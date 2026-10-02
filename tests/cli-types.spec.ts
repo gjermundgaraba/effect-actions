@@ -216,8 +216,6 @@ expectTypeOf<Command.Services<typeof remoteGroup>>().toEqualTypeOf<HttpClient.Ht
 
 void remoteCount;
 
-void remoteGroup;
-
 // @ts-expect-error A remote command selects an action of the binding.
 ActionCli.command(http, Plain);
 

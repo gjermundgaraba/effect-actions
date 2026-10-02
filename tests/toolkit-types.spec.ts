@@ -94,10 +94,8 @@ export const toolkitTypes = Effect.gen(function* () {
   tools.handle("renamed", {});
 }).pipe(Effect.provide(binding.layer));
 
-toolkitTypes satisfies Effect.Effect<unknown, unknown, Principal>;
-
-// @ts-expect-error Running the returned stream retains the handler's per-call principal.
-toolkitTypes satisfies Effect.Effect<unknown, unknown, never>;
+// Running the returned stream retains the handler's per-call principal.
+expectTypeOf<Effect.Services<typeof toolkitTypes>>().toEqualTypeOf<Principal>();
 
 /** A service-free tool is not widened by sibling handlers of the same implementation. */
 export const serviceFreeToolkitCall = Effect.gen(function* () {
@@ -106,7 +104,7 @@ export const serviceFreeToolkitCall = Effect.gen(function* () {
   yield* Stream.runDrain(calls);
 }).pipe(Effect.provide(binding.layer));
 
-serviceFreeToolkitCall satisfies Effect.Effect<unknown, unknown, never>;
+expectTypeOf<Effect.Services<typeof serviceFreeToolkitCall>>().toBeNever();
 
 class LeftBuild extends Context.Service<LeftBuild, string>()("toolkit-types/LeftBuild") {}
 
@@ -132,14 +130,10 @@ const right = Action.implement(
 
 const mixed = ActionToolkit.make([left, right]);
 
-const mixedBuild = Effect.scoped(Layer.build(mixed.layer));
-
 // The public layer retains both independently declared acquisition channels.
-mixedBuild satisfies Effect.Effect<unknown, "right-build", LeftBuild>;
+expectTypeOf<Layer.Error<typeof mixed.layer>>().toEqualTypeOf<"right-build">();
 
-const mixedWithLeft = mixedBuild.pipe(Effect.provideService(LeftBuild, "left"));
-
-mixedWithLeft satisfies Effect.Effect<unknown, "right-build", never>;
+expectTypeOf<Layer.Services<typeof mixed.layer>>().toEqualTypeOf<LeftBuild>();
 
 class SharedBuild extends Context.Service<SharedBuild, string>()("toolkit-types/SharedBuild") {}
 
@@ -155,10 +149,9 @@ const sharing = Action.implement(
 
 const shared = ActionToolkit.make(sharing);
 
-Effect.scoped(Layer.build(shared.layer)) satisfies Effect.Effect<unknown, never, SharedBuild>;
+expectTypeOf<Layer.Error<typeof shared.layer>>().toBeNever();
 
-// @ts-expect-error The builder is a startup requirement, not erased.
-Effect.scoped(Layer.build(shared.layer)) satisfies Effect.Effect<unknown, never, never>;
+expectTypeOf<Layer.Services<typeof shared.layer>>().toEqualTypeOf<SharedBuild>();
 
 // ...while each tool owes only its own handler's per-call services.
 export const sharedCall = Effect.gen(function* () {
@@ -166,17 +159,15 @@ export const sharedCall = Effect.gen(function* () {
   yield* Stream.runDrain(yield* tools.handle("service_free", {}));
 }).pipe(Effect.provide(shared.layer.pipe(Layer.provide(Layer.succeed(SharedBuild, "s")))));
 
-sharedCall satisfies Effect.Effect<unknown, unknown, never>;
+expectTypeOf<Effect.Services<typeof sharedCall>>().toBeNever();
 
 export const guardedCall = Effect.gen(function* () {
   const tools = yield* shared.toolkit;
   yield* Stream.runDrain(yield* tools.handle("guarded", {}));
 }).pipe(Effect.provide(shared.layer.pipe(Layer.provide(Layer.succeed(SharedBuild, "s")))));
 
-guardedCall satisfies Effect.Effect<unknown, unknown, Principal>;
-
-// @ts-expect-error The guarded tool keeps its principal.
-guardedCall satisfies Effect.Effect<unknown, unknown, never>;
+// The guarded tool keeps its principal.
+expectTypeOf<Effect.Services<typeof guardedCall>>().toEqualTypeOf<Principal>();
 
 // `needsApproval` reads each call of the implementations' own actions, as `before` reads them.
 ActionToolkit.make(app, {
