@@ -127,19 +127,19 @@ it("keeps relative links in docs/ inside docs/", () => {
   }
 });
 
-it("runs the documented client against the quickstart routes", async () => {
-  const web = serve(routes);
+it.effect("runs the documented client against the quickstart routes", () =>
+  Effect.gen(function* () {
+    const web = serve(routes);
 
-  const result = await Effect.runPromise(
-    greeting.pipe(
+    const result = yield* greeting.pipe(
       Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
         web.handler(new Request(input, init)),
       ),
-    ),
-  );
+    );
 
-  expect(result).toBe("Hello, Ada!");
-});
+    expect(result).toBe("Hello, Ada!");
+  }),
+);
 
 it("serves browser preflight and MCP calls with the documented CORS configuration", async () => {
   const web = serve(browserRoutes);
