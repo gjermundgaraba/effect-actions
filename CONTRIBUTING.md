@@ -27,9 +27,8 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 
 - Tests import Vitest through `@effect/vitest`, which re-exports it. `vitest` is pinned to the version Vite+ depends on (`vp toolchain vitest`), so both run one Vitest.
 - A test running an Effect is `it.effect`, which provides a scope, a `TestClock` and a `TestConsole`: it acquires its server in its scope, and what it logs is captured. A command's lines are read from a console of its own run (`logged`, `printed`), so a test running several reads each one's. A test whose handler or codec waits on real time is `it.live`.
-- A test stays `async` where what it drives is a Promise: a web handler's `fetch`, the official MCP client, a subprocess. So does a test of an Effect run under no layer, since `it.effect` provides its services as one, and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead.
+- A test stays `async` where what it drives is a Promise: a web handler's `fetch`, the official MCP client, a subprocess. So does a test of an Effect run under no layer, and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead.
 - Each test provides the layers whose state or builds it reads, such as `Users.layerMemory`, rather than sharing one through `it.layer`.
-- What `it.effect` provides is one layer graph, which every acquisition in the test shares, and a nested `Effect.provide` reuses the `TestConsole` and `TestClock` it built. A helper wanting its own provides them with `{ local: true }`, as `logged` and `printed` do.
 - Type pins in `*.spec.ts` use `expectTypeOf`; a compile failure is an expression under `@ts-expect-error`.
 
 ## Design notes
