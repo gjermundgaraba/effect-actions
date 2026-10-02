@@ -25,7 +25,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 
 ## Tests
 
-- Tests import Vitest through `@effect/vitest`, which re-exports it. `vitest` is pinned to the version Vite+ depends on (`vp toolchain vitest`), so both run one Vitest.
+- Tests import Vitest through `@effect/vitest`, which re-exports it. The pnpm catalog pins `vitest` to the version Vite+ depends on (`vp toolchain vitest`), and an override holds every package to it, Vite+ included, so one Vitest is installed.
 - A test running an Effect is `it.effect`, which provides a scope, a `TestClock` and a `TestConsole`: it serves its routes with `Testing.layer(routes)` in its scope, sending a raw request with `send`, and what it logs is captured. A command's lines are read from a console of its own run (`logged`, `printed`), so a test running several reads each one's. A codec that completes later awaits a resolved promise, `Effect.promise(() => Promise.resolve())`, which no `TestClock` holds, where `Effect.yieldNow` would still complete synchronously; a test whose handler waits on real time is `it.live`.
 - A test that runs no Effect stays `async`, such as one sending raw requests to a web handler, which `serve` releases when the test finishes. So does a test of an Effect run under no layer, of a context given per request (`serveWithContext`), and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead. An `it.effect` test takes `serve`'s handler only to wrap it, recording what a client sends, or to answer a program that provides its own client.
 - Each test provides the layers whose state or builds it reads, such as `Users.layerMemory`, rather than sharing one through `it.layer`.
