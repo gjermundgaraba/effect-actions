@@ -1,7 +1,6 @@
-import { Predicate, type Schema } from "effect";
+import { Predicate, type Schema, type Types } from "effect";
 import { McpProtocol } from "effect/ai";
 import type * as Action from "../Action.js";
-import type { IsUnion } from "./actions.js";
 
 /**
  * The one protocol revision served over HTTP. 2026-07-28 is stateless: every request
@@ -36,7 +35,7 @@ type DeclaredKey<E> = keyof {
 export type TextField<A extends Action.Any> = A["success"]["Encoded"] extends infer E
   ? unknown extends E
     ? string
-    : true extends IsUnion<E>
+    : true extends Types.IsUnion<E>
       ? never
       : E extends ReadonlyArray<unknown>
         ? never

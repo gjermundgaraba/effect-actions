@@ -14,9 +14,6 @@ export const projectedErrors = (
   surface: Action.Any["errors"] = [],
 ): Action.Any["errors"] => [...new Set([...builtIns, ...action.errors, ...surface])];
 
-/** Whether `T` is a union of several types. */
-export type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
-
 const validName = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Names become path segments, OpenAPI identifiers and client method keys. */

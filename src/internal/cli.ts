@@ -1,14 +1,17 @@
-import { Console, Effect, Option, Predicate, Record, Runtime, Schema, SchemaAST } from "effect";
+import {
+  Console,
+  Effect,
+  Option,
+  Predicate,
+  Record,
+  Runtime,
+  Schema,
+  SchemaAST,
+  type Types,
+} from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../Action.js";
-import {
-  assertDistinct,
-  type IsUnion,
-  literalValues,
-  members,
-  projectedErrors,
-  unsuspended,
-} from "./actions.js";
+import { assertDistinct, literalValues, members, projectedErrors, unsuspended } from "./actions.js";
 import { onStderr } from "./console.js";
 import { InvalidInput } from "./errors.js";
 
@@ -17,7 +20,7 @@ import { InvalidInput } from "./errors.js";
  * or class input, as encoded. None for any other input, a record or a union included.
  */
 export type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
-  ? true extends IsUnion<E>
+  ? true extends Types.IsUnion<E>
     ? never
     : E extends ReadonlyArray<unknown>
       ? never
