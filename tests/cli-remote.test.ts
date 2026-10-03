@@ -269,3 +269,64 @@ it.effect(
       expect(requests).toHaveLength(2);
     }),
 );
+
+it.effect("connects through its client options, which no other command's requests take", () =>
+  Effect.gen(function* () {
+    const web = serve(ActionHttp.layer(Http, recording().app));
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+
+    const fetchLayer = Testing.layer(async (request) => {
+      requests.push({ url: request.url, authorization: request.headers.get("authorization") });
+
+      return request.url.startsWith("https://auth.example.com/")
+        ? Response.json({ code: "device" })
+        : web.handler(request);
+    });
+
+    const client = {
+      baseUrl: "http://api.example.com",
+      transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("secret")),
+    };
+
+    const login = Command.make("login", {}, () =>
+      Effect.asVoid(
+        Effect.flatMap(HttpClient.HttpClient, (http) =>
+          http.get("https://auth.example.com/device/code"),
+        ),
+      ),
+    );
+
+    const cli = Command.make("acme").pipe(
+      Command.withSubcommands([
+        ActionCli.make(Http, { name: "api", client }),
+        ActionCli.command(Http, Remote, { name: "double", client }),
+        login,
+      ]),
+    );
+
+    const run = (args: ReadonlyArray<string>) =>
+      logged(exec(cli, args)).pipe(Effect.provide(fetchLayer));
+
+    const [, aggregated] = yield* run(["api", "remote", "--value", "21"]);
+    const [, selected] = yield* run(["double", "--value", "4"]);
+    yield* run(["login"]);
+
+    expect([aggregated, selected]).toEqual([['"42"'], ['"8"']]);
+    expect(requests).toEqual([
+      { url: "http://api.example.com/api/remote", authorization: "Bearer secret" },
+      { url: "http://api.example.com/api/remote", authorization: "Bearer secret" },
+      { url: "https://auth.example.com/device/code", authorization: null },
+    ]);
+  }),
+);
+
+it("refuses client options for implementations, which run in process", () => {
+  const { app } = recording();
+  const client = { baseUrl: "http://api.example.com" };
+  const refusal = "Client options are for a command over HTTP: pass a binding";
+
+  // @ts-expect-error A local command connects nowhere.
+  expect(() => ActionCli.command(app, Remote, { client })).toThrow(refusal);
+  // @ts-expect-error A local aggregate connects nowhere.
+  expect(() => ActionCli.make(app, { name: "cli", client })).toThrow(refusal);
+});

@@ -62,7 +62,7 @@ implementation is also:
 ```ts
 const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolkit and its handler layer
 const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --name Ada
-const remote = ActionCli.command(Http, Greet); // greet --name Ada, over HTTP
+const remote = ActionCli.command(Http, Greet, { client: { baseUrl } }); // greet --name Ada, over HTTP
 const local = Action.client(greet); // the HTTP client's methods, in process
 ```
 

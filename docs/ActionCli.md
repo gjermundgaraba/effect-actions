@@ -24,8 +24,9 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `command`: `positional` | Input fields taken as positional arguments instead of flags, in this order.                                  |
 | `make`: `name`          | The aggregate's name, required.                                                                              |
 | `make`: `commands`      | Each subcommand's `command` options, keyed by action name: `{ readFile: { positional: ["path"], render } }`. |
+| Over HTTP: `client`     | The `ActionHttp.client` options, `baseUrl` and `transformClient`, for this command's or aggregate's client.  |
 
-Exported types: `Options<A>` of `make`, `A` the union of its actions, such as `typeof GetUser | typeof RenameUser`, and `CommandOptions<typeof Action>` of `command`, the same locally and over HTTP, and `Failure<E>`, a type only: what a command fails with when its action fails, Effect CLI's `CliError.UserError` whose `cause` is the failure `E`. A command over HTTP calls through the host's `HttpClient`, which sets where it sends and any credentials.
+Exported types: `Options<A>` of `make`, `A` the union of its actions, such as `typeof GetUser | typeof RenameUser`; `CommandOptions<typeof Action>` of `command`, the same locally and over HTTP, where both also take `client`, an `ActionHttp.ClientOptions`; and `Failure<E>`, a type only: what a command fails with when its action fails, Effect CLI's `CliError.UserError` whose `cause` is the failure `E`. A command over HTTP calls through the host's `HttpClient`, configured by its `client` options: where it sends and any credentials.
 
 Flags come from the action's input. A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`, `_id` is `--id`), parsing the field's encoded JSON
@@ -111,24 +112,15 @@ Command.run(cli, { version: "0.1.0" }).pipe(
 ```ts
 import { Command } from "effect/cli";
 import { Effect } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { Http } from "./binding.js";
 import { Status } from "./contracts.js";
 
-// From a binding rather than an implementation, the command calls the server instead.
-const command = ActionCli.command(Http, Status).pipe(
-  // Its client is the connection: where it sends, and any credentials. Provided on the
-  // command, it reaches no other request the program makes.
-  Command.provideEffect(
-    HttpClient.HttpClient,
-    Effect.map(
-      HttpClient.HttpClient,
-      HttpClient.mapRequest(HttpClientRequest.prependUrl("http://127.0.0.1:3000")),
-    ),
-  ),
-);
+// From a binding rather than an implementation, the command calls the server instead. Its
+// client options are the connection, as `ActionHttp.client` takes them: where it sends, and
+// any credentials, which reach no other request the program makes.
+const command = ActionCli.command(Http, Status, { client: { baseUrl: "http://127.0.0.1:3000" } });
 
 Command.run(command, { version: "0.1.0" }).pipe(
   Effect.provide(NodeHttpClient.layerUndici),
@@ -137,9 +129,11 @@ Command.run(command, { version: "0.1.0" }).pipe(
 );
 ```
 
-Credentials go on the same client, read when a command runs, as from `Config`. An aggregate
-nests in the host's own tree like any native command, and what it is provided reaches its own
-commands alone:
+A static token goes in the same options, `transformClient:
+HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. A URL or credentials read when a
+command runs, as from `Config`, configure the client the command is provided instead. An
+aggregate nests in the host's own tree like any native command, and what it is provided
+reaches its own commands alone:
 
 ```ts
 const api = ActionCli.make(Http, { name: "api" }).pipe(
@@ -181,7 +175,7 @@ const cli = Command.make("acme").pipe(Command.withSubcommands([api, login]));
 - After `Command.run` the failure may be any `UserError`, so a host matches the action's by its cause, after `Command.run` has printed it: `Effect.catchTag("UserError", (error) => error.cause instanceof UserNotFound ? ... : Effect.fail(error))` decides what follows, such as the exit code, not what was printed. `Failure` is a type only, since `instanceof` would leave its cause `any`. For text of its own, the host provides Effect's formatter, `CliOutput.layer(Object.assign({}, CliOutput.defaultFormatter(), { formatError }))`; `Command.run(cli, { version, renderErrors: false })` has it print every failure itself, the parser's too.
 - `runMain` reports what is not a command's failure, outside the program, on stdout: a defect, such as a handler's bug or a success that does not encode, and a failure of a layer the host provides, on the command or around the run. Those layers log outside the command too. A CLI whose stdout feeds scripts sends both to stderr: it provides `Logger.LogToStderr` outermost, runs `NodeRuntime.runMain({ disableErrorReporting: true })`, and reports what the command did not print itself, `Effect.tapCause((cause) => Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause)) ? Effect.void : Console.error(Cause.pretty(cause)))`, as the stdio example does ([ActionMcp.md](ActionMcp.md#subprocess)). `LogToStderr` moves the default logger, but not those layers' `Console` output or a logger writing through `Console.log`, such as `Logger.consoleJson`: log JSON with `Logger.withConsoleError(Logger.formatJson)`.
 - From a binding, `command(http, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `make(http, { name })` projects every action of the binding, the same tree `make` builds locally, with the same options.
-- A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient` and configures it on the remote command or aggregate, `Command.provideEffect(HttpClient.HttpClient, ...)`: where it sends, `HttpClient.mapRequest(HttpClientRequest.prependUrl(url))`, and credentials, `HttpClientRequest.bearerToken(token)`, read when a command runs. Configured around the whole program, it would rewrite every request the program makes, an absolute URL too, and send each the credentials. Nothing is inferred from action arguments.
+- A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient`, and the remote command or aggregate configures its own client with `client`, the options `ActionHttp.client` takes: where it sends, `baseUrl`, and credentials, `transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. One aggregate has one connection: its `commands` take no `client`, and the types refuse `client` on a command from implementations, which `command` and `make` also throw (`Client options are for a command over HTTP: pass a binding`). Settings read when a command runs, as from `Config`, configure the client provided on the remote command or aggregate instead, `Command.provideEffect(HttpClient.HttpClient, ...)`, prepending the URL with `HttpClient.mapRequest(HttpClientRequest.prependUrl(url))`. Configured around the whole program, the client would rewrite every request the program makes, an absolute URL too, and send each the credentials. Nothing is inferred from action arguments.
 - Over HTTP, input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. A failure's cause is the client's: the action's and binding's declared errors, the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), `SchemaError` for an answer that does not decode, and `HttpClientError`. Input that does not decode is `InvalidInput`, and sends nothing.
 - For a custom tree, compose individual `command` results with native `Command` combinators (`Command.make(name).pipe(Command.withSubcommands([...]))`). `make`'s aggregate nests in a host's tree the same way, and what it is provided reaches its own subcommands alone.
 
@@ -199,8 +193,8 @@ const cli = Command.make("acme").pipe(Command.withSubcommands([api, login]));
 - A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `implementations`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
-- Type error `Type 'HttpClient' is not assignable to type 'never'` in the pipe that runs a command over HTTP, such as through `NodeRuntime.runMain`: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the command's client prepends no URL, and routes are relative outside `Testing.layer`. Connection refused: the prepended URL is wrong. 401 `Unauthenticated`: add credentials to the command's client; the command adds no headers of its own.
-- Another command's request goes to the API's URL, or carries its token: the client is configured around the whole program. Configure it on the remote command or aggregate instead.
+- Type error `Type 'HttpClient' is not assignable to type 'never'` in the pipe that runs a command over HTTP, such as through `NodeRuntime.runMain`: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the command's client has no `baseUrl` and prepends no URL, and routes are relative outside `Testing.layer`. Connection refused: the URL is wrong. 401 `Unauthenticated`: add credentials to the command's client, in `client`'s `transformClient` or on the client it is provided; the command adds no headers of its own.
+- Another command's request goes to the API's URL, or carries its token: the client is configured around the whole program. Configure it with the remote command's or aggregate's `client`, or provide it on that command instead.
 - `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make`: two actions have the same kebab-case name. Give one a `name` in `commands`, or aggregate them under separate `make` commands.
 - `Unknown commands: <keys>` thrown by `make`: a `commands` key names no action of it. Use the action's own name, not its kebab-case command name.
 - `No overload matches this call` at `make([...apps, status], { commands: { status: ... } })` in a helper generic over implementations, `<const Apps extends ReadonlyArray<Action.AnyImplementation>>`: through that constraint, `commands` is typed for any action too, and no entry for the helper's own action compiles, `render`, `positional` or `name`. Give that action a command of its own and put both in a tree: `Command.make("x").pipe(Command.withSubcommands([ActionCli.make(apps, { name: "apps" }), ActionCli.command(status, Status, { render })]))`. `Command.withSubcommands` on `make`'s aggregate would replace its subcommands.

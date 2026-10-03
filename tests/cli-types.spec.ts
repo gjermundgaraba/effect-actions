@@ -1,6 +1,6 @@
 // Compile-only public CLI API assertions.
 import { Context, Effect, Schema } from "effect";
-import { HttpClient, type HttpClientError } from "effect/http";
+import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
 import { Command } from "effect/cli";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
@@ -218,6 +218,34 @@ void remoteCount;
 
 // @ts-expect-error A remote command selects an action of the binding.
 ActionCli.command(http, Plain);
+
+// A remote command or aggregate takes its client's options, as `ActionHttp.client` does, and
+// still owes only the client they configure.
+const connection: ActionHttp.ClientOptions = {
+  baseUrl: "http://api.example.com",
+  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("secret")),
+};
+
+const connected = ActionCli.command(http, RemoteAction, { client: connection, render: String });
+
+const connectedGroup = ActionCli.make(http, { name: "remote", client: connection });
+
+expectTypeOf<Command.Services<typeof connected>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+expectTypeOf<Command.Services<typeof connectedGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+// @ts-expect-error A local command runs in process and connects nowhere.
+ActionCli.command(local, One, { client: connection });
+
+// @ts-expect-error So does a local aggregate.
+ActionCli.make(local, { name: "local", client: connection });
+
+// One connection per aggregate: a subcommand takes none of its own.
+ActionCli.make(http, {
+  name: "remote",
+  // @ts-expect-error A subcommand's options are its syntax alone.
+  commands: { remote: { client: connection } },
+});
 
 // A command from a binding fails with exactly what its client method fails with: the
 // action's own errors, the built-in errors every endpoint declares, and the native

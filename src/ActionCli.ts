@@ -8,7 +8,12 @@ import {
   command as makeCommand,
   type Options as CommandOptions,
 } from "./internal/cli.js";
-import { type AnyHttp, assertInBinding, methods } from "./internal/client.js";
+import {
+  type AnyHttp,
+  assertInBinding,
+  type Options as ClientOptions,
+  methods,
+} from "./internal/client.js";
 import {
   acquire,
   type ActionOf,
@@ -103,20 +108,21 @@ const select = (apps: ReadonlyArray<AnyImplementation>, action: Action.Any): Any
 };
 
 /**
- * One command calling `action` through the binding's client, on the host's `HttpClient`,
- * whose failures include the binding's errors.
+ * One command calling `action` through the binding's client, made with `client` on the
+ * host's `HttpClient`, whose failures include the binding's errors.
  */
 const remote = (
   http: AnyHttp,
   action: Action.Any,
   options: CommandOptions<Action.Any> | undefined,
+  client: ClientOptions | undefined,
 ) => {
   assertInBinding(http.actions, action);
   assertErrors([action], http.errors);
 
   return makeCommand(
     action,
-    (input) => Effect.flatMap(methods(http), (methodOf) => methodOf(action)(input)),
+    (input) => Effect.flatMap(methods(http, client), (methodOf) => methodOf(action)(input)),
     options,
     http.errors,
   );
@@ -125,13 +131,21 @@ const remote = (
 // A binding declares its native `api`; an implementation never does.
 const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasProperty(value, "api");
 
+/** Refuse client options for implementations, which run in process and connect nowhere. */
+const assertClient = (target: AnyHttp | Served, client: ClientOptions | undefined): void => {
+  if (client !== undefined && !isHttp(target)) {
+    throw new Error("Client options are for a command over HTTP: pass a binding");
+  }
+};
+
 /** `action`'s command: called over HTTP from a binding, or run by its one implementation. */
 const project = (
   target: AnyHttp | Served,
   action: Action.Any,
   options: CommandOptions<Action.Any> | undefined,
+  client: ClientOptions | undefined,
 ): Command.Command<string, never, {}, unknown, unknown> => {
-  if (isHttp(target)) return remote(target, action, options);
+  if (isHttp(target)) return remote(target, action, options, client);
 
   const app = select(toList(target), action);
 
@@ -142,8 +156,8 @@ const project = (
  * Project one action into a native Effect CLI command, named after it in kebab case with
  * one flag per field of its input (`--user-id`), or `--input` taking the whole input as
  * JSON when it is not a struct. From an HTTP binding, the command calls the action over
- * HTTP through its `ActionHttp.client` method, on the host's `HttpClient`, and fails as the
- * method does. From implementations, it runs the handler in process, behind its
+ * HTTP through its `ActionHttp.client` method, made with the `client` options on the host's
+ * `HttpClient`, and fails as the method does. From implementations, it runs the handler in process, behind its
  * implementation's `before` hook, and needs what its handler, hook and builder need; the
  * host provides the identity. It prints the result on stdout; a failure is a `Failure`,
  * which `Command.run` prints on stderr.
@@ -151,7 +165,13 @@ const project = (
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(
   http: H,
   action: A,
-  options?: CommandOptions<A>,
+  options?: CommandOptions<A> & {
+    /**
+     * Its client's options, as `ActionHttp.client` takes them: `baseUrl`, and
+     * `transformClient` for credentials. They reach this command's requests alone.
+     */
+    readonly client?: ClientOptions;
+  },
 ): Command.Command<
   string,
   never,
@@ -186,25 +206,37 @@ export function command<
 >(
   target: T,
   action: A,
-  options?: CommandOptions<A>,
+  options?: CommandOptions<A> & (T extends AnyHttp ? { readonly client?: ClientOptions } : unknown),
 ): Command.Command<string, never, {}, unknown, unknown>;
 export function command(
   target: AnyHttp | Served,
   action: Action.Any,
-  options?: CommandOptions<Action.Any>,
+  options?: CommandOptions<Action.Any> & { readonly client?: ClientOptions },
 ): Command.Command<string, never, {}, unknown, unknown> {
-  return project(target, action, options);
+  const { client, ...syntax } = options ?? {};
+
+  assertClient(target, client);
+
+  return project(target, action, options === undefined ? undefined : syntax, client);
 }
 
 /**
  * Project every action as a subcommand of one aggregate command, each named after its
  * action in kebab case: each action of an HTTP binding called over HTTP, or each
  * implemented action run in process. `commands` gives a subcommand the options `command`
- * takes, by action name.
+ * takes, by action name; over HTTP, `client` configures every subcommand's client.
  */
 export function make<const H extends AnyHttp>(
   http: H,
-  options: NoInfer<Options<H["actions"][number]>>,
+  options: NoInfer<
+    Options<H["actions"][number]> & {
+      /**
+       * Every subcommand's client options, as `ActionHttp.client` takes them: `baseUrl`,
+       * and `transformClient` for credentials. They reach this aggregate's requests alone.
+       */
+      readonly client?: ClientOptions;
+    }
+  >,
 ): Command.Command<
   string,
   {},
@@ -234,13 +266,18 @@ export function make<const Apps extends Served>(
 // implementations, chosen by a condition, reaches it too, and owes `unknown`.
 export function make<const T extends AnyHttp | Served>(
   target: T,
-  options: NoInfer<Options<T extends AnyHttp ? T["actions"][number] : ActionOf<Member<T>>>>,
+  options: NoInfer<
+    Options<T extends AnyHttp ? T["actions"][number] : ActionOf<Member<T>>> &
+      (T extends AnyHttp ? { readonly client?: ClientOptions } : unknown)
+  >,
 ): Command.Command<string, {}, {}, unknown, unknown>;
 export function make(
   target: AnyHttp | Served,
-  options: Options,
+  options: Options & { readonly client?: ClientOptions },
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const commands = options.commands ?? {};
+
+  assertClient(target, options.client);
 
   const actions = isHttp(target) ? target.actions : toList(target).flatMap((app) => app.actions);
 
@@ -256,6 +293,7 @@ export function make(
       target,
       action,
       Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
+      options.client,
     ),
   }));
 

@@ -347,7 +347,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 | 0.8.0                                                                                                                            | 0.10.0                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.command(Http, GetUser)`, `ActionCli.make(Http, { name })`, on a host `HttpClient` that prepends the URL, provided on the command: `Command.provideEffect(HttpClient.HttpClient, ...)`                                                                                                                                                                                                                                                    |
+| `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.command(Http, GetUser, { client: { baseUrl } })`, `ActionCli.make(Http, { name, client })`: `client` takes `ActionHttp.client`'s options, on the host's `HttpClient`                                                                                                                                                                                                                                                                     |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                                                                                                                                                                                                                                                           |
 | `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command`, local or remote; `ActionCli.Options` is `make`'s; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                                                                                    |
 | A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` is the failure: `Effect.catchTag("UserError", (error) => error.cause instanceof UserNotFound ? ... : Effect.fail(error))`                                                                                                                                                                                                                                                   |
@@ -358,7 +358,11 @@ Each area below lists what is renamed or removed, then what changes without a re
   any other required field's flag, left out, is refused by the parser before the implementation
   is built, `Missing required flag: --<flag>` on stderr after the command's help on stdout.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
-  remote command takes no client options: it calls through the host's `HttpClient`.
+  remote command or aggregate takes its connection as `client`, the options `ActionHttp.client`
+  takes, `baseUrl` and `transformClient`, which reach its own requests alone: 0.8.0's
+  `connection` without `transformResponse`. A URL or token read when a command runs, as from
+  `Config`, configures the `HttpClient` provided on the command,
+  `Command.provideEffect(HttpClient.HttpClient, ...)`.
 - A field holding an array of strings or numbers, choices included, takes a repeated flag, one
   element per occurrence: `--provider exa --provider hn`. Given none, a required field is `[]`
   and an optional one is left out; a `Schema.NonEmptyArray` field's flag is required once. Any
@@ -600,9 +604,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   when the command runs, before its input is decoded, so input the action's schema refuses is
   refused after they are built; `--help` and the parser's errors, such as a missing or unknown
   flag, never build them. Provided around the run, as 0.8.0 showed, they are built before the
-  arguments are parsed. A remote command's `HttpClient` is configured on the command too,
-  `Command.provideEffect(HttpClient.HttpClient, ...)`, so no other request of the program takes
-  its URL or credentials. `make`'s aggregate run alone still builds its provisions before
+  arguments are parsed. A remote command's connection is configured on the command too, with
+  `client` or, for settings read when it runs, `Command.provideEffect(HttpClient.HttpClient, ...)`,
+  so no other request of the program takes its URL or credentials. `make`'s aggregate run alone still builds its provisions before
   showing its help, and fails instead if one fails.
 - The docs state what a message for input that does not decode says on every surface: what
   the schema expects and, where Effect's decoder reports one, each issue's path, never a value
