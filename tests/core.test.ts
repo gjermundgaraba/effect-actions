@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import * as Action from "../src/Action.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as Testing from "../src/Testing.js";
 import { makeTestHttp } from "./server.js";
 import { post } from "./requests.js";
 import { GetUser, RenameUser } from "../examples/contracts.js";
@@ -129,7 +131,7 @@ describe("contracts", () => {
       "Forbidden",
     ];
 
-    // The contract is plain data a client may hold; serving it is refused.
+    // The contract is plain data; serving it is refused, and calling it.
     for (const [error, tag] of errors.map((error, i) => [error, tags[i]] as const)) {
       const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
 
@@ -196,6 +198,43 @@ describe("contracts", () => {
     });
 
     expect(() => Action.implement(Variants, () => Effect.void, Action.allowAll)).not.toThrow();
+  });
+
+  it("refuses those errors at every client too, of a contract no server here need serve", () => {
+    const Busy = Schema.TaggedStruct("Busy", {});
+
+    const Twice = Action.make("twice", {
+      description: "",
+      access: "write",
+      errors: [Busy, Schema.TaggedStruct("Busy", { late: Schema.Boolean })],
+    });
+
+    const Guarded = Action.make("guarded", {
+      description: "",
+      access: "write",
+      errors: [Schema.TaggedStruct("Forbidden", {})],
+    });
+
+    const Once = Action.make("once", { description: "", access: "write", errors: [Busy] });
+
+    const binding = ActionHttp.make([Once], {
+      errors: [Schema.TaggedStruct("Busy", { reason: Schema.String })],
+    });
+
+    const twice = 'Duplicate error _tag in action "twice": Busy';
+
+    const guarded =
+      'Action "guarded": error _tag "Forbidden" is built in, and declared on every surface';
+
+    const once = 'Duplicate error _tag in action "once" and its binding: Busy';
+
+    expect(() => ActionHttp.client(ActionHttp.make([Twice]))).toThrow(twice);
+    expect(() => ActionHttp.client(ActionHttp.make([Guarded]))).toThrow(guarded);
+    expect(() => ActionHttp.client(binding)).toThrow(once);
+    expect(() => ActionCli.command(binding, Once)).toThrow(once);
+    expect(() => ActionCli.make(binding, { name: "once" })).toThrow(once);
+    expect(() => Testing.mcpClient([Twice])).toThrow(twice);
+    expect(() => Testing.mcpClient([Guarded])).toThrow(guarded);
   });
 
   it("answers a built-in error as itself beside a loose error schema of the action's", async () => {

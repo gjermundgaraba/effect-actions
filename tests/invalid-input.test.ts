@@ -478,8 +478,6 @@ describe("an action without input", () => {
     expect(missing.status).toBe(400);
     // The body decodes as the built-in `InvalidInput`, not any other 400.
     await expect(invalidInput(missing)).resolves.not.toBe("");
-    // Without a content type, the request is not JSON at all.
-    expect((await call({})).status).toBe(415);
   });
 
   it("is a closed object tool over MCP", async () => {

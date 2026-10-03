@@ -24,16 +24,10 @@ import {
 } from "effect/http";
 import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
-import { assertOnce, projectedErrors } from "./internal/actions.js";
+import { assertErrors, assertOnce, projectedErrors } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
 import { type BuiltIn, refusals } from "./internal/errors.js";
-import {
-  defaultPath,
-  isJsonObject,
-  type Params,
-  statelessRequest,
-  type ToolOptions,
-} from "./internal/mcp.js";
+import { defaultPath, type Params, statelessRequest, type ToolOptions } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
@@ -128,8 +122,8 @@ export interface McpClientOptions<A extends Action.Any = Action.Any> {
   /** Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token, say. */
   readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
   /**
-   * The endpoint's `tools`, as `ActionMcp.layerHttp` takes them: a text field the endpoint
-   * sends as raw text is put back under its field before the success is decoded. An entry of
+   * The endpoint's `tools`, as `ActionMcp.layerHttp` takes them: the success of a tool with
+   * a text field is read from its text blocks, the field raw, the rest as JSON. An entry of
    * an action the client does not call is not read.
    */
   readonly tools?: ToolOptions<A>;
@@ -197,29 +191,30 @@ const ToolReply = Schema.Union([
   Schema.Struct({ error: Schema.Struct({ code: Schema.Finite, message: Schema.String }) }),
 ]);
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
+
+const decodeObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject));
+
 /**
- * The success of a result from its content and its structured content: a text field `field`
- * the endpoint sent as raw text, the first of two blocks, put back into the structured rest.
- * A success sent whole has one block, its JSON.
+ * The success a tool with the text field `field` sends as text, without structured content:
+ * the field raw in the first block and the JSON of the rest in the second, or the JSON of the
+ * whole in one block when the success holds no string there. `None` for any other content.
  */
-const successOf = (
+const textSuccessOf = (
   content: (typeof ToolResult.Type)["content"],
-  structured: Schema.Json,
-  field: string | undefined,
-): Schema.Json => {
-  const [text, rest] = content;
+  field: string,
+): Option.Option<Schema.Json> => {
+  const [first, second, ...others] = content;
+  const raw = first?.text;
 
-  if (
-    field === undefined ||
-    rest === undefined ||
-    text?.text === undefined ||
-    !isJsonObject(structured)
-  ) {
-    return structured;
-  }
+  if (raw === undefined || others.length > 0) return Option.none();
 
-  // oxlint-disable-next-line typescript/no-misused-spread -- A misfire: `Schema.JsonObject` is an interface merged with a schema value, which the rule takes for a class; this is the response's decoded JSON, with no prototype to lose.
-  return { ...structured, [field]: text.text };
+  if (second === undefined) return decodeJson(raw);
+
+  return Option.map(
+    second.text === undefined ? Option.none() : decodeObject(second.text),
+    (rest) => ({ ...rest, [field]: raw }),
+  );
 };
 
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply));
@@ -302,21 +297,29 @@ const callTool = (
       return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
     }
 
-    if (result.structuredContent === undefined) {
-      return yield* Effect.fail(other(`returned no structured content: ${text}`));
+    // A tool with a text field sends its success as text; any other, as structured content.
+    const success =
+      field !== undefined
+        ? textSuccessOf(result.content, field)
+        : result.structuredContent === undefined
+          ? Option.none()
+          : Option.some(result.structuredContent);
+
+    if (Option.isNone(success)) {
+      const missing = field === undefined ? "no structured content" : "no success as text";
+
+      return yield* Effect.fail(other(`returned ${missing}: ${text}`));
     }
 
-    return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(
-      successOf(result.content, result.structuredContent, field),
-    );
+    return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(success.value);
   });
 };
 
 /**
  * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
  * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
- * encoded with the action's schema, and the success decoded, a text field the endpoint's
- * `tools` name put back first. A declared error the tool returns, the action's own or a
+ * encoded with the action's schema, and the success decoded, from the text blocks of a tool
+ * whose text field the endpoint's `tools` name. A declared error the tool returns, the action's own or a
  * refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
  * with. The argument may be omitted when `{}` is a valid input. Requires the native
  * `HttpClient`, such as the one `layer` provides.
@@ -336,6 +339,7 @@ export function mcpClient(
   HttpClient.HttpClient
 > {
   assertOnce("action", actions);
+  assertErrors(actions);
 
   return Effect.map(HttpClient.HttpClient, (native) => {
     const client = transformClient(native);

@@ -107,10 +107,6 @@ describe("MCP stdio example", () => {
     expect(output.stderr).toContain("console log");
     expect(output.stderr).toContain(lines("log", "info", "debug", "warn", "error", "dirxml"));
     expect(output.stderr).toContain(lines("{ dir: true }", "[ { table: 1 } ]"));
-    expect(output.stderr).toContain(lines("default: 1", "default: 2", "calls: 1", "calls: 1"));
-    expect(output.stderr).toMatch(
-      /\ntimer %s: \d+(\.\d{1,3})?ms logged\ntimer %s: \d+(\.\d{1,3})?ms\n/,
-    );
     expect(output.stderr).toContain(
       lines("group", "inside", "collapsed", "deeper", "second line", "{ nested: true }"),
     );

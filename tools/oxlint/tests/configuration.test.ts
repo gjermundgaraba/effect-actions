@@ -24,7 +24,8 @@ const decodeReport = Schema.decodeUnknownSync(Schema.fromJsonString(Report));
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
-// Inside the repository so the root vite.config.ts applies; outside every ignore pattern.
+// Inside the repository so the root vite.config.ts applies. Every other lint and type check
+// ignores the directory, so a check running beside this test never sees its findings.
 const probe = join(root, "tools/oxlint/tests", `probe-${process.pid}-${Date.now()}`);
 
 /** Each case's fixtures, and the findings `vp lint` reports in them, as `file: code`. */
@@ -125,6 +126,7 @@ beforeAll(() => {
   // A finding is a non-zero exit; the report is on stdout either way.
   const { stdout } = spawnSync("vp", ["lint", "--format", "json", probe], {
     cwd: root,
+    env: { ...process.env, LINT_PROBE: "1" },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });

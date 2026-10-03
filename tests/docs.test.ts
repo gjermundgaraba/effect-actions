@@ -60,7 +60,9 @@ it.each(snippets)(
   },
 );
 
-// Code copied from a page's canonical example must compile, so every one is an example.
+// Code copied from a page's canonical example must compile: every page with a Canonical
+// section lists it above, so its first snippet there is an example. A snippet under no listed
+// heading, such as a fragment, is not checked.
 it("pairs every canonical snippet with a type-checked example", () => {
   const pages = readdirSync(docsDirectory).filter((name) =>
     readFileSync(join(docsDirectory, name), "utf8").includes("\n## Canonical\n"),

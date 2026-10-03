@@ -133,13 +133,14 @@ const outputSchemas = (reply: string) =>
   );
 
 describe("MCP text fields", () => {
-  it("send the field once, raw, before the structured rest and its JSON copy", async () => {
+  it("send the field once, raw, then the JSON of the rest, without structured content", async () => {
     const response = await serveHttp().handler(rawToolCall("fetch", { url: "a" }));
     const message = (await response.text()).trim();
     const { result } = Schema.decodeUnknownSync(Reply)(message);
 
-    expect(result).toHaveProperty("structuredContent", rest);
-    expect(result).toMatchObject({
+    expect(result).toEqual({
+      _meta: { "io.modelcontextprotocol/serverInfo": server },
+      resultType: "complete",
       isError: false,
       content: [
         { type: "text", text: tricky },
@@ -151,23 +152,14 @@ describe("MCP text fields", () => {
     expect(JSON.stringify(JSON.parse(message))).toBe(message);
   });
 
-  it("list an output schema without the field", async () => {
+  it("list no output schema for a tool with a text field", async () => {
     const response = await serveHttp().handler(mcpRequest({ method: "tools/list" }));
     const listed = outputSchemas(await response.text());
 
-    const { properties, required } = Schema.decodeUnknownSync(
-      Schema.Struct({
-        properties: Schema.Record(Schema.String, Schema.Json),
-        required: Schema.Array(Schema.String),
-      }),
-    )(listed.get("fetch"));
-
-    expect(Object.keys(properties)).toEqual(["end", "owner"]);
-    expect(required).toEqual(["end", "owner"]);
+    expect(listed.get("fetch")).toBeUndefined();
+    expect(listed.get("head")).toBeUndefined();
+    expect(listed.has("fetch")).toBe(true);
     expect(listed.get("fetchJson")).toHaveProperty("properties.body");
-    // The only required field was the text field: `required` goes with it.
-    expect(listed.get("head")).toMatchObject({ properties: { next: { type: "string" } } });
-    expect(listed.get("head")).not.toHaveProperty("required");
   });
 
   it.each([
@@ -189,18 +181,19 @@ describe("MCP text fields", () => {
     expect(text).toMatchObject({ isError: true });
   });
 
-  it("send a success without the field whole", async () => {
+  it("send a success without the field whole, as its JSON text alone", async () => {
     const web = serveHttp();
 
     expect(await resultOf(await web.handler(rawToolCall("excerpt", { url: "none" })))).toEqual({
       _meta: { "io.modelcontextprotocol/serverInfo": server },
       resultType: "complete",
       isError: false,
-      structuredContent: { url: "none" },
       content: [{ type: "text", text: JSON.stringify({ url: "none" }) }],
     });
-    expect(await resultOf(await web.handler(rawToolCall("excerpt", { url: "a" })))).toMatchObject({
-      structuredContent: { url: "a" },
+    expect(await resultOf(await web.handler(rawToolCall("excerpt", { url: "a" })))).toEqual({
+      _meta: { "io.modelcontextprotocol/serverInfo": server },
+      resultType: "complete",
+      isError: false,
       content: [
         { type: "text", text: tricky },
         { type: "text", text: JSON.stringify({ url: "a" }) },
@@ -208,21 +201,20 @@ describe("MCP text fields", () => {
     });
   });
 
-  it.effect("send the field as text on a 2025 revision over stdio, with the rest structured", () =>
+  it.effect("send the same two text blocks on a 2025 revision over stdio", () =>
     Effect.gen(function* () {
       const [listed = "", called = ""] = yield* converse(stdio, "2025-06-18", [
         { method: "tools/list" },
         { method: "tools/call", params: { name: "fetch", arguments: { url: "a" } } },
       ]);
 
-      expect(outputSchemas(listed).get("fetch")).toMatchObject({ required: ["end", "owner"] });
-      expect(outputSchemas(listed).get("fetch")).not.toHaveProperty("properties.body");
+      expect(outputSchemas(listed).get("fetch")).toBeUndefined();
+      expect(outputSchemas(listed).get("fetchJson")).toHaveProperty("properties.body");
       expect(JSON.parse(called)).toEqual({
         jsonrpc: "2.0",
         id: 2,
         result: {
           isError: false,
-          structuredContent: rest,
           content: [
             { type: "text", text: tricky },
             { type: "text", text: JSON.stringify(rest) },
@@ -232,7 +224,7 @@ describe("MCP text fields", () => {
     }),
   );
 
-  it.effect("are put back under their field by mcpClient, given the endpoint's tools", () =>
+  it.effect("are read from the text blocks by mcpClient, given the endpoint's tools", () =>
     Effect.gen(function* () {
       const whole = { body: tricky, ...rest };
       const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt], { tools });
@@ -257,18 +249,23 @@ describe("MCP text fields", () => {
     ),
   );
 
-  it.effect("are missing from the success mcpClient decodes without the endpoint's tools", () =>
-    Effect.gen(function* () {
-      const mcp = yield* Testing.mcpClient([Fetch]);
-      const failure = yield* Effect.flip(mcp.fetch({ url: "a" }));
+  it.effect(
+    "leave mcpClient without structured content to decode without the endpoint's tools",
+    () =>
+      Effect.gen(function* () {
+        const mcp = yield* Testing.mcpClient([Fetch]);
+        const failure = yield* Effect.flip(mcp.fetch({ url: "a" }));
 
-      expect(Schema.isSchemaError(failure) && failure.message).toContain('at ["body"]');
-    }).pipe(
-      Effect.provide(Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada")))),
-    ),
+        expect(failure).toBeInstanceOf(Testing.McpCallError);
+        expect(failure.message).toContain('MCP tools/call "fetch" returned no structured content');
+      }).pipe(
+        Effect.provide(
+          Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada"))),
+        ),
+      ),
   );
 
-  it("are accepted by the official client, which checks results against the listed schema", async () => {
+  it("reach the official client as text alone, with no listed schema to check", async () => {
     const web = serveHttp();
 
     const called = await withMcpClient({ fetch: web.handler }, async (client) => {
@@ -280,16 +277,15 @@ describe("MCP text fields", () => {
       );
     });
 
+    expect(called.map((result) => "structuredContent" in result)).toEqual([false, false]);
     expect(called).toMatchObject([
       {
-        structuredContent: rest,
         content: [
           { type: "text", text: tricky },
           { type: "text", text: JSON.stringify(rest) },
         ],
       },
       {
-        structuredContent: {},
         content: [
           { type: "text", text: tricky },
           { type: "text", text: "{}" },

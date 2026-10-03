@@ -63,6 +63,9 @@ export default defineConfig({
       ".roo/**",
       ".windsurf/**",
       "tools/oxlint/anti-slop/**",
+      // Transient lint-configuration probes hold findings on purpose. Only their own run,
+      // which sets LINT_PROBE, lints them (tools/oxlint/tests/configuration.test.ts).
+      ...(process.env["LINT_PROBE"] === undefined ? ["tools/oxlint/tests/probe-*/**"] : []),
     ],
     jsPlugins: [
       { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },

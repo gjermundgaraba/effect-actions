@@ -145,27 +145,17 @@ type Registry = McpServer.McpServer["Service"];
 /** What the native registry takes for one tool: its listing, and what a call of it runs. */
 type Registration = Parameters<Registry["addTool"]>[0];
 
-/** The parts of a listed output schema a text field is removed from. */
+/** The properties of a listed output schema, which a text field must be one of. */
 const decodeListed = Schema.decodeUnknownOption(
-  Schema.Struct({
-    properties: Schema.Record(Schema.String, Schema.Json),
-    required: Schema.optionalKey(Schema.Array(Schema.String)),
-  }),
+  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Json) }),
 );
 
-/** `value` without its field `field`, and what the field held. */
-const detach = (value: Schema.JsonObject, field: string) => {
-  const { [field]: detached, ...rest } = value;
-
-  return { detached, rest };
-};
-
 /**
- * The listed output schema of `tool` without the text field `field`. Only a top-level
- * property can be left out; any other field fails the layer build rather than publish a
- * schema the structured content would not satisfy.
+ * `tool` listing no output schema, for a success sent as text. Its text field `field` must
+ * be a top-level property of the success's listed schema; any other field fails the layer
+ * build rather than name a field no success holds.
  */
-const outputWithout = (tool: McpSchema.Tool, field: string): Effect.Effect<Schema.JsonObject> => {
+const listedAsText = (tool: McpSchema.Tool, field: string): Effect.Effect<McpSchema.Tool> => {
   const listed = decodeListed(tool.outputSchema);
 
   if (Option.isNone(listed) || !Object.hasOwn(listed.value.properties, field)) {
@@ -174,47 +164,42 @@ const outputWithout = (tool: McpSchema.Tool, field: string): Effect.Effect<Schem
     );
   }
 
-  const { properties: _, required: __, ...output } = tool.outputSchema ?? {};
-  const required = (listed.value.required ?? []).filter((key) => key !== field);
+  const { outputSchema: _, ...listing } = tool;
 
-  return Effect.succeed({
-    ...output,
-    properties: detach(listed.value.properties, field).rest,
-    ...(required.length === 0 ? {} : { required }),
-  });
+  // The native McpSchema.Tool, a Schema.Class, rebuilt from its own fields but outputSchema,
+  // as McpServer.addTool rebuilds it: the constructor restores the prototype and validates them.
+  return Effect.succeed(new McpSchema.Tool(listing));
 };
 
 /**
- * A success whose text field holds a string, sent with the string once, raw, as the first
- * text block, before the JSON of the rest, which is its structured content. Any other result
- * is the native one: an error, or a success without the field as a string.
+ * A success as text alone, without structured content: one whose text field holds a string as
+ * two text blocks, the string once, raw, then the JSON of the rest; any other as the JSON of
+ * the whole, the native text. A host preferring structured content has none, so it shows the
+ * text. An error is the native result.
  */
 const textResult = (result: McpSchema.CallToolResult, field: string): McpSchema.CallToolResult => {
-  const structured = result.structuredContent;
+  if (result.isError === true) return result;
 
-  if (result.isError === true || !isJsonObject(structured)) return result;
-
-  const { detached, rest } = detach(structured, field);
-
-  if (!Predicate.isString(detached)) return result;
+  const { structuredContent: structured, ...native } = result;
+  const whole: Schema.JsonObject = isJsonObject(structured) ? structured : {};
+  const { [field]: detached, ...rest } = whole;
 
   return new McpSchema.CallToolResult({
-    // oxlint-disable-next-line typescript/no-misused-spread -- Rebuilds the native McpSchema.CallToolResult, a Schema.Class, from its own fields: each one the server set survives but the two replaced, and the constructor restores the prototype and validates them.
-    ...result,
-    structuredContent: rest,
-    content: [
-      { type: "text", text: detached },
-      { type: "text", text: JSON.stringify(rest) },
-    ],
+    ...native,
+    content: Predicate.isString(detached)
+      ? [
+          { type: "text", text: detached },
+          { type: "text", text: JSON.stringify(rest) },
+        ]
+      : native.content,
   });
 };
 
-/** A tool's registration whose success sends the text field `field` as text. */
+/** A tool's registration whose success is sent as text, its text field `field` raw. */
 const withText = (registration: Registration, field: string): Effect.Effect<Registration> =>
-  Effect.map(outputWithout(registration.tool, field), (outputSchema) => ({
+  Effect.map(listedAsText(registration.tool, field), (tool) => ({
     ...registration,
-    // oxlint-disable-next-line typescript/no-misused-spread -- Rebuilds the native McpSchema.Tool, a Schema.Class, from its own fields, as McpServer.addTool does: each one survives but outputSchema, and the constructor restores the prototype and validates them.
-    tool: new McpSchema.Tool({ ...registration.tool, outputSchema }),
+    tool,
     handle: (payload) =>
       Effect.map(registration.handle(payload), (result) =>
         Predicate.isTagged(result, "InputRequired") ? result : textResult(result, field),
@@ -224,8 +209,8 @@ const withText = (registration: Registration, field: string): Effect.Effect<Regi
 /**
  * `registry`, registering the tool of each action `texts` names with that text field. The
  * native `registerToolkit` registers every tool through `addTool`, and builds each listing
- * and result, always with the whole success as structured content; a text field is moved out
- * of what it registers, so decoding, failures and defects stay native.
+ * and result, always with the whole success as structured content; a text field's tool is
+ * registered without it, so decoding, failures and defects stay native.
  */
 const withTexts = (registry: Registry, texts: ReadonlyMap<string, string>): Registry => ({
   ...registry,

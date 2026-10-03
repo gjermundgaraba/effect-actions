@@ -15,14 +15,11 @@ export interface Server {
   readonly dispose: () => Promise<void>;
 }
 
-/** What routes may leave to `serveWithContext`: the router, the platform, request context. */
+/** What routes may leave to `serveWithContext`: what `serve` admits, and request context. */
 type Routable =
-  | HttpRouter.HttpRouter
+  | Served
   | HttpRouter.Request<"Requires", any>
-  | HttpRouter.Request<"GlobalRequires", any>
-  | HttpRouter.Request<"Error", any>
-  | HttpRouter.Request<"GlobalError", any>
-  | Layer.Success<typeof HttpServer.layerServices>;
+  | HttpRouter.Request<"GlobalRequires", any>;
 
 /**
  * Serve `routes` in memory, without a network or request logs, each request taking a

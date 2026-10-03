@@ -1,11 +1,10 @@
 import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import {
-  assertDistinctTags,
+  assertErrors,
   assertKnown,
   assertName,
   assertOnce,
-  assertOwnTags,
   projectedErrors,
 } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
@@ -471,12 +470,7 @@ export function implement(
   const names = actions.map((action) => action.name);
 
   assertOnce("action", actions);
-
-  // Checked where an action is served rather than where it is made, which a client does too.
-  for (const action of actions) {
-    assertOwnTags(`Action "${action.name}"`, action.errors);
-    assertDistinctTags(`action "${action.name}"`, action.errors);
-  }
+  assertErrors(actions);
 
   const hook = hookOf(before);
 

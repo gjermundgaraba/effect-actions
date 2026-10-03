@@ -21,15 +21,9 @@ import {
   OpenApi,
 } from "effect/http-api";
 import type * as Action from "./Action.js";
-import {
-  assertDistinctTags,
-  assertOnce,
-  assertOwnTags,
-  projectedErrors,
-} from "./internal/actions.js";
+import { assertErrors, assertOnce, projectedErrors } from "./internal/actions.js";
 import {
   type AnyHttp,
-  assertInBinding,
   type Client,
   type ErasedMethod,
   methods,
@@ -284,9 +278,6 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   const errors = options.errors ?? [];
   const open = options.public ?? [];
 
-  // The types admit only the binding's own actions; plain JavaScript may pass others.
-  for (const action of open) assertInBinding(actions, action);
-
   const mount = mountSegments(options.prefix);
   const security = documentation(options.security ?? {});
 
@@ -379,18 +370,10 @@ export function layer<const H extends AnyHttp, const Apps extends Served>(
   | Path.Path
 >;
 export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
-  // Checked where the binding is served: a client holds it too.
-  assertOwnTags("ActionHttp binding", http.errors);
-
   const apps = toList(served);
   const actions = servedBy(http, apps);
 
-  for (const action of actions) {
-    assertDistinctTags(`action "${action.name}" and its binding`, [
-      ...action.errors,
-      ...http.errors,
-    ]);
-  }
+  assertErrors(actions, http.errors);
 
   const mount = mountSegments(http.prefix);
   const name = groupName(mount);
@@ -453,6 +436,8 @@ export function client(
   http: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
+  assertErrors(http.actions, http.errors);
+
   return Effect.map(methods(http, options), (methodOf) =>
     Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
   );

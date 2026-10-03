@@ -52,9 +52,9 @@ export type ToolOptions<A extends Action.Any> = {
   readonly [K in A as K["name"]]?: {
     /**
      * A string field of the encoded success, the text field, which MCP sends once, raw, as
-     * the first text block, before the JSON of the rest, and leaves out of
-     * `structuredContent` and the listed `outputSchema`: a body the model reads as it is,
-     * such as a page of Markdown.
+     * the first text block, then the JSON of the rest as the second, with no
+     * `structuredContent` and no listed `outputSchema` for the tool, so every host shows the
+     * model both: a body the model reads as it is, such as a page of Markdown.
      */
     readonly text?: TextField<K>;
   };

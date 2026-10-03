@@ -17,8 +17,11 @@ to `ActionMcp`'s `tools` option, and stdio also serves the revisions back to 202
 Claude Code and Codex connect. The docs say where builders and your own services are built, and
 show one MCP URL for signed-out and signed-in callers.
 
-Built and tested against `effect` and `@effect/platform-node` `4.0.0`. The `effect` peer is
-unchanged since 0.9.0 (`^4.0.0`). TypeScript 7 or newer is supported; earlier versions are not.
+Built and tested against `effect` and `@effect/platform-node` `4.0.0`. The `effect` peer narrows
+to `~4.0.0`, Effect's 4.0.x patches: the modules every surface builds on are unstable in Effect,
+so a minor release may change them, and a later minor is admitted once the package is tested
+against it: install `effect` and every `@effect/*` package at 4.0.x. TypeScript 7 or newer is
+supported; earlier versions are not.
 0.9.0 kept 0.8.0's API and behavior, so these notes compare with 0.8.0.
 
 ### Breaking changes
@@ -146,6 +149,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   OAuth scopes.
 - Errors one caller may receive have distinct `_tag`s: `implement` and `ActionHttp.layer`
   refuse two with one, so give each a tag of its own.
+- Every client refuses the same errors a server would, of a built-in `_tag` or two of one
+  `_tag`, when it is made: `ActionHttp.client`, a remote `ActionCli` command and
+  `Testing.mcpClient`, so a client of a contract no server of this package serves cannot
+  decode a look-alike as a built-in error.
 - A helper passing implementations it is given beside its own takes them as one type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spreads it,
   `[...apps, double]`, or takes one, `<App extends Action.AnyImplementation>(app: App)`, and
@@ -288,8 +295,13 @@ Each area below lists what is renamed or removed, then what changes without a re
   `Schema.Struct({})`, naming the actions:
   `MCP tool input must be one object with keys, such as a struct: <name>`. Such input compiled,
   and the layer build died with `McpServer cannot register tool '<name>'`.
-- MCP sends a text field as 0.8.0 did: once, raw, as the first text block, leaving it out of
-  `structuredContent` and the listed `outputSchema`. Every other surface serves the whole
+- A text field's tool sends text alone: a success holding the field as a string is two text
+  blocks, the field once, raw, then the JSON of the rest, and any other success the JSON of the
+  whole, with no `structuredContent`, and the tool lists no `outputSchema`. 0.8.0 sent the rest
+  as `structuredContent` too, where a host preferring structured content showed the model the
+  rest without the field, and listed an `outputSchema` without the field. A program reading
+  the rest as structured content reads the JSON of the second text block instead;
+  `Testing.mcpClient`, given the endpoint's `tools`, does. Every other surface serves the whole
   success. `text` is typed by the served action: a top-level string field of its encoded
   success, optional or not, which a scalar, array, union or record success does not have.
   0.8.0 accepted a union member's field, or any name for a record, and then failed the layer
@@ -347,6 +359,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   is built, `Missing required flag: --<flag>` on stderr after the command's help on stdout.
   Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
   remote command takes no client options: it calls through the host's `HttpClient`.
+- A field holding an array of strings or numbers, choices included, takes a repeated flag, one
+  element per occurrence: `--provider exa --provider hn`. Given none, a required field is `[]`
+  and an optional one is left out; a `Schema.NonEmptyArray` field's flag is required once. Any
+  other array, and an array taken as a positional argument, takes JSON.
 - A command whose action fails prints the failure on stderr as the JSON HTTP sends for it, such
   as `{"_tag":"UserNotFound","id":"9"}`, through Effect's CLI formatter, and exits 1, or with
   the failure's `Runtime.errorExitCode`. It fails with Effect CLI's `UserError`, whose `cause`
@@ -385,7 +401,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | 0.8.0                                                                                                                                     | 0.10.0                                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Testing.httpClient(api, handler)`, `Testing.Handler`                                                                                     | `Testing.layer(handler)`: the native `HttpClient`, answered by the web handler, on which `ActionHttp.client(Http)` and every other client call it; `Testing.layer(routes)` builds the routes itself                                                                                                                                              |
-| `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient?, tools? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. Given the endpoint's `tools`, a text field is put back under its field                                                                                                                                    |
+| `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient?, tools? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. Given the endpoint's `tools`, a text field's tool has its success read from its text blocks                                                                                                               |
 | `Testing.mcpRequest({ url, method, params, headers })`, a `Request`                                                                       | `Testing.mcpRequest(method, params?, { url?, headers? })`, an Effect of the response on the `HttpClient`                                                                                                                                                                                                                                         |
 | `Testing.McpCallOptions`, `McpCallResult`, `McpRequestParams`, `McpRequestValue`                                                          | None: `mcpClient` types each call, and `params` are JSON                                                                                                                                                                                                                                                                                         |
 | `TestingClient.withMcpClient`, `McpClientOptions`, the optional `@modelcontextprotocol/client` peer                                       | Depend on the official client, `new Client(info, { versionNegotiation: { mode: { pin: "2026-07-28" } } })`. Give its transport `fetch: (input, init) => web.handler(new Request(input, init))`, with `web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)))` as 0.8.0's tests built it; or use `Testing.mcpClient` |

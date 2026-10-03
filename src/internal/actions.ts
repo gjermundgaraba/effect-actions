@@ -109,7 +109,7 @@ const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> => {
  * every endpoint and tool declares the built-in errors already, and a client decoding the
  * answer could not tell a look-alike from them.
  */
-export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
+const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
   const tag = errors
     .flatMap((error) => tagsOf(error.ast))
     .find((tag) => Object.hasOwn(statuses, tag));
@@ -123,9 +123,31 @@ export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void 
  * Refuse two errors one caller may receive with one `_tag`: a client decodes an answer by
  * trying the schemas declared for its status, and would take one for the other.
  */
-export const assertDistinctTags = (what: string, errors: Action.Any["errors"]): void =>
+const assertDistinctTags = (what: string, errors: Action.Any["errors"]): void =>
   assertDistinct(
     `error _tag in ${what}`,
     [...new Set(errors)].flatMap((error) => tagsOf(error.ast)),
     (tag) => tag,
   );
+
+/**
+ * Refuse errors a caller of `actions` could not tell apart, the binding's `errors` among them
+ * over HTTP: one with a built-in error's `_tag`, and two of one action, or of one action and
+ * its binding, with one `_tag`. Checked by every surface serving the actions and every client
+ * calling them, rather than where an action is made, so a client of a contract no server here
+ * serves refuses it too.
+ */
+export const assertErrors = (
+  actions: ReadonlyArray<Action.Any>,
+  binding: Action.Any["errors"] = [],
+): void => {
+  assertOwnTags("ActionHttp binding", binding);
+
+  for (const action of actions) {
+    assertOwnTags(`Action "${action.name}"`, action.errors);
+    assertDistinctTags(
+      binding.length === 0 ? `action "${action.name}"` : `action "${action.name}" and its binding`,
+      [...action.errors, ...binding],
+    );
+  }
+};

@@ -64,11 +64,22 @@ it("escapes a challenge's quoted metadata URL, whose query may hold a backslash"
   );
 });
 
-it("publishes discovery for every layer it authenticates, which may share it", async () => {
-  const authenticate = Authentication.make(Caller, Effect.succeed(Effect.succeed("caller")), {
-    resource: "https://api.example.com/mcp",
-    authorizationServers: ["https://auth.example.com"],
-  }).layer;
+it("publishes discovery for every layer it authenticates, which share one build of it", async () => {
+  let built = 0;
+
+  // Discovery is published where the middleware is built, so one build publishes it once.
+  const authenticate = Authentication.make(
+    Caller,
+    Effect.sync(() => {
+      built++;
+
+      return Effect.succeed("caller");
+    }),
+    {
+      resource: "https://api.example.com/mcp",
+      authorizationServers: ["https://auth.example.com"],
+    },
+  ).layer;
 
   const web = serve(
     Layer.mergeAll(
@@ -81,6 +92,7 @@ it("publishes discovery for every layer it authenticates, which may share it", a
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
   expect(await (await web.handler(new Request("https://api.example.com/b"))).text()).toBe("b");
+  expect(built).toBe(1);
 });
 
 it("publishes discovery from every composition of its middleware", async () => {

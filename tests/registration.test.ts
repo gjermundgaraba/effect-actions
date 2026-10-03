@@ -699,3 +699,78 @@ describe("projection boundaries", () => {
     }),
   );
 });
+
+describe("MCP registration", () => {
+  const WhoAmI = Action.make("whoAmI", {
+    description: "Current user",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const Invoice = Action.make("invoice", {
+    description: "Invoice total",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const Audit = Action.make("audit", {
+    description: "Audit",
+    access: "write",
+    success: Schema.String,
+  });
+
+  const whoAmI = Action.implement(WhoAmI, () => Effect.succeed("ada"), Action.allowAll);
+
+  const billing = Action.implement(
+    [Invoice, Audit],
+    { invoice: () => Effect.succeed("4"), audit: () => Effect.succeed("clean") },
+    Action.allowAll,
+  );
+
+  it("serves several implementations as the tools of one endpoint", async () => {
+    const web = makeTestMcp([whoAmI, billing]);
+
+    expect((await listTools(web.handler)).map(({ name }) => name).sort()).toEqual([
+      "audit",
+      "invoice",
+      "whoAmI",
+    ]);
+    expect(await (await web.handler(rawToolCall("whoAmI"))).json()).toMatchObject({
+      result: { structuredContent: "ada" },
+    });
+  });
+
+  it("names each tool after its action, and checks names where tools are served", () => {
+    const same = () =>
+      Action.make("same", { description: "", access: "write", success: Schema.String });
+
+    const First = same();
+    const Second = same();
+
+    // Two contracts may share a name; whoever serves both refuses them.
+    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action: same");
+
+    const apps = [
+      Action.implement(First, () => Effect.succeed("a"), Action.allowAll),
+      Action.implement(Second, () => Effect.succeed("b"), Action.allowAll),
+    ];
+
+    const options = { name: "test", version: "0" };
+    expect(() => ActionMcp.layerHttp(apps, options)).toThrow("Duplicate MCP tool: same");
+    expect(() => ActionMcp.runStdio(apps, options)).toThrow("Duplicate MCP tool: same");
+    expect(() => ActionToolkit.make(apps)).toThrow("Duplicate tool: same");
+
+    const Other = Action.make("other", {
+      description: "",
+      access: "write",
+      success: Schema.String,
+    });
+
+    expect(() =>
+      ActionMcp.layerHttp(
+        [whoAmI, Action.implement(Other, () => Effect.succeed("b"), Action.allowAll)],
+        options,
+      ),
+    ).not.toThrow();
+  });
+});

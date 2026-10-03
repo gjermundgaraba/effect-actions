@@ -25,7 +25,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `make`: `name`          | The aggregate's name, required.                                                                              |
 | `make`: `commands`      | Each subcommand's `command` options, keyed by action name: `{ readFile: { positional: ["path"], render } }`. |
 
-Exported types: `Options<Actions>` of `make` and `CommandOptions<typeof Action>` of `command`, the same locally and over HTTP, and `Failure<E>`, a type only: what a command fails with when its action fails, Effect CLI's `CliError.UserError` whose `cause` is the failure `E`. A command over HTTP calls through the host's `HttpClient`, which sets where it sends and any credentials.
+Exported types: `Options<A>` of `make`, `A` the union of its actions, such as `typeof GetUser | typeof RenameUser`, and `CommandOptions<typeof Action>` of `command`, the same locally and over HTTP, and `Failure<E>`, a type only: what a command fails with when its action fails, Effect CLI's `CliError.UserError` whose `cause` is the failure `E`. A command over HTTP calls through the host's `HttpClient`, which sets where it sends and any credentials.
 
 Flags come from the action's input. A struct or class input gets one flag per top-level
 field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`, `_id` is `--id`), parsing the field's encoded JSON
@@ -36,7 +36,8 @@ value:
 | string or template literal               | `--name <string>`; the action's schema checks a template  |
 | boolean                                  | `--on`, a switch; omitted is `false` for a required field |
 | union of string literals, or string enum | `--kind <choice>`, one of the values                      |
-| anything else, numbers included          | `--tags <value>`: JSON the field accepts, or the text     |
+| array of strings or numbers, or choices  | `--tag <value>`, repeated: one element per occurrence     |
+| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or the text    |
 
 A suspended input or field, as a recursive schema is written, counts as the schema it stands
 for, its description included.
@@ -45,10 +46,15 @@ An input that is not a struct of named fields (a union, a record, a scalar) gets
 `--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`, which the
 action's schema decodes when the command runs. A schema accepting `{}`, including a union
 with such a member, succeeds; otherwise the command fails with `InvalidInput`. An action without input gets no flags.
+A repeated flag reads each occurrence as one element, as the flag of that element would:
+`--provider exa --provider hn` for `Schema.Array(Schema.Literals(["exa", "hn"]))`. Given none, a
+required field is `[]` and an optional one is left out; a `Schema.NonEmptyArray` field's flag is
+required once. Any other array, such as one of objects, and an array taken as a positional
+argument take JSON, `--points '[{"x":1}]'`.
 A value flag parses its text as JSON when the field's encoding accepts that kind of value
-(`--count 2`, `--tags '["x"]'`), or else keeps the text (`--limit auto`, `--scale Infinity`
+(`--count 2`, `--owner '{"id":"x"}'`), or else keeps the text (`--limit auto`, `--scale Infinity`
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
-Only the kind decides: JSON breaking a rule, such as four tags where three are allowed, stays
+Only the kind decides: JSON breaking a rule, such as `--width 0` where it must be positive, stays
 JSON, and the schema reports the rule and its path.
 Choices may be nested unions: `Schema.Union([Schema.Literals(["a", "b"]), Schema.Literal("c")])`
 is one choice of three.
@@ -173,7 +179,7 @@ const cli = Command.make("acme").pipe(Command.withSubcommands([api, login]));
 - When its action fails, a command fails with Effect CLI's `UserError`, typed `Failure<E>`, whose `cause` is that failure: a declared error, a binding's, a built-in one, or a builder's. Its message is the JSON HTTP sends for it ([guarantees.md](guarantees.md#wire-behavior)), such as `{"_tag":"UserNotFound","id":"9"}`. `Command.run` prints it on stderr through Effect's `CliOutput` formatter and marks it reported, so `NodeRuntime.runMain` prints it no more, and the process exits 1, or with the cause's `Runtime.errorExitCode`. A failure no schema encodes, a builder's or the transport's, prints as its tag, or an error's name, and its message, then each cause's, up to one already printed, and never its other fields, a plain object's `name` among them.
 - Every local command may fail with `Action.BuiltIn`, whatever its implementation's hook. Input that does not decode is `InvalidInput`, as over HTTP: it skips the hook and handler.
 - After `Command.run` the failure may be any `UserError`, so a host matches the action's by its cause, after `Command.run` has printed it: `Effect.catchTag("UserError", (error) => error.cause instanceof UserNotFound ? ... : Effect.fail(error))` decides what follows, such as the exit code, not what was printed. `Failure` is a type only, since `instanceof` would leave its cause `any`. For text of its own, the host provides Effect's formatter, `CliOutput.layer(Object.assign({}, CliOutput.defaultFormatter(), { formatError }))`; `Command.run(cli, { version, renderErrors: false })` has it print every failure itself, the parser's too.
-- `runMain` reports what is not a command's failure, outside the program, on stdout: a defect, such as a handler's bug or a success that does not encode, and a failure of a layer the host provides, on the command or around the run. Those layers log outside the command too. A CLI whose stdout feeds scripts sends both to stderr: it provides `Logger.LogToStderr` outermost, runs `NodeRuntime.runMain({ disableErrorReporting: true })`, and reports what the command did not print itself, `Effect.tapCause((cause) => Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause)) ? Effect.void : Effect.logError(cause))`. `LogToStderr` moves the default logger, but not those layers' `Console` output or a logger writing through `Console.log`, such as `Logger.consoleJson`: log JSON with `Logger.withConsoleError(Logger.formatJson)`.
+- `runMain` reports what is not a command's failure, outside the program, on stdout: a defect, such as a handler's bug or a success that does not encode, and a failure of a layer the host provides, on the command or around the run. Those layers log outside the command too. A CLI whose stdout feeds scripts sends both to stderr: it provides `Logger.LogToStderr` outermost, runs `NodeRuntime.runMain({ disableErrorReporting: true })`, and reports what the command did not print itself, `Effect.tapCause((cause) => Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause)) ? Effect.void : Console.error(Cause.pretty(cause)))`, as the stdio example does ([ActionMcp.md](ActionMcp.md#subprocess)). `LogToStderr` moves the default logger, but not those layers' `Console` output or a logger writing through `Console.log`, such as `Logger.consoleJson`: log JSON with `Logger.withConsoleError(Logger.formatJson)`.
 - From a binding, `command(http, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `make(http, { name })` projects every action of the binding, the same tree `make` builds locally, with the same options.
 - A command over HTTP runs no hook: the server owns authentication and authorization. The host provides `HttpClient` and configures it on the remote command or aggregate, `Command.provideEffect(HttpClient.HttpClient, ...)`: where it sends, `HttpClient.mapRequest(HttpClientRequest.prependUrl(url))`, and credentials, `HttpClientRequest.bearerToken(token)`, read when a command runs. Configured around the whole program, it would rewrite every request the program makes, an absolute URL too, and send each the credentials. Nothing is inferred from action arguments.
 - Over HTTP, input is decoded by the action schema before dispatch, then passed to the native client at its normal codec boundary. A failure's cause is the client's: the action's and binding's declared errors, the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), `SchemaError` for an answer that does not decode, and `HttpClientError`. Input that does not decode is `InvalidInput`, and sends nothing.

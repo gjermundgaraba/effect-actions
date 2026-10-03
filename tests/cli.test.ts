@@ -140,7 +140,9 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
       "--mode",
       "fast",
       "--tags",
-      '["a","b"]',
+      "a",
+      "--tags",
+      "b",
       "--owner",
       '{"id":"alice"}',
       "--note",
@@ -149,7 +151,8 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
       "2026-01-02T03:04:05.000Z",
     ]);
 
-    // An omitted required boolean is a switch left off; an omitted optional field is absent.
+    // An omitted required boolean is a switch left off, an omitted optional field is absent,
+    // and a repeated flag given none is an empty array.
     yield* exec(command, [
       "--tenant-id",
       "acme",
@@ -157,8 +160,6 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
       "1",
       "--mode",
       "safe",
-      "--tags",
-      "[]",
       "--owner",
       '{"id":"bob"}',
     ]);
@@ -183,18 +184,7 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
     // A choice is parsed natively: another value shows help.
     const slow = failure(
       yield* Effect.exit(
-        exec(command, [
-          "--tenant-id",
-          "acme",
-          "--count",
-          "1",
-          "--mode",
-          "slow",
-          "--tags",
-          "[]",
-          "--owner",
-          "{}",
-        ]),
+        exec(command, ["--tenant-id", "acme", "--count", "1", "--mode", "slow", "--owner", "{}"]),
       ),
     );
 
@@ -208,8 +198,8 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
     // input it refuses is `InvalidInput`, as over HTTP, naming the field.
     for (const [field, args] of [
       // The required flags, `--count` given text that is not JSON.
-      ["count", ["--tenant-id", "acme", "--tags", "[]", ...required.with(1, "many")]],
-      ["tags", ["--tenant-id", "acme", "--tags", "[", ...required]],
+      ["count", ["--tenant-id", "acme", ...required.with(1, "many")]],
+      ["owner", ["--tenant-id", "acme", ...required.with(5, "[")]],
     ] as const) {
       const refused = causeOf(yield* Effect.exit(exec(command, args)));
 
@@ -220,7 +210,7 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
     }
 
     // A required field's flag is required by the parser, which shows help without it.
-    const missing = failure(yield* Effect.exit(exec(command, ["--tags", "[]", ...required])));
+    const missing = failure(yield* Effect.exit(exec(command, required)));
     expect(missing).toBeInstanceOf(CliError.ShowHelp);
 
     if (missing instanceof CliError.ShowHelp) {
@@ -230,7 +220,7 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
     // A JSON flag holding JSON of the wrong shape is invalid input as well.
     expect(
       causeOf(
-        yield* Effect.exit(exec(command, ["--tenant-id", "acme", "--tags", "[1]", ...required])),
+        yield* Effect.exit(exec(command, ["--tenant-id", "acme", ...required.with(5, "[1]")])),
       ),
     ).toBeInstanceOf(Action.InvalidInput);
 
@@ -245,14 +235,95 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
             "1",
             "--mode",
             "fast",
-            "--tags",
-            "[]",
             "--owner",
             '{"id":"a","nmae":"Ada"}',
           ]),
         ),
       ),
     ).toBeInstanceOf(Action.InvalidInput);
+
+    expect(inputs).toHaveLength(2);
+  }),
+);
+
+it.effect("repeats the flag of an array of strings or numbers, one element per occurrence", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+
+    const Search = Action.make("search", {
+      description: "Search with some providers",
+      access: "read",
+      input: {
+        query: Schema.String,
+        provider: Schema.NonEmptyArray(Schema.Literals(["exa", "hn"])),
+        site: Schema.optionalKey(Schema.Array(Schema.String)),
+        limit: Schema.Array(Schema.Finite),
+        // An array of objects takes JSON, as any other value flag.
+        filters: Schema.Array(Schema.Struct({ key: Schema.String })),
+      },
+      success: Schema.String,
+    });
+
+    const app = Action.implement(
+      Search,
+      (input) =>
+        Effect.andThen(
+          Effect.sync(() => inputs.push(input)),
+          () => Effect.succeed("ok"),
+        ),
+      Action.allowAll,
+    );
+
+    const command = ActionCli.command(app, Search, { positional: ["query"] });
+
+    yield* exec(command, [
+      "golang",
+      "--provider",
+      "exa",
+      "--provider",
+      "hn",
+      "--site",
+      "go.dev",
+      "--limit",
+      "3",
+      "--limit",
+      "5",
+      "--filters",
+      '[{"key":"lang"}]',
+    ]);
+    // None of an optional array's flag leaves it out, and none of a required one is `[]`.
+    yield* exec(command, ["golang", "--provider", "hn", "--filters", "[]"]);
+
+    expect(inputs).toStrictEqual([
+      {
+        query: "golang",
+        provider: ["exa", "hn"],
+        site: ["go.dev"],
+        limit: [3, 5],
+        filters: [{ key: "lang" }],
+      },
+      { query: "golang", provider: ["hn"], limit: [], filters: [] },
+    ]);
+
+    // A non-empty array's flag is required once, which the parser reports missing.
+    const missing = failure(yield* Effect.exit(exec(command, ["golang", "--filters", "[]"])));
+    expect(missing).toBeInstanceOf(CliError.ShowHelp);
+
+    if (missing instanceof CliError.ShowHelp) {
+      expect(missing.errors).toEqual([new CliError.MissingOption({ option: "provider" })]);
+    }
+
+    // Each occurrence is parsed as one element: a choice natively, anything else for the
+    // schema to decode, which names the element.
+    const other = ["golang", "--provider", "bing", "--filters", "[]"];
+    expect(failure(yield* Effect.exit(exec(command, other)))).toBeInstanceOf(CliError.ShowHelp);
+
+    const many = ["golang", "--provider", "hn", "--limit", "many", "--filters", "[]"];
+    const refused = causeOf(yield* Effect.exit(exec(command, many)));
+
+    expect(refused).toBeInstanceOf(Action.InvalidInput);
+
+    if (refused instanceof Action.InvalidInput) expect(refused.message).toContain('["limit"][0]');
 
     expect(inputs).toHaveLength(2);
   }),
@@ -1536,6 +1607,8 @@ it.effect(
 
       const Write = Action.make("write", { description: "Writes", access: "write" });
 
+      let hooked = 0;
+
       const app = Action.implement(
         [Read, Write],
         {
@@ -1549,9 +1622,14 @@ it.effect(
           write: () => Effect.void,
         },
         (action) =>
-          action.access === "read"
-            ? Effect.void
-            : Effect.fail(new Action.Forbidden({ message: "Requires write.", scopes: ["write"] })),
+          Effect.andThen(
+            Effect.sync(() => hooked++),
+            action.access === "read"
+              ? Effect.void
+              : Effect.fail(
+                  new Action.Forbidden({ message: "Requires write.", scopes: ["write"] }),
+                ),
+          ),
       );
 
       const cli = ActionCli.make(app, { name: "records" });
@@ -1611,11 +1689,15 @@ it.effect(
         expect(Runtime.getErrorReported(reported)).toBe(false);
       }
 
+      // Every call above ran the hook, the command's and HTTP's.
+      expect(hooked).toBe(cases.length * 2);
+
       // Input that does not decode is the `InvalidInput` HTTP answers, before the hook runs.
       const [invalid, , stderr] = yield* printed(exec(cli, ["read", "--id", ""]));
 
       const sent = yield* answered("read", { id: "" });
 
+      expect(hooked).toBe(cases.length * 2);
       expect(causeOf(invalid)).toBeInstanceOf(Action.InvalidInput);
       expect(sent).toContain('"_tag":"InvalidInput"');
       expect(stderr).toEqual([expect.stringContaining(sent)]);

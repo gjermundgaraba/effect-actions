@@ -2,7 +2,7 @@ import { Effect, Predicate, type Schema } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "./Action.js";
-import { assertDistinct, assertKnown } from "./internal/actions.js";
+import { assertDistinct, assertErrors, assertKnown } from "./internal/actions.js";
 import {
   type Failure,
   command as makeCommand,
@@ -112,6 +112,7 @@ const remote = (
   options: CommandOptions<Action.Any> | undefined,
 ) => {
   assertInBinding(http.actions, action);
+  assertErrors([action], http.errors);
 
   return makeCommand(
     action,

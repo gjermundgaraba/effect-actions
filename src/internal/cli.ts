@@ -192,24 +192,64 @@ const addsNull = (plain: SchemaAST.AST): boolean => {
 };
 
 /**
+ * The element of an encoded array a flag repeats, and how many times it must: an array of
+ * strings or numbers, choices included, whose fixed first elements, if any, are its rest's,
+ * as `Schema.NonEmptyArray` writes one. `undefined` for any other array, which takes JSON.
+ */
+const repeated = (
+  ast: SchemaAST.AST,
+): { readonly element: SchemaAST.AST; readonly min: number } | undefined => {
+  const encoded = unsuspended(ast);
+
+  if (!SchemaAST.isArrays(encoded)) return undefined;
+
+  const [element, ...after] = encoded.rest;
+
+  if (
+    element === undefined ||
+    after.length > 0 ||
+    !encoded.elements.every((first) => first === element) ||
+    !kindsOf(element).every((kind) => kind === "string" || kind === "number")
+  ) {
+    return undefined;
+  }
+
+  return { element, min: encoded.elements.length };
+};
+
+/**
  * A field's flag or argument, `None` when omitted, from its JSON encoding and its plain one.
  * A required field's is required, so the parser reports it missing; a required boolean flag
  * is a switch instead: omitted, it is `false`, as a switch reads. A boolean argument takes
- * `true` or `false`.
+ * `true` or `false`. A flag of an array of strings or numbers is repeated, one element per
+ * occurrence: none is `[]`, or leaves an optional field out.
  */
 const fieldParam = (
   kind: Kind,
   name: string,
   encoded: SchemaAST.AST,
   plain: SchemaAST.AST | undefined,
-): Param.Param<Kind, Option.Option<unknown>> =>
-  !SchemaAST.isOptional(encoded)
-    ? kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded))
-      ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
-      : valueParam(kind, name, encoded).pipe(Param.map(Option.some))
-    : Param.optional(
-        valueParam(kind, name, plain !== undefined && addsNull(plain) ? present(encoded) : encoded),
-      );
+): Param.Param<Kind, Option.Option<unknown>> => {
+  const optional = SchemaAST.isOptional(encoded);
+  const value = optional && plain !== undefined && addsNull(plain) ? present(encoded) : encoded;
+  const repeats = kind === Param.flagKind ? repeated(value) : undefined;
+
+  if (repeats !== undefined) {
+    const elements = valueParam(kind, name, repeats.element);
+
+    return optional
+      ? Param.variadic(elements).pipe(
+          Param.map((values) => (values.length === 0 ? Option.none() : Option.some(values))),
+        )
+      : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(Option.some));
+  }
+
+  if (optional) return Param.optional(valueParam(kind, name, value));
+
+  return kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded))
+    ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
+    : valueParam(kind, name, encoded).pipe(Param.map(Option.some));
+};
 
 /** One input field's flag or argument, parsed as its encoded value, `None` when omitted. */
 interface FieldParam {
