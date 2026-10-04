@@ -56,18 +56,16 @@ export interface LayerHttpOptions<E = never, R = never>
 }
 
 /**
- * The revisions served over stdio: 2026-07-28 and every stateful revision a host negotiates
- * with `initialize`, newest first. A success is sent as it is on each. 2026-07-28 carries any
- * success as `structuredContent`; the adapters of 2025-11-25 and 2025-06-18 carry only an
- * object there, and list only an object-rooted `outputSchema`, and earlier ones neither, nor
- * 2024-11-05 tool hints. A success they do not structure is text alone, a string as itself.
+ * The revisions served over stdio: 2026-07-28 and the stateful revisions hosts open stdio
+ * with, newest first; a host asking for another is offered 2025-11-25. A success is sent as it
+ * is on each. 2026-07-28 carries any success as `structuredContent`; the adapters of 2025-11-25
+ * and 2025-06-18 carry only an object there, and list only an object-rooted `outputSchema`. A
+ * success they do not structure is text alone, a string as itself.
  */
 const stdioProtocols = [
   McpProtocol.v2026_07_28,
   McpProtocol.v2025_11_25,
   McpProtocol.v2025_06_18,
-  McpProtocol.v2025_03_26,
-  McpProtocol.v2024_11_05,
 ] as const;
 
 /**
@@ -285,7 +283,7 @@ export function layerHttp(
 
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
- * 2026-07-28 or any earlier revision back to 2024-11-05, as the host negotiates: the whole
+ * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates: the whole
  * program of an MCP subprocess, which succeeds once the host closes its side and the calls in
  * flight, which that interrupts, have stopped. A signal interrupts it.
  *

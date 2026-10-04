@@ -13,7 +13,7 @@ own, and a request's own values win over startup ones. CLI flags come from each 
 and a command runs on Effect's own `NodeRuntime.runMain`, printing a failure on stderr as the
 JSON HTTP sends. The client modules merge into `ActionHttp` and `ActionCli`, clients and
 `Testing` are Effect-only, and `ActionCatalog` and `TestingClient` are removed. `mcp.text` becomes
-the `text` hint, and stdio also serves the revisions back to 2024-11-05, so
+the `text` hint, and stdio also serves 2025-11-25 and 2025-06-18, so
 Claude Code and Codex connect. The docs say where builders and your own services are built, and
 show one MCP URL for signed-out and signed-in callers.
 
@@ -481,17 +481,17 @@ Each area below lists what is renamed or removed, then what changes without a re
   client re-authorizes and retries.
 - `Authentication.bearerToken` reads the request's bearer token as a `Redacted<string>`,
   failing with `Unauthenticated` without one; `Effect.option(bearerToken)` where it is optional.
-- `ActionMcp.runStdio` serves every MCP revision from 2024-11-05, beside 2026-07-28, as the
-  host negotiates, so hosts that open with `initialize`, such as Claude Code and Codex,
-  connect. This reverses 0.6.0's "Stdio hosts must speak 2026-07-28", which 0.7.0 kept on
+- `ActionMcp.runStdio` serves MCP 2025-11-25 and 2025-06-18, beside 2026-07-28, as the host
+  negotiates, so hosts that open with `initialize`, such as Claude Code and Codex, connect; a
+  host asking for an earlier revision is offered 2025-11-25. This reverses 0.6.0's "Stdio hosts must speak 2026-07-28", which 0.7.0 kept on
   purpose for uniformity with HTTP, and which made 0.8.0's `layerStdio` refuse them. HTTP
   still serves 2026-07-28 only: Codex, which opens HTTP with `initialize` as well, connects
   over stdio ([ActionMcp.md](docs/ActionMcp.md#failure-modes)). MCP successes stay bare on
   every transport and revision, as in 0.8.0: on 2026-07-28 `structuredContent` is the encoded
   success and the text content is its JSON. On the revisions 0.8.0 refused, Effect's adapters
   decide what is structured: 2025-11-25 and 2025-06-18 carry only an object success as
-  `structuredContent` and list only an object-rooted `outputSchema`; 2025-03-26 and 2024-11-05
-  structure nothing. A success they do not structure is text alone, its JSON or, for a string
+  `structuredContent` and list only an object-rooted `outputSchema`. A success they do not
+  structure is text alone, its JSON or, for a string
   success, the string itself, so a host on those revisions reads a non-object success from the
   text.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`, where 0.8.0 required it.

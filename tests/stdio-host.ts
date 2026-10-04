@@ -32,19 +32,21 @@ const initialize = (revision: string): HostRequest => ({
   },
 });
 
+/** Whether a host speaking `revision` sends each request alone, without a session. */
+const isStateless = (revision: string) => revision === httpProtocol.protocolVersion;
+
 /**
- * Run `server`, a program on `Stdio` such as `ActionMcp.runStdio`, for a host speaking
- * `revision`, and send it `requests`, as ids 1 on: before 2026-07-28, after the session's
- * `initialize`. Succeeds with the line the server answered each request with, once it has
- * ended, which it does when stdin closes after the last answer.
+ * Run `server` for a host speaking `revision`, and send it `requests`, as ids 1 on: before
+ * 2026-07-28, after the session's `initialize`, as id 0. Succeeds with the line the server
+ * answered each with, `initialize` included, once it has ended.
  */
-export const converse = <E>(
+const exchange = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
   revision: string,
   requests: ReadonlyArray<HostRequest>,
 ): Effect.Effect<ReadonlyArray<string>, E> =>
   Effect.gen(function* () {
-    const stateless = revision === httpProtocol.protocolVersion;
+    const stateless = isStateless(revision);
 
     const sent = [
       ...(stateless ? [] : [{ id: 0, request: initialize(revision) }]),
@@ -101,8 +103,26 @@ export const converse = <E>(
 
     yield* server.pipe(Effect.provide(Stdio.layerTest({ stdin, stdout })));
 
-    return yield* Effect.forEach(
-      pending.filter(({ id }) => id > 0),
-      ({ reply }) => Deferred.await(reply),
-    );
+    return yield* Effect.forEach(pending, ({ reply }) => Deferred.await(reply));
   });
+
+/**
+ * Run `server`, a program on `Stdio` such as `ActionMcp.runStdio`, for a host speaking
+ * `revision`, and send it `requests`, as ids 1 on: before 2026-07-28, after the session's
+ * `initialize`. Succeeds with the line the server answered each request with, once it has
+ * ended, which it does when stdin closes after the last answer.
+ */
+export const converse = <E>(
+  server: Effect.Effect<void, E, Stdio.Stdio>,
+  revision: string,
+  requests: ReadonlyArray<HostRequest>,
+): Effect.Effect<ReadonlyArray<string>, E> =>
+  Effect.map(exchange(server, revision, requests), (lines) =>
+    isStateless(revision) ? lines : lines.slice(1),
+  );
+
+/** The line `server` answers the `initialize` of a host asking for `revision` with. */
+export const negotiate = <E>(
+  server: Effect.Effect<void, E, Stdio.Stdio>,
+  revision: string,
+): Effect.Effect<string, E> => Effect.map(exchange(server, revision, []), ([line = ""]) => line);

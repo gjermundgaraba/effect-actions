@@ -13,7 +13,7 @@ import * as Testing from "../src/Testing.js";
 import { statelessRequest } from "../src/internal/mcp.js";
 import { everyConsoleMethod } from "./console-methods.js";
 import { rawToolCall, send } from "./requests.js";
-import { converse } from "./stdio-host.js";
+import { converse, negotiate } from "./stdio-host.js";
 
 /** A client of a stdio server in a real subprocess, speaking only `revision`. */
 const connect = async (revision: string, script = "examples/mcp-stdio.ts") => {
@@ -137,8 +137,6 @@ describe("runStdio's invalid arguments", () => {
     ["2026-07-28", "result"],
     ["2025-11-25", "result"],
     ["2025-06-18", "error"],
-    ["2025-03-26", "error"],
-    ["2024-11-05", "error"],
   ] as const)("refuses them to a %s host as its %s", ([revision, kind]) =>
     Effect.gen(function* () {
       const [line] = yield* converse(
@@ -211,14 +209,11 @@ describe("runStdio's successes", () => {
   );
 
   // The tools whose success a revision structures, and lists an output schema for: every
-  // one on 2026-07-28; only the object on the 2025 revisions with structured content; none
-  // before them.
+  // one on 2026-07-28; only the object on the 2025 revisions.
   it.effect.each([
     ["2026-07-28", ["ready", "count", "greeting", "list", "reset"]],
     ["2025-11-25", ["ready"]],
     ["2025-06-18", ["ready"]],
-    ["2025-03-26", []],
-    ["2024-11-05", []],
   ] as const)("sends each success as it is to a %s host", ([revision, structured]) =>
     Effect.gen(function* () {
       const [listed, ...called] = yield* converse(
@@ -424,6 +419,27 @@ it.effect("serves native features given as features beside the tools", () =>
   }),
 );
 
+// A host asking for a revision stdio does not serve is offered its newest stateful one, as
+// MCP negotiates: the host proceeds on it or disconnects.
+it.effect.each(["2025-03-26", "2024-11-05"])("offers 2025-11-25 to a host asking for %s", (asked) =>
+  Effect.gen(function* () {
+    const Ping = Action.make("ping", { description: "Ping", access: "read" });
+
+    const line = yield* negotiate(
+      ActionMcp.runStdio(
+        Action.implement(Ping, () => Effect.void, Action.allowAll),
+        {
+          name: "test",
+          version: "0",
+        },
+      ),
+      asked,
+    );
+
+    expect(JSON.parse(line)).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
+  }),
+);
+
 describe("runStdio's input schemas", () => {
   const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
 
@@ -443,14 +459,10 @@ describe("runStdio's input schemas", () => {
     }),
   );
 
-  const open = {
+  const closed = {
     type: "object",
     properties: { item: { $ref: "#/$defs/Item" } },
     required: ["item"],
-  };
-
-  const closed = {
-    ...open,
     additionalProperties: false,
     $defs: {
       Item: {
@@ -462,27 +474,21 @@ describe("runStdio's input schemas", () => {
     },
   };
 
-  // Closed, with the definitions its references name, from 2025-06-18 on. Effect's adapters for
-  // the revisions before list only the root's type, properties and required: open, and with a
-  // reference that resolves nowhere.
-  it.effect.each([
-    ["2026-07-28", closed],
-    ["2025-11-25", closed],
-    ["2025-06-18", closed],
-    ["2025-03-26", open],
-    ["2024-11-05", open],
-  ] as const)("lists the input schema to a %s host", ([revision, schema]) =>
-    Effect.gen(function* () {
-      const [listed] = yield* converse(
-        ActionMcp.runStdio(put, { name: "items", version: "0" }),
-        revision,
-        [{ method: "tools/list" }],
-      );
+  // Closed, with the definitions its references name, on every revision served.
+  it.effect.each(["2026-07-28", "2025-11-25", "2025-06-18"])(
+    "lists the input schema to a %s host",
+    (revision) =>
+      Effect.gen(function* () {
+        const [listed] = yield* converse(
+          ActionMcp.runStdio(put, { name: "items", version: "0" }),
+          revision,
+          [{ method: "tools/list" }],
+        );
 
-      const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+        const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
 
-      expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([schema]);
-    }),
+        expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([closed]);
+      }),
   );
 });
 
