@@ -217,7 +217,9 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `ActionHttp` answers a request without a content type with 415, as an MCP endpoint does;
   0.8.0 read it as JSON. A page on any origin can send such a body, with the caller's cookies,
   without a CORS preflight. The library's clients send `Content-Type: application/json`; a raw
-  caller adds it.
+  caller adds it. A route's payload is JSON whatever encoding its input is annotated with, such
+  as `HttpApiSchema.asFormUrlEncoded()`, which `HttpApi` would accept as a form body, sent
+  without a preflight too, and no other surface reads; the binding's client sends JSON.
 - On `ActionHttp` and `ActionMcp`, a value a request gets from authentication,
   `HttpRouter.provideRequest` or other router middleware wins over one the routes were built
   with under the same tag, as on native routes and in a Toolkit call; a startup value only

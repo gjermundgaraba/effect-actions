@@ -239,11 +239,13 @@ const declared = (error: Declared): ReadonlyArray<Declared> => {
 
 /**
  * The native endpoint of `action` at `path`, declaring its action's errors, the binding's
- * `errors` and the built-in ones: what `make` documents and `layer` serves.
+ * `errors` and the built-in ones: what `make` documents and `layer` serves. Its payload is
+ * JSON whatever encoding the input is annotated with, which no other surface reads either:
+ * `HttpApi` would take a form or text body for it, which a page sends without a preflight.
  */
 const endpointOf = (action: Action.Any, path: `/${string}`, errors: Errors) =>
   HttpApiEndpoint.post(action.name, path, {
-    payload: action.input,
+    payload: action.input.pipe(HttpApiSchema.asJson()),
     success: action.success,
     error: projectedErrors(action, errors).flatMap(declared),
   });

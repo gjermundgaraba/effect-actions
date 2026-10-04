@@ -212,7 +212,7 @@ elsewhere, give `baseUrl`.
 - The endpoints are one top-level group named after the mount path, so the native client exposes them as `client.<action>({ payload })`.
 - Bindings combine into one host API with the native `addHttpApi` method, `HttpApi.make("app").addHttpApi(Http.api)`, for one document or one native client, only when their prefixes differ and no action name repeats across them. An operation ID is the action name, and a group is keyed by its mount path. Serving several bindings with `layer` has neither limit.
 - Serve the OpenAPI document as a native route: `HttpRouter.add("GET", "/api/openapi.json", HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`. It documents every bound action, not only the served ones. It is a plain route: middleware provided to its layer covers it, and nothing covers it otherwise.
-- A route runs only a request typed as JSON: any other type, or none, is a 415, as on an MCP endpoint. So no request a page on another origin can send without a CORS preflight reaches a handler, whatever credentials, cookies included, it carries; one typed as JSON is preflighted, and the host's CORS policy decides.
+- A route runs only a request typed as JSON: any other type, or none, is a 415, as on an MCP endpoint, whatever encoding the input is annotated with, such as `HttpApiSchema.asFormUrlEncoded()`, which `HttpApi` would read and no other surface does. So no request a page on another origin can send without a CORS preflight reaches a handler, whatever credentials, cookies included, it carries; one typed as JSON is preflighted, and the host's CORS policy decides.
 - Wire format: [guarantees.md](guarantees.md#wire-behavior). Spans and log annotations: [guarantees.md](guarantees.md#observability).
 
 ### Binding errors

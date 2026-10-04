@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema, SchemaTransformation, Stream } from "effect";
 import { McpSchema } from "effect/ai";
 import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { HttpApiClient, OpenApi } from "effect/http-api";
+import { HttpApiClient, HttpApiSchema, OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -133,6 +133,52 @@ it("answers 415 to every body a page may send without a preflight, so a cross-si
 
   expect(calls.count).toBe(2);
 });
+
+it.effect(
+  "serves an input annotated with another encoding as JSON, to the binding's client too",
+  () =>
+    Effect.gen(function* () {
+      // Annotations `HttpApi` would read as a form or a text body, which needs no preflight.
+      const encodings = [
+        HttpApiSchema.asFormUrlEncoded(),
+        HttpApiSchema.asJson({ contentType: "text/plain" }),
+      ];
+
+      for (const encoding of encodings) {
+        const Rename = Action.make("rename", {
+          description: "Rename",
+          access: "write",
+          input: Schema.Struct({ name: Schema.String }).pipe(encoding),
+          success: Schema.String,
+        });
+
+        const Renaming = ActionHttp.make([Rename]);
+
+        const app = Action.implement(Rename, ({ name }) => Effect.succeed(name), Action.allowAll);
+
+        yield* Effect.gen(function* () {
+          for (const [type, body] of [
+            ["application/x-www-form-urlencoded", "name=Ada"],
+            ["text/plain", '{"name":"Ada"}'],
+          ] as const) {
+            const refused = yield* send(
+              new Request("http://localhost/api/rename", {
+                method: "POST",
+                headers: { "content-type": type },
+                body,
+              }),
+            );
+
+            expect(refused.status).toBe(415);
+          }
+
+          const client = yield* ActionHttp.client(Renaming);
+
+          expect(yield* client.rename({ name: "Ada" })).toBe("Ada");
+        }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Renaming, app))));
+      }
+    }),
+);
 
 it("names the content type a 415 refuses, or none", async () => {
   const web = serve(ActionHttp.layer(Http, counted().app));
