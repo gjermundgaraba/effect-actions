@@ -47,7 +47,7 @@ nothing there. Router/platform services are also required
 
 The binding, shared by the server and every client:
 
-```ts
+```ts example=binding.ts
 import { HttpApiSecurity } from "effect/http-api";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
@@ -68,7 +68,7 @@ export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI
 
 ### Serving
 
-```ts
+```ts example=http.ts
 import { Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { HttpApiSwagger, OpenApi } from "effect/http-api";
@@ -124,7 +124,7 @@ const routes = Layer.mergeAll(
 `client(Http)` is Effect's native `HttpApiClient` with one method per action, taking the
 action's input directly and answering with its decoded success: `client.<action>(input)`.
 
-```ts
+```ts example=client.ts
 import { Console, Effect } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -172,7 +172,7 @@ success, failure or required services, which the method types cannot follow; use
 Code that does not run Effects, such as a browser app, builds the client once with its
 `HttpClient` and runs each call with `Effect.runPromise`.
 
-```ts
+```ts example=promise-client.ts
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -256,9 +256,9 @@ elsewhere, give `baseUrl`.
 - Route returns 404: the action is not in the binding, its implementation was never passed to a `layer` call, or the path lacks the prefix. An implementation's action is served only if the binding holds that very value: an equal-looking copy, such as a test declaring the contract again, is not.
 - `No action of this implementation is in this HTTP binding: x` thrown by `layer`: none of the implementation's actions was passed to this binding's `make`, so it is the wrong implementation or the wrong binding. `x (another contract)` is an action of a bound name that is not the bound value, as a second copy of the contracts module makes: implement the exact contract value the binding received. Matching names and schemas do not establish identity.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same bound action.
-- `Duplicate error _tag in action "<name>" and its binding: <tag>` thrown by `layer`, `client` or a remote `ActionCli` command: an error of the action and one of the binding's `errors` share a `_tag`. Rename one, or list the one schema in both.
+- `Duplicate error _tag in action "<name>" and its binding: <tag>` thrown by `make`: an error of the action and one of the binding's `errors` share a `_tag`. Rename one, or list the one schema in both.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action, such as one implementation given to both the public and the authenticated layer, or a share of it to one and the whole to the other. Serve each action in one call: give each layer an `Action.share` of its own actions, `Action.share([Poll], users, Action.allowAll)` to the public layer and `Action.share([Write], users)` to the authenticated one.
-- `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by `layer`, `client` or a remote `ActionCli` command: a binding error has a built-in tag, or is a built-in error. Drop a built-in error, which every endpoint declares already; rename an error of your own.
+- `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by `make`: a binding error has a built-in tag, or is a built-in error. Drop a built-in error, which every endpoint declares already; rename an error of your own.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.

@@ -21,7 +21,7 @@ import {
   OpenApi,
 } from "effect/http-api";
 import type * as Action from "./Action.js";
-import { assertErrors, assertOnce, projectedErrors } from "./internal/actions.js";
+import { assertBindingErrors, assertOnce, projectedErrors } from "./internal/actions.js";
 import {
   type AnyHttp,
   type Client,
@@ -72,7 +72,7 @@ export interface Options<E extends Errors = Errors, A extends Action.Any = Actio
    * Errors every endpoint may answer with besides its action's own, such as a limit
    * middleware around the routes applies before decoding: declared by every endpoint, so
    * clients decode them. Handlers and hooks never fail with them; they are the binding's, and
-   * no other surface declares them.
+   * no other surface declares them. None shares a `_tag` with a built-in error or an action's.
    */
   readonly errors?: E;
   /**
@@ -276,6 +276,9 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   assertOnce("action", actions);
 
   const errors = options.errors ?? [];
+
+  assertBindingErrors(actions, errors);
+
   const open = options.public ?? [];
 
   const mount = mountSegments(options.prefix);
@@ -373,8 +376,6 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
   const apps = toList(served);
   const actions = servedBy(http, apps);
 
-  assertErrors(actions, http.errors);
-
   const mount = mountSegments(http.prefix);
   const name = groupName(mount);
 
@@ -436,8 +437,6 @@ export function client(
   http: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
-  assertErrors(http.actions, http.errors);
-
   return Effect.map(methods(http, options), (methodOf) =>
     Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
   );

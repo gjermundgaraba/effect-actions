@@ -80,7 +80,7 @@ only the encoded success on stdout; `Command.run` prints a failure on stderr.
 
 ## Canonical
 
-```ts
+```ts example=cli.ts
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -109,7 +109,7 @@ Command.run(cli, { version: "0.1.0" }).pipe(
 
 ### Over HTTP
 
-```ts
+```ts example=cli-remote.ts
 import { Command } from "effect/cli";
 import { Effect } from "effect";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";

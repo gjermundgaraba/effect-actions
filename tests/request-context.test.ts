@@ -30,22 +30,9 @@ import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { httpProtocol } from "../src/internal/mcp.js";
-import { mcpRequest, post, rawToolCall } from "./requests.js";
+import { as, mcpRequest, post, rawToolCall, valueOf } from "./requests.js";
 import { serve, serveWithContext } from "./serve.js";
 import { converse } from "./stdio-host.js";
-
-/** Client options sending `token`, a demo actor's name, as its bearer token. */
-const as = (token: string) => ({
-  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
-});
-
-/** A raw MCP tool call's response, holding the encoded success as its structured content. */
-const McpSuccess = Schema.Struct({
-  result: Schema.Struct({ structuredContent: Schema.Json }),
-});
-
-const valueOf = async (response: Response) =>
-  Schema.decodeUnknownSync(McpSuccess)(await response.json()).result.structuredContent;
 
 describe("the identity authentication provides", () => {
   // A native route under the example's authentication, reading the identity as handlers do.

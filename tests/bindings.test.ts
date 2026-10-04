@@ -541,9 +541,17 @@ it("serves a copy of a binding like the binding itself", async () => {
   expect(await (await web.handler(post("/v1/identity"))).json()).toBe("copied");
 });
 
-it("serves a binding with no actions", async () => {
-  const web = serve(ActionHttp.layer(ActionHttp.make([], { prefix: "/empty" }), []));
+it("serves a binding with no actions beside one with routes", async () => {
+  const app = Action.implement(identity, () => Effect.succeed("served"), Action.allowAll);
 
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([], { prefix: "/empty" }), []),
+      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/v1" }), app),
+    ),
+  );
+
+  expect(await (await web.handler(post("/v1/identity"))).json()).toBe("served");
   expect((await web.handler(post("/empty/identity"))).status).toBe(404);
 });
 

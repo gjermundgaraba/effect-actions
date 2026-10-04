@@ -1,9 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
-import * as Testing from "../src/Testing.js";
 import { makeTestHttp } from "./server.js";
 import { post } from "./requests.js";
 import { GetUser, RenameUser } from "../examples/contracts.js";
@@ -93,51 +91,46 @@ describe("contracts", () => {
       error: Schema.String,
     }) {}
 
-    // Widened, as plain JavaScript passes them: the types refuse a built-in error listed.
-    const errors: ReadonlyArray<Schema.Codec<unknown, unknown>> = [
-      Forbidden,
-      Schema.TaggedStruct("InvalidInput", { issues: Schema.Array(Schema.String) }),
-      Schema.Union([
-        Schema.TaggedStruct("Busy", {}),
-        Schema.TaggedStruct("Unauthenticated", { reason: Schema.String }),
-      ]),
+    // Widened, as plain JavaScript passes them: the types refuse a built-in error listed. Each
+    // with the built-in tag it encodes with.
+    const errors: ReadonlyArray<readonly [Schema.Codec<unknown, unknown>, string]> = [
+      [Forbidden, "Forbidden"],
+      [
+        Schema.TaggedStruct("InvalidInput", { issues: Schema.Array(Schema.String) }),
+        "InvalidInput",
+      ],
+      [
+        Schema.Union([
+          Schema.TaggedStruct("Busy", {}),
+          Schema.TaggedStruct("Unauthenticated", { reason: Schema.String }),
+        ]),
+        "Unauthenticated",
+      ],
       // A union behind a transformation, which only its encoding shows.
-      Schema.Union([Forbidden, Schema.TaggedStruct("Busy", {})]).pipe(
-        Schema.decodeTo(Schema.String, {
-          decode: SchemaGetter.transform(({ _tag }) => _tag),
-          encode: SchemaGetter.transform((_tag) => ({ _tag: "Busy" as const })),
-        }),
-      ),
+      [
+        Schema.Union([Forbidden, Schema.TaggedStruct("Busy", {})]).pipe(
+          Schema.decodeTo(Schema.String, {
+            decode: SchemaGetter.transform(({ _tag }) => _tag),
+            encode: SchemaGetter.transform((_tag) => ({ _tag: "Busy" as const })),
+          }),
+        ),
+        "Forbidden",
+      ],
       // Every surface declares the built-in errors already, annotated or not.
-      Action.Forbidden,
-      Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]),
-      Action.InvalidInput.annotate({ description: "Out of stock" }),
+      [Action.Forbidden, "Forbidden"],
+      [Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]), "Unauthenticated"],
+      [Action.InvalidInput.annotate({ description: "Out of stock" }), "InvalidInput"],
       // Suspended, as a recursive error is written, or tagged by a union of literals or an enum.
-      Schema.suspend(() => Forbidden),
-      Schema.Struct({ _tag: Schema.Literals(["Busy", "Unauthenticated"]) }),
-      Schema.Struct({ _tag: Schema.Enum({ Forbidden: "Forbidden", Busy: "Busy" }) }),
+      [Schema.suspend(() => Forbidden), "Forbidden"],
+      [Schema.Struct({ _tag: Schema.Literals(["Busy", "Unauthenticated"]) }), "Unauthenticated"],
+      [Schema.Struct({ _tag: Schema.Enum({ Forbidden: "Forbidden", Busy: "Busy" }) }), "Forbidden"],
     ];
 
-    const tags = [
-      "Forbidden",
-      "InvalidInput",
-      "Unauthenticated",
-      "Forbidden",
-      "Forbidden",
-      "Unauthenticated",
-      "InvalidInput",
-      "Forbidden",
-      "Unauthenticated",
-      "Forbidden",
-    ];
-
-    // The contract is plain data; serving it is refused, and calling it.
-    for (const [error, tag] of errors.map((error, i) => [error, tags[i]] as const)) {
-      const Guarded = Action.make("guarded", { description: "", access: "write", errors: [error] });
-
-      expect(() => Action.implement(Guarded, () => Effect.void, Action.allowAll)).toThrow(
-        `Action "guarded": error _tag "${tag}" is built in, and declared on every surface`,
-      );
+    // Refused where the contract is made, so neither a server nor a client of it meets one.
+    for (const [error, tag] of errors) {
+      expect(() =>
+        Action.make("guarded", { description: "", access: "write", errors: [error] }),
+      ).toThrow(`Action "guarded": error _tag "${tag}" is built in, and declared on every surface`);
     }
 
     // Other tags, in a union too, are fine.
@@ -158,83 +151,38 @@ describe("contracts", () => {
   it("refuses two errors one caller may receive with one _tag", () => {
     const Busy = Schema.TaggedStruct("Busy", { retryAfter: Schema.Finite });
 
-    const Twice = Action.make("twice", {
-      description: "",
-      access: "write",
-      errors: [
-        Busy,
-        Schema.Union([Schema.TaggedStruct("Busy", {}), Schema.TaggedStruct("Late", {})]),
-      ],
-    });
-
-    expect(() => Action.implement(Twice, () => Effect.void, Action.allowAll)).toThrow(
-      'Duplicate error _tag in action "twice": Busy',
-    );
+    expect(() =>
+      Action.make("twice", {
+        description: "",
+        access: "write",
+        errors: [
+          Busy,
+          Schema.Union([Schema.TaggedStruct("Busy", {}), Schema.TaggedStruct("Late", {})]),
+        ],
+      }),
+    ).toThrow('Duplicate error _tag in action "twice": Busy');
 
     // An action's error beside its binding's, where the client tries both for one status.
     const Once = Action.make("once", { description: "", access: "write", errors: [Busy] });
-    const app = Action.implement(Once, () => Effect.void, Action.allowAll);
 
     expect(() =>
-      ActionHttp.layer(
-        ActionHttp.make([Once], {
-          errors: [Schema.TaggedStruct("Busy", { reason: Schema.String })],
-        }),
-        app,
-      ),
+      ActionHttp.make([Once], { errors: [Schema.TaggedStruct("Busy", { reason: Schema.String })] }),
     ).toThrow('Duplicate error _tag in action "once" and its binding: Busy');
 
     // One schema listed by both is one error.
-    expect(() => ActionHttp.layer(ActionHttp.make([Once], { errors: [Busy] }), app)).not.toThrow();
+    expect(() => ActionHttp.make([Once], { errors: [Busy] })).not.toThrow();
 
     // So is one schema whose `_tag` repeats: variants of one error, or an enum's aliases.
-    const Variants = Action.make("variants", {
-      description: "",
-      access: "write",
-      errors: [
-        Schema.Union([Busy, Schema.TaggedStruct("Busy", {})]),
-        Schema.Struct({ _tag: Schema.Enum({ Late: "Late", Delayed: "Late" }) }),
-      ],
-    });
-
-    expect(() => Action.implement(Variants, () => Effect.void, Action.allowAll)).not.toThrow();
-  });
-
-  it("refuses those errors at every client too, of a contract no server here need serve", () => {
-    const Busy = Schema.TaggedStruct("Busy", {});
-
-    const Twice = Action.make("twice", {
-      description: "",
-      access: "write",
-      errors: [Busy, Schema.TaggedStruct("Busy", { late: Schema.Boolean })],
-    });
-
-    const Guarded = Action.make("guarded", {
-      description: "",
-      access: "write",
-      errors: [Schema.TaggedStruct("Forbidden", {})],
-    });
-
-    const Once = Action.make("once", { description: "", access: "write", errors: [Busy] });
-
-    const binding = ActionHttp.make([Once], {
-      errors: [Schema.TaggedStruct("Busy", { reason: Schema.String })],
-    });
-
-    const twice = 'Duplicate error _tag in action "twice": Busy';
-
-    const guarded =
-      'Action "guarded": error _tag "Forbidden" is built in, and declared on every surface';
-
-    const once = 'Duplicate error _tag in action "once" and its binding: Busy';
-
-    expect(() => ActionHttp.client(ActionHttp.make([Twice]))).toThrow(twice);
-    expect(() => ActionHttp.client(ActionHttp.make([Guarded]))).toThrow(guarded);
-    expect(() => ActionHttp.client(binding)).toThrow(once);
-    expect(() => ActionCli.command(binding, Once)).toThrow(once);
-    expect(() => ActionCli.make(binding, { name: "once" })).toThrow(once);
-    expect(() => Testing.mcpClient([Twice])).toThrow(twice);
-    expect(() => Testing.mcpClient([Guarded])).toThrow(guarded);
+    expect(() =>
+      Action.make("variants", {
+        description: "",
+        access: "write",
+        errors: [
+          Schema.Union([Busy, Schema.TaggedStruct("Busy", {})]),
+          Schema.Struct({ _tag: Schema.Enum({ Late: "Late", Delayed: "Late" }) }),
+        ],
+      }),
+    ).not.toThrow();
   });
 
   it("answers a built-in error as itself beside a loose error schema of the action's", async () => {

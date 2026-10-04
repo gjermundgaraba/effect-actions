@@ -6,9 +6,6 @@ interface McpClientOptions {
   readonly fetch: (request: Request) => Promise<Response>;
   /** Defaults to `/mcp`, the default `ActionMcp.layerHttp` path. */
   readonly path?: string;
-  /** Defaults to `http://localhost`. */
-  readonly baseUrl?: string | URL;
-  readonly headers?: ConstructorParameters<typeof Headers>[0];
 }
 
 /**
@@ -16,7 +13,7 @@ interface McpClientOptions {
  * serves, and always close its transport after the callback.
  */
 export const withMcpClient = async <A>(
-  { fetch, path = "/mcp", baseUrl = "http://localhost", headers }: McpClientOptions,
+  { fetch, path = "/mcp" }: McpClientOptions,
   run: (client: Client) => Promise<A>,
 ): Promise<A> => {
   const client = new Client(
@@ -25,14 +22,10 @@ export const withMcpClient = async <A>(
   );
 
   try {
-    const transportOptions: ConstructorParameters<typeof StreamableHTTPClientTransport>[1] = {
-      fetch: (input, init) => fetch(new Request(input, init)),
-    };
-
-    if (headers !== undefined) transportOptions.requestInit = { headers };
-
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(path, baseUrl), transportOptions),
+      new StreamableHTTPClientTransport(new URL(path, "http://localhost"), {
+        fetch: (input, init) => fetch(new Request(input, init)),
+      }),
     );
 
     return await run(client);

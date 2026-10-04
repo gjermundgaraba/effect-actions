@@ -131,23 +131,27 @@ const assertDistinctTags = (what: string, errors: Action.Any["errors"]): void =>
   );
 
 /**
- * Refuse errors a caller of `actions` could not tell apart, the binding's `errors` among them
- * over HTTP: one with a built-in error's `_tag`, and two of one action, or of one action and
- * its binding, with one `_tag`. Checked by every surface serving the actions and every client
- * calling them, rather than where an action is made, so a client of a contract no server here
- * serves refuses it too.
+ * Refuse errors a caller of `action` could not tell apart: one with a built-in error's `_tag`,
+ * and two with one `_tag`. Checked where the action is made, so every surface and client
+ * of it may rely on them.
  */
-export const assertErrors = (
+export const assertErrors = (action: Action.Any): void => {
+  assertOwnTags(`Action "${action.name}"`, action.errors);
+  assertDistinctTags(`action "${action.name}"`, action.errors);
+};
+
+/**
+ * Refuse a binding's `errors` a caller could not tell apart from the built-in ones or from an
+ * action's: one with a built-in error's `_tag`, and one sharing a `_tag` with an error of
+ * one of `actions`. Checked where the binding is made.
+ */
+export const assertBindingErrors = (
   actions: ReadonlyArray<Action.Any>,
-  binding: Action.Any["errors"] = [],
+  binding: Action.Any["errors"],
 ): void => {
   assertOwnTags("ActionHttp binding", binding);
 
   for (const action of actions) {
-    assertOwnTags(`Action "${action.name}"`, action.errors);
-    assertDistinctTags(
-      binding.length === 0 ? `action "${action.name}"` : `action "${action.name}" and its binding`,
-      [...action.errors, ...binding],
-    );
+    assertDistinctTags(`action "${action.name}" and its binding`, [...action.errors, ...binding]);
   }
 };

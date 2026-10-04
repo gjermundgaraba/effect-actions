@@ -11,7 +11,7 @@ import { makeTestApp } from "./server.js";
 import { Http } from "../examples/binding.js";
 import { UserNotFound } from "../examples/contracts.js";
 import { httpClient, serve } from "./serve.js";
-import { mcpRequest } from "./requests.js";
+import { mcpRequest, valueOf } from "./requests.js";
 import { withMcpClient } from "./mcp-client.js";
 
 let app: ReturnType<typeof makeTestApp>;
@@ -545,22 +545,16 @@ it("supplies the native request context to handlers without a router requirement
   // No `path`: the endpoint is served at `/mcp`.
   const web = serve(ActionMcp.layerHttp(app, { name: "test", version: "0" }));
 
-  const result = Schema.decodeUnknownSync(
-    Schema.Struct({ result: Schema.Struct({ structuredContent: Schema.Json }) }),
-  )(
-    await (
-      await web.handler(
-        mcpRequest({
-          method: "tools/call",
-          params: {
-            name: "client",
-            arguments: {},
-            _meta: { "io.modelcontextprotocol/clientInfo": { name: "probe", version: "0" } },
-          },
-        }),
-      )
-    ).json(),
+  const result = await web.handler(
+    mcpRequest({
+      method: "tools/call",
+      params: {
+        name: "client",
+        arguments: {},
+        _meta: { "io.modelcontextprotocol/clientInfo": { name: "probe", version: "0" } },
+      },
+    }),
   );
 
-  expect(result.result.structuredContent).toBe("probe");
+  expect(await valueOf(result)).toBe("probe");
 });

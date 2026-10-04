@@ -56,7 +56,7 @@ with declared errors and the built-in ones.
 
 Contracts are pure values, safe to import in a browser.
 
-```ts
+```ts example=contracts.ts
 import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 
@@ -133,7 +133,7 @@ identity, `CurrentActor`, which authentication provides per request, and the hoo
 `authorize`, which reads each action's `access`. Its demo actors stand in for the identities a
 token verifier returns.
 
-```ts
+```ts example=authorization.ts
 import { Context, Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 
@@ -186,7 +186,7 @@ not by surface: `userActions` holds `listChanges`, which HTTP does not serve bec
 binding leaves it out. A layer without authentication still takes only public actions
 ([ActionHttp.md](ActionHttp.md#rules)).
 
-```ts
+```ts example=handlers.ts
 import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { authorize, CurrentActor } from "./authorization.js";
@@ -241,7 +241,7 @@ Effect yields the store once and returns the hook, which yields the caller on ev
 The host provides `Permissions.layerMemory` at startup, as it provides `Users`; authentication
 still provides `CurrentActor` per request.
 
-```ts
+```ts example=authorization-built.ts
 import { Context, Effect, Layer } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { actors, CurrentActor, type Permission } from "./authorization.js";
@@ -292,7 +292,7 @@ acquired once, where builders live, and each call is given its caller, as authen
 one per request, so one client serves several callers. Every implemented action has a method,
 `listChanges` included, which no binding holds.
 
-```ts
+```ts example=in-process.ts
 import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { actors, CurrentActor } from "./authorization.js";
@@ -343,7 +343,7 @@ console.log(
 - Options typed as a whole (`Parameters<typeof Action.make>[1]`) are not checked. Their action's schemas are as wide as what may run, so its success is `unknown`.
 - MCP input must be one object with keys, an identified, recursive or suspended root included. Scalar, array or union input is fine for HTTP and for a native Toolkit, but `ActionMcp` refuses it when `layerHttp` or `runStdio` is called, naming the action ([ActionMcp.md](ActionMcp.md#rules)). Success and error schemas may be any shape.
 - Hint defaults: `destructive: access === "write"`, `idempotent: false`, `openWorld: true`; `readOnlyHint` is always `access === "read"`. Only a write may state `destructive`: a read is never destructive, as MCP defines the hint for writes only. Hints are metadata for the model. They do not enforce authorization, approval, or retries; a native Toolkit's approval is `ActionToolkit.make`'s `needsApproval` option.
-- The built-in errors are declared everywhere ([guarantees.md](guarantees.md#wire-behavior)), and any handler may fail with them without listing them: `InvalidInput` for input that decodes but cannot be served, a refusal for a step-up. `implement` refuses an `errors` entry that encodes with a built-in tag, the built-in itself included, since every surface declares it already and a client could not tell a look-alike apart.
+- The built-in errors are declared everywhere ([guarantees.md](guarantees.md#wire-behavior)), and any handler may fail with them without listing them: `InvalidInput` for input that decodes but cannot be served, a refusal for a step-up. `make` refuses an `errors` entry that encodes with a built-in tag, the built-in itself included, since every surface declares it already and a client could not tell a look-alike apart.
 - Build a refusal with or without a message: `new Action.Forbidden()` sends `"Not allowed."`, `new Action.Forbidden({ message: "Requires users:write." })` sends that. A `Forbidden` may name the OAuth scopes the call lacks, `new Action.Forbidden({ scopes: ["users:write"] })`: a refused OAuth client then re-authorizes with them ([Authentication.md](Authentication.md#rules)).
 - Schemas must be service-free. Put service access in the handler.
 
@@ -399,8 +399,9 @@ console.log(
 - `Type 'H' is not assignable to type 'H & ...'` on `hints` at `make`, where `H` is a helper's type parameter, as in `<const H extends Action.Hints>(hints: H)`: the hint check cannot read hints a type parameter stands for, so it refuses them. An action's type carries no hint types, so type the parameter `Action.Hints`; the helper loses nothing.
 - Type error on `errors` at `make`, `... is not assignable to type 'readonly never[]'` or naming the remaining errors: it lists a built-in error. Drop it; every surface declares it, and a handler may fail with it anyway.
 - `Object literal may only specify known properties, and 'before' does not exist` at `implement`: the hook is the third argument itself, not an option of an object.
-- `implement`, or a client of the action (`ActionHttp.client`, a remote `ActionCli` command, `Testing.mcpClient`), throws `Duplicate error _tag in action "<name>": <tag>`: two of the action's errors, or members of a union among them, encode with one `_tag`, so a client could not tell them apart. Rename one.
-- `implement`, or a client of the action, throws `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error from `errors`, since a handler may fail with it anyway; rename an error of your own.
+- `make` throws `Duplicate error _tag in action "<name>": <tag>`: two of the action's errors, or members of a union among them, encode with one `_tag`, so a client could not tell them apart. Rename one.
+- `make` throws `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error from `errors`, since a handler may fail with it anyway; rename an error of your own.
+- `ReferenceError` thrown by `make`: an entry of `errors` is a `Schema.suspend` whose thunk reads a `const` declared further down. `make` reads every error's `_tag` when it is called; declare the error first.
 - `Type 'CurrentActor' is not assignable to type 'never'` where a program calling a client runs: a call reads the caller, and nothing provides one around it. Provide it around the call, or around the calls it makes; provided around the acquisition, it reaches no call. Never provide it to a layer or a builder acquiring the client.
 - A type error that a program still requires `Scope`: acquiring a client builds, as a layer does. Acquire it in a builder or a layer, or run the program in `Effect.scoped`.
 - A builder runs on every request, or a route owes `HttpRouter.Request<"Requires", X>` for `X`, a service its builder yields: a handler acquires a client per request. Acquire it in the builder, and call it in the handler.

@@ -6,7 +6,7 @@ underneath.
 
 ## Looks like this
 
-```ts
+```ts example=quickstart.ts
 import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -25,7 +25,7 @@ export const Http = ActionHttp.make([Greet]);
 
 and a server that implements it, in a module of its own:
 
-```ts
+```ts example=quickstart-server.ts
 import { Effect, Layer } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";

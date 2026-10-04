@@ -111,7 +111,10 @@ export interface Options {
   readonly input?: Codec | Fields | undefined;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields | undefined;
-  /** One schema per declared failure; each keeps its own HTTP status annotation. Defaults to none. */
+  /**
+   * One schema per declared failure; each keeps its own HTTP status annotation. Defaults to
+   * none. Each `_tag` once, and none of a built-in error's.
+   */
   readonly errors?: ReadonlyArray<Codec> | undefined;
   /**
    * What the action does to its resource. Required: an action nobody classified
@@ -145,7 +148,7 @@ type KnownHints<O> = { readonly hints?: { readonly [K in UnknownHints<O>]: never
 
 /**
  * The built-in errors, refused in `errors`: every surface declares them already. The types
- * refuse only the built-ins themselves; `implement` refuses, at startup, an error of your own
+ * refuse only the built-ins themselves; `make` refuses, when called, an error of your own
  * that encodes with a built-in `_tag`.
  */
 type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
@@ -256,7 +259,7 @@ export function make(name: string, options: Options): Any {
     openWorld: options.hints?.openWorld ?? true,
   };
 
-  return {
+  const action: Any = {
     name,
     description: options.description,
     input: codecOf(options.input ?? {}),
@@ -265,6 +268,10 @@ export function make(name: string, options: Options): Any {
     access,
     hints,
   };
+
+  assertErrors(action);
+
+  return action;
 }
 
 /** What `implement` binds: one action, or several that share one builder. */
@@ -470,7 +477,6 @@ export function implement(
   const names = actions.map((action) => action.name);
 
   assertOnce("action", actions);
-  assertErrors(actions);
 
   const hook = hookOf(before);
 

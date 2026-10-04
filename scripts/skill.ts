@@ -5,13 +5,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const root = fileURLToPath(new URL("../", import.meta.url));
+const root = fileURLToPath(new URL("../", import.meta.url));
 
 export const docsDirectory = join(root, "docs");
 
 export const skillDirectory = join(root, "skills", "effect-actions");
 
-export interface SkillFile {
+interface SkillFile {
   /** Relative to the skill directory. */
   readonly path: string;
   readonly content: string;
@@ -19,7 +19,7 @@ export interface SkillFile {
 
 // The skill's header. Its pages follow the main branch, so it sends a project that installs the
 // package to the installed version's own docs/.
-export const frontmatter = `---
+const frontmatter = `---
 name: effect-actions
 description: >
   Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,

@@ -409,9 +409,7 @@ it.effect("declares a binding's errors on every endpoint, so middleware's answer
 it("refuses a binding error with a built-in error's tag", () => {
   class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
-  const binding = ActionHttp.make([Get], { errors: [Forbidden] });
-
-  expect(() => ActionHttp.layer(binding, [])).toThrow(
+  expect(() => ActionHttp.make([Get], { errors: [Forbidden] })).toThrow(
     'ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface',
   );
 });

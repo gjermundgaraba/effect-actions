@@ -38,7 +38,7 @@ method.
 
 ## Canonical
 
-```ts
+```ts example=testing.ts
 import { Effect } from "effect";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
@@ -68,7 +68,7 @@ surface makes on its input, its success and its failure ([Action.md](Action.md#c
 call takes its caller, so one test has several, and an action no binding holds, such as a
 tool, has a method like any other.
 
-```ts
+```ts example=in-process.ts
 import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { actors, CurrentActor } from "./authorization.js";
@@ -106,7 +106,7 @@ around `layer`, like any other service the routes require, and the test program 
 reads. One `layer` is one caller; several are called in process
 ([Implementations](#implementations)).
 
-```ts
+```ts example=testing-caller.ts
 import { Effect, Layer } from "effect";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";

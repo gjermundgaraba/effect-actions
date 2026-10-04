@@ -14,65 +14,46 @@ import { serve } from "./serve.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-// Documented snippets that must stay byte-identical to a type-checked example: the first
-// snippets under the heading, one per file, in order.
-const snippets = [
-  ["README.md", "## Looks like this", ["quickstart.ts", "quickstart-server.ts"]],
-  ["docs/setup.md", "## Minimal program", ["quickstart.ts", "quickstart-server.ts"]],
-  ["docs/Action.md", "## Canonical", ["contracts.ts"]],
-  ["docs/Action.md", "### Identity and hook", ["authorization.ts"]],
-  ["docs/Action.md", "### Implementations", ["handlers.ts"]],
-  ["docs/Action.md", "### Built hooks", ["authorization-built.ts"]],
-  ["docs/Action.md", "### Client", ["in-process.ts"]],
-  ["docs/ActionHttp.md", "## Canonical", ["binding.ts"]],
-  ["docs/ActionHttp.md", "### Serving", ["http.ts"]],
-  ["docs/ActionHttp.md", "### Client", ["client.ts"]],
-  ["docs/ActionHttp.md", "### Promise callers", ["promise-client.ts"]],
-  ["docs/Authentication.md", "## Canonical", ["authentication.ts"]],
-  ["docs/Authentication.md", "### Combined with other middleware", ["authentication-tenant.ts"]],
-  ["docs/Authentication.md", "### One URL for signed-out callers", ["mcp-sign-in.ts"]],
-  ["docs/ActionMcp.md", "## Canonical", ["mcp.ts"]],
-  ["docs/ActionCli.md", "## Canonical", ["cli.ts"]],
-  ["docs/ActionCli.md", "### Over HTTP", ["cli-remote.ts"]],
-  ["docs/ActionToolkit.md", "## Canonical", ["toolkit-authorized.ts"]],
-  ["docs/ActionToolkit.md", "### Approval", ["toolkit-approval.ts"]],
-  ["docs/Testing.md", "## Canonical", ["testing.ts"]],
-  ["docs/Testing.md", "### Implementations", ["in-process.ts"]],
-  ["docs/Testing.md", "### One caller", ["testing-caller.ts"]],
-  ["docs/ActionMcp.md", "### Cross-origin browsers", ["mcp-browser.ts"]],
-  ["docs/ActionMcp.md", "### Subprocess", ["mcp-stdio.ts"]],
-] as const;
+/** README.md and every page of docs/, which the skill copies. */
+const pages = [
+  "README.md",
+  ...readdirSync(docsDirectory)
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => `docs/${name}`),
+];
 
 /** An example as a page shows it, importing the published package. */
 const documented = (file: string) => published(read(`examples/${file}`).trim());
 
+// A snippet fenced as `ts example=<file>` stays byte-identical to that type-checked example.
+const snippets = pages.flatMap((page) =>
+  Array.from(
+    read(page).matchAll(/\x60{3}ts example=(\S+)\n([\s\S]*?)\n\x60{3}/g),
+    ([, file = "", code]) => [page, file, code] as const,
+  ),
+);
+
 it.each(snippets)(
-  "keeps %s %s aligned with its type-checked source",
-  (document, heading, files) => {
-    const section = read(document).split(`\n${heading}\n`)[1] ?? "";
-
-    const blocks = Array.from(
-      section.matchAll(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/g),
-      ([, code]) => code,
-    );
-
-    expect(blocks.slice(0, files.length)).toEqual(files.map(documented));
+  "keeps %s's snippet of %s aligned with its type-checked source",
+  (_, file, code) => {
+    expect(code).toBe(documented(file));
   },
 );
 
-// Code copied from a page's canonical example must compile: every page with a Canonical
-// section lists it above, so its first snippet there is an example. A snippet under no listed
-// heading, such as a fragment, is not checked.
-it("pairs every canonical snippet with a type-checked example", () => {
-  const pages = readdirSync(docsDirectory).filter((name) =>
-    readFileSync(join(docsDirectory, name), "utf8").includes("\n## Canonical\n"),
-  );
+// Code copied from a page's canonical example must compile: the first snippet of every
+// Canonical section is an example. A snippet without the mark, such as a fragment, is not
+// checked.
+it("marks every canonical snippet as a type-checked example", () => {
+  const unmarked = pages.filter((page) => {
+    const [, section] = read(page).split("\n## Canonical\n");
 
-  const paired = snippets.flatMap(([document, heading]) =>
-    heading === "## Canonical" ? [document] : [],
-  );
+    return (
+      section !== undefined &&
+      !/^[^\x60]*(?:\x60[^\x60]+\x60[^\x60]*)*\x60{3}ts example=/.test(section)
+    );
+  });
 
-  expect(paired).toEqual(expect.arrayContaining(pages.map((page) => `docs/${page}`)));
+  expect(unmarked).toEqual([]);
 });
 
 // The entry points a consumer imports are the modules the package exports, each once.

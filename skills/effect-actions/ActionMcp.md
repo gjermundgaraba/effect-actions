@@ -39,7 +39,7 @@ is supplied by the server, not required of the host.
 
 ## Canonical
 
-```ts
+```ts example=mcp.ts
 import { Layer } from "effect";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { authenticate } from "./authentication.js";
@@ -73,7 +73,7 @@ export const layer = Layer.mergeAll(publicMcp, mcp);
 native router CORS outside the route middleware. This CORS layer is global to the router;
 choose its policy for every route it covers.
 
-```ts
+```ts example=mcp-browser.ts
 import { Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -111,7 +111,7 @@ export const routes = Layer.mergeAll(
 
 ### Subprocess
 
-```ts
+```ts example=mcp-stdio.ts
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
 import { Cause, Console, Effect, Logger, Runtime, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";

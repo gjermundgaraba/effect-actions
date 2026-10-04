@@ -34,7 +34,7 @@ Every module imports from the `effect` package only. There is no package root, s
 
 ## Minimal program
 
-```ts
+```ts example=quickstart.ts
 import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -53,7 +53,7 @@ export const Http = ActionHttp.make([Greet]);
 
 The server, in its own module, so that a browser client imports the contract alone:
 
-```ts
+```ts example=quickstart-server.ts
 import { Effect, Layer } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";

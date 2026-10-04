@@ -16,7 +16,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - `docs/README.md` is the routing table and doubles as the skill body. One line per page saying when to read it.
 - A change to public behavior changes the matching `docs/` page in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
-- `tests/docs.test.ts` compares the README showcase and selected executable examples with files in `examples/`, so those snippets stay type-checked. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
+- A snippet fenced as ` ```ts example=<file> ` stays byte-identical to that file in `examples/`, which `tests/docs.test.ts` checks, so it stays type-checked; the first snippet of every Canonical section is one. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
 - A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
 - Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Implementation rationale belongs in code comments or below.

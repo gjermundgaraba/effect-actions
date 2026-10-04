@@ -30,7 +30,7 @@ failures and services belong to the handler layer.
 
 ## Canonical
 
-```ts
+```ts example=toolkit-authorized.ts
 import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, Stream } from "effect";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
@@ -66,7 +66,7 @@ LanguageModel.generateText({ prompt, toolkit: Toolkit.merge(toolkit, WebKit) }).
 
 ### Approval
 
-```ts
+```ts example=toolkit-approval.ts
 import { Effect, Option } from "effect";
 import { LanguageModel } from "effect/ai";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";

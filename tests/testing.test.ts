@@ -29,21 +29,17 @@ import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as Testing from "../src/Testing.js";
+import { as } from "./requests.js";
 
 /** `program` against the example host, answered in memory with fresh example state. */
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
   program.pipe(Effect.provide(Testing.layer(host)));
 
-/** Client options sending `token`, a demo actor's name, as its bearer token. */
-const as = (token = "alice") => ({
-  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
-});
-
 /** Headers carrying `token` as its bearer token, for a raw request. */
 const headersAs = (token = "alice") => ({ headers: { authorization: `Bearer ${token}` } });
 
 /** The example host's MCP client, as `token`'s actor. */
-const mcpAs = (token?: string) =>
+const mcpAs = (token = "alice") =>
   Testing.mcpClient([GetUser, RenameUser, Double, WhoAmI], as(token));
 
 describe("mcpClient", () => {
@@ -267,13 +263,13 @@ describe("mcpClient", () => {
       /** `Missing` called at `url`. */
       const missing = (url?: string) =>
         Effect.flatMap(
-          Testing.mcpClient([Missing], { ...as(), ...(url === undefined ? {} : { url }) }),
+          Testing.mcpClient([Missing], { ...as("alice"), ...(url === undefined ? {} : { url }) }),
           (mcp) => Effect.flip(mcp.missing_tool()),
         );
 
       const failures = yield* againstHost(
         Effect.all([
-          Effect.flatMap(Testing.mcpClient([Loose], as()), (mcp) =>
+          Effect.flatMap(Testing.mcpClient([Loose], as("alice")), (mcp) =>
             Effect.flip(mcp.getUser({ id: 1 })),
           ),
           missing(),
@@ -511,7 +507,7 @@ describe("layer", () => {
 
     try {
       const renamed = await run(
-        Effect.flatMap(ActionHttp.client(Http, as()), (client) =>
+        Effect.flatMap(ActionHttp.client(Http, as("alice")), (client) =>
           client.renameUser({ id: "1", name: "Grace" }),
         ),
       );
@@ -519,7 +515,7 @@ describe("layer", () => {
       // A second layer on the same handler: the rename stands, and every client answers.
       const answered = await run(
         Effect.gen(function* () {
-          const client = yield* ActionHttp.client(Http, as());
+          const client = yield* ActionHttp.client(Http, as("alice"));
           const listed = yield* Testing.mcpRequest("tools/list", {}, headersAs());
 
           return [

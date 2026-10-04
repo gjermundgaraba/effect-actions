@@ -1,4 +1,4 @@
-import type { Schema } from "effect";
+import { Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { type Params, statelessRequest } from "../src/internal/mcp.js";
 
@@ -47,3 +47,17 @@ export const mcpRequest = ({
  */
 export const rawToolCall = (name: string, args: Schema.Json = {}): Request =>
   mcpRequest({ method: "tools/call", params: { name, arguments: args } });
+
+/** Client options sending `token`, a demo actor's name, as its bearer token. */
+export const as = (token: string) => ({
+  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+});
+
+/** A raw MCP tool call's response, holding the encoded success as its structured content. */
+const McpSuccess = Schema.Struct({
+  result: Schema.Struct({ structuredContent: Schema.Json }),
+});
+
+/** The encoded success of a raw MCP tool call's response, as its structured content. */
+export const valueOf = async (response: Response): Promise<Schema.Json> =>
+  Schema.decodeUnknownSync(McpSuccess)(await response.json()).result.structuredContent;

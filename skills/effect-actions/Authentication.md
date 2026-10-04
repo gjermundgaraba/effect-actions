@@ -52,7 +52,7 @@ routes, answering a missing or unknown token with the built-in 401 and publishin
 resource's discovery. Provide its layer, `authenticate`, around the layers serving the protected
 implementations ([ActionHttp.md](ActionHttp.md#serving), [ActionMcp.md](ActionMcp.md#canonical)).
 
-```ts
+```ts example=authentication.ts
 import { Effect, Redacted } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
@@ -99,7 +99,7 @@ A host serving tenants on their own subdomains: a verifier built once at startup
 request's tenant from middleware combined before the authentication, and middleware reading
 the identity combined after it.
 
-```ts
+```ts example=authentication-tenant.ts
 import { Context, Effect, Layer, Redacted } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -176,7 +176,7 @@ identity is optional, and each protected implementation's hook answers a signed-
 the 401 an MCP client signs in on ([Rules](#rules)). The example app keeps its public tool on an
 endpoint of its own instead ([ActionMcp.md](ActionMcp.md#canonical)), the default.
 
-```ts
+```ts example=mcp-sign-in.ts
 import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";

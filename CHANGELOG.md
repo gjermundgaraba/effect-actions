@@ -135,8 +135,8 @@ Each area below lists what is renamed or removed, then what changes without a re
   is never a request-time requirement: `runStdio`, a Toolkit tool, `tools.handle` and
   `LanguageModel.generateText` need no `Effect.scoped` for a handler that acquires; drop one
   added only for the types.
-- `implement` refuses an `errors` entry encoding with a built-in `_tag`, behind `Schema.suspend`
-  or among a union of `_tag` literals or an enum's values too. So does `ActionHttp.layer` for
+- `make` refuses an `errors` entry encoding with a built-in `_tag`, behind `Schema.suspend`
+  or among a union of `_tag` literals or an enum's values too. So does `ActionHttp.make` for
   such an entry in a binding's `errors`, the built-in itself included: it throws
   `ActionHttp binding: error _tag "Unauthenticated" is built in, and declared on every surface`
   though `make`'s types accept it. Drop the `Unauthenticated` and `Forbidden` 0.8.0 declared in
@@ -147,12 +147,12 @@ Each area below lists what is renamed or removed, then what changes without a re
   0.8.0's example's `permission` would be lost. Use
   ``new Action.Forbidden({ message: `Requires ${permission}.` })``, adding `scopes` only for
   OAuth scopes.
-- Errors one caller may receive have distinct `_tag`s: `implement` and `ActionHttp.layer`
-  refuse two with one, so give each a tag of its own.
-- Every client refuses the same errors a server would, of a built-in `_tag` or two of one
-  `_tag`, when it is made: `ActionHttp.client`, a remote `ActionCli` command and
-  `Testing.mcpClient`, so a client of a contract no server of this package serves cannot
-  decode a look-alike as a built-in error.
+- Errors one caller may receive have distinct `_tag`s: `Action.make` refuses two with one, and
+  `ActionHttp.make` an action's beside its binding's, so give each a tag of its own. Both are
+  checked where the contract or binding is made, so a client of a contract no server of this
+  package serves cannot decode a look-alike as a built-in error either. A top-level
+  `Schema.suspend` in `errors` is resolved then: one whose thunk reads a `const` declared later
+  throws a `ReferenceError` at `make`.
 - A helper passing implementations it is given beside its own takes them as one type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spreads it,
   `[...apps, double]`, or takes one, `<App extends Action.AnyImplementation>(app: App)`, and
