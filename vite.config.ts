@@ -104,7 +104,9 @@ export default defineConfig({
       "anti-slop/no-unknown-returns": "error",
       "anti-slop/no-unknown-type-aliases": "error",
       "anti-slop/no-unsafe-dictionary-type": "error",
-      "anti-slop/no-widen-then-assert": "error",
+      // Off: the widening is no-known-value-widening's and the narrowing assertion is
+      // typescript/no-unsafe-type-assertion's, which reads types where this rule reads syntax.
+      "anti-slop/no-widen-then-assert": "off",
       "anti-slop/require-readable-spacing": "error",
       "anti-slop/require-safety-comment-for-type-assertion": "error",
       // `any` escape routes the syntactic rules cannot see: untyped JSON, SDK generics,
@@ -118,7 +120,9 @@ export default defineConfig({
       "anti-slop-effect/no-manual-effect-error-tag": "error",
       "anti-slop-effect/no-manual-tag-comparison": "error",
       "anti-slop-effect/no-manual-tagged-construction": "error",
-      "anti-slop-effect/no-service-constructor-imports": "error",
+      // Off: a `make[A-Z]` name cannot establish that an import is a service constructor, and
+      // a namespace import bypasses it.
+      "anti-slop-effect/no-service-constructor-imports": "off",
       "anti-slop-effect/prefer-effect-match": "error",
     },
   },

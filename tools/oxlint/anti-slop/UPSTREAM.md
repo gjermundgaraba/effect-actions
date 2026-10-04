@@ -41,6 +41,12 @@ Preserve these when updating from upstream.
   dictionary only when its key constraint is broad (`isBroadMappedKey`), matching the alias
   path below it. Previously `{ readonly [K in "a" | "b"]: number }` was reported as widening,
   which the baseline forbids for finite mapped keys.
+- `shared/dictionary-types.ts`, `unsafeDirectValue`: a top-level interface is the value a
+  reference names only when no type parameter or nearer declaration shadows it
+  (`isProgramTypeBinding` in `shared/type-alias-resolution.ts`, beside `visibleTypeAlias`, which
+  the alias path already used). Previously `interface Value {}` made `Record<string, Value>`
+  under `<Value extends string>`, or under an inner `type Value = string`, an empty-object
+  dictionary.
 - `shared/dictionary-types.ts`: `unsafeMembers[0] ?? null` so the file type-checks under
   `noUncheckedIndexedAccess`, which the regression tests' program requires.
 

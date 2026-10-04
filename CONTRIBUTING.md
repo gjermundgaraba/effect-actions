@@ -150,8 +150,7 @@ code exactly as unsafe.
   `no-unknown-type-aliases`, `no-object-parameters`, `no-unsafe-dictionary-type`): decode at the
   I/O boundary and pass owner contracts inward. There is no name-based exemption; a parameter named
   `cause` is as unknown as any other, and thrown-value boundaries use an explained directive.
-- **Evidence loss** (`no-known-value-widening`, `no-widen-then-assert`,
-  `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
+- **Evidence loss** (`no-known-value-widening`, `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
   `typescript/no-unsafe-type-assertion`): keep inference or validate with `satisfies`. A SAFETY
   comment is necessary, not sufficient; the type-aware assertion rule needs its own explained
   directive when an assertion is a genuine erasure boundary.
@@ -179,6 +178,12 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
   without mutable builders.
 - `anti-slop/no-shape-in-symbol-names`: a substring cannot establish domain ownership; naming is
   reviewed by people.
+- `anti-slop/no-widen-then-assert`: the widening is `no-known-value-widening`'s and the narrowing
+  assertion `typescript/no-unsafe-type-assertion`'s, which reads types; read from syntax, it took
+  a destructured field's evidence from the whole initializer, which its sibling rule corrects.
+- `anti-slop-effect/no-service-constructor-imports`: a `make[A-Z]` name cannot establish that an
+  import is a dependency-bearing service constructor, and a namespace import bypasses it, which
+  rewards the import change the policy calls laundering.
 
 ### Verification
 

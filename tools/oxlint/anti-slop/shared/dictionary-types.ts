@@ -3,6 +3,7 @@ import type { ESTree } from "vite-plus/lint/plugins";
 import {
 	createTypeAliasEnvironment,
 	hasVisibleTypeBinding,
+	isProgramTypeBinding,
 	visibleTypeAlias,
 	type TypeAliasEnvironment as LexicalTypeAliasEnvironment,
 } from "./type-alias-resolution.ts";
@@ -217,7 +218,10 @@ function unsafeDirectValue(
 			: unsafeDirectValue(substitution, environment, substitutions, resolvingAliases);
 	}
 	const interfaceDeclarations = environment.interfaces.get(name);
-	if (interfaceDeclarations !== undefined) {
+	if (
+		interfaceDeclarations !== undefined &&
+		isProgramTypeBinding(name, unwrapped, environment.typeAliases)
+	) {
 		return isEffectivelyEmptyInterface(interfaceDeclarations) ? "empty-object" : null;
 	}
 	const alias = visibleTypeAlias(name, unwrapped, environment.typeAliases);

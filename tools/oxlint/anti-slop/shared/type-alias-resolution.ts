@@ -171,6 +171,17 @@ export function visibleTypeAlias(
 	return bindings.length === 1 ? (bindings[0]?.alias ?? null) : null;
 }
 
+/** Return whether this use names a declaration of the program's own scope, unshadowed. */
+export function isProgramTypeBinding(
+	name: string,
+	use: ESTree.Node,
+	environment: TypeAliasEnvironment,
+): boolean {
+	if (lexicalTypeParameterNames(use, environment.visitorKeys).has(name)) return false;
+	const bindings = nearestTypeBindings(name, use, environment);
+	return bindings.length > 0 && bindings.every((binding) => binding.scope.type === "Program");
+}
+
 /** Return whether a local declaration shadows a built-in type at this use. */
 export function hasVisibleTypeBinding(
 	name: string,

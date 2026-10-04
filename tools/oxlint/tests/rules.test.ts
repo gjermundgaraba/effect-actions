@@ -3,6 +3,7 @@ import { RuleTester } from "vite-plus/lint/plugins-dev";
 import { noKnownValueWideningRule } from "../anti-slop/rules/no-known-value-widening.ts";
 import { noModuleMockingRule } from "../anti-slop/rules/no-module-mocking.ts";
 import { noUnknownParametersRule } from "../anti-slop/rules/no-unknown-parameters.ts";
+import { noUnsafeDictionaryTypeRule } from "../anti-slop/rules/no-unsafe-dictionary-type.ts";
 
 // Regression tests for the local corrections recorded in ../anti-slop/UPSTREAM.md.
 // Each probe pairs an accepted case with a case the rule must still reject.
@@ -127,6 +128,32 @@ tester.run("no-known-value-widening", noKnownValueWideningRule, {
       name: "a mapped type over string is still an open dictionary",
       code: "const table: { [K in string]: number } = { a: 1, b: 2 };",
       errors: [{ messageId: "widening" }],
+    },
+  ],
+});
+
+tester.run("no-unsafe-dictionary-type", noUnsafeDictionaryTypeRule, {
+  valid: [
+    {
+      name: "a type parameter shadowing an empty interface is not that interface",
+      code: [
+        "interface Value {}",
+        "export function make<Value extends string>(): Record<string, Value> { return {}; }",
+      ].join("\n"),
+    },
+    {
+      name: "an inner alias shadowing an empty interface is resolved as the alias",
+      code: [
+        "interface Value {}",
+        "namespace Inner { type Value = string; export const table: Record<string, Value> = {}; }",
+      ].join("\n"),
+    },
+  ],
+  invalid: [
+    {
+      name: "an empty interface the reference names is still an empty-object value",
+      code: ["interface Value {}", "export const table: Record<string, Value> = {};"].join("\n"),
+      errors: [{ messageId: "unsafeDictionary" }],
     },
   ],
 });
