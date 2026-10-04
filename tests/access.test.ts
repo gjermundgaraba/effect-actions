@@ -590,21 +590,41 @@ describe("the pre-handler hook", () => {
           () => Effect.fail(new RateLimited()),
         );
 
-        const exit = yield* Effect.exit(
+        const undeclared = new Error(
+          'Action "status": its hook failed with an error the action does not declare: RateLimited',
+        );
+
+        /** What `exit` died with, if it did. */
+        const defectOf = <A, E>(exit: Exit.Exit<A, E>) =>
+          Exit.isFailure(exit) && Cause.hasDies(exit.cause) ? Cause.squash(exit.cause) : undefined;
+
+        // In process: `Action.client`, the Toolkit and a local command.
+        const called = yield* Effect.exit(
           Effect.flatMap(Action.client(app), (client) => client.status()),
         );
 
-        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-        expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined).toEqual(
-          new Error(
-            'Action "status": its hook failed with an error the action does not declare: RateLimited',
-          ),
+        expect(defectOf(called)).toEqual(undeclared);
+
+        const tools = ActionToolkit.make(app);
+
+        const handled = yield* Effect.exit(
+          Effect.gen(function* () {
+            const toolkit = yield* tools.toolkit;
+
+            return yield* Stream.runCollect(yield* toolkit.handle("status", {}));
+          }).pipe(Effect.provide(tools.layer)),
         );
+
+        expect(defectOf(handled)).toEqual(undeclared);
+
+        const local = yield* Effect.exit(exec(ActionCli.command(app, Status), []));
+
+        expect(defectOf(local)).toEqual(undeclared);
 
         const Http = ActionHttp.make([Ping, Status]);
 
         yield* Effect.gen(function* () {
-          // The action that declares it answers with it.
+          // Over HTTP and MCP, the action that declares it answers with it; the other, as a defect.
           expect((yield* send(post("/api/ping"))).status).toBe(429);
           expect((yield* send(post("/api/status"))).status).toBe(500);
 

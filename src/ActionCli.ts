@@ -87,8 +87,8 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
 
   // SAFETY: the builders' failures and services are the implementation's `EX` and `RX`, the
   // handler's and the hook's services its entry of `R`. The handler fails with the action's
-  // errors or a `BuiltIn`; the hook with a refusal or an error every action it guards, this
-  // one included, declares.
+  // errors or a `BuiltIn`; the hook with a refusal or an error of its actions', which the
+  // shared dispatch makes a defect unless this action declares it.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased handler boundary: the implementation's type restores every channel.
   return built as Local<App, A>;
 };

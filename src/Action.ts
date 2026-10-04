@@ -37,9 +37,9 @@ export type { Implementation } from "./internal/implementation.js";
 /**
  * An implementation's hook: whether a caller may call. It receives the selected action and
  * fails with a refusal, or with an error its actions declare, such as a rate limit, which a
- * call of an action that does not declare it gets as a defect; its services are request-time requirements, like a handler's. `implement` and
- * `share` also take an Effect building one, whose services are startup requirements, like a
- * builder's.
+ * call of an action that does not declare it gets as a defect; its services are request-time
+ * requirements, like a handler's. `implement` and `share` also take an Effect building one,
+ * whose services are startup requirements, like a builder's.
  */
 export type { Before } from "./internal/implementation.js";
 
@@ -213,8 +213,9 @@ type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
 
 /**
  * The rules `make` checks beyond `Options`: every option and hint known, a read never
- * destructive, a `text` hint a string field of the success, and no built-in error listed. Options that fail `Options` itself infer as
- * `Options`, whose error the compiler already reports, so they are not checked again.
+ * destructive, a `text` hint a string field of the success, and no built-in error listed.
+ * Options that fail `Options` itself infer as `Options`, whose error the compiler already
+ * reports, so they are not checked again.
  */
 type Rules<O> = Options extends O
   ? unknown
