@@ -1870,3 +1870,66 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     Extract<Layer.Services<typeof servedWider>, HttpRouter.Request<"Requires", unknown>>
   >().toEqualTypeOf<HttpRouter.Request<"Requires", CurrentActor>>();
 }
+
+// Another contract of a bound name, which `layer` leaves out beside an action it serves of the
+// same implementation, owes nothing there.
+{
+  class AgentStore extends Context.Service<AgentStore, string>()("types/AgentStore") {}
+
+  const Search = Action.make("search", {
+    description: "Search the site",
+    access: "read",
+    input: { query: Schema.String },
+    success: Schema.String,
+  });
+
+  const AgentSearch = Action.make("search", {
+    description: "Search the agent's notes",
+    access: "read",
+    input: { topic: Schema.String },
+    success: Schema.String,
+  });
+
+  const Ping = Action.make("ping", { description: "Ping", access: "read" });
+
+  const web = Action.implement(Search, ({ query }) => Effect.succeed(query), Action.allowAll);
+
+  const agent = Action.implement(
+    [Ping, AgentSearch],
+    { ping: () => Effect.void, search: () => Effect.service(AgentStore) },
+    Action.allowAll,
+  );
+
+  const served = ActionHttp.layer(ActionHttp.make([Search, Ping]), [web, agent]);
+
+  expectTypeOf<
+    Extract<Layer.Services<typeof served>, HttpRouter.Request<"Requires", unknown>>
+  >().toBeNever();
+}
+
+// An implementation annotated with an action whose name is a union of names still owes what
+// its handler reads for each.
+{
+  const Profile = Action.make("profile", { description: "", access: "read" });
+
+  const app = Action.implement(Profile, () => Effect.asVoid(CurrentActor), Action.allowAll);
+
+  const annotated: Action.Implementation<
+    Action.Action<
+      "profile" | "audit",
+      typeof Profile.input,
+      typeof Profile.success,
+      typeof Profile.errors,
+      "read"
+    >,
+    (typeof app)["~request"],
+    never,
+    never
+  > = app;
+
+  const served = ActionHttp.layer(ActionHttp.make([Profile]), annotated);
+
+  expectTypeOf<
+    Extract<Layer.Services<typeof served>, HttpRouter.Request<"Requires", unknown>>
+  >().toEqualTypeOf<HttpRouter.Request<"Requires", CurrentActor>>();
+}

@@ -211,14 +211,17 @@ export const toList = (served: Served): ReadonlyArray<AnyImplementation> => Arr.
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
 
-/** Per-request requirements of `App`'s hook and handler for each `A` it implements. */
+/**
+ * Per-request requirements of `App`'s hook and handler for each `A` it implements: those of
+ * every name `A`'s may be, so a union or an erased name owes each it may stand for.
+ */
 export type RequestOf<App, A extends Action.Any> = App extends {
   readonly "~request": infer R;
 }
   ? A extends Action.Any
-    ? A["name"] extends keyof R
-      ? R[A["name"]] | R["~hook" & keyof R]
-      : never
+    ? [A["name"] & keyof R] extends [never]
+      ? never
+      : R[A["name"] & keyof R] | R["~hook" & keyof R]
     : never
   : never;
 

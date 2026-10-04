@@ -120,16 +120,26 @@ type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.
 /** The actions of the implementations `App`. */
 type ActionsOf<App> = Extract<ActionOf<App>, Action.Any>;
 
+/** Whether `A` may be one of `Bound`: either is assignable to the other. */
+type Matches<A extends Action.Any, Bound extends Action.Any> = Bound extends Action.Any
+  ? [A] extends [Bound]
+    ? true
+    : [Bound] extends [A]
+      ? true
+      : never
+  : never;
+
 /**
- * The actions of `App` a layer of the binding's actions `Bound` may serve: those whose name
- * may be one the binding holds, however wide their types. An erased name on either side may
- * be any, so it counts. `layer` selects by identity, and refuses a same-named action of
- * another contract, so this counts no fewer than it serves.
+ * The actions of `App` a layer of the binding's actions `Bound` may serve, as `layer` selects
+ * them by identity: an action whose type either is assignable to, or is assigned by, one the
+ * binding holds. So an implementation typed wider than its contract, or a binding typed wider
+ * than its actions, an erased one included, still counts, and another contract of a bound
+ * name, which `layer` leaves out beside an action it serves, does not.
  */
 type Serving<App, Bound extends Action.Any> =
   ActionsOf<App> extends infer A
     ? A extends Action.Any
-      ? [A["name"] & Bound["name"]] extends [never]
+      ? [Matches<A, Bound>] extends [never]
         ? never
         : A
       : never
