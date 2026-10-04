@@ -115,7 +115,7 @@ export const shareTypes = Effect.gen(function* () {
   void client.renameUser({ id: "1", name: "Bea" });
 });
 
-// A hook's error that every action declares is each call's own declared error.
+// A hook's error that the actions declare is each call's own declared error.
 class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {}) {}
 
 const Limited = Action.make("limited", {

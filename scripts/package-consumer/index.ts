@@ -179,7 +179,7 @@ const checkHookTypes = () => {
     // @ts-expect-error A published hook fails with nothing its actions do not declare.
     () => Effect.fail(new Denied()),
   );
-  // A published hook may fail with an error every action it guards declares.
+  // A published hook may fail with an error its actions declare.
   Action.implement(
     [
       Action.make("first", { description: "First", access: "read", errors: [Denied] }),

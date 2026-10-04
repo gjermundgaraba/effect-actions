@@ -1,6 +1,7 @@
-import { Array as Arr, Context, Effect, Layer, Option } from "effect";
+import { Array as Arr, Context, Effect, Layer, Option, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
+import { projectedErrors } from "./actions.js";
 import type { Refusal } from "./errors.js";
 
 /**
@@ -26,60 +27,26 @@ export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 type DeclaredErrors<A extends Action.Any> = A extends unknown ? A["errors"][number]["Type"] : never;
 
 /**
- * The errors every action of `A` declares: each member of their union that no action leaves
- * out, filtered one at a time. Inferring an intersection of each action's union instead
- * multiplies them out, which TypeScript refuses as too complex (TS2590) from 11 actions of 3
- * errors each, or 9 of 4, even for a hook that only refuses. An erased action's errors are
- * `unknown`, which admits nothing: a hook typed over `Action.Any` only refuses. Filtering
- * every declared error against every action costs their product, so `implement` and `share`
- * filter only one action's, however the actions are listed, with `CommonErrorsAmong`.
- * `Before` keeps this: through `CommonErrorsAmong`, the variance TypeScript measures for
- * `Before` no longer lets `Action.allowAll` fit a `Before<A>`.
+ * What a hook over `A` may fail with besides a refusal: an error one of the actions declares,
+ * such as a rate limit. A call fails with it as typed only where its own action declares it;
+ * any other is a defect naming the action, which `dispatch` checks for every surface. An
+ * erased action's errors are `unknown`, which admits nothing: a hook typed over `Action.Any`
+ * only refuses.
  */
-export type CommonErrors<A extends Action.Any> =
-  DeclaredErrors<A> extends infer E
-    ? unknown extends E
-      ? never
-      : E extends unknown
-        ? [
-            A extends unknown ? ([E] extends [A["errors"][number]["Type"]] ? never : A) : never,
-          ] extends [never]
-          ? E
-          : never
-        : never
-    : never;
-
-/**
- * The errors of `C` that every action of `A` declares, filtered one at a time, as
- * `CommonErrors` filters. `implement` and `share` pass one action's errors as `C`, the first
- * listed or, for a list whose type fixes no first action, one member of their union: every
- * error all the actions declare is among them, so the filter costs that action's errors times
- * the actions rather than every declared error times the actions. An erased action admits
- * nothing, wherever it is listed.
- */
-export type CommonErrorsAmong<A extends Action.Any, C> =
-  unknown extends DeclaredErrors<A>
-    ? never
-    : C extends unknown
-      ? [
-          A extends unknown ? ([C] extends [A["errors"][number]["Type"]] ? never : A) : never,
-        ] extends [never]
-        ? C
-        : never
-      : never;
+export type HookErrors<A extends Action.Any> =
+  DeclaredErrors<A> extends infer E ? (unknown extends E ? never : E) : never;
 
 /**
  * An implementation's hook: whether a caller may call. It runs once per call on every
  * surface, after the input is decoded and before the selected handler, with its action
  * contract, so a policy reads `access` rather than the action name. It fails with a
  * refusal, answered as a declared error, or over HTTP as its status when an OAuth client
- * steps up on it, or with an error every action of `A` declares, such as a rate limit,
- * which every surface declares for each of them. Its services `RB` are request-time
- * requirements, like a handler's.
+ * steps up on it, or with an error the action it receives declares, such as a rate limit.
+ * Its services `RB` are request-time requirements, like a handler's.
  */
 export type Before<A extends Action.Any, RB = never> = (
   action: A,
-) => Effect.Effect<void, Refusal | CommonErrors<A>, RB>;
+) => Effect.Effect<void, Refusal | HookErrors<A>, RB>;
 
 /** An implementation's hook, erased. */
 export type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
@@ -330,6 +297,29 @@ export const built = (
   });
 };
 
+/** The defect of a hook failing with `error`, which `action` does not declare. */
+const undeclared = (action: Action.Any, error: ErasedValue): Error =>
+  new Error(
+    `Action "${action.name}": its hook failed with an error the action does not declare: ${
+      Predicate.hasProperty(error, "_tag") ? String(error._tag) : String(error)
+    }`,
+  );
+
+/**
+ * `before` checked for `action`: a failure the action does not declare, as a hook typed over
+ * several actions may fail with another's error, is a defect naming the action and its `_tag`.
+ */
+const guarded = (action: Action.Any, before: ErasedBefore) => {
+  const declared = Schema.is(Schema.Union(projectedErrors(action)));
+
+  return () =>
+    before(action).pipe(
+      Effect.tapError((error) =>
+        declared(error) ? Effect.void : Effect.die(undeclared(action, error)),
+      ),
+    );
+};
+
 /**
  * One action's handler behind its hook. The hook runs first, outside the action's span,
  * so what it fails with is attributed to the surface rather than to a handler that never ran.
@@ -348,6 +338,8 @@ const dispatch = (
     "action.access": action.access,
   };
 
+  const hook = guarded(action, before);
+
   return (input) => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
@@ -358,6 +350,6 @@ const dispatch = (
       { captureStackTrace: false, attributes },
     );
 
-    return Effect.scoped(Effect.flatMap(before(action), () => handled));
+    return Effect.scoped(Effect.flatMap(hook(), () => handled));
   };
 };

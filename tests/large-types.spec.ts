@@ -18,10 +18,9 @@ export const largeHookTypes = (
   fourHundredHandlers: NumberedHandlers<FourHundred>,
   fourHundredArray: ReadonlyArray<FourHundred[number]>,
 ) => {
-  // What every action declares is found one error at a time: an intersection of the sixty
-  // unions would multiply out to 4^60 members, past what TypeScript represents (TS2590).
+  // A hook may fail with any error the actions declare: their union, linear in the actions.
   expectTypeOf<Effect.Error<ReturnType<Action.Before<Sixty[number]>>>>().toEqualTypeOf<
-    Action.Refusal | Throttled
+    Action.Refusal | Sixty[number]["errors"][number]["Type"]
   >();
 
   Action.implement(sixty, sixtyHandlers, Action.allowAll);
@@ -29,15 +28,16 @@ export const largeHookTypes = (
     action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
   );
   Action.implement(sixty, sixtyHandlers, () => Effect.fail(new Throttled()));
-  // @ts-expect-error Only the first action declares it.
+  // Only the first action declares it: a call of any other is a defect at run time.
   Action.implement(sixty, sixtyHandlers, () => Effect.fail(Schema.TaggedStruct("0a", {}).make({})));
+  // @ts-expect-error No action declares it.
+  Action.implement(sixty, sixtyHandlers, () => Effect.fail(Schema.TaggedStruct("0z", {}).make({})));
 
-  // `implement` filters only the first action's errors, among which is every error all the
-  // actions declare: filtering every declared error against every action made this call too
-  // deep to check (TS2589).
+  // Four hundred actions, listed as a tuple or an array, behind a hook written inline or
+  // annotated `Action.Before`.
+  const limit: Action.Before<FourHundred[number]> = () => Effect.fail(new Throttled());
+
   Action.implement(fourHundred, fourHundredHandlers, () => Effect.fail(new Throttled()));
-  // A list whose type fixes no first action, such as an array without `as const`, types its
-  // actions only as their union: `implement` filters one member's errors. Filtering every
-  // action's made this call too deep to check (TS2589).
   Action.implement(fourHundredArray, fourHundredHandlers, () => Effect.fail(new Throttled()));
+  Action.implement(fourHundred, fourHundredHandlers, limit);
 };

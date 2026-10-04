@@ -670,21 +670,22 @@ export const hookErrorTypes = () => {
 
   const limit = () => Effect.fail(new RateLimited({ retryAfter: 30 }));
 
-  // A hook may fail with an error every action it guards declares.
+  // A hook may fail with an error any action it guards declares: a call of one that does not
+  // declare it, such as `status`, is a defect at run time.
   const limited = Action.implement([Get, Put, Ping], handlers, limit);
 
-  // @ts-expect-error `status` does not declare `RateLimited`, which is not a refusal.
-  Action.implement([Get, Put, Ping, Status], { ...handlers, status }, limit);
-  // @ts-expect-error Listed first, it declares no error for the others to share.
   Action.implement([Status, Get, Put, Ping], { ...handlers, status }, limit);
+
+  // @ts-expect-error No action declares `Conflict`.
+  Action.implement([Get, Status], { get: handlers.get, status }, () => Effect.fail(new Conflict()));
 
   // A list whose type fixes no first action, such as an array without `as const` or one
   // spread first, is checked the same way.
   const list = [Get, Put, Ping];
 
-  Action.implement(list, handlers, limit);
-  // @ts-expect-error `status` does not declare `RateLimited`.
   Action.implement([...list, Status], { ...handlers, status }, limit);
+  // @ts-expect-error `status` declares nothing.
+  Action.implement(Status, status, limit);
 
   // An erased action's errors are unknown, which admits nothing, wherever it is listed.
   const erased: Action.Any = Get;
@@ -698,10 +699,10 @@ export const hookErrorTypes = () => {
   // One action's hook may fail with any error the action declares.
   Action.implement(Put, handlers.put, () => Effect.fail(new Conflict()));
 
-  // A share's hook fails with what its own actions declare in common: more than its source's.
-  Action.share([Get, Put], limited, () => Effect.fail(new NotFound({ id: "" })));
-  // @ts-expect-error `ping` does not declare `NotFound`.
-  Action.share([Get, Put, Ping], limited, () => Effect.fail(new NotFound({ id: "" })));
+  // A share's hook fails with what its own actions declare.
+  Action.share([Get, Put], limited, () => Effect.fail(new Conflict()));
+  // @ts-expect-error Neither `get` nor `ping` declares `Conflict`.
+  Action.share([Get, Ping], limited, () => Effect.fail(new Conflict()));
 
   /** What a hook of the actions `A` may fail with. */
   type Fails<A extends Action.Any> = Effect.Error<ReturnType<Action.Before<A>>>;
@@ -709,13 +710,11 @@ export const hookErrorTypes = () => {
   expectTypeOf<Fails<typeof Put>>().toEqualTypeOf<
     Action.Refusal | NotFound | Conflict | RateLimited
   >();
-  expectTypeOf<Fails<typeof Get | typeof Put>>().toEqualTypeOf<
+  expectTypeOf<Fails<typeof Get | typeof Ping>>().toEqualTypeOf<
     Action.Refusal | NotFound | RateLimited
   >();
-  expectTypeOf<Fails<typeof Get | typeof Put | typeof Ping>>().toEqualTypeOf<
-    Action.Refusal | RateLimited
-  >();
-  expectTypeOf<Fails<typeof Get | typeof Status>>().toEqualTypeOf<Action.Refusal>();
+  expectTypeOf<Fails<typeof Ping | typeof Status>>().toEqualTypeOf<Action.Refusal | RateLimited>();
+  expectTypeOf<Fails<typeof Status>>().toEqualTypeOf<Action.Refusal>();
   // An erased action's errors are unknown: typed over any action, a hook only refuses.
   expectTypeOf<Fails<Action.Any>>().toEqualTypeOf<Action.Refusal>();
   expectTypeOf<Fails<typeof Get | Action.Any>>().toEqualTypeOf<Action.Refusal>();
@@ -746,7 +745,7 @@ export const hookErrorTypes = () => {
   // @ts-expect-error `get` does not declare `Conflict`.
   Action.implement(Get, handlers.get, wide);
 
-  // A built hook too: its limiter is a startup service, and its limit an error in common.
+  // A built hook too: its limiter is a startup service, and its limit an error they declare.
   const built = Action.implement(
     [Get, Put, Ping],
     handlers,
@@ -763,8 +762,8 @@ export const hookErrorTypes = () => {
   expectTypeOf(Action.layer(built)).toEqualTypeOf<Layer.Layer<never, never, Limiter>>();
 
   Action.implement(
-    [Get, Status],
-    { get: handlers.get, status },
+    Status,
+    status,
     // @ts-expect-error `status` does not declare `RateLimited`.
     Effect.map(Limiter, (limiter) =>
       Effect.fn(function* (action) {
@@ -1115,7 +1114,7 @@ export const builtHookTypes = () => {
   void provided.handler(new Request("http://localhost"), Context.empty());
   void provided.handler(new Request("http://localhost"), Context.make(Actor, "alice"));
 
-  // A built hook, too, fails only with a refusal or an error its actions all declare.
+  // A built hook, too, fails only with a refusal or an error its actions declare.
   Action.implement(
     [Lookup, Rename],
     handlers,

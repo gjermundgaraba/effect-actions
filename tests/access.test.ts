@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Latch, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Latch, Layer, Option, Schema, Stream } from "effect";
 import { Command } from "effect/cli";
 import { McpServer } from "effect/ai";
 import { HttpRouter } from "effect/http";
@@ -457,7 +457,7 @@ describe("the pre-handler hook", () => {
   );
 
   it.effect(
-    "fails with an error every action it guards declares, answered as the action's own everywhere",
+    "fails with an error the called action declares, answered as the action's own everywhere",
     () =>
       Effect.gen(function* () {
         class RateLimited extends Schema.TaggedError<RateLimited>()(
@@ -561,6 +561,71 @@ describe("the pre-handler hook", () => {
         const local = yield* Effect.exit(exec(ActionCli.command(app, Poke), ["--value", "x"]));
 
         expect(causeOf(local)).toBeInstanceOf(RateLimited);
+      }),
+  );
+
+  it.effect(
+    "makes a failure the called action does not declare a defect naming it, on every surface",
+    () =>
+      Effect.gen(function* () {
+        class RateLimited extends Schema.TaggedError<RateLimited>()(
+          "RateLimited",
+          {},
+          { httpApiStatus: 429 },
+        ) {}
+
+        const Ping = Action.make("ping", {
+          description: "Ping",
+          access: "read",
+          errors: [RateLimited],
+        });
+
+        const Status = Action.make("status", { description: "Status", access: "read" });
+
+        // Typed by the union of what the actions declare, a hook may fail with an error the
+        // action it runs for leaves out.
+        const app = Action.implement(
+          [Ping, Status],
+          { ping: () => Effect.void, status: () => Effect.void },
+          () => Effect.fail(new RateLimited()),
+        );
+
+        const exit = yield* Effect.exit(
+          Effect.flatMap(Action.client(app), (client) => client.status()),
+        );
+
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined).toEqual(
+          new Error(
+            'Action "status": its hook failed with an error the action does not declare: RateLimited',
+          ),
+        );
+
+        const Http = ActionHttp.make([Ping, Status]);
+
+        yield* Effect.gen(function* () {
+          // The action that declares it answers with it.
+          expect((yield* send(post("/api/ping"))).status).toBe(429);
+          expect((yield* send(post("/api/status"))).status).toBe(500);
+
+          expect(yield* (yield* send(rawToolCall("status"))).json).toMatchObject({
+            result: {
+              isError: true,
+              content: [
+                { type: "text", text: "Tool execution failed due to an internal server error." },
+              ],
+            },
+          });
+        }).pipe(
+          Effect.provide(
+            Testing.layer(
+              Layer.mergeAll(
+                ActionHttp.layer(Http, app),
+                ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+              ),
+            ),
+          ),
+        );
       }),
   );
 });
