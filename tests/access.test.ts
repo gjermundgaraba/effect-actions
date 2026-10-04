@@ -1,5 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Latch, Layer, Option, Schema, Stream } from "effect";
+import {
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Latch,
+  Layer,
+  Option,
+  Predicate,
+  Schema,
+  SchemaIssue,
+  Stream,
+} from "effect";
 import { Command } from "effect/cli";
 import { McpServer } from "effect/ai";
 import { HttpRouter } from "effect/http";
@@ -562,6 +574,43 @@ describe("the pre-handler hook", () => {
 
         expect(causeOf(local)).toBeInstanceOf(RateLimited);
       }),
+  );
+
+  it.effect("passes a declared error its schema checks asynchronously, as the handler's", () =>
+    Effect.gen(function* () {
+      // A code checked only once a promise settles, as a lookup would.
+      const Code = Schema.declareConstructor<string>()(
+        [],
+        () => (input, ast) =>
+          Effect.promise(() => Promise.resolve()).pipe(
+            Effect.flatMap(() =>
+              Predicate.isString(input)
+                ? Effect.succeed(input)
+                : Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input))),
+            ),
+          ),
+        { toCodecJson: () => undefined },
+      );
+
+      const Limited = Schema.TaggedStruct("Limited", { code: Code });
+      const limited = yield* Limited.makeEffect({ code: "quota" });
+
+      const Ping = Action.make("ping", { description: "Ping", access: "read", errors: [Limited] });
+
+      const fromHandler = Action.implement(Ping, () => Effect.fail(limited), Action.allowAll);
+
+      const fromHook = Action.implement(
+        Ping,
+        () => Effect.void,
+        () => Effect.fail(limited),
+      );
+
+      for (const app of [fromHandler, fromHook]) {
+        const client = yield* Action.client(app);
+
+        expect(yield* Effect.flip(client.ping())).toEqual(limited);
+      }
+    }),
   );
 
   it.effect(
