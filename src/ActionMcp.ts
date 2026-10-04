@@ -69,10 +69,11 @@ const stdioProtocols = [
 ] as const;
 
 /**
- * The native server supplies its own request context to every tool call, and over HTTP
- * the router its own, such as the request.
+ * The native server supplies its own request context to every tool call, and the registry
+ * it registers the tools on, the endpoint's own; over HTTP the router its own, such as the
+ * request.
  */
-type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext>;
+type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext | McpServer.McpServer>;
 
 type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provided>;
 

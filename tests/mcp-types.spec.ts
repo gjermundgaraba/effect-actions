@@ -124,3 +124,21 @@ const listed = Action.implement(
 export const listedClient = Effect.map(Testing.mcpClient(listed.actions), (mcp) => {
   expectTypeOf<keyof typeof mcp>().toEqualTypeOf<"first" | "second">();
 });
+
+// A handler may yield its endpoint's registry, to send progress, and no host owes it.
+const progress = Action.implement(
+  Action.make("progress", read),
+  () =>
+    Effect.flatMap(McpServer.McpServer, (server) =>
+      server.notifications["notifications/progress"]({ progressToken: "p", progress: 1 }),
+    ),
+  Action.allowAll,
+);
+
+expectTypeOf(ActionMcp.layerHttp(progress, options)).toEqualTypeOf<
+  Layer.Layer<never, Cause.IllegalArgumentError, HttpRouter.HttpRouter>
+>();
+
+expectTypeOf(ActionMcp.runStdio(progress, options)).toEqualTypeOf<
+  Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio>
+>();

@@ -323,14 +323,13 @@ describe("the pre-handler hook", () => {
       Reporting,
       () =>
         Effect.gen(function* () {
-          const server = yield* Effect.serviceOption(McpServer.McpServer);
+          // Its endpoint's registry, which no host provides.
+          const server = yield* McpServer.McpServer;
 
-          if (Option.isSome(server)) {
-            yield* server.value.notifications["notifications/progress"]({
-              progressToken: "call",
-              progress: 1,
-            });
-          }
+          yield* server.notifications["notifications/progress"]({
+            progressToken: "call",
+            progress: 1,
+          });
 
           yield* streamed.await;
 
