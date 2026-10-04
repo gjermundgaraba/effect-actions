@@ -217,12 +217,16 @@ const repeated = (
   return { element, min: encoded.elements.length };
 };
 
+/** The occurrence of a repeated flag that adds no element, so `--tag '[]'` alone is `[]`. */
+const empty = "[]";
+
 /**
  * A field's flag or argument, `None` when omitted, from its JSON encoding and its plain one.
  * A required field's is required, so the parser reports it missing; a required boolean flag
  * is a switch instead: omitted, it is `false`, as a switch reads. A boolean argument takes
  * `true` or `false`. A flag of an array of strings or numbers is repeated, one element per
- * occurrence: none is `[]`, or leaves an optional field out.
+ * occurrence but `[]`, which adds none, and a choice among the element's: none is `[]`, or
+ * leaves an optional field out, which `[]` gives instead.
  */
 const fieldParam = (
   kind: Kind,
@@ -235,13 +239,21 @@ const fieldParam = (
   const repeats = kind === Param.flagKind ? repeated(value) : undefined;
 
   if (repeats !== undefined) {
-    const elements = valueParam(kind, name, repeats.element);
+    const literals = choices(unsuspended(repeats.element));
+
+    const elements =
+      literals === undefined
+        ? valueParam(kind, name, repeats.element)
+        : Param.Literals(kind, name, [...literals, empty]);
+
+    const listed = (values: ReadonlyArray<unknown>) =>
+      Option.some(values.filter((value) => value !== empty));
 
     return optional
       ? Param.variadic(elements).pipe(
-          Param.map((values) => (values.length === 0 ? Option.none() : Option.some(values))),
+          Param.map((values) => (values.length === 0 ? Option.none() : listed(values))),
         )
-      : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(Option.some));
+      : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(listed));
   }
 
   if (optional) return Param.optional(valueParam(kind, name, value));

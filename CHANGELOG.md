@@ -357,8 +357,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   `Command.provideEffect(HttpClient.HttpClient, ...)`.
 - A field holding an array of strings or numbers, choices included, takes a repeated flag, one
   element per occurrence: `--provider exa --provider hn`. Given none, a required field is `[]`
-  and an optional one is left out; a `Schema.NonEmptyArray` field's flag is required once. Any
-  other array, and an array taken as a positional argument, takes JSON.
+  and an optional one is left out; a `Schema.NonEmptyArray` field's flag is required once. An
+  occurrence of `[]` adds no element, so `--tags '[]'` alone sends `[]`, clearing an optional
+  field. Any other array, and an array taken as a positional argument, takes JSON.
 - A command whose action fails prints the failure on stderr as the JSON HTTP sends for it, such
   as `{"_tag":"UserNotFound","id":"9"}`, through Effect's CLI formatter, and exits 1, or with
   the failure's `Runtime.errorExitCode`. It fails with Effect CLI's `UserError`, whose `cause`

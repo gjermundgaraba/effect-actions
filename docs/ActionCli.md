@@ -32,13 +32,13 @@ Flags come from the action's input. A struct or class input gets one flag per to
 field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`, `_id` is `--id`), parsing the field's encoded JSON
 value:
 
-| Encoded field                            | Flag                                                      |
-| ---------------------------------------- | --------------------------------------------------------- |
-| string or template literal               | `--name <string>`; the action's schema checks a template  |
-| boolean                                  | `--on`, a switch; omitted is `false` for a required field |
-| union of string literals, or string enum | `--kind <choice>`, one of the values                      |
-| array of strings or numbers, or choices  | `--tag <value>`, repeated: one element per occurrence     |
-| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or the text    |
+| Encoded field                            | Flag                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------- |
+| string or template literal               | `--name <string>`; the action's schema checks a template              |
+| boolean                                  | `--on`, a switch; omitted is `false` for a required field             |
+| union of string literals, or string enum | `--kind <choice>`, one of the values                                  |
+| array of strings or numbers, or choices  | `--tag <value>`, repeated: one element per occurrence; `[]` adds none |
+| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or the text                |
 
 A suspended input or field, as a recursive schema is written, counts as the schema it stands
 for, its description included.
@@ -50,7 +50,9 @@ with such a member, succeeds; otherwise the command fails with `InvalidInput`. A
 A repeated flag reads each occurrence as one element, as the flag of that element would:
 `--provider exa --provider hn` for `Schema.Array(Schema.Literals(["exa", "hn"]))`. Given none, a
 required field is `[]` and an optional one is left out; a `Schema.NonEmptyArray` field's flag is
-required once. Any other array, such as one of objects, and an array taken as a positional
+required once. An occurrence of `[]` adds no element, and is one of a choice's values, so
+`--tags '[]'` alone sends `[]`, clearing an optional field the flag would otherwise leave out; an
+element whose text is `[]` cannot be sent. Any other array, such as one of objects, and an array taken as a positional
 argument take JSON, `--points '[{"x":1}]'`.
 A value flag parses its text as JSON when the field's encoding accepts that kind of value
 (`--count 2`, `--owner '{"id":"x"}'`), or else keeps the text (`--limit auto`, `--scale Infinity`

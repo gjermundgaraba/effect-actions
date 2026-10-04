@@ -246,87 +246,104 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
   }),
 );
 
-it.effect("repeats the flag of an array of strings or numbers, one element per occurrence", () =>
-  Effect.gen(function* () {
-    const inputs: unknown[] = [];
+it.effect(
+  "repeats the flag of an array of strings or numbers, one element per occurrence but `[]`",
+  () =>
+    Effect.gen(function* () {
+      const inputs: unknown[] = [];
 
-    const Search = Action.make("search", {
-      description: "Search with some providers",
-      access: "read",
-      input: {
-        query: Schema.String,
-        provider: Schema.NonEmptyArray(Schema.Literals(["exa", "hn"])),
-        site: Schema.optionalKey(Schema.Array(Schema.String)),
-        limit: Schema.Array(Schema.Finite),
-        // An array of objects takes JSON, as any other value flag.
-        filters: Schema.Array(Schema.Struct({ key: Schema.String })),
-      },
-      success: Schema.String,
-    });
+      const Search = Action.make("search", {
+        description: "Search with some providers",
+        access: "read",
+        input: {
+          query: Schema.String,
+          provider: Schema.NonEmptyArray(Schema.Literals(["exa", "hn"])),
+          site: Schema.optionalKey(Schema.Array(Schema.String)),
+          limit: Schema.Array(Schema.Finite),
+          // An array of objects takes JSON, as any other value flag.
+          filters: Schema.Array(Schema.Struct({ key: Schema.String })),
+        },
+        success: Schema.String,
+      });
 
-    const app = Action.implement(
-      Search,
-      (input) =>
-        Effect.andThen(
-          Effect.sync(() => inputs.push(input)),
-          () => Effect.succeed("ok"),
-        ),
-      Action.allowAll,
-    );
+      const app = Action.implement(
+        Search,
+        (input) =>
+          Effect.andThen(
+            Effect.sync(() => inputs.push(input)),
+            () => Effect.succeed("ok"),
+          ),
+        Action.allowAll,
+      );
 
-    const command = ActionCli.command(app, Search, { positional: ["query"] });
+      const command = ActionCli.command(app, Search, { positional: ["query"] });
 
-    yield* exec(command, [
-      "golang",
-      "--provider",
-      "exa",
-      "--provider",
-      "hn",
-      "--site",
-      "go.dev",
-      "--limit",
-      "3",
-      "--limit",
-      "5",
-      "--filters",
-      '[{"key":"lang"}]',
-    ]);
-    // None of an optional array's flag leaves it out, and none of a required one is `[]`.
-    yield* exec(command, ["golang", "--provider", "hn", "--filters", "[]"]);
+      yield* exec(command, [
+        "golang",
+        "--provider",
+        "exa",
+        "--provider",
+        "hn",
+        "--site",
+        "go.dev",
+        "--limit",
+        "3",
+        "--limit",
+        "5",
+        "--filters",
+        '[{"key":"lang"}]',
+      ]);
+      // None of an optional array's flag leaves it out, and none of a required one is `[]`.
+      yield* exec(command, ["golang", "--provider", "hn", "--filters", "[]"]);
+      // An occurrence of `[]` adds no element, a choice's included, so it alone sends `[]`.
+      yield* exec(command, [
+        "golang",
+        "--provider",
+        "hn",
+        "--provider",
+        "[]",
+        "--site",
+        "[]",
+        "--limit",
+        "[]",
+        "--filters",
+        "[]",
+      ]);
 
-    expect(inputs).toStrictEqual([
-      {
-        query: "golang",
-        provider: ["exa", "hn"],
-        site: ["go.dev"],
-        limit: [3, 5],
-        filters: [{ key: "lang" }],
-      },
-      { query: "golang", provider: ["hn"], limit: [], filters: [] },
-    ]);
+      expect(inputs).toStrictEqual([
+        {
+          query: "golang",
+          provider: ["exa", "hn"],
+          site: ["go.dev"],
+          limit: [3, 5],
+          filters: [{ key: "lang" }],
+        },
+        { query: "golang", provider: ["hn"], limit: [], filters: [] },
+        { query: "golang", provider: ["hn"], site: [], limit: [], filters: [] },
+      ]);
 
-    // A non-empty array's flag is required once, which the parser reports missing.
-    const missing = failure(yield* Effect.exit(exec(command, ["golang", "--filters", "[]"])));
-    expect(missing).toBeInstanceOf(CliError.ShowHelp);
+      // A non-empty array's flag is required once, which the parser reports missing.
+      const missing = failure(yield* Effect.exit(exec(command, ["golang", "--filters", "[]"])));
+      expect(missing).toBeInstanceOf(CliError.ShowHelp);
 
-    if (missing instanceof CliError.ShowHelp) {
-      expect(missing.errors).toEqual([new CliError.MissingOption({ option: "provider" })]);
-    }
+      if (missing instanceof CliError.ShowHelp) {
+        expect(missing.errors).toEqual([new CliError.MissingOption({ option: "provider" })]);
+      }
 
-    // Each occurrence is parsed as one element: a choice natively, anything else for the
-    // schema to decode, which names the element.
-    const other = ["golang", "--provider", "bing", "--filters", "[]"];
-    expect(failure(yield* Effect.exit(exec(command, other)))).toBeInstanceOf(CliError.ShowHelp);
+      // Each occurrence is parsed as one element: a choice natively, anything else for the
+      // schema to decode, which names the element.
+      const other = ["golang", "--provider", "bing", "--filters", "[]"];
+      expect(failure(yield* Effect.exit(exec(command, other)))).toBeInstanceOf(CliError.ShowHelp);
 
-    const many = ["golang", "--provider", "hn", "--limit", "many", "--filters", "[]"];
-    const refused = causeOf(yield* Effect.exit(exec(command, many)));
+      const many = ["golang", "--provider", "hn", "--limit", "many", "--filters", "[]"];
+      const refused = causeOf(yield* Effect.exit(exec(command, many)));
 
-    expect(refused).toBeInstanceOf(Action.InvalidInput);
+      expect(refused).toBeInstanceOf(Action.InvalidInput);
 
-    if (refused instanceof Action.InvalidInput) expect(refused.message).toContain('["limit"][0]');
+      if (refused instanceof Action.InvalidInput) expect(refused.message).toContain('["limit"][0]');
 
-    expect(inputs).toHaveLength(2);
-  }),
+      expect(inputs).toHaveLength(3);
+    }),
 );
 
 it.effect(
