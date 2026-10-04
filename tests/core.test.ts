@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as Testing from "../src/Testing.js";
 import { makeTestHttp } from "./server.js";
 import { post } from "./requests.js";
 import { GetUser, RenameUser } from "../examples/contracts.js";
@@ -148,42 +149,48 @@ describe("contracts", () => {
     ]);
   });
 
-  it("refuses two errors one caller may receive with one _tag", () => {
-    const Busy = Schema.TaggedStruct("Busy", { retryAfter: Schema.Finite });
+  it.effect(
+    "tells errors sharing a _tag apart by their other fields, as members of any union",
+    () =>
+      Effect.gen(function* () {
+        const EmailInvalid = Schema.TaggedStruct("Validation", { field: Schema.Literal("email") });
+        const NameInvalid = Schema.TaggedStruct("Validation", { field: Schema.Literal("name") });
 
-    expect(() =>
-      Action.make("twice", {
-        description: "",
-        access: "write",
-        errors: [
-          Busy,
-          Schema.Union([Schema.TaggedStruct("Busy", {}), Schema.TaggedStruct("Late", {})]),
-        ],
+        const Register = Action.make("register", {
+          description: "",
+          access: "write",
+          input: { field: Schema.Literals(["email", "name"]) },
+          errors: [EmailInvalid, NameInvalid],
+        });
+
+        // A binding may list one of them too.
+        const Http = ActionHttp.make([Register], { errors: [NameInvalid] });
+
+        const app = Action.implement(
+          Register,
+          ({ field }) =>
+            field === "email"
+              ? Effect.fail(EmailInvalid.make({ field }))
+              : Effect.fail(NameInvalid.make({ field })),
+          Action.allowAll,
+        );
+
+        const local = yield* Action.client(app);
+
+        const remote = yield* ActionHttp.client(Http).pipe(
+          Effect.provide(Testing.layer(ActionHttp.layer(Http, app))),
+        );
+
+        for (const client of [local, remote]) {
+          expect(yield* Effect.flip(client.register({ field: "email" }))).toEqual(
+            EmailInvalid.make({ field: "email" }),
+          );
+          expect(yield* Effect.flip(client.register({ field: "name" }))).toEqual(
+            NameInvalid.make({ field: "name" }),
+          );
+        }
       }),
-    ).toThrow('Duplicate error _tag in action "twice": Busy');
-
-    // An action's error beside its binding's, where the client tries both for one status.
-    const Once = Action.make("once", { description: "", access: "write", errors: [Busy] });
-
-    expect(() =>
-      ActionHttp.make([Once], { errors: [Schema.TaggedStruct("Busy", { reason: Schema.String })] }),
-    ).toThrow('Duplicate error _tag in action "once" and its binding: Busy');
-
-    // One schema listed by both is one error.
-    expect(() => ActionHttp.make([Once], { errors: [Busy] })).not.toThrow();
-
-    // So is one schema whose `_tag` repeats: variants of one error, or an enum's aliases.
-    expect(() =>
-      Action.make("variants", {
-        description: "",
-        access: "write",
-        errors: [
-          Schema.Union([Busy, Schema.TaggedStruct("Busy", {})]),
-          Schema.Struct({ _tag: Schema.Enum({ Late: "Late", Delayed: "Late" }) }),
-        ],
-      }),
-    ).not.toThrow();
-  });
+  );
 
   it("answers a built-in error as itself beside a loose error schema of the action's", async () => {
     const Loose = Action.make("loose", {

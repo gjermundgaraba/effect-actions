@@ -220,7 +220,7 @@ elsewhere, give `baseUrl`.
 - `errors` are what middleware around the routes answers with, on any endpoint: `ActionHttp.make(actions, { errors: [RateLimited] })`. Every endpoint declares them, OpenAPI shows them, and every client decodes them.
 - Middleware sends one as the binding declares it, at the status its `httpApiStatus` states, or 422 without one: for `class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {}, { httpApiStatus: 429 }) {}`, `HttpServerResponse.schemaJson(RateLimited)(error, { status: 429 })`. A union with its own `httpApiStatus` uses that status for every member; otherwise, each member of a plain union is declared at its own status, or 422 without one.
 - No handler or hook fails with them: both serve every surface, and only HTTP declares them. An action whose handler fails with one lists it in its own `errors`; a limit its implementation's hook applies is listed by each of its actions ([guarantees.md](guarantees.md#authorization)).
-- They may not reuse a built-in error's tag: `layer` refuses such a binding.
+- They may not reuse a built-in error's tag: `make` refuses such a binding.
 
 ### Documented security
 
@@ -256,7 +256,6 @@ elsewhere, give `baseUrl`.
 - Route returns 404: the action is not in the binding, its implementation was never passed to a `layer` call, or the path lacks the prefix. An implementation's action is served only if the binding holds that very value: an equal-looking copy, such as a test declaring the contract again, is not.
 - `No action of this implementation is in this HTTP binding: x` thrown by `layer`: none of the implementation's actions was passed to this binding's `make`, so it is the wrong implementation or the wrong binding. `x (another contract)` is an action of a bound name that is not the bound value, as a second copy of the contracts module makes: implement the exact contract value the binding received. Matching names and schemas do not establish identity.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same bound action.
-- `Duplicate error _tag in action "<name>" and its binding: <tag>` thrown by `make`: an error of the action and one of the binding's `errors` share a `_tag`. Rename one, or list the one schema in both.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action, such as one implementation given to both the public and the authenticated layer, or a share of it to one and the whole to the other. Serve each action in one call: give each layer an `Action.share` of its own actions, `Action.share([Poll], users, Action.allowAll)` to the public layer and `Action.share([Write], users)` to the authenticated one.
 - `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by `make`: a binding error has a built-in tag, or is a built-in error. Drop a built-in error, which every endpoint declares already; rename an error of your own.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.

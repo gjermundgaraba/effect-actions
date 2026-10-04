@@ -1,7 +1,7 @@
 import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema, type Types } from "effect";
 import type { Scope } from "effect";
 import {
-  assertErrors,
+  assertOwnTags,
   assertKnown,
   assertName,
   assertOnce,
@@ -153,7 +153,7 @@ export interface Options {
   readonly success?: Codec | Fields | undefined;
   /**
    * One schema per declared failure; each keeps its own HTTP status annotation. Defaults to
-   * none. Each `_tag` once, and none of a built-in error's.
+   * none. None with a built-in error's `_tag`.
    */
   readonly errors?: ReadonlyArray<Codec> | undefined;
   /**
@@ -326,7 +326,7 @@ export function make(name: string, options: Options): Any {
     hints,
   };
 
-  assertErrors(action);
+  assertOwnTags(`Action "${action.name}"`, action.errors);
 
   return action;
 }

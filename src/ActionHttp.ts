@@ -21,7 +21,7 @@ import {
   OpenApi,
 } from "effect/http-api";
 import type * as Action from "./Action.js";
-import { assertBindingErrors, assertOnce, projectedErrors } from "./internal/actions.js";
+import { assertOnce, assertOwnTags, projectedErrors } from "./internal/actions.js";
 import {
   type AnyHttp,
   type Client,
@@ -72,7 +72,7 @@ export interface Options<E extends Errors = Errors, A extends Action.Any = Actio
    * Errors every endpoint may answer with besides its action's own, such as a limit
    * middleware around the routes applies before decoding: declared by every endpoint, so
    * clients decode them. Handlers and hooks never fail with them; they are the binding's, and
-   * no other surface declares them. None shares a `_tag` with a built-in error or an action's.
+   * no other surface declares them. None with a built-in error's `_tag`.
    */
   readonly errors?: E;
   /**
@@ -286,7 +286,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
 
   const errors = options.errors ?? [];
 
-  assertBindingErrors(actions, errors);
+  assertOwnTags("ActionHttp binding", errors);
 
   const open = options.public ?? [];
 

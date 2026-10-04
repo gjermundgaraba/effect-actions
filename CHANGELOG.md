@@ -149,10 +149,11 @@ Each area below lists what is renamed or removed, then what changes without a re
   0.8.0's example's `permission` would be lost. Use
   ``new Action.Forbidden({ message: `Requires ${permission}.` })``, adding `scopes` only for
   OAuth scopes.
-- Errors one caller may receive have distinct `_tag`s: `Action.make` refuses two with one, and
-  `ActionHttp.make` an action's beside its binding's, so give each a tag of its own. Both are
-  checked where the contract or binding is made, so a client of a contract no server of this
-  package serves cannot decode a look-alike as a built-in error either. A top-level
+- `Action.make` refuses an error in `errors` that encodes with a built-in error's `_tag`, and
+  `ActionHttp.make` one in the binding's: checked where the contract or binding is made, so a
+  client of a contract no server of this package serves cannot decode a look-alike as a
+  built-in error either. Errors of your own may share a `_tag`, told apart by their other
+  fields as the members of any union are. A top-level
   `Schema.suspend` in `errors` is resolved then: one whose thunk reads a `const` declared later
   throws a `ReferenceError` at `make`.
 - A helper passing implementations it is given beside its own takes them as one type parameter,

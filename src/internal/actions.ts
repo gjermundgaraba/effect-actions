@@ -89,11 +89,11 @@ export const literalValues = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
       : [undefined];
 
 /**
- * The `_tag`s a schema's encoding carries, each once: each member's of a union, every value of
- * a union of literals or of an enum, and a suspended schema's, as a recursive error is written.
+ * The `_tag`s a schema's encoding carries: each member's of a union, every value of a union of
+ * literals or of an enum, and a suspended schema's, as a recursive error is written.
  */
-const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> => {
-  const tags = members(SchemaAST.toEncoded(ast)).flatMap((member) => {
+const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> =>
+  members(SchemaAST.toEncoded(ast)).flatMap((member) => {
     const tag = SchemaAST.isObjects(member)
       ? member.propertySignatures.find((property) => property.name === "_tag")?.type
       : undefined;
@@ -101,57 +101,18 @@ const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> => {
     return tag === undefined ? [] : members(tag).flatMap(literalValues).filter(Predicate.isString);
   });
 
-  return [...new Set(tags)];
-};
-
 /**
  * Refuse an error that encodes with a built-in error's `_tag`, the built-in itself included:
- * every endpoint and tool declares the built-in errors already, and a client decoding the
- * answer could not tell a look-alike from them.
+ * every endpoint and tool declares the built-in errors already, a client decoding the answer
+ * could not tell a look-alike from them, and a look-alike of a refusal would step up. Checked
+ * where the action or the binding is made, so every surface and client of it may rely on it.
  */
-const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
+export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
   const tag = errors
     .flatMap((error) => tagsOf(error.ast))
     .find((tag) => Object.hasOwn(statuses, tag));
 
   if (tag !== undefined) {
     throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
-  }
-};
-
-/**
- * Refuse two errors one caller may receive with one `_tag`: a client decodes an answer by
- * trying the schemas declared for its status, and would take one for the other.
- */
-const assertDistinctTags = (what: string, errors: Action.Any["errors"]): void =>
-  assertDistinct(
-    `error _tag in ${what}`,
-    [...new Set(errors)].flatMap((error) => tagsOf(error.ast)),
-    (tag) => tag,
-  );
-
-/**
- * Refuse errors a caller of `action` could not tell apart: one with a built-in error's `_tag`,
- * and two with one `_tag`. Checked where the action is made, so every surface and client
- * of it may rely on them.
- */
-export const assertErrors = (action: Action.Any): void => {
-  assertOwnTags(`Action "${action.name}"`, action.errors);
-  assertDistinctTags(`action "${action.name}"`, action.errors);
-};
-
-/**
- * Refuse a binding's `errors` a caller could not tell apart from the built-in ones or from an
- * action's: one with a built-in error's `_tag`, and one sharing a `_tag` with an error of
- * one of `actions`. Checked where the binding is made.
- */
-export const assertBindingErrors = (
-  actions: ReadonlyArray<Action.Any>,
-  binding: Action.Any["errors"],
-): void => {
-  assertOwnTags("ActionHttp binding", binding);
-
-  for (const action of actions) {
-    assertDistinctTags(`action "${action.name}" and its binding`, [...action.errors, ...binding]);
   }
 };
