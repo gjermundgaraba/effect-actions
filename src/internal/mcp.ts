@@ -21,6 +21,10 @@ export interface Params {
   readonly [key: string]: Schema.Json | undefined;
 }
 
+/** The parameter a method's `mcp-name` header repeats, as the native runtime routes it. */
+const routed = (method: string, params: Params) =>
+  method === "resources/read" ? params.uri : params.name;
+
 /**
  * One stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves it:
  * the headers routing it, which repeat what its body says, and its JSON-RPC body. The client
@@ -29,13 +33,14 @@ export interface Params {
  */
 export const statelessRequest = (method: string, params: Params) => {
   const { protocolVersion } = httpProtocol;
+  const name = routed(method, params);
 
   return {
     headers: {
       accept: "application/json, text/event-stream",
       "mcp-protocol-version": protocolVersion,
       "mcp-method": method,
-      ...(Predicate.isString(params.name) ? { "mcp-name": params.name } : {}),
+      ...(Predicate.isString(name) ? { "mcp-name": name } : {}),
     },
     body: {
       jsonrpc: "2.0",

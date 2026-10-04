@@ -190,6 +190,11 @@ replaces it, or is replaced, as Effect's registry keeps one tool per name: name 
 service they need, provided around the endpoint, is shared with the rest of the graph; one
 provided to the `features` layer itself is built once per endpoint.
 
+A feature runs with the services it was built with, never a request's: Effect's `resource` and
+`prompt` run their content in their build context alone, so a feature cannot read the caller.
+Content that depends on the caller is an action. Never provide an identity at startup to
+satisfy a feature.
+
 ## Rules
 
 - HTTP serves MCP 2026-07-28 and no other revision: it is stateless, every request standing alone. The stateful revisions keep a session per `initialize`, which Effect's HTTP runtime never expires and which no identity owns. Stdio serves 2026-07-28, 2025-11-25 and 2025-06-18, whichever the host negotiates. There is no `protocols` option; Effect owns version checks and negotiation.
@@ -223,6 +228,7 @@ provided to the `features` layer itself is built once per endpoint.
 ## Failure modes
 
 - `MCP tool input must be one object with keys, such as a struct: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions' input is a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Wrap a union in a field, `input: { notification: Schema.Union([Email, Sms]) }`, omit `input` (or give `{}`) for no arguments, or leave the action off MCP.
+- `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched, with `CurrentActor` among the endpoint's startup requirements rather than its `Request<"Requires", ...>`: a feature reads a request service, which it never receives ([native features](#native-features)). Serve that content as an action.
 - A native `McpServer.resource`, `McpServer.prompt` or `McpServer.toolkit` layer merged beside `layerHttp` builds without error and is never served: `resources/list` is empty, `prompts/list` is not found, and `tools/list` lists only the actions. Each endpoint's registry is its own: pass them as its `features`.
 - An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's hook, before the handler runs.
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.

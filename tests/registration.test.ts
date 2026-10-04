@@ -579,6 +579,66 @@ describe("projection boundaries", () => {
     });
   });
 
+  it.effect(
+    "reads features with the services provided around the endpoints, built once for all",
+    () =>
+      Effect.gen(function* () {
+        class Docs extends Context.Service<Docs, string>()("registration/Docs") {}
+
+        let built = 0;
+
+        const docs = Layer.effect(
+          Docs,
+          Effect.sync(() => (built++, "# Acme")),
+        );
+
+        const features = Layer.mergeAll(
+          McpServer.resource({
+            uri: "docs://readme",
+            name: "README",
+            content: Effect.service(Docs),
+          }),
+          McpServer.prompt({
+            name: "triage",
+            content: () => Effect.map(Effect.service(Docs), (readme) => `Triage with ${readme}`),
+          }),
+        );
+
+        const app = Action.implement(
+          Action.make("ping", { description: "Ping", access: "read" }),
+          () => Effect.void,
+          Action.allowAll,
+        );
+
+        const endpoints = Layer.mergeAll(
+          ActionMcp.layerHttp(app, { name: "a", version: "0", path: "/a", features }),
+          ActionMcp.layerHttp(app, { name: "b", version: "0", path: "/b", features }),
+        ).pipe(Layer.provide(docs));
+
+        yield* Effect.gen(function* () {
+          for (const url of ["/a", "/b"]) {
+            const read = yield* Testing.mcpRequest(
+              "resources/read",
+              { uri: "docs://readme" },
+              { url },
+            );
+
+            expect(yield* read.json).toMatchObject({
+              result: { contents: [{ uri: "docs://readme", text: "# Acme" }] },
+            });
+
+            const got = yield* Testing.mcpRequest("prompts/get", { name: "triage" }, { url });
+
+            expect(yield* got.json).toMatchObject({
+              result: { messages: [{ content: { type: "text", text: "Triage with # Acme" } }] },
+            });
+          }
+        }).pipe(Effect.provide(Testing.layer(endpoints)));
+
+        expect(built).toBe(1);
+      }),
+  );
+
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
     const Scalar = Action.make("scalar", {
       description: "Scalar error",

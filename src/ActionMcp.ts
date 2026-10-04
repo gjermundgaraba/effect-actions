@@ -255,8 +255,9 @@ const server = <Out, R>(
  * lifetime. Tools under different middleware go on endpoints of their own. Under
  * `Authentication.make`, a call refused with `Unauthenticated`, or with `Forbidden` naming
  * scopes, is answered with its HTTP status and challenge, 401 or 403, as MCP authorization
- * requires; any other failure, and every failure without it, is a tool result. What
- * middleware provides per request wins over what the endpoint was built with; still, never
+ * requires; any other failure, and every failure without it, is a tool result. In a tool
+ * call, what middleware provides per request wins over what the endpoint was built with;
+ * native `features` read only what they were built with, never a request's. Still, never
  * provide an identity at startup, which a route no authentication covers serves to anyone.
  */
 export function layerHttp<const Apps extends Served, E = never, R = never>(

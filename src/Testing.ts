@@ -341,7 +341,8 @@ export function mcpClient(
 /**
  * Send one stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves
  * it, on the `HttpClient`: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
- * `params.name`, and the client metadata in `_meta` are filled in, under any `_meta` given,
+ * `params.uri` for `resources/read` and `params.name` otherwise, and the client metadata in
+ * `_meta` are filled in, under any `_meta` given,
  * such as a `progressToken`; the protocol version is always the request's own. It succeeds
  * with the response as the endpoint sent it, whatever its status: for a test asserting on
  * what `mcpClient` decodes away, such as `tools/list`, a refusal's challenge, or a call its
