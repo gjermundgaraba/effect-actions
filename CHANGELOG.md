@@ -280,10 +280,10 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### MCP
 
-| 0.8.0                                                                              | 0.10.0                                                                                                              |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `ActionMcp.Options<Errors, R>` of `layerHttp`, `ActionMcp.StdioOptions<Errors, R>` | `ActionMcp.LayerHttpOptions<A>`; `ActionMcp.Options<A>` is the server's, which `layerHttp` and `runStdio` both take |
-| `Layer.launch(ActionMcp.layerStdio(implementations, options))`                     | `ActionMcp.runStdio(implementations, options)`, which succeeds when the host closes stdin                           |
+| 0.8.0                                                                              | 0.10.0                                                                                                                                                     |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ActionMcp.Options<Errors, R>` of `layerHttp`, `ActionMcp.StdioOptions<Errors, R>` | `ActionMcp.LayerHttpOptions<E, R>`; `ActionMcp.Options<E, R>` is the server's, which `layerHttp` and `runStdio` both take; `E` and `R` are its `features`' |
+| `Layer.launch(ActionMcp.layerStdio(implementations, options))`                     | `ActionMcp.runStdio(implementations, options)`, which succeeds when the host closes stdin                                                                  |
 
 - `runStdio` gives its program a `Console` whose every method writes to stderr, so console
   loggers such as `Logger.consoleJson`, `Console.log`, and the counters, timers and group labels

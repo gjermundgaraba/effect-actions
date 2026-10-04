@@ -15,7 +15,7 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `runStdio(implementations, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
 
 The options, exported as `LayerHttpOptions` and `Options` (the server's, which `LayerHttpOptions` extends), are the native
-`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`, and `features`. They pass through unchanged; `path` gains a default. Each implementation brings its
+`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`, plus `features`. The native ones pass through unchanged; `path` gains a default. Each implementation brings its
 hook ([Action.md](Action.md#implementations)); authentication is middleware the host provides
 around `layerHttp` ([Authentication.md](Authentication.md)).
 
