@@ -613,6 +613,42 @@ describe("the pre-handler hook", () => {
     }),
   );
 
+  it.effect("keeps a declared hook failure's whole cause: its trace and a defect beside it", () =>
+    Effect.gen(function* () {
+      class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {}) {}
+
+      const Ping = Action.make("ping", {
+        description: "Ping",
+        access: "read",
+        errors: [RateLimited],
+      });
+
+      const cleanup = new Error("cleanup failed");
+
+      // Refused in a span of its own, with a cleanup that dies.
+      const app = Action.implement(
+        Ping,
+        () => Effect.void,
+        () =>
+          Effect.fail(new RateLimited()).pipe(
+            Effect.ensuring(Effect.die(cleanup)),
+            Effect.withSpan("quota"),
+          ),
+      );
+
+      const client = yield* Action.client(app);
+      const cause = yield* Effect.flip(Effect.sandbox(client.ping()));
+
+      expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([
+        new RateLimited(),
+      ]);
+      expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
+        cleanup,
+      ]);
+      expect(Cause.pretty(cause)).toMatch(/^\s+at quota \(.*access\.test\.ts/m);
+    }),
+  );
+
   it.effect(
     "makes a failure the called action does not declare a defect naming it, on every surface",
     () =>

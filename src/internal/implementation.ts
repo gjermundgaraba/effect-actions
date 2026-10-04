@@ -309,18 +309,15 @@ const undeclared = (action: Action.Any, error: ErasedValue): Error =>
  * `before` checked for `action`: a failure the action does not declare, as a hook typed over
  * several actions may fail with another's error, is a defect naming the action and its `_tag`.
  * The check runs as an Effect, as every codec does, so an error schema checked asynchronously
- * passes; the hook's own error is failed with, keeping its trace.
+ * passes; a declared failure keeps its whole cause, its trace and any defect beside it.
  */
 const guarded = (action: Action.Any, before: ErasedBefore) => {
   const declared = Schema.decodeUnknownEffect(Schema.toType(Schema.Union(projectedErrors(action))));
 
   return () =>
     before(action).pipe(
-      Effect.catch((error) =>
-        Effect.matchEffect(declared(error), {
-          onFailure: () => Effect.die(undeclared(action, error)),
-          onSuccess: () => Effect.fail(error),
-        }),
+      Effect.tapError((error) =>
+        Effect.catch(Effect.asVoid(declared(error)), () => Effect.die(undeclared(action, error))),
       ),
     );
 };
