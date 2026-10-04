@@ -12,8 +12,8 @@ tested. Every endpoint and tool declares the built-in `InvalidInput` (400), `Una
 own, and a request's own values win over startup ones. CLI flags come from each action's input,
 and a command runs on Effect's own `NodeRuntime.runMain`, printing a failure on stderr as the
 JSON HTTP sends. The client modules merge into `ActionHttp` and `ActionCli`, clients and
-`Testing` are Effect-only, and `ActionCatalog` and `TestingClient` are removed. `mcp.text` moves
-to `ActionMcp`'s `tools` option, and stdio also serves the revisions back to 2024-11-05, so
+`Testing` are Effect-only, and `ActionCatalog` and `TestingClient` are removed. `mcp.text` becomes
+the `text` hint, and stdio also serves the revisions back to 2024-11-05, so
 Claude Code and Codex connect. The docs say where builders and your own services are built, and
 show one MCP URL for signed-out and signed-in callers.
 
@@ -40,9 +40,9 @@ ActionMcp.layerHttp([users, pages], { name, version, path: "/mcp", errors, befor
 const users = Action.implement([GetUser, RenameUser], build, authorize);
 const Http = ActionHttp.make([GetUser, RenameUser]);
 ActionHttp.layer(Http, users);
-const ReadPage = Action.make("readPage", { ... });
+const ReadPage = Action.make("readPage", { ..., hints: { text: "markdown" } });
 const pages = Action.implement(ReadPage, read, authorize);
-ActionMcp.layerHttp([users, pages], { name, version, tools: { readPage: { text: "markdown" } } });
+ActionMcp.layerHttp([users, pages], { name, version });
 ```
 
 Each area below lists what is renamed or removed, then what changes without a rename.
@@ -54,7 +54,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                                                 |
 | `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command   |
 | `mcp.readOnly`                                                            | `access: "read"`                                                                                                                                                                                                                 |
-| `mcp: { text: "markdown" }` on `Action.make`                              | `tools: { readPage: { text: "markdown" } }` in the `ActionMcp.layerHttp` or `runStdio` options, keyed by action name: a contract holds no surface's options                                                                      |
+| `mcp: { text: "markdown" }` on `Action.make`                              | `hints: { text: "markdown" }` on `Action.make`, which every MCP endpoint and `Testing.mcpClient` read                                                                                                                            |
 | `mcp: false`                                                              | A list of the actions that are tools, beside the contracts, and `Action.share(Tools, app)` given to `ActionMcp` and `ActionToolkit`: an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
 | `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                            |
 | `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, Access>`; `Action.Options` has none                                                                                                                                                 |
@@ -156,8 +156,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 - A helper passing implementations it is given beside its own takes them as one type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spreads it,
   `[...apps, double]`, or takes one, `<App extends Action.AnyImplementation>(app: App)`, and
-  lists it, `[app, double]`, as 0.8.0's `Http.layer([app, double])` took it. MCP's `tools`
-  then refuses the helper's own keys: spread a list where `tools` is given. A helper may share
+  lists it, `[app, double]`, as 0.8.0's `Http.layer([app, double])` took it. A helper may share
   actions its type parameters stand for, `Action.share([action], app)`. A value typed
   `Action.AnyImplementation` owes `unknown`, on every surface's layer.
 - An implementation is served, shared and called only by the installed copy of the package
@@ -301,25 +300,14 @@ Each area below lists what is renamed or removed, then what changes without a re
   as `structuredContent` too, where a host preferring structured content showed the model the
   rest without the field, and listed an `outputSchema` without the field. A program reading
   the rest as structured content reads the JSON of the second text block instead;
-  `Testing.mcpClient`, given the endpoint's `tools`, does. Every other surface serves the whole
-  success. `text` is typed by the served action: a top-level string field of its encoded
-  success, optional or not, which a scalar, array, union or record success does not have.
+  `Testing.mcpClient`, reading the same hint, does. Every other surface serves the whole
+  success. `text` is typed by `make`: a top-level string field of the encoded success,
+  optional or not, which a scalar, array, union or record success does not have.
   0.8.0 accepted a union member's field, or any name for a record, and then failed the layer
   build. Where the types cannot tell, as for an erased success or a union of one struct, the
   build still fails with
   `MCP tool '<name>' cannot send '<field>' as text: it is not a top-level property of its success`.
-  Make such a success one struct, or leave its tool out of `tools`.
-- `ActionMcp.Options<A>`, `ActionMcp.LayerHttpOptions<A>` and `Testing.McpClientOptions<A>`
-  take the served actions as `A`, which types `tools`; `A` defaults to any action. A `tools`
-  key that no served action has is a type error, or `Unknown tools: <names>` thrown by
-  `layerHttp` or `runStdio` where the types did not check it. For an argument chosen by a
-  condition, the types accept a key any choice serves, and a choice that does not serve it
-  throws: choose `tools` by the same condition. A helper spreading its type parameter beside
-  its own implementations has the entries of its own actions typed, and other keys left to
-  that throw and the layer build. Declare a shared `tools` constant `as const`, or `text`
-  widens to `string`. One constant serves the endpoint and every `Testing.mcpClient` that
-  calls one of its actions, as a client reads only the entries of the actions it calls; give
-  a client that calls none of them no `tools`.
+  Make such a success one struct, or drop the hint.
 
 #### Toolkit
 
@@ -405,7 +393,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | 0.8.0                                                                                                                                     | 0.10.0                                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Testing.httpClient(api, handler)`, `Testing.Handler`                                                                                     | `Testing.layer(handler)`: the native `HttpClient`, answered by the web handler, on which `ActionHttp.client(Http)` and every other client call it; `Testing.layer(routes)` builds the routes itself                                                                                                                                              |
-| `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient?, tools? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. Given the endpoint's `tools`, a text field's tool has its success read from its text blocks                                                                                                               |
+| `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. An action with a `text` hint has its success read from its text blocks                                                                                                                                            |
 | `Testing.mcpRequest({ url, method, params, headers })`, a `Request`                                                                       | `Testing.mcpRequest(method, params?, { url?, headers? })`, an Effect of the response on the `HttpClient`                                                                                                                                                                                                                                         |
 | `Testing.McpCallOptions`, `McpCallResult`, `McpRequestParams`, `McpRequestValue`                                                          | None: `mcpClient` types each call, and `params` are JSON                                                                                                                                                                                                                                                                                         |
 | `TestingClient.withMcpClient`, `McpClientOptions`, the optional `@modelcontextprotocol/client` peer                                       | Depend on the official client, `new Client(info, { versionNegotiation: { mode: { pin: "2026-07-28" } } })`. Give its transport `fetch: (input, init) => web.handler(new Request(input, init))`, with `web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)))` as 0.8.0's tests built it; or use `Testing.mcpClient` |

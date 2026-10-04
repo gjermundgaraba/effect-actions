@@ -14,8 +14,8 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `layerHttp(implementations, options)` | Serve implementations at a Streamable HTTP endpoint.                                               |
 | `runStdio(implementations, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
 
-The options, exported as `LayerHttpOptions<A>` and `Options<A>` (the server's, which `LayerHttpOptions` extends), are the native
-`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`, plus `tools`, which the served actions `A` type. The native ones pass through unchanged; `path` gains a default. Each implementation brings its
+The options, exported as `LayerHttpOptions` and `Options` (the server's, which `LayerHttpOptions` extends), are the native
+`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`. They pass through unchanged; `path` gains a default. Each implementation brings its
 hook ([Action.md](Action.md#implementations)); authentication is middleware the host provides
 around `layerHttp` ([Authentication.md](Authentication.md)).
 
@@ -27,7 +27,6 @@ around `layerHttp` ([Authentication.md](Authentication.md)).
 | `extensions`                         | Optional native server capability extensions.                                  |
 | `path`                               | HTTP endpoint path; HTTP only, defaults to `/mcp`.                             |
 | `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only, not CORS configuration.            |
-| `tools`                              | Each action's tool options, by action name; `text` names its text field.       |
 
 `implementations` is one implementation or a list. Every tool declares its action's errors plus the
 built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. `layerHttp`'s layer and `runStdio`'s
@@ -148,23 +147,24 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 
 ### Text fields
 
-`tools` names, for an action's tool, a string field of its encoded success, the text field,
-which MCP sends once, as it is, before the JSON of the rest: a page of Markdown, rather than
+An action's `text` hint names a string field of its encoded success, the text field, which
+its tool sends once, as it is, before the JSON of the rest: a page of Markdown, rather than
 the same text JSON-escaped twice. The tool's results carry no structured content, so a host
 that prefers structured content shows the model the text instead.
 
 ```ts
-// ReadPage succeeds with { markdown: Schema.String, next: Schema.optionalKey(Schema.String) }.
-const readPage = Action.implement(ReadPage, read, authorize);
-
-const tools = { readPage: { text: "markdown" } } as const;
-
-const mcp = ActionMcp.layerHttp(readPage, { name: "pages", version: "1.0.0", tools });
+const ReadPage = Action.make("readPage", {
+  description: "Read one page of a document.",
+  access: "read",
+  input: { url: Schema.String },
+  success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
+  hints: { text: "markdown" },
+});
 ```
 
 A success is then `content: [<markdown>, <JSON of { next }>]`, without `structuredContent`, and
-the tool lists no `outputSchema`. A test client takes the same `tools`,
-`Testing.mcpClient([ReadPage], { tools })` ([Testing.md](Testing.md#rules)).
+the tool lists no `outputSchema`. Every endpoint serving the action sends it so, and
+`Testing.mcpClient` reads it so ([Testing.md](Testing.md#rules)).
 
 ## Rules
 
@@ -179,8 +179,7 @@ the tool lists no `outputSchema`. A test client takes the same `tools`,
 - A tool's `inputSchema` is its input's JSON Schema over HTTP and on stdio from 2025-06-18 on, closed with `additionalProperties: false` where the input declares its fields; a record's lists its value schema there instead. On 2025-03-26 and 2024-11-05, Effect's adapters list only its root's `type`, `properties` and `required`: no `additionalProperties`, so a host sees the input open, and no `$defs`, so a field's `$ref`, as an identified or recursive schema has, resolves nowhere. Undeclared arguments are refused on every revision, as invalid arguments.
 - A success is sent as it is. On 2026-07-28, over HTTP and stdio, it is `structuredContent: <encoded success>`, of any JSON type (`null` for an action that returns nothing), and one text block holding the same JSON, and the tool's `outputSchema` describes the encoded success. Stdio's earlier revisions structure less: 2025-11-25 and 2025-06-18 carry only an object as `structuredContent`, and list only an object-rooted `outputSchema`; 2025-03-26 and 2024-11-05 carry neither. A success they do not structure is text alone: its JSON, or a string success the string itself. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
 - With a text field, a success holding it as a string is `content: [<field>, <JSON of the rest>]`: the field once, verbatim, and the rest once. A success without the field as a string, such as one that omits an optional field, is `content: [<JSON of the whole>]`. Neither carries `structuredContent`, on any revision, and the tool lists no `outputSchema`, so a host that prefers structured content has none and shows the model the text. The tool's failures are answered as any tool's; every other surface serves the whole success ([guarantees.md](guarantees.md#wire-behavior)).
-- A text field must be a top-level property of the success's JSON Schema: a field of a struct or class success. The types accept only a string field, optional or not, of the named action's encoded success, and only a served action's name as a key of `tools`. Where the types could not tell, as for a union of one struct or an erased success, building the layer refuses a field that is not such a property; one that is not a string never holds one, so every success is sent whole. `layerHttp` and `runStdio` throw `Unknown tools: <names>` on a key no served action has where the types did not check it.
-- For an argument chosen by a condition, `debug ? [status, dump] : [status]`, the types accept a key any choice serves, and a choice that does not serve it throws `Unknown tools` at the call. For a helper's own type parameter, passed alone or spread into a list (`layerHttp([...apps, status], options)`), they check the entries of the helper's own actions, and leave other keys to that throw and to the layer build. Listed as one element, `[app, status]`, it makes them refuse the helper's own keys too: take the implementations as a list and spread it.
+- A text field must be a top-level property of the success's JSON Schema: a field of a struct or class success. `Action.make`'s types accept only a string field, optional or not, of the encoded success. Where they could not tell, as for a union of one struct, an erased success, or a hint typed only as `string`, building the layer refuses a field that is not such a property; one that is not a string never holds one, so every success is sent whole.
 - On 2026-07-28, over HTTP and over stdio, the native server adds `_meta["io.modelcontextprotocol/serverInfo"]` and `resultType: "complete"` to every result, beside a tool result's own fields (`isError: false` on a success); the earlier revisions stdio speaks add neither. `serverInfo` is the options' `name`, `version`, `description`, `websiteUrl` and `icons`, as given, so a 2026-07-28 result's encoded size is the size of its own fields plus a fixed overhead per endpoint or subprocess.
 - Invalid arguments are answered by the native `McpServer`: from 2025-11-25 on, an `isError` result with a message for the model, such as `Invalid parameters for tool 'greet': Expected string\n  at ["name"]`; on earlier stdio revisions, a JSON-RPC error. HTTP's `InvalidInput` does not apply.
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
@@ -210,11 +209,10 @@ the tool lists no `outputSchema`. A test client takes the same `tools`,
 - An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.
 - A disallowed Origin receives 401 instead: wrapping authentication rejected it before the native Origin check. A Host or Origin check that must run before authentication is global middleware ([Authentication.md](Authentication.md#rules)).
 - Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.
-- Layer build dies with `MCP tool '<name>' cannot send '<field>' as text: it is not a top-level property of its success`: the success's JSON Schema has no such top-level property, and the types did not tell. The success is a union of one struct, which they take for a struct, or they could not read it, as for an erased success or an action a helper's type parameter stands for. Name a top-level field, make the success one struct, or leave the tool out of `tools`.
-- A tool sends every success whole, as one JSON text block without `structuredContent`: its `text` names a field that is not a string, where the types could not read the success, as for an erased one or an action a helper's type parameter stands for. Name a string field.
-- Type error on `text` in `tools`, such as `Type '"words"' is not assignable to type '"markdown" | "note"'`, or, for a success with no text field, to `undefined` or `never`: the field is not a top-level string field of the action's encoded success. It has another type or does not exist, or the success is not one struct: a scalar, an array, a union or a record. Name a string field, or give the tool no `text`.
-- `Object literal may only specify known properties` on a key of `tools`, or `Unknown tools: <names>` thrown at `layerHttp` or `runStdio` where the types did not check the key: no served action has that name. Name the action, or drop the key. For an argument chosen by a condition, the choice that throws does not serve that action: choose `tools` by the same condition, `tools: debug ? { dump: { text: "markdown" } } : {}`, or split the call.
-- `Type 'string' is not assignable to type '"markdown" | ...'` for `tools` declared apart from the call: its `text` widened to `string`. Declare it `as const`.
-- A client finds no `structuredContent` in a tool's result, and a field of the success missing from the JSON of its text: the tool has a text field, sent raw as the first text block, with the rest as JSON in the second. Read them there, or give `Testing.mcpClient` the endpoint's `tools`.
+- Layer build dies with `MCP tool '<name>' cannot send '<field>' as text: it is not a top-level property of its success`: the success's JSON Schema has no such top-level property, and the types did not tell. The success is a union of one struct, which they take for a struct, or they could not read it, as for an erased success or an action a helper's type parameter stands for. Name a top-level field, make the success one struct, or drop the hint.
+- A tool sends every success whole, as one JSON text block without `structuredContent`: its `text` hint names a field that is not a string, where the types could not read the success or the hint, as for an erased success or a hint typed only as `string`. Name a string field.
+- Type error on `text` in `hints` at `Action.make`, such as `Type '"words"' is not assignable to type '"markdown" | "note"'`, or, for a success with no text field, to `undefined` or `never`: the field is not a top-level string field of the action's encoded success. It has another type or does not exist, or the success is not one struct: a scalar, an array, a union or a record. Name a string field, or drop the hint.
+- A client other than `Testing.mcpClient` finds no `structuredContent` in a tool's result, and a field of the success missing from the JSON of its text: the action has a `text` hint, so the field is sent raw as the first text block, with the rest as JSON in the second. Read them there.
+- `Object literal may only specify known properties, and 'tools'`: a text field is the action's `text` hint. Move it to `Action.make`'s `hints`.
 - `Object literal may only specify known properties, and 'protocols'`: the revisions are fixed. Delete the option.
 - `Object literal may only specify known properties, and 'before'`: surfaces take no hook. Pass it to `Action.implement`.

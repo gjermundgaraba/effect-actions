@@ -32,13 +32,13 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `Handler`, `Before`, `Access`                  | Typed handlers, hooks `(action) => Effect<void, Refusal \| E, R>`, `"read"`/`"write"`. |
 | `Options`, `Hints`                             | What `make` takes, and its tool hints.                                                 |
 
-| Option                  | Meaning                                                          |
-| ----------------------- | ---------------------------------------------------------------- |
-| `description`, `access` | Required description and `"read"` / `"write"`.                   |
-| `input`                 | Optional schema or fields; omitted or `{}`, an empty object.     |
-| `success`               | Optional schema or fields; omission means `Schema.Void`.         |
-| `errors`                | Declared error codecs; defaults to none.                         |
-| `hints`                 | Tool hints for MCP and the Toolkit; each defaults from `access`. |
+| Option                  | Meaning                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `description`, `access` | Required description and `"read"` / `"write"`.                                             |
+| `input`                 | Optional schema or fields; omitted or `{}`, an empty object.                               |
+| `success`               | Optional schema or fields; omission means `Schema.Void`.                                   |
+| `errors`                | Declared error codecs; defaults to none.                                                   |
+| `hints`                 | Tool hints for MCP and the Toolkit, each defaulting from `access`, and MCP's `text` field. |
 
 `before` is required. It receives the selected action and fails with a `Refusal`, or with an
 error `E` every action of its implementation declares, such as a rate limit; every surface runs
@@ -338,7 +338,7 @@ console.log(
 - `access` is also the tool's read-only hint, which no option overrides, so authorization and what MCP clients are told cannot disagree. Derive authorization from `access`, never from a tool hint.
 - A contract says nothing about where it is served. HTTP serves its binding's actions among the implementations passed to it; MCP, a Toolkit and `ActionCli.make` serve every action of theirs. To keep an action off HTTP, leave it out of `ActionHttp.make`, whatever implementation holds it; to keep it off MCP, leave its implementation out of the MCP layer.
 - An action kept off MCP, a Toolkit or a CLI this way, but sharing a builder with served ones, is `share`d from their implementation, so the builder still runs once. HTTP needs no `share`: its binding already leaves the action out. List the actions that are tools in one place, beside the contracts, `export const Tools = [GetUser, RenameUser] as const`, and give every MCP endpoint and Toolkit `share(Tools, users)`: an action added later is no tool until it is listed. List an action only where the model may hold what it takes and returns: a tool call passes both through the model's context, and records its input on a span ([guarantees.md](guarantees.md#observability)).
-- `make` accepts only the keys listed above, and `hints` only `destructive`, `idempotent` and `openWorld`. An unknown key is a compile error, beside known ones too.
+- `make` accepts only the keys listed above, and `hints` only `destructive`, `idempotent`, `openWorld` and `text`. An unknown key is a compile error, beside known ones too. `text` names a top-level string field of the encoded success, which MCP sends as text ([ActionMcp.md](ActionMcp.md#text-fields)); every other surface ignores it.
 - An `undefined` option takes its default, as an omitted one does. One that may be either is typed as either: with `success: enabled ? Schema.String : undefined`, or the same through a conditional spread, the success is `string | void`. The same holds for `input` and `errors`.
 - Options typed as a whole (`Parameters<typeof Action.make>[1]`) are not checked. Their action's schemas are as wide as what may run, so its success is `unknown`.
 - MCP input must be one object with keys, an identified, recursive or suspended root included. Scalar, array or union input is fine for HTTP and for a native Toolkit, but `ActionMcp` refuses it when `layerHttp` or `runStdio` is called, naming the action ([ActionMcp.md](ActionMcp.md#rules)). Success and error schemas may be any shape.
@@ -396,7 +396,7 @@ console.log(
 - `'readOnly' does not exist in type 'Hints'` at `make`, or `Type 'true' is not assignable to type 'never'` on `readOnly` beside another hint: a tool's read-only hint is its `access`. Set `access` instead.
 - Type error on `hints.destructive` of a read action: a read is never destructive. Drop the hint, or make the action a write.
 - `Type '...' is not assignable to type 'never'` on a key at `make`, in `hints` too: an option or hint it does not take, or a misspelled one.
-- `Type 'H' is not assignable to type 'H & ...'` on `hints` at `make`, where `H` is a helper's type parameter, as in `<const H extends Action.Hints>(hints: H)`: the hint check cannot read hints a type parameter stands for, so it refuses them. An action's type carries no hint types, so type the parameter `Action.Hints`; the helper loses nothing.
+- `Type 'H' is not assignable to type 'H & ...'` at `make`, where `H` is a helper's type parameter, as in `<const H extends Action.Hints>(hints: H)`: the hint check cannot read hints a type parameter stands for, so it refuses them. An action's type carries no hint types, so type the parameter `Action.Hints`; the helper loses nothing.
 - Type error on `errors` at `make`, `... is not assignable to type 'readonly never[]'` or naming the remaining errors: it lists a built-in error. Drop it; every surface declares it, and a handler may fail with it anyway.
 - `Object literal may only specify known properties, and 'before' does not exist` at `implement`: the hook is the third argument itself, not an option of an object.
 - `make` throws `Duplicate error _tag in action "<name>": <tag>`: two of the action's errors, or members of a union among them, encode with one `_tag`, so a client could not tell them apart. Rename one.

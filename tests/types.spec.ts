@@ -1643,10 +1643,10 @@ export const hintTypes = (built: Action.Hints, dangerous: boolean) => {
   // The check cannot read hints a helper's type parameter stands for, so it refuses them. An
   // action's type carries no hint types: a helper typing its parameter `Action.Hints` compiles.
   const generic = <const H extends Action.Hints>(hints: H) =>
+    // @ts-expect-error Type 'H' is not assignable to type 'H & ...'.
     Action.make("generic", {
       description: "Hints of a type parameter",
       access: "write",
-      // @ts-expect-error Type 'H' is not assignable to type 'H & ...'.
       hints,
     });
 
@@ -1681,11 +1681,12 @@ export const servedRequirementTypes = () => {
     hint: { idempotent: true },
   });
 
-  // Every hint is resolved on the contract.
+  // Every hint is resolved on the contract; `text` has no default.
   expectTypeOf<(typeof hintsApp)["actions"][number]["hints"]>().toEqualTypeOf<{
     readonly destructive: boolean;
     readonly idempotent: boolean;
     readonly openWorld: boolean;
+    readonly text: string | undefined;
   }>();
 };
 

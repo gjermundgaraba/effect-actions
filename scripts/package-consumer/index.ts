@@ -75,10 +75,12 @@ if (served.listed !== 200) throw new Error("MCP request failed");
 if (!served.raw.includes('"structuredContent":"Hello, Ada!"'))
   throw new Error(`Unexpected MCP result: ${served.raw}`);
 
+// A published text hint names a string field of the success.
 const Page = Action.make("page", {
   description: "Read a page",
   access: "read",
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
+  hints: { text: "markdown" },
 });
 
 const page = Action.implement(
@@ -87,17 +89,15 @@ const page = Action.implement(
   Action.allowAll,
 );
 
-const tools = { page: { text: "markdown" } } as const;
+void ActionMcp.layerHttp(page, { name: "pages", version: "0" });
 
-const checkMcpTypes = <const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps) => {
-  // @ts-expect-error Published tool options name a string field of the success.
-  ActionMcp.layerHttp(page, { name: "pages", version: "0", tools: { page: { text: "body" } } });
-
-  // A helper's own type parameter spread beside its implementation keeps that entry typed.
-  ActionMcp.layerHttp([...apps, page], { name: "pages", version: "0", tools });
-};
-
-void checkMcpTypes;
+Action.make("misnamed", {
+  description: "Read a page",
+  access: "read",
+  success: { markdown: Schema.String },
+  // @ts-expect-error `body` is no field of the success.
+  hints: { text: "body" },
+});
 
 // A consumer's binding is a native HttpApi: Effect's own generator documents it.
 if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))

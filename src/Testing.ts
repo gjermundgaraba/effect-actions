@@ -27,7 +27,7 @@ import type * as Action from "./Action.js";
 import { assertOnce, projectedErrors } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
 import { type BuiltIn, refusals } from "./internal/errors.js";
-import { defaultPath, type Params, statelessRequest, type ToolOptions } from "./internal/mcp.js";
+import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
@@ -109,11 +109,8 @@ export function layer(
   );
 }
 
-/**
- * Where `mcpClient` sends, through what client, and how the endpoint sends the successes of
- * the actions `A`.
- */
-export interface McpClientOptions<A extends Action.Any = Action.Any> {
+/** Where `mcpClient` sends, and through what client. */
+export interface McpClientOptions {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
    * the default `ActionMcp.layerHttp` path.
@@ -121,23 +118,7 @@ export interface McpClientOptions<A extends Action.Any = Action.Any> {
   readonly url?: string;
   /** Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token, say. */
   readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
-  /**
-   * The endpoint's `tools`, as `ActionMcp.layerHttp` takes them: the success of a tool with
-   * a text field is read from its text blocks, the field raw, the rest as JSON. An entry of
-   * an action the client does not call is not read.
-   */
-  readonly tools?: ToolOptions<A>;
 }
-
-/**
- * The options of a client of `Actions`, read by a fixed key from a type distributed over
- * `Actions`, so where `Actions` is a helper's own type parameter, spread into a list, the
- * compiler reads them through the helper's constraint: `tools` checks the entries of the
- * helper's own actions, and takes any other name.
- */
-type ClientOptions<Actions extends ReadonlyArray<Action.Any>> = (Actions extends unknown
-  ? { readonly typed: McpClientOptions<Actions[number]> }
-  : never)["typed"];
 
 /** Where `mcpRequest` sends, and with what headers. */
 export interface McpRequestOptions {
@@ -249,17 +230,19 @@ const failWith = (errors: Action.Any["errors"], text: string, otherwise: McpCall
   );
 
 /**
- * The tool call of `action` with `input` on `client`, sending to `url`, whose success has
- * the text field `field`, if any.
+ * The tool call of `action` with `input` on `client`, sending to `url`, whose success the
+ * tool sends as text when the action has a `text` hint.
  */
 const callTool = (
   client: HttpClient.HttpClient,
   url: string,
   action: Action.Any,
-  field: string | undefined,
   input: Action.Any["input"]["Type"],
 ): Effect.Effect<unknown, unknown> => {
-  const { name } = action;
+  const {
+    name,
+    hints: { text: field },
+  } = action;
 
   const other = (answer: string) =>
     new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
@@ -319,18 +302,18 @@ const callTool = (
  * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
  * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
  * encoded with the action's schema, and the success decoded, from the text blocks of a tool
- * whose text field the endpoint's `tools` name. A declared error the tool returns, the action's own or a
+ * whose action has a `text` hint. A declared error the tool returns, the action's own or a
  * refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
  * with. The argument may be omitted when `{}` is a valid input. Requires the native
  * `HttpClient`, such as the one `layer` provides.
  */
 export function mcpClient<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions,
-  options?: NoInfer<ClientOptions<Actions>>,
+  options?: McpClientOptions,
 ): Effect.Effect<McpClient<Actions>, never, HttpClient.HttpClient>;
 export function mcpClient(
   actions: ReadonlyArray<Action.Any>,
-  { url = defaultPath, transformClient = identity, tools = {} }: McpClientOptions = {},
+  { url = defaultPath, transformClient = identity }: McpClientOptions = {},
 ): Effect.Effect<
   {
     readonly [name: string]: (...input: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>;
@@ -345,14 +328,10 @@ export function mcpClient(
 
     return Object.fromEntries(
       actions.map((action) => {
-        const field = Object.hasOwn(tools, action.name) ? tools[action.name]?.text : undefined;
-
         return [
           action.name,
           (...args: ReadonlyArray<Action.Any["input"]["Type"]>) =>
-            Effect.flatMap(inputOf(action, args), (input) =>
-              callTool(client, url, action, field, input),
-            ),
+            Effect.flatMap(inputOf(action, args), (input) => callTool(client, url, action, input)),
         ];
       }),
     );

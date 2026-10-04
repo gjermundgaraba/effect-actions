@@ -13,14 +13,11 @@ import {
 } from "effect";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
 import type { HttpRouter } from "effect/http";
-import type * as Action from "./Action.js";
-import { assertKnown } from "./internal/actions.js";
-import { defaultPath, httpProtocol, isJsonObject, type ToolOptions } from "./internal/mcp.js";
+import { defaultPath, httpProtocol, isJsonObject } from "./internal/mcp.js";
 import { recordStepUp } from "./internal/refusal.js";
 import { onStderr } from "./internal/console.js";
 import { bindTools, type Projection } from "./internal/tools.js";
 import {
-  type ActionOf,
   type AnyImplementation,
   type BuildContext,
   type BuildError,
@@ -32,28 +29,17 @@ import {
 } from "./internal/implementation.js";
 
 /**
- * An MCP server of the actions `A`, over HTTP or stdio: every native `McpServer.layerStdio`
- * option except `protocols`, the server information, `instructions` and `extensions`, and
- * the options of each action's tool.
+ * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option except
+ * `protocols`, the server information, `instructions` and `extensions`.
  */
-export interface Options<A extends Action.Any = Action.Any> extends Omit<
-  Parameters<typeof McpServer.layerStdio>[0],
-  "protocols"
-> {
-  /**
-   * The options of each action's tool, keyed by the action's name:
-   * `{ readPage: { text: "markdown" } }`. A key no served action has is refused.
-   */
-  readonly tools?: ToolOptions<A>;
-}
+export type Options = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
 
 /**
- * One Streamable HTTP MCP endpoint of the actions `A`: `Options`, and every native
- * `McpServer.layerHttp` option except `protocols`, `allowedOrigins` among them, with `path`
- * defaulting to `/mcp`.
+ * One Streamable HTTP MCP endpoint: `Options`, and every native `McpServer.layerHttp` option
+ * except `protocols`, `allowedOrigins` among them, with `path` defaulting to `/mcp`.
  */
-export interface LayerHttpOptions<A extends Action.Any = Action.Any>
-  extends Options<A>, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
+export interface LayerHttpOptions
+  extends Options, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
 }
@@ -72,21 +58,6 @@ const stdioProtocols = [
   McpProtocol.v2025_03_26,
   McpProtocol.v2024_11_05,
 ] as const;
-
-/**
- * The options of a server of `Apps`, over HTTP and over stdio, whose `tools` the served actions
- * type. Each is read by a fixed key from a type distributed over `Apps`, so where `Apps` is a
- * helper's own type parameter, alone or spread into a list, the compiler reads the options
- * through the helper's constraint: `tools` checks the entries of the helper's own actions, and
- * takes any other name, which the call checks against the served actions and the layer build
- * against the success. A union argument takes the options of any of its members.
- */
-type ServerOptions<Apps extends Served> = Apps extends unknown
-  ? {
-      readonly http: LayerHttpOptions<ActionOf<Member<Apps>>>;
-      readonly stdio: Options<ActionOf<Member<Apps>>>;
-    }
-  : never;
 
 /**
  * The native server supplies its own request context to every tool call, and over HTTP
@@ -223,34 +194,22 @@ const withTexts = (registry: Registry, texts: ReadonlyMap<string, string>): Regi
   },
 });
 
-/**
- * The text field of each tool `tools` names, by action name. A key no served action has is
- * refused, as a stale option cannot outlive its action.
- */
-const textFields = (
-  apps: ReadonlyArray<AnyImplementation>,
-  tools: ToolOptions<Action.Any>,
-): ReadonlyMap<string, string> => {
-  assertKnown(
-    "tools",
-    Object.keys(tools),
-    apps.flatMap((app) => app.actions.map((action) => action.name)),
-  );
-
-  return new Map(
-    Object.entries(tools).flatMap(([name, options]) =>
-      options?.text === undefined ? [] : [[name, options.text] as const],
+/** The text hint of each of `apps`' actions that has one, by action name. */
+const textFields = (apps: ReadonlyArray<AnyImplementation>): ReadonlyMap<string, string> =>
+  new Map(
+    apps.flatMap((app) =>
+      app.actions.flatMap(({ name, hints }) =>
+        hints.text === undefined ? [] : [[name, hints.text] as const],
+      ),
     ),
   );
-};
 
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
-  tools: ToolOptions<Action.Any> = {},
 ) => {
   const binding = bindTools(apps, projection);
-  const texts = textFields(apps, tools);
+  const texts = textFields(apps);
 
   assertObjectInputs(apps);
 
@@ -289,7 +248,7 @@ const server = <Out, R>(
  */
 export function layerHttp<const Apps extends Served>(
   implementations: Apps,
-  options: NoInfer<ServerOptions<Apps>["http"]>,
+  options: LayerHttpOptions,
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
@@ -297,7 +256,7 @@ export function layerHttp<const Apps extends Served>(
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", HttpToolRequestContext<RequestContext<Member<Apps>>>>
 >;
-export function layerHttp(apps: Served, { tools, ...options }: LayerHttpOptions) {
+export function layerHttp(apps: Served, options: LayerHttpOptions) {
   return server(
     toList(apps),
     McpServer.layerHttp({
@@ -305,7 +264,6 @@ export function layerHttp(apps: Served, { tools, ...options }: LayerHttpOptions)
       path: options.path ?? defaultPath,
       protocols: [httpProtocol],
     }),
-    tools,
   );
 }
 
@@ -321,17 +279,16 @@ export function layerHttp(apps: Served, { tools, ...options }: LayerHttpOptions)
  */
 export function runStdio<const Apps extends Served>(
   implementations: Apps,
-  options: NoInfer<ServerOptions<Apps>["stdio"]>,
+  options: Options,
 ): Effect.Effect<
   void,
   BuildError<Member<Apps>> | Cause.IllegalArgumentError,
   BuildContext<Member<Apps>> | Stdio.Stdio | ToolRequestContext<RequestContext<Member<Apps>>>
 >;
-export function runStdio(apps: Served, { tools, ...options }: Options) {
+export function runStdio(apps: Served, options: Options) {
   const transport = server(
     toList(apps),
     McpServer.layerStdio({ ...options, protocols: stdioProtocols }),
-    tools,
   );
 
   // The native transport ends by interrupting the fiber that built it once the host closes

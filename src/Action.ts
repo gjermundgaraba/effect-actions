@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema } from "effect";
+import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema, type Types } from "effect";
 import type { Scope } from "effect";
 import {
   assertErrors,
@@ -90,7 +90,47 @@ export interface Hints {
   readonly idempotent?: boolean;
   /** `openWorldHint`; defaults to `true`. */
   readonly openWorld?: boolean;
+  /**
+   * MCP only: a top-level string field of the encoded success, which the tool sends once,
+   * raw, as the first text block, then the JSON of the rest as the second, with no
+   * `structuredContent` and no listed `outputSchema`, so every host shows the model both: a
+   * body the model reads as it is, such as a page of Markdown. Defaults to none.
+   */
+  readonly text?: string | undefined;
 }
+
+/** The keys `E` declares, leaving out an index signature's. */
+type DeclaredKey<E> = keyof {
+  [
+    K in keyof E as string extends K
+      ? never
+      : number extends K
+        ? never
+        : symbol extends K
+          ? never
+          : K
+  ]: E[K];
+};
+
+/**
+ * The fields of an encoded success `E` its tool may send as text: the top-level string fields
+ * a struct or class declares, optional ones included, and not the keys of an index signature,
+ * such as a struct with rest's record. None of any other success, a union or a record among
+ * them, whose JSON Schema has no top-level property for it. An erased success may name any;
+ * the MCP server refuses what the types cannot see when its layer is built.
+ */
+type TextField<E> = unknown extends E
+  ? string
+  : true extends Types.IsUnion<E>
+    ? never
+    : E extends ReadonlyArray<unknown>
+      ? never
+      : E extends object
+        ? {
+            readonly [K in DeclaredKey<E>]-?: Required<E>[K] extends string ? K : never;
+          }[DeclaredKey<E>] &
+            string
+        : never;
 
 /**
  * The failures every surface declares and any handler may fail with, and the refusals among
@@ -147,6 +187,20 @@ type UnknownHints<O> = O extends { readonly hints?: infer H }
 type KnownHints<O> = { readonly hints?: { readonly [K in UnknownHints<O>]: never } };
 
 /**
+ * A `text` hint naming a top-level string field of the encoded success. One typed only as
+ * `string`, such as hints built apart, is left for the MCP server to check.
+ */
+type TextHint<O> = O extends { readonly hints?: { readonly text?: infer F } }
+  ? string extends F
+    ? unknown
+    : {
+        readonly hints?: {
+          readonly text?: TextField<SchemaOf<O, "success", typeof Schema.Void>["Encoded"]>;
+        };
+      }
+  : unknown;
+
+/**
  * The built-in errors, refused in `errors`: every surface declares them already. The types
  * refuse only the built-ins themselves; `make` refuses, when called, an error of your own
  * that encodes with a built-in `_tag`.
@@ -159,7 +213,7 @@ type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
 
 /**
  * The rules `make` checks beyond `Options`: every option and hint known, a read never
- * destructive, and no built-in error listed. Options that fail `Options` itself infer as
+ * destructive, a `text` hint a string field of the success, and no built-in error listed. Options that fail `Options` itself infer as
  * `Options`, whose error the compiler already reports, so they are not checked again.
  */
 type Rules<O> = Options extends O
@@ -167,6 +221,7 @@ type Rules<O> = Options extends O
   : Known<O, Options> &
       OwnErrors<O> &
       KnownHints<O> &
+      TextHint<O> &
       (O extends { readonly access: "read" }
         ? { readonly hints?: { readonly destructive?: never } }
         : unknown);
@@ -257,6 +312,7 @@ export function make(name: string, options: Options): Any {
     destructive: access === "write" && (options.hints?.destructive ?? true),
     idempotent: options.hints?.idempotent ?? false,
     openWorld: options.hints?.openWorld ?? true,
+    text: options.hints?.text,
   };
 
   const action: Any = {

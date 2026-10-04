@@ -33,9 +33,9 @@ const page = (access: Action.Access) => ({
   access,
 });
 
-const Fetch = Action.make("fetch", page("read"));
+const Fetch = Action.make("fetch", { ...page("read"), hints: { text: "body" } });
 
-const Store = Action.make("store", page("write"));
+const Store = Action.make("store", { ...page("write"), hints: { text: "body" } });
 
 // Structured twins: every answer but success must be the one a text tool gives.
 const FetchJson = Action.make("fetchJson", page("read"));
@@ -48,6 +48,7 @@ const Head = Action.make("head", {
   access: "read",
   input: { url: Schema.String },
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
+  hints: { text: "markdown" },
 });
 
 const Excerpt = Action.make("excerpt", {
@@ -55,6 +56,7 @@ const Excerpt = Action.make("excerpt", {
   access: "read",
   input: { url: Schema.String },
   success: { markdown: Schema.optionalKey(Schema.String), url: Schema.String },
+  hints: { text: "markdown" },
 });
 
 const tricky = ' leading\n"quoted" \\ é 😀   trailing\t ';
@@ -86,27 +88,18 @@ const app = Action.implement(
       : Effect.void,
 );
 
-const tools = {
-  fetch: { text: "body" },
-  store: { text: "body" },
-  head: { text: "markdown" },
-  excerpt: { text: "markdown" },
-} as const;
-
 const server = { name: "pages", version: "1.0.0" } as const;
 
 const rest = { end: tricky.length, owner: "ada" };
 
-const endpoint = ActionMcp.layerHttp(app, { ...server, tools });
+const endpoint = ActionMcp.layerHttp(app, server);
 
 /** The endpoint in memory, as the caller `ada`. */
 const serveHttp = () =>
   serve(endpoint.pipe(HttpRouter.provideRequest(Layer.succeed(Principal, "ada"))));
 
 /** The same server over stdio, as the caller `ada`. */
-const stdio = ActionMcp.runStdio(app, { ...server, tools }).pipe(
-  Effect.provideService(Principal, "ada"),
-);
+const stdio = ActionMcp.runStdio(app, server).pipe(Effect.provideService(Principal, "ada"));
 
 const Reply = Schema.fromJsonString(Schema.Struct({ result: Schema.Json }));
 
@@ -224,10 +217,10 @@ describe("MCP text fields", () => {
     }),
   );
 
-  it.effect("are read from the text blocks by mcpClient, given the endpoint's tools", () =>
+  it.effect("are read from the text blocks by mcpClient, which reads the same hints", () =>
     Effect.gen(function* () {
       const whole = { body: tricky, ...rest };
-      const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt], { tools });
+      const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt]);
 
       const results = [
         yield* mcp.fetch({ url: "a" }),
@@ -247,22 +240,6 @@ describe("MCP text fields", () => {
     }).pipe(
       Effect.provide(Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada")))),
     ),
-  );
-
-  it.effect(
-    "leave mcpClient without structured content to decode without the endpoint's tools",
-    () =>
-      Effect.gen(function* () {
-        const mcp = yield* Testing.mcpClient([Fetch]);
-        const failure = yield* Effect.flip(mcp.fetch({ url: "a" }));
-
-        expect(failure).toBeInstanceOf(Testing.McpCallError);
-        expect(failure.message).toContain('MCP tools/call "fetch" returned no structured content');
-      }).pipe(
-        Effect.provide(
-          Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada"))),
-        ),
-      ),
   );
 
   it("reach the official client as text alone, with no listed schema to check", async () => {
@@ -317,17 +294,14 @@ describe("a text field MCP cannot send", () => {
         description: "A page, as a union of one struct",
         access: "read",
         success: Schema.Union([Schema.Struct({ body: Schema.String })]),
+        hints: { text: "body" },
       });
 
       const single = Action.implement(Single, () => Effect.succeed({ body: "x" }), Action.allowAll);
 
       expect(
         yield* defectOf(
-          Layer.build(
-            ActionMcp.layerHttp(single, { ...server, tools: { single: { text: "body" } } }).pipe(
-              Layer.provide(HttpRouter.layer),
-            ),
-          ),
+          Layer.build(ActionMcp.layerHttp(single, server).pipe(Layer.provide(HttpRouter.layer))),
         ),
       ).toBe(cannot("single"));
     }),
@@ -344,10 +318,14 @@ describe("a text field MCP cannot send", () => {
     ["a missing", Schema.Struct({ title: Schema.String })],
   ] as const)("fails the layer build for %s field of an erased success", ([, success]) =>
     Effect.gen(function* () {
+      // Typed only as `string`, a hint the types leave to the layer build.
+      const text: string = "body";
+
       const Erased = Action.make("erased", {
         description: "A success the types cannot read",
         access: "read",
         success,
+        hints: { text },
       });
 
       // Erased, as in a list of implementations typed as any: any field compiles.
@@ -364,22 +342,9 @@ describe("a text field MCP cannot send", () => {
 
       expect(
         yield* defectOf(
-          Layer.build(
-            ActionMcp.layerHttp(erased, { ...server, tools: { erased: { text: "body" } } }).pipe(
-              Layer.provide(HttpRouter.layer),
-            ),
-          ),
+          Layer.build(ActionMcp.layerHttp(erased, server).pipe(Layer.provide(HttpRouter.layer))),
         ),
       ).toBe(cannot("erased"));
     }),
   );
-
-  it("refuses a tools key no served action has, where a plain object slips past the types", () => {
-    // Widened, as plain JavaScript passes it.
-    const stale = Object.fromEntries([["read", {}]]);
-
-    expect(() => ActionMcp.layerHttp(app, { ...server, tools: stale })).toThrow(
-      "Unknown tools: read",
-    );
-  });
 });
