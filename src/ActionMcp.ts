@@ -30,16 +30,27 @@ import {
 
 /**
  * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option except
- * `protocols`, the server information, `instructions` and `extensions`.
+ * `protocols`, the server information, `instructions` and `extensions`, and the native
+ * features it serves beside its tools.
  */
-export type Options = Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols">;
+export interface Options<E = never, R = never> extends Omit<
+  Parameters<typeof McpServer.layerStdio>[0],
+  "protocols"
+> {
+  /**
+   * Native MCP features served beside the actions' tools, such as `McpServer.resource`,
+   * `McpServer.prompt` and `McpServer.toolkit` layers merged into one. They register on this
+   * server's registry; merged beside it instead, they register on another and are not served.
+   */
+  readonly features?: Layer.Layer<never, E, R> | undefined;
+}
 
 /**
  * One Streamable HTTP MCP endpoint: `Options`, and every native `McpServer.layerHttp` option
  * except `protocols`, `allowedOrigins` among them, with `path` defaulting to `/mcp`.
  */
-export interface LayerHttpOptions
-  extends Options, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
+export interface LayerHttpOptions<E = never, R = never>
+  extends Options<E, R>, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
 }
@@ -207,6 +218,7 @@ const textFields = (apps: ReadonlyArray<AnyImplementation>): ReadonlyMap<string,
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
+  features: Layer.Layer<never, unknown, unknown> = Layer.empty,
 ) => {
   const binding = bindTools(apps, projection);
   const texts = textFields(apps);
@@ -225,10 +237,13 @@ const server = <Out, R>(
     );
   });
 
-  return Layer.effectDiscard(register).pipe(
+  // Native features provide the native registry themselves, so they register on this one
+  // only when built in its graph.
+  return Layer.mergeAll(Layer.effectDiscard(register), features).pipe(
     Layer.provide(transport),
     // The native registry is mutable; every endpoint/subprocess gets its own one. Only
-    // the registry: handlers are provided outside it, so builders stay shared.
+    // the registry: handlers are provided outside it, so builders stay shared, and so are
+    // the services the features need, provided around the endpoint.
     Layer.fresh,
     provideHandlers(apps),
   );
@@ -246,24 +261,25 @@ const server = <Out, R>(
  * middleware provides per request wins over what the endpoint was built with; still, never
  * provide an identity at startup, which a route no authentication covers serves to anyone.
  */
-export function layerHttp<const Apps extends Served>(
+export function layerHttp<const Apps extends Served, E = never, R = never>(
   implementations: Apps,
-  options: LayerHttpOptions,
+  options: LayerHttpOptions<E, R>,
 ): Layer.Layer<
   never,
-  BuildError<Member<Apps>> | Cause.IllegalArgumentError,
+  BuildError<Member<Apps>> | Cause.IllegalArgumentError | E,
   | BuildContext<Member<Apps>>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", HttpToolRequestContext<RequestContext<Member<Apps>>>>
+  | R
 >;
-export function layerHttp(apps: Served, options: LayerHttpOptions) {
+export function layerHttp(
+  apps: Served,
+  { features, path, ...options }: LayerHttpOptions<unknown, unknown>,
+) {
   return server(
     toList(apps),
-    McpServer.layerHttp({
-      ...options,
-      path: options.path ?? defaultPath,
-      protocols: [httpProtocol],
-    }),
+    McpServer.layerHttp({ ...options, path: path ?? defaultPath, protocols: [httpProtocol] }),
+    features,
   );
 }
 
@@ -277,18 +293,19 @@ export function layerHttp(apps: Served, options: LayerHttpOptions) {
  * `Stdio` service and the identity. Arguments are tool input only and never establish
  * request identity or authority; each implementation's `before` hook runs.
  */
-export function runStdio<const Apps extends Served>(
+export function runStdio<const Apps extends Served, E = never, R = never>(
   implementations: Apps,
-  options: Options,
+  options: Options<E, R>,
 ): Effect.Effect<
   void,
-  BuildError<Member<Apps>> | Cause.IllegalArgumentError,
-  BuildContext<Member<Apps>> | Stdio.Stdio | ToolRequestContext<RequestContext<Member<Apps>>>
+  BuildError<Member<Apps>> | Cause.IllegalArgumentError | E,
+  BuildContext<Member<Apps>> | Stdio.Stdio | ToolRequestContext<RequestContext<Member<Apps>>> | R
 >;
-export function runStdio(apps: Served, options: Options) {
+export function runStdio(apps: Served, { features, ...options }: Options<unknown, unknown>) {
   const transport = server(
     toList(apps),
     McpServer.layerStdio({ ...options, protocols: stdioProtocols }),
+    features,
   );
 
   // The native transport ends by interrupting the fiber that built it once the host closes

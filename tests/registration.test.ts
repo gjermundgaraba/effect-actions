@@ -10,7 +10,7 @@ import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
 import { makeTestHttp, makeTestMcp } from "./server.js";
 import { mcpRequest, post, rawToolCall, send } from "./requests.js";
-import { serve } from "./serve.js";
+import { type Handler, serve } from "./serve.js";
 
 it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
   const web = serve(
@@ -535,31 +535,48 @@ describe("projection boundaries", () => {
     expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
   });
 
-  // An endpoint's registry is its own: native features merged beside it register elsewhere.
-  it("serves no native resource, prompt or tool merged beside an endpoint", async () => {
+  // An endpoint's registry is its own: native features register on it as its `features`, and
+  // elsewhere when merged beside it.
+  it("serves native resources, prompts and tools given as features, and none merged beside", async () => {
     const Ping = Action.make("ping", { description: "Ping", access: "read" });
     const Native = Toolkit.make(Tool.make("native", { success: Schema.String }));
 
-    const web = serve(
-      Layer.mergeAll(
-        ActionMcp.layerHttp(
-          Action.implement(Ping, () => Effect.void, Action.allowAll),
-          { name: "test", version: "0" },
-        ),
-        McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("#") }),
-        McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
-        McpServer.toolkit(Native).pipe(
-          Layer.provide(Native.toLayer({ native: () => Effect.succeed("native") })),
-        ),
+    const native = Layer.mergeAll(
+      McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("#") }),
+      McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
+      McpServer.toolkit(Native).pipe(
+        Layer.provide(Native.toLayer({ native: () => Effect.succeed("native") })),
       ),
     );
 
-    const resources = await web.handler(mcpRequest({ method: "resources/list" }));
-    const prompts = await web.handler(mcpRequest({ method: "prompts/list" }));
+    const app = Action.implement(Ping, () => Effect.void, Action.allowAll);
+    const options = { name: "test", version: "0" };
 
-    expect((await listTools(web.handler)).map(({ name }) => name)).toEqual(["ping"]);
-    expect(await resources.json()).toMatchObject({ result: { resources: [] } });
-    expect(await prompts.json()).toMatchObject({ error: { code: -32601 } });
+    const served = serve(ActionMcp.layerHttp(app, { ...options, features: native }));
+    const beside = serve(Layer.mergeAll(ActionMcp.layerHttp(app, options), native));
+
+    const listed = async (handler: Handler) => {
+      const resources = await handler(mcpRequest({ method: "resources/list" }));
+      const prompts = await handler(mcpRequest({ method: "prompts/list" }));
+
+      return {
+        tools: (await listTools(handler)).map(({ name }) => name).toSorted(),
+        resources: await resources.json(),
+        prompts: await prompts.json(),
+      };
+    };
+
+    expect(await listed(served.handler)).toMatchObject({
+      tools: ["native", "ping"],
+      resources: { result: { resources: [{ uri: "docs://readme", name: "README" }] } },
+      prompts: { result: { prompts: [{ name: "triage" }] } },
+    });
+
+    expect(await listed(beside.handler)).toMatchObject({
+      tools: ["ping"],
+      resources: { result: { resources: [] } },
+      prompts: { error: { code: -32601 } },
+    });
   });
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {

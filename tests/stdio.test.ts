@@ -4,6 +4,7 @@ import { format } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Console, Deferred, Effect, Predicate, Schema, Sink, Stdio, Stream } from "effect";
+import { McpServer } from "effect/ai";
 import { TestClock } from "effect/testing";
 import { describe, expect, it, onTestFinished } from "@effect/vitest";
 import * as Action from "../src/Action.js";
@@ -400,6 +401,27 @@ it.live(
       // No result for the call: no answer, or a JSON-RPC error.
       expect(written).not.toContain('"result"');
     }),
+);
+
+it.effect("serves native features given as features beside the tools", () =>
+  Effect.gen(function* () {
+    const Ping = Action.make("ping", { description: "Ping", access: "read" });
+
+    const [listed = ""] = yield* converse(
+      ActionMcp.runStdio(
+        Action.implement(Ping, () => Effect.void, Action.allowAll),
+        {
+          name: "test",
+          version: "0",
+          features: McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
+        },
+      ),
+      "2025-11-25",
+      [{ method: "prompts/list" }],
+    );
+
+    expect(JSON.parse(listed)).toMatchObject({ result: { prompts: [{ name: "triage" }] } });
+  }),
 );
 
 describe("runStdio's input schemas", () => {

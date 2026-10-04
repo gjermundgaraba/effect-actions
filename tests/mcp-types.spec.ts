@@ -1,7 +1,9 @@
 // Compile-only assertions, included by `vp check`, on the servers and clients of MCP and the
 // `text` hint they read. Input is checked when a server is made (registration.test.ts), so the
 // types take any implementations, a helper's own included.
-import { Effect, Schema } from "effect";
+import { Cause, Context, Effect, Layer, Schema, type Stdio } from "effect";
+import { McpServer } from "effect/ai";
+import type { HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -29,6 +31,27 @@ export const serveBeside = <const Apps extends ReadonlyArray<Action.AnyImplement
 
 export const runListed = <App extends Action.AnyImplementation>(app: App) =>
   ActionMcp.runStdio([app, status], options);
+
+// What native features need and fail with is the server's to provide and fail with.
+class Docs extends Context.Service<Docs, string>()("mcp-types/Docs") {}
+
+class Missing extends Schema.TaggedError<Missing>()("Missing", {}) {}
+
+const readme = McpServer.resource({
+  uri: "docs://readme",
+  name: "README",
+  content: Effect.service(Docs),
+});
+
+const features = Layer.merge(readme, Layer.effectDiscard(Effect.fail(new Missing())));
+
+expectTypeOf(ActionMcp.layerHttp(status, { ...options, features })).toEqualTypeOf<
+  Layer.Layer<never, Cause.IllegalArgumentError | Missing, HttpRouter.HttpRouter | Docs>
+>();
+
+expectTypeOf(ActionMcp.runStdio(status, { ...options, features })).toEqualTypeOf<
+  Effect.Effect<void, Cause.IllegalArgumentError | Missing, Stdio.Stdio | Docs>
+>();
 
 // A `text` hint names a top-level string field of the action's encoded success, an optional
 // one too.

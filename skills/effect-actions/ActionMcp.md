@@ -15,7 +15,7 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `runStdio(implementations, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
 
 The options, exported as `LayerHttpOptions` and `Options` (the server's, which `LayerHttpOptions` extends), are the native
-`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`. They pass through unchanged; `path` gains a default. Each implementation brings its
+`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols`, and `features`. They pass through unchanged; `path` gains a default. Each implementation brings its
 hook ([Action.md](Action.md#implementations)); authentication is middleware the host provides
 around `layerHttp` ([Authentication.md](Authentication.md)).
 
@@ -27,6 +27,7 @@ around `layerHttp` ([Authentication.md](Authentication.md)).
 | `extensions`                         | Optional native server capability extensions.                                  |
 | `path`                               | HTTP endpoint path; HTTP only, defaults to `/mcp`.                             |
 | `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only, not CORS configuration.            |
+| `features`                           | Optional native resources, prompts and tools served beside the actions' tools. |
 
 `implementations` is one implementation or a list. Every tool declares its action's errors plus the
 built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. `layerHttp`'s layer and `runStdio`'s
@@ -34,7 +35,8 @@ program retain the build failures and requirements of their builders, plus nativ
 `IllegalArgumentError`. HTTP needs the router and wraps handler and hook services as request
 requirements until middleware provided around it, such as authentication, provides them. stdio
 needs `Stdio` and the caller's request services, identity included. Native `McpRequestContext`
-is supplied by the server, not required of the host.
+is supplied by the server, not required of the host. The server also fails as its `features` do
+and needs what they need.
 
 ## Canonical
 
@@ -166,6 +168,28 @@ A success is then `content: [<markdown>, <JSON of { next }>]`, without `structur
 the tool lists no `outputSchema`. Every endpoint serving the action sends it so, and
 `Testing.mcpClient` reads it so ([Testing.md](Testing.md#rules)).
 
+### Native features
+
+Effect's own resources, prompts and tools join an endpoint's tools as its `features`, one layer
+merging them:
+
+```ts
+ActionMcp.layerHttp(app, {
+  name: "acme",
+  version: "1.0.0",
+  features: Layer.mergeAll(
+    McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("# Acme") }),
+    McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage the issue.") }),
+  ),
+});
+```
+
+They are native: no implementation's `before` hook runs for them, though the authentication
+around an endpoint covers them as it covers its tools. A native tool named as an action
+replaces it, or is replaced, as Effect's registry keeps one tool per name: name them apart. A
+service they need, provided around the endpoint, is shared with the rest of the graph; one
+provided to the `features` layer itself is built once per endpoint.
+
 ## Rules
 
 - HTTP serves MCP 2026-07-28 and no other revision: it is stateless, every request standing alone. The stateful revisions keep a session per `initialize`, which Effect's HTTP runtime never expires and which no identity owns. Stdio serves 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, whichever the host negotiates. There is no `protocols` option; Effect owns version checks and negotiation.
@@ -199,7 +223,7 @@ the tool lists no `outputSchema`. Every endpoint serving the action sends it so,
 ## Failure modes
 
 - `MCP tool input must be one object with keys, such as a struct: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions' input is a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Wrap a union in a field, `input: { notification: Schema.Union([Email, Sms]) }`, omit `input` (or give `{}`) for no arguments, or leave the action off MCP.
-- A native `McpServer.resource`, `McpServer.prompt` or `McpServer.toolkit` layer merged beside `layerHttp` builds without error and is never served: `resources/list` is empty, `prompts/list` is not found, and `tools/list` lists only the actions. Each endpoint's registry is its own, and only its actions register on it. Serve native features from a native `McpServer.layerHttp` endpoint on another path.
+- A native `McpServer.resource`, `McpServer.prompt` or `McpServer.toolkit` layer merged beside `layerHttp` builds without error and is never served: `resources/list` is empty, `prompts/list` is not found, and `tools/list` lists only the actions. Each endpoint's registry is its own: pass them as its `features`.
 - An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's hook, before the handler runs.
 - `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action.
 - `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched, or `Request<"Requires", CurrentActor>` in the endpoint's type: a handler or hook yields a request service that no middleware around the endpoint provides. Provide the authentication, `Layer.provide(authenticate)`, or other middleware (`Layer.provide(middleware.layer)`) on that `layerHttp`; never an identity at startup ([Authentication.md](Authentication.md#failure-modes)).

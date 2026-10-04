@@ -495,6 +495,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   success, the string itself, so a host on those revisions reads a non-object success from the
   text.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`, where 0.8.0 required it.
+- `ActionMcp.layerHttp` and `runStdio` take `features`, a layer of Effect's own
+  `McpServer.resource`, `McpServer.prompt` and `McpServer.toolkit`, served beside the actions'
+  tools on the same endpoint. Merged beside the endpoint instead, they register on another
+  registry and are not served.
 - `ActionToolkit.make(implementations, { needsApproval })` has `LanguageModel` ask for
   approval of a model's call before it runs, through Effect's native `Tool.needsApproval`:
   one check over every call, `(call, context) =>` a boolean or an `Effect` of one, where
