@@ -1826,3 +1826,47 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
 
   void [binding, app, hook, clientOptions, httpOptions, call, request, auth, shared];
 };
+
+// A helper may type an action wider than the binding holds it, its access defaulted or its
+// success widened, and implement the same contract: the layer serving it still owes what its
+// handler reads per request.
+{
+  const Profile = Action.make("profile", {
+    description: "The caller's id",
+    access: "read",
+    success: Schema.String,
+  });
+
+  const binding = ActionHttp.make([Profile]);
+
+  type DefaultAccess = Action.Action<
+    "profile",
+    typeof Profile.input,
+    typeof Profile.success,
+    typeof Profile.errors
+  >;
+
+  type WiderSuccess = Action.Action<
+    "profile",
+    typeof Profile.input,
+    Schema.Codec<string>,
+    typeof Profile.errors,
+    "read"
+  >;
+
+  const read = () => Effect.map(CurrentActor, ({ id }) => id);
+
+  const defaultAccess = (action: DefaultAccess) => Action.implement(action, read, Action.allowAll);
+  const widerSuccess = (action: WiderSuccess) => Action.implement(action, read, Action.allowAll);
+
+  const servedDefault = ActionHttp.layer(binding, defaultAccess(Profile));
+  const servedWider = ActionHttp.layer(binding, widerSuccess(Profile));
+
+  expectTypeOf<
+    Extract<Layer.Services<typeof servedDefault>, HttpRouter.Request<"Requires", unknown>>
+  >().toEqualTypeOf<HttpRouter.Request<"Requires", CurrentActor>>();
+
+  expectTypeOf<
+    Extract<Layer.Services<typeof servedWider>, HttpRouter.Request<"Requires", unknown>>
+  >().toEqualTypeOf<HttpRouter.Request<"Requires", CurrentActor>>();
+}

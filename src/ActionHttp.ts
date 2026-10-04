@@ -121,12 +121,19 @@ type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.
 type ActionsOf<App> = Extract<ActionOf<App>, Action.Any>;
 
 /**
- * The actions of `App` a layer of the binding's actions `Bound` serves: those the binding
- * holds. An implementation whose actions are erased may hold any, so all of them count.
+ * The actions of `App` a layer of the binding's actions `Bound` may serve: those whose name
+ * may be one the binding holds, however wide their types. An erased name on either side may
+ * be any, so it counts. `layer` selects by identity, and refuses a same-named action of
+ * another contract, so this counts no fewer than it serves.
  */
-type Serving<App, Bound extends Action.Any> = string extends ActionsOf<App>["name"]
-  ? ActionsOf<App>
-  : Extract<ActionsOf<App>, Bound>;
+type Serving<App, Bound extends Action.Any> =
+  ActionsOf<App> extends infer A
+    ? A extends Action.Any
+      ? [A["name"] & Bound["name"]] extends [never]
+        ? never
+        : A
+      : never
+    : never;
 
 /**
  * What each implementation among `App` owes per request where a layer of the actions `Bound`
