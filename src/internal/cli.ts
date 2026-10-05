@@ -550,7 +550,7 @@ export const command = <A extends Action.Any, E, R>(
   // the result, printed last.
   const run = (parsed: Parsed, rendered: ((output: A["success"]["Type"]) => string) | undefined) =>
     decode(parsed).pipe(
-      Effect.mapError(({ message }) => new InvalidInput({ message })),
+      Effect.mapError(InvalidInput.fromSchemaError),
       Effect.flatMap(execute),
       Effect.catch(failure),
       Effect.flatMap((value) => output(action, value, rendered)),

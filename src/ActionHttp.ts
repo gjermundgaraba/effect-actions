@@ -9,7 +9,7 @@ import {
   Scope,
 } from "effect";
 import type { Etag, HttpClient, HttpPlatform } from "effect/http";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
   HttpApiBuilder,
@@ -57,6 +57,15 @@ export type { AnyHttp as Any } from "./internal/client.js";
  * The native `HttpApiClient.make` options `client` takes: `baseUrl` and `transformClient`.
  */
 export type { Options as ClientOptions } from "./internal/client.js";
+
+/** What `fetchClient` takes: `client`'s options, and the `fetch` its calls send with. */
+export interface FetchClientOptions extends ClientOptions {
+  /**
+   * What each call sends with. Omitted: the global `fetch`, looked up on every call, so one
+   * installed after the client is built, such as a test's stub, is used.
+   */
+  readonly fetch?: typeof globalThis.fetch | undefined;
+}
 
 /** Error schemas, as an action declares them. */
 type Errors = Action.Any["errors"];
@@ -435,6 +444,15 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
   return HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(entry()));
 }
 
+/** A binding's client, erased: `client` and `fetchClient` restore its exact type. */
+const erasedClient = (
+  http: AnyHttp,
+  options?: ClientOptions,
+): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> =>
+  Effect.map(methods(http, options), (methodOf) =>
+    Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
+  );
+
 /**
  * Effect's native `HttpApiClient` for a binding, one method per action taking the
  * action's input directly: `client.greet({ name })`. The argument may be omitted when `{}`
@@ -456,7 +474,32 @@ export function client(
   http: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
-  return Effect.map(methods(http, options), (methodOf) =>
-    Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
+  return erasedClient(http, options);
+}
+
+/**
+ * `client` built once over `fetch`, for code that holds a client outside an Effect, such as
+ * a browser app: its methods are the same Effects and require nothing, so each call runs
+ * alone, as `Effect.runPromise(api.greet({ name }))`. The options are `client`'s, and
+ * `fetch`.
+ *
+ * Each call sends with `options.fetch`, or with the global `fetch` as it is when the call
+ * runs.
+ */
+export function fetchClient<const H extends AnyHttp>(
+  http: H,
+  options?: FetchClientOptions,
+): Client<H>;
+export function fetchClient(
+  http: AnyHttp,
+  { fetch, ...options }: FetchClientOptions = {},
+): { readonly [name: string]: ErasedMethod } {
+  return erasedClient(http, options).pipe(
+    Effect.provide(FetchHttpClient.layer),
+    Effect.provideService(
+      FetchHttpClient.Fetch,
+      fetch ?? ((input, init) => globalThis.fetch(input, init)),
+    ),
+    Effect.runSync,
   );
 }

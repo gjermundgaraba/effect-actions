@@ -143,6 +143,27 @@ ActionHttp.client(ActionHttp.make(Notes), {
   transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
 });
 
+// The fetch client is the same client, built: its methods require nothing.
+const fetched = ActionHttp.fetchClient(ActionHttp.make(Notes), {
+  baseUrl: "http://localhost",
+  fetch: (input, init) => globalThis.fetch(input, init),
+});
+
+expectTypeOf(fetched).toEqualTypeOf<ActionHttp.Client<ActionHttp.Binding<typeof Notes>>>();
+
+expectTypeOf<Effect.Services<ReturnType<typeof fetched.get>>>().toEqualTypeOf<never>();
+
+// A wrapper's optional `fetch` passes through as it is, omitted or `undefined`.
+const passed = (fetch?: typeof globalThis.fetch) =>
+  ActionHttp.fetchClient(ActionHttp.make(Notes), { fetch });
+
+expectTypeOf(passed).returns.toEqualTypeOf<typeof fetched>();
+
+ActionHttp.fetchClient(ActionHttp.make(Notes), {
+  // @ts-expect-error Nor does the fetch client take one.
+  transformResponse: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
+});
+
 // A binding's errors fail every method, beside each action's own.
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
 

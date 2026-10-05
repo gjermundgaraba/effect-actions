@@ -18,6 +18,8 @@ Import `@gjermundgaraba/effect-actions/Authentication`.
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `make(service, build, protectedResource?)` | Effect's `HttpRouter.Middleware`, providing an identity service per request or answering with a refusal. |
 | `bearerToken`                              | The request's bearer token, `Redacted`, failing with `Action.Unauthenticated` without one.               |
+| `bearerTokenOf(authorization)`             | The bearer token of an `Authorization` header value, an `Option`: `bearerToken`'s reading, pure.         |
+| `refusal(error, options?)`                 | The response `make` answers a refusal with, for a caller the router never routes.                        |
 
 `build` is a builder, like the one `Action.implement` takes ([Action.md](Action.md#implementations)):
 an Effect that yields startup services, such as a token verifier, and returns the per-request
@@ -35,7 +37,12 @@ with other middleware first: `authentication.combine(resolveTenant)` resolves th
 before authenticating, `accessLog.combine(authentication)` reads the identity after.
 
 `protectedResource` is an OAuth protected resource, which `make` publishes and names in every
-challenge. Exported type: `Options`.
+challenge, or an Effect that builds one, or none, where it is known only at startup: it runs
+with `build`, once per layer graph, and the middleware's layer requires what it yields.
+Exported type: `Options`.
+
+`refusal` takes `protectedResource`, the one given to `make`, and `authorization`, the request's
+`Authorization` header. Exported type: `RefusalOptions`.
 
 | Protected resource option | Meaning                                                                                       |
 | ------------------------- | --------------------------------------------------------------------------------------------- |
@@ -277,6 +284,58 @@ export const layer = ActionMcp.layerHttp([search, save], { name: "notes", versio
 );
 ```
 
+### Outside the router
+
+A caller the router never routes, such as a Node `upgrade` handler admitting a socket,
+authenticates its own header and refuses with `refusal`: the response the middleware answers
+the same refusal with on a route.
+
+```ts example=authentication-upgrade.ts
+import { Effect, Option, Redacted } from "effect";
+import { HttpServerResponse } from "effect/http";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { type Actor, actors } from "./authorization.js";
+
+// The protected resource `Authentication.make` is given around the routes.
+const protectedResource = {
+  resource: "http://localhost:3000/mcp",
+  authorizationServers: ["https://auth.example.com"],
+  scopesSupported: ["users:read", "users:write"],
+  scopesRequired: ["users:read"],
+} satisfies Authentication.Options;
+
+const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
+
+// DEMO ONLY: a token is an actor's name. A socket writes, so it needs the write scope. The
+// header is read as a route's is: `bearerTokenOf` is what `bearerToken` reads a request with.
+const verify = (authorization: string | undefined): Effect.Effect<Actor, Action.Refusal> => {
+  const token = Option.getOrUndefined(
+    Option.map(Authentication.bearerTokenOf(authorization), Redacted.value),
+  );
+
+  if (token === undefined || !isActorToken(token)) {
+    return Effect.fail(new Action.Unauthenticated());
+  }
+
+  const actor: Actor = actors[token];
+
+  return actor.permissions.includes("users:write")
+    ? Effect.succeed(actor)
+    : Effect.fail(
+        new Action.Forbidden({ message: "Requires users:write.", scopes: ["users:write"] }),
+      );
+};
+
+// A caller the router never routes, such as a Node `upgrade` handler admitting a socket,
+// which authenticates the `Authorization` header itself: the actor, or the response to
+// refuse with, the one the middleware answers the same refusal with on a route.
+export const admit = (authorization: string | undefined): Effect.Effect<Actor, Response> =>
+  Effect.mapError(verify(authorization), (error) =>
+    HttpServerResponse.toWeb(Authentication.refusal(error, { protectedResource, authorization })),
+  );
+```
+
 ## Rules
 
 - The per-request authentication succeeds with the identity value or fails with a refusal. `Unauthenticated` is sent as its JSON with **401**; `Forbidden` as its JSON with **403**. Both are the bodies every endpoint declares, so typed clients decode them. An `HttpServerResponse` is sent with its own status and headers, for a status or header that varies per refusal.
@@ -290,6 +349,8 @@ export const layer = ActionMcp.layerHttp([search, save], { name: "notes", versio
 - An OAuth client re-authorizes on that challenge with those scopes added, as MCP authorization requires; the official MCP client does. A `Forbidden` naming no scope has no challenge ([guarantees.md](guarantees.md#authorization)).
 - Name scopes only when re-authorizing can grant them. A caller whose credential cannot step up, such as an API key, gets a `Forbidden` naming none: a plain 403, and a tool result over MCP, rather than a login prompt that cannot help.
 - A WebSocket upgrade is a router route, such as `RpcServer.layerProtocolWebsocket`'s: provide the middleware's layer to it as to any other.
+- A caller the router never routes, such as a Node `upgrade` handler, verifies its own credential and answers a refusal with `refusal(error, { protectedResource, authorization })`: the status, JSON, `Cache-Control: no-store` and challenge `make` answers that refusal with, by the rules above, `invalid_token` when `authorization` presented a bearer token. Give it the `protectedResource` given to `make`, or its challenges name no metadata URL and no `scopesRequired`. It is an `HttpServerResponse`; `HttpServerResponse.toWeb` gives a web `Response`. It refuses an invalid `scopesRequired` as `make` does, by throwing.
+- Such a caller reads its header with `bearerTokenOf(authorization)`, an `Option` of the `Redacted` token: the reading `bearerToken` gives a request and every challenge is decided by, so a header a route would refuse is refused there too. `Bearer` matches case-insensitively and takes exactly one token: no scheme, another scheme, or two tokens is none.
 - It is bearer authentication, for a credential sent as `Authorization: Bearer`, such as an OAuth access token or an API key: its 401s challenge `Bearer`. A surface authenticated by a session cookie uses Effect's native `HttpRouter.middleware` instead, which answers its own 401 and sets `Cache-Control: no-store` on what it covers: under `make`, its 401s would ask for a bearer token it never accepts, and name `invalid_token` for any bearer header.
 - The per-request authentication can fail with nothing else: any other error is a type error. Map a verifier's failure to a refusal.
 - `bearerToken` reads `Authorization: Bearer <token>`, the scheme case-insensitively. Without the header or with another scheme it fails with `Unauthenticated` (`A bearer token is required.`); where a token is optional, `Effect.option(bearerToken)`. The token is `Redacted`, as `HttpApiSecurity.bearer` gives it, so a log, span or error holding it prints `<redacted>`; read it with `Redacted.value(token)` where it is verified. Verifying the token stays the host's.
@@ -308,6 +369,7 @@ export const layer = ActionMcp.layerHttp([search, save], { name: "notes", versio
 - Resources the per-request authentication acquires in the request scope live until that scope closes, including while the handler runs.
 - Downstream action errors are handled by their transport. They are never serialized as authentication failures.
 - Never provide `CurrentActor` or any identity or tenant tag in a startup layer or root context: [guarantees.md](guarantees.md#dependency-lifetimes).
+- A resource read from configuration or a service is given as an Effect: `Authentication.make(CurrentActor, build, Effect.map(Settings, ({ resource }) => resource))`. The result is still the middleware, so it combines with other middleware as one given a plain resource does, where `Layer.unwrap` around `make(...).layer` would leave only a layer. Succeeding with `undefined` publishes nothing and challenges with a bare `Bearer`.
 - A protected resource's discovery is published when the middleware's layer is built, once per layer graph, whichever composition builds it and however many layers it is provided to, and needs no route of its own. It publishes what it is given: the deployment must ensure `resource` and `authorizationServers` are valid OAuth URLs (HTTPS, or loopback HTTP in development).
 - Discovery is served at `/.well-known/oauth-protected-resource` followed by the resource's path (`/.well-known/oauth-protected-resource/mcp` for `https://host/mcp`), for `GET` and `HEAD`, matching that literal path and query, and answers the CORS preflight there. It answers before routing, so no route middleware, the authentication publishing it included, covers it. Other requests fall through to the host router. Caching policy is the host's.
 - Any origin may read discovery, as a browser MCP client must after a 401: it carries `Access-Control-Allow-Origin: *`, and answers an `OPTIONS` preflight at its URL with **204**, allowing `GET`, `HEAD` and `OPTIONS` and the headers the preflight asks for. Where the host's CORS middleware runs before it, that policy answers discovery's preflight and adds its headers to discovery's reads, so an origin it allows may read discovery, and discovery keeps its `*` where the policy sets no origin. Global middleware runs in the order it registers while layers build, which is the order it is merged in unless something built before it is asynchronous; either way, an origin the host's policy allows may read discovery.
@@ -335,5 +397,5 @@ export const layer = ActionMcp.layerHttp([search, save], { name: "notes", versio
 - An MCP client reports `InsufficientScopeError` instead of re-authorizing: it has no OAuth provider configured, so it cannot step up. Configure one, or grant the scope up front.
 - `new Action.Forbidden({ scopes })` throws a schema validation error: a scope is not an OAuth scope token (it is empty, or contains a space, `"` or `\`). Give each scope as its own element.
 - An MCP client asks a user who only reads to consent to writes on first login: the 401 names no scope, so it requests every one of `scopesSupported`. Give `scopesRequired`.
-- `Invalid scope in scopesRequired: "<scope>"` thrown by `make`: a scope is empty or contains a space, `"` or `\`. Give each scope as its own element.
+- `Invalid scope in scopesRequired: "<scope>"` thrown by `make`, or for a built resource a defect when its layer builds: a scope is empty or contains a space, `"` or `\`. Give each scope as its own element.
 - A route's `Cache-Control` is replaced by `no-store`: an enclosing middleware serialized the response of a failure. Only a route's own answer keeps its caching.

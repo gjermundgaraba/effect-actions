@@ -1,5 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Redacted, Schema, SchemaTransformation, Stream } from "effect";
+import {
+  Context,
+  Effect,
+  Layer,
+  Predicate,
+  Redacted,
+  Schema,
+  SchemaTransformation,
+  Stream,
+} from "effect";
 import { McpSchema } from "effect/ai";
 import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiClient, HttpApiSchema, OpenApi } from "effect/http-api";
@@ -32,6 +41,10 @@ const Http = ActionHttp.make([Echo]);
 /** The message of the `InvalidInput` a response carries: Effect's words, so assert on its path. */
 const invalidInput = async (response: Response) =>
   Schema.decodeUnknownSync(Action.InvalidInput)(await response.json()).message;
+
+/** The issues a call's failure lists, when it is an `InvalidInput`. */
+const issuesOf = (failure: Action.BuiltIn) =>
+  Predicate.isTagged(failure, "InvalidInput") ? failure.issues : undefined;
 
 /** `Echo`, counting its calls. */
 const counted = () => {
@@ -342,6 +355,136 @@ it("answers a handler's own InvalidInput as declared", async () => {
   expect(await invalidInput(http)).toBe("Too large");
 });
 
+it.effect("names each issue of input that does not decode by its path, on every InvalidInput", () =>
+  Effect.gen(function* () {
+    const Order = Action.make("order", {
+      description: "Order",
+      access: "write",
+      input: {
+        kind: Schema.Literal("order"),
+        lines: Schema.Array(Schema.Struct({ sku: Schema.String, count: Schema.Finite })),
+      },
+      success: Schema.String,
+    });
+
+    const app = Action.implement(
+      Order,
+      ({ lines }) =>
+        lines.length === 0
+          ? Effect.fail(
+              new Action.InvalidInput({
+                message: "An order needs a line",
+                issues: [{ path: ["lines"], message: "Expected a line" }],
+              }),
+            )
+          : Effect.succeed("ordered"),
+      Action.allowAll,
+    );
+
+    const Http = ActionHttp.make([Order]);
+
+    /** The `InvalidInput` the routes answer `input` with. */
+    const answered = (input: Parameters<typeof post>[1]) =>
+      Effect.flatMap(send(post("/api/order", input)), (response) => response.json).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Action.InvalidInput)),
+        Effect.provide(Testing.layer(ActionHttp.layer(Http, app))),
+      );
+
+    const nested = {
+      kind: "order",
+      lines: [
+        { sku: "a", count: 1 },
+        { sku: "b", count: "two" },
+      ],
+    };
+
+    // Each issue apart, its path the keys and indexes from the input's root.
+    const http = yield* answered({ ...nested, note: "extra" });
+
+    expect(http.issues).toHaveLength(2);
+    expect(http.issues?.map(({ path }) => path)).toContainEqual(["lines", 1, "count"]);
+    expect(http.issues?.map(({ path }) => path)).toContainEqual(["note"]);
+    // The message stays the schema's description of them all.
+    expect(http.message).toContain('at ["lines"][1]["count"]');
+
+    // `HttpApiBuilder` decodes a payload through a union, which reports a wrong top-level
+    // literal as the whole expected shape: one issue for it. The lines are ones the handler
+    // takes, so the issue is the schema's.
+    const literal = yield* answered({ kind: "refund", lines: [{ sku: "a", count: 1 }] });
+
+    expect(literal.issues).toHaveLength(1);
+
+    // A handler's own issues are sent as it names them.
+    const own = yield* answered({ kind: "order", lines: [] });
+
+    expect(own.issues).toEqual([{ path: ["lines"], message: "Expected a line" }]);
+
+    // In process, where the input's own type is passed.
+    const client = yield* Action.client(app);
+
+    const inProcess = yield* Effect.flip(
+      client.order({ kind: "order", lines: [{ sku: "a", count: Number.NaN }] }),
+    );
+
+    expect(issuesOf(inProcess)?.map(({ path }) => path)).toEqual([["lines", 0, "count"]]);
+
+    // From a command, printed as the JSON HTTP sends.
+    const [, , stderr] = yield* printed(
+      exec(ActionCli.command(app, Order), ["--kind", "order", "--lines", '[{"sku":"a"}]']),
+    );
+
+    expect(stderr.join("\n")).toContain('"path":["lines",0,"count"]');
+
+    // The OpenAPI document declares them on the 400 every endpoint answers.
+    const document = OpenApi.fromApi(Http.api);
+
+    expect(document.paths["/api/order"]?.post?.responses["400"]).toMatchObject({
+      content: {
+        "application/json": { schema: { $ref: "#/components/schemas/InvalidInputEncoded" } },
+      },
+    });
+    expect(document.components.schemas["InvalidInputEncoded"]).toMatchObject({
+      properties: {
+        issues: { type: "array", items: { required: ["path", "message"] } },
+      },
+      required: ["_tag", "message"],
+    });
+  }),
+);
+
+it.effect("answers a schema failure of one's own as the surfaces answer input", () =>
+  Effect.gen(function* () {
+    // Input the application decodes itself, such as a header, refused as an action's is.
+    const refused = yield* Effect.flip(
+      Schema.decodeUnknownEffect(Schema.Struct({ tenant: Schema.String, page: Schema.Finite }))({
+        tenant: "secret-tenant",
+        page: "two",
+      }).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError)),
+    );
+
+    expect(refused).toBeInstanceOf(Action.InvalidInput);
+    expect(refused.issues).toEqual([{ path: ["page"], message: "Expected number" }]);
+    expect(refused.message).toContain('at ["page"]');
+    // Never a value sent.
+    expect(JSON.stringify(refused)).not.toContain("two");
+  }),
+);
+
+it.effect("names a symbol key of an issue's path as its string form, which JSON can carry", () =>
+  Effect.gen(function* () {
+    const secret = Symbol("secret");
+
+    const failure = yield* Effect.flip(
+      Schema.decodeUnknownEffect(Schema.Struct({ [secret]: Schema.String }))({ [secret]: 1 }),
+    );
+
+    // Told apart from a string key named `secret`.
+    expect(Action.InvalidInput.fromSchemaError(failure).issues?.map(({ path }) => path)).toEqual([
+      ["Symbol(secret)"],
+    ]);
+  }),
+);
+
 it.effect(
   "says where input does not decode and what it expects, never a value sent, on every surface",
   () =>
@@ -437,7 +580,10 @@ it.effect(
         expect(inProcess.message).toContain(path);
       }
 
-      for (const value of [sent.password, sent.pin]) expect(inProcess.message).not.toContain(value);
+      for (const value of [sent.password, sent.pin]) {
+        expect(inProcess.message).not.toContain(value);
+        expect(JSON.stringify(issuesOf(inProcess))).not.toContain(value);
+      }
 
       // The handler never sees input that does not decode, on any surface.
       expect(calls).toBe(0);

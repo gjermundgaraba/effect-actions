@@ -107,6 +107,7 @@ which is public.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the protected ones.
 - [authentication.ts](authentication.ts): `Authentication.make`'s router middleware for an OAuth protected resource, and its layer `authenticate`, publishing its RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
 - [authentication-tenant.ts](authentication-tenant.ts): authentication combined with other middleware, not served by the app: a verifier built once at startup, each request's tenant from middleware combined before it, and middleware reading the identity combined after it.
+- [authentication-upgrade.ts](authentication-upgrade.ts): `Authentication.refusal` for a caller the router never routes, not served by the app: a socket upgrade authenticating its own header, refused with the response the middleware answers the same refusal with.
 - [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): the public and the protected MCP endpoints.
 - [mcp-sign-in.ts](mcp-sign-in.ts): one MCP URL for signed-out and signed-in callers, not served by the app: an optional identity, a public tool, and a protected one whose hook answers a signed-out caller with the 401 an MCP client signs in on.
@@ -114,7 +115,7 @@ which is public.
 - [app.ts](app.ts): every surface of the host, behind that policy, merged first so it covers discovery too.
 - [server.ts](server.ts): the Node HTTP server, its request body limit, and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
-- [promise-client.ts](promise-client.ts): the client built once for code that does not run Effects, each call a promise.
+- [promise-client.ts](promise-client.ts): `ActionHttp.fetchClient`, the client built once outside an Effect, each call a promise.
 
 ## Follow a request
 

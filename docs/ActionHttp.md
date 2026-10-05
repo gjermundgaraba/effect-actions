@@ -19,8 +19,9 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `Http.api`                     | Native Effect `HttpApi` for clients and OpenAPI.                                             |
 | `layer(Http, implementations)` | Mount the routes of the bound actions these implementations hold, behind their hooks.        |
 | `client(Http, options?)`       | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
+| `fetchClient(Http, options?)`  | The same client, built over `fetch` outside an Effect: its methods require nothing.          |
 
-Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make` and `ClientOptions` of `client`.
+Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make`, `ClientOptions` of `client` and `FetchClientOptions` of `fetchClient`.
 
 | Option                      | Meaning                                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,6 +31,7 @@ Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Clien
 | `make`: `public`            | The binding's actions served without authentication: their endpoints state no security.                                         |
 | `client`: `baseUrl`         | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser). |
 | `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                   |
+| `fetchClient`: `fetch`      | What each call sends with; it also takes `client`'s options. Omitted: the global `fetch`, looked up on every call.              |
 
 Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action>`. The
 OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `/` at the root. Every
@@ -167,24 +169,25 @@ native `HttpApiClient.make` options except `transformResponse`, which may change
 success, failure or required services, which the method types cannot follow; use
 `transformClient`, or the native client.
 
+`transformClient` sees every response before the contract decodes it, so a status is read
+there whatever its body: a page told that its session ended, by the contract's 401 or a
+proxy's, with
+`HttpClient.tap((response) => Effect.sync(() => { if (response.status === 401) signedOut(); }))`.
+The call still fails as typed, with `Unauthenticated` or an `HttpClientError`.
+
 ### Promise callers
 
-Code that does not run Effects, such as a browser app, builds the client once with its
-`HttpClient` and runs each call with `Effect.runPromise`.
+Code that holds a client outside an Effect, such as a browser app, builds it once with
+`fetchClient(Http, options?)`: `client` over `fetch`, its methods the same Effects, requiring
+nothing. Each call runs with `Effect.runPromise`.
 
 ```ts example=promise-client.ts
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./binding.js";
 
-// Built once, for code that does not run Effects: its methods need nothing more.
-export const api = ActionHttp.client(Http).pipe(
-  Effect.provide(FetchHttpClient.layer),
-  // `fetch` is read on every call, so a wrapper or a test's stub installed later is used.
-  Effect.provideService(FetchHttpClient.Fetch, (input, init) => globalThis.fetch(input, init)),
-  Effect.runSync,
-);
+// Built once, outside any Effect: its methods need nothing more.
+export const api = ActionHttp.fetchClient(Http);
 
 // A promise per call. A declared error rejects it as its decoded value, so
 // `error instanceof UserNotFound` holds in a `catch`.
@@ -193,10 +196,13 @@ export const userName = async (id: string): Promise<string> =>
 ```
 
 A declared error rejects the promise as its decoded value, so `catch` code matches it with
-`instanceof`. The native `FetchHttpClient` reads the default `fetch` once, on first use, so a
-`fetch` installed later, such as a test's stub, is used only when `FetchHttpClient.Fetch`
-reads it on each call, as above. In a browser, relative routes resolve against the page;
-elsewhere, give `baseUrl`.
+`instanceof`. A call sends with the `fetch` option, such as one sending the page's cookies,
+`(input, init) => fetch(input, { ...init, credentials: "include" })`; without it, with the
+global `fetch` as the call finds it, so a test's stub installed after the client is built is
+used. A `fetch` of your own keeps `init.signal`, which aborts the request when its call is
+interrupted: a deadline is `Effect.timeout` on the call,
+`api.getUser({ id }).pipe(Effect.timeout("5 seconds"))`, not a signal that replaces it.
+In a browser, relative routes resolve against the page; elsewhere, give `baseUrl`.
 
 ## Rules
 
@@ -249,7 +255,7 @@ elsewhere, give `baseUrl`.
 ### Built-in errors
 
 - Every endpoint declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)). `client`, a remote `ActionCli` command and the native `HttpApiClient` decode them as typed failures, and OpenAPI shows them on every operation. They cannot be left out; the binding's `errors` add to them.
-- `InvalidInput`'s `message` is the schema's own description of every issue: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]"}`.
+- `InvalidInput`'s `message` is the schema's own description of every issue, and `issues` lists each by its path: `{"_tag":"InvalidInput","message":"Expected string\n  at [\"name\"]","issues":[{"path":["name"],"message":"Expected string"}]}`.
 
 ## Failure modes
 

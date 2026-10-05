@@ -285,6 +285,18 @@ describe("contracts", () => {
 
     expect(response.status).toBe(201);
   });
+
+  it("keys a list of actions by name, each its own contract, refusing a name held twice", () => {
+    const contracts = Action.byName([GetUser, RenameUser]);
+
+    expect(Object.keys(contracts)).toEqual(["getUser", "renameUser"]);
+    expect(contracts.getUser).toBe(GetUser);
+    expect(contracts.renameUser.success).toBe(RenameUser.success);
+
+    const Again = Action.make("getUser", { description: "Again", access: "read" });
+
+    expect(() => Action.byName([GetUser, Again])).toThrow("Duplicate action: getUser");
+  });
 });
 
 describe("implementations", () => {

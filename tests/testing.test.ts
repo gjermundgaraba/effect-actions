@@ -1,8 +1,18 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Context, Effect, FileSystem, Layer, Path, Schema, SchemaGetter, Stream } from "effect";
+import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
+import {
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Result,
+  Schema,
+  SchemaGetter,
+  Stream,
+} from "effect";
 import {
   Etag,
   FetchHttpClient,
@@ -379,16 +389,20 @@ describe("mcpRequest", () => {
       const [listed, refused, unknown] = yield* againstHost(
         Effect.all([
           Effect.flatMap(
-            Testing.mcpRequest("tools/list", {}, headersAs()),
+            HttpClient.execute(Testing.mcpRequest("tools/list", {}, headersAs())),
             HttpClientResponse.schemaBodyJson(Listed),
           ),
-          Testing.mcpRequest(
-            "tools/call",
-            { name: "renameUser", arguments: { id: "1", name: "Grace" } },
-            headersAs("reader"),
+          HttpClient.execute(
+            Testing.mcpRequest(
+              "tools/call",
+              { name: "renameUser", arguments: { id: "1", name: "Grace" } },
+              headersAs("reader"),
+            ),
           ),
           Effect.flatMap(
-            Testing.mcpRequest("tools/call", { name: "missing", arguments: {} }, headersAs()),
+            HttpClient.execute(
+              Testing.mcpRequest("tools/call", { name: "missing", arguments: {} }, headersAs()),
+            ),
             HttpClientResponse.schemaBodyJson(Failed),
           ),
         ]),
@@ -408,10 +422,12 @@ describe("mcpRequest", () => {
     Effect.gen(function* () {
       const text = yield* againstHost(
         Effect.flatMap(
-          Testing.mcpRequest(
-            "tools/call",
-            { name: "double", arguments: { value: "21" } },
-            headersAs(),
+          HttpClient.execute(
+            Testing.mcpRequest(
+              "tools/call",
+              { name: "double", arguments: { value: "21" } },
+              headersAs(),
+            ),
           ),
           (response) => response.text,
         ),
@@ -419,6 +435,71 @@ describe("mcpRequest", () => {
 
       expect(`${JSON.stringify(JSON.parse(text))}\n`).toBe(text);
     }),
+  );
+
+  it("converts to the web Request a web handler takes", async () => {
+    const web = HttpRouter.toWebHandler(host.pipe(Layer.provide(HttpServer.layerServices)), {
+      disableLogger: true,
+    });
+
+    /** A tool result the native server answers a refused call with. */
+    const Refused = Schema.Struct({
+      result: Schema.Struct({
+        isError: Schema.Boolean,
+        content: Schema.Array(Schema.Struct({ text: Schema.String })),
+      }),
+    });
+
+    /** One request to the handler, as a Promise test sends it: a web `Response` back. */
+    const mcp = (method: string, params: Parameters<typeof Testing.mcpRequest>[1]) =>
+      web.handler(
+        Result.getOrThrow(
+          HttpClientRequest.toWebResult(
+            Testing.mcpRequest(method, params, { url: "http://localhost/mcp", ...headersAs() }),
+          ),
+        ),
+      );
+
+    try {
+      const listed = await mcp("tools/list", {});
+
+      expect(listed.status).toBe(200);
+      expect(listed.headers.get("content-type")).toContain("application/json");
+
+      // A call the typed client would not send: an argument the input does not declare.
+      const called = await mcp("tools/call", {
+        name: "getUser",
+        arguments: { id: "1", extra: true },
+      });
+
+      const { result } = Schema.decodeUnknownSync(Refused)(await called.json());
+
+      expect(result.isError).toBe(true);
+      expect(result.content.map(({ text }) => text).join()).toContain("getUser");
+    } finally {
+      await web.dispose();
+    }
+
+    // The default `/mcp` is relative, which only an `HttpClient` resolves.
+    expect(Result.isFailure(HttpClientRequest.toWebResult(Testing.mcpRequest("tools/list")))).toBe(
+      true,
+    );
+  });
+
+  it.effect("reaches a listening server through a client that prepends its URL", () =>
+    Effect.gen(function* () {
+      // The default is relative, so the test server's client sends it to the server itself.
+      const response = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
+
+      // Unauthenticated, as the listening host answers it.
+      expect(response.status).toBe(401);
+    }).pipe(
+      Effect.provide(
+        HttpRouter.serve(host, { disableLogger: true, disableListenLog: true }).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        ),
+      ),
+    ),
   );
 });
 
@@ -434,17 +515,19 @@ describe("mcpRequest metadata", () => {
         ),
       );
 
-      const sent = yield* Testing.mcpRequest(
-        "tools/call",
-        {
-          name: "slow",
-          arguments: {},
-          _meta: {
-            progressToken: "p",
-            "io.modelcontextprotocol/protocolVersion": "1999-01-01",
+      const sent = yield* HttpClient.execute(
+        Testing.mcpRequest(
+          "tools/call",
+          {
+            name: "slow",
+            arguments: {},
+            _meta: {
+              progressToken: "p",
+              "io.modelcontextprotocol/protocolVersion": "1999-01-01",
+            },
           },
-        },
-        { url: "/echo" },
+          { url: "/echo" },
+        ),
       ).pipe(
         Effect.flatMap((response) => response.text),
         Effect.provide(Testing.layer(echo)),
@@ -516,7 +599,10 @@ describe("layer", () => {
       const answered = await run(
         Effect.gen(function* () {
           const client = yield* ActionHttp.client(Http, as("alice"));
-          const listed = yield* Testing.mcpRequest("tools/list", {}, headersAs());
+
+          const listed = yield* HttpClient.execute(
+            Testing.mcpRequest("tools/list", {}, headersAs()),
+          );
 
           return [
             yield* client.getUser({ id: "1" }),

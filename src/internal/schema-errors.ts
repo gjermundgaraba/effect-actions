@@ -14,7 +14,7 @@ const responseKinds: ReadonlySet<HttpApiError.HttpApiSchemaError["kind"]> = new 
 
 /**
  * The native middleware answering schema failures: a request that does not decode with
- * `InvalidInput` and the schema's own message, a result that does not encode as a defect,
+ * `InvalidInput`, the schema's own message and issues, a result that does not encode as a defect,
  * the empty 500 of any other server bug.
  */
 export class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
@@ -26,5 +26,5 @@ export const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(SchemaEr
   responseKinds.has(failure.kind)
     ? // Its cause, not the native failure: the failure itself renders as a 400.
       Effect.die(failure.cause)
-    : Effect.fail(new InvalidInput({ message: failure.cause.message })),
+    : Effect.fail(InvalidInput.fromSchemaError(failure.cause)),
 );

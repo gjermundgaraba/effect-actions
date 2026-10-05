@@ -77,10 +77,11 @@ Serve `routes` with `HttpRouter.serve` and a platform server layer, with a reque
 
 ## Browser
 
-A browser app calls the server with `ActionHttp.client`. It needs the contracts and the HTTP
-binding, and nothing else of the server. The package declares `"sideEffects": false`, so a
-bundler may drop what a client does not use. Keep the contracts and the binding in modules that
-import no server code, and import those alone from the page, as the minimal program does:
+A browser app calls the server with `ActionHttp.client`, or `ActionHttp.fetchClient` outside an
+Effect. It needs the contracts and the HTTP binding, and nothing else of the server. The package
+declares `"sideEffects": false`, so a bundler may drop what a client does not use. Keep the
+contracts and the binding in modules that import no server code, and import those alone from
+the page, as the minimal program does:
 
 ```text
 contracts.ts    Action.make(...) and ActionHttp.make([...]): imports effect only
@@ -99,6 +100,10 @@ an import map rather than its bundle maps those three. A map pointing at Effect 
 published files maps `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` too,
 to the same files the `effect` barrel loads, as Effect's own `Runtime` module imports them by
 name; a build or CDN that resolves Effect's own imports needs only the three.
+Serve each of the three whole. A page that re-exports only the names it uses, from a vendored
+module or a trimmed bundle, fails at load with `does not provide an export named …` once the
+package imports another name from the same specifier, as a release may: check such a list
+against the package's imports on every upgrade.
 
 Companion Effect modules you will import alongside: `effect/http-api` (`HttpApiClient`, `OpenApi`, `HttpApiSwagger`, `HttpApiScalar`), `effect/http` (`HttpRouter`, `HttpServerResponse`, `FetchHttpClient`, `HttpClientError`), `effect/cli` (`Command`, `Flag`, `Argument`).
 

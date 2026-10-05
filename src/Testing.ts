@@ -109,6 +109,9 @@ export function layer(
   );
 }
 
+/** An MCP request's parameters, as `mcpRequest` takes them: JSON, with any `_meta`. */
+export type { Params as McpParams } from "./internal/mcp.js";
+
 /** Where `mcpClient` sends, and through what client. */
 export interface McpClientOptions {
   /**
@@ -120,9 +123,13 @@ export interface McpClientOptions {
   readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
 }
 
-/** Where `mcpRequest` sends, and with what headers. */
+/** Where an `mcpRequest` goes, and with what headers. */
 export interface McpRequestOptions {
-  /** The endpoint, as `McpClientOptions` has it. */
+  /**
+   * The endpoint, resolved by the `HttpClient` that sends the request: relative under `layer`.
+   * Defaults to `/mcp`, as `mcpClient`'s does; converting to a web `Request` needs an absolute
+   * one.
+   */
   readonly url?: string;
   readonly headers?: Headers.Input;
 }
@@ -250,8 +257,8 @@ const callTool = (
   return Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
-    const response = yield* mcpRequest("tools/call", { name, arguments: encoded }, { url }).pipe(
-      Effect.provideService(HttpClient.HttpClient, client),
+    const response = yield* client.execute(
+      mcpRequest("tools/call", { name, arguments: encoded }, { url }),
     );
 
     const text = yield* response.text;
@@ -339,32 +346,27 @@ export function mcpClient(
 }
 
 /**
- * Send one stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves
- * it, on the `HttpClient`: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
+ * One stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves it,
+ * as the native request value: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
  * `params.uri` for `resources/read` and `params.name` otherwise, and the client metadata in
- * `_meta` are filled in, under any `_meta` given,
- * such as a `progressToken`; the protocol version is always the request's own. It succeeds
- * with the response as the endpoint sent it, whatever its status: for a test asserting on
- * what `mcpClient` decodes away, such as `tools/list`, a refusal's challenge, or a call its
- * types would not send.
+ * `_meta` are filled in, under any `_meta` given, such as a `progressToken`; the protocol
+ * version is always the request's own. The test sends it: `HttpClient.execute` answers the
+ * response as the endpoint sent it, whatever its status, and `HttpClientRequest.toWebResult`
+ * gives the web `Request` a web handler or `fetch` takes, once `url` is absolute. It is for a test
+ * asserting on what `mcpClient` decodes away, such as `tools/list`, a refusal's challenge, or
+ * a call its types would not send.
  */
 export const mcpRequest = (
   method: string,
   params: Params = {},
   { headers = {}, url = defaultPath }: McpRequestOptions = {},
-): Effect.Effect<
-  HttpClientResponse.HttpClientResponse,
-  HttpClientError.HttpClientError,
-  HttpClient.HttpClient
-> => {
+): HttpClientRequest.HttpClientRequest => {
   const { headers: routing, body } = statelessRequest(method, params);
 
   // The routing headers go over any the caller sets.
-  return HttpClient.execute(
-    HttpClientRequest.post(url).pipe(
-      HttpClientRequest.setHeaders(headers),
-      HttpClientRequest.setHeaders(routing),
-      HttpClientRequest.bodyJsonUnsafe(body),
-    ),
+  return HttpClientRequest.post(url).pipe(
+    HttpClientRequest.setHeaders(headers),
+    HttpClientRequest.setHeaders(routing),
+    HttpClientRequest.bodyJsonUnsafe(body),
   );
 };

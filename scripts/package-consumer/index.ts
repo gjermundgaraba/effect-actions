@@ -55,12 +55,11 @@ const served = await Effect.gen(function* () {
   const greeting = yield* client.greet({ name: "Ada" });
   const mcp = yield* Testing.mcpClient([Greet]);
   const called = yield* mcp.greet({ name: "Ada" });
-  const listed = yield* Testing.mcpRequest("tools/list");
+  const listed = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
 
-  const raw = yield* Testing.mcpRequest("tools/call", {
-    name: "greet",
-    arguments: { name: "Ada" },
-  });
+  const raw = yield* HttpClient.execute(
+    Testing.mcpRequest("tools/call", { name: "greet", arguments: { name: "Ada" } }),
+  );
 
   return { greeting, called, listed: listed.status, raw: yield* raw.text };
 }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);

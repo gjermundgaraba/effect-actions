@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Redacted } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
@@ -142,6 +142,117 @@ it("publishes discovery from every composition of its middleware", async () => {
 
   const b = await web.handler(new Request("https://api.example.com/b"));
   expect([await b.text(), b.headers.get("x-caller")]).toEqual(["caller@acme", "caller@acme"]);
+});
+
+describe("a resource built at startup", () => {
+  class Tenant extends Context.Service<Tenant, string>()("protected-resource/BuiltTenant") {}
+
+  class Resources extends Context.Service<Resources, Authentication.Options | undefined>()(
+    "protected-resource/Resources",
+  ) {}
+
+  const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
+    Effect.provideService(route, Tenant, "acme"),
+  );
+
+  /** Authentication whose resource is the `Resources` service's, counting its builds. */
+  const built = () => {
+    const builds = { count: 0 };
+
+    const authentication = Authentication.make(
+      Caller,
+      Effect.succeed(
+        Effect.gen(function* () {
+          const token = yield* Authentication.bearerToken;
+
+          return `${Redacted.value(token)}@${yield* Tenant}`;
+        }),
+      ),
+      Effect.map(Resources, (resource) => {
+        builds.count += 1;
+
+        return resource;
+      }),
+    );
+
+    return { builds, authentication };
+  };
+
+  /** Two routes under one layer of `authentication`, combined, its resource `resource`. */
+  const routes = (
+    authentication: ReturnType<typeof built>["authentication"],
+    resource: Authentication.Options | undefined,
+  ) => {
+    // The middleware itself, so it combines as one made with a plain resource does.
+    const authenticate = authentication
+      .combine(resolveTenant)
+      .layer.pipe(Layer.provide(Layer.succeed(Resources, resource)));
+
+    return Layer.mergeAll(
+      HttpRouter.add("GET", "/a", Effect.map(Caller, HttpServerResponse.text)).pipe(
+        Layer.provide(authenticate),
+      ),
+      HttpRouter.add("GET", "/b", Effect.map(Caller, HttpServerResponse.text)).pipe(
+        Layer.provide(authenticate),
+      ),
+    );
+  };
+
+  it("publishes its discovery and names it in every challenge, built once, and combines", async () => {
+    const { builds, authentication } = built();
+
+    const web = serve(
+      routes(authentication, {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+        scopesRequired: ["docs:read"],
+      }),
+    );
+
+    const discovered = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+
+    expect(discovered.status).toBe(200);
+    expect(await discovered.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
+
+    const anonymous = await web.handler(new Request("https://api.example.com/a"));
+
+    expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([
+      401,
+      `Bearer scope="docs:read", resource_metadata="https://api.example.com${prefix}/mcp"`,
+    ]);
+
+    // The request service comes from the middleware combined before it.
+    const admitted = await web.handler(
+      new Request("https://api.example.com/b", { headers: { authorization: "Bearer alice" } }),
+    );
+
+    expect(await admitted.text()).toBe("alice@acme");
+    expect(builds.count).toBe(1);
+  });
+
+  it("publishes nothing and challenges with a bare Bearer when it builds none", async () => {
+    const web = serve(routes(built().authentication, undefined));
+
+    const discovered = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+    const anonymous = await web.handler(new Request("https://api.example.com/a"));
+
+    expect(discovered.status).toBe(404);
+    expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([401, "Bearer"]);
+  });
+
+  it("refuses a scopesRequired that is no scope token when its layer builds", async () => {
+    const web = serve(
+      routes(built().authentication, {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+        scopesRequired: ["docs read"],
+      }),
+    );
+
+    await expect(web.handler(new Request("https://api.example.com/a"))).rejects.toThrow(
+      'Invalid scope in scopesRequired: "docs read"',
+    );
+  });
 });
 
 describe("discovery across origins", () => {

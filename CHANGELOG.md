@@ -70,7 +70,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, before)`, with `Action.allowAll` where 0.8.0 passed no `before`                                                                                  |
 | `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`, inferred, never spelled out: a helper takes implementations as a type parameter ([Action.md](docs/Action.md#rules)); a group is a list of actions         |
-| `ActionGroup.contracts(...groups)`, `Contracts`                                              | The actions themselves, or a binding's `Http.actions`                                                                                                                              |
+| `ActionGroup.contracts(...groups)`, `Contracts`                                              | `Action.byName(actions)`, the list keyed by name, each its exact contract; the list itself is the actions, or a binding's `Http.actions`                                           |
 | `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                 |
 | `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its hook, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer` |
 | A group's `errors`                                                                           | One array spread into each action's `errors`; `ActionHttp.make(actions, { errors })` for middleware's, such as a rate limit's; authentication's refusals are built in              |
@@ -181,8 +181,8 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `Http.openApi()`                                                                       | `HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`, the route 0.6.0's `openApi` replaced: `Http.api` is native                                                                                                                        |
 | `ActionCatalog`                                                                        | `OpenApi.fromApi(ActionHttp.make(actions).api)` of the actions to describe, offline. A binding no layer serves may hold actions HTTP leaves out, such as a tool for agents, which `Http.api` omits. Or use an MCP endpoint's `tools/list`. Hints are each action's `hints` |
 | `HttpApiClient.make(Http.api)`'s `client.users.getUser({ payload })`                   | `ActionHttp.client(Http)`'s `client.getUser(input)`; natively `client.getUser({ payload })`                                                                                                                                                                                |
-| `ActionHttpClient.promise(Http, options)`                                              | A client built once with `FetchHttpClient.layer`, each call `Effect.runPromise`d ([ActionHttp.md](docs/ActionHttp.md#promise-callers)), the wrapper 0.6.0's `promise` replaced: clients are Effect-only                                                                    |
-| `ActionHttpClient.Client`, `Method`, `Options`                                         | `ActionHttp.Client`, `ActionHttp.ClientOptions`; `fetch` is `FetchHttpClient.Fetch`                                                                                                                                                                                        |
+| `ActionHttpClient.promise(Http, options)`                                              | `ActionHttp.fetchClient(Http, options)`, built once, each call `Effect.runPromise`d ([ActionHttp.md](docs/ActionHttp.md#promise-callers)), the wrapper 0.6.0's `promise` replaced: clients are Effect-only                                                                 |
+| `ActionHttpClient.Client`, `Method`, `Options`                                         | `ActionHttp.Client`, `ActionHttp.ClientOptions`; `fetch` is `fetchClient`'s option, or `FetchHttpClient.Fetch` around `client`                                                                                                                                             |
 
 - Routes are `POST <prefix>/<action>`, `/api` by default, with operation ID `<action>`, so
   action names are unique per binding; 0.8.0's were `POST <apiPath>/<group>/<action>`, with
@@ -206,7 +206,9 @@ Each area below lists what is renamed or removed, then what changes without a re
 - Every endpoint declares its action's errors, its binding's, and the three built-in ones, and
   every tool its action's and the three. Any handler may fail with the built-in ones unlisted.
   Input that does not decode, malformed JSON included, is a 400 `InvalidInput` carrying the
-  schema's message, and a result that does not encode is an empty 500; 0.8.0 answered both
+  schema's message and its `issues`, each a `path` into the input and a `message`, which a
+  handler refusing input that decodes may name too, so an application's own error for bad
+  input, kept for its structured issues, is deleted; and a result that does not encode is an empty 500; 0.8.0 answered both
   with an empty 400, or with its group's `schemaError` answers. Nothing replaces
   `schemaError`: input needs no error of your own, since every surface declares
   `InvalidInput`, and a success that does not encode means the handler broke its contract
@@ -247,7 +249,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Authentication.middleware(tag, authenticate).layer`                             | For a bearer credential, `Authentication.make(tag, Effect.succeed(authenticate), resource?).layer`, where `authenticate` may fail with a refusal; for a session cookie, Effect's `HttpRouter.middleware`, answering its own 401 and setting `Cache-Control: no-store` |
 | `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.Options`, `make`'s third argument                                                                                                                                                                                                                     |
-| `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `make`'s third argument, which publishes discovery and names its URL in every challenge                                                                                                                                                                               |
+| `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `make`'s third argument, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusal`                                                                                                                                 |
 | A 401 challenge naming a scope                                                   | `scopesRequired` in `make`'s third argument                                                                                                                                                                                                                           |
 | An insufficient-scope error of your own and a hand-built challenge               | `new Action.Forbidden({ message, scopes: [scope] })`                                                                                                                                                                                                                  |
 
@@ -400,12 +402,22 @@ Each area below lists what is renamed or removed, then what changes without a re
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Testing.httpClient(api, handler)`, `Testing.Handler`                                                                                     | `Testing.layer(handler)`: the native `HttpClient`, answered by the web handler, on which `ActionHttp.client(Http)` and every other client call it; `Testing.layer(routes)` builds the routes itself                                                                                                                                              |
 | `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. An action with a `text` hint has its success read from its text blocks                                                                                                                                            |
-| `Testing.mcpRequest({ url, method, params, headers })`, a `Request`                                                                       | `Testing.mcpRequest(method, params?, { url?, headers? })`, an Effect of the response on the `HttpClient`                                                                                                                                                                                                                                         |
+| `Testing.mcpRequest({ url, method, params, headers })`, a `Request`                                                                       | `Testing.mcpRequest(method, params?, { url?, headers? })`, the native request: send it with `HttpClient.execute`, or as a web `Request`, `HttpClientRequest.toWebResult`                                                                                                                                                                         |
 | `Testing.McpCallOptions`, `McpCallResult`, `McpRequestParams`, `McpRequestValue`                                                          | None: `mcpClient` types each call, and `params` are JSON                                                                                                                                                                                                                                                                                         |
 | `TestingClient.withMcpClient`, `McpClientOptions`, the optional `@modelcontextprotocol/client` peer                                       | Depend on the official client, `new Client(info, { versionNegotiation: { mode: { pin: "2026-07-28" } } })`. Give its transport `fetch: (input, init) => web.handler(new Request(input, init))`, with `web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)))` as 0.8.0's tests built it; or use `Testing.mcpClient` |
 
 ### Additions
 
+- `ActionHttp.fetchClient(Http, { baseUrl, transformClient, fetch })` is `client` built once
+  over `fetch`, outside an Effect: its methods are the same Effects and require nothing, so a
+  browser app or a script runs each call with `Effect.runPromise`. A call sends with the
+  `fetch` option, or with the global `fetch` as the call finds it, so a test's stub installed
+  later is used. It replaces
+  the three lines every Promise caller repeated around `client`: `FetchHttpClient.layer`,
+  `FetchHttpClient.Fetch` and `Effect.runSync`.
+- `Action.InvalidInput.fromSchemaError(error)` is the `InvalidInput` every surface answers a
+  `Schema.SchemaError` with, its message and its `issues`, for code that decodes input of its
+  own, such as a header or a route parameter, and answers as the surfaces do.
 - `input` and `success` take plain fields: `input: { id: Schema.String }`. `input: {}`, or no
   `input`, is an action without input: a strict empty object, the root MCP needs. A given
   schema, `Schema.Struct({})` included, is kept as it is.
@@ -482,6 +494,18 @@ Each area below lists what is renamed or removed, then what changes without a re
   client re-authorizes and retries.
 - `Authentication.bearerToken` reads the request's bearer token as a `Redacted<string>`,
   failing with `Unauthenticated` without one; `Effect.option(bearerToken)` where it is optional.
+- `Authentication.refusal(error, { protectedResource, authorization })` is the response
+  `Authentication.make` answers a refusal with: its status, JSON, `Cache-Control: no-store` and
+  challenge. A caller the router never routes, such as a Node `upgrade` handler admitting a
+  socket, refuses with it rather than building a challenge of its own
+  ([Authentication.md](docs/Authentication.md#outside-the-router)).
+- `Authentication.bearerTokenOf(authorization)` reads an `Authorization` header value as
+  `bearerToken` reads a request's, an `Option` of the `Redacted` token, for that same caller,
+  which holds the header and no request.
+- `Authentication.make`'s `protectedResource` may be an Effect that builds it, as `build`
+  builds the authentication: for a resource known only at startup, such as one read from a
+  service. It runs once per layer graph, and the result is still the middleware, so it
+  combines with other middleware, which `Layer.unwrap` around `make(...).layer` gave up.
 - `ActionMcp.runStdio` serves MCP 2025-11-25 and 2025-06-18, beside 2026-07-28, as the host
   negotiates, so hosts that open with `initialize`, such as Claude Code and Codex, connect; a
   host asking for an earlier revision is offered 2025-11-25. This reverses 0.6.0's "Stdio hosts must speak 2026-07-28", which 0.7.0 kept on

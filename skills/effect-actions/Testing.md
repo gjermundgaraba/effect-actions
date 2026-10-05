@@ -14,16 +14,16 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 | `layer(routes)`                         | A `Layer<HttpClient>` answering requests with `routes` in memory.                   |
 | `layer(handler)`                        | A `Layer<HttpClient>` answering requests with a web handler the test serves.        |
 | `mcpClient(actions, options?)`          | An Effect of a client calling each action's tool, like `ActionHttp.client`.         |
-| `mcpRequest(method, params?, options?)` | One request an `ActionMcp` endpoint serves, answering the response as sent.         |
+| `mcpRequest(method, params?, options?)` | One request an `ActionMcp` endpoint serves, as the native request the test sends.   |
 | `McpCallError`                          | What a client method fails with for an answer it cannot decode; `message` holds it. |
 
-| Option                         | Meaning                                                                                                                        |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `url`                          | The endpoint, resolved by the `HttpClient` (relative under `layer`); default `/mcp`, the `ActionMcp.layerHttp` default.        |
-| `mcpClient`: `transformClient` | Wraps the native `HttpClient`, as `ActionHttp.client` takes it: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. |
-| `mcpRequest`: `headers`        | Request headers.                                                                                                               |
+| Option                         | Meaning                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`                          | The endpoint, resolved by the `HttpClient` (relative under `layer`, or one prepending a base URL); default `/mcp`, the `ActionMcp.layerHttp` default. |
+| `mcpClient`: `transformClient` | Wraps the native `HttpClient`, as `ActionHttp.client` takes it: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                        |
+| `mcpRequest`: `headers`        | Request headers.                                                                                                                                      |
 
-Exported types: `McpClient<Actions>`, a client's type; `McpClientOptions` of `mcpClient`, and `McpRequestOptions` of `mcpRequest`.
+Exported types: `McpClient<Actions>`, a client's type; `McpClientOptions` of `mcpClient`; `McpRequestOptions` of `mcpRequest`, and `McpParams`, its `params`.
 
 `mcpClient(actions, options)` builds a client on the `HttpClient` in context, one method per
 action, called as a client method is: `mcp.getUser({ id })`. For every tool one implementation
@@ -143,9 +143,12 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
 - An action with a `text` hint ([ActionMcp.md](ActionMcp.md#text-fields)) has its success read from its tool's text blocks, the field raw from the first and the rest from the JSON of the second, or the whole from the JSON of one block, and then decoded: the client reads the hint from the contract, as the endpoint does.
 - A declared error, the action's own or a built-in one, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication or a hook, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
 - Any other answer fails with `McpCallError`, whose `message` holds it: another status, the native server's own text (invalid arguments, a defect), no reply, a result without `structuredContent`, or a JSON-RPC error (an unknown tool). Match it with `Effect.catchTag("McpCallError", ...)`.
-- The input is typed, so a malformed call cannot be sent through a client method. To assert on a malformed call, another MCP method or the response itself, such as a refusal's status and `WWW-Authenticate` challenge, use `mcpRequest(method, params, options)`.
-- `mcpRequest` sends one stateless request as a client method does, with `mcp-name` from `params.uri` for `resources/read` and from `params.name` otherwise, and the client metadata in `_meta`. A `_meta` in `params`, such as a `progressToken`, is merged over the client metadata, and the protocol version is always the request's own. It succeeds with the response whatever its status.
-- To assert on a result's exact bytes, such as a size bound, parse the text of `mcpRequest`'s JSON response: `JSON.stringify` of the parsed message reproduces what the server wrote, less its final newline, so `JSON.stringify(message.result)` is the result as encoded.
+- The input is typed, so a malformed call cannot be sent through a client method. To assert on a malformed call, another MCP method or the response itself, such as a refusal's status and `WWW-Authenticate` challenge, send `mcpRequest(method, params, options)`.
+- `mcpRequest` is one stateless request as a client method sends it, a native `HttpClientRequest` the test sends itself: with `mcp-name` from `params.uri` for `resources/read` and from `params.name` otherwise, and the client metadata in `_meta`. A `_meta` in `params`, such as a `progressToken`, is merged over the client metadata, and the protocol version is always the request's own.
+- Under `layer`, send it with `HttpClient.execute(Testing.mcpRequest("tools/list"))`, which succeeds with the response whatever its status.
+- A Promise test sends it as a web `Request`, to a web handler or to `fetch`, for a web `Response` back: `handler(Result.getOrThrow(HttpClientRequest.toWebResult(Testing.mcpRequest(method, params, { url: "http://localhost/mcp" }))))`. The `url` is absolute, the handler's origin or a listening server's, since a web `Request` has no `HttpClient` to resolve a relative one.
+- A tool call the typed client would not send is `mcpRequest("tools/call", { name, arguments })`, its result read from the response's JSON: `result.structuredContent`, or `result.isError` and `result.content`.
+- To assert on a result's exact bytes, such as a size bound, parse the text of an `mcpRequest`'s JSON response: `JSON.stringify` of the parsed message reproduces what the server wrote, less its final newline, so `JSON.stringify(message.result)` is the result as encoded.
 - A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `transformClient`, the same options for `mcpClient` and `ActionHttp.client`: one client per caller, `const alice = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")) }`. `mcpRequest` takes `headers`.
 - A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
@@ -162,4 +165,5 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(asReader))));
 - A builder or handler finds no file where one exists, failing with `NotFound: FileSystem.<method> (<path>)`, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it, with `Layer.provideMerge` where the program reads files too.
 - `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
 - A client method fails with `McpCallError` `MCP tools/call "<name>" returned no structured content`: the endpoint sends that tool's success as text, since its action has a `text` hint, and the client was given a contract without it. Give `mcpClient` the endpoint's own contract.
-- An `HttpClientError` whose reason is `InvalidUrlError`, from a client method on an `HttpClient` other than `layer`'s: a relative `url` resolves only under `layer`. Pass an absolute `url`.
+- `HttpClientRequest.toWebResult` or `toWeb` of an `mcpRequest` fails with `UrlError`: its `url` is the relative default. Pass an absolute `url`.
+- An `HttpClientError` whose reason is `InvalidUrlError`, from a client method or a sent `mcpRequest` on an `HttpClient` that prepends no base URL: a relative `url` resolves under `layer`, and under a client that prepends one, such as `NodeHttpServer.layerTest`'s. Pass an absolute `url`.

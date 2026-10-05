@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Predicate, Schema, SchemaIssue } from "effect";
 
 /** A message field that defaults, so `new Forbidden()` needs no argument. */
 const message = (fallback: string) =>
@@ -8,14 +8,53 @@ const message = (fallback: string) =>
 export const statuses = { InvalidInput: 400, Unauthenticated: 401, Forbidden: 403 } as const;
 
 /**
+ * One thing wrong with an input: where, as the keys and indexes leading to it from the input's
+ * root, none for the input itself, and what the schema expects there.
+ */
+const Issue = Schema.Struct({
+  path: Schema.Array(Schema.Union([Schema.String, Schema.Finite])),
+  message: Schema.String,
+});
+
+const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+
+/**
  * The request's input does not decode against the action's input. HTTP answers every such
- * request with it, its message the schema's own description of what is wrong.
+ * request with it, its message the schema's own description of what is wrong, and `issues`
+ * the same description an issue at a time, for a caller that points at a field. A handler
+ * failing with it for input that decodes but cannot be served may name its own.
  */
 export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   "InvalidInput",
-  { message: message("The input does not match the action's input.") },
+  {
+    message: message("The input does not match the action's input."),
+    issues: Schema.optionalKey(Schema.Array(Issue)),
+  },
   { httpApiStatus: statuses.InvalidInput },
-) {}
+) {
+  /**
+   * The `InvalidInput` for input that did not decode, as every surface answers it: the
+   * schema's message, and each of its issues by path, for code that decodes input of its own,
+   * such as a header or a route parameter. Neither carries a value of the input: decoding
+   * runs without `reportInput`, so no issue holds one to format. A symbol key is sent as its
+   * string form, `Symbol(name)`, as JSON has no symbols, which tells it from a string key of
+   * that name.
+   */
+  static readonly fromSchemaError = ({ issue, message }: Schema.SchemaError): InvalidInput =>
+    new InvalidInput({
+      message,
+      issues: standardIssues(issue).issues.map((found) => ({
+        // The formatter is typed as Standard Schema's failure result, whose path is optional
+        // and may hold `{ key }` segments.
+        path: (found.path ?? []).map((segment) => {
+          const key = Predicate.isPropertyKey(segment) ? segment : segment.key;
+
+          return Predicate.isSymbol(key) ? String(key) : key;
+        }),
+        message: found.message,
+      })),
+    });
+}
 
 /** The caller is not authenticated: authentication or an implementation's `before` hook refuses. */
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(

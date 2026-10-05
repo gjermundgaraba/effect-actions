@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, JsonPointer, Layer, Predicate, Schema } from "effect";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { HttpClient } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
@@ -617,17 +618,17 @@ describe("projection boundaries", () => {
 
         yield* Effect.gen(function* () {
           for (const url of ["/a", "/b"]) {
-            const read = yield* Testing.mcpRequest(
-              "resources/read",
-              { uri: "docs://readme" },
-              { url },
+            const read = yield* HttpClient.execute(
+              Testing.mcpRequest("resources/read", { uri: "docs://readme" }, { url }),
             );
 
             expect(yield* read.json).toMatchObject({
               result: { contents: [{ uri: "docs://readme", text: "# Acme" }] },
             });
 
-            const got = yield* Testing.mcpRequest("prompts/get", { name: "triage" }, { url });
+            const got = yield* HttpClient.execute(
+              Testing.mcpRequest("prompts/get", { name: "triage" }, { url }),
+            );
 
             expect(yield* got.json).toMatchObject({
               result: { messages: [{ content: { type: "text", text: "Triage with # Acme" } }] },

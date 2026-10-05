@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Schema, SchemaTransformation } from "effect";
+import { Cause, Effect, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
@@ -412,4 +412,88 @@ it("refuses a binding error with a built-in error's tag", () => {
   expect(() => ActionHttp.make([Get], { errors: [Forbidden] })).toThrow(
     'ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface',
   );
+});
+
+/** `handler` as a `fetch`, recording the name it answers under. */
+const fetchOf =
+  (name: string, handler: Handler, used: Array<string>): typeof globalThis.fetch =>
+  (input, init) => {
+    used.push(name);
+
+    return handler(new Request(input, init));
+  };
+
+it("builds a fetch client outside an Effect, each sending with its own fetch", async () => {
+  const { handler, requests } = serveNotes();
+  const used: Array<string> = [];
+
+  const first = ActionHttp.fetchClient(Http, {
+    baseUrl: "http://localhost",
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")),
+    fetch: fetchOf("first", handler, used),
+  });
+
+  const second = ActionHttp.fetchClient(Http, {
+    baseUrl: "http://localhost",
+    fetch: fetchOf("second", handler, used),
+  });
+
+  expect(Object.keys(first)).toEqual(["get", "count", "remove"]);
+  expect((await Effect.runPromise(first.get({ id: "a" }))).id).toBe("a");
+  expect((await Effect.runPromise(second.get({ id: "b" }))).id).toBe("b");
+  expect(used).toEqual(["first", "second"]);
+  expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
+    "Bearer t0k",
+    null,
+  ]);
+
+  // A declared error rejects the promise as its decoded class.
+  const missing = Effect.runPromise(first.get({ id: "missing" }));
+
+  await expect(missing).rejects.toBeInstanceOf(NotFound);
+  await expect(missing).rejects.toEqual(new NotFound({ id: "missing" }));
+});
+
+it("sends a fetch client's calls with the global fetch as each call finds it", async () => {
+  const { handler } = serveNotes();
+  const used: Array<string> = [];
+  const original = globalThis.fetch;
+
+  const api = ActionHttp.fetchClient(Http, { baseUrl: "http://localhost" });
+
+  try {
+    // Installed after the client is built, and replaced after its first call.
+    globalThis.fetch = fetchOf("stub", handler, used);
+    await Effect.runPromise(api.get({ id: "a" }));
+
+    globalThis.fetch = fetchOf("later", handler, used);
+    await Effect.runPromise(api.get({ id: "a" }));
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  expect(used).toEqual(["stub", "later"]);
+});
+
+it("aborts a fetch client's request when its call is interrupted, as a timeout does", async () => {
+  const signals: Array<AbortSignal> = [];
+
+  // A fetch that answers only by failing once its signal aborts.
+  const api = ActionHttp.fetchClient(Http, {
+    baseUrl: "http://localhost",
+    fetch: (_input, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+
+        if (signal === undefined || signal === null) return;
+
+        signals.push(signal);
+        signal.addEventListener("abort", () => reject(signal.reason));
+      }),
+  });
+
+  const timedOut = Effect.runPromise(api.get({ id: "a" }).pipe(Effect.timeout("10 millis")));
+
+  await expect(timedOut).rejects.toSatisfy(Cause.isTimeoutError);
+  expect(signals.map((signal) => signal.aborted)).toEqual([true]);
 });

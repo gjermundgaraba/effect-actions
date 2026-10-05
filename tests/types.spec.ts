@@ -4,6 +4,7 @@ import { Context, Effect, Layer, Schema, type Stdio } from "effect";
 import {
   type HttpClient,
   type HttpClientError,
+  type HttpClientRequest,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
@@ -1544,6 +1545,52 @@ export const authenticationBuildTypes = () => {
 
   expectTypeOf<Unbuilt["requires"]>().toEqualTypeOf<Verifier>();
   expectTypeOf<Unbuilt["layerRequires"]>().toEqualTypeOf<HttpRouter.HttpRouter>();
+
+  // A plain protected resource adds nothing to the layer.
+  const plain = Authentication.make(Identity, Effect.succeed(Effect.succeed({ id: "a" })), {
+    resource: "https://api.example.com",
+    authorizationServers: ["https://auth.example.com"],
+  });
+
+  type Plain = typeof plain extends HttpRouter.Middleware<infer C> ? C : never;
+
+  expectTypeOf<Plain["layerError"]>().toBeNever();
+  expectTypeOf<Plain["layerRequires"]>().toEqualTypeOf<HttpRouter.HttpRouter>();
+
+  class Unconfigured extends Schema.TaggedError<Unconfigured>()("Unconfigured", {}) {}
+
+  class Resources extends Context.Service<
+    Resources,
+    { readonly load: Effect.Effect<Authentication.Options | undefined, Unconfigured> }
+  >()("types/Resources") {}
+
+  // A resource built at startup is the layer's: what its Effect yields and fails with,
+  // beside the build's, its scope the layer's own. It is still the middleware, so it combines.
+  const startup = Authentication.make(
+    Identity,
+    Effect.map(Verifier, ({ verify }) => Effect.flatMap(Tenant, (tenant) => verify(tenant, "/"))),
+    Effect.gen(function* () {
+      const { load } = yield* Resources;
+      yield* Effect.addFinalizer(() => Effect.void);
+
+      return yield* load;
+    }),
+  );
+
+  type Startup = typeof startup extends HttpRouter.Middleware<infer C> ? C : never;
+
+  expectTypeOf<Startup["requires"]>().toEqualTypeOf<Tenant>();
+  expectTypeOf<Startup["layerError"]>().toEqualTypeOf<Unconfigured>();
+  expectTypeOf<Startup["layerRequires"]>().toEqualTypeOf<
+    HttpRouter.HttpRouter | Verifier | Resources
+  >();
+
+  const configured = startup.combine(resolveTenant).layer;
+
+  expectTypeOf<Layer.Services<typeof configured>>().toEqualTypeOf<
+    HttpRouter.HttpRouter | Verifier | Resources
+  >();
+  expectTypeOf<Layer.Error<typeof configured>>().toEqualTypeOf<Unconfigured>();
 };
 
 export const voidSuccessTypes = () => {
@@ -1708,7 +1755,10 @@ export const mcpClientTypes = Effect.gen(function* () {
   // @ts-expect-error The input is the action's decoded input.
   void mcp.double({ value: "2" });
   // Metadata merges under the protocol keys, such as a progress token.
-  void Testing.mcpRequest("tools/list", { _meta: { progressToken: "p" } });
+  // It is the native request, which the test sends or converts to a web `Request`.
+  expectTypeOf(
+    Testing.mcpRequest("tools/list", { _meta: { progressToken: "p" } }),
+  ).toEqualTypeOf<HttpClientRequest.HttpClientRequest>();
 
   // Its declared errors and the refusals are typed failures.
   yield* mcp.getUser({ id: "1" }).pipe(
@@ -1811,6 +1861,12 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   const shared: ActionMcp.LayerHttpOptions = serverOptions;
   const call: Testing.McpClientOptions = { url: "/mcp" };
   const request: Testing.McpRequestOptions = { url: "/mcp", headers: {} };
+  const params: Testing.McpParams = { name: "double", _meta: { progressToken: "p" } };
+
+  // `mcpRequest`'s parameters by name, where a helper passes them on.
+  expectTypeOf<Parameters<typeof Testing.mcpRequest>[1]>().toEqualTypeOf<
+    Testing.McpParams | undefined
+  >();
 
   const auth: Authentication.Options = {
     resource: "https://api.example.com/mcp",
@@ -1824,7 +1880,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   const struct = Action.make("struct", { ...options, input: Schema.Struct({}) });
   expectTypeOf<(typeof struct)["input"]>().toEqualTypeOf<Schema.Struct<{}>>();
 
-  void [binding, app, hook, clientOptions, httpOptions, call, request, auth, shared];
+  void [binding, app, hook, clientOptions, httpOptions, call, request, params, auth, shared];
 };
 
 // A helper may type an action wider than the binding holds it, its access defaulted or its

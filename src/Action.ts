@@ -331,6 +331,22 @@ export function make(name: string, options: Options): Any {
   return action;
 }
 
+/**
+ * `actions` keyed by name, each its exact contract: `byName(actions).getUser`, its schemas
+ * where a test or a mock reads them, and its types where a helper takes a name,
+ * `(typeof contracts)[K]["input"]["Type"]`, which resolves under a generic `K` where
+ * `Extract` over the list does not. The list is typed by its members, as every surface types
+ * one. A name held twice is refused, as a surface refuses it.
+ */
+export function byName<const Actions extends ReadonlyArray<Any>>(
+  actions: Actions,
+): { readonly [A in Actions[number] as A["name"]]: A };
+export function byName(actions: ReadonlyArray<Any>): { readonly [name: string]: Any } {
+  assertOnce("action", actions);
+
+  return Object.fromEntries(actions.map((action) => [action.name, action]));
+}
+
 /** What `implement` binds: one action, or several that share one builder. */
 type Target = Any | ReadonlyArray<Any>;
 
@@ -691,7 +707,7 @@ const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
   return (...args) =>
     inputOf(action, args).pipe(
       Effect.flatMap(input),
-      Effect.mapError(({ message }) => new InvalidInput({ message })),
+      Effect.mapError(InvalidInput.fromSchemaError),
       Effect.flatMap((value) =>
         Effect.catchCause(run(value), (cause) =>
           Effect.flatMap(mapFailures(cause, failure), Effect.failCause),

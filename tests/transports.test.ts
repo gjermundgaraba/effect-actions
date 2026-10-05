@@ -447,7 +447,7 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
   const list = (origin?: string) =>
     mcpRequest({
       method: "tools/list",
-      headers: origin === undefined ? undefined : { origin },
+      headers: origin === undefined ? {} : { origin },
     });
 
   // Without `allowedOrigins` the native server admits Origin-less clients
