@@ -401,7 +401,7 @@ describe("Authentication.layer", () => {
       description: "Find something private",
       readOnly: true,
       caller: Identity,
-      errors: [Hidden],
+      error: [Hidden],
     });
 
     const find = Action.implement(

@@ -152,7 +152,7 @@ export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallErr
  * endpoint could not be reached, or an `McpCallError` for any other answer.
  */
 type CallError<A extends Action.Any> =
-  | A["errors"][number]["Type"]
+  | A["error"][number]["Type"]
   | BuiltIn
   | Schema.SchemaError
   | HttpClientError.HttpClientError
@@ -230,7 +230,7 @@ const replyOf = (response: HttpClientResponse.HttpClientResponse, text: string) 
 };
 
 /** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
-const failWith = (errors: Action.Any["errors"], text: string, otherwise: McpCallError) =>
+const failWith = (errors: Action.Any["error"], text: string, otherwise: McpCallError) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
     text,
   ).pipe(

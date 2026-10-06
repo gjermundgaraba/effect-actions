@@ -258,7 +258,7 @@ describe("ActionToolkit", () => {
         caller: Action.Anyone,
         input: { id: Schema.String },
         success: Schema.String,
-        errors: [NotFound],
+        error: [NotFound],
       });
 
       const binding = ActionToolkit.make(

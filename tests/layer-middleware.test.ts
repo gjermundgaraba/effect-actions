@@ -158,7 +158,7 @@ class Quota extends HttpApiMiddleware.Service<Quota, { requires: Actor }>()(
 it("answers a binding's error a layer middleware fails with, before decoding, as every client decodes it", async () => {
   const counted: Array<string> = [];
 
-  const Limited = ActionHttp.make([Who], { authentication: Login, errors: [Throttled] });
+  const Limited = ActionHttp.make([Who], { authentication: Login, error: [Throttled] });
 
   const web = serve(
     ActionHttp.layer(Limited, app, { middleware: [Quota] }).pipe(
@@ -231,7 +231,7 @@ it("answers a step-up refusal as it leaves the layer's middleware, which may rec
   expect([recovered.status, await recovered.text()]).toEqual([200, "fallback"]);
 
   // One turning it into another error the binding declares answers with that error.
-  const Masking = ActionHttp.make([Edit], { authentication: Login, errors: [Unavailable] });
+  const Masking = ActionHttp.make([Edit], { authentication: Login, error: [Unavailable] });
 
   const mask = Layer.succeed(Mask, (route) =>
     Effect.catch(route, () => Effect.fail(new Unavailable({ message: "Try later." }))),

@@ -1877,7 +1877,7 @@ it.effect(
         caller: CurrentActor,
         input: { id: Schema.String.check(Schema.isMinLength(1)) },
         success: Schema.String,
-        errors: [Gone, Missing, Over, Busy],
+        error: [Gone, Missing, Over, Busy],
       });
 
       const over = new Over({ limit: 10n, hint: Option.some("lower it") });
@@ -2022,7 +2022,7 @@ it.effect(
         description: "Removes",
         readOnly: false,
         caller: Action.Anyone,
-        errors: [Gone],
+        error: [Gone],
       });
 
       const app = Action.implement(Remove, () => Effect.fail(new Gone({ id: "x" })));
@@ -2163,7 +2163,7 @@ it.effect(
         caller: Action.Anyone,
         input: { word: logged("input") },
         success: logged("success"),
-        errors: [Refused],
+        error: [Refused],
       });
 
       const coded = ActionCli.command(
@@ -2350,7 +2350,7 @@ it.effect("matches a failure by its tag with Effect's own catchReason, after Com
       readOnly: true,
       caller: Action.Anyone,
       input: { id: Schema.String },
-      errors: [Missing],
+      error: [Missing],
     });
 
     const find = ActionCli.command(
@@ -2405,7 +2405,7 @@ it.effect(
         description: "Quit",
         readOnly: true,
         caller: Action.Anyone,
-        errors: [Exiting],
+        error: [Exiting],
       });
 
       const quit = ActionCli.command(

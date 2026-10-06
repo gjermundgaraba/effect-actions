@@ -109,7 +109,7 @@ type Owning<App, A extends Action.Any> = App extends unknown
  */
 type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
-  A["errors"][number]["Type"] | BuildError<App, A> | Action.BuiltIn,
+  A["error"][number]["Type"] | BuildError<App, A> | Action.BuiltIn,
   RequestOf<App, A> | BuildContext<App, A>
 >;
 
@@ -176,7 +176,7 @@ const remote = (
     action,
     (input) => Effect.flatMap(methods(http, client), (methodOf) => methodOf(action)(input)),
     options,
-    http.errors,
+    http.error,
   );
 };
 
@@ -229,8 +229,8 @@ export function command<const H extends AnyHttp, A extends H["actions"][number]>
   never,
   {},
   Failure<
-    | A["errors"][number]["Type"]
-    | H["errors"][number]["Type"]
+    | A["error"][number]["Type"]
+    | H["error"][number]["Type"]
     | Action.BuiltIn
     | HttpClientError.HttpClientError
     | Schema.SchemaError
@@ -283,8 +283,8 @@ type HttpOptions<A extends Action.Any> = Options<A> & {
 
 /** What an aggregate command over binding `H` fails with, running its actions `A`. */
 type HttpFailure<H extends AnyHttp, A extends Action.Any> = Failure<
-  | A["errors"][number]["Type"]
-  | H["errors"][number]["Type"]
+  | A["error"][number]["Type"]
+  | H["error"][number]["Type"]
   | Action.BuiltIn
   | HttpClientError.HttpClientError
   | Schema.SchemaError

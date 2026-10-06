@@ -140,7 +140,7 @@ describe("mcpClient", () => {
         readOnly: false,
         caller: Action.Anyone,
         success: Schema.String,
-        errors: [Schema.String],
+        error: [Schema.String],
       });
 
       const routes = ActionMcp.layerHttp(
@@ -194,7 +194,7 @@ describe("mcpClient", () => {
         readOnly: true,
         caller: Action.Anyone,
         success: Schema.String,
-        errors: [Late],
+        error: [Late],
       });
 
       const routes = ActionMcp.layerHttp(

@@ -37,7 +37,7 @@ const Echo = Action.make("echo", {
   caller: Action.Anyone,
   input: { value: Schema.Finite },
   success: Schema.Finite,
-  errors: [Rejected],
+  error: [Rejected],
 });
 
 const Http = ActionHttp.make([Echo]);

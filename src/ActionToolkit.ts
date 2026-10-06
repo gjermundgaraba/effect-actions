@@ -29,7 +29,7 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
     readonly parameters: Schema.toCodecJson<A["input"]>;
     readonly success: Schema.toCodecJson<A["success"]>;
     readonly failure: Schema.toCodecJson<
-      Schema.Union<ReadonlyArray<A["errors"][number] | BuiltIns>>
+      Schema.Union<ReadonlyArray<A["error"][number] | BuiltIns>>
     >;
     readonly failureMode: "return";
   },

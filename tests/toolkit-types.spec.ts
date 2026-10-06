@@ -61,7 +61,7 @@ const Fetch = Action.make("fetch", {
   readOnly: true,
   caller: Action.Anyone,
   success: Schema.String,
-  errors: [Gone],
+  error: [Gone],
 });
 
 const fetched = ActionToolkit.make(Action.implement(Fetch, () => Effect.succeed("")));

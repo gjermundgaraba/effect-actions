@@ -36,7 +36,7 @@ const page = <const ReadOnly extends boolean>(readOnly: ReadOnly) => ({
   description: "Fetch one page of a document.",
   input: { url: Schema.String },
   success: Page,
-  errors: [PageNotFound],
+  error: [PageNotFound],
   readOnly,
   caller: Principal,
 });

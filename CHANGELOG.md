@@ -64,6 +64,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command                                                      |
 | `mcp.readOnly`                                                            | The contract's `readOnly`: a tool is read-only exactly when its action is                                                                                                                                                                                                           |
 | `mcp: false`                                                              | Leave the action out of the `actions` option of `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make`: list the actions that are tools beside the contracts, `actions: Tools`, and an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
+| `errors: [UserNotFound]`, `action.errors`                                 | `error: UserNotFound` or `error: [UserNotFound, Conflict]`, as `HttpApiEndpoint` takes it; `action.error`, always a list                                                                                                                                                            |
 | `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                                                                               |
 | `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, ReadOnly, Caller>`; `Action.Options` has none                                                                                                                                                                                          |
 
@@ -90,7 +91,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `ActionGroup.contracts(...groups)`, `Contracts`                                              | `Action.byName(actions)`, the list keyed by name, each its exact contract; the list itself is the actions, or a binding's `Http.actions`                                                    |
 | `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                          |
 | `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its authorization, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer` |
-| A group's `errors`                                                                           | One array spread into each action's `errors`; `ActionHttp.make(actions, { errors })` for router middleware's; authentication's refusals are built in                                        |
+| A group's `errors`                                                                           | One array spread into each action's `error`; `ActionHttp.make(actions, { error })` for router middleware's; authentication's refusals are built in                                          |
 | A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                            | Nothing: input that does not decode is the built-in `Action.InvalidInput`, and a success that does not encode is a defect, an empty 500                                                     |
 | `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group` | `Action.implement(actions, handlers, { authorize })`, for an implementation of protected actions                                                                                            |
 | A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`      | An authorizer failing with an `Action.Refusal` only; a limit is the handler's, failing with an error its action declares                                                                    |
@@ -112,14 +113,14 @@ Each area below lists what is renamed or removed, then what changes without a re
   is not an authorizer: `before: enabled ? authorize : undefined` becomes
   `{ authorize: enabled ? authorize : Action.allowAll }`.
 - `authorize` runs only for protected actions, after authentication and input decoding, and fails
-  only with a refusal. A limit is the handler's: the action declares its error in `errors`, so
+  only with a refusal. A limit is the handler's: the action declares its error in `error`, so
   every surface declares it and every client decodes it, the builder yields the limiter, a startup
   service every surface of the layer graph shares, and the handler fails with the error before its
   work ([Action.md](docs/Action.md#implementations)). 0.8.0's hook failed with its surface's
   `errors`, which that surface alone declared, and a CLI's with any error: move a limit into the
   handlers of the actions it applies to, declaring its error on each, or keep a limit applied
   before decoding in HTTP middleware, router middleware or the layer's own, with
-  `ActionHttp.make`'s `errors`.
+  `ActionHttp.make`'s `error`.
 - One action takes its handler, and a builder for it returns the handler, not a record: a
   one-action group's `.implement({ greet: handler })` becomes
   `Action.implement(Greet, handler)`, with `{ authorize }` for a protected action. A list
@@ -156,24 +157,24 @@ Each area below lists what is renamed or removed, then what changes without a re
   is never a request-time requirement: `runStdio`, a Toolkit tool, `tools.handle` and
   `LanguageModel.generateText` need no `Effect.scoped` for a handler that acquires; drop one
   added only for the types.
-- `make` refuses an `errors` entry encoding with a built-in `_tag`, behind `Schema.suspend`
+- `make` refuses an `error` entry encoding with a built-in `_tag`, behind `Schema.suspend`
   or among a union of `_tag` literals or an enum's values too. So does `ActionHttp.make` for
-  such an entry in a binding's `errors`, the built-in itself included: it throws
+  such an entry in a binding's `error`, the built-in itself included: it throws
   `ActionHttp binding: error _tag "Unauthenticated" is built in, and declared on every surface`
   though `make`'s types accept it. Drop the `Unauthenticated` and `Forbidden` 0.8.0 declared in
-  `ActionHttp.make`'s `errors` for the authentication's 401 and the authorizer's 403: every endpoint
+  `ActionHttp.make`'s `error` for the authentication's 401 and the authorizer's 403: every endpoint
   declares the built-in ones. Replace an `Unauthenticated` or `Forbidden` of your own with the
   built-in one, in authorizers and handlers too. One kept there still compiles, since its `_tag` and
   `message` match the built-in's. It is then sent as the built-in without its other fields, so
   0.8.0's example's `permission` would be lost. Use
   ``new Action.Forbidden({ message: `Requires ${permission}.` })``, adding `scopes` only for
   OAuth scopes.
-- `Action.make` refuses an error in `errors` that encodes with a built-in error's `_tag`, and
+- `Action.make` refuses an error in `error` that encodes with a built-in error's `_tag`, and
   `ActionHttp.make` one in the binding's: checked where the contract or binding is made, so a
   client of a contract no server of this package serves cannot decode a look-alike as a
   built-in error either. Errors of your own may share a `_tag`, told apart by their other
   fields as the members of any union are. A top-level
-  `Schema.suspend` in `errors` is resolved then: one whose thunk reads a `const` declared later
+  `Schema.suspend` in `error` is resolved then: one whose thunk reads a `const` declared later
   throws a `ReferenceError` at `make`.
 - A helper passing implementations it is given beside its own takes them as one type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spreads it,
@@ -191,7 +192,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 | 0.8.0                                                                                  | 0.10.0                                                                                                                                                                                                                                                                   |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, errors?, authentication? })`: `prefix: "/api/users"` keeps `/api/users/getUser`; `authentication` is required for a protected action                                                                                                |
+| `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, error?, authentication? })`: `prefix: "/api/users"` keeps `/api/users/getUser`; `authentication` is required for a protected action                                                                                                 |
 | The `ActionHttp.Http` type, `Http.groups`                                              | `ActionHttp.Binding`, `Http.actions`                                                                                                                                                                                                                                     |
 | `ActionHttp.Api`, `ActionHttp.LayerOptions`                                            | `typeof Http.api`; `ActionHttp.LayerOptions` is now `layer`'s `middleware`                                                                                                                                                                                               |
 | `Http.layer(implementations, { before })`                                              | `ActionHttp.layer(Http, implementations, { middleware? })`, with the binding's authentication provider: `.pipe(Layer.provide(authenticate))`                                                                                                                             |
@@ -537,7 +538,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `ActionHttp.layer(Http, implementations, { middleware })` runs native `HttpApiMiddleware`
   around every route it serves, inside authentication and outside decoding, the first listed
   innermost. It may require the identity where every action the layer serves is protected, and
-  fails only with the binding's `errors` or a built-in error, such as an address allowlist's
+  fails only with the binding's `error` or a built-in error, such as an address allowlist's
   `Action.Forbidden`, so a limit keyed by the caller runs before decoding; one after decoding,
   on every surface, is the handler's. It may fail with a binding error only where the binding surely
   declares it, in a slot of its own of a list of fixed length.
@@ -628,9 +629,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   `ActionHttp.layer`, which takes options or none, reads `middleware` that may be absent the same
   way: such options owe what any of the middleware requires and provide nothing; a reusable value
   names its tuple, `ActionHttp.LayerOptions<readonly [typeof Audit]>`. `ActionHttp.make` reads
-  `errors` so: options that may leave them out declare them or none, as the binding has at run time,
+  `error` so: options that may leave them out declare them or none, as the binding has at run time,
   so clients decode them and no layer middleware may fail with them, and explicit type arguments
-  naming `errors` require the options argument; a layer middleware fails only with an error a fixed
+  naming `error` require the options argument; a layer middleware fails only with an error a fixed
   tuple slot of its own declares, never one of an array of unknown length or a slot of several.
   `make` takes public-only actions alone, or any actions with options: a helper forwarding options
   that may be absent passes `options ?? {}`. A misspelled option is a type error beside `actions`

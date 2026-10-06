@@ -147,16 +147,16 @@ declare const misspelled:
       readonly description: "";
       readonly readOnly: true;
       readonly caller: typeof Action.Anyone;
-      readonly errors: readonly [];
+      readonly error: readonly [];
     }
   | {
       readonly description: "";
       readonly readOnly: true;
       readonly caller: typeof Action.Anyone;
-      readonly error: readonly [];
+      readonly errors: readonly [];
     };
 
-// @ts-expect-error No option `error`.
+// @ts-expect-error No option `errors`.
 Action.make("typoInUnion", misspelled);
 
 // A builder written apart from `implement`, as another authorizer of the same handlers takes,

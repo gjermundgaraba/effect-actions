@@ -1302,7 +1302,7 @@ describe("HTTP bindings", () => {
       readOnly: false,
       caller: Action.Anyone,
       success: Schema.String,
-      errors: [Missing, ...shared],
+      error: [Missing, ...shared],
     });
 
     const List = Action.make("list", {
@@ -1310,7 +1310,7 @@ describe("HTTP bindings", () => {
       readOnly: false,
       caller: Action.Anyone,
       success: Schema.String,
-      errors: [...shared],
+      error: [...shared],
     });
 
     const apps = Action.implement([Find, List], {

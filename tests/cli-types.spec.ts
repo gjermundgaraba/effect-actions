@@ -198,7 +198,7 @@ const RemoteAction = Action.make("remote", {
   caller: Action.Anyone,
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
-  errors: [Domain],
+  error: [Domain],
 });
 
 const Count = Action.make("count", {
@@ -275,7 +275,7 @@ const Erring = Action.make("erring", {
   readOnly: true,
   caller: Action.Anyone,
   success: Schema.String,
-  errors: [Gone],
+  error: [Gone],
 });
 
 const Bound = ActionHttp.make([Plain, Erring]);
@@ -303,7 +303,7 @@ expectTypeOf<Command.Error<typeof boundAll>>().toEqualTypeOf<
 // A binding's own errors are every remote command's failures too.
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
 
-const Throttling = ActionHttp.make([Plain, Erring], { errors: [Throttled] });
+const Throttling = ActionHttp.make([Plain, Erring], { error: [Throttled] });
 
 const throttledPlain = ActionCli.command(Throttling, Plain);
 
@@ -393,7 +393,7 @@ const Declares = Action.make("declares", {
   readOnly: true,
   caller: Action.Anyone,
   success: Schema.String,
-  errors: [Domain],
+  error: [Domain],
 });
 
 const declares = ActionCli.command(

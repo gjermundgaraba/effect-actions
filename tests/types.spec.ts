@@ -430,7 +430,7 @@ export const builtInErrorTypes = () => {
   // A binding is plain data: its actions, its errors, its mount path, the native API and the
   // authentication of its protected actions, none here.
   expectTypeOf<keyof typeof bound>().toEqualTypeOf<
-    "actions" | "errors" | "prefix" | "api" | "authentication"
+    "actions" | "error" | "prefix" | "api" | "authentication"
   >();
   expectTypeOf(bound.authentication).toBeUndefined();
 
@@ -449,7 +449,7 @@ export const builtInErrorTypes = () => {
     readOnly: false,
     caller: Action.Anyone,
     // @ts-expect-error No action lists a built-in error: every surface declares it.
-    errors: [Action.Forbidden],
+    error: [Action.Forbidden],
   });
   // @ts-expect-error Only those and the declared errors.
   Action.implement(Echo, () => Effect.fail(new Error("undeclared")));
@@ -668,7 +668,7 @@ export const declaredErrorTypes = () => {
     readOnly: true,
     caller: CurrentActor,
     success: Schema.String,
-    errors: [NotFound, RateLimited],
+    error: [NotFound, RateLimited],
   });
 
   const Put = Action.make("put", {
@@ -676,7 +676,7 @@ export const declaredErrorTypes = () => {
     readOnly: false,
     caller: CurrentActor,
     success: Schema.String,
-    errors: [NotFound, Conflict, RateLimited],
+    error: [NotFound, Conflict, RateLimited],
   });
 
   const Status = Action.make("status", {
@@ -685,10 +685,32 @@ export const declaredErrorTypes = () => {
     caller: Action.Anyone,
   });
 
-  expectTypeOf<(typeof Put)["errors"][number]["Type"]>().toEqualTypeOf<
+  expectTypeOf<(typeof Put)["error"][number]["Type"]>().toEqualTypeOf<
     NotFound | Conflict | RateLimited
   >();
-  expectTypeOf<(typeof Status)["errors"]>().toEqualTypeOf<ReadonlyArray<never>>();
+
+  // One schema alone is a list of one, on a contract and on a binding.
+  const Find = Action.make("find", {
+    description: "Find",
+    readOnly: true,
+    caller: Action.Anyone,
+    error: NotFound,
+  });
+
+  expectTypeOf<(typeof Find)["error"][number]["Type"]>().toEqualTypeOf<NotFound>();
+  expectTypeOf(ActionHttp.make([Find], { error: RateLimited }).error).toEqualTypeOf<
+    readonly [typeof RateLimited]
+  >();
+  // A built-in is refused alone as in a list.
+  Action.make("refused", {
+    description: "",
+    readOnly: true,
+    caller: Action.Anyone,
+    // @ts-expect-error Every surface declares `Forbidden` already.
+    error: Action.Forbidden,
+  });
+
+  expectTypeOf<(typeof Status)["error"]>().toEqualTypeOf<ReadonlyArray<never>>();
 
   /** What authorization of the actions `A` may fail with. */
   type Fails<A extends Action.Any> = Effect.Error<ReturnType<Action.Authorize<A>>>;
@@ -1810,8 +1832,8 @@ export const widenedOptionTypes = () => {
 
   expectTypeOf<(typeof Widened)["success"]["Type"]>().toBeUnknown();
   expectTypeOf<(typeof Widened)["input"]["Type"]>().toBeUnknown();
-  expectTypeOf<(typeof Widened)["errors"]>().toExtend<Action.Any["errors"]>();
-  expectTypeOf<Action.Any["errors"]>().toExtend<(typeof Widened)["errors"]>();
+  expectTypeOf<(typeof Widened)["error"]>().toExtend<Action.Any["error"]>();
+  expectTypeOf<Action.Any["error"]>().toExtend<(typeof Widened)["error"]>();
   expectTypeOf<(typeof Widened)["caller"]>().toEqualTypeOf<
     typeof Action.Anyone | Context.Key<unknown, unknown>
   >();
@@ -1830,7 +1852,7 @@ export const unionOptionTypes = (
         readonly caller: typeof Action.Anyone;
         readonly input: { readonly id: typeof Schema.String };
         readonly success: typeof Schema.String;
-        readonly errors: [typeof Schema.Number];
+        readonly error: [typeof Schema.Number];
       },
 ) => {
   // A union of options, each member complete, gives each member's schemas.
@@ -1840,7 +1862,7 @@ export const unionOptionTypes = (
   expectTypeOf<(typeof Either)["input"]["Type"]>().toEqualTypeOf<
     { readonly id: string } | { readonly [x: string]: never }
   >();
-  expectTypeOf<(typeof Either)["errors"]>().toEqualTypeOf<ReadonlyArray<typeof Schema.Number>>();
+  expectTypeOf<(typeof Either)["error"]>().toEqualTypeOf<ReadonlyArray<typeof Schema.Number>>();
 
   // A handler may return what either member's success accepts.
   void Action.implement(Either, () => Effect.succeed("x"));
@@ -1911,7 +1933,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     "profile",
     typeof Profile.input,
     typeof Profile.success,
-    typeof Profile.errors,
+    typeof Profile.error,
     boolean,
     typeof Action.Anyone
   >;
@@ -1920,7 +1942,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     "profile",
     typeof Profile.input,
     Schema.Codec<string>,
-    typeof Profile.errors,
+    typeof Profile.error,
     true,
     typeof Action.Anyone
   >;
@@ -1995,7 +2017,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
       "profile" | "audit",
       typeof Profile.input,
       typeof Profile.success,
-      typeof Profile.errors,
+      typeof Profile.error,
       true,
       typeof Action.Anyone
     >,

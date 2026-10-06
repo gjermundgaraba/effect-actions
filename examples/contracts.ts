@@ -25,7 +25,7 @@ export const GetUser = Action.make("getUser", {
   description: "Look up a user in your tenant.",
   input: { id: Schema.String },
   success: User,
-  errors: [UserNotFound],
+  error: UserNotFound,
   readOnly: true,
   caller: CurrentActor,
 });
@@ -37,7 +37,7 @@ export const RenameUser = Action.make("renameUser", {
     name: Schema.String.check(Schema.isMinLength(1)),
   },
   success: User,
-  errors: [UserNotFound],
+  error: UserNotFound,
   readOnly: false,
   caller: CurrentActor,
   mcp: { destructiveHint: false },

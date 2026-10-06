@@ -169,7 +169,7 @@ describe("projection boundaries", () => {
         readOnly: false,
         caller: Action.Anyone,
         success: Schema.String,
-        errors: [Failure],
+        error: [Failure],
       });
 
       const apps = Action.implement([Fail], {
@@ -222,7 +222,7 @@ describe("projection boundaries", () => {
         caller: Action.Anyone,
         input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
         success: Schema.String,
-        errors,
+        error: errors,
       });
 
       const apps = Action.implement([Fail], {
@@ -264,7 +264,7 @@ describe("projection boundaries", () => {
               description: "",
               readOnly: false,
               caller: Action.Anyone,
-              errors,
+              error: errors,
             }),
           ]).api,
         ).paths["/api/fail"]?.post?.responses ?? {},
@@ -475,7 +475,7 @@ describe("projection boundaries", () => {
       readOnly: false,
       caller: Action.Anyone,
       success: Schema.String,
-      errors: [Denied],
+      error: [Denied],
     });
 
     const mcp = makeTestMcp(
@@ -755,7 +755,7 @@ describe("projection boundaries", () => {
       readOnly: false,
       caller: Action.Anyone,
       success: Schema.String,
-      errors: [Schema.String],
+      error: [Schema.String],
     });
 
     const apps = Action.implement([Scalar], {
@@ -789,7 +789,7 @@ describe("projection boundaries", () => {
       readOnly: false,
       caller: Action.Anyone,
       success: Schema.String,
-      errors: [Domain],
+      error: [Domain],
     });
 
     const Boom = Action.make("boom", {

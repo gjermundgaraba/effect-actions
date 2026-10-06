@@ -22,15 +22,40 @@ describe("contracts", () => {
       caller: Action.Anyone,
       input: undefined,
       success: undefined,
-      errors: undefined,
+      error: undefined,
     });
 
     for (const action of [Reset, Undefined]) {
       expect(Schema.is(action.input)({})).toBe(true);
       expect(Schema.is(action.input)({ unexpected: 1 })).toBe(false);
       expect(action.success).toBe(Schema.Void);
-      expect(action.errors).toEqual([]);
+      expect(action.error).toEqual([]);
     }
+  });
+
+  it("takes one error schema or a list, as HttpApiEndpoint does, and holds a list", () => {
+    class Gone extends Schema.TaggedError<Gone>()("Gone", {}, { httpApiStatus: 410 }) {}
+
+    class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+
+    const One = Action.make("one", {
+      description: "One",
+      readOnly: true,
+      caller: Action.Anyone,
+      error: Gone,
+    });
+
+    const Two = Action.make("two", {
+      description: "Two",
+      readOnly: true,
+      caller: Action.Anyone,
+      error: [Gone, Busy],
+    });
+
+    expect(One.error).toEqual([Gone]);
+    expect(Two.error).toEqual([Gone, Busy]);
+    expect(ActionHttp.make([One], { error: Busy }).error).toEqual([Busy]);
+    expect(ActionHttp.make([One], { error: [Busy] }).error).toEqual([Busy]);
   });
 
   it("names a public caller with a symbol every copy of the package shares", () => {
@@ -136,7 +161,7 @@ describe("contracts", () => {
           description: "",
           readOnly: false,
           caller: Action.Anyone,
-          errors: [error],
+          error: [error],
         }),
       ).toThrow(`Action "guarded": error _tag "${tag}" is built in, and declared on every surface`);
     }
@@ -146,7 +171,7 @@ describe("contracts", () => {
       description: "",
       readOnly: false,
       caller: Action.Anyone,
-      errors: [
+      error: [
         Schema.TaggedStruct("Busy", {}),
         Schema.Union([Schema.TaggedStruct("Late", {}), Schema.TaggedStruct("Gone", {})]),
       ],
@@ -167,11 +192,11 @@ describe("contracts", () => {
           readOnly: false,
           caller: Action.Anyone,
           input: { field: Schema.Literals(["email", "name"]) },
-          errors: [EmailInvalid, NameInvalid],
+          error: [EmailInvalid, NameInvalid],
         });
 
         // A binding may list one of them too.
-        const Http = ActionHttp.make([Register], { errors: [NameInvalid] });
+        const Http = ActionHttp.make([Register], { error: [NameInvalid] });
 
         const app = Action.implement(Register, ({ field }) =>
           field === "email"
@@ -201,7 +226,7 @@ describe("contracts", () => {
       description: "An error schema any object with a message matches",
       readOnly: false,
       caller: Action.Anyone,
-      errors: [Schema.Struct({ message: Schema.String })],
+      error: [Schema.Struct({ message: Schema.String })],
     });
 
     const web = makeTestHttp(

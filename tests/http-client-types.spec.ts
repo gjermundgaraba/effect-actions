@@ -14,7 +14,7 @@ const Get = Action.make("get", {
   caller: Action.Anyone,
   input: { id: Schema.String },
   success: { id: Schema.String, at: Schema.DateTimeUtcFromString },
-  errors: [Missing],
+  error: [Missing],
 });
 
 const List = Action.make("list", {
@@ -172,7 +172,7 @@ ActionHttp.fetchClient(ActionHttp.make(Notes), {
 // A binding's errors fail every method, beside each action's own.
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}
 
-const Throttling = ActionHttp.make(Notes, { errors: [Throttled] });
+const Throttling = ActionHttp.make(Notes, { error: [Throttled] });
 
 export const bindingErrorTypes = Effect.gen(function* () {
   const methods = yield* ActionHttp.client(Throttling);

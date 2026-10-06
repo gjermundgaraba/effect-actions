@@ -23,7 +23,7 @@ const Get = Action.make("get", {
   caller: Action.Anyone,
   input: { id: Schema.String },
   success: { id: Schema.String, at: Schema.DateTimeUtcFromString },
-  errors: [NotFound],
+  error: [NotFound],
 });
 
 const Count = Action.make("count", {
@@ -341,7 +341,7 @@ it.effect("decodes two errors that share a status by their tag", () =>
       readOnly: false,
       caller: CurrentActor,
       success: Schema.String,
-      errors: [Rejected],
+      error: [Rejected],
     });
 
     const Reject = Action.make("reject", {
@@ -349,7 +349,7 @@ it.effect("decodes two errors that share a status by their tag", () =>
       readOnly: true,
       caller: Action.Anyone,
       success: Schema.String,
-      errors: [Rejected],
+      error: [Rejected],
     });
 
     const binding = ActionHttp.make([Refuse, Reject], { authentication: Login });
@@ -387,7 +387,7 @@ it.effect("declares a binding's errors on every endpoint, so middleware's answer
     // No status of its own: sent as 422, as an action's own would be.
     class Maintenance extends Schema.TaggedError<Maintenance>()("Maintenance", {}) {}
 
-    const binding = ActionHttp.make([Get, Count], { errors: [RateLimited, Maintenance] });
+    const binding = ActionHttp.make([Get, Count], { error: [RateLimited, Maintenance] });
 
     // What middleware around the routes answers with, as the binding declares it.
     const answering = (error: RateLimited | Maintenance, status: number) => () =>
@@ -422,7 +422,7 @@ it.effect("declares a binding's errors on every endpoint, so middleware's answer
 it("refuses a binding error with a built-in error's tag", () => {
   class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
-  expect(() => ActionHttp.make([Get], { errors: [Forbidden] })).toThrow(
+  expect(() => ActionHttp.make([Get], { error: [Forbidden] })).toThrow(
     'ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface',
   );
 });

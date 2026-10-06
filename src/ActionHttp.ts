@@ -35,6 +35,7 @@ import {
   assertDistinct,
   assertOnce,
   assertOwnTags,
+  errorList,
   projectedErrors,
   unsuspended,
 } from "./internal/actions.js";
@@ -93,7 +94,7 @@ export interface FetchClientOptions extends ClientOptions {
 }
 
 /** Error schemas, as an action declares them. */
-type Errors = Action.Any["errors"];
+type Errors = Action.Any["error"];
 
 /** Native endpoint middleware, as `HttpApiMiddleware.Service` declares it. */
 type Middleware = ReadonlyArray<Context.Key<HttpApiMiddleware.AnyId, unknown>>;
@@ -213,15 +214,18 @@ type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
       : never)
 >;
 
+/** The list an `error` option of type `G` stands for: one schema is a list of one. */
+type ListOf<G> = G extends Errors ? G : readonly [G];
+
 /**
- * The errors options `O` declare, as at run time: those `errors` always gives, or, where it may
+ * The errors options `O` declare, as at run time: those `error` always gives, or, where it may
  * be absent, those it gives or none, so clients decode each that may arrive.
  */
 type ErrorsOf<O> = O extends unknown
-  ? "errors" extends keyof O
-    ? O extends { readonly errors: infer E extends Errors }
-      ? E
-      : Extract<O["errors" & keyof O], Errors> | []
+  ? "error" extends keyof O
+    ? O extends { readonly error: infer G extends Errors | Errors[number] }
+      ? ListOf<G>
+      : ListOf<Extract<O["error" & keyof O], Errors | Errors[number]>> | []
     : []
   : never;
 
@@ -240,7 +244,8 @@ type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D extends A
 /** Contract-level configuration shared by servers and clients. */
 export interface Options<E extends Errors = Errors> {
   readonly prefix?: `/${string}`;
-  readonly errors?: E;
+  /** Router middleware's errors, which every endpoint declares: one schema, or a list. */
+  readonly error?: E | E[number];
   readonly authentication?: Authentication;
 }
 
@@ -254,7 +259,7 @@ type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
       Schema.toCodecJson<A["input"]>,
       never,
       Schema.toCodecJson<A["success"]>,
-      Schema.toCodecJson<A["errors"][number] | E[number] | BuiltIns>,
+      Schema.toCodecJson<A["error"][number] | E[number] | BuiltIns>,
       never
     >
   : never;
@@ -282,8 +287,8 @@ export interface Binding<
   readonly authentication: D;
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
-  /** The errors every endpoint declares besides its action's own. */
-  readonly errors: E;
+  /** The errors every endpoint declares besides its action's own, as a list. */
+  readonly error: E;
   /** Where its routes mount: `/api` by default, `/` at the root, without a trailing slash. */
   readonly prefix: `/${string}`;
   readonly api: Api<Actions, E>;
@@ -360,7 +365,7 @@ const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 const statusThrough = (ast: SchemaAST.AST): number | undefined =>
   statusOf(ast) ?? (SchemaAST.isSuspend(ast) ? statusThrough(ast.thunk()) : undefined);
 
-type Declared = Action.Any["errors"][number];
+type Declared = Action.Any["error"][number];
 
 /**
  * The schemas an endpoint declares for one error, each with the status it is sent with. `HttpApi`
@@ -437,7 +442,7 @@ export function make<const Actions extends ReadonlyArray<Action.Any>>(
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): AnyHttp {
   assertOnce("action", actions);
 
-  const errors = options.errors ?? [];
+  const errors = errorList(options.error);
 
   assertOwnTags("ActionHttp binding", errors);
 
@@ -464,7 +469,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
 
   return {
     actions,
-    errors,
+    error: errors,
     prefix: route(mount),
     api,
     authentication: options.authentication,
@@ -548,7 +553,7 @@ export function layer<
   http: H,
   implementations: Apps,
   options: O &
-    ServerOnly<MiddlewareOf<O>, H["errors"]> &
+    ServerOnly<MiddlewareOf<O>, H["error"]> &
     NoInfer<Known<O, LayerOptions<Middleware>>>,
 ): HttpLayer<H, Apps, MiddlewareOf<O>, Selected<O, H["actions"][number]>>;
 export function layer(
@@ -573,7 +578,7 @@ export function layer(
       // Applied innermost first: the layer's middleware runs inside the authentication and
       // its step-up answer, and outside the content type and schema checks.
       const endpoint = within(
-        endpointOf(action, route([...mount, action.name]), http.errors)
+        endpointOf(action, route([...mount, action.name]), http.error)
           .middleware(JsonContentType)
           .middleware(SchemaErrors),
         options.middleware,

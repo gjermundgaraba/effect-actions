@@ -18,7 +18,7 @@ export type Options = Omit<
 >;
 
 /** An error schema the binding declares on every endpoint. */
-type BindingError = Action.Any["errors"][number];
+type BindingError = Action.Any["error"][number];
 
 /**
  * What one call of `A` fails with: a declared error value (the action's own, one `E` of the
@@ -27,7 +27,7 @@ type BindingError = Action.Any["errors"][number];
  * the input does not encode or the success does not decode.
  */
 export type MethodError<A extends Action.Any, E extends BindingError = never> =
-  | A["errors"][number]["Type"]
+  | A["error"][number]["Type"]
   | E["Type"]
   | BuiltIns["Type"]
   | HttpClientError.HttpClientError
@@ -46,14 +46,14 @@ type Method<A extends Action.Any, E extends BindingError> = Call<
 export interface AnyHttp {
   readonly authentication?: Authentication | undefined;
   readonly actions: ReadonlyArray<Action.Any>;
-  readonly errors: ReadonlyArray<BindingError>;
+  readonly error: ReadonlyArray<BindingError>;
   readonly prefix: `/${string}`;
   readonly api: HttpApi.Constraint;
 }
 
 /** Every action of the binding `H`, as `client.<action>(input)`. */
 export type Client<H extends AnyHttp> = {
-  readonly [A in H["actions"][number] as A["name"]]: Method<A, H["errors"][number]>;
+  readonly [A in H["actions"][number] as A["name"]]: Method<A, H["error"][number]>;
 };
 
 /** A client method, erased: the binding's actions restore its exact type. */

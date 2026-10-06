@@ -169,7 +169,7 @@ it.effect("fails with an error its action declares, as the client decodes it", (
       readOnly: true,
       caller: Action.Anyone,
       input: { value: Schema.Finite },
-      errors: [TooLarge],
+      error: [TooLarge],
     });
 
     const BoundedHttp = ActionHttp.make([Bounded]);
@@ -201,7 +201,7 @@ it.effect(
         { httpApiStatus: 429 },
       ) {}
 
-      const Throttling = ActionHttp.make([Remote], { errors: [Throttled] });
+      const Throttling = ActionHttp.make([Remote], { error: [Throttled] });
       const command = ActionCli.command(Throttling, Remote);
 
       const stderrOf = (answer: (request: Request) => Promise<Response>) =>

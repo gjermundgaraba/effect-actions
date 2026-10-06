@@ -49,7 +49,7 @@ export const Lookup = Action.make("lookup", {
   caller: Principal,
   input: { id: Schema.String },
   success: Schema.String,
-  errors: [Limited],
+  error: [Limited],
 });
 
 export const LookupHttp = ActionHttp.make([Lookup], { authentication: Login });

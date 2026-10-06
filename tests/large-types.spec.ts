@@ -30,7 +30,7 @@ export const largeAuthorizationTypes = (
   twoHundred: TwoHundred,
 ) => {
   // The actions declare their own errors and the shared limit: one union, linear in the actions.
-  type Declared = Sixty[number]["errors"][number]["Type"];
+  type Declared = Sixty[number]["error"][number]["Type"];
 
   expectTypeOf<Extract<Declared, Throttled>>().toEqualTypeOf<Throttled>();
   expectTypeOf<Exclude<Declared, Throttled>["_tag"]>().toExtend<`${number}${"a" | "b" | "c"}`>();

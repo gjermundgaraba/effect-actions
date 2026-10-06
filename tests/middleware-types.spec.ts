@@ -204,7 +204,7 @@ class Quota extends HttpApiMiddleware.Service<Quota, { requires: Actor }>()(
   { error: Throttled },
 ) {}
 
-const Limited = ActionHttp.make([Who], { authentication: Login, errors: [Throttled] });
+const Limited = ActionHttp.make([Who], { authentication: Login, error: [Throttled] });
 
 const quota = ActionHttp.layer(Limited, app, { middleware: [Quota] });
 
@@ -221,7 +221,7 @@ const unsureErrors: ActionHttp.Options<readonly [typeof Throttled]> & {
 
 const Unsure = ActionHttp.make([Who], unsureErrors);
 
-expectTypeOf(Unsure.errors).toEqualTypeOf<readonly [typeof Throttled] | []>();
+expectTypeOf(Unsure.error).toEqualTypeOf<readonly [typeof Throttled] | []>();
 
 expectTypeOf<Throttled>().toExtend<
   Effect.Error<ReturnType<ActionHttp.Client<typeof Unsure>["who"]>>
@@ -231,7 +231,7 @@ expectTypeOf<Throttled>().toExtend<
 ActionHttp.layer(Unsure, app, { middleware: [Quota] });
 
 // Inline errors are the tuple given, which surely holds each.
-expectTypeOf(Limited.errors).toEqualTypeOf<readonly [typeof Throttled]>();
+expectTypeOf(Limited.error).toEqualTypeOf<readonly [typeof Throttled]>();
 
 class Busy extends Schema.TaggedError<Busy>()("Busy", {}, { httpApiStatus: 503 }) {}
 
@@ -243,11 +243,11 @@ const either: readonly [typeof Throttled | typeof Busy] = [Busy];
 
 const extra: ReadonlyArray<typeof Busy> = [];
 
-const Unsized = ActionHttp.make([Who], { authentication: Login, errors: unsized });
+const Unsized = ActionHttp.make([Who], { authentication: Login, error: unsized });
 
-const Either = ActionHttp.make([Who], { authentication: Login, errors: either });
+const Either = ActionHttp.make([Who], { authentication: Login, error: either });
 
-const Variadic = ActionHttp.make([Who], { authentication: Login, errors: [Throttled, ...extra] });
+const Variadic = ActionHttp.make([Who], { authentication: Login, error: [Throttled, ...extra] });
 
 // @ts-expect-error Not surely declared by this binding.
 ActionHttp.layer(Unsized, app, { middleware: [Quota] });
@@ -267,7 +267,7 @@ ActionHttp.layer(Http, app, { middleware: [Allowlist] });
 
 // Explicit options naming errors require the argument, which alone holds them.
 // @ts-expect-error The options naming errors are not given.
-ActionHttp.make<readonly [typeof Public], { readonly errors: readonly [typeof Throttled] }>([
+ActionHttp.make<readonly [typeof Public], { readonly error: readonly [typeof Throttled] }>([
   Public,
 ]);
 

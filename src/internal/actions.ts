@@ -1,6 +1,14 @@
-import { Predicate, SchemaAST } from "effect";
+import { Predicate, Schema, SchemaAST } from "effect";
 import type * as Action from "../Action.js";
 import { builtIns, statuses } from "./errors.js";
+
+/**
+ * The list an `error` option stands for: one schema, a list as given, or none, as
+ * `HttpApiEndpoint` takes it.
+ */
+export const errorList = (
+  error: Action.Any["error"][number] | Action.Any["error"] | undefined,
+): Action.Any["error"] => (error === undefined ? [] : Schema.isSchema(error) ? [error] : error);
 
 /**
  * What a projection of an action declares: the built-in errors, the action's own, and any
@@ -11,8 +19,8 @@ import { builtIns, statuses } from "./errors.js";
  */
 export const projectedErrors = (
   action: Action.Any,
-  surface: Action.Any["errors"] = [],
-): Action.Any["errors"] => [...new Set([...builtIns, ...action.errors, ...surface])];
+  surface: Action.Any["error"] = [],
+): Action.Any["error"] => [...new Set([...builtIns, ...action.error, ...surface])];
 
 /**
  * The caller of a public action: anyone, signed in or not. Registered globally, so two copies
@@ -113,7 +121,7 @@ const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> =>
  * could not tell a look-alike from them, and a look-alike of a refusal would step up. Checked
  * where the action or the binding is made, so every surface and client of it may rely on it.
  */
-export const assertOwnTags = (what: string, errors: Action.Any["errors"]): void => {
+export const assertOwnTags = (what: string, errors: Action.Any["error"]): void => {
   const tag = errors
     .flatMap((error) => tagsOf(error.ast))
     .find((tag) => Object.hasOwn(statuses, tag));

@@ -37,7 +37,7 @@ type Public = Action.Action<
   string,
   Action.Any["input"],
   Action.Any["success"],
-  Action.Any["errors"],
+  Action.Any["error"],
   boolean,
   typeof Action.Anyone
 >;

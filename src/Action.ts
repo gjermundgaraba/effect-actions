@@ -15,6 +15,7 @@ import {
   assertKnown,
   assertName,
   assertOnce,
+  errorList,
   projectedErrors,
 } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
@@ -179,10 +180,11 @@ export interface Options {
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields | undefined;
   /**
-   * One schema per declared failure; each keeps its own HTTP status annotation. Defaults to
-   * none. None with a built-in error's `_tag`.
+   * The declared failures: one schema, or a list of them, as `HttpApiEndpoint` takes them;
+   * each keeps its own HTTP status annotation. Defaults to none. None with a built-in
+   * error's `_tag`.
    */
-  readonly errors?: ReadonlyArray<Codec> | undefined;
+  readonly error?: Codec | ReadonlyArray<Codec> | undefined;
   /**
    * Whether the action leaves its resource unchanged. Required: an action nobody classified
    * is the one a reviewer must check. An implementation's `authorize` may read it, and MCP's
@@ -218,15 +220,22 @@ type TextOption<O> = O extends { readonly mcp?: { readonly text?: infer F } }
       }
   : unknown;
 
+/** The schemas an `error` option of type `G` declares: one, or each of a list. */
+type ErrorMembers<G> = G extends ReadonlyArray<infer E> ? E : G;
+
 /**
- * The built-in errors, refused in `errors`: every surface declares them already. The types
+ * The built-in errors, refused in `error`: every surface declares them already. The types
  * refuse only the built-ins themselves; `make` refuses, when called, an error of your own
  * that encodes with a built-in `_tag`.
  */
-type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
-  ? [Extract<E, BuiltIns>] extends [never]
+type OwnErrors<O> = O extends { readonly error: infer G }
+  ? [Extract<ErrorMembers<G>, BuiltIns>] extends [never]
     ? unknown
-    : { readonly errors: ReadonlyArray<Exclude<E, BuiltIns>> }
+    : {
+        readonly error:
+          | Exclude<ErrorMembers<G>, BuiltIns>
+          | ReadonlyArray<Exclude<ErrorMembers<G>, BuiltIns>>;
+      }
   : unknown;
 
 /**
@@ -273,7 +282,9 @@ type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf
 >;
 
 /** The declared errors of `O`, none when omitted. */
-type ErrorsOf<O> = ReadonlyArray<Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>[number]>;
+type ErrorsOf<O> = ReadonlyArray<
+  ErrorMembers<Extract<OptionOf<O, "error", []>, Codec | ReadonlyArray<Codec>>>
+>;
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
 export interface Action<
@@ -289,7 +300,8 @@ export interface Action<
   readonly description: string;
   readonly input: Input;
   readonly success: Success;
-  readonly errors: Errors;
+  /** The declared failures, as a list: one given alone is a list of one. */
+  readonly error: Errors;
   // Declared, never defaulted, so a type selecting the reads, such as
   // `Extract<A, { readOnly: true }>`, reads a literal.
   readonly readOnly: ReadOnly;
@@ -303,7 +315,7 @@ export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
 /** Receives decoded input; may fail only with the declared errors and the built-in ones. */
 export type Handler<A extends Any, R = never> = (
   input: A["input"]["Type"],
-) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | BuiltIn, R>;
+) => Effect.Effect<A["success"]["Type"], A["error"][number]["Type"] | BuiltIn, R>;
 
 /**
  * The handlers of the actions `A`, keyed by name, as `implement` takes them: what a builder
@@ -366,12 +378,12 @@ export function make(name: string, options: Options): Any {
     description: options.description,
     input: codecOf(options.input ?? {}),
     success: options.success === undefined ? Schema.Void : codecOf(options.success),
-    errors: options.errors ?? [],
+    error: errorList(options.error),
     readOnly,
     mcp: { ...options.mcp },
   };
 
-  assertOwnTags(`Action "${action.name}"`, action.errors);
+  assertOwnTags(`Action "${action.name}"`, action.error);
 
   return action;
 }
@@ -438,7 +450,7 @@ type NoHandler<R> = { readonly "~list": R };
 type Single<T extends Target, R> = T extends Any
   ? (
       input: T["input"]["Type"],
-    ) => Effect.Effect<T["success"]["Type"], T["errors"][number]["Type"] | BuiltIn, R>
+    ) => Effect.Effect<T["success"]["Type"], T["error"][number]["Type"] | BuiltIn, R>
   : NoHandler<R>;
 
 /**
@@ -686,7 +698,7 @@ export function layer(implementations: Served): Layer.Layer<never, unknown, unkn
  */
 type Method<A extends Any, R> = Call<
   A,
-  Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | BuiltIn, R>
+  Effect.Effect<A["success"]["Type"], A["error"][number]["Type"] | BuiltIn, R>
 >;
 
 /**

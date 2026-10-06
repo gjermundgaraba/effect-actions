@@ -288,7 +288,7 @@ describe("Action.client", () => {
         description: "Ping",
         readOnly: true,
         caller: CurrentActor,
-        errors: [Busy],
+        error: [Busy],
       });
 
       const app = Action.implement(
@@ -401,21 +401,21 @@ describe("Action.client", () => {
           description: "A label",
           readOnly: true,
           caller: Action.Anyone,
-          errors: [Mislabeled],
+          error: [Mislabeled],
         });
 
         const Profile = Action.make("profile", {
           description: "A profile",
           readOnly: true,
           caller: Action.Anyone,
-          errors: [Missing],
+          error: [Missing],
         });
 
         const Queue = Action.make("queue", {
           description: "A queue",
           readOnly: true,
           caller: Action.Anyone,
-          errors: [Busy],
+          error: [Busy],
         });
 
         // Wider than the error declares, as TypeScript lets a variable through.
@@ -455,7 +455,7 @@ describe("Action.client", () => {
         description: "Count",
         readOnly: true,
         caller: Action.Anyone,
-        errors: [Counted],
+        error: [Counted],
       });
 
       const app = Action.implement([Count, Ping], {
@@ -504,7 +504,7 @@ describe("Action.client", () => {
         description: "Status",
         readOnly: true,
         caller: Action.Anyone,
-        errors: [Quota],
+        error: [Quota],
       });
 
       const client = yield* Action.client(Action.implement(Status, () => Effect.fail(quota)));
@@ -521,7 +521,7 @@ describe("Action.client", () => {
         description: "Status",
         readOnly: true,
         caller: Action.Anyone,
-        errors: [Busy],
+        error: [Busy],
       });
 
       const busy = new Busy();
