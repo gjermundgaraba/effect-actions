@@ -68,6 +68,12 @@ import {
 /** A client's methods, one per action of the binding. */
 export type { Client } from "./internal/client.js";
 
+/**
+ * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
+ * built-in errors, a native `HttpClientError` and a `SchemaError`.
+ */
+export type { MethodError } from "./internal/client.js";
+
 /** Any HTTP binding, with its actions erased: what `layer` and `client` read. */
 export type { AnyHttp as Any } from "./internal/client.js";
 

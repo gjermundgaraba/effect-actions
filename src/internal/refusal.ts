@@ -29,7 +29,8 @@ const Refusals = Schema.Union(refusals);
 
 const encode = Schema.encodeSync(Refusals);
 
-const isRefusal = Schema.is(Refusals);
+/** Whether `error` is a built-in refusal, `Unauthenticated` or `Forbidden`. */
+export const isRefusal = Schema.is(Refusals);
 
 /**
  * The RFC 6750 `insufficient_scope` challenge an OAuth client steps up on, for a `Forbidden`

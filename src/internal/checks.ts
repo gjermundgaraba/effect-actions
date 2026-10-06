@@ -41,7 +41,7 @@ export const Check =
  * What a check's callback may read: its declared request services, and the call's own
  * `Scope`, closed when the call ends, so a caller owes no `Scope` for it.
  */
-type Within<O> = RequiredBy<O> | Scope.Scope;
+export type Within<O> = RequiredBy<O> | Scope.Scope;
 
 export type CheckServices<A extends Action.Any> = ServiceOf<A["checks"][number]>;
 

@@ -293,10 +293,9 @@ Each area below lists what is renamed or removed, then what changes without a re
 | Middleware provided around a layer to authenticate it                            | The contracts' `auth` decides, and the layer requires the provider: a protected action is authenticated on every layer serving it, a public one on none                                                                                                                                                                                                                                                                                                                                |
 | Middleware reading the identity, after authentication                            | `ActionHttp.layer(Http, apps, { middleware: [LogCaller] })`, native `HttpApiMiddleware`; over HTTP only                                                                                                                                                                                                                                                                                                                                                                                |
 
-- Authentication covers action endpoints alone, not a host's own routes: an `HttpRouter.add`
-  route that sat under 0.8.0's middleware reads the token with `Authentication.bearerToken`,
-  verifies it with the function given to `Authentication.layer`, and answers a refusal with
-  `Authentication.refusal(error, { protectedResource, authorization })`
+- A descriptor covers action endpoints alone: an `HttpRouter.add` route that sat under 0.8.0's
+  middleware takes `Authentication.protect(Login)`, router middleware authenticating it with the
+  same provider, `route.pipe(Layer.provide(Authentication.protect(Login).layer))`
   ([Authentication.md](docs/Authentication.md#a-route-of-your-own)).
 - `make` is a browser-safe declaration: its name literal identifies the one provider that satisfies
   it, so a provider of another descriptor of the same identity does not. It names one native
@@ -601,9 +600,11 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`. On an
   authenticated route it is a 403 with an `insufficient_scope` challenge, on which an MCP
   client re-authorizes and retries.
-- `Authentication.bearerToken` reads the request's bearer token as a `Redacted<string>`,
-  failing with `Unauthenticated` without one, for native middleware on routes of the host's own,
-  such as a WebSocket upgrade; a verifier is given the token instead.
+- `Authentication.protect(descriptor)` is native router middleware for a route of the host's
+  own, such as an export, a page frame or a WebSocket upgrade: the descriptor's provider
+  verifies the credential its scheme decodes and gives the route the identity, and the route is
+  answered as an action's, its refusals and challenges, a `Forbidden` it fails with stepping up
+  under Bearer, and `no-store` on every response to a request it authenticates.
 - `Authentication.refusal(error, { authentication, protectedResource, authorization })` is the
   response authentication answers a refusal with: its status, JSON, `Cache-Control: no-store` and
   challenge. A caller the router never routes, such as a Node `upgrade` handler admitting a socket,
@@ -611,12 +612,11 @@ Each area below lists what is renamed or removed, then what changes without a re
   ([Authentication.md](docs/Authentication.md#outside-the-router)). Given `authentication`, a
   descriptor of another scheme, it answers as that descriptor's routes do: its 401 names that
   scheme, and nothing steps up.
-- `Authentication.bearerTokenOf(authorization)` reads an `Authorization` header value as
-  `bearerToken` reads a request's, an `Option` of the `Redacted` token, for that same caller,
-  which holds the header and no request. Both read it as Effect's `HttpApiSecurity.bearer`
-  does, the reading a Bearer descriptor's verifier receives: the whitespace around the value
-  stripped, as HTTP parsers do, then the rest of the header after the scheme and its spaces,
-  `a b` for `Bearer a b`.
+- `Authentication.bearerTokenOf(authorization)` reads an `Authorization` header value, an
+  `Option` of the `Redacted` token, for that same caller, which holds the header and no
+  request. It reads it as Effect's `HttpApiSecurity.bearer` does, the reading a Bearer
+  descriptor's verifier receives: the whitespace around the value stripped, as HTTP parsers do,
+  then the rest of the header after the scheme and its spaces, `a b` for `Bearer a b`.
 - `Authentication.layer`'s `protectedResource` may be an Effect that builds it, as a builder
   builds the verifier: for a resource known only at startup, such as one read from a
   service. It runs once per layer graph.
@@ -710,6 +710,13 @@ Each area below lists what is renamed or removed, then what changes without a re
   HTTP. Layer middleware chosen by a condition within one slot provides nothing, so what one
   choice would provide stays owed.
 - `Testing.mcpClient` reads tool results with the native `McpSchema.CallToolResult`.
+- `Action` exports `CheckCallback`, `CheckContext` and `BuildContext`, and `ActionHttp`
+  `MethodError`, the types a check class, a surface's layer and a client's method are written
+  in, so a package emitting declarations may export them.
+- `Action.Handlers<typeof actions>` types a builder's record written apart from `implement`, as
+  another authorizer of the same handlers takes, so each handler is typed from its contract.
+- `Authentication` exports `Descriptor` and `Provider`, the types `make` and `layer` return, so
+  a package emitting declarations may export a descriptor, a binding naming one and a provider.
 - `ActionCli.make(target, { name, commands })` gives a subcommand the options `command` takes,
   by action name: `commands: { readFile: { positional: ["path"], render } }`. It takes any
   action of the target, so one record serves aggregates of several `actions`: a command of an

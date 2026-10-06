@@ -56,6 +56,8 @@ try {
         noImplicitOverride: true,
         noFallthroughCasesInSwitch: true,
         skipLibCheck: false,
+        // As a library built on this one emits them: every exported value is nameable.
+        declaration: true,
         types: [],
         lib: ["es2023", "esnext.disposable", "dom", "dom.iterable"],
       },

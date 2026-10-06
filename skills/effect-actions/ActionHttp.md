@@ -25,7 +25,7 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `client(Http, options?)`                 | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
 | `fetchClient(Http, options?)`            | The same client, built over `fetch` outside an Effect: its methods require nothing.          |
 
-Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `Options` of `make`, `LayerOptions` of `layer`, `ClientOptions` of `client` and `FetchClientOptions` of `fetchClient`.
+Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Client<typeof Http>`; `MethodError`, what one of its calls fails with; `Options` of `make`, `LayerOptions` of `layer`, `ClientOptions` of `client` and `FetchClientOptions` of `fetchClient`.
 
 | Option                      | Meaning                                                                                                                           |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |

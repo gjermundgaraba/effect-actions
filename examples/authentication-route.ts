@@ -1,26 +1,26 @@
-import { Effect } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Effect, Layer } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
-import { protectedResource, verify } from "./authentication.js";
+import { CurrentActor } from "./authorization.js";
+import { Login } from "./binding.js";
 
-// A route of the host's own beside the actions, which no authentication descriptor covers: it
-// reads the bearer token itself, verifies it with the function `authenticate` verifies the
-// actions' tokens with, and refuses as authentication refuses on an action's route.
+// A route of the host's own beside the actions, authenticated as they are: the binding's
+// descriptor's provider verifies the request and gives the route the actor. A refusal it
+// fails with is answered as an action's, and a scope a caller lacks steps up under Bearer.
 export const exportRoute = HttpRouter.add(
   "GET",
   "/export",
   Effect.gen(function* () {
-    const actor = yield* Effect.flatMap(Authentication.bearerToken, verify);
+    const actor = yield* CurrentActor;
+
+    if (!actor.permissions.includes("users:read")) {
+      return yield* new Action.Forbidden({
+        message: "Requires users:read.",
+        scopes: ["users:read"],
+      });
+    }
 
     return HttpServerResponse.text(`Users of ${actor.tenantId}.`);
-  }).pipe(
-    Effect.catch((error) =>
-      Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-        Authentication.refusal(error, {
-          protectedResource,
-          authorization: request.headers.authorization,
-        }),
-      ),
-    ),
-  ),
-);
+  }),
+).pipe(Layer.provide(Authentication.protect(Login).layer));

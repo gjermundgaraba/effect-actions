@@ -3,7 +3,7 @@ import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../Action.js";
 import type { Protected, ServedRequest, Serving } from "./implementation.js";
-import { Unauthenticated } from "./errors.js";
+import { type Refusal, Unauthenticated } from "./errors.js";
 
 /** One native security scheme: Bearer unless a descriptor names another. */
 export type Security = HttpApiSecurity.HttpApiSecurity;
@@ -49,6 +49,17 @@ export interface Runtime {
     route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
     optional: boolean,
   ) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R | HttpRouter.Provided>;
+  /**
+   * A route of the host's own: the request is decoded here, the route gets the identity
+   * itself, and a refusal it fails with is answered as an action route's.
+   */
+  readonly route: <E, R>(
+    route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    Exclude<E, Refusal>,
+    HttpRouter.Provided
+  >;
 }
 
 /**

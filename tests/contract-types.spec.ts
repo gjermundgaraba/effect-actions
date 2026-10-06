@@ -157,3 +157,32 @@ declare const checked:
 
 // @ts-expect-error No option `check`.
 Action.make("typoInUnion", checked);
+
+// A builder written apart from `implement`, as another authorizer of the same handlers takes,
+// types its handlers from their contracts through `Action.Handlers`.
+export const handlersApart = () => {
+  class Users extends Context.Service<Users, (id: string) => string>()("contract-types/Users") {}
+
+  const actions = [GetUser, RenameUser] as const;
+
+  const handlers = Effect.map(
+    Effect.service(Users),
+    (users) =>
+      ({
+        getUser: ({ id }) => Effect.succeed({ id, name: users(id) }),
+        renameUser: ({ id, name }) => Effect.succeed({ id, name }),
+      }) satisfies Action.Handlers<typeof actions>,
+  );
+
+  const remote = Action.implement(actions, handlers, { authorize: () => Effect.void });
+  const trusted = Action.implement(actions, handlers, { authorize: Action.allowAll });
+
+  expectTypeOf<Action.Handlers<readonly [typeof GetUser]>>().toEqualTypeOf<{
+    readonly getUser: Action.Handler<typeof GetUser>;
+  }>();
+
+  // @ts-expect-error A handler of no listed action is refused.
+  ({ deleteUser: () => Effect.void }) satisfies Action.Handlers<typeof actions>;
+
+  return [remote, trusted];
+};

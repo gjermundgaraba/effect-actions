@@ -22,7 +22,15 @@ import {
 } from "./internal/authentication.js";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
 import type { Known, OptionalUnless } from "./internal/implementation.js";
-import { answer, answerStepUp, bearer, challenge, isStepUp, plain } from "./internal/refusal.js";
+import {
+  answer,
+  answerStepUp,
+  bearer,
+  challenge,
+  isRefusal,
+  isStepUp,
+  plain,
+} from "./internal/refusal.js";
 
 /**
  * An `Authorization` header of the `Bearer` scheme, and its token, as Effect's own
@@ -34,10 +42,11 @@ const bearerScheme = /^[ \t]*Bearer +([^ \t](?:.*[^ \t])?)[ \t]*$/i;
 
 /**
  * The bearer token of an `Authorization` header, `authorization`, or none: the one reading
- * of the header, which `bearerToken`, every challenge and a Bearer descriptor's verifier
- * share, as Effect's `HttpApiSecurity.bearer` reads it. It is for a caller the router never
- * routes, which holds the header and no request. The scheme is matched case-insensitively,
- * as RFC 9110 requires, and the token is `Redacted`, as `bearerToken`'s.
+ * of the header, which every challenge and a Bearer descriptor's verifier share, as Effect's
+ * `HttpApiSecurity.bearer` reads it. It is for a caller the router never routes, which holds
+ * the header and no request; a route of the host's own is authenticated by `protect`. The
+ * scheme is matched case-insensitively, as RFC 9110 requires, and the token is `Redacted`, as
+ * Effect's own decoder gives it.
  */
 export const bearerTokenOf = (
   authorization: string | undefined,
@@ -46,24 +55,6 @@ export const bearerTokenOf = (
     Option.fromNullishOr(bearerScheme.exec(authorization ?? "")?.[1]),
     (token): Redacted.Redacted<string> => Redacted.make(token),
   );
-
-/**
- * The bearer token of the request's `Authorization` header, failing with `Unauthenticated`
- * when it has none. The scheme is matched case-insensitively, as RFC 9110 requires. The
- * token is `Redacted`, as Effect's own `HttpApiSecurity.bearer` gives it, so a log or an
- * error holding it never prints it; `Redacted.value(token)` reads it. Where a token is
- * optional, `Effect.option(bearerToken)`.
- */
-export const bearerToken: Effect.Effect<
-  Redacted.Redacted<string>,
-  Unauthenticated,
-  HttpServerRequest.HttpServerRequest
-> = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-  Option.match(bearerTokenOf(request.headers.authorization), {
-    onNone: () => Effect.fail(new Unauthenticated({ message: "A bearer token is required." })),
-    onSome: Effect.succeed,
-  }),
-);
 
 /** An OAuth protected resource (RFC 9728), as `layer` publishes it. */
 export interface ProtectedResource {
@@ -360,7 +351,11 @@ export const make = <const Name extends string, I, A, const O extends Options = 
   };
 };
 
-export type { Any } from "./internal/authentication.js";
+/**
+ * A descriptor `make` returns, and the provider of its verifier `layer` returns, named so a
+ * package emitting declarations can export them, and a binding naming one.
+ */
+export type { Any, Descriptor, Provider } from "./internal/authentication.js";
 
 /**
  * A descriptor's verifier: the credential its scheme decodes, as Effect's own decoder gives
@@ -537,7 +532,46 @@ export function layer(
                   ),
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary.
           )) as Runtime["http"],
+        // A route of the host's own: decoded here, as MCP's, given the identity as an action's
+        // handler is, and a refusal it fails with, such as a scope check's `Forbidden`, is
+        // answered as an action route's, stepping up under Bearer.
+        // SAFETY: as `http` above.
+        route: ((route: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>) =>
+          Effect.flatMap(
+            HttpApiBuilder.securityDecode(security),
+            (credential) =>
+              verified(credential, Effect.catchIf(route, isRefusal, refuse), auth.service),
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary.
+          )) as Runtime["route"],
       };
     }),
   );
 }
+
+/** The identity `I`, or none where it is erased to `unknown`. */
+type Provides<I> = unknown extends I ? never : I;
+
+/**
+ * Native router middleware authenticating a route of the host's own, such as an export, a
+ * page frame or a WebSocket upgrade, with `auth`'s provider, as its actions' routes are: the
+ * credential its scheme decodes, verified by the same verifier, and the identity provided to
+ * the route. It answers as an action route: a missing or invalid credential with the refusal,
+ * every response to the request it authenticates `no-store` unless it states its own caching,
+ * and a refusal the route fails with, such as a scope check's `Forbidden`, as its status, JSON
+ * and challenge, stepping up under Bearer. The layer requires the provider, `layer(auth, ...)`.
+ * An erased descriptor, `Any`, provides no service the types can name: its identity is
+ * `unknown`, which would discharge every request service the route owes.
+ */
+export const protect = <I, A, S extends Security, Name extends string>(
+  auth: Descriptor<I, A, S, Name>,
+): HttpRouter.Middleware<{
+  provides: Provides<I>;
+  handles: Refusal;
+  error: never;
+  requires: never;
+  layerError: never;
+  layerRequires: Provider<I, Name>;
+}> =>
+  HttpRouter.middleware<{ provides: Provides<I>; handles: Refusal }>()(
+    Effect.map(Effect.service(auth["~provider"]), (runtime) => (route) => runtime.route(route)),
+  );

@@ -30,7 +30,7 @@ import {
   type ErasedAuthorize,
   type ErasedHandler,
   type ErasedValue,
-  type Handlers,
+  type Handlers as ErasedHandlers,
   Implementation,
   type Member,
   memoized,
@@ -50,6 +50,19 @@ import {
 import type { AnyCheck } from "./internal/checks.js";
 
 export { Check, type AnyCheck } from "./internal/checks.js";
+
+/**
+ * A check's callback, of its error and the services it may read, `CheckContext` of its
+ * options: what an `Action.Check` class implements, named so a package emitting declarations
+ * can export one.
+ */
+export type { CheckCallback, Within as CheckContext } from "./internal/checks.js";
+
+/**
+ * What a surface serving the actions `Listed` of the implementations `App` reads at startup:
+ * their builders' and built authorizers' services, and their checks'.
+ */
+export type { BuildContext } from "./internal/implementation.js";
 
 /** An action bound to its handler; opaque, see `implement`. */
 export type { Implementation } from "./internal/implementation.js";
@@ -318,6 +331,15 @@ export type Handler<A extends Any, R = never> = (
 ) => Effect.Effect<A["success"]["Type"], A["errors"][number]["Type"] | BuiltIn, R>;
 
 /**
+ * The handlers of the actions `A`, keyed by name, as `implement` takes them: what a builder
+ * written apart from `implement` returns, `satisfies Action.Handlers<typeof actions>`, so its
+ * handlers are typed from their contracts, as another authorizer of the same handlers needs.
+ */
+export type Handlers<A extends ReadonlyArray<Any>, R = never> = {
+  readonly [Action in A[number] as Action["name"]]: Handler<Action, R>;
+};
+
+/**
  * The schema an option stands for: a schema as given, `NoInput` for no fields, or the struct
  * of the fields, which may be keyed by symbols, as in a struct.
  */
@@ -518,7 +540,7 @@ type Implemented<T extends Target, R, RS, EX, RX, RB, EB, RBX> = Implementation<
 type ErasedAuthorizer = ErasedAuthorize | Effect.Effect<ErasedAuthorize, unknown, unknown>;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
-type Built = Handlers<unknown> | ErasedHandler<unknown>;
+type Built = ErasedHandlers<unknown> | ErasedHandler<unknown>;
 
 /**
  * Every authenticated caller may call a protected action. The contract's identity
@@ -656,7 +678,7 @@ export function implement(
   // key no action names is refused, so a stale handler cannot outlive its action, and so
   // is an action without a handler. The result pairs each action with its handler.
   const record = (built: Built): Bound => {
-    const handlers: Handlers<unknown> = Predicate.isFunction(built)
+    const handlers: ErasedHandlers<unknown> = Predicate.isFunction(built)
       ? Object.fromEntries(Array.isArray(target) ? [] : actions.map(({ name }) => [name, built]))
       : built;
 

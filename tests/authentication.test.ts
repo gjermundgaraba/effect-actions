@@ -1,4 +1,3 @@
-import { inspect } from "node:util";
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Client,
@@ -549,55 +548,156 @@ describe("Authentication.layer's refusals", () => {
   });
 });
 
-describe("Authentication.bearerToken", () => {
-  const withAuthorization = (authorization?: string) =>
-    Effect.provideService(
-      Authentication.bearerToken,
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(
-        new Request("http://localhost/", {
-          headers: authorization === undefined ? {} : { authorization },
-        }),
+describe("Authentication.protect", () => {
+  const protectedResource = {
+    resource: "https://api.example.com/api",
+    authorizationServers: ["https://auth.example.com"],
+    scopesRequired: ["docs:read"],
+  } satisfies Authentication.ProtectedResource;
+
+  const metadata = "https://api.example.com/.well-known/oauth-protected-resource/api";
+
+  // A host's own routes beside an action, under the action's descriptor: one reads the
+  // identity, one states its own caching, and the rest refuse or answer 401 themselves.
+  const deployment = (
+    verifier: Authentication.Verify<{ readonly id: string }, typeof Login.security, never> = verify,
+  ) =>
+    serve(
+      Layer.mergeAll(
+        ActionHttp.layer(IdentifyHttp, identify),
+        Layer.mergeAll(
+          HttpRouter.add(
+            "GET",
+            "/own",
+            Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
+          ),
+          HttpRouter.add(
+            "GET",
+            "/cached",
+            Effect.succeed(
+              HttpServerResponse.text("cached", { headers: { "cache-control": "private" } }),
+            ),
+          ),
+          HttpRouter.add("GET", "/expired", Effect.fail(new Action.Unauthenticated())),
+          HttpRouter.add(
+            "GET",
+            "/narrow",
+            Effect.fail(
+              new Action.Forbidden({ message: "Needs docs:write.", scopes: ["docs:write"] }),
+            ),
+          ),
+          HttpRouter.add(
+            "GET",
+            "/signed-out",
+            Effect.succeed(HttpServerResponse.text("Sign in again", { status: 401 })),
+          ),
+        ).pipe(Layer.provide(Authentication.protect(Login).layer)),
+      ).pipe(Layer.provide(Authentication.layer(Login, verifier, { protectedResource }))),
+    );
+
+  const get = (path: string, authorization?: string) =>
+    new Request(`http://localhost${path}`, {
+      headers: authorization === undefined ? {} : { authorization },
+    });
+
+  const answerOf = async (response: Response) => [
+    response.status,
+    response.headers.get("www-authenticate"),
+    response.headers.get("cache-control"),
+    await response.text(),
+  ];
+
+  it("refuses a credential as the action routes refuse it", async () => {
+    const web = deployment();
+
+    for (const authorization of [undefined, "Bearer ", "Basic YWxpY2U6c2VjcmV0", "Bearer denied"]) {
+      expect(await answerOf(await web.handler(get("/own", authorization)))).toEqual(
+        await answerOf(await web.handler(request(authorization))),
+      );
+    }
+  });
+
+  it("gives the route the identity, and no-stores its answer unless it states its own caching", async () => {
+    const web = deployment();
+
+    const own = await web.handler(get("/own", "Bearer alice"));
+    expect([own.status, own.headers.get("cache-control"), await own.text()]).toEqual([
+      200,
+      "no-store",
+      "alice",
+    ]);
+
+    const cached = await web.handler(get("/cached", "Bearer alice"));
+    expect(cached.headers.get("cache-control")).toBe("private");
+  });
+
+  it("answers the route's refusals as an action's, stepping up under Bearer, and challenges its own 401", async () => {
+    const web = deployment();
+
+    const expired = await web.handler(get("/expired", "Bearer alice"));
+    expect([expired.status, expired.headers.get("www-authenticate")]).toEqual([
+      401,
+      `Bearer error="invalid_token", scope="docs:read", resource_metadata="${metadata}"`,
+    ]);
+    expect(Schema.decodeUnknownSync(Action.Unauthenticated)(await expired.json())).toBeInstanceOf(
+      Action.Unauthenticated,
+    );
+
+    const narrow = await web.handler(get("/narrow", "Bearer alice"));
+    expect([narrow.status, narrow.headers.get("www-authenticate")]).toEqual([
+      403,
+      `Bearer error="insufficient_scope", scope="docs:write", resource_metadata="${metadata}", error_description="Needs docs:write."`,
+    ]);
+    expect(narrow.headers.get("cache-control")).toBe("no-store");
+
+    const signedOut = await web.handler(get("/signed-out", "Bearer alice"));
+    expect([signedOut.status, signedOut.headers.get("www-authenticate")]).toEqual([
+      401,
+      `Bearer error="invalid_token", scope="docs:read", resource_metadata="${metadata}"`,
+    ]);
+  });
+
+  it("sends a verifier's own response, such as an unavailable issuer's", async () => {
+    const web = deployment(() =>
+      Effect.fail(HttpServerResponse.text("Issuer unavailable", { status: 503 })),
+    );
+
+    const own = await web.handler(get("/own", "Bearer alice"));
+    expect([own.status, await own.text()]).toEqual([503, "Issuer unavailable"]);
+  });
+
+  it("authenticates under another scheme, as its actions are", async () => {
+    const Session = Authentication.make("test.ProtectSession", Identity, {
+      security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
+    });
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Identify], { authentication: Session }), identify),
+        HttpRouter.add(
+          "GET",
+          "/own",
+          Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
+        ).pipe(Layer.provide(Authentication.protect(Session).layer)),
+      ).pipe(
+        Layer.provide(
+          Authentication.layer(Session, (session) =>
+            Redacted.value(session) === "s1"
+              ? Effect.succeed({ id: "alice" })
+              : Effect.fail(new Action.Unauthenticated()),
+          ),
+        ),
       ),
     );
 
-  const tokenOf = (authorization?: string) =>
-    Effect.map(Effect.option(withAuthorization(authorization)), Option.map(Redacted.value));
+    const signedIn = get("/own");
+    signedIn.headers.set("cookie", "session=s1");
+    expect(await (await web.handler(signedIn)).text()).toBe("alice");
 
-  // `bearerToken` reads a request's header as `bearerTokenOf` reads it, which the refusal suite
-  // pins against Effect's own decoder.
-  it.effect("reads the request's header as bearerTokenOf reads it", () =>
-    Effect.gen(function* () {
-      for (const header of [
-        undefined,
-        "bearer alice",
-        "Bearer two tokens",
-        "Basic YWxpY2U6c2VjcmV0",
-        "Bearer ",
-      ]) {
-        expect(yield* tokenOf(header)).toEqual(
-          Option.map(Authentication.bearerTokenOf(header), Redacted.value),
-        );
-      }
-    }),
-  );
-
-  it.effect("keeps the token out of anything that prints it", () =>
-    Effect.gen(function* () {
-      const token = yield* withAuthorization("Bearer alice");
-
-      expect(inspect(token)).not.toContain("alice");
-      expect(JSON.stringify({ token })).not.toContain("alice");
-    }),
-  );
-
-  it.effect("fails with the built-in 401, so authentication needs no branch of its own", () =>
-    Effect.gen(function* () {
-      expect(yield* Effect.flip(withAuthorization())).toEqual(
-        new Action.Unauthenticated({ message: "A bearer token is required." }),
-      );
-    }),
-  );
+    const anonymous = await web.handler(get("/own"));
+    const action = await web.handler(post("/api/identify"));
+    expect(await answerOf(anonymous)).toEqual(await answerOf(action));
+  });
 });
 
 describe("a scheme other than Bearer", () => {
