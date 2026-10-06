@@ -9,22 +9,22 @@ class Principal extends Context.Service<Principal, string>()("toolkit-types/Prin
 
 const Named = Action.make("named", {
   description: "A named tool.",
-  access: "write",
-  auth: Principal,
+  readOnly: false,
+  caller: Principal,
   success: Schema.String,
 });
 
 const Guarded = Action.make("guarded", {
   description: "Needs a principal.",
-  access: "write",
-  auth: Principal,
+  readOnly: false,
+  caller: Principal,
   success: Schema.String,
 });
 
 const ServiceFree = Action.make("service_free", {
   description: "Does not need a principal.",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -58,8 +58,8 @@ class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
 
 const Fetch = Action.make("fetch", {
   description: "May be gone.",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
   errors: [Gone],
 });
@@ -110,15 +110,15 @@ class LeftBuild extends Context.Service<LeftBuild, string>()("toolkit-types/Left
 
 const Left = Action.make("left", {
   description: "Left",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
 const Right = Action.make("right", {
   description: "Right",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.Number,
 });
 
@@ -177,9 +177,9 @@ expectTypeOf<Effect.Services<typeof guardedCall>>().toEqualTypeOf<Principal>();
 ActionToolkit.make(app, {
   needsApproval: (call) => {
     const name: "named" | "service_free" | "guarded" = call.name;
-    const access: "write" = call.action.access;
+    const readOnly: false = call.action.readOnly;
 
-    return name === "guarded" && access === "write";
+    return name === "guarded" && !readOnly;
   },
 });
 
@@ -207,8 +207,8 @@ ActionToolkit.make(app, { needsApproval: () => Effect.fail("unavailable") });
 
 const Erase = Action.make("erase", {
   description: "Erase a document.",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: { id: Schema.String, hard: Schema.Boolean },
   success: Schema.String,
 });
@@ -217,8 +217,8 @@ const eraser = Action.implement(Erase, () => Effect.succeed("erased"));
 
 const Read = Action.make("read", {
   description: "Read a document.",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: { path: Schema.String },
   success: Schema.String,
 });
@@ -231,9 +231,9 @@ ActionToolkit.make([app, eraser, reader], {
     if (call.name !== "erase") return call.name === "read" && call.input.path.startsWith("/");
 
     const hard: boolean = call.input.hard;
-    const access: "write" = call.action.access;
+    const readOnly: false = call.action.readOnly;
 
-    return hard && access === "write" && call.input.id !== "draft";
+    return hard && !readOnly && call.input.id !== "draft";
   },
 });
 
@@ -250,8 +250,7 @@ const writesApproved = <
   const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
 >(
   implementations: Apps,
-) =>
-  ActionToolkit.make(implementations, { needsApproval: (call) => call.action.access === "write" });
+) => ActionToolkit.make(implementations, { needsApproval: (call) => !call.action.readOnly });
 
 expectTypeOf<typeof writesApproved<[typeof app, typeof eraser]>>().toEqualTypeOf<
   (

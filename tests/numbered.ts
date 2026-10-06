@@ -46,7 +46,7 @@ type Numbered<I extends number, K extends 3 | 6> = Action.Action<
   Action.Any["input"],
   Action.Any["success"],
   ReadonlyArray<OwnErrors<I>[K][number] | typeof Throttled>,
-  "read",
+  true,
   typeof Caller,
   readonly [typeof Limited]
 >;

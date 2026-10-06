@@ -36,8 +36,8 @@ describe("the identity authentication provides", () => {
   // authentication covers it.
   const Caller = Action.make("caller", {
     description: "Name the caller.",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -190,8 +190,8 @@ describe("a value provided per request", () => {
 
   const Where = Action.make("where", {
     description: "Name the request's tenant.",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -241,8 +241,8 @@ describe("a value provided per request", () => {
 
       const Who = Action.make("who", {
         description: "Record the caller.",
-        access: "read",
-        auth: Actor,
+        readOnly: true,
+        caller: Actor,
       });
 
       const who = Action.implement(
@@ -261,8 +261,8 @@ describe("a value provided per request", () => {
       // Public, reading the caller the host's own middleware provides each request.
       const Chat = Action.make("chat", {
         description: "Call a tool as a narrower delegate of the caller.",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
       });
 
       const chat = Action.implement(
@@ -306,12 +306,12 @@ describe("a value provided per request", () => {
 describe("what the routes were built with", () => {
   const Level = Action.make("level", {
     description: "Name the current log level.",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
-  const Boom = Action.make("boom", { description: "Die.", access: "write", auth: "public" });
+  const Boom = Action.make("boom", { description: "Die.", readOnly: false, caller: Action.Anyone });
 
   it("fills in a reference a request lacks, but never the log level an MCP client asks for", async () => {
     const level = Action.implement(Level, () => Effect.service(References.CurrentLogLevel));
@@ -345,8 +345,8 @@ describe("what the routes were built with", () => {
 
         const Probe = Action.make("probe", {
           description: "Name the stage and the log level.",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           success: { stage: Schema.String, level: Schema.String },
         });
 
@@ -470,8 +470,8 @@ describe("over stdio", () => {
 
       const Who = Action.make("who", {
         description: "Name the caller.",
-        access: "read",
-        auth: Actor,
+        readOnly: true,
+        caller: Actor,
         success: Schema.String,
       });
 

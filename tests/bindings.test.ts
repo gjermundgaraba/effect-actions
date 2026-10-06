@@ -21,8 +21,8 @@ class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 // Public: `Actor` is a request service the router provides, not a signed-in caller.
 const identity = Action.make("identity", {
   description: "Request identity",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -96,8 +96,8 @@ it("releases what an HTTP call acquires when the call ends, before route middlew
   // Protected, so its authorizer runs.
   const Open = Action.make("open", {
     description: "Opens a resource of its own",
-    access: "write",
-    auth: CurrentActor,
+    readOnly: false,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -141,8 +141,8 @@ it("releases what an HTTP call acquires when the call ends, before route middlew
 describe("selecting an implementation's actions", () => {
   const secret = Action.make("secret", {
     description: "Only for the signed in",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -218,8 +218,8 @@ describe("selecting an implementation's actions", () => {
       // An action MCP cannot serve, its input a scalar, is fine left out of the tools.
       const Count = Action.make("count", {
         description: "Counts",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: Schema.Number,
         success: Schema.Number,
       });
@@ -264,8 +264,8 @@ describe("selecting an implementation's actions", () => {
     // Of the same type, which the types cannot tell apart.
     const lookalike = Action.make("identity", {
       description: "",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -398,8 +398,8 @@ it.effect("builds once beside routes served apart, when Action.layer is provided
     // Protected, so its authorizer is built and run.
     const Count = Action.make("count", {
       description: "",
-      access: "read",
-      auth: CurrentActor,
+      readOnly: true,
+      caller: CurrentActor,
       success: Schema.Finite,
     });
 
@@ -458,8 +458,8 @@ it.effect("builds once beside routes served apart, when Action.layer is provided
 describe("a builder beside HttpRouter.serve", () => {
   const Count = Action.make("count", {
     description: "",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.Finite,
   });
 
@@ -520,8 +520,8 @@ describe("a builder beside HttpRouter.serve", () => {
 
         const Greet = Action.make("greet", {
           description: "",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           success: Schema.String,
         });
 
@@ -574,8 +574,8 @@ describe("a builder beside HttpRouter.serve", () => {
         // the toolkit's handler layer, built in the routes' layer graph, as the endpoint's is.
         const Chat = Action.make("chat", {
           description: "",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           success: Schema.Finite,
         });
 
@@ -679,8 +679,8 @@ it("keeps same-contract implementations apart over MCP", async () => {
 it("records a tool call's arguments on its span, a Schema.Redacted value included, where HTTP records no body", async () => {
   const SignIn = Action.make("login", {
     description: "",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { password: Schema.Redacted(Schema.String) },
     success: Schema.String,
   });
@@ -748,8 +748,8 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
   // Beside the public `identity`, one whose authorizer runs.
   const Guarded = Action.make("guarded", {
     description: "Signed in only",
-    access: "write",
-    auth: CurrentActor,
+    readOnly: false,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -830,9 +830,9 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     expect(parents.get("identity")).toMatch(requestSpan);
 
     // The contract's identity is on the span and on every handler log line.
-    const identity = new Map([
+    const identity = new Map<string, unknown>([
       ["action.name", "identity"],
-      ["action.access", "write"],
+      ["action.read_only", false],
     ]);
 
     expect(spans.get("identity")?.attributes).toEqual(identity);
@@ -894,23 +894,23 @@ class Tenant extends Context.Service<Tenant, string>()("bindings/Tenant") {}
 
 const WhoAmI = Action.make("whoAmI", {
   description: "Current user",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
 const Invoice = Action.make("invoice", {
   description: "Invoice total",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: { amount: Schema.FiniteFromString },
   success: Schema.Finite,
 });
 
 const Audit = Action.make("audit", {
   description: "Audit",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -979,15 +979,15 @@ describe("HTTP bindings", () => {
 
   const Alpha = Action.make("alpha", {
     description: "Alpha",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
   const Beta = Action.make("beta", {
     description: "Beta",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -996,8 +996,8 @@ describe("HTTP bindings", () => {
 
     const LookAlike = Action.make("alpha", {
       description: "Alpha",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1035,8 +1035,8 @@ describe("HTTP bindings", () => {
 
     const LookAlike = Action.make("alpha", {
       description: "Alpha",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1197,16 +1197,16 @@ describe("HTTP bindings", () => {
   it("serves a route and another contract's tool of the same name side by side", async () => {
     const Search = Action.make("search", {
       description: "Search the site",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { query: Schema.String },
       success: Schema.String,
     });
 
     const AgentSearch = Action.make("search", {
       description: "Search the agent's notes",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { topic: Schema.String },
       success: Schema.String,
     });
@@ -1299,16 +1299,16 @@ describe("HTTP bindings", () => {
 
     const Find = Action.make("find", {
       description: "Find",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
       errors: [Missing, ...shared],
     });
 
     const List = Action.make("list", {
       description: "List",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
       errors: [...shared],
     });
@@ -1352,8 +1352,8 @@ describe("HTTP bindings", () => {
 describe("security from the contracts", () => {
   const Rename = Action.make("rename", {
     description: "Rename the caller",
-    access: "write",
-    auth: CurrentActor,
+    readOnly: false,
+    caller: CurrentActor,
     input: { name: Schema.String },
     success: Schema.String,
   });
@@ -1363,8 +1363,8 @@ describe("security from the contracts", () => {
 
   const Ping = Action.make("ping", {
     description: "Ping",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -1466,8 +1466,8 @@ describe("security from the contracts", () => {
 
     const Purge = Action.make("purge", {
       description: "Purge",
-      access: "write",
-      auth: CurrentActor,
+      readOnly: false,
+      caller: CurrentActor,
     });
 
     const combined = HttpApi.make("host")

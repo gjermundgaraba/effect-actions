@@ -1,6 +1,7 @@
 import { Array as Arr, Context, Effect, Layer, Option } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
+import { Anyone } from "./actions.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 import type { CheckCallback, CheckRequests, CheckServices, ServiceOf } from "./checks.js";
 
@@ -124,7 +125,7 @@ export class Implementation<
   static layerOf(app: AnyImplementation): Layer.Layer<never, unknown, unknown> {
     const source = Implementation.own(app);
 
-    return app.actions.some((action) => action.auth !== "public")
+    return app.actions.some((action) => action.caller !== Anyone)
       ? Layer.merge(source.#handlers.layer, source.#authorizer.layer)
       : source.#handlers.layer;
   }
@@ -140,7 +141,7 @@ export class Implementation<
     return Effect.gen(function* () {
       const bound = yield* source.#handlers.key;
 
-      const before = actions.some((action) => action.auth !== "public")
+      const before = actions.some((action) => action.caller !== Anyone)
         ? yield* source.#authorizer.key
         : () => Effect.void;
 
@@ -340,19 +341,19 @@ export const select = (
 
 /** The protected members of a contract union. */
 export type Protected<A extends Action.Any> = A extends unknown
-  ? A["auth"] extends "public"
+  ? A["caller"] extends typeof Anyone
     ? never
     : A
   : never;
 
 /**
- * The identity required by the contract, even when its handler never reads it. An `auth`
- * narrowed to `"public"`, such as `Action.Any & { auth: "public" }`'s, which TypeScript keeps
- * as `"public" | (Key & "public")`, requires none.
+ * The identity required by the contract, even when its handler never reads it. A `caller`
+ * narrowed to `Anyone`, such as `Action.Any & { caller: typeof Anyone }`'s, which TypeScript
+ * keeps as `typeof Anyone | (Key & typeof Anyone)`, requires none.
  */
-export type AuthenticationOf<A extends Action.Any> = A["auth"] extends "public"
+export type AuthenticationOf<A extends Action.Any> = A["caller"] extends typeof Anyone
   ? never
-  : ServiceOf<A["auth"]>;
+  : ServiceOf<A["caller"]>;
 
 /**
  * Per-request requirements of `App`'s authorization, checks and handler for each `A` it
@@ -367,7 +368,7 @@ export type RequestOf<App, A extends Action.Any> = App extends {
       ? never
       :
           | R[A["name"] & keyof R]
-          | (A["auth"] extends "public" ? never : R["~authorize" & keyof R])
+          | (A["caller"] extends typeof Anyone ? never : R["~authorize" & keyof R])
           | AuthenticationOf<A>
           | CheckRequests<A>
     : never
@@ -476,18 +477,18 @@ const dispatch = (
   // writes, so a trace or a log can be filtered by action without parsing names.
   const attributes = {
     "action.name": action.name,
-    "action.access": action.access,
+    "action.read_only": action.readOnly,
   };
 
   const authentication =
-    action.auth === "public"
+    action.caller === Anyone
       ? Effect.void
-      : Effect.flatMap(Effect.serviceOption(action.auth), (actor) =>
+      : Effect.flatMap(Effect.serviceOption(action.caller), (actor) =>
           Option.isSome(actor) ? Effect.void : Effect.fail(new Unauthenticated()),
         );
 
   const authorization =
-    action.auth === "public" ? Effect.void : Effect.suspend(() => before(action));
+    action.caller === Anyone ? Effect.void : Effect.suspend(() => before(action));
 
   const operational = Effect.forEach(checks, (check) => Effect.suspend(() => check(action)), {
     discard: true,

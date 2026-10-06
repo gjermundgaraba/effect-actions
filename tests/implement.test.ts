@@ -22,16 +22,16 @@ class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") 
 describe("implement", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { name: Schema.String },
     success: Schema.String,
   });
 
   const Bye = Action.make("bye", {
     description: "Parts",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -229,8 +229,8 @@ describe("implement", () => {
 describe("authorization", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -264,7 +264,7 @@ describe("authorization", () => {
   );
 
   it("refuses an authorize given to public actions alone, which would never run", () => {
-    const Open = Action.make("open", { description: "", access: "read", auth: "public" });
+    const Open = Action.make("open", { description: "", readOnly: true, caller: Action.Anyone });
 
     expect(() =>
       // @ts-expect-error A public-only target takes no authorize.
@@ -317,8 +317,8 @@ describe("authorization", () => {
   it("builds authorize passed as a service once for every implementation it guards", async () => {
     const Bye = Action.make("bye", {
       description: "Parts",
-      access: "read",
-      auth: CurrentActor,
+      readOnly: true,
+      caller: CurrentActor,
       success: Schema.String,
     });
 
@@ -378,22 +378,22 @@ describe("authorization", () => {
 describe("builder acquisition", () => {
   const One = Action.make("one", {
     description: "One",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.Number,
   });
 
   const Two = Action.make("two", {
     description: "Two",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.Number,
   });
 
   const Solo = Action.make("solo", {
     description: "Solo",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -474,7 +474,7 @@ describe("builder acquisition", () => {
     Effect.gen(function* () {
       class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 
-      const Solo = Action.make("solo", { description: "", access: "read", auth: "public" });
+      const Solo = Action.make("solo", { description: "", readOnly: true, caller: Action.Anyone });
 
       const failing = Action.implement(
         Solo,

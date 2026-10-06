@@ -12,22 +12,22 @@ class Perms extends Context.Service<Perms, ReadonlySet<string>>()("pin/Perms") {
 
 const Get = Action.make("get", {
   description: "d",
-  access: "read",
-  auth: Actor,
+  readOnly: true,
+  caller: Actor,
   success: Schema.String,
 });
 
 const Put = Action.make("put", {
   description: "d",
-  access: "write",
-  auth: Actor,
+  readOnly: false,
+  caller: Actor,
   success: Schema.String,
 });
 
 const Open = Action.make("open", {
   description: "d",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 

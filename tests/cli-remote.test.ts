@@ -11,8 +11,8 @@ import { serve } from "./serve.js";
 
 const Remote = Action.make("remote", {
   description: "Doubles an encoded finite number",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: Schema.Struct({ value: Schema.FiniteFromString }),
   success: Schema.FiniteFromString,
 });
@@ -79,8 +79,8 @@ it.effect("projects commands through the HTTP client", () =>
     // The binding is selected by contract identity: an equal-looking action is not one of it.
     const Lookalike = Action.make("remote", {
       description: "Not the bound contract",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.FiniteFromString,
     });
@@ -95,8 +95,8 @@ it.effect("projects a binding as one kebab-case subcommand per action", () =>
   Effect.gen(function* () {
     const Echo = Action.make("echoText", {
       description: "Echoes its input",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { text: Schema.String },
       success: Schema.String,
     });

@@ -22,8 +22,8 @@ export class Limited extends Action.Check<Limited>()("example/Limited", {
 export const Invite = Action.make("invite", {
   description: "Invite someone to your tenant.",
   input: { email: Schema.String },
-  access: "write",
-  auth: CurrentActor,
+  readOnly: false,
+  caller: CurrentActor,
   checks: [Limited],
 });
 

@@ -10,12 +10,16 @@ import { serve } from "./serve.js";
 
 describe("contracts", () => {
   it("defaults to no input, Schema.Void and no errors, an undefined option as an omitted one", () => {
-    const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
+    const Reset = Action.make("reset", {
+      description: "Reset",
+      readOnly: false,
+      caller: Action.Anyone,
+    });
 
     const Undefined = Action.make("reset", {
       description: "Reset",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: undefined,
       success: undefined,
       errors: undefined,
@@ -29,41 +33,26 @@ describe("contracts", () => {
     }
   });
 
-  it("derives tool hints: destructive follows access, and only a write may state it", () => {
-    expect(GetUser.hints).toEqual({
-      destructive: false,
-      idempotent: false,
-      openWorld: true,
-    });
-    expect(RenameUser.hints).toEqual({
-      destructive: false,
-      idempotent: false,
-      openWorld: true,
-    });
+  it("names a public caller with a symbol every copy of the package shares", () => {
+    expect(Action.Anyone).toBe(Symbol.for("@gjermundgaraba/effect-actions/Anyone"));
+  });
+
+  it("keeps the mcp options as given, defaulting none", () => {
+    expect(GetUser.mcp).toEqual({});
+    expect(RenameUser.mcp).toEqual({ destructiveHint: false });
+
+    const options = { title: "Write", idempotentHint: true } as const;
 
     const Write = Action.make("write", {
-      description: "Default hints",
-      access: "write",
-      auth: "public",
+      description: "Given mcp options",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
+      mcp: options,
     });
 
-    expect(Write.hints).toEqual({
-      destructive: true,
-      idempotent: false,
-      openWorld: true,
-    });
-
-    const Read = Action.make("read", {
-      description: "A read stating destructive",
-      access: "read",
-      auth: "public",
-      success: Schema.String,
-      // @ts-expect-error A read is never destructive; plain JavaScript can still say so.
-      hints: { destructive: true },
-    });
-
-    expect(Read.hints.destructive).toBe(false);
+    expect(Write.mcp).toEqual(options);
+    expect(Write.mcp).not.toBe(options);
   });
 
   it("owns the built-in failures, each with a default message", () => {
@@ -80,8 +69,8 @@ describe("contracts", () => {
       expect(() =>
         Action.make(name, {
           description: "",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           success: Schema.String,
         }),
       ).toThrow("Invalid action name");
@@ -92,8 +81,8 @@ describe("contracts", () => {
       expect(
         Action.make(name, {
           description: "",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           success: Schema.String,
         }).name,
       ).toBe(name);
@@ -145,8 +134,8 @@ describe("contracts", () => {
       expect(() =>
         Action.make("guarded", {
           description: "",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           errors: [error],
         }),
       ).toThrow(`Action "guarded": error _tag "${tag}" is built in, and declared on every surface`);
@@ -155,8 +144,8 @@ describe("contracts", () => {
     // Other tags, in a union too, are fine.
     const Allowed = Action.make("allowed", {
       description: "",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       errors: [
         Schema.TaggedStruct("Busy", {}),
         Schema.Union([Schema.TaggedStruct("Late", {}), Schema.TaggedStruct("Gone", {})]),
@@ -175,8 +164,8 @@ describe("contracts", () => {
 
         const Register = Action.make("register", {
           description: "",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           input: { field: Schema.Literals(["email", "name"]) },
           errors: [EmailInvalid, NameInvalid],
         });
@@ -210,8 +199,8 @@ describe("contracts", () => {
   it("answers a built-in error as itself beside a loose error schema of the action's", async () => {
     const Loose = Action.make("loose", {
       description: "An error schema any object with a message matches",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       errors: [Schema.Struct({ message: Schema.String })],
     });
 
@@ -235,16 +224,16 @@ describe("contracts", () => {
   it("accepts struct fields wherever a struct schema is accepted", () => {
     const Fields = Action.make("fields", {
       description: "Fields shorthand",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { id: Schema.String, limit: Schema.optionalKey(Schema.FiniteFromString) },
       success: { total: Schema.Finite },
     });
 
     const Schemas = Action.make("schemas", {
       description: "Schemas",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: Schema.Struct({ id: Schema.String }),
       success: Schema.Finite,
     });
@@ -274,8 +263,8 @@ describe("contracts", () => {
 
     const Keyed = Action.make("keyed", {
       description: "Symbol-keyed fields",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { [key]: Schema.String },
       success: Schema.String,
     });
@@ -289,8 +278,8 @@ describe("contracts", () => {
 
     const Create = Action.make("create", {
       description: "Creates, answering 201",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: created,
     });
 
@@ -309,7 +298,11 @@ describe("contracts", () => {
     expect(contracts.getUser).toBe(GetUser);
     expect(contracts.renameUser.success).toBe(RenameUser.success);
 
-    const Again = Action.make("getUser", { description: "Again", access: "read", auth: "public" });
+    const Again = Action.make("getUser", {
+      description: "Again",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
 
     expect(() => Action.byName([GetUser, Again])).toThrow("Duplicate action: getUser");
   });
@@ -318,8 +311,8 @@ describe("contracts", () => {
 describe("implementations", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { name: Schema.String },
     success: Schema.String,
   });
@@ -341,8 +334,8 @@ describe("implementations", () => {
 
   const Proto = Action.make("__proto__", {
     description: "Prototype-safe",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 

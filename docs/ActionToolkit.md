@@ -8,11 +8,11 @@ of your own calls the implementations typed, with `Action.client` ([Action.md](A
 
 Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 
-| API                               | Purpose                                                                                                         |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                                              |
-| `toolkit`                         | A native `Toolkit`: `toolkit.tools` holds the tool definitions by name, with typed schemas, hints and approval. |
-| `layer`                           | The handler layer: builds handlers and built authorizers in its scope; requires build-time services and checks. |
+| API                               | Purpose                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                                                  |
+| `toolkit`                         | A native `Toolkit`: `toolkit.tools` holds the tool definitions by name, with typed schemas, MCP hints and approval. |
+| `layer`                           | The handler layer: builds handlers and built authorizers in its scope; requires build-time services and checks.     |
 
 | Option          | Meaning                                                                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -79,7 +79,7 @@ import { double, userActions } from "./handlers.js";
 // `call.name` narrows `call.input` across both implementations. Without a caller, it asks.
 export const { toolkit, layer } = ActionToolkit.make([userActions, double], {
   needsApproval: (call) =>
-    call.action.access === "write" &&
+    !call.action.readOnly &&
     Effect.map(
       Effect.serviceOption(CurrentActor),
       Option.match({
@@ -96,14 +96,14 @@ export const chat = (actor: Actor, prompt: string) =>
 
 A call that needs approval ends the turn with a `tool-approval-request` part instead of a
 result; the host answers it with a native `tool-approval-response` prompt part in the next turn.
-Every write, whoever calls: `needsApproval: (call) => call.action.access === "write"`. A
+Every write, whoever calls: `needsApproval: (call) => !call.action.readOnly`. A
 toolkit made for another agent or policy from the same implementations runs with this `layer`:
 provide it once. So does one of fewer tools, such as an agent's
 `ActionToolkit.make(userActions, { actions: [GetUser] }).toolkit`.
 
 ## Rules
 
-- Every action of the implementations passed becomes a tool, named after the action, with its `hints`, unless `actions` lists the tools: then only those, each behind its implementation's authorizer and from its builder's one run, and an implementation holding none of them is not built. `make(implementations)` accepts one implementation or a list, such as `[userActions, double]`. The types take only actions of the implementations, and type `toolkit` and `layer`'s build services by the listed actions alone; `needsApproval`'s `call` is typed by every action of the implementations. Options whose `actions` may be absent, such as a value typed `ActionToolkit.Options<A>`, serve every action when it is absent and the listed ones when given, so their types owe what every action owes, and hold only the tools present either way ([guarantees.md](guarantees.md#names)).
+- Every action of the implementations passed becomes a tool, named after the action, with its `mcp` hints, unless `actions` lists the tools: then only those, each behind its implementation's authorizer and from its builder's one run, and an implementation holding none of them is not built. `make(implementations)` accepts one implementation or a list, such as `[userActions, double]`. The types take only actions of the implementations, and type `toolkit` and `layer`'s build services by the listed actions alone; `needsApproval`'s `call` is typed by every action of the implementations. Options whose `actions` may be absent, such as a value typed `ActionToolkit.Options<A>`, serve every action when it is absent and the listed ones when given, so their types owe what every action owes, and hold only the tools present either way ([guarantees.md](guarantees.md#names)).
 - A result's `result` is the action's decoded success or declared failure, and its `encodedResult` the JSON a model reads, such as `"42"` for a `BigInt`. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes JSON arguments, as a model sends them: an ISO string for a `Schema.Date`, `null` for an absent `Schema.optional` field. It returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
 - Builders, calls and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and authorization and checks the [authorization rules](guarantees.md#authorization): `layer` builds, a call releases what it acquired when it ends, whether a model's turn or `tools.handle` makes it, and identity is supplied at invocation, never when building the layer. A protected tool's call owes its identity in its type; one call without it anyway, as from plain JavaScript, fails with `Unauthenticated` before `authorize` runs. The innermost caller provided wins: a call made under a narrower identity runs as that one.

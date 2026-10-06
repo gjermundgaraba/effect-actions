@@ -46,7 +46,7 @@ Package facts that apply everywhere:
 - Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
 - Callers are your own code in the same process, such as a test, a job or a command of your own: `Action.client`, with the methods of `ActionHttp.client`.
 
-Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. A contract states who may call it, `auth`, and an implementation of protected actions carries its own `authorize`, which every surface runs; surfaces take only their transport's options. A remote surface serving protected actions names their authentication descriptor and requires its verifier, `Authentication.layer`; on a local surface the host provides the identity.
+Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. A contract states who may call it, `caller`, and an implementation of protected actions carries its own `authorize`, which every surface runs; surfaces take only their transport's options. A remote surface serving protected actions names their authentication descriptor and requires its verifier, `Authentication.layer`; on a local surface the host provides the identity.
 
 For first-time setup, follow the [minimal program](setup.md#minimal-program).
 

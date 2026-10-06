@@ -12,15 +12,15 @@ export class Actor extends Context.Service<Actor, string>()("tenant/Actor") {}
 
 export const Who = Action.make("who", {
   description: "Name the caller, an identity of the request's tenant",
-  access: "read",
-  auth: Actor,
+  readOnly: true,
+  caller: Actor,
   success: Schema.String,
 });
 
 export const Public = Action.make("public", {
   description: "Answer anyone",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 

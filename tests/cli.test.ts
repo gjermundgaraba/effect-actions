@@ -53,16 +53,16 @@ it.effect("takes one flag per input field and no flags for an action without inp
 
     const NumberAction = Action.make("number", {
       description: "Accept an encoded finite number",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.FiniteFromString,
     });
 
     const Empty = Action.make("empty", {
       description: "No input",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -109,8 +109,8 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
 
     const Flags = Action.make("flags", {
       description: "One field of every kind",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: {
         tenantId: Schema.String,
         count: Schema.Finite,
@@ -259,8 +259,8 @@ it.effect(
 
       const Search = Action.make("search", {
         description: "Search with some providers",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: {
           query: Schema.String,
           provider: Schema.NonEmptyArray(Schema.Literals(["exa", "hn"])),
@@ -357,8 +357,8 @@ it.effect(
 
       const Ruled = Action.make("ruled", {
         description: "Fields with rules beyond their kind",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: {
           tags: Schema.Union([
             Schema.String,
@@ -415,8 +415,8 @@ it.effect("takes an enum's value and a template literal's text as they are, not 
 
     const Enums = Action.make("enums", {
       description: "Enum and template-literal fields",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: {
         color: Schema.Enum({ Red: "red", Blue: "blue" }),
         level: Schema.Enum({ Low: 1, High: 2 }),
@@ -455,8 +455,8 @@ it.effect("reads a suspended input or field as the schema it stands for, describ
 
     const Note = Action.make("note", {
       description: "A suspended input of suspended fields",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.suspend(() =>
         Schema.Struct({
           text: Schema.suspend(() => Schema.String.annotate({ description: "What to note" })),
@@ -497,8 +497,8 @@ it.effect("rejects invalid input before acquiring or invoking the handler", () =
 
     const NumberAction = Action.make("number", {
       description: "A finite number",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Number,
     });
@@ -534,16 +534,16 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
 
     const Scalar = Action.make("scalar", {
       description: "Scalar input",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.String,
       success: Schema.String,
     });
 
     const Shape = Action.make("shape", {
       description: "A union root",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Union([
         Schema.Struct({ kind: Schema.Literal("circle"), radius: Schema.Finite }),
         Schema.Struct({ kind: Schema.Literal("square"), side: Schema.Finite }),
@@ -553,8 +553,8 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
 
     const Scores = Action.make("scores", {
       description: "A record's keys are not known in advance",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Record(Schema.String, Schema.Finite),
       success: Schema.String,
     });
@@ -615,8 +615,8 @@ it.effect("decodes --input only when the command runs, with an asynchronous sche
 
     const Delayed = Action.make("delayed", {
       description: "A record decoded asynchronously",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Record(Schema.String, Schema.Finite).pipe(
         Schema.decode({
           decode: SchemaGetter.transformEffect((scores: Readonly<Record<string, number>>) =>
@@ -649,8 +649,8 @@ it.effect("validates a success before rendering it", () =>
 
     const Invalid = Action.make("invalid", {
       description: "Invalid",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.Finite,
     });
 
@@ -672,12 +672,16 @@ it.effect("validates a success before rendering it", () =>
 
 it.effect("prints nothing for an action that returns nothing, but prints a declared null", () =>
   Effect.gen(function* () {
-    const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
+    const Reset = Action.make("reset", {
+      description: "Reset",
+      readOnly: false,
+      caller: Action.Anyone,
+    });
 
     const Clear = Action.make("clear", {
       description: "Clear",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.Null,
     });
 
@@ -700,8 +704,8 @@ it.effect("takes flags from a class input's fields, described by their schemas",
 
     const Read = Action.make("readUser", {
       description: "Read a user",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: Lookup,
       success: Schema.String,
     });
@@ -727,8 +731,8 @@ it.effect(
     Effect.gen(function* () {
       const Tag = Action.make("tag", {
         description: "Tags a record",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: Schema.Struct({
           _id: Schema.String,
           a: Schema.String.annotate({ description: "The first" }),
@@ -743,7 +747,11 @@ it.effect(
       );
 
       // A name of underscores alone keeps them, rather than naming nothing.
-      const Underscore = Action.make("_", { description: "", access: "read", auth: "public" });
+      const Underscore = Action.make("_", {
+        description: "",
+        readOnly: true,
+        caller: Action.Anyone,
+      });
 
       expect(
         ActionCli.command(
@@ -768,8 +776,8 @@ it.effect("takes an optional field's plain value, and leaves it out when its fla
   Effect.gen(function* () {
     const Search = Action.make("search", {
       description: "Searches",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: {
         query: Schema.optional(Schema.String),
         limit: Schema.optional(Schema.Number.annotate({ description: "How many to return" })),
@@ -801,8 +809,8 @@ it.effect("keeps the null an optional field declares itself, so the flag can sen
   Effect.gen(function* () {
     const Note = Action.make("note", {
       description: "Sets or clears a note",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: { note: Schema.optionalKey(Schema.NullOr(Schema.String)) },
       success: Schema.String,
     });
@@ -833,8 +841,8 @@ it.effect("keeps the null an optional field's codec encodes, under its encoded n
       Effect.gen(function* () {
         const Note = Action.make("note", {
           description: "Sets or clears a note",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           input,
           success: Schema.String,
         });
@@ -883,8 +891,8 @@ it.effect("takes a number, a non-finite number or a string beside it as JSON or 
   Effect.gen(function* () {
     const Page = Action.make("page", {
       description: "Reads a page",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: {
         limit: Schema.Union([Schema.Finite, Schema.Literal("auto")]),
         scale: Schema.optionalKey(Schema.Number),
@@ -916,8 +924,8 @@ it.effect(
     Effect.gen(function* () {
       const Tune = Action.make("tune", {
         description: "Tunes a setting",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: {
           mode: Schema.Union([Schema.Literals(["true", "false"]), Schema.Literal("auto")]),
           label: Schema.optionalKey(Schema.Union([Schema.Literal("auto"), Schema.String])),
@@ -960,16 +968,16 @@ it.effect(
 
       const Whole = Action.make("whole", {
         description: "Takes a pair",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: Pair,
         success: Schema.String,
       });
 
       const Nested = Action.make("nested", {
         description: "Takes a pair as a field",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { pair: Pair },
         success: Schema.String,
       });
@@ -993,8 +1001,8 @@ it.effect(
     Effect.gen(function* () {
       const Settings = Action.make("settings", {
         description: "Has fields named like global flags and like the renderer's flag",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { help: Schema.String, logLevel: Schema.String, json: Schema.String },
         success: Schema.String,
       });
@@ -1016,8 +1024,8 @@ it.effect(
       // So are two fields of one kebab-case name, in a command or an aggregate.
       const Twice = Action.make("twice", {
         description: "Names one field twice",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { userId: Schema.String, user_id: Schema.String },
         success: Schema.String,
       });
@@ -1038,8 +1046,8 @@ it.effect(
 
       const Scoped = Action.make("scoped", {
         description: "Opens a resource of its own",
-        access: "write",
-        auth: Caller,
+        readOnly: false,
+        caller: Caller,
         success: Schema.String,
       });
 
@@ -1094,8 +1102,8 @@ it.effect(
 
       const Counted = Action.make("counted", {
         description: "Counts builds",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -1137,8 +1145,8 @@ it.effect(
 
       const Guarded = Action.make("guarded", {
         description: "Behind a built authorizer",
-        access: "write",
-        auth: Caller,
+        readOnly: false,
+        caller: Caller,
         success: Schema.String,
       });
 
@@ -1178,15 +1186,15 @@ it.effect(
     Effect.gen(function* () {
       const Plain = Action.make("plain", {
         description: "No renderer",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
       const Pretty = Action.make("pretty", {
         description: "Rendered",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -1228,15 +1236,15 @@ it.effect("selects a command's implementation by contract identity, not by name"
   Effect.gen(function* () {
     const First = Action.make("same", {
       description: "The first contract named same",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
     const Second = Action.make("same", {
       description: "Another contract with the same name",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1252,8 +1260,8 @@ it.effect("selects a command's implementation by contract identity, not by name"
 
     const Missing = Action.make("missing", {
       description: "Not implemented here",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1270,15 +1278,15 @@ it.effect(
     Effect.gen(function* () {
       const One = Action.make("one", {
         description: "One",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
       const Two = Action.make("two", {
         description: "Two",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -1291,8 +1299,8 @@ it.effect(
 
       const Again = Action.make("one", {
         description: "Again",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -1316,8 +1324,8 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
 
     const GetUser = Action.make("getUser", {
       description: "Reads a user",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { userId: Schema.String },
       success: Schema.String,
     });
@@ -1336,8 +1344,8 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
     // An acronym is one word.
     const GetHTTPUser = Action.make("getHTTPUser", {
       description: "Reads a user over HTTP",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1361,8 +1369,8 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
     // Two distinct action names can share a kebab-case command name.
     const Snake = Action.make("get_user", {
       description: "Another spelling",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1380,15 +1388,15 @@ it.effect("acquires only the builder of the selected command's implementation", 
 
     const Built = Action.make("built", {
       description: "Built",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
     const Idle = Action.make("idle", {
       description: "Idle",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -1423,14 +1431,22 @@ it.effect("makes subcommands of the listed actions only, from implementations or
 
     const Read = Action.make("read", {
       description: "Read",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
-    const Write = Action.make("write", { description: "Write", access: "write", auth: "public" });
+    const Write = Action.make("write", {
+      description: "Write",
+      readOnly: false,
+      caller: Action.Anyone,
+    });
 
-    const Other = Action.make("other", { description: "Other", access: "read", auth: "public" });
+    const Other = Action.make("other", {
+      description: "Other",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
 
     const app = Action.implement(
       [Read, Write],
@@ -1508,15 +1524,15 @@ it.effect(
 
       const Read = Action.make("read", {
         description: "Who reads",
-        access: "read",
-        auth: Operator,
+        readOnly: true,
+        caller: Operator,
         success: Schema.String,
       });
 
       const Purge = Action.make("purge", {
         description: "Purge everything",
-        access: "write",
-        auth: Operator,
+        readOnly: false,
+        caller: Operator,
         checks: [Limited],
       });
 
@@ -1526,7 +1542,7 @@ it.effect(
         {
           authorize: (action) =>
             Effect.flatMap(Operator, ({ role }) =>
-              role === "admin" || action.access === "read"
+              role === "admin" || action.readOnly
                 ? Effect.void
                 : Effect.fail(new Action.Forbidden()),
             ),
@@ -1584,8 +1600,8 @@ it.effect(
 
       const Copy = Action.make("copy", {
         description: "Copy a file",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: {
           from: Schema.String,
           to: Schema.String,
@@ -1635,15 +1651,15 @@ it.effect(
 it("refuses positional arguments a parser could not read back", () => {
   const Pair = Action.make("pair", {
     description: "A required and an optional field",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { first: Schema.String, second: Schema.optional(Schema.String) },
   });
 
   const Scalar = Action.make("scalar", {
     description: "Not a struct",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: Schema.String,
   });
 
@@ -1674,16 +1690,16 @@ it.effect("takes an array field as the last positional, one value per argument",
 
     const Remove = Action.make("remove", {
       description: "Remove files",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: { force: Schema.Boolean, paths: Schema.Array(Schema.String) },
       success: Schema.String,
     });
 
     const Tag = Action.make("tag", {
       description: "Tag a file",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: {
         path: Schema.String,
         tags: Schema.optional(Schema.Array(Schema.Literals(["a", "b"]))),
@@ -1742,8 +1758,8 @@ it.effect("gives a flag the alias its options name, and shows a positional's val
 
     const List = Action.make("list", {
       description: "List records",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { scale: Schema.Finite, limit: Schema.optional(Schema.Finite), all: Schema.Boolean },
       success: Schema.String,
     });
@@ -1797,16 +1813,16 @@ it.effect("gives a subcommand of an aggregate the options command takes, by acti
   Effect.gen(function* () {
     const Read = Action.make("readFile", {
       description: "Read a file",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { path: Schema.String, lines: Schema.optional(Schema.Finite) },
       success: Schema.String,
     });
 
     const Size = Action.make("size", {
       description: "A file's size",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { path: Schema.String },
       success: Schema.Finite,
     });
@@ -1880,8 +1896,8 @@ it.effect(
 
       const Read = Action.make("read", {
         description: "Reads a record",
-        access: "read",
-        auth: CurrentActor,
+        readOnly: true,
+        caller: CurrentActor,
         input: { id: Schema.String.check(Schema.isMinLength(1)) },
         success: Schema.String,
         errors: [Gone, Missing, Over, Busy],
@@ -1891,8 +1907,8 @@ it.effect(
 
       const Write = Action.make("write", {
         description: "Writes",
-        access: "write",
-        auth: CurrentActor,
+        readOnly: false,
+        caller: CurrentActor,
       });
 
       let authorized = 0;
@@ -2027,8 +2043,8 @@ it.effect(
 
       const Remove = Action.make("remove", {
         description: "Removes",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         errors: [Gone],
       });
 
@@ -2064,8 +2080,8 @@ it.effect(
 
       const Status = Action.make("status", {
         description: "Status",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
       });
 
       const url = "postgres://admin:hunter2@db";
@@ -2114,8 +2130,8 @@ it.effect(
     Effect.gen(function* () {
       const Noisy = Action.make("noisy", {
         description: "Logs",
-        access: "read",
-        auth: Caller,
+        readOnly: true,
+        caller: Caller,
         success: Schema.String,
       });
 
@@ -2166,8 +2182,8 @@ it.effect(
 
       const Coded = Action.make("coded", {
         description: "Logs in its codecs",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { word: logged("input") },
         success: logged("success"),
         errors: [Refused],
@@ -2199,8 +2215,8 @@ it.effect(
       // A remote command's client too, configured on the command, which logs as it sends.
       const Quiet = Action.make("quiet", {
         description: "Answers over HTTP",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -2247,8 +2263,8 @@ it.effect(
 
       const Write = Action.make("write", {
         description: "Writes",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: { value: Schema.String },
         success: Schema.String,
       });
@@ -2354,8 +2370,8 @@ it.effect("matches a failure by its tag with Effect's own catchReason, after Com
 
     const Find = Action.make("find", {
       description: "Find",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: { id: Schema.String },
       errors: [Missing],
     });
@@ -2410,8 +2426,8 @@ it.effect(
 
       const Quit = Action.make("quit", {
         description: "Quit",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         errors: [Exiting],
       });
 
@@ -2443,15 +2459,15 @@ it.effect(
 
       const Open = Action.make("open", {
         description: "Open to anyone",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
       const Guarded = Action.make("guarded", {
         description: "Signed in only",
-        access: "read",
-        auth: CurrentActor,
+        readOnly: true,
+        caller: CurrentActor,
         success: Schema.String,
       });
 

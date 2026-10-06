@@ -77,10 +77,10 @@ if (!served.raw.includes('"structuredContent":"Hello, Ada!"'))
 // A published text hint names a string field of the success.
 const Page = Action.make("page", {
   description: "Read a page",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
-  hints: { text: "markdown" },
+  mcp: { text: "markdown" },
 });
 
 const page = Action.implement(Page, () => Effect.succeed({ markdown: "# Page", next: "2" }));
@@ -89,11 +89,11 @@ void ActionMcp.layerHttp(page, { name: "pages", version: "0" });
 
 Action.make("misnamed", {
   description: "Read a page",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: { markdown: Schema.String },
   // @ts-expect-error `body` is no field of the success.
-  hints: { text: "body" },
+  mcp: { text: "body" },
 });
 
 // A consumer's binding is a native HttpApi: Effect's own generator documents it.
@@ -123,15 +123,15 @@ class Identity extends Context.Service<Identity, string>()("consumer/Identity") 
 
 const Read = Action.make("read", {
   description: "Read",
-  access: "read",
-  auth: Identity,
+  readOnly: true,
+  caller: Identity,
   success: Schema.String,
 });
 
 const Write = Action.make("write", {
   description: "Write",
-  access: "write",
-  auth: Identity,
+  readOnly: false,
+  caller: Identity,
   success: Schema.String,
 });
 
@@ -147,8 +147,7 @@ const checkCliTypes = (failure: ActionCli.Failure<Action.Forbidden>) => {
 
 void checkCliTypes;
 
-if (Read.access !== "read" || Write.access !== "write")
-  throw new Error("Published access metadata failed");
+if (!Read.readOnly || Write.readOnly) throw new Error("Published readOnly metadata failed");
 
 const Login = Authentication.make("consumer.Login", Identity);
 
@@ -165,9 +164,7 @@ const guarded = Action.implement(
   },
   {
     authorize: (action) =>
-      action.access === "read"
-        ? Effect.void
-        : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+      action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden({ message: "Read only." })),
   },
 );
 
@@ -186,8 +183,8 @@ const checkHookTypes = () => {
 
   const Gated = Action.make("gated", {
     description: "Gated",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     checks: [Gate],
   });
 

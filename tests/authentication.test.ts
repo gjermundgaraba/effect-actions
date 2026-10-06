@@ -48,8 +48,8 @@ const Login = Authentication.make("test.Login", Identity);
 
 const Identify = Action.make("identify", {
   description: "Name the authenticated caller",
-  access: "read",
-  auth: Identity,
+  readOnly: true,
+  caller: Identity,
   success: Schema.String,
 });
 
@@ -199,8 +199,8 @@ describe("Authentication.layer", () => {
   it("challenges every 401 it covers that has no challenge of its own", async () => {
     const Refuse = Action.make("refuse", {
       description: "Refused by its handler",
-      access: "read",
-      auth: Identity,
+      readOnly: true,
+      caller: Identity,
     });
 
     const own = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
@@ -231,7 +231,7 @@ describe("Authentication.layer", () => {
   });
 
   it("challenges an authorizer's 401 as its own, naming the scopes a first login requests", async () => {
-    const Read = Action.make("read", { description: "Read", access: "read", auth: Identity });
+    const Read = Action.make("read", { description: "Read", readOnly: true, caller: Identity });
 
     const web = serve(
       ActionHttp.layer(
@@ -262,7 +262,7 @@ describe("Authentication.layer", () => {
   });
 
   it("challenges an authorizer's refusal naming scopes with insufficient_scope, describing it only in RFC 6750's characters", async () => {
-    const Write = Action.make("write", { description: "Write", access: "write", auth: Identity });
+    const Write = Action.make("write", { description: "Write", readOnly: false, caller: Identity });
 
     const write = Action.implement(Write, () => Effect.void, {
       authorize: () =>
@@ -399,8 +399,8 @@ describe("Authentication.layer", () => {
 
     const Find = Action.make("find", {
       description: "Find something private",
-      access: "read",
-      auth: Identity,
+      readOnly: true,
+      caller: Identity,
       errors: [Hidden],
     });
 
@@ -431,8 +431,8 @@ describe("Authentication.layer", () => {
   it("keeps the caching a route states, and no-stores every other response", async () => {
     const Artifact = Action.make("artifact", {
       description: "An immutable artifact of the caller's",
-      access: "read",
-      auth: Identity,
+      readOnly: true,
+      caller: Identity,
       success: Schema.String,
     });
 
@@ -761,7 +761,7 @@ describe("a scheme other than Bearer", () => {
     expect([narrow.status, narrow.headers.get("www-authenticate")]).toEqual([403, null]);
 
     // A tool's refusal is its result, as on an endpoint no OAuth client signs in to.
-    const Locked = Action.make("locked", { description: "", access: "write", auth: Identity });
+    const Locked = Action.make("locked", { description: "", readOnly: false, caller: Identity });
 
     const locked = serve(
       ActionMcp.layerHttp(
@@ -838,8 +838,8 @@ describe("Basic", () => {
 describe("a public action beside protected ones", () => {
   const Ping = Action.make("ping", {
     description: "Answer anyone",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -981,15 +981,15 @@ describe("an empty credential", () => {
 describe("authentication around a surface", () => {
   const Public = Action.make("public", {
     description: "Answer anyone",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
   const Secret = Action.make("secret", {
     description: "Answer the authenticated identity",
-    access: "read",
-    auth: Identity,
+    readOnly: true,
+    caller: Identity,
     input: { note: Schema.String },
     success: Schema.String,
   });
@@ -1137,8 +1137,8 @@ describe("authentication around a surface", () => {
 
     const Limit = Action.make("limit", {
       description: "Limited",
-      access: "write",
-      auth: Identity,
+      readOnly: false,
+      caller: Identity,
       checks: [Limited],
     });
 
@@ -1266,8 +1266,8 @@ describe("Authentication.layer beside other middleware", () => {
 
   const WhoAmI = Action.make("whoAmI", {
     description: "Name the authenticated caller",
-    access: "read",
-    auth: Identity,
+    readOnly: true,
+    caller: Identity,
     success: Schema.String,
   });
 

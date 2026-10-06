@@ -175,8 +175,8 @@ expectTypeOf<Owed<typeof unselected>>().toEqualTypeOf<Actor>();
 
 const Elsewhere = Action.make("elsewhere", {
   description: "Bound by no binding here",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 

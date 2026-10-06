@@ -206,7 +206,7 @@ class Mask extends HttpApiMiddleware.Service<Mask>()("layer-middleware/Mask", {
 class Fallback extends HttpApiMiddleware.Service<Fallback>()("layer-middleware/Fallback") {}
 
 it("answers a step-up refusal as it leaves the layer's middleware, which may recover from it or replace it", async () => {
-  const Edit = Action.make("edit", { description: "Edit", access: "write", auth: Actor });
+  const Edit = Action.make("edit", { description: "Edit", readOnly: false, caller: Actor });
 
   const editing = Action.implement(
     Edit,

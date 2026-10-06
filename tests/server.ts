@@ -9,7 +9,7 @@ import { serve } from "./serve.js";
 export const makeTestApp = () => serve(layer);
 
 /** An action anyone may call, declaring no checks, whose layers a test would provide. */
-type Public = Action.Any & { readonly auth: "public"; readonly checks: readonly [] };
+type Public = Action.Any & { readonly caller: typeof Action.Anyone; readonly checks: readonly [] };
 
 /**
  * An implementation of public actions that owes nothing per request or to build, as `serve`

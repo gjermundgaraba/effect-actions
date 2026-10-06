@@ -33,8 +33,8 @@ class Rejected extends Schema.TaggedError<Rejected>()(
 
 const Echo = Action.make("echo", {
   description: "Echo",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: { value: Schema.Finite },
   success: Schema.Finite,
   errors: [Rejected],
@@ -161,8 +161,8 @@ it.effect(
       for (const encoding of encodings) {
         const Rename = Action.make("rename", {
           description: "Rename",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           input: Schema.Struct({ name: Schema.String }).pipe(encoding),
           success: Schema.String,
         });
@@ -220,8 +220,8 @@ it("names the content type a 415 refuses, or none", async () => {
 it("authenticates a protected route before it checks the content type or decodes the input", async () => {
   const Guarded = Action.make("guarded", {
     description: "Echo, signed in",
-    access: "write",
-    auth: CurrentActor,
+    readOnly: false,
+    caller: CurrentActor,
     input: { value: Schema.Finite },
     success: Schema.Finite,
   });
@@ -271,8 +271,8 @@ it.effect(
 
       const Save = Action.make("save", {
         description: "Save",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: { value: Schema.Finite, owner: Schema.Struct({ id: Schema.String }) },
         success: Schema.Finite,
       });
@@ -330,8 +330,8 @@ it.effect(
 it("refuses undeclared fields in the input only: a wider success is encoded to its fields", async () => {
   const Profile = Action.make("profile", {
     description: "A profile, from a record holding more",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: { id: Schema.String },
   });
 
@@ -354,8 +354,8 @@ it("refuses undeclared fields in the input only: a wider success is encoded to i
 it("answers InvalidInput on every binding and every layer of one router", async () => {
   const Other = Action.make("other", {
     description: "Other",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     input: { value: Schema.Finite },
     success: Schema.Finite,
   });
@@ -403,8 +403,8 @@ it.effect("names each issue of input that does not decode by its path, on every 
   Effect.gen(function* () {
     const Order = Action.make("order", {
       description: "Order",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: {
         kind: Schema.Literal("order"),
         lines: Schema.Array(Schema.Struct({ sku: Schema.String, count: Schema.Finite })),
@@ -533,8 +533,8 @@ it.effect(
     Effect.gen(function* () {
       const Login = Action.make("login", {
         description: "Log in",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: {
           password: Schema.Redacted(Schema.String.check(Schema.isMinLength(12))),
           pin: Schema.String.check(Schema.isPattern(/^\d{4}$/)),
@@ -654,8 +654,8 @@ it("executes each input/output transformation once per call", async () => {
 
   const Counted = Action.make("echo", {
     description: "Count codec operations",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { value: number },
     success: number,
   });
@@ -677,14 +677,19 @@ it("executes each input/output transformation once per call", async () => {
 });
 
 describe("an action without input", () => {
-  const Empty = Action.make("empty", { description: "No input", access: "read", auth: "public" });
+  const Empty = Action.make("empty", {
+    description: "No input",
+    readOnly: true,
+    caller: Action.Anyone,
+  });
+
   const app = Action.implement(Empty, () => Effect.void);
 
   it("has the input of one whose input is {}", () => {
     const Braces = Action.make("empty", {
       description: "No input",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: {},
     });
 
@@ -734,8 +739,8 @@ describe("an action without input", () => {
 it("publishes `success: {}` as the closed empty object", async () => {
   const Empty = Action.make("empty", {
     description: "Empty",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: {},
   });
 

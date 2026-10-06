@@ -19,8 +19,8 @@ const CallerLogin = Authentication.make("refusal.CallerLogin", Caller);
 
 const Private = Action.make("private", {
   description: "Signed in only",
-  access: "read",
-  auth: Caller,
+  readOnly: true,
+  caller: Caller,
   success: Schema.String,
 });
 
@@ -288,8 +288,8 @@ describe("the upgrade example", () => {
   // A socket writes, so the route refuses a caller without the write scope, as `admit` does.
   const Write = Action.make("write", {
     description: "Write",
-    access: "write",
-    auth: CurrentActor,
+    readOnly: false,
+    caller: CurrentActor,
   });
 
   const writing = Action.implement(Write, () => Effect.void, { authorize });

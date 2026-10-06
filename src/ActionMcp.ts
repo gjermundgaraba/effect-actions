@@ -24,6 +24,7 @@ import {
   type RemoteRequest,
   type Required as RequiredAuthentication,
 } from "./internal/authentication.js";
+import { Anyone } from "./internal/actions.js";
 import { defaultPath, httpProtocol, isJsonObject } from "./internal/mcp.js";
 import { recordStepUp } from "./internal/refusal.js";
 import { logToStderr } from "./internal/console.js";
@@ -155,14 +156,14 @@ const assertShapes = (apps: ReadonlyArray<AnyImplementation>): void => {
     .filter((action) => !isToolJson(rootOf(action.input)))
     .map(({ name }) => name);
 
-  const texts = actions.flatMap(({ name, hints, success }) => {
-    if (hints.text === undefined) return [];
+  const texts = actions.flatMap(({ name, mcp, success }) => {
+    if (mcp.text === undefined) return [];
 
     const listed = decodeListed(rootOf(success));
 
-    return Option.isSome(listed) && Object.hasOwn(listed.value.properties, hints.text)
+    return Option.isSome(listed) && Object.hasOwn(listed.value.properties, mcp.text)
       ? []
-      : [`${name} ('${hints.text}')`];
+      : [`${name} ('${mcp.text}')`];
   });
 
   const refused = [
@@ -245,12 +246,12 @@ const withTexts = (registry: Registry, texts: ReadonlyMap<string, string>): Regi
   },
 });
 
-/** The text hint of each of `apps`' actions that has one, by action name. */
+/** The `mcp.text` of each of `apps`' actions that has one, by action name. */
 const textFields = (apps: ReadonlyArray<AnyImplementation>): ReadonlyMap<string, string> =>
   new Map(
     apps.flatMap((app) =>
-      app.actions.flatMap(({ name, hints }) =>
-        hints.text === undefined ? [] : [[name, hints.text] as const],
+      app.actions.flatMap(({ name, mcp }) =>
+        mcp.text === undefined ? [] : [[name, mcp.text] as const],
       ),
     ),
   );
@@ -270,7 +271,7 @@ const server = <Out, R>(
           // A protected tool's step-up refusal answers its request; a public one's is its
           // result, signed in or not, as a public route's is over HTTP.
           handler: (run, action) => (input) =>
-            action.auth === "public"
+            action.caller === Anyone
               ? run(input)
               : recordStepUp(promote(authentication, run(input))),
         },
@@ -336,7 +337,7 @@ const anonymous = new Set(["server/discover", "tools/list", "notifications/cance
  * no public tool as it is authenticates: it fails closed.
  */
 const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
-  const open = new Set(actions.filter(({ auth }) => auth === "public").map(({ name }) => name));
+  const open = new Set(actions.filter(({ caller }) => caller === Anyone).map(({ name }) => name));
 
   return (headers: Headers.Headers): boolean => {
     if (open.size === 0) return true;

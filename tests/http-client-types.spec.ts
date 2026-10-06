@@ -10,8 +10,8 @@ class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.Stri
 
 const Get = Action.make("get", {
   description: "Read a note",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: { id: Schema.String },
   success: { id: Schema.String, at: Schema.DateTimeUtcFromString },
   errors: [Missing],
@@ -19,16 +19,16 @@ const Get = Action.make("get", {
 
 const List = Action.make("list", {
   description: "List notes",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: { limit: Schema.optionalKey(Schema.Finite) },
   success: Schema.Array(Schema.String),
 });
 
 const Count = Action.make("count", {
   description: "Count notes",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.Finite,
 });
 
@@ -111,16 +111,16 @@ class Lookup extends Schema.Class<Lookup>("Lookup")({ id: Schema.String }) {}
 
 const Filter = Action.make("filter", {
   description: "Filter notes",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: Filters,
   success: Schema.Array(Schema.String),
 });
 
 const Find = Action.make("find", {
   description: "Find a note",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: Lookup,
   success: Schema.String,
 });

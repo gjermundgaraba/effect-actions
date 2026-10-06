@@ -10,6 +10,7 @@ import {
 } from "effect";
 import type { Scope } from "effect";
 import {
+  Anyone,
   assertOwnTags,
   assertKnown,
   assertName,
@@ -101,36 +102,35 @@ type CodecOf<S extends Codec | Fields> = S extends Codec
     : never;
 
 /**
- * What an action does to the resource it serves: `"read"` observes, `"write"`
- * may change it. Authorization metadata, not a tool hint.
+ * The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not, and no
+ * authorizer runs for it.
  */
-export type Access = "read" | "write";
+export { Anyone } from "./internal/actions.js";
 
 /**
- * Tool hints; every field has a default derived from the action. `readOnlyHint` is not
- * one: it is always `access === "read"`, so a tool cannot say otherwise than its contract.
+ * How the action's tool presents itself over MCP, in MCP's own names; every field is optional
+ * and none enforces anything. A hint left out is MCP's default, but `destructiveHint`, which is
+ * `false` for a read-only action. `readOnlyHint` is not one: it is always the contract's
+ * `readOnly`, so a tool cannot say otherwise than its contract.
  */
-export interface Hints {
-  /** `destructiveHint`, a write's only; defaults to `true`. A read is never destructive. */
-  readonly destructive?: boolean;
-  /** `idempotentHint`; defaults to `false`. */
-  readonly idempotent?: boolean;
-  /** `openWorldHint`; defaults to `true`. */
-  readonly openWorld?: boolean;
+export interface Mcp {
+  /** The tool's display name, `annotations.title`, beside its name. */
+  readonly title?: string | undefined;
+  /** `annotations.destructiveHint`, meaningful for a write only. */
+  readonly destructiveHint?: boolean | undefined;
+  /** `annotations.idempotentHint`, meaningful for a write only. */
+  readonly idempotentHint?: boolean | undefined;
+  /** `annotations.openWorldHint`: whether the tool reaches entities outside its own domain. */
+  readonly openWorldHint?: boolean | undefined;
+  /** The tool's `_meta`, JSON such as an MCP App's UI resource, sent as given. */
+  readonly _meta?: { readonly [key: string]: Schema.Json } | undefined;
   /**
-   * MCP only: a top-level string field of the encoded success, which the tool sends once,
-   * raw, as the first text block, then the JSON of the rest as the second, with no
-   * `structuredContent` and no listed `outputSchema`, so every host shows the model both: a
-   * body the model reads as it is, such as a page of Markdown. Defaults to none.
+   * The library's own, not MCP's: a top-level string field of the encoded success, which the
+   * tool sends once, raw, as the first text block, then the JSON of the rest as the second,
+   * with no `structuredContent` and no listed `outputSchema`, so every host shows the model
+   * both: a body the model reads as it is, such as a page of Markdown.
    */
   readonly text?: string | undefined;
-  /** The tool's display name, `annotations.title`, beside its name. Defaults to none. */
-  readonly title?: string | undefined;
-  /**
-   * The tool's `_meta` on MCP, JSON such as an MCP App's UI resource, sent as given.
-   * Defaults to none.
-   */
-  readonly meta?: { readonly [key: string]: Schema.Json } | undefined;
 }
 
 /** The keys `E` declares, leaving out an index signature's. */
@@ -180,7 +180,11 @@ export {
 
 /** What `make` needs to define an action. */
 export interface Options {
-  readonly auth: "public" | Context.Key<unknown, unknown>;
+  /**
+   * Who may call the action: `Action.Anyone`, or the identity service a caller must have,
+   * which every surface enforces. Required: an action that names no caller is not public.
+   */
+  readonly caller: typeof Anyone | Context.Key<unknown, unknown>;
   readonly checks?: ReadonlyArray<AnyCheck>;
   readonly description: string;
   /** A schema or struct fields. Omit, or give `{}`, for an action without arguments. */
@@ -193,38 +197,35 @@ export interface Options {
    */
   readonly errors?: ReadonlyArray<Codec> | undefined;
   /**
-   * What the action does to its resource. Required: an action nobody classified
-   * is the one a reviewer must check. Read by an implementation's `authorize`; the
-   * library itself authorizes nothing.
+   * Whether the action leaves its resource unchanged. Required: an action nobody classified
+   * is the one a reviewer must check. An implementation's `authorize` may read it, and MCP's
+   * `readOnlyHint` is it; the library itself authorizes nothing with it.
    */
-  readonly access: Access;
-  /**
-   * Tool hints, for MCP and native Toolkit tools. The tool is named after the action. Only
-   * a write may state `destructive`, as MCP defines it for writes.
-   */
-  readonly hints?: Hints;
+  readonly readOnly: boolean;
+  /** How the action's tool presents itself over MCP, and on a native Toolkit's tools. */
+  readonly mcp?: Mcp;
 }
 
 /**
- * The keys beyond `Hints` in the hints of any member of `O`, given or optional, so a
- * misspelled hint in a conditional spread or in one branch of a ternary is refused too.
+ * The keys beyond `Mcp` in the `mcp` of any member of `O`, given or optional, so a misspelled
+ * one in a conditional spread or in one branch of a ternary is refused too.
  */
-type UnknownHints<O> = O extends { readonly hints?: infer H }
-  ? Exclude<H extends unknown ? keyof H : never, keyof Hints>
+type UnknownMcp<O> = O extends { readonly mcp?: infer H }
+  ? Exclude<H extends unknown ? keyof H : never, keyof Mcp>
   : never;
 
-/** No hint beyond `Hints`, whichever member of `O` gives it. */
-type KnownHints<O> = { readonly hints?: { readonly [K in UnknownHints<O>]: never } };
+/** No key beyond `Mcp`, whichever member of `O` gives it. */
+type KnownMcp<O> = { readonly mcp?: { readonly [K in UnknownMcp<O>]: never } };
 
 /**
- * A `text` hint naming a top-level string field of the encoded success. One typed only as
- * `string`, such as hints built apart, is left for the MCP server to check.
+ * A `text` naming a top-level string field of the encoded success. One typed only as
+ * `string`, such as options built apart, is left for the MCP server to check.
  */
-type TextHint<O> = O extends { readonly hints?: { readonly text?: infer F } }
+type TextOption<O> = O extends { readonly mcp?: { readonly text?: infer F } }
   ? string extends F
     ? unknown
     : {
-        readonly hints?: {
+        readonly mcp?: {
           readonly text?: TextField<SchemaOf<O, "success", typeof Schema.Void>["Encoded"]>;
         };
       }
@@ -250,30 +251,22 @@ type OnlyOptions<O> = {
 };
 
 /**
- * `auth` is a `Context.Service`: a `Context.Reference` is never missing, so its default would
- * stand in for every caller who supplies none.
+ * `caller` is a `Context.Service`: a `Context.Reference` is never missing, so its default
+ * would stand in for every caller who supplies none.
  */
-type ServiceAuth<O> = O extends { readonly auth: { readonly defaultValue: unknown } }
-  ? { readonly auth: "An identity is a Context.Service, not a Context.Reference" }
+type ServiceCaller<O> = O extends { readonly caller: { readonly defaultValue: unknown } }
+  ? { readonly caller: "An identity is a Context.Service, not a Context.Reference" }
   : unknown;
 
 /**
- * The rules `make` checks beyond `Options`: every option and hint known, a read never
- * destructive, a `text` hint a string field of the success, and no built-in error listed.
- * Options that fail `Options` itself infer as `Options`, whose error the compiler already
- * reports, so they are not checked again. Checked after inference: `make`'s options are
- * `O & NoInfer<Rules<O>>`.
+ * The rules `make` checks beyond `Options`: every option and `mcp` key known, a `text` a
+ * string field of the success, and no built-in error listed. Options that fail `Options`
+ * itself infer as `Options`, whose error the compiler already reports, so they are not
+ * checked again. Checked after inference: `make`'s options are `O & NoInfer<Rules<O>>`.
  */
 type Rules<O> = Options extends O
   ? unknown
-  : OnlyOptions<O> &
-      ServiceAuth<O> &
-      OwnErrors<O> &
-      KnownHints<O> &
-      TextHint<O> &
-      (O extends { readonly access: "read" }
-        ? { readonly hints?: { readonly destructive?: never } }
-        : unknown);
+  : OnlyOptions<O> & ServiceCaller<O> & OwnErrors<O> & KnownMcp<O> & TextOption<O>;
 
 /**
  * Option `K` of `O` as given, or also `Default` wherever it may be omitted or undefined, as
@@ -305,21 +298,22 @@ export interface Action<
   Input extends Codec,
   Success extends Codec,
   Errors extends ReadonlyArray<Codec>,
-  Acc extends Access = Access,
-  Auth extends Options["auth"] = Options["auth"],
+  ReadOnly extends boolean = boolean,
+  Caller extends Options["caller"] = Options["caller"],
   Checks extends ReadonlyArray<AnyCheck> = ReadonlyArray<AnyCheck>,
 > {
-  readonly auth: Auth;
+  readonly caller: Caller;
   readonly checks: Checks;
   readonly name: Name;
   readonly description: string;
   readonly input: Input;
   readonly success: Success;
   readonly errors: Errors;
-  // Declared, never defaulted, so a rule that switches on it reads a literal
-  // rather than the runtime values the hints are.
-  readonly access: Acc;
-  readonly hints: Required<Hints>;
+  // Declared, never defaulted, so a type selecting the reads, such as
+  // `Extract<A, { readOnly: true }>`, reads a literal.
+  readonly readOnly: ReadOnly;
+  /** The `mcp` options as given, none when left out. */
+  readonly mcp: Mcp;
 }
 
 /** Any action, with its schemas erased. */
@@ -362,51 +356,43 @@ export function make<const Name extends string, const O extends Options>(
   SchemaOf<O, "input", typeof NoInput>,
   SchemaOf<O, "success", typeof Schema.Void>,
   ErrorsOf<O>,
-  O["access"],
-  O["auth"],
+  O["readOnly"],
+  O["caller"],
   ChecksOf<O>
 >;
 export function make(name: string, options: Options): Any {
   assertName("action name", name);
 
-  const { access, auth } = options;
+  const { caller, readOnly } = options;
 
-  if (auth !== "public" && !Context.isKey(auth)) {
-    throw new Error("Missing auth: declare public or an identity service key");
+  if (caller !== Anyone && !Context.isKey(caller)) {
+    throw new Error("Missing caller: declare Action.Anyone or an identity service key");
   }
 
   // A reference's default is always present, so it would authenticate every caller.
-  if (auth !== "public" && Context.isReference(auth)) {
-    throw new Error("Invalid auth: an identity is a Context.Service, not a Context.Reference");
+  if (caller !== Anyone && Context.isReference(caller)) {
+    throw new Error("Invalid caller: an identity is a Context.Service, not a Context.Reference");
   }
 
-  // The type is the only thing stopping a third value, and a plain-JavaScript
+  // The type is the only thing stopping another value, and a plain-JavaScript
   // caller has none: an unclassified action must not reach an authorizer that reads it.
-  if (access !== "read" && access !== "write") throw new Error(`Invalid access: ${String(access)}`);
-
-  const hints = {
-    // Plain JavaScript can pass `destructive` for a read too; it is still not one.
-    destructive: access === "write" && (options.hints?.destructive ?? true),
-    idempotent: options.hints?.idempotent ?? false,
-    openWorld: options.hints?.openWorld ?? true,
-    text: options.hints?.text,
-    title: options.hints?.title,
-    meta: options.hints?.meta,
-  };
+  if (readOnly !== true && readOnly !== false) {
+    throw new Error(`Invalid readOnly: ${String(readOnly)}`);
+  }
 
   // Each once, as its error is: a spread shared list may repeat one, which would run twice.
   const checks = [...new Set(options.checks ?? [])];
 
   const action: Any = {
-    auth,
+    caller,
     checks,
     name,
     description: options.description,
     input: codecOf(options.input ?? {}),
     success: options.success === undefined ? Schema.Void : codecOf(options.success),
     errors: [...new Set([...(options.errors ?? []), ...checks.map((check) => check.error)])],
-    access,
-    hints,
+    readOnly,
+    mcp: { ...options.mcp },
   };
 
   assertOwnTags(`Action "${action.name}"`, action.errors);
@@ -440,7 +426,7 @@ type Target = Any | ReadonlyArray<Any>;
 type ProtectedActionsTakeAuthorize = PublicAction | ReadonlyArray<PublicAction>;
 
 /** An action anyone may call. */
-type PublicAction = Any & { readonly auth: "public" };
+type PublicAction = Any & { readonly caller: typeof Anyone };
 
 /**
  * The actions `T` stands for. One action is extracted rather than taken as it is, so where `T`
@@ -669,7 +655,7 @@ export function implement(
   assertOnce("action", actions);
 
   const authorizer = authorizerOf(
-    actions.some((action) => action.auth !== "public")
+    actions.some((action) => action.caller !== Anyone)
       ? assertAuthorization(options?.authorize)
       : assertNoAuthorization(options?.authorize),
   );

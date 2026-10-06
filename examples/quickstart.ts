@@ -8,8 +8,8 @@ export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
   success: Schema.String,
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
 });
 
 export const Http = ActionHttp.make([Greet]);

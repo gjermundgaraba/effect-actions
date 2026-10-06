@@ -1,7 +1,7 @@
 # Authentication
 
 How a remote caller proves the identity a protected contract declares, and its verification on
-the server. A contract states its identity, `auth: CurrentActor` ([Action.md](Action.md#rules)).
+the server. A contract states its identity, `caller: CurrentActor` ([Action.md](Action.md#rules)).
 `make` declares how a caller proves it: a named, browser-safe descriptor of one native scheme,
 Bearer unless it names another, which a binding and an MCP endpoint serving protected actions
 name. `layer` is that
@@ -90,7 +90,7 @@ import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 export const Login = Authentication.make("example.Login", CurrentActor);
 
 // Protected contracts get native bearer security (enforced and documented); `status`,
-// declared `auth: "public"`, gets none.
+// declared `caller: Action.Anyone`, gets none.
 export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI], {
   authentication: Login,
 });
@@ -367,7 +367,7 @@ export const admit = (authorization: string | undefined): Effect.Effect<Actor, R
 - Discovery is served at `/.well-known/oauth-protected-resource` followed by the resource's path (`/.well-known/oauth-protected-resource/mcp` for `https://host/mcp`), for `GET` and `HEAD`, matching that literal path and query, and answers the CORS preflight there. It answers before routing, so no route middleware, authentication included, covers it. Other requests fall through to the host router. Caching policy is the host's.
 - Any origin may read discovery, as a browser MCP client must after a 401: it carries `Access-Control-Allow-Origin: *`, and answers an `OPTIONS` preflight at its URL with **204**, allowing `GET`, `HEAD` and `OPTIONS` and the headers the preflight asks for. Where the host's CORS middleware runs before it, that policy answers discovery's preflight and adds its headers to discovery's reads, so an origin it allows may read discovery, and discovery keeps its `*` where the policy sets no origin. Global middleware runs in the order it registers while layers build, which is the order it is merged in unless something built before it is asynchronous; either way, an origin the host's policy allows may read discovery.
 - A host with two resources makes one descriptor and one `layer` per resource; a cookie-authenticated dashboard beside them takes a descriptor of its own, on a binding of its own.
-- Tool discovery is never filtered by actor. Action-level authorization belongs in the implementation's `authorize`, which runs with the action contract in hand; write the rule against `action.access` rather than repeating a check in each handler. Record-level checks follow [guarantees.md](guarantees.md#authorization).
+- Tool discovery is never filtered by actor. Action-level authorization belongs in the implementation's `authorize`, which runs with the action contract in hand; write the rule against `action.readOnly` rather than repeating a check in each handler. Record-level checks follow [guarantees.md](guarantees.md#authorization).
 
 ## Failure modes
 
@@ -380,7 +380,7 @@ export const admit = (authorization: string | undefined): Effect.Effect<Actor, R
 - `Invalid authentication name: "<name>", not an OpenAPI key` thrown by `make`: the name holds a character an OpenAPI component key cannot, such as `/` or `:`. Use letters, digits, `_`, `.` and `-`: `example.Login`.
 - `Missing verify: pass a verify function, or an Effect building one`, a defect when the provider's layer builds: `layer` was given neither a function nor an Effect building one, as plain JavaScript may pass. Pass `verify` itself.
 - `Request<"Requires", Tenant>` still owed although the tenant middleware's layer is provided: it was provided in one array with the authentication, `Layer.provide([authenticate, resolveTenant.layer])`, whose members provide to the routes and not to one another. Provide it in a later `Layer.provide` of its own ([Rules](#rules)).
-- An action that must be authenticated answers without credentials: its contract states `auth: "public"`. Make it protected; the surfaces then authenticate it, whatever its handler reads.
+- An action that must be authenticated answers without credentials: its contract states `caller: Action.Anyone`. Make it protected; the surfaces then authenticate it, whatever its handler reads.
 - A public tool's call answers 401 on an MCP endpoint serving protected tools too: it presented a credential that does not verify, such as an expired token, and the endpoint verifies a presented credential. Send a valid one, or none.
 - An MCP host asks for sign-in when it connects: every tool of the endpoint is protected, so every request authenticates. One serving public tools too lists its tools and runs the public ones without signing in, and a protected tool's call answers the 401 the host signs in on; whether a host signs in then, rather than reporting the error, is the host's.
 - Type error at `layer` on `verify`: a verifier fails with an error that is neither a refusal nor an `HttpServerResponse`, or succeeds with a value that is not the identity. Map its failure to a refusal, and return the identity's type.

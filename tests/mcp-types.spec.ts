@@ -1,8 +1,8 @@
-// Compile-only assertions, included by `vp check`, on the servers and clients of MCP and the
-// `text` hint they read. Input is checked when a server is made (registration.test.ts), so the
+// Compile-only assertions, included by `vp check`, on the servers and clients of MCP, the
+// `mcp` options of a contract and the `text` they read. Input is checked when a server is made (registration.test.ts), so the
 // types take any implementations, a helper's own included.
 import { Cause, Context, Effect, Layer, Schema, type Stdio } from "effect";
-import { McpServer } from "effect/ai";
+import { type McpSchema, McpServer } from "effect/ai";
 import type { HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
@@ -12,9 +12,23 @@ import * as Testing from "../src/Testing.js";
 
 const options = { name: "t", version: "0" };
 
-const read = { description: "", access: "read", auth: "public" } as const;
+const read = { description: "", readOnly: true, caller: Action.Anyone } as const;
 
 const done = () => Effect.void;
+
+/** A type with its optional fields required and `undefined` left out of each. */
+type Given<T> = { readonly [K in keyof T]-?: Exclude<T[K], undefined> };
+
+// A contract's MCP hints are MCP's own: the native annotations of a tool but `readOnlyHint`,
+// the contract's `readOnly`, each as Effect types it, and the tool's own `_meta`. `Action`
+// imports none of them, so a contract stays browser-safe; this keeps them from drifting.
+expectTypeOf<Given<Omit<Action.Mcp, "_meta" | "text">>>().toEqualTypeOf<
+  Given<Omit<typeof McpSchema.ToolAnnotations.Encoded, "readOnlyHint">>
+>();
+
+expectTypeOf<Given<Pick<Action.Mcp, "_meta">>>().toExtend<
+  Given<Pick<typeof McpSchema.Tool.Encoded, "_meta">>
+>();
 
 const status = Action.implement(Action.make("status", read), done);
 
@@ -24,8 +38,8 @@ type Public = Action.Action<
   Action.Any["input"],
   Action.Any["success"],
   Action.Any["errors"],
-  Action.Access,
-  "public"
+  boolean,
+  typeof Action.Anyone
 >;
 
 declare const erased: ReadonlyArray<Action.AnyImplementation>;
@@ -81,7 +95,7 @@ expectTypeOf(ActionMcp.runStdio(status, { ...options, features: registered })).t
   Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio | Docs>
 >();
 
-// A `text` hint names a top-level string field of the action's encoded success, an optional
+// An `mcp.text` names a top-level string field of the action's encoded success, an optional
 // one too.
 const success = {
   markdown: Schema.String,
@@ -89,15 +103,15 @@ const success = {
   note: Schema.optionalKey(Schema.String),
 };
 
-Action.make("page", { ...read, success, hints: { text: "markdown" } });
+Action.make("page", { ...read, success, mcp: { text: "markdown" } });
 
-Action.make("note", { ...read, success, hints: { text: "note", idempotent: true } });
+Action.make("note", { ...read, success, mcp: { text: "note", idempotentHint: true } });
 
 // @ts-expect-error `words` is a number.
-Action.make("words", { ...read, success, hints: { text: "words" } });
+Action.make("words", { ...read, success, mcp: { text: "words" } });
 
 // @ts-expect-error The success has no such field.
-Action.make("missing", { ...read, success, hints: { text: "missing" } });
+Action.make("missing", { ...read, success, mcp: { text: "missing" } });
 
 Action.make("either", {
   ...read,
@@ -107,39 +121,39 @@ Action.make("either", {
     Schema.Struct({ body: Schema.String, kind: Schema.Literal("b") }),
   ]),
   // @ts-expect-error A union of structs has no field of its own.
-  hints: { text: "body" },
+  mcp: { text: "body" },
 });
 
 // @ts-expect-error A string success has no fields.
-Action.make("scalar", { ...read, success: Schema.String, hints: { text: "length" } });
+Action.make("scalar", { ...read, success: Schema.String, mcp: { text: "length" } });
 
 Action.make("dictionary", {
   ...read,
   success: Schema.Record(Schema.String, Schema.String),
   // @ts-expect-error Nor has a record a field of its own.
-  hints: { text: "body" },
+  mcp: { text: "body" },
 });
 
 // @ts-expect-error Nor has an action without a success.
-Action.make("none", { ...read, hints: { text: "body" } });
+Action.make("none", { ...read, mcp: { text: "body" } });
 
 // A struct with rest: its declared field is a top-level property, its record's keys are not.
 const rest = Schema.StructWithRest(Schema.Struct({ markdown: Schema.String }), [
   Schema.Record(Schema.String, Schema.String),
 ]);
 
-Action.make("rest", { ...read, success: rest, hints: { text: "markdown" } });
+Action.make("rest", { ...read, success: rest, mcp: { text: "markdown" } });
 
 // @ts-expect-error A key only the rest allows is no declared field.
-Action.make("restExtra", { ...read, success: rest, hints: { text: "extra" } });
+Action.make("restExtra", { ...read, success: rest, mcp: { text: "extra" } });
 
-// The types cannot read an erased success, nor a hint typed only as `string`: the layer build
+// The types cannot read an erased success, nor a `text` typed only as `string`: the layer build
 // checks them.
 declare const field: string;
 
 declare const unread: Schema.Codec<unknown>;
 
-Action.make("erased", { ...read, success: unread, hints: { text: field } });
+Action.make("erased", { ...read, success: unread, mcp: { text: field } });
 
 // An implementation's `actions` are its exact contracts: a client of them has one method per
 // tool the implementation serves, and no other.
@@ -181,7 +195,7 @@ const Login = Authentication.make("mcp-types.Login", Caller);
 
 const Open = Action.make("open", read);
 
-const Private = Action.make("private", { ...read, auth: Caller });
+const Private = Action.make("private", { ...read, caller: Caller });
 
 const mixed = Action.implement(
   [Open, Private],

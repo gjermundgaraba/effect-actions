@@ -85,8 +85,8 @@ describe("descriptions", () => {
   it("describes each action on every surface by its contract's description", async () => {
     const Describe = Action.make("describe", {
       description: "What this action does, for every caller.",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
     });
 
     const app = Action.implement(Describe, () => Effect.void);
@@ -145,8 +145,8 @@ describe("projection boundaries", () => {
   it("serves scalar input over HTTP", async () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.String,
       success: Schema.String,
     });
@@ -166,8 +166,8 @@ describe("projection boundaries", () => {
 
       const Fail = Action.make("fail", {
         description: "Declared failure",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.String,
         errors: [Failure],
       });
@@ -218,8 +218,8 @@ describe("projection boundaries", () => {
     Effect.gen(function* () {
       const Fail = Action.make("fail", {
         description: "Two failures",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
         success: Schema.String,
         errors,
@@ -260,7 +260,12 @@ describe("projection boundaries", () => {
       Object.keys(
         OpenApi.fromApi(
           ActionHttp.make([
-            Action.make("fail", { description: "", access: "write", auth: "public", errors }),
+            Action.make("fail", {
+              description: "",
+              readOnly: false,
+              caller: Action.Anyone,
+              errors,
+            }),
           ]).api,
         ).paths["/api/fail"]?.post?.responses ?? {},
       ).sort();
@@ -282,35 +287,43 @@ describe("projection boundaries", () => {
     ]);
   });
 
-  it("carries each action's hints to its MCP and native tools", async () => {
+  it("carries each action's mcp hints to its MCP and native tools, MCP's defaults for the rest", async () => {
     const Lookup = Action.make("lookup", {
       description: "Look up",
-      access: "read",
-      auth: "public",
-      hints: { idempotent: true, openWorld: false },
+      readOnly: true,
+      caller: Action.Anyone,
+      mcp: { idempotentHint: true, openWorldHint: false },
     });
 
     const Append = Action.make("append", {
       description: "Append",
-      access: "write",
-      auth: "public",
-      hints: { destructive: false },
+      readOnly: false,
+      caller: Action.Anyone,
+      mcp: { destructiveHint: false },
     });
 
     const Wipe = Action.make("wipe", {
       description: "Wipe",
-      access: "write",
-      auth: "public",
-      hints: { idempotent: true },
+      readOnly: false,
+      caller: Action.Anyone,
+      mcp: { idempotentHint: true },
     });
 
-    const app = Action.implement([Lookup, Append, Wipe], {
+    const Purge = Action.make("purge", {
+      description: "A read stating destructive, as given",
+      readOnly: true,
+      caller: Action.Anyone,
+      mcp: { destructiveHint: true },
+    });
+
+    const app = Action.implement([Lookup, Append, Wipe, Purge], {
       lookup: () => Effect.void,
       append: () => Effect.void,
       wipe: () => Effect.void,
+      purge: () => Effect.void,
     });
 
-    const hints = {
+    const annotations = {
       lookup: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -329,13 +342,19 @@ describe("projection boundaries", () => {
         idempotentHint: true,
         openWorldHint: true,
       },
+      purge: {
+        readOnlyHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     };
 
     const mcp = makeTestMcp(app);
 
     const listed = await listTools(mcp.handler);
     expect(Object.fromEntries(listed.map((tool) => [tool.name, tool.annotations]))).toMatchObject(
-      hints,
+      annotations,
     );
 
     const { tools } = ActionToolkit.make(app).toolkit;
@@ -351,7 +370,25 @@ describe("projection boundaries", () => {
           },
         ]),
       ),
-    ).toEqual(hints);
+    ).toEqual(annotations);
+
+    // Only what a contract states is stored, beside a read's destructive hint, so Effect's own
+    // defaults, MCP's, stand for the rest rather than copies of them.
+    const hints = [Tool.Destructive, Tool.Idempotent, Tool.OpenWorld];
+
+    expect(
+      Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [
+          name,
+          hints.filter(({ key }) => tool.annotations.mapUnsafe.has(key)),
+        ]),
+      ),
+    ).toEqual({
+      lookup: hints,
+      append: [Tool.Destructive],
+      wipe: [Tool.Idempotent],
+      purge: [Tool.Destructive],
+    });
   });
 
   it("carries a title and `_meta` to its MCP and native tools, only where given", async () => {
@@ -359,12 +396,16 @@ describe("projection boundaries", () => {
 
     const Lookup = Action.make("lookup", {
       description: "Look up",
-      access: "read",
-      auth: "public",
-      hints: { title: "Look up a record", meta },
+      readOnly: true,
+      caller: Action.Anyone,
+      mcp: { title: "Look up a record", _meta: meta },
     });
 
-    const Plain = Action.make("plain", { description: "Plain", access: "read", auth: "public" });
+    const Plain = Action.make("plain", {
+      description: "Plain",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
 
     const app = Action.implement([Lookup, Plain], {
       lookup: () => Effect.void,
@@ -388,8 +429,8 @@ describe("projection boundaries", () => {
   it("declares each built-in error once on every tool and endpoint", () => {
     const Declared = Action.make("whoAmI", {
       description: "Name the authenticated principal",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -431,8 +472,8 @@ describe("projection boundaries", () => {
 
     const Fail = Action.make("fail", {
       description: "Error with a message",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
       errors: [Denied],
     });
@@ -466,8 +507,8 @@ describe("projection boundaries", () => {
 
       const Tree = Action.make("tree", {
         description: "Recursive object",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: Node,
         success: Node,
       });
@@ -504,7 +545,7 @@ describe("projection boundaries", () => {
   const implementations = (inputs: Readonly<Record<string, Action.Any["input"] | undefined>>) =>
     Object.entries(inputs).map(([name, input]) =>
       Action.implement(
-        Action.make(name, { description: name, access: "read", auth: "public", input }),
+        Action.make(name, { description: name, readOnly: true, caller: Action.Anyone, input }),
         () => Effect.void,
       ),
     );
@@ -563,7 +604,7 @@ describe("projection boundaries", () => {
     const refused = implementations(inputs);
 
     const status = Action.implement(
-      Action.make("status", { description: "Status", access: "read", auth: "public" }),
+      Action.make("status", { description: "Status", readOnly: true, caller: Action.Anyone }),
       () => Effect.void,
     );
 
@@ -579,7 +620,12 @@ describe("projection boundaries", () => {
   // The endpoint's authentication decides by tool name, so a native tool never takes an
   // action's: it would replace the action's tool, and inherit a public one's access.
   it("refuses a native feature's tool of an action's name", async () => {
-    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
     const Native = Toolkit.make(Tool.make("ping", { success: Schema.String }));
 
     const native = McpServer.toolkit(Native).pipe(
@@ -598,7 +644,12 @@ describe("projection boundaries", () => {
   });
 
   it("serves native resources, prompts and tools given as features, and none merged beside", async () => {
-    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
     const Native = Toolkit.make(Tool.make("native", { success: Schema.String }));
 
     const native = Layer.mergeAll(
@@ -665,7 +716,7 @@ describe("projection boundaries", () => {
         );
 
         const app = Action.implement(
-          Action.make("ping", { description: "Ping", access: "read", auth: "public" }),
+          Action.make("ping", { description: "Ping", readOnly: true, caller: Action.Anyone }),
           () => Effect.void,
         );
 
@@ -701,8 +752,8 @@ describe("projection boundaries", () => {
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
     const Scalar = Action.make("scalar", {
       description: "Scalar error",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
       errors: [Schema.String],
     });
@@ -726,8 +777,8 @@ describe("projection boundaries", () => {
   it("turns invalid output and errors, and defects, into sanitized native failures on both transports", async () => {
     const Broken = Action.make("broken", {
       description: "Bad output",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.Finite,
     });
 
@@ -735,16 +786,16 @@ describe("projection boundaries", () => {
 
     const Refused = Action.make("refused", {
       description: "Bad declared error",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
       errors: [Domain],
     });
 
     const Boom = Action.make("boom", {
       description: "Defect",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -776,8 +827,8 @@ describe("projection boundaries", () => {
   it("lowers declaration schemas to JSON identically on both transports", async () => {
     const Stamp = Action.make("stamp", {
       description: "Date round trip",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Struct({ d: Schema.Date }),
       success: Schema.Struct({ d: Schema.Date }),
     });
@@ -805,8 +856,8 @@ describe("projection boundaries", () => {
 
       const Slow = Action.make("slow", {
         description: "Wait",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -833,22 +884,22 @@ describe("projection boundaries", () => {
 describe("MCP registration", () => {
   const WhoAmI = Action.make("whoAmI", {
     description: "Current user",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
   const Invoice = Action.make("invoice", {
     description: "Invoice total",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
   const Audit = Action.make("audit", {
     description: "Audit",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -876,8 +927,8 @@ describe("MCP registration", () => {
     const same = () =>
       Action.make("same", {
         description: "",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -899,8 +950,8 @@ describe("MCP registration", () => {
 
     const Other = Action.make("other", {
       description: "",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 

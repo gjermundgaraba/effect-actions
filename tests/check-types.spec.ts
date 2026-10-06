@@ -44,8 +44,8 @@ export const bad = Layer.succeed(Limit, () => Effect.asVoid(Boot));
 
 const X = Action.make("x", {
   description: "x",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   checks: [Limit],
   success: Schema.String,
 });

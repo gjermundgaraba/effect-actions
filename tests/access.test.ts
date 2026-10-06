@@ -37,21 +37,21 @@ const grants = Authentication.layer(ScopesLogin, (token: Redacted.Redacted<strin
 );
 
 /** A caller of any token: what OAuth step-up answers under. */
-const Anyone = Authentication.make("access-test.Anyone", Caller);
+const AnyCaller = Authentication.make("access-test.AnyCaller", Caller);
 
-const anyone = Authentication.layer(Anyone, () => Effect.succeed("anyone"));
+const anyone = Authentication.layer(AnyCaller, () => Effect.succeed("anyone"));
 
 const Read = Action.make("read", {
   description: "Read the resource",
-  access: "read",
-  auth: Scopes,
+  readOnly: true,
+  caller: Scopes,
   success: Schema.String,
 });
 
 const Write = Action.make("write", {
   description: "Change the resource",
-  access: "write",
-  auth: Scopes,
+  readOnly: false,
+  caller: Scopes,
   input: { value: Schema.String },
   success: Schema.String,
 });
@@ -73,7 +73,7 @@ const authorize =
 
       if (granted.length === 0) return yield* new Action.Unauthenticated({ message: "Sign in." });
 
-      if (action.access === "read") return;
+      if (action.readOnly) return;
 
       if (!granted.includes("write")) {
         return yield* new Action.Forbidden({ message: "Requires write." });
@@ -110,35 +110,37 @@ const serveHttp = (app: App) => serve(ActionHttp.layer(Http, app).pipe(Layer.pro
 /** `request`, granted only the read scope. */
 const reading = (request: Request) => withBearer(request, "read");
 
-describe("action access", () => {
-  it("refuses a value the contract does not define, so plain JavaScript cannot skip a rule", () => {
-    expect(() =>
-      Action.make("unclassified", {
-        description: "Classified by nobody",
-        // @ts-expect-error The check exists for callers the compiler never sees.
-        access: "admin",
-        auth: "public",
-        success: Schema.String,
-      }),
-    ).toThrow("Invalid access: admin");
+describe("action classification", () => {
+  it("refuses a readOnly that is not a boolean, so plain JavaScript cannot skip a rule", () => {
+    for (const readOnly of [undefined, "read"]) {
+      expect(() =>
+        Action.make("unclassified", {
+          description: "Classified by nobody",
+          // @ts-expect-error The check exists for callers the compiler never sees.
+          readOnly,
+          caller: Action.Anyone,
+          success: Schema.String,
+        }),
+      ).toThrow(`Invalid readOnly: ${readOnly}`);
+    }
   });
 
   it("refuses a contract stating no one who may call it", () => {
-    for (const auth of [undefined, "anyone"]) {
+    for (const caller of [undefined, "public"]) {
       expect(() =>
         // @ts-expect-error The check exists for callers the compiler never sees.
-        Action.make("unstated", { description: "", access: "read", auth }),
-      ).toThrow("Missing auth: declare public or an identity service key");
+        Action.make("unstated", { description: "", readOnly: true, caller }),
+      ).toThrow("Missing caller: declare Action.Anyone or an identity service key");
     }
   });
 
   it("refuses a Context.Reference as an identity, whose default would stand in for every caller", () => {
-    const Anyone = Context.Reference<string>("access/Anyone", { defaultValue: () => "anyone" });
+    const Default = Context.Reference<string>("access/Default", { defaultValue: () => "anyone" });
 
     expect(() =>
       // @ts-expect-error The check exists for callers the compiler never sees.
-      Action.make("byDefault", { description: "", access: "read", auth: Anyone }),
-    ).toThrow("Invalid auth: an identity is a Context.Service, not a Context.Reference");
+      Action.make("byDefault", { description: "", readOnly: true, caller: Default }),
+    ).toThrow("Invalid caller: an identity is a Context.Service, not a Context.Reference");
   });
 });
 
@@ -210,20 +212,20 @@ describe("the authorizer", () => {
 
     const Gated = Action.make("gated", {
       description: "Refused by its authorizer",
-      access: "write",
-      auth: Caller,
+      readOnly: false,
+      caller: Caller,
     });
 
     const Handled = Action.make("handled", {
       description: "Refused by its handler",
-      access: "write",
-      auth: Caller,
+      readOnly: false,
+      caller: Caller,
     });
 
     const Plain = Action.make("plain", {
       description: "Refused by its authorizer, naming no scope",
-      access: "write",
-      auth: Caller,
+      readOnly: false,
+      caller: Caller,
     });
 
     const app = Action.implement(
@@ -243,8 +245,11 @@ describe("the authorizer", () => {
 
     const web = serve(
       Layer.mergeAll(
-        ActionHttp.layer(ActionHttp.make([Gated, Handled, Plain], { authentication: Anyone }), app),
-        ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: Anyone }),
+        ActionHttp.layer(
+          ActionHttp.make([Gated, Handled, Plain], { authentication: AnyCaller }),
+          app,
+        ),
+        ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }),
       ).pipe(Layer.provide(anyone)),
     );
 
@@ -292,8 +297,8 @@ describe("the authorizer", () => {
     // handler's refusal as it is, unchallenged, and over MCP the model reads a result.
     const Open = Action.make("open", {
       description: "Refused by its handler, with no authentication",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
     });
 
     const signIn = new Action.Unauthenticated({ message: "Sign in." });
@@ -332,14 +337,14 @@ describe("the authorizer", () => {
   it("keeps each request's step-up refusal its own under concurrent calls", async () => {
     const Allowed = Action.make("allowed", {
       description: "Allowed",
-      access: "read",
-      auth: Caller,
+      readOnly: true,
+      caller: Caller,
     });
 
     const Refused = Action.make("refused", {
       description: "Refused",
-      access: "write",
-      auth: Caller,
+      readOnly: false,
+      caller: Caller,
     });
 
     const app = Action.implement(
@@ -355,8 +360,8 @@ describe("the authorizer", () => {
 
     const web = serve(
       Layer.mergeAll(
-        ActionHttp.layer(ActionHttp.make([Allowed, Refused], { authentication: Anyone }), app),
-        ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: Anyone }),
+        ActionHttp.layer(ActionHttp.make([Allowed, Refused], { authentication: AnyCaller }), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }),
       ).pipe(Layer.provide(anyone)),
     );
 
@@ -379,8 +384,8 @@ describe("the authorizer", () => {
   it("answers a handler's step-up refusal as a tool result once its call has streamed", async () => {
     const Reporting = Action.make("reporting", {
       description: "Reports progress, then refuses",
-      access: "write",
-      auth: Caller,
+      readOnly: false,
+      caller: Caller,
     });
 
     // Opened once the test has the response: the refusal comes only after it has started.
@@ -406,7 +411,7 @@ describe("the authorizer", () => {
     );
 
     const mcp = serve(
-      ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: Anyone }).pipe(
+      ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }).pipe(
         Layer.provide(anyone),
       ),
     );
@@ -511,8 +516,8 @@ describe("the authorizer", () => {
 
     const Status = Action.make("status", {
       description: "Answer anyone",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
@@ -580,16 +585,16 @@ describe("declared checks", () => {
 
   const Ping = Action.make("ping", {
     description: "Ping",
-    access: "read",
-    auth: Caller,
+    readOnly: true,
+    caller: Caller,
     success: Schema.String,
     checks: [Limited],
   });
 
   const Poke = Action.make("poke", {
     description: "Poke",
-    access: "write",
-    auth: Caller,
+    readOnly: false,
+    caller: Caller,
     input: { value: Schema.String },
     success: Schema.String,
     checks: [Limited],
@@ -603,7 +608,7 @@ describe("declared checks", () => {
     { authorize: Action.allowAll },
   );
 
-  const Http = ActionHttp.make([Ping, Poke], { authentication: Anyone });
+  const Http = ActionHttp.make([Ping, Poke], { authentication: AnyCaller });
 
   it.effect("fails with the error it declares, answered as the action's own everywhere", () =>
     Effect.gen(function* () {
@@ -611,7 +616,7 @@ describe("declared checks", () => {
       const limits = Layer.effect(
         Limited,
         Effect.succeed((action: Action.Any) =>
-          action.access === "write" ? Effect.fail(limited) : Effect.void,
+          !action.readOnly ? Effect.fail(limited) : Effect.void,
         ),
       );
 
@@ -619,7 +624,7 @@ describe("declared checks", () => {
       const served = Testing.layer(
         Layer.mergeAll(
           ActionHttp.layer(Http, app),
-          ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: Anyone }),
+          ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }),
         ).pipe(Layer.provide([anyone, limits])),
       );
 
@@ -720,7 +725,7 @@ describe("declared checks", () => {
           Testing.layer(
             Layer.mergeAll(
               ActionHttp.layer(Http, app),
-              ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: Anyone }),
+              ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }),
             ).pipe(Layer.provide([anyone, once])),
           ),
         ),
@@ -741,8 +746,8 @@ describe("declared checks", () => {
 
       const Status = Action.make("status", {
         description: "A public action listing one check twice",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         checks: [...shared, Counted],
       });
 
@@ -767,8 +772,8 @@ describe("declared checks", () => {
 
       const Status = Action.make("status", {
         description: "A public action with an operational limit",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         checks: [Capacity],
       });
 
@@ -817,8 +822,8 @@ describe("declared checks", () => {
 
       const Status = Action.make("status", {
         description: "A public action with a per-tenant limit",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         checks: [Quota],
       });
 
@@ -883,8 +888,8 @@ describe("declared checks", () => {
 
       const Status = Action.make("status", {
         description: "Status",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         checks: [Gate],
       });
 
@@ -967,8 +972,8 @@ describe("a trusted local caller", () => {
 
   const Rename = Action.make("renameUser", {
     description: "Rename a user, subject to the rate limit",
-    access: "write",
-    auth: Actor,
+    readOnly: false,
+    caller: Actor,
     checks: [Limited],
     input: { name: Schema.String },
     success: { name: Schema.String, caller: Schema.String },
@@ -981,7 +986,7 @@ describe("a trusted local caller", () => {
 
       if (actor.role === "trusted-admin") return;
 
-      if (action.access === "write" && actor.role !== "writer") {
+      if (!action.readOnly && actor.role !== "writer") {
         return yield* new Action.Forbidden({ scopes: ["users:write"] });
       }
     });

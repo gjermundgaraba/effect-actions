@@ -9,7 +9,7 @@ import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 export const Login = Authentication.make("example.Login", CurrentActor);
 
 // Protected contracts get native bearer security (enforced and documented); `status`,
-// declared `auth: "public"`, gets none.
+// declared `caller: Action.Anyone`, gets none.
 export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI], {
   authentication: Login,
 });

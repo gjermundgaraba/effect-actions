@@ -17,15 +17,15 @@ class Boot extends Context.Service<Boot, true>()("selection/Boot") {}
 
 const Public = Action.make("open", {
   description: "Open",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
 const Guarded = Action.make("guarded", {
   description: "Guarded",
-  access: "read",
-  auth: Actor,
+  readOnly: true,
+  caller: Actor,
   success: Schema.String,
 });
 

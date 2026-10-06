@@ -7,7 +7,11 @@ import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { everyConsoleMethod } from "./console-methods.js";
 
-const Status = Action.make("status", { description: "Report", access: "read", auth: "public" });
+const Status = Action.make("status", {
+  description: "Report",
+  readOnly: true,
+  caller: Action.Anyone,
+});
 
 const status = Action.implement(
   Status,

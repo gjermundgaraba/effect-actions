@@ -103,14 +103,14 @@ describe("mcpClient", () => {
     Effect.gen(function* () {
       const Refuse = Action.make("refuse", {
         description: "Refuses",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
       });
 
       const Reject = Action.make("reject", {
         description: "Rejects its input",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
       });
 
       const app = Action.implement([Refuse, Reject], {
@@ -137,8 +137,8 @@ describe("mcpClient", () => {
     Effect.gen(function* () {
       const Fail = Action.make("fail", {
         description: "Fails with a string",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.String,
         errors: [Schema.String],
       });
@@ -191,8 +191,8 @@ describe("mcpClient", () => {
 
       const Slow = Action.make("slow", {
         description: "Fails late",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
         errors: [Late],
       });
@@ -213,7 +213,12 @@ describe("mcpClient", () => {
 
   it.effect("returns nothing for an action that returns nothing, over HTTP and MCP alike", () =>
     Effect.gen(function* () {
-      const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
+      const Reset = Action.make("reset", {
+        description: "Reset",
+        readOnly: false,
+        caller: Action.Anyone,
+      });
+
       const Http = ActionHttp.make([Reset]);
       const reset = Action.implement(Reset, () => Effect.void);
 
@@ -242,8 +247,8 @@ describe("mcpClient", () => {
 
       const List = Action.make("list", {
         description: "List notes, all of them without a tag",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: Filters,
         success: Schema.String,
       });
@@ -267,16 +272,16 @@ describe("mcpClient", () => {
       // Contracts the host does not serve as declared here: other input, and no such tool.
       const Loose = Action.make("getUser", {
         description: "The host's getUser, with an input it refuses",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { id: Schema.Finite },
         success: Schema.String,
       });
 
       const Missing = Action.make("missing_tool", {
         description: "Not served",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -342,8 +347,8 @@ describe("mcpClient", () => {
 
   const Listed = Action.make("listed", {
     description: "Lists numbers",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.Array(Schema.Finite),
   });
 
@@ -870,8 +875,8 @@ describe("layer", () => {
 
       const Ping = Action.make("ping", {
         description: "Ping",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.Boolean,
       });
 
@@ -897,8 +902,8 @@ describe("layer", () => {
 
       const Guarded = Action.make("ping", {
         description: "Ping",
-        access: "read",
-        auth: CurrentActor,
+        readOnly: true,
+        caller: CurrentActor,
         success: Schema.Boolean,
       });
 
@@ -925,8 +930,8 @@ describe("layer", () => {
 
       const Visit = Action.make("visit", {
         description: "Count a visit.",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.Finite,
       });
 
@@ -1019,8 +1024,8 @@ describe("layer", () => {
 
         const Read = Action.make("read", {
           description: "Reads a file with its builder's services and with its request's.",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           input: { name: Schema.String },
           success: Schema.Array(Schema.String),
         });
@@ -1085,8 +1090,8 @@ describe("layer", () => {
     Effect.gen(function* () {
       const Exists = Action.make("exists", {
         description: "Whether a file exists, to its builder's file system and to its request's.",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { path: Schema.String },
         success: Schema.Array(Schema.Boolean),
       });

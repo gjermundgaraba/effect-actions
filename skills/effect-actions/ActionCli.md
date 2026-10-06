@@ -201,8 +201,8 @@ export class Operator extends Context.Service<Operator, RemoteOperator | Trusted
 
 export const Purge = Action.make("purge", {
   description: "Purge the cache.",
-  access: "write",
-  auth: Operator,
+  readOnly: false,
+  caller: Operator,
 });
 
 // One rule for every caller: a trusted operator passes, a remote one needs the editor role.
@@ -213,7 +213,7 @@ export const cache = Action.implement(Purge, () => Effect.log("Purged."), {
 
       if (operator.role === "trusted") return;
 
-      if (action.access === "write" && operator.role !== "editor") {
+      if (!action.readOnly && operator.role !== "editor") {
         return yield* new Action.Forbidden({ message: "Requires the editor role." });
       }
     }),

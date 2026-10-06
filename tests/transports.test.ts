@@ -423,8 +423,8 @@ describe("public and protected actions of one host", () => {
 it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", async () => {
   const Ping = Action.make("ping", {
     description: "Answer the caller",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -484,8 +484,8 @@ it("runs an endpoint's authentication before the native MCP Origin check", async
   // Every tool protected, so every request authenticates.
   const Who = Action.make("who", {
     description: "The caller",
-    access: "read",
-    auth: Identity,
+    readOnly: true,
+    caller: Identity,
     success: Schema.String,
   });
 
@@ -536,8 +536,8 @@ it("runs an endpoint's authentication before the native MCP Origin check", async
 it("supplies the native request context to handlers without a router requirement, at the default /mcp path", async () => {
   const ClientName = Action.make("client", {
     description: "The connected client's declared name",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 

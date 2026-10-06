@@ -69,7 +69,7 @@ import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 export const Login = Authentication.make("example.Login", CurrentActor);
 
 // Protected contracts get native bearer security (enforced and documented); `status`,
-// declared `auth: "public"`, gets none.
+// declared `caller: Action.Anyone`, gets none.
 export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI], {
   authentication: Login,
 });
@@ -240,7 +240,7 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 
 ### Security
 
-- OpenAPI security follows each contract's `auth`. Every protected endpoint carries the descriptor's native security middleware, the one that enforces it: `OpenApi.fromApi`, `HttpApiSwagger` and `HttpApiScalar` show its scheme in `components.securitySchemes`, keyed by the descriptor's name as it is, `example.Login`, and `[{ "example.Login": [] }]` as the operation's requirement, and a public endpoint states `security: []`. A combined document keeps each binding's: distinct descriptors have distinct names, so their schemes never share a key ([Authentication.md](Authentication.md#rules)).
+- OpenAPI security follows each contract's `caller`. Every protected endpoint carries the descriptor's native security middleware, the one that enforces it: `OpenApi.fromApi`, `HttpApiSwagger` and `HttpApiScalar` show its scheme in `components.securitySchemes`, keyed by the descriptor's name as it is, `example.Login`, and `[{ "example.Login": [] }]` as the operation's requirement, and a public endpoint states `security: []`. A combined document keeps each binding's: distinct descriptors have distinct names, so their schemes never share a key ([Authentication.md](Authentication.md#rules)).
 - The document and the routes cannot disagree: no option documents a scheme the routes do not enforce, or a public action the routes protect.
 - Effect has no OAuth or OpenID Connect scheme, so an OAuth protected resource is documented as a bearer scheme; its discovery is the provider's ([Authentication.md](Authentication.md#rules)).
 - Clients read none of it: a client sends what `transformClient` adds, whatever the document says.
@@ -281,10 +281,10 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 - A combined document or native client lacks one binding's actions: two combined bindings share a prefix, so one group replaced the other. Give each its own prefix, or bind the actions together.
 - `Provider<CurrentActor, "example.Login">` among the layer's requirements, or `Type 'Provider<...>' is not assignable to type 'never'` where the server is launched: the layer serves a protected action and its descriptor's provider is not provided. Provide it, `Layer.provide(authenticate)` ([Authentication.md](Authentication.md#failure-modes)). Nothing else stands in for it.
 - `Type 'X' is not assignable to type 'never'` where the server is launched, or `Request<"Requires", X>` in the layer's type: a handler, the authorizer or a check yields a request service `X` that no middleware around the layer provides. Provide it with router middleware, or `HttpRouter.provideRequest`; never an identity at startup. `X` the identity on a layer serving public actions: a public handler, or a check a public action lists, reads it, or a layer middleware requires it. No public route gets an identity: make the action protected, or serve the middleware's protected actions from a layer of their own ([Rules](#rules)).
-- `No overload matches this call` at `make`, its last overload naming `"Protected actions take options naming their authentication"`, or a type error naming `authentication`: the binding holds a protected action and names no descriptor, or one of another identity. Give `{ authentication: Login }`, never `auth: "public"` on the contract to silence it.
+- `No overload matches this call` at `make`, its last overload naming `"Protected actions take options naming their authentication"`, or a type error naming `authentication`: the binding holds a protected action and names no descriptor, or one of another identity. Give `{ authentication: Login }`, never `caller: Action.Anyone` on the contract to silence it.
 - `Argument of type 'Options<…> | undefined' is not assignable` at `make`: a helper forwards options that may be absent. `make` takes options or none, two forms, so pass `options ?? {}`.
 - A type error on `middleware` naming `"Layer middleware fails only with the binding's errors and needs no client"`: a middleware declares an error neither the binding nor the built-ins hold, or a client counterpart. Add the error to the binding's `errors`, or, for a limit after decoding on every surface, move it to a check on the actions.
-- A route answers without credentials: its contract is `auth: "public"`. Make it protected; its route is then authenticated, whatever its handler reads.
+- A route answers without credentials: its contract is `caller: Action.Anyone`. Make it protected; its route is then authenticated, whatever its handler reads.
 - A protected route answers 401 to a request missing its content type or sending invalid input: it presented no credential that verifies, and authentication runs before anything reads the body. Send the token, then the content type and the input are checked.
 - Swagger shows no Authorize button: the binding holds no protected action.
 - `Service not found: effect-actions/Authentication/Security/…` when the host builds: `Http.api` of a binding holding a protected action is served with the native `HttpApiBuilder`. Serve it with `layer`.

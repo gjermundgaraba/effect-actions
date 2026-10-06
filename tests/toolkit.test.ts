@@ -11,8 +11,8 @@ class Principal extends Context.Service<Principal, string>()("toolkit-test/Princ
 
 const Erase = Action.make("erase", {
   description: "Erase",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: { id: Schema.String },
   success: Schema.String,
 });
@@ -51,8 +51,8 @@ describe("ActionToolkit", () => {
 
         const Read = Action.make("read", {
           description: "Read",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           input: { path: Schema.String },
           success: Schema.String,
         });
@@ -121,7 +121,7 @@ describe("ActionToolkit", () => {
         // One make call: a write needs approval unless an admin calls; without a caller, it asks.
         const { toolkit, layer } = ActionToolkit.make(app, {
           needsApproval: (call) =>
-            call.action.access === "write" &&
+            !call.action.readOnly &&
             Effect.map(
               Effect.serviceOption(Principal),
               Option.match({ onNone: () => true, onSome: (principal) => principal !== "admin" }),
@@ -216,8 +216,8 @@ describe("ActionToolkit", () => {
 
         const Schedule = Action.make("schedule", {
           description: "Schedule a reminder.",
-          access: "write",
-          auth: "public",
+          readOnly: false,
+          caller: Action.Anyone,
           input: { at: Schema.Date, note: Schema.optional(Schema.String) },
           success: Schema.BigInt,
         });
@@ -254,8 +254,8 @@ describe("ActionToolkit", () => {
 
       const Find = Action.make("find", {
         description: "Find a note.",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { id: Schema.String },
         success: Schema.String,
         errors: [NotFound],
@@ -288,8 +288,8 @@ describe("ActionToolkit", () => {
 
         const Echo = Action.make("echo", {
           description: "Echo a number.",
-          access: "read",
-          auth: Principal,
+          readOnly: true,
+          caller: Principal,
           input: { value: Schema.Finite },
           success: Schema.Finite,
         });
@@ -315,8 +315,8 @@ describe("ActionToolkit", () => {
   it("runs each call with its own identity, filling in one provided to layer for a call without one", async () => {
     const Who = Action.make("who", {
       description: "Current principal",
-      access: "read",
-      auth: Principal,
+      readOnly: true,
+      caller: Principal,
       success: Schema.String,
     });
 
@@ -364,8 +364,8 @@ describe("ActionToolkit", () => {
       Effect.gen(function* () {
         const Secret = Action.make("secret", {
           description: "A secret.",
-          access: "read",
-          auth: Principal,
+          readOnly: true,
+          caller: Principal,
           success: Schema.String,
         });
 
@@ -415,15 +415,15 @@ describe("ActionToolkit", () => {
 
       const Read = Action.make("read", {
         description: "Read",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
       const Other = Action.make("other", {
         description: "Other",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -440,7 +440,7 @@ describe("ActionToolkit", () => {
 
       // A toolkit per agent or per policy, each from a make call of its own.
       const approving = ActionToolkit.make(app, {
-        needsApproval: (call) => call.action.access === "write",
+        needsApproval: (call) => !call.action.readOnly,
       }).toolkit;
 
       const some = ActionToolkit.make(other).toolkit;
@@ -501,8 +501,8 @@ describe("ActionToolkit", () => {
 
         const Open = Action.make("open", {
           description: "Opens a resource of its own",
-          access: "write",
-          auth: Principal,
+          readOnly: false,
+          caller: Principal,
           success: Schema.String,
         });
 
@@ -574,8 +574,8 @@ describe("ActionToolkit", () => {
     Effect.gen(function* () {
       const Double = Action.make("double", {
         description: "Double a number.",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { value: Schema.Finite },
         success: Schema.Finite,
       });
@@ -620,15 +620,15 @@ describe("ActionToolkit", () => {
 
       const One = Action.make("one", {
         description: "One",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.Number,
       });
 
       const Two = Action.make("two", {
         description: "Two",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.Number,
       });
 

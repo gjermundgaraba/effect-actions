@@ -35,8 +35,8 @@ expectTypeOf<Input<"getUser">>().toEqualTypeOf<{ readonly id: string }>();
 
 expectTypeOf<Success<"getUser">>().toEqualTypeOf<typeof User.Type>();
 
-/** The writes among them, by `access`. */
-type Write = { [K in Name]: (typeof contracts)[K]["access"] extends "write" ? K : never }[Name];
+/** The writes among them, by `readOnly`. */
+type Write = { [K in Name]: (typeof contracts)[K]["readOnly"] extends false ? K : never }[Name];
 
 expectTypeOf<Write>().toEqualTypeOf<"renameUser">();
 
@@ -64,15 +64,15 @@ const refuse = ({ message }: Stale) => Effect.fail(new Action.InvalidInput({ mes
 
 const Who = Action.make("who", {
   description: "",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: WhoAmI.success,
 });
 
 const Whom = Action.make("whom", {
   description: "",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: WhoAmI.success,
 });
 
@@ -129,29 +129,29 @@ export const served = <R>(
 };
 
 // A reference is never missing, so its default would authenticate every caller.
-const Anyone = Context.Reference<{ readonly id: string }>("spec/Anyone", {
+const Defaulted = Context.Reference<{ readonly id: string }>("spec/Defaulted", {
   defaultValue: () => ({ id: "anyone" }),
 });
 
 Action.make("byDefault", {
   description: "",
-  access: "read",
+  readOnly: true,
   // @ts-expect-error An identity is a Context.Service, not a Context.Reference.
-  auth: Anyone,
+  caller: Defaulted,
 });
 
 // A misspelled option in one member of a union of options is refused too: it would drop a check.
 declare const checked:
   | {
       readonly description: "";
-      readonly access: "read";
-      readonly auth: "public";
+      readonly readOnly: true;
+      readonly caller: typeof Action.Anyone;
       readonly checks: readonly [];
     }
   | {
       readonly description: "";
-      readonly access: "read";
-      readonly auth: "public";
+      readonly readOnly: true;
+      readonly caller: typeof Action.Anyone;
       readonly check: readonly [];
     };
 

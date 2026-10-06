@@ -17,13 +17,13 @@ export const actors = {
 } as const satisfies Readonly<Record<string, Actor>>;
 
 /**
- * The identity a protected contract declares, `auth: CurrentActor`: provided per request by
+ * The identity a protected contract declares, `caller: CurrentActor`: provided per request by
  * authentication, and by the host on a local surface.
  */
 export class CurrentActor extends Context.Service<CurrentActor, Actor>()("example/CurrentActor") {}
 
 /**
- * One authorization rule for every surface, derived from each contract's own `access`. An
+ * One authorization rule for every surface, derived from each contract's own `readOnly`. An
  * implementation of protected actions states it, `{ authorize }`, so every surface serving
  * them runs it before each handler, once the caller is authenticated, and no handler contains
  * authorization code. Its `Forbidden` is built in: every endpoint and tool declares it, and
@@ -31,7 +31,7 @@ export class CurrentActor extends Context.Service<CurrentActor, Actor>()("exampl
  * challenge an OAuth client steps up on.
  */
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
-  const permission: Permission = action.access === "read" ? "users:read" : "users:write";
+  const permission: Permission = action.readOnly ? "users:read" : "users:write";
   const actor = yield* CurrentActor;
 
   if (!actor.permissions.includes(permission)) {

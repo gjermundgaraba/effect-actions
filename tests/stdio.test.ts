@@ -117,7 +117,12 @@ describe("MCP stdio example", () => {
 });
 
 describe("runStdio's invalid arguments", () => {
-  const Ping = Action.make("ping", { description: "Answer", access: "read", auth: "public" });
+  const Ping = Action.make("ping", {
+    description: "Answer",
+    readOnly: true,
+    caller: Action.Anyone,
+  });
+
   const ping = Action.implement(Ping, () => Effect.void);
 
   const Answered = Schema.fromJsonString(
@@ -161,8 +166,8 @@ describe("runStdio's invalid arguments", () => {
 describe("runStdio's successes", () => {
   const read = {
     description: "Succeeds with one kind of JSON value",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
   } as const;
 
   const Ready = Action.make("ready", { ...read, success: { ready: Schema.Boolean } });
@@ -304,8 +309,8 @@ it.effect(
     Effect.gen(function* () {
       const Ping = Action.make("ping", {
         description: "Answer pong",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String,
       });
 
@@ -356,8 +361,8 @@ it.live(
     Effect.gen(function* () {
       const Commit = Action.make("commit", {
         description: "Commit a write",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
       });
 
       const call = {
@@ -402,7 +407,11 @@ it.live(
 
 it.effect("serves native features given as features beside the tools", () =>
   Effect.gen(function* () {
-    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
 
     const [listed = ""] = yield* converse(
       ActionMcp.runStdio(
@@ -425,7 +434,11 @@ it.effect("serves native features given as features beside the tools", () =>
 // MCP negotiates: the host proceeds on it or disconnects.
 it.effect.each(["2025-03-26", "2024-11-05"])("offers 2025-11-25 to a host asking for %s", (asked) =>
   Effect.gen(function* () {
-    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
 
     const line = yield* negotiate(
       ActionMcp.runStdio(
@@ -447,8 +460,8 @@ describe("runStdio's input schemas", () => {
 
   const Put = Action.make("put", {
     description: "Store an item",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { item: Item },
   });
 
@@ -537,8 +550,8 @@ describe("runStdio's console", () => {
 
       const Status = Action.make("status", {
         description: "Report",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
       });
 
       // The builder runs when the server starts; a host with nothing on stdin then closes it.

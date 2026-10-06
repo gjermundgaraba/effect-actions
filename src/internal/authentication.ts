@@ -2,6 +2,7 @@ import { type Context, Effect, Option } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../Action.js";
+import { Anyone } from "./actions.js";
 import type { Protected, ServedRequest, Serving } from "./implementation.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
@@ -80,7 +81,7 @@ export type Any = Descriptor<unknown, unknown, Security>;
 
 export type Identity<A extends Action.Any> = [A] extends [never]
   ? never
-  : A["auth"] extends Context.Key<infer I, unknown>
+  : A["caller"] extends Context.Key<infer I, unknown>
     ? I
     : never;
 
@@ -89,7 +90,7 @@ export type Identity<A extends Action.Any> = [A] extends [never]
  * key is known only at run time, where `assertAuthentication` checks it.
  */
 type Covered<A extends Action.Any> =
-  Exclude<A["auth"], "public"> extends Context.Key<infer I, unknown> ? I : never;
+  Exclude<A["caller"], typeof Anyone> extends Context.Key<infer I, unknown> ? I : never;
 
 export type Required<A extends Action.Any> = [Protected<A>] extends [never]
   ? { readonly authentication?: Any }
@@ -113,7 +114,7 @@ export type Matching<A extends Action.Any, D> =
 
 /** Keep public requirements separate, without rescanning all handlers for every action. */
 export type RemoteRequest<App, A extends Action.Any> =
-  | ServedRequest<App, Extract<A, { readonly auth: "public" }>>
+  | ServedRequest<App, Extract<A, { readonly caller: typeof Anyone }>>
   | Exclude<ServedRequest<App, Protected<A>>, Identity<Protected<A>>>;
 
 export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
@@ -127,7 +128,10 @@ export const assertAuthentication = (
   auth: Any | undefined,
 ): void => {
   for (const action of actions) {
-    if (action.auth !== "public" && (auth === undefined || action.auth.key !== auth.service.key)) {
+    if (
+      action.caller !== Anyone &&
+      (auth === undefined || action.caller.key !== auth.service.key)
+    ) {
       throw new Error(
         `Protected action '${action.name}' requires its matching authentication descriptor`,
       );

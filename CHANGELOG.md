@@ -3,22 +3,22 @@
 ## 0.10.0
 
 One contract, one implementation, one rule for who may call. `ActionGroup` is gone: a contract
-states who may call it, `auth: "public"` or the identity a caller must have, and every surface
-enforces it; `Action.implement` binds handlers to actions, behind the `authorize` an implementation
-of protected actions states, and declared checks, such as a rate limit, run before them on every
-surface. Authentication is a named, browser-safe descriptor the binding names and a server-only
-verifier, enforced and documented as native endpoint security, before any body is read. HTTP binds a
-flat list of actions, and one layer serves the public and the protected ones; one MCP endpoint
-serves signed-out and signed-in callers. Every client calls an action with its input, and
+states who may call it, `caller: Action.Anyone` or the identity a caller must have, and every
+surface enforces it; `Action.implement` binds handlers to actions, behind the `authorize` an
+implementation of protected actions states, and declared checks, such as a rate limit, run before
+them on every surface. Authentication is a named, browser-safe descriptor the binding names and a
+server-only verifier, enforced and documented as native endpoint security, before any body is read.
+HTTP binds a flat list of actions, and one layer serves the public and the protected ones; one MCP
+endpoint serves signed-out and signed-in callers. Every client calls an action with its input, and
 `Action.client` calls implementations in process, which is how their behavior is tested. Every
 endpoint and tool declares the built-in `InvalidInput` (400), `Unauthenticated` (401) and
 `Forbidden` (403). A builder runs once per layer graph, each call has a scope of its own, and a
 request's own values win over startup ones. CLI flags come from each action's input, and a command
 runs on Effect's own `NodeRuntime.runMain`, printing a failure on stderr as the JSON HTTP sends. The
 client modules merge into `ActionHttp` and `ActionCli`, clients and `Testing` are Effect-only, and
-`ActionCatalog` and `TestingClient` are removed. `mcp.text` becomes the `text` hint, and stdio also
-serves 2025-11-25 and 2025-06-18, so Claude Code and Codex connect. The docs say where builders and
-your own services are built.
+`ActionCatalog` and `TestingClient` are removed. `access` becomes `readOnly`, `mcp` takes MCP's own
+hint names, and stdio also serves 2025-11-25 and 2025-06-18, so Claude Code and Codex connect. The
+docs say where builders and your own services are built.
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0`. The `effect` peer narrows
 to `~4.0.0`, Effect's 4.0.x patches: the modules every surface builds on are unstable in Effect,
@@ -40,13 +40,13 @@ const pages = ActionGroup.make({ name: "pages" }, ReadPage).implement({ readPage
 ActionMcp.layerHttp([users, pages], { name, version, path: "/mcp", errors, before: authorize });
 
 // 0.10.0
-const GetUser = Action.make("getUser", { ..., auth: CurrentActor });
+const GetUser = Action.make("getUser", { ..., readOnly: true, caller: CurrentActor });
 const users = Action.implement([GetUser, RenameUser], build, { authorize });
 const Login = Authentication.make("app.Login", CurrentActor);
 const Http = ActionHttp.make([GetUser, RenameUser], { authentication: Login });
 const authenticate = Authentication.layer(Login, verify, { protectedResource });
 ActionHttp.layer(Http, users).pipe(Layer.provide(authenticate));
-const ReadPage = Action.make("readPage", { ..., auth: CurrentActor, hints: { text: "markdown" } });
+const ReadPage = Action.make("readPage", { ..., caller: CurrentActor, mcp: { text: "markdown" } });
 const pages = Action.implement(ReadPage, read, { authorize });
 ActionMcp.layerHttp([users, pages], { name, version, authentication: Login }).pipe(
   Layer.provide(authenticate),
@@ -59,29 +59,30 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 | 0.8.0                                                                     | 0.10.0                                                                                                                                                                                                                                                                              |
 | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                                                                                                    |
+| `access: "read"`, `access: "write"`, `action.access`, `Action.Access`     | `readOnly: true`, `readOnly: false`, `action.readOnly`, a boolean kept as its literal; the span and log attribute `action.access` becomes `action.read_only`, a boolean                                                                                                             |
+| `mcp.destructive`, `mcp.idempotent`, `mcp.openWorld`                      | `mcp.destructiveHint`, `mcp.idempotentHint`, `mcp.openWorldHint`: MCP's own names, each left out MCP's default, but a read-only action's `destructiveHint`, which is `false`                                                                                                        |
+| `action.mcp`, `Action.McpOptions`                                         | `action.mcp`, the options as given, without defaults, `Action.Mcp`                                                                                                                                                                                                                  |
 | `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command                                                      |
-| `mcp.readOnly`                                                            | `access: "read"`                                                                                                                                                                                                                                                                    |
-| `mcp: { text: "markdown" }` on `Action.make`                              | `hints: { text: "markdown" }` on `Action.make`, which every MCP endpoint and `Testing.mcpClient` read                                                                                                                                                                               |
+| `mcp.readOnly`                                                            | The contract's `readOnly`: a tool is read-only exactly when its action is                                                                                                                                                                                                           |
 | `mcp: false`                                                              | Leave the action out of the `actions` option of `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make`: list the actions that are tools beside the contracts, `actions: Tools`, and an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
 | `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                                                                               |
-| `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, Access, Auth, Checks>`; `Action.Options` has none                                                                                                                                                                                      |
+| `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, ReadOnly, Caller, Checks>`; `Action.Options` has none                                                                                                                                                                                  |
 
-- Every contract states who may call it, `auth`: `"public"`, or the identity service a caller
-  must have, such as `auth: CurrentActor`. Without it `make` does not compile, and from plain
-  JavaScript throws `Missing auth: declare public or an identity service key`. 0.8.0 left this
-  to whichever layers the host wrapped in authentication. Every surface now enforces it, whatever
-  the handler reads: remotely through the binding's or endpoint's authentication descriptor,
-  locally by owing the identity per call. Give `auth: "public"` to an action 0.8.0 served
-  without authentication or a hook, and the identity its hook or handler read to every other.
-  The module declaring the identity, a `Context.Service`, stays free of server code: contracts
-  import it.
+- Every contract states who may call it, `caller`: `Action.Anyone`, or the identity service a caller
+  must have, such as `caller: CurrentActor`. Without it `make` does not compile, and from plain
+  JavaScript throws `Missing caller: declare Action.Anyone or an identity service key`. 0.8.0 left
+  this to whichever layers the host wrapped in authentication. Every surface now enforces it,
+  whatever the handler reads: remotely through the binding's or endpoint's authentication
+  descriptor, locally by owing the identity per call. Give `caller: Action.Anyone` to an action
+  0.8.0 served without authentication or a hook, and the identity its hook or handler read to every
+  other. The module declaring the identity, a `Context.Service`, stays free of server code:
+  contracts import it.
 - `checks: [Limited]` lists an action's checks ([Action.md](docs/Action.md#checks)), whose
   errors join its `errors`.
 - `Action.make` throws `Invalid action name: <name>` for a name over 128 characters, which 0.8.0
-  refused only as a tool name: shorten it. Its types refuse an unknown hint, such as a
-  misspelling, `hints.destructive` on a read, and hints typed by a helper's type parameter:
-  type that parameter `Action.Hints`.
+  refused only as a tool name: shorten it. Its types refuse an unknown `mcp` key, such as a
+  misspelling or `readOnlyHint`, and options typed by a helper's type parameter: type that
+  parameter `Action.Mcp`. A `readOnly` that is not a boolean throws `Invalid readOnly: <value>`.
 
 #### Implementations and authorization
 
@@ -194,18 +195,18 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### HTTP
 
-| 0.8.0                                                                                  | 0.10.0                                                                                                                                                                                                                                                                     |
-| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, errors?, authentication? })`: `prefix: "/api/users"` keeps `/api/users/getUser`; `authentication` is required for a protected action                                                                                                  |
-| The `ActionHttp.Http` type, `Http.groups`                                              | `ActionHttp.Binding`, `Http.actions`                                                                                                                                                                                                                                       |
-| `ActionHttp.Api`, `ActionHttp.LayerOptions`                                            | `typeof Http.api`; `ActionHttp.LayerOptions` is now `layer`'s `middleware`                                                                                                                                                                                                 |
-| `Http.layer(implementations, { before })`                                              | `ActionHttp.layer(Http, implementations, { middleware? })`, with the binding's authentication provider: `.pipe(Layer.provide(authenticate))`                                                                                                                               |
-| A group left out of `ActionHttp.make`, implemented apart, to keep its actions off HTTP | The actions left out of `ActionHttp.make`, implemented with the others                                                                                                                                                                                                     |
-| `Http.openApi()`                                                                       | `HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`, the route 0.6.0's `openApi` replaced: `Http.api` is native                                                                                                                        |
-| `ActionCatalog`                                                                        | `OpenApi.fromApi(ActionHttp.make(actions).api)` of the actions to describe, offline. A binding no layer serves may hold actions HTTP leaves out, such as a tool for agents, which `Http.api` omits. Or use an MCP endpoint's `tools/list`. Hints are each action's `hints` |
-| `HttpApiClient.make(Http.api)`'s `client.users.getUser({ payload })`                   | `ActionHttp.client(Http)`'s `client.getUser(input)`; natively `client.getUser({ payload })`                                                                                                                                                                                |
-| `ActionHttpClient.promise(Http, options)`                                              | `ActionHttp.fetchClient(Http, options)`, built once, each call `Effect.runPromise`d ([ActionHttp.md](docs/ActionHttp.md#promise-callers)), the wrapper 0.6.0's `promise` replaced: clients are Effect-only                                                                 |
-| `ActionHttpClient.Client`, `Method`, `Options`                                         | `ActionHttp.Client`, `ActionHttp.ClientOptions`; `fetch` is `fetchClient`'s option, or `FetchHttpClient.Fetch` around `client`                                                                                                                                             |
+| 0.8.0                                                                                  | 0.10.0                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, errors?, authentication? })`: `prefix: "/api/users"` keeps `/api/users/getUser`; `authentication` is required for a protected action                                                                                                |
+| The `ActionHttp.Http` type, `Http.groups`                                              | `ActionHttp.Binding`, `Http.actions`                                                                                                                                                                                                                                     |
+| `ActionHttp.Api`, `ActionHttp.LayerOptions`                                            | `typeof Http.api`; `ActionHttp.LayerOptions` is now `layer`'s `middleware`                                                                                                                                                                                               |
+| `Http.layer(implementations, { before })`                                              | `ActionHttp.layer(Http, implementations, { middleware? })`, with the binding's authentication provider: `.pipe(Layer.provide(authenticate))`                                                                                                                             |
+| A group left out of `ActionHttp.make`, implemented apart, to keep its actions off HTTP | The actions left out of `ActionHttp.make`, implemented with the others                                                                                                                                                                                                   |
+| `Http.openApi()`                                                                       | `HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`, the route 0.6.0's `openApi` replaced: `Http.api` is native                                                                                                                      |
+| `ActionCatalog`                                                                        | `OpenApi.fromApi(ActionHttp.make(actions).api)` of the actions to describe, offline. A binding no layer serves may hold actions HTTP leaves out, such as a tool for agents, which `Http.api` omits. Or use an MCP endpoint's `tools/list`. Hints are each action's `mcp` |
+| `HttpApiClient.make(Http.api)`'s `client.users.getUser({ payload })`                   | `ActionHttp.client(Http)`'s `client.getUser(input)`; natively `client.getUser({ payload })`                                                                                                                                                                              |
+| `ActionHttpClient.promise(Http, options)`                                              | `ActionHttp.fetchClient(Http, options)`, built once, each call `Effect.runPromise`d ([ActionHttp.md](docs/ActionHttp.md#promise-callers)), the wrapper 0.6.0's `promise` replaced: clients are Effect-only                                                               |
+| `ActionHttpClient.Client`, `Method`, `Options`                                         | `ActionHttp.Client`, `ActionHttp.ClientOptions`; `fetch` is `fetchClient`'s option, or `FetchHttpClient.Fetch` around `client`                                                                                                                                           |
 
 - Routes are `POST <prefix>/<action>`, `/api` by default, with operation ID `<action>`, so
   action names are unique per binding; 0.8.0's were `POST <apiPath>/<group>/<action>`, with
@@ -290,7 +291,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `layer`'s `protectedResource`, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusal`                                                                                                                                                                                                                                                                                                                                            |
 | A 401 challenge naming a scope                                                   | `scopesRequired` in the protected resource                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | An insufficient-scope error of your own and a hand-built challenge               | `new Action.Forbidden({ message, scopes: [scope] })`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Middleware provided around a layer to authenticate it                            | The contracts' `auth` decides, and the layer requires the provider: a protected action is authenticated on every layer serving it, a public one on none                                                                                                                                                                                                                                                                                                                                |
+| Middleware provided around a layer to authenticate it                            | The contracts' `caller` decides, and the layer requires the provider: a protected action is authenticated on every layer serving it, a public one on none                                                                                                                                                                                                                                                                                                                              |
 | Middleware reading the identity, after authentication                            | `ActionHttp.layer(Http, apps, { middleware: [LogCaller] })`, native `HttpApiMiddleware`; over HTTP only                                                                                                                                                                                                                                                                                                                                                                                |
 
 - A descriptor covers action endpoints alone: an `HttpRouter.add` route that sat under 0.8.0's
@@ -399,14 +400,14 @@ Each area below lists what is renamed or removed, then what changes without a re
   as `structuredContent` too, where a host preferring structured content showed the model the
   rest without the field, and listed an `outputSchema` without the field. A program reading
   the rest as structured content reads the JSON of the second text block instead;
-  `Testing.mcpClient`, reading the same hint, does. Every other surface serves the whole
+  `Testing.mcpClient`, reading the same `text`, does. Every other surface serves the whole
   success. `text` is typed by `make`: a top-level string field of the encoded success,
   optional or not, which a scalar, array, union or record success does not have.
   0.8.0 accepted a union member's field, or any name for a record, and then failed the layer
   build. Where the types cannot tell, as for an erased success or a union of one struct,
   `layerHttp` and `runStdio` throw when called, naming every such action:
   `MCP tool text field must be a top-level property of its success: <name> ('<field>')`.
-  Make such a success one struct, or drop the hint.
+  Make such a success one struct, or drop `text`.
 
 #### Toolkit
 
@@ -508,8 +509,8 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `Authentication.make` refuses, in its types, a `security` that is no native scheme, such as a
   record of them, before the run time throws; `layer` refuses a `protectedResource` for a
   scheme other than Bearer the same way.
-- `Action.make` refuses a `Context.Reference` as `auth`, in its types and at run time
-  (`Invalid auth: an identity is a Context.Service, not a Context.Reference`): a reference is
+- `Action.make` refuses a `Context.Reference` as `caller`, in its types and at run time
+  (`Invalid caller: an identity is a Context.Service, not a Context.Reference`): a reference is
   never missing, so its default would stand in for every caller who supplies none.
 - `Action.implement` throws `A public-only target takes no authorize` when plain JavaScript gives
   `authorize` to public actions alone, which would never run, as its types already refuse.
@@ -550,7 +551,7 @@ Each area below lists what is renamed or removed, then what changes without a re
     error: RateLimited,
     requires: CurrentActor,
   }) {}
-  const Invite = Action.make("invite", { ..., auth: CurrentActor, checks: [Limited] });
+  const Invite = Action.make("invite", { ..., caller: CurrentActor, checks: [Limited] });
   const LimitedLive = Layer.effect(
     Limited,
     Effect.map(Limiter, (limiter) => () => Effect.flatMap(CurrentActor, ({ id }) => limiter.take(id))),
@@ -699,7 +700,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   is its flag's, `value` for one taking JSON or text.
 - `ActionCli.command` and `ActionCli.make`'s `commands` take `aliases`, a flag's short name by
   field, `{ aliases: { limit: "n" } }`, through native `Param.withAlias`.
-- Hints take `title` and `meta`, an MCP tool's display title and its `_meta`, through native
+- `mcp` takes `title` and `_meta`, an MCP tool's display title and its `_meta`, through native
   `Tool.Title` and `Tool.Meta`.
 - `ActionMcp.layerHttp` and `runStdio` take the options' type as their second type argument,
   `<Apps, O, E, R, D>`, as `ActionToolkit.make` and `Action.client` do, and native `features`

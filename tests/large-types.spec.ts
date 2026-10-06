@@ -42,8 +42,7 @@ export const largeAuthorizationTypes = (
 
   Action.implement(sixty, sixtyHandlers, { authorize: Action.allowAll });
   Action.implement(sixty, sixtyHandlers, {
-    authorize: (action) =>
-      action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden()),
+    authorize: (action) => (action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden())),
   });
   // @ts-expect-error The limit every action declares is its check's to fail with, not authorization's.
   Action.implement(sixty, sixtyHandlers, { authorize: () => Effect.fail(new Throttled()) });
@@ -62,7 +61,7 @@ export const largeAuthorizationTypes = (
   // Four hundred actions, listed as a tuple or an array, behind an authorizer written inline
   // or annotated `Action.Authorize`.
   const authorize: Action.Authorize<FourHundred[number]> = (action) =>
-    action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
+    action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden());
 
   Action.implement(fourHundred, fourHundredHandlers, {
     authorize: () => Effect.fail(new Action.Forbidden()),

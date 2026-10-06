@@ -17,8 +17,8 @@ export const Login = Authentication.make("declarations.Login", Principal);
 
 export const Whoami = Action.make("whoami", {
   description: "The signed-in principal",
-  access: "read",
-  auth: Principal,
+  readOnly: true,
+  caller: Principal,
   success: Schema.String,
 });
 
@@ -51,8 +51,8 @@ export class Limit extends Action.Check<Limit>()("declarations/Limit", {
 
 export const Lookup = Action.make("lookup", {
   description: "Look a record up",
-  access: "read",
-  auth: Principal,
+  readOnly: true,
+  caller: Principal,
   input: { id: Schema.String },
   success: Schema.String,
   checks: [Limit],

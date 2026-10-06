@@ -94,7 +94,11 @@ describe("a mixed MCP endpoint", () => {
   });
 
   it("answers a public tool's step-up refusal as its result, signed in or not, as HTTP does", async () => {
-    const Peek = Action.make("peek", { description: "Peek", access: "read", auth: "public" });
+    const Peek = Action.make("peek", {
+      description: "Peek",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
 
     const peeking = Action.implement(Peek, () =>
       Effect.fail(new Action.Forbidden({ message: "Needs read.", scopes: ["users:read"] })),

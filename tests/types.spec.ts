@@ -139,10 +139,10 @@ export const typeAssertions = () => {
   const contextual = Action.implement(
     Action.make("client", {
       description: "Client",
-      access: "write",
-      auth: "public",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
-      hints: {},
+      mcp: {},
     }),
     () => Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? ""),
   );
@@ -158,8 +158,8 @@ export const typeAssertions = () => {
   const requestOnly = Action.implement(
     Action.make("whoever", {
       description: "",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: WhoAmI.success,
     }),
     () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
@@ -186,8 +186,8 @@ export const implementTypes = () => {
   // Fields shorthand: a record of fields stands for the struct of them, input and success.
   const Lookup = Action.make("lookup", {
     description: "Lookup",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     input: { id: Schema.String, limit: Schema.optionalKey(Schema.Finite) },
     success: { id: Schema.String, name: Schema.String },
   });
@@ -204,8 +204,8 @@ export const implementTypes = () => {
 
   const Rename = Action.make("rename", {
     description: "Rename",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: Schema.Struct({ id: Schema.String, name: Schema.String }),
     success: Schema.String,
   });
@@ -213,8 +213,8 @@ export const implementTypes = () => {
   // The same rename, for a signed-in principal.
   const Secured = Action.make("secured", {
     description: "Rename, signed in",
-    access: "write",
-    auth: Principal,
+    readOnly: false,
+    caller: Principal,
     input: Schema.Struct({ id: Schema.String, name: Schema.String }),
     success: Schema.String,
   });
@@ -336,8 +336,8 @@ export const implementTypes = () => {
   // over HTTP or MCP over HTTP.
   const Headers = Action.make("headers", {
     description: "",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -419,8 +419,8 @@ export const clientTypes = Effect.gen(function* () {
 export const builtInErrorTypes = () => {
   const Echo = Action.make("echo", {
     description: "Echo",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { value: Schema.Finite },
     success: Schema.Finite,
   });
@@ -446,8 +446,8 @@ export const builtInErrorTypes = () => {
   Action.implement(Echo, () => Effect.fail(new Action.InvalidInput({ message: "Too many" })));
   Action.make("listed", {
     description: "",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     // @ts-expect-error No action lists a built-in error: every surface declares it.
     errors: [Action.Forbidden],
   });
@@ -486,15 +486,15 @@ export const layerTypes = () => {
 
   const Invoice = Action.make("invoice", {
     description: "Invoice",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.Number,
   });
 
   const Report = Action.make("report", {
     description: "Report",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.Number,
   });
 
@@ -603,8 +603,8 @@ export const authorizeTypes = () => {
 
   const Read = Action.make("read", {
     description: "Read",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -626,7 +626,7 @@ export const authorizeTypes = () => {
     authorize: (action) => {
       expectTypeOf(action).toEqualTypeOf<typeof Read>();
 
-      return action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
+      return action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden());
     },
   });
 
@@ -670,8 +670,8 @@ export const checkTypes = () => {
 
   const Get = Action.make("get", {
     description: "Get",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
     errors: [NotFound],
     checks: [Limited],
@@ -679,8 +679,8 @@ export const checkTypes = () => {
 
   const Put = Action.make("put", {
     description: "Put",
-    access: "write",
-    auth: CurrentActor,
+    readOnly: false,
+    caller: CurrentActor,
     success: Schema.String,
     errors: [NotFound, Conflict],
     checks: [Limited],
@@ -689,13 +689,17 @@ export const checkTypes = () => {
   // Listed in `errors` too, it is declared once.
   const Ping = Action.make("ping", {
     description: "Ping",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     errors: [RateLimited],
     checks: [Limited],
   });
 
-  const Status = Action.make("status", { description: "Status", access: "read", auth: "public" });
+  const Status = Action.make("status", {
+    description: "Status",
+    readOnly: true,
+    caller: Action.Anyone,
+  });
 
   // Each action's errors: its own and its checks'.
   expectTypeOf<(typeof Put)["errors"][number]["Type"]>().toEqualTypeOf<
@@ -728,7 +732,7 @@ export const checkTypes = () => {
 
   // Typed over any action, a refusing authorizer guards any implementation.
   const authorize: Action.Authorize<Action.Any> = (action) =>
-    action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
+    action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden());
 
   const limited = Action.implement([Get, Put, Ping], handlers, { authorize });
 
@@ -782,8 +786,8 @@ export const checkTypes = () => {
 export const requiredAuthorizeTypes = () => {
   const Read = Action.make("read", {
     description: "Read",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -806,16 +810,16 @@ export const effectFnHandlerTypes = () => {
 
   const Lookup = Action.make("lookup", {
     description: "Lookup",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     input: { id: Schema.String },
     success: { id: Schema.String, name: Schema.String },
   });
 
   const Rename = Action.make("rename", {
     description: "Rename",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     input: { id: Schema.String, name: Schema.String },
     success: Schema.String,
   });
@@ -954,15 +958,15 @@ export const deferredTypes = () => {
 
   const Stamp = Action.make("stamp", {
     description: "Stamp",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
   const Echo = Action.make("echo", {
     description: "Echo",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     input: { value: Schema.String },
     success: Schema.String,
   });
@@ -1044,7 +1048,7 @@ export const deferredTypes = () => {
 export const builtAuthorizerTypes = () => {
   class Permissions extends Context.Service<
     Permissions,
-    { readonly allows: (actor: string, access: Action.Access) => boolean }
+    { readonly allows: (actor: string, readOnly: boolean) => boolean }
   >()("types-spec/Permissions") {}
 
   class Actor extends Context.Service<Actor, string>()("types-spec/Actor") {}
@@ -1059,15 +1063,15 @@ export const builtAuthorizerTypes = () => {
 
   const Lookup = Action.make("lookup", {
     description: "Lookup",
-    access: "read",
-    auth: Actor,
+    readOnly: true,
+    caller: Actor,
     success: Schema.String,
   });
 
   const Rename = Action.make("rename", {
     description: "Rename",
-    access: "write",
-    auth: Actor,
+    readOnly: false,
+    caller: Actor,
     success: Schema.String,
   });
 
@@ -1089,7 +1093,7 @@ export const builtAuthorizerTypes = () => {
 
           void [name, other];
 
-          if (!permissions.allows(yield* Actor, action.access)) {
+          if (!permissions.allows(yield* Actor, action.readOnly)) {
             return yield* new Action.Forbidden();
           }
         });
@@ -1183,9 +1187,9 @@ export const builtAuthorizerTypes = () => {
         void [name, other];
 
         // @ts-expect-error A misspelled field is refused, not read as `undefined`.
-        if (action.acess === "write") return yield* new Action.Forbidden();
+        if (action.redOnly === false) return yield* new Action.Forbidden();
 
-        if (!permissions.allows(yield* Actor, action.access)) {
+        if (!permissions.allows(yield* Actor, action.readOnly)) {
           return yield* new Action.Forbidden();
         }
       });
@@ -1201,7 +1205,7 @@ export const builtAuthorizerTypes = () => {
 
         void [name, other];
 
-        if (!permissions.allows(yield* Actor, action.access)) {
+        if (!permissions.allows(yield* Actor, action.readOnly)) {
           return yield* new Action.Forbidden();
         }
       }),
@@ -1219,7 +1223,7 @@ export const builtAuthorizerTypes = () => {
 
         void [name, other];
 
-        if (!permissions.allows(yield* Actor, action.access)) {
+        if (!permissions.allows(yield* Actor, action.readOnly)) {
           return yield* new Action.Forbidden();
         }
       });
@@ -1243,9 +1247,9 @@ export const builtAuthorizerTypes = () => {
 
         return Effect.fn(function* (action) {
           // @ts-expect-error A misspelled field is refused, not read as `undefined`.
-          if (action.acess === "write") return yield* new Action.Forbidden();
+          if (action.redOnly === false) return yield* new Action.Forbidden();
 
-          if (!permissions.allows(yield* Actor, action.access)) {
+          if (!permissions.allows(yield* Actor, action.readOnly)) {
             return yield* new Action.Forbidden();
           }
         });
@@ -1262,8 +1266,8 @@ export const erasedImplementationTypes = () => {
 
   const Stored = Action.make("stored", {
     description: "Stored",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -1319,8 +1323,8 @@ export const erasedImplementationTypes = () => {
   // Beside the helper's own implementations, the type parameter is spread or listed.
   const Paired = Action.make("paired", {
     description: "Paired",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
@@ -1372,15 +1376,15 @@ export const bindingSelectionTypes = () => {
 
   const Read = Action.make("read", {
     description: "Read",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
   const Audit = Action.make("audit", {
     description: "Audit",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -1471,8 +1475,8 @@ export const authenticationLayerTypes = () => {
 
   const Who = Action.make("who", {
     description: "Who",
-    access: "read",
-    auth: Identity,
+    readOnly: true,
+    caller: Identity,
     success: Schema.String,
   });
 
@@ -1570,12 +1574,16 @@ export const authenticationLayerTypes = () => {
 };
 
 export const voidSuccessTypes = () => {
-  const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
+  const Reset = Action.make("reset", {
+    description: "Reset",
+    readOnly: false,
+    caller: Action.Anyone,
+  });
 
   const Explicit = Action.make("explicit", {
     description: "Explicit",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     success: Schema.Void,
   });
 
@@ -1596,102 +1604,115 @@ export const voidSuccessTypes = () => {
   Action.implement(Explicit, () => Effect.succeed(1));
 };
 
-export const hintTypes = (built: Action.Hints, dangerous: boolean) => {
-  // Every hint a write may state, a read's without `destructive`, and hints built ahead.
+export const mcpOptionTypes = (built: Action.Mcp, dangerous: boolean) => {
+  // Every MCP hint, on a write and on a read alike, and options built ahead.
   const Write = Action.make("write", {
     description: "Every hint",
-    access: "write",
-    auth: "public",
-    hints: { destructive: false, idempotent: true, openWorld: false },
+    readOnly: false,
+    caller: Action.Anyone,
+    mcp: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   });
 
   const Read = Action.make("read", {
     description: "A read's hints",
-    access: "read",
-    auth: "public",
-    hints: { idempotent: true, openWorld: false },
+    readOnly: true,
+    caller: Action.Anyone,
+    mcp: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   });
 
-  // The access is kept as its literal, so a rule switching on it narrows.
-  expectTypeOf<(typeof Write)["access"]>().toEqualTypeOf<"write">();
-  expectTypeOf<(typeof Read)["access"]>().toEqualTypeOf<"read">();
+  // `readOnly` is kept as its literal, so a type selecting the reads narrows.
+  expectTypeOf<(typeof Write)["readOnly"]>().toEqualTypeOf<false>();
+  expectTypeOf<(typeof Read)["readOnly"]>().toEqualTypeOf<true>();
+  expectTypeOf<Extract<typeof Write | typeof Read, { readonly readOnly: true }>>().toEqualTypeOf<
+    typeof Read
+  >();
 
   Action.make("built", {
-    description: "Hints built ahead",
-    access: "write",
-    auth: "public",
-    hints: built,
+    description: "Options built ahead",
+    readOnly: false,
+    caller: Action.Anyone,
+    mcp: built,
   });
 
   Action.make("typo", {
     description: "A misspelled hint",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     // @ts-expect-error A misspelled hint is refused beside a valid one, not silently ignored.
-    hints: { destructive: false, idempotnt: true },
+    mcp: { destructiveHint: false, idempotntHint: true },
   });
 
   Action.make("readOnly", {
     description: "A read-only hint",
-    access: "write",
-    auth: "public",
-    // @ts-expect-error A tool is read-only exactly when its action reads, beside other hints too.
-    hints: { readOnly: true, idempotent: true },
+    readOnly: false,
+    caller: Action.Anyone,
+    // @ts-expect-error A tool is read-only exactly when its action is, beside other hints too.
+    mcp: { readOnlyHint: true, idempotentHint: true },
   });
 
-  const loose = { openWorld: false, idempotnt: true };
+  // The hints are MCP's names, not shorthands.
+  Action.make("short", {
+    description: "A shorthand",
+    readOnly: false,
+    caller: Action.Anyone,
+    // @ts-expect-error `destructive` is not MCP's name.
+    mcp: { destructive: false },
+  });
+
+  const loose = { openWorldHint: false, idempotntHint: true };
 
   Action.make("loose", {
     description: "A misspelled hint built ahead",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     // @ts-expect-error A misspelled hint is refused in a value built ahead too.
-    hints: loose,
+    mcp: loose,
   });
 
-  // Hints given by a condition, spread or chosen, are checked in every branch.
+  // Options given by a condition, spread or chosen, are checked in every branch.
   Action.make("spread", {
     description: "Hints spread by a condition",
-    access: "write",
-    auth: "public",
-    ...(dangerous ? { hints: { destructive: true, idempotent: true } } : {}),
+    readOnly: false,
+    caller: Action.Anyone,
+    ...(dangerous ? { mcp: { destructiveHint: true, idempotentHint: true } } : {}),
   });
 
   // @ts-expect-error A misspelled hint in a conditional spread is refused too.
   Action.make("spreadTypo", {
     description: "A misspelled hint spread by a condition",
-    access: "write",
-    auth: "public",
-    ...(dangerous ? { hints: { destructive: true, idempotnt: true } } : {}),
+    readOnly: false,
+    caller: Action.Anyone,
+    ...(dangerous ? { mcp: { destructiveHint: true, idempotntHint: true } } : {}),
   });
 
-  const valid = { idempotent: true };
+  const valid = { idempotentHint: true };
 
   Action.make("chosenTypo", {
     description: "A misspelled hint in one branch",
-    access: "write",
-    auth: "public",
+    readOnly: false,
+    caller: Action.Anyone,
     // @ts-expect-error A misspelled hint in either branch is refused.
-    hints: dangerous ? loose : valid,
+    mcp: dangerous ? loose : valid,
   });
 
-  // The check cannot read hints a helper's type parameter stands for, so it refuses them. An
-  // action's type carries no hint types: a helper typing its parameter `Action.Hints` compiles.
-  const generic = <const H extends Action.Hints>(hints: H) =>
+  // The check cannot read options a helper's type parameter stands for, so it refuses them.
+  // An action's type carries no option types: a helper typing its parameter `Action.Mcp`
+  // compiles.
+  const generic = <const H extends Action.Mcp>(mcp: H) =>
     // @ts-expect-error Type 'H' is not assignable to type 'H & ...'.
     Action.make("generic", {
-      description: "Hints of a type parameter",
-      access: "write",
-      auth: "public",
-      hints,
+      description: "Options of a type parameter",
+      readOnly: false,
+      caller: Action.Anyone,
+      mcp,
     });
 
-  const typed = (hints: Action.Hints) =>
+  const typed = (mcp: Action.Mcp) =>
     Action.make("typed", {
-      description: "Hints of a helper",
-      access: "write",
-      auth: "public",
-      hints,
+      description: "Options of a helper",
+      readOnly: false,
+      caller: Action.Anyone,
+      mcp,
     });
 
   void generic;
@@ -1703,49 +1724,42 @@ export const servedRequirementTypes = () => {
 
   const principal = () => Effect.map(Principal, (name) => name);
 
-  const hintsApp = Action.implement(
+  const mcpApp = Action.implement(
     Action.make("act", {
       description: "A tool",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
-      hints: { idempotent: true },
+      mcp: { idempotentHint: true },
     }),
     principal,
   );
 
   Action.make("typo", {
     description: "Typo",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
     // @ts-expect-error A misspelled option is an unknown property, not silently ignored.
-    hint: { idempotent: true },
+    mpc: { idempotentHint: true },
   });
 
-  // Every hint is resolved on the contract; `text`, `title` and `meta` have no default.
-  expectTypeOf<(typeof hintsApp)["actions"][number]["hints"]>().toEqualTypeOf<{
-    readonly destructive: boolean;
-    readonly idempotent: boolean;
-    readonly openWorld: boolean;
-    readonly text: string | undefined;
-    readonly title: string | undefined;
-    readonly meta: { readonly [key: string]: Schema.Json } | undefined;
-  }>();
+  // The contract keeps the options as given, typed as `Action.Mcp`: no hint has a default.
+  expectTypeOf<(typeof mcpApp)["actions"][number]["mcp"]>().toEqualTypeOf<Action.Mcp>();
 
   Action.make("titled", {
     description: "Titled",
-    access: "read",
-    auth: "public",
-    hints: { title: "Titled", meta: { "ui/resourceUri": "ui://titled" } },
+    readOnly: true,
+    caller: Action.Anyone,
+    mcp: { title: "Titled", _meta: { "ui/resourceUri": "ui://titled" } },
   });
 
   Action.make("titled", {
     description: "Titled",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     // @ts-expect-error A title is text.
-    hints: { title: 1 },
+    mcp: { title: 1 },
   });
 };
 
@@ -1786,15 +1800,15 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
   // is typed as the option or its default, however it is written.
   const Conditional = Action.make("conditional", {
     description: "Returns data only sometimes",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: enabled ? Schema.String : undefined,
   });
 
   const Spread = Action.make("spread", {
     description: "Returns data only sometimes",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     ...(enabled ? { success: Schema.String } : {}),
   });
 
@@ -1805,8 +1819,8 @@ export const maybeAbsentOptionTypes = (enabled: boolean) => {
 
   const Who = Action.make("who", {
     description: "Who",
-    access: "read",
-    auth: CurrentActor,
+    readOnly: true,
+    caller: CurrentActor,
     success: Schema.String,
   });
 
@@ -1829,8 +1843,8 @@ export const widenedOptionTypes = () => {
   // are then as wide as what may run, rather than the defaults.
   const options: Parameters<typeof Action.make>[1] = {
     description: "Returns data",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   };
 
@@ -1840,18 +1854,22 @@ export const widenedOptionTypes = () => {
   expectTypeOf<(typeof Widened)["input"]["Type"]>().toBeUnknown();
   expectTypeOf<(typeof Widened)["errors"]>().toExtend<Action.Any["errors"]>();
   expectTypeOf<Action.Any["errors"]>().toExtend<(typeof Widened)["errors"]>();
-  expectTypeOf<(typeof Widened)["auth"]>().toEqualTypeOf<
-    "public" | Context.Key<unknown, unknown>
+  expectTypeOf<(typeof Widened)["caller"]>().toEqualTypeOf<
+    typeof Action.Anyone | Context.Key<unknown, unknown>
   >();
 };
 
 export const unionOptionTypes = (
   options:
-    | { readonly description: string; readonly access: "read"; readonly auth: "public" }
     | {
         readonly description: string;
-        readonly access: "read";
-        readonly auth: "public";
+        readonly readOnly: true;
+        readonly caller: typeof Action.Anyone;
+      }
+    | {
+        readonly description: string;
+        readonly readOnly: true;
+        readonly caller: typeof Action.Anyone;
         readonly input: { readonly id: typeof Schema.String };
         readonly success: typeof Schema.String;
         readonly errors: [typeof Schema.Number];
@@ -1874,12 +1892,12 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   // Every option a module's functions take is its own named type.
   const options = {
     description: "Options built ahead of `make`",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
   } satisfies Action.Options;
 
   const authorize: Action.Authorize<typeof Double> = (action) =>
-    action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden());
+    action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden());
 
   const actionClientOptions: Action.ClientOptions<typeof Double> = { actions: [Double] };
   const layerOptions: ActionHttp.LayerOptions = { middleware: [] };
@@ -1918,26 +1936,26 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   void [actionClientOptions, layerOptions, authenticationOptions, verifiers];
 };
 
-// A helper may type an action wider than the binding holds it, its access defaulted or its
+// A helper may type an action wider than the binding holds it, its readOnly defaulted or its
 // success widened, and implement the same contract: the layer serving it still owes what its
 // handler reads per request.
 {
   const Profile = Action.make("profile", {
     description: "The caller's id",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     success: Schema.String,
   });
 
   const binding = ActionHttp.make([Profile]);
 
-  type DefaultAccess = Action.Action<
+  type DefaultReadOnly = Action.Action<
     "profile",
     typeof Profile.input,
     typeof Profile.success,
     typeof Profile.errors,
-    Action.Access,
-    "public",
+    boolean,
+    typeof Action.Anyone,
     readonly []
   >;
 
@@ -1946,17 +1964,17 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     typeof Profile.input,
     Schema.Codec<string>,
     typeof Profile.errors,
-    "read",
-    "public",
+    true,
+    typeof Action.Anyone,
     readonly []
   >;
 
   const read = () => Effect.map(CurrentActor, ({ id }) => id);
 
-  const defaultAccess = (action: DefaultAccess) => Action.implement(action, read);
+  const defaultReadOnly = (action: DefaultReadOnly) => Action.implement(action, read);
   const widerSuccess = (action: WiderSuccess) => Action.implement(action, read);
 
-  const servedDefault = ActionHttp.layer(binding, defaultAccess(Profile));
+  const servedDefault = ActionHttp.layer(binding, defaultReadOnly(Profile));
   const servedWider = ActionHttp.layer(binding, widerSuccess(Profile));
 
   expectTypeOf<
@@ -1975,21 +1993,21 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
 
   const Search = Action.make("search", {
     description: "Search the site",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     input: { query: Schema.String },
     success: Schema.String,
   });
 
   const AgentSearch = Action.make("search", {
     description: "Search the agent's notes",
-    access: "read",
-    auth: "public",
+    readOnly: true,
+    caller: Action.Anyone,
     input: { topic: Schema.String },
     success: Schema.String,
   });
 
-  const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
+  const Ping = Action.make("ping", { description: "Ping", readOnly: true, caller: Action.Anyone });
 
   const web = Action.implement(Search, ({ query }) => Effect.succeed(query));
 
@@ -2008,7 +2026,11 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
 // An implementation annotated with an action whose name is a union of names still owes what
 // its handler reads for each.
 {
-  const Profile = Action.make("profile", { description: "", access: "read", auth: "public" });
+  const Profile = Action.make("profile", {
+    description: "",
+    readOnly: true,
+    caller: Action.Anyone,
+  });
 
   const app = Action.implement(Profile, () => Effect.asVoid(CurrentActor));
 
@@ -2018,8 +2040,8 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
       typeof Profile.input,
       typeof Profile.success,
       typeof Profile.errors,
-      "read",
-      "public",
+      true,
+      typeof Action.Anyone,
       readonly []
     >,
     (typeof app)["~request"],

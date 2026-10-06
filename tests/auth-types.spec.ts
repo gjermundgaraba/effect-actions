@@ -40,8 +40,8 @@ class Limited extends Action.Check<Limited>()("auth-types/Limited", {
 
 const Rename = Action.make("rename", {
   description: "Rename, within the caller's limit.",
-  access: "write",
-  auth: CurrentActor,
+  readOnly: false,
+  caller: CurrentActor,
   checks: [Limited],
   input: { name: Schema.String },
   success: Schema.String,
@@ -70,15 +70,17 @@ const run = <A, E>(layer: Layer.Layer<A, E>) =>
 
 export const declarationTypes = () => {
   // @ts-expect-error A contract states who may call it.
-  Action.make("unclassified", { description: "x", access: "read" });
-  Action.make("classified", { description: "x", access: "read", auth: "public" });
+  Action.make("unclassified", { description: "x", readOnly: true });
+  Action.make("classified", { description: "x", readOnly: true, caller: Action.Anyone });
 
   // @ts-expect-error A protected binding names how its identity is verified.
   ActionHttp.make([Double]);
   ActionHttp.make([Double], { authentication: Login });
 
   // A helper generic in public actions binds them without options.
-  const bindPublic = <const A extends ReadonlyArray<Action.Any & { readonly auth: "public" }>>(
+  const bindPublic = <
+    const A extends ReadonlyArray<Action.Any & { readonly caller: typeof Action.Anyone }>,
+  >(
     actions: A,
   ) => ActionHttp.make(actions);
 

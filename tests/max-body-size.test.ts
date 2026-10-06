@@ -9,8 +9,8 @@ import * as Testing from "../src/Testing.js";
 
 const Echo = Action.make("echo", {
   description: "Echo the text",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: Schema.Struct({ text: Schema.String }),
   success: Schema.String,
 });

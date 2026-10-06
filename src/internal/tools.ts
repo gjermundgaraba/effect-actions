@@ -1,4 +1,4 @@
-import { Effect, type Layer, Schema } from "effect";
+import { type Context, Effect, type Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../Action.js";
 import { assertOnce, projectedErrors } from "./actions.js";
@@ -26,20 +26,30 @@ export interface Projection {
   readonly handler?: (run: ErasedHandler<unknown>, action: Action.Any) => ErasedHandler<unknown>;
 }
 
+/** `tool` annotated with `value` under `key`, or as it is where `value` is not given. */
+const annotateIf = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S | undefined) =>
+  value === undefined ? tool : tool.annotate(key, value);
+
 /**
- * A tool's hints: read-only exactly when its action reads, and the contract's others, its
- * title and `_meta` only where given.
+ * A tool's annotations: read-only exactly when its action is, and the contract's `mcp` ones
+ * where given, so the native defaults, MCP's, stand for the others. A read-only tool is not
+ * destructive unless it says so, where the native default calls every tool destructive.
  */
-const annotate = (tool: Tool.Any, { access, hints }: Action.Any) => {
-  const hinted = tool
-    .annotate(Tool.Readonly, access === "read")
-    .annotate(Tool.Destructive, hints.destructive)
-    .annotate(Tool.Idempotent, hints.idempotent)
-    .annotate(Tool.OpenWorld, hints.openWorld);
+const annotate = (tool: Tool.Any, { readOnly, mcp }: Action.Any) => {
+  const destructive = mcp.destructiveHint ?? (readOnly ? false : undefined);
+  const meta = mcp._meta === undefined ? undefined : { ...mcp._meta };
 
-  const titled = hints.title === undefined ? hinted : hinted.annotate(Tool.Title, hints.title);
+  const hinted = annotateIf(
+    annotateIf(
+      annotateIf(tool.annotate(Tool.Readonly, readOnly), Tool.Destructive, destructive),
+      Tool.Idempotent,
+      mcp.idempotentHint,
+    ),
+    Tool.OpenWorld,
+    mcp.openWorldHint,
+  );
 
-  return hints.meta === undefined ? titled : titled.annotate(Tool.Meta, { ...hints.meta });
+  return annotateIf(annotateIf(hinted, Tool.Title, mcp.title), Tool.Meta, meta);
 };
 
 /**

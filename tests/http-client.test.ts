@@ -19,8 +19,8 @@ class NotFound extends Schema.TaggedError<NotFound>()(
 
 const Get = Action.make("get", {
   description: "Read a note",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: { id: Schema.String },
   success: { id: Schema.String, at: Schema.DateTimeUtcFromString },
   errors: [NotFound],
@@ -28,15 +28,15 @@ const Get = Action.make("get", {
 
 const Count = Action.make("count", {
   description: "Count notes",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.Finite,
 });
 
 const Remove = Action.make("remove", {
   description: "Remove every note",
-  access: "write",
-  auth: CurrentActor,
+  readOnly: false,
+  caller: CurrentActor,
   success: Schema.Null,
 });
 
@@ -188,16 +188,16 @@ it.effect(
     Effect.gen(function* () {
       const Double = Action.make("double", {
         description: "Transform in both directions",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: { value: Schema.FiniteFromString },
         success: Schema.FiniteFromString,
       });
 
       const Optional = Action.make("optional", {
         description: "Optional input",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: { value: Schema.optional(Schema.Number) },
         success: Schema.Number,
       });
@@ -214,16 +214,16 @@ it.effect(
 
       const Nullable = Action.make("nullable", {
         description: "Nullable object",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: Schema.NullOr(Schema.Struct({ value: Schema.optional(Schema.Number) })),
         success: Schema.String,
       });
 
       const UndefinedValue = Action.make("undefinedValue", {
         description: "Undefined is real decoded data",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
         input: undefinedFromString,
         success: Schema.String,
       });
@@ -231,8 +231,8 @@ it.effect(
       // Typed like an action without `input`, so it is called the same way.
       const EmptyRecord = Action.make("emptyRecord", {
         description: "A hand-written empty-record input",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: Schema.Record(Schema.String, Schema.Never),
         success: Schema.Boolean,
       });
@@ -291,8 +291,8 @@ it.effect("takes a left-out argument as the input {} decodes to, an input class'
 
     const List = Action.make("list", {
       description: "List notes, all of them without a tag",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       input: Filters,
       success: Schema.String,
     });
@@ -338,16 +338,16 @@ it.effect("decodes two errors that share a status by their tag", () =>
     // Each action declares its own 403 beside the built-in `Forbidden` its authorizer raises.
     const Refuse = Action.make("refuse", {
       description: "Refused by its authorizer",
-      access: "write",
-      auth: CurrentActor,
+      readOnly: false,
+      caller: CurrentActor,
       success: Schema.String,
       errors: [Rejected],
     });
 
     const Reject = Action.make("reject", {
       description: "Rejected by the handler",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.String,
       errors: [Rejected],
     });

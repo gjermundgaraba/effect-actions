@@ -21,7 +21,7 @@ export const authorizeStored = Effect.gen(function* () {
 
   return (action: Action.Any) =>
     Effect.gen(function* () {
-      const permission: Permission = action.access === "read" ? "users:read" : "users:write";
+      const permission: Permission = action.readOnly ? "users:read" : "users:write";
       const actor = yield* CurrentActor;
 
       if (!(yield* permissions.of(actor.id)).includes(permission)) {

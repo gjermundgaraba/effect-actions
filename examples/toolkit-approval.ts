@@ -8,7 +8,7 @@ import { double, userActions } from "./handlers.js";
 // `call.name` narrows `call.input` across both implementations. Without a caller, it asks.
 export const { toolkit, layer } = ActionToolkit.make([userActions, double], {
   needsApproval: (call) =>
-    call.action.access === "write" &&
+    !call.action.readOnly &&
     Effect.map(
       Effect.serviceOption(CurrentActor),
       Option.match({

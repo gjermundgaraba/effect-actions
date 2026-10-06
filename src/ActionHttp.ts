@@ -31,6 +31,7 @@ import {
   type Required as RequiredAuthentication,
 } from "./internal/authentication.js";
 import {
+  Anyone,
   assertDistinct,
   assertOnce,
   assertOwnTags,
@@ -207,7 +208,7 @@ type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
   Through<M, RemoteRequest<App, A>>,
   | HttpRouter.Provided
   // Authentication, outermost, provides the identity, though only to protected routes.
-  | ([Extract<Serving<App, A>, { readonly auth: "public" }>] extends [never]
+  | ([Extract<Serving<App, A>, { readonly caller: typeof Anyone }>] extends [never]
       ? Identity<Protected<Serving<App, A>>>
       : never)
 >;
@@ -226,7 +227,7 @@ type ErrorsOf<O> = O extends unknown
 
 /** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
 type PublicOnly<Actions extends ReadonlyArray<Action.Any>> = [
-  Exclude<Actions[number], { readonly auth: "public" }>,
+  Exclude<Actions[number], { readonly caller: typeof Anyone }>,
 ] extends [never]
   ? unknown
   : { readonly "Protected actions take options naming their authentication": never };
@@ -417,9 +418,9 @@ const within = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
 // Two forms, not one with a conditional rest parameter, through which TypeScript infers no
 // `const` tuple of errors; and so explicit options naming errors require the argument. The
 // first takes public actions by its constraint, which a helper generic in them meets.
-export function make<const Actions extends ReadonlyArray<Action.Any & { readonly auth: "public" }>>(
-  actions: Actions,
-): Binding<Actions, [], undefined>;
+export function make<
+  const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
+>(actions: Actions): Binding<Actions, [], undefined>;
 export function make<const Actions extends ReadonlyArray<Action.Any>, const O extends Options = {}>(
   actions: Actions,
   options: O &
@@ -451,7 +452,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
       action.description,
     );
 
-    return security === undefined || action.auth === "public"
+    return security === undefined || action.caller === Anyone
       ? endpoint
       : endpoint.middleware(security);
   });
@@ -578,7 +579,7 @@ export function layer(
         options.middleware,
       );
 
-      return action.auth === "public" || http.authentication === undefined
+      return action.caller === Anyone || http.authentication === undefined
         ? endpoint
         : endpoint.middleware(StepUp).middleware(http.authentication["~middleware"]);
     }),
@@ -588,7 +589,7 @@ export function layer(
     Effect.gen(function* () {
       const bound = yield* acquire(apps);
 
-      const auth = actions.some((action) => action.auth !== "public")
+      const auth = actions.some((action) => action.caller !== Anyone)
         ? http.authentication
         : undefined;
 

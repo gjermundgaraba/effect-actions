@@ -23,8 +23,8 @@ const asReader = Effect.provideService(CurrentActor, actors.reader);
 
 const Ping = Action.make("ping", {
   description: "Ping",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.Number,
 });
 
@@ -86,8 +86,8 @@ describe("Action.client", () => {
 
         const Rename = Action.make("rename", {
           description: "Rename",
-          access: "write",
-          auth: CurrentActor,
+          readOnly: false,
+          caller: CurrentActor,
           input: { id: NonEmpty, name: NonEmpty },
           success: Schema.String,
         });
@@ -124,16 +124,16 @@ describe("Action.client", () => {
 
       const Double = Action.make("double", {
         description: "Double",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { value: Schema.FiniteFromString },
         success: Schema.Finite,
       });
 
       const Search = Action.make("search", {
         description: "Search",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: Filters,
         success: Schema.String,
       });
@@ -141,8 +141,8 @@ describe("Action.client", () => {
       // Trimmed when decoded, and sent as given: a remote handler gets it trimmed.
       const Greet = Action.make("greet", {
         description: "Greet",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { name: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())) },
         success: Schema.String,
       });
@@ -150,8 +150,8 @@ describe("Action.client", () => {
       // JSON has no `-0`: a remote handler gets `0`, and so does a remote caller.
       const Zero = Action.make("zero", {
         description: "Zero",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { value: Schema.Number },
         success: Schema.Array(Schema.Number),
       });
@@ -186,8 +186,8 @@ describe("Action.client", () => {
       // Every field defaulted when decoded: `{}` decodes, to the defaults.
       const Page = Action.make("page", {
         description: "Page",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: { limit: Schema.Number.pipe(Schema.withDecodingDefaultKey(Effect.succeed(20))) },
         success: Schema.Number,
       });
@@ -195,8 +195,8 @@ describe("Action.client", () => {
       // Decoded, it takes nothing; encoded, it requires a token, so `{}` does not decode.
       const Signed = Action.make("signed", {
         description: "Signed",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         input: Schema.Struct({ token: Schema.String }).pipe(
           Schema.decodeTo(
             Schema.Struct({}),
@@ -235,8 +235,8 @@ describe("Action.client", () => {
 
       const Guarded = Action.make("ping", {
         description: "Ping",
-        access: "read",
-        auth: CurrentActor,
+        readOnly: true,
+        caller: CurrentActor,
         success: Schema.Number,
       });
 
@@ -275,29 +275,29 @@ describe("Action.client", () => {
     Effect.gen(function* () {
       const Name = Action.make("name", {
         description: "A name",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String.check(Schema.isMinLength(1)),
       });
 
       const Profile = Action.make("profile", {
         description: "A profile",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: { id: Schema.String },
       });
 
       const Nothing = Action.make("nothing", {
         description: "Returns nothing",
-        access: "write",
-        auth: "public",
+        readOnly: false,
+        caller: Action.Anyone,
       });
 
       // Trimmed when decoded, and sent as given: a remote caller gets it trimmed.
       const Label = Action.make("label", {
         description: "A label",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         success: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())),
       });
 
@@ -356,22 +356,22 @@ describe("Action.client", () => {
 
         const Label = Action.make("label", {
           description: "A label",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           errors: [Mislabeled],
         });
 
         const Profile = Action.make("profile", {
           description: "A profile",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           errors: [Missing],
         });
 
         const Queue = Action.make("queue", {
           description: "A queue",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           errors: [Busy],
         });
 
@@ -410,8 +410,8 @@ describe("Action.client", () => {
 
       const Count = Action.make("count", {
         description: "Count",
-        access: "read",
-        auth: "public",
+        readOnly: true,
+        caller: Action.Anyone,
         errors: [Counted],
       });
 
@@ -444,8 +444,8 @@ describe("Action.client", () => {
       Effect.gen(function* () {
         const Where = Action.make("where", {
           description: "Name the span it runs in",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           success: { name: Schema.String, parent: Schema.String },
         });
 
@@ -478,12 +478,16 @@ describe("Action.client", () => {
     Effect.gen(function* () {
       let built = 0;
 
-      const Read = Action.make("read", { description: "Read", access: "read", auth: CurrentActor });
+      const Read = Action.make("read", {
+        description: "Read",
+        readOnly: true,
+        caller: CurrentActor,
+      });
 
       const Write = Action.make("write", {
         description: "Write",
-        access: "write",
-        auth: CurrentActor,
+        readOnly: false,
+        caller: CurrentActor,
       });
 
       const app = Action.implement(
@@ -495,7 +499,7 @@ describe("Action.client", () => {
         }),
         {
           authorize: (action) =>
-            action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
+            !action.readOnly ? Effect.fail(new Action.Forbidden()) : Effect.void,
         },
       );
 
@@ -553,8 +557,8 @@ describe("Action.client", () => {
 
         const Pong = Action.make("pong", {
           description: "Pong",
-          access: "read",
-          auth: "public",
+          readOnly: true,
+          caller: Action.Anyone,
           success: Schema.Number,
         });
 

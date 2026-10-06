@@ -240,7 +240,7 @@ const failWith = (errors: Action.Any["errors"], text: string, otherwise: McpCall
 
 /**
  * The tool call of `action` with `input` on `client`, sending to `url`, whose success the
- * tool sends as text when the action has a `text` hint.
+ * tool sends as text when the action names an `mcp.text`.
  */
 const callTool = (
   client: HttpClient.HttpClient,
@@ -250,7 +250,7 @@ const callTool = (
 ): Effect.Effect<unknown, unknown> => {
   const {
     name,
-    hints: { text: field },
+    mcp: { text: field },
   } = action;
 
   const other = (answer: string) =>
@@ -311,7 +311,7 @@ const callTool = (
  * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
  * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
  * encoded with the action's schema, and the success decoded, from the text blocks of a tool
- * whose action has a `text` hint. A declared error the tool returns, the action's own or a
+ * whose action names an `mcp.text`. A declared error the tool returns, the action's own or a
  * refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
  * with. The argument may be omitted when `{}` is a valid input. Requires the native
  * `HttpClient`, such as the one `layer` provides.

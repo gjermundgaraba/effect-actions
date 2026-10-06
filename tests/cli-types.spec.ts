@@ -17,16 +17,16 @@ class Authorizing extends Context.Service<Authorizing, string>()("cli-types/Auth
 
 const One = Action.make("one", {
   description: "One",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
 });
 
 const Two = Action.make("two", {
   description: "Two",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: Schema.Struct({ value: Schema.Finite }),
   success: Schema.Finite,
 });
@@ -65,8 +65,8 @@ class Caller extends Context.Service<Caller, string>()("cli-types/Caller") {}
 
 const Guarded = Action.make("guarded", {
   description: "Guarded",
-  access: "write",
-  auth: Caller,
+  readOnly: false,
+  caller: Caller,
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
 });
@@ -74,7 +74,7 @@ const Guarded = Action.make("guarded", {
 const refuse = Effect.fn(function* (action: Action.Any) {
   yield* Authorizing;
 
-  if (action.access === "write") return yield* new Action.Unauthenticated();
+  if (!action.readOnly) return yield* new Action.Unauthenticated();
 
   return yield* new Action.Forbidden();
 });
@@ -102,8 +102,8 @@ expectTypeOf<Command.Services<typeof operated>>().toEqualTypeOf<Authorizing>();
 
 const Plain = Action.make("plain", {
   description: "Plain",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -142,8 +142,8 @@ expectTypeOf<Parameters<typeof ActionCli.command>[0]>().toEqualTypeOf<
 
 const Scoped = Action.make("scoped", {
   description: "Scoped",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -166,8 +166,8 @@ expectTypeOf<Command.Services<typeof scopedGroup>>().toBeNever();
 
 const ScopedHandler = Action.make("scopedHandler", {
   description: "Scoped handler",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -194,8 +194,8 @@ class Domain extends Schema.TaggedError<Domain>()("Domain", {}) {}
 
 const RemoteAction = Action.make("remote", {
   description: "Remote",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
   errors: [Domain],
@@ -203,15 +203,15 @@ const RemoteAction = Action.make("remote", {
 
 const Count = Action.make("count", {
   description: "Count",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.Finite,
 });
 
 const Other = Action.make("other", {
   description: "Other",
-  access: "write",
-  auth: "public",
+  readOnly: false,
+  caller: Action.Anyone,
   success: Schema.String,
 });
 
@@ -272,8 +272,8 @@ class Gone extends Schema.TaggedError<Gone>()("Gone", {}, { httpApiStatus: 410 }
 
 const Erring = Action.make("erring", {
   description: "Declares an error",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
   errors: [Gone],
 });
@@ -355,15 +355,15 @@ ActionCli.command(local, One, { positional: ["other"] });
 
 const ScalarInput = Action.make("scalarInput", {
   description: "A scalar input",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: Schema.String,
 });
 
 const UnionInput = Action.make("unionInput", {
   description: "A union input",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   input: Schema.Union([Schema.Struct({ a: Schema.String }), Schema.Struct({ a: Schema.Finite })]),
 });
 
@@ -390,8 +390,8 @@ class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {
 
 const Declares = Action.make("declares", {
   description: "Declares an error",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.String,
   errors: [Domain],
 });

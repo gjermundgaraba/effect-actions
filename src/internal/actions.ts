@@ -14,6 +14,12 @@ export const projectedErrors = (
   surface: Action.Any["errors"] = [],
 ): Action.Any["errors"] => [...new Set([...builtIns, ...action.errors, ...surface])];
 
+/**
+ * The caller of a public action: anyone, signed in or not. Registered globally, so two copies
+ * of the package agree on it, as they agree on a name.
+ */
+export const Anyone: unique symbol = Symbol.for("@gjermundgaraba/effect-actions/Anyone");
+
 const validName = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Names become path segments, OpenAPI identifiers and client method keys. */

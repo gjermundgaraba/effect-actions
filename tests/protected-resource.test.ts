@@ -17,8 +17,8 @@ const Login = Authentication.make("protected-resource.Login", Caller);
 
 const Identify = Action.make("identify", {
   description: "Name the caller.",
-  access: "read",
-  auth: Caller,
+  readOnly: true,
+  caller: Caller,
   success: Schema.String,
 });
 

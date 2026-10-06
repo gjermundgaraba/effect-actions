@@ -13,12 +13,12 @@ The example listens on 127.0.0.1:3000. It uses an in-memory repository and delib
 
 Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
-Every action declares `access: "read"` or `access: "write"`, and who may call it: `status` is
-`auth: "public"`, every other action `auth: CurrentActor`. The HTTP and MCP layers serving a
+Every action declares `readOnly: true` or `readOnly: false`, and who may call it: `status` is
+`caller: Action.Anyone`, every other action `caller: CurrentActor`. The HTTP and MCP layers serving a
 protected action verify the bearer token through `authenticate`, the verifier of the binding's
 `Login`, before decoding its input. The protected implementations state their authorization
 once, `authorize`, which every surface, the CLI and the Toolkit included, runs before each
-handler: it maps `access` to `users:read` / `users:write` and refuses with the built-in
+handler: it maps `readOnly` to `users:read` / `users:write` and refuses with the built-in
 `Action.Forbidden`, naming the scope the caller lacks. `status` states none, and no
 authorization runs for it. No handler repeats this action-level policy, and no surface can
 leave the rule out. Record-level access stays in `Users`, which scopes data by tenant.
@@ -97,7 +97,7 @@ which is public.
 ## Application structure
 
 - [quickstart.ts](quickstart.ts), [quickstart-server.ts](quickstart-server.ts), [quickstart-client.ts](quickstart-client.ts): the minimal program's contract and binding, its server, and its typed client.
-- [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
+- [contracts.ts](contracts.ts): schemas, errors and actions, each with its `readOnly` and `caller`.
 - [binding.ts](binding.ts): the `Login` authentication descriptor and the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of the binding, so HTTP does not serve it. Its protected routes require the bearer scheme, enforced and documented; `status` is public.
 - [authorization.ts](authorization.ts): demo actors, the identity `CurrentActor` the protected contracts declare, permissions, and the `authorize` rule the protected implementations state.
 - [authorization-built.ts](authorization-built.ts): the same rule built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
@@ -126,7 +126,7 @@ HTTP /api/getUser / MCP tool getUser
   → the HTTP layer's own middleware, if any
   → the surface decodes input (invalid input is a 400 InvalidInput over HTTP and an isError
     result over MCP; authorize and the handler never run)
-  → authorize reads access: "read" and checks users:read
+  → authorize reads readOnly: true and checks users:read
   → the action's declared checks, none here
   → handler calls Users.get(actor.tenantId, id)
   → the surface encodes the user or the declared error

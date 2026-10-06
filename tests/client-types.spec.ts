@@ -87,8 +87,8 @@ class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {
 
 const Ping = Action.make("ping", {
   description: "Ping",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   success: Schema.Number,
 });
 
@@ -132,8 +132,8 @@ class Limited extends Action.Check<Limited>()("client-types/Limited", {
 
 const Metered = Action.make("metered", {
   description: "Metered",
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
   checks: [Limited],
 });
 

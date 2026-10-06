@@ -17,7 +17,7 @@ export const status = Action.implement(
 
 // Capture Users at startup; resolve CurrentActor per request. Every surface authenticates
 // the caller, then runs `authorize` before each handler, so it has already refused an actor
-// without the permission the action's access needs. HTTP serves only the actions its binding holds:
+// without the permission the action needs. HTTP serves only the actions its binding holds:
 // `listChanges`, which it leaves out, is a tool and a command, never a route.
 export const userActions = Action.implement(
   [GetUser, RenameUser, WhoAmI, ListChanges],

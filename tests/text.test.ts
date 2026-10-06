@@ -32,41 +32,41 @@ const Page = Schema.Struct({
   owner: Schema.String,
 });
 
-const page = (access: Action.Access) => ({
+const page = <const ReadOnly extends boolean>(readOnly: ReadOnly) => ({
   description: "Fetch one page of a document.",
   input: { url: Schema.String },
   success: Page,
   errors: [PageNotFound],
-  access,
-  auth: Principal,
+  readOnly,
+  caller: Principal,
 });
 
-const Fetch = Action.make("fetch", { ...page("read"), hints: { text: "body" } });
+const Fetch = Action.make("fetch", { ...page(true), mcp: { text: "body" } });
 
-const Store = Action.make("store", { ...page("write"), hints: { text: "body" } });
+const Store = Action.make("store", { ...page(false), mcp: { text: "body" } });
 
 // Structured twins: every answer but success must be the one a text tool gives.
-const FetchJson = Action.make("fetchJson", page("read"));
+const FetchJson = Action.make("fetchJson", page(true));
 
-const StoreJson = Action.make("storeJson", page("write"));
+const StoreJson = Action.make("storeJson", page(false));
 
 // The text field is the only required key, and optional in `excerpt`.
 const Head = Action.make("head", {
   description: "The start of a document.",
-  access: "read",
-  auth: Principal,
+  readOnly: true,
+  caller: Principal,
   input: { url: Schema.String },
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
-  hints: { text: "markdown" },
+  mcp: { text: "markdown" },
 });
 
 const Excerpt = Action.make("excerpt", {
   description: "An excerpt of a document, when it has one.",
-  access: "read",
-  auth: Principal,
+  readOnly: true,
+  caller: Principal,
   input: { url: Schema.String },
   success: { markdown: Schema.optionalKey(Schema.String), url: Schema.String },
-  hints: { text: "markdown" },
+  mcp: { text: "markdown" },
 });
 
 const tricky = ' leading\n"quoted" \\ é 😀   trailing\t ';
@@ -94,9 +94,7 @@ const app = Action.implement(
   },
   {
     authorize: (action) =>
-      action.access === "write"
-        ? Effect.fail(new Action.Forbidden({ message: "Read only." }))
-        : Effect.void,
+      !action.readOnly ? Effect.fail(new Action.Forbidden({ message: "Read only." })) : Effect.void,
   },
 );
 
@@ -234,7 +232,7 @@ describe("MCP text fields", () => {
     }),
   );
 
-  it.effect("are read from the text blocks by mcpClient, which reads the same hints", () =>
+  it.effect("are read from the text blocks by mcpClient, which reads the same `mcp.text`", () =>
     Effect.gen(function* () {
       const whole = { body: tricky, ...rest };
       const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt], as("ada"));
@@ -306,32 +304,32 @@ describe("a text field MCP cannot send", () => {
     // A union of one struct: an object to the types, `anyOf` to its JSON Schema.
     const Single = Action.make("single", {
       description: "A page, as a union of one struct",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.Union([Schema.Struct({ body: Schema.String })]),
-      hints: { text: "body" },
+      mcp: { text: "body" },
     });
 
-    // Typed only as `string`, a hint the types leave to the server.
+    // Typed only as `string`, a `text` the types leave to the server.
     const text: string = "body";
 
     const Union = Action.make("union", {
       description: "A page of either kind, each holding the field",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.Union([
         Schema.Struct({ body: Schema.String, kind: Schema.Literal("a") }),
         Schema.Struct({ body: Schema.String, kind: Schema.Literal("b") }),
       ]),
-      hints: { text },
+      mcp: { text },
     });
 
     const Missing = Action.make("missing", {
       description: "A page without the field",
-      access: "read",
-      auth: "public",
+      readOnly: true,
+      caller: Action.Anyone,
       success: Schema.Struct({ title: Schema.String }),
-      hints: { text },
+      mcp: { text },
     });
 
     const refused = [

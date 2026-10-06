@@ -7,8 +7,8 @@ import * as ActionMcp from "../src/ActionMcp.js";
 const Status = Action.make("status", {
   description: "Report whether the subprocess is ready.",
   success: { ready: Schema.Boolean },
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
 });
 
 const status = Action.implement(Status, () =>

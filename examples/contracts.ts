@@ -17,8 +17,8 @@ export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
 export const Status = Action.make("status", {
   description: "Report whether the service is up.",
   success: { service: Schema.String, users: Schema.Finite },
-  access: "read",
-  auth: "public",
+  readOnly: true,
+  caller: Action.Anyone,
 });
 
 export const GetUser = Action.make("getUser", {
@@ -26,8 +26,8 @@ export const GetUser = Action.make("getUser", {
   input: { id: Schema.String },
   success: User,
   errors: [UserNotFound],
-  access: "read",
-  auth: CurrentActor,
+  readOnly: true,
+  caller: CurrentActor,
 });
 
 export const RenameUser = Action.make("renameUser", {
@@ -38,9 +38,9 @@ export const RenameUser = Action.make("renameUser", {
   },
   success: User,
   errors: [UserNotFound],
-  access: "write",
-  auth: CurrentActor,
-  hints: { destructive: false },
+  readOnly: false,
+  caller: CurrentActor,
+  mcp: { destructiveHint: false },
 });
 
 // On either transport, input is { value: "21" }. The handler receives numeric 21.
@@ -48,16 +48,16 @@ export const Double = Action.make("double", {
   description: "Double a finite number supplied as a string.",
   input: { value: Schema.FiniteFromString },
   success: Schema.Finite,
-  access: "read",
-  auth: CurrentActor,
+  readOnly: true,
+  caller: CurrentActor,
 });
 
 // Identity comes from the host's authenticated request context, not action input.
 export const WhoAmI = Action.make("whoAmI", {
   description: "Inspect the authenticated actor.",
   success: { id: Schema.String, tenantId: Schema.String },
-  access: "read",
-  auth: CurrentActor,
+  readOnly: true,
+  caller: CurrentActor,
 });
 
 export const Change = Schema.Struct({
@@ -69,6 +69,6 @@ export const Change = Schema.Struct({
 export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
   success: { changes: Schema.Array(Change) },
-  access: "read",
-  auth: CurrentActor,
+  readOnly: true,
+  caller: CurrentActor,
 });
