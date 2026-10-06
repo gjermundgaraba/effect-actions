@@ -4,7 +4,9 @@ import { McpProtocol } from "effect/ai";
 /**
  * The one protocol revision served over HTTP. 2026-07-28 is stateless: every request
  * stands alone. The stateful revisions keep a session per `initialize`, which the native
- * HTTP runtime never expires and which no identity owns.
+ * HTTP runtime never expires and which no identity owns. A mixed endpoint's gate relies on it
+ * too: it decides from the routing headers, which the native runtime checks against the body
+ * of a stateless request alone, so serving a stateful revision over HTTP would open the gate.
  */
 export const httpProtocol = McpProtocol.v2026_07_28;
 

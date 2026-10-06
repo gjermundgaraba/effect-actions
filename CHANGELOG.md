@@ -2,20 +2,23 @@
 
 ## 0.10.0
 
-One contract, one implementation, one hook. `ActionGroup` is gone: `Action.implement` binds
-handlers to actions behind a `before` hook, which every implementation states, `Action.allowAll`
-where no action-level rule applies, and every surface runs. HTTP binds a flat list of actions,
-and each layer serves those its implementations hold. Every client calls an action with its
-input, and `Action.client` calls implementations in process, which is how their behavior is
-tested. Every endpoint and tool declares the built-in `InvalidInput` (400), `Unauthenticated`
-(401) and `Forbidden` (403). A builder runs once per layer graph, each call has a scope of its
-own, and a request's own values win over startup ones. CLI flags come from each action's input,
-and a command runs on Effect's own `NodeRuntime.runMain`, printing a failure on stderr as the
-JSON HTTP sends. The client modules merge into `ActionHttp` and `ActionCli`, clients and
-`Testing` are Effect-only, and `ActionCatalog` and `TestingClient` are removed. `mcp.text` becomes
-the `text` hint, and stdio also serves 2025-11-25 and 2025-06-18, so
-Claude Code and Codex connect. The docs say where builders and your own services are built, and
-show one MCP URL for signed-out and signed-in callers.
+One contract, one implementation, one rule for who may call. `ActionGroup` is gone: a contract
+states who may call it, `auth: "public"` or the identity a caller must have, and every surface
+enforces it; `Action.implement` binds handlers to actions, behind the `authorize` an implementation
+of protected actions states, and declared checks, such as a rate limit, run before them on every
+surface. Authentication is a named, browser-safe descriptor the binding names and a server-only
+verifier, enforced and documented as native endpoint security, before any body is read. HTTP binds a
+flat list of actions, and one layer serves the public and the protected ones; one MCP endpoint
+serves signed-out and signed-in callers. Every client calls an action with its input, and
+`Action.client` calls implementations in process, which is how their behavior is tested. Every
+endpoint and tool declares the built-in `InvalidInput` (400), `Unauthenticated` (401) and
+`Forbidden` (403). A builder runs once per layer graph, each call has a scope of its own, and a
+request's own values win over startup ones. CLI flags come from each action's input, and a command
+runs on Effect's own `NodeRuntime.runMain`, printing a failure on stderr as the JSON HTTP sends. The
+client modules merge into `ActionHttp` and `ActionCli`, clients and `Testing` are Effect-only, and
+`ActionCatalog` and `TestingClient` are removed. `mcp.text` becomes the `text` hint, and stdio also
+serves 2025-11-25 and 2025-06-18, so Claude Code and Codex connect. The docs say where builders and
+your own services are built.
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0`. The `effect` peer narrows
 to `~4.0.0`, Effect's 4.0.x patches: the modules every surface builds on are unstable in Effect,
@@ -37,74 +40,95 @@ const pages = ActionGroup.make({ name: "pages" }, ReadPage).implement({ readPage
 ActionMcp.layerHttp([users, pages], { name, version, path: "/mcp", errors, before: authorize });
 
 // 0.10.0
-const users = Action.implement([GetUser, RenameUser], build, authorize);
-const Http = ActionHttp.make([GetUser, RenameUser]);
-ActionHttp.layer(Http, users);
-const ReadPage = Action.make("readPage", { ..., hints: { text: "markdown" } });
-const pages = Action.implement(ReadPage, read, authorize);
-ActionMcp.layerHttp([users, pages], { name, version });
+const GetUser = Action.make("getUser", { ..., auth: CurrentActor });
+const users = Action.implement([GetUser, RenameUser], build, { authorize });
+const Login = Authentication.make("app.Login", CurrentActor);
+const Http = ActionHttp.make([GetUser, RenameUser], { authentication: Login });
+const authenticate = Authentication.layer(Login, verify, { protectedResource });
+ActionHttp.layer(Http, users).pipe(Layer.provide(authenticate));
+const ReadPage = Action.make("readPage", { ..., auth: CurrentActor, hints: { text: "markdown" } });
+const pages = Action.implement(ReadPage, read, { authorize });
+ActionMcp.layerHttp([users, pages], { name, version, authentication: Login }).pipe(
+  Layer.provide(authenticate),
+);
 ```
 
 Each area below lists what is renamed or removed, then what changes without a rename.
 
 #### Contracts
 
-| 0.8.0                                                                     | 0.10.0                                                                                                                                                                                                                           |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                                                 |
-| `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command   |
-| `mcp.readOnly`                                                            | `access: "read"`                                                                                                                                                                                                                 |
-| `mcp: { text: "markdown" }` on `Action.make`                              | `hints: { text: "markdown" }` on `Action.make`, which every MCP endpoint and `Testing.mcpClient` read                                                                                                                            |
-| `mcp: false`                                                              | A list of the actions that are tools, beside the contracts, and `Action.share(Tools, app)` given to `ActionMcp` and `ActionToolkit`: an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
-| `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                            |
-| `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, Access>`; `Action.Options` has none                                                                                                                                                 |
+| 0.8.0                                                                     | 0.10.0                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp: { ... }`, `action.mcp`, `Action.McpOptions`                         | `hints: { ... }`, `action.hints`, `Action.Hints`                                                                                                                                                                                                                                    |
+| `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command                                                      |
+| `mcp.readOnly`                                                            | `access: "read"`                                                                                                                                                                                                                                                                    |
+| `mcp: { text: "markdown" }` on `Action.make`                              | `hints: { text: "markdown" }` on `Action.make`, which every MCP endpoint and `Testing.mcpClient` read                                                                                                                                                                               |
+| `mcp: false`                                                              | Leave the action out of the `actions` option of `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make`: list the actions that are tools beside the contracts, `actions: Tools`, and an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
+| `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                                                                               |
+| `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, Access, Auth, Checks>`; `Action.Options` has none                                                                                                                                                                                      |
 
+- Every contract states who may call it, `auth`: `"public"`, or the identity service a caller
+  must have, such as `auth: CurrentActor`. Without it `make` does not compile, and from plain
+  JavaScript throws `Missing auth: declare public or an identity service key`. 0.8.0 left this
+  to whichever layers the host wrapped in authentication. Every surface now enforces it, whatever
+  the handler reads: remotely through the binding's or endpoint's authentication descriptor,
+  locally by owing the identity per call. Give `auth: "public"` to an action 0.8.0 served
+  without authentication or a hook, and the identity its hook or handler read to every other.
+  The module declaring the identity, a `Context.Service`, stays free of server code: contracts
+  import it.
+- `checks: [Limited]` lists an action's checks ([Action.md](docs/Action.md#checks)), whose
+  errors join its `errors`.
 - `Action.make` throws `Invalid action name: <name>` for a name over 128 characters, which 0.8.0
   refused only as a tool name: shorten it. Its types refuse an unknown hint, such as a
   misspelling, `hints.destructive` on a read, and hints typed by a helper's type parameter:
   type that parameter `Action.Hints`.
 
-#### Implementations and hooks
+#### Implementations and authorization
 
-| 0.8.0                                                                                        | 0.10.0                                                                                                                                                                             |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, before)`, with `Action.allowAll` where 0.8.0 passed no `before`                                                                                  |
-| `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`, inferred, never spelled out: a helper takes implementations as a type parameter ([Action.md](docs/Action.md#rules)); a group is a list of actions         |
-| `ActionGroup.contracts(...groups)`, `Contracts`                                              | `Action.byName(actions)`, the list keyed by name, each its exact contract; the list itself is the actions, or a binding's `Http.actions`                                           |
-| `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                 |
-| `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its hook, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer` |
-| A group's `errors`                                                                           | One array spread into each action's `errors`; `ActionHttp.make(actions, { errors })` for middleware's, such as a rate limit's; authentication's refusals are built in              |
-| A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                            | Nothing: input that does not decode is the built-in `Action.InvalidInput`, and a success that does not encode is a defect, an empty 500                                            |
-| `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group` | `Action.implement(actions, handlers, before)`                                                                                                                                      |
-| A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`      | A hook failing with an `Action.Refusal`, or with an error the called action declares: one array, such as `[RateLimited]`, spread into each action's `errors`                       |
-| `before`'s `action`, an `Action.Any`                                                         | `before`'s `action`, typed as the implementation's own actions, in a built hook too                                                                                                |
-| Span `<group>.<action>`, attribute and log annotation `action.group`                         | Span `<action>`                                                                                                                                                                    |
+| 0.8.0                                                                                        | 0.10.0                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, { authorize })`, `{ authorize }` only for protected actions                                                                                                                      |
+| `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`, inferred, never spelled out: a helper takes implementations as a type parameter ([Action.md](docs/Action.md#rules)); a group is a list of actions                                         |
+| `ActionGroup.contracts(...groups)`, `Contracts`                                              | `Action.byName(actions)`, the list keyed by name, each its exact contract; the list itself is the actions, or a binding's `Http.actions`                                                                           |
+| `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                                                 |
+| `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its authorization and checks, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer`             |
+| A group's `errors`                                                                           | One array spread into each action's `errors`; a check's error joins the `errors` of the actions listing it; `ActionHttp.make(actions, { errors })` for router middleware's; authentication's refusals are built in |
+| A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                            | Nothing: input that does not decode is the built-in `Action.InvalidInput`, and a success that does not encode is a defect, an empty 500                                                                            |
+| `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group` | `Action.implement(actions, handlers, { authorize })`, for an implementation of protected actions                                                                                                                   |
+| A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`      | An authorizer failing with an `Action.Refusal` only; a limit is a check, `Action.Check`, listed in each limited action's `checks`                                                                                  |
+| `before`'s `action`, an `Action.Any`                                                         | `authorize`'s `action`, typed as the implementation's own actions, in a built authorizer too                                                                                                                       |
+| Span `<group>.<action>`, attribute and log annotation `action.group`                         | Span `<action>`                                                                                                                                                                                                    |
 
-- Every implementation states who may call it: `before` is required, and `Action.allowAll` is
-  the hook without an action-level rule. In 0.8.0 `before` was an option of `Http.layer`,
-  `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`, `ActionCli.command` and
-  `ActionCli.group`, and leaving it out meant no authorization. Where 0.8.0 passed none, pass
-  `Action.allowAll`. Where it guarded one surface and not another, implement once with the
-  hook, and serve the other surface `Action.share(actions, app, Action.allowAll)`; a surface
-  that had a hook of its own takes its share with that hook. Without a hook, `implement` does
-  not compile (`Expected 3 arguments, but got 2`), and from plain JavaScript it throws
-  `Missing hook: pass an authorization hook, or Action.allowAll`. `undefined` is not a hook:
-  `before: enabled ? authorize : undefined` becomes `enabled ? authorize : Action.allowAll`.
-- A hook fails with a refusal, or with an error the called action declares,
-  which every surface declares for that action and every client decodes: HTTP answers with its
-  status and JSON, MCP with an `isError` tool result, the Toolkit with a typed failure, and a
-  CLI command with the same JSON on stderr. Only a refusal steps up under
-  `Authentication.make`. 0.8.0's hook failed with its surface's `errors`, which that surface
-  alone declared, and a CLI's with any error: move a limit from a surface's `errors` into each
-  guarded action's `errors`, spreading one array, or keep a limit applied before decoding in
-  HTTP middleware, with `ActionHttp.make`'s `errors`. The types take any error one of the
-  actions declares; a call of an action that lacks it fails with a defect,
-  `Action "<name>": its hook failed with an error the action does not declare: <tag>`, an empty
-  500 over HTTP.
+- An implementation of protected actions states who of the authenticated callers may call:
+  `{ authorize }` is required, and `Action.allowAll` lets every authenticated caller call. An
+  implementation of public actions alone takes none. In 0.8.0 `before` was an option of
+  `Http.layer`, `ActionMcp.layerHttp` and `layerStdio`, `ActionToolkit.make`,
+  `ActionCli.command` and `ActionCli.group`, and leaving it out meant no authorization. Pass it
+  to `implement` instead; where 0.8.0 passed none, make the contract public, or pass
+  `{ authorize: Action.allowAll }`. Where it guarded one surface and not another, decide per
+  action: the contract is public, or the caller of the unguarded surface is a trusted identity
+  the host supplies there, which the same `authorize` admits
+  ([ActionCli.md](docs/ActionCli.md#trusted-callers)). Without `authorize`, `implement` of a
+  protected action does not compile, naming `ProtectedActionsTakeAuthorize`, and from plain
+  JavaScript it throws `Protected actions require authorize, or Action.allowAll`. `undefined`
+  is not an authorizer: `before: enabled ? authorize : undefined` becomes
+  `{ authorize: enabled ? authorize : Action.allowAll }`.
+- `authorize` runs only for protected actions, after authentication and input decoding, and
+  fails only with a refusal. A limit is a check, an `Action.Check` such as
+  `Action.Check<Limited>()("app/Limited", { error: RateLimited, requires: CurrentActor })`,
+  listed in each limited action's `checks`, which adds its error to their `errors`, so every
+  surface declares it and every client decodes it: HTTP answers with its status and JSON, MCP
+  with an `isError` tool result, the Toolkit with a typed failure, and a CLI command with the
+  same JSON on stderr. `Action.check(Limited, callback)` implements it, from the callback or an
+  Effect building it once per layer graph, and every surface serving a limited action requires
+  that layer. Checks run after `authorize`, for public actions too. 0.8.0's hook failed with its
+  surface's `errors`, which that surface alone declared, and a CLI's with any error: move a limit
+  into a check, or keep a limit applied before decoding in HTTP middleware, router middleware
+  or the layer's own, with `ActionHttp.make`'s `errors`.
 - One action takes its handler, and a builder for it returns the handler, not a record: a
   one-action group's `.implement({ greet: handler })` becomes
-  `Action.implement(Greet, handler, before)`. A list takes a record keyed by action name, as a
-  group did.
+  `Action.implement(Greet, handler)`, with `{ authorize }` for a protected action. A list
+  takes a record keyed by action name, as a group did.
 - A record has exactly one handler per action: an extra key is a compile error, which 0.8.0
   ignored. `implement` throws `Missing handlers: <names>` or `Unknown handlers: <keys>`; a
   builder's record is checked when its layer builds.
@@ -126,8 +150,8 @@ Each area below lists what is renamed or removed, then what changes without a re
 - A builder's startup services are one union, `A | B` as written, so providing them in two
   `Layer.provide` calls, one per service, discharges both. 0.8.0 typed them `NoInfer<A | B>`,
   which stayed owed after both calls and showed in every hover.
-- Each call has a scope of its own, on every surface: what a hook or a handler acquires is
-  released when the call ends, the handler's first, and a fiber it forks with
+- Each call has a scope of its own, on every surface: what an authorizer, a check or a handler
+  acquires is released when the call ends, the handler's first, and a fiber it forks with
   `Effect.forkScoped` is interrupted. In 0.8.0 a Toolkit call made with `tools.handle`, or
   approved through `LanguageModel`, held it until its caller's scope closed, so with a pooled
   connection per call, a third call on a pool of two waited forever. Over HTTP, a handler's
@@ -142,9 +166,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   such an entry in a binding's `errors`, the built-in itself included: it throws
   `ActionHttp binding: error _tag "Unauthenticated" is built in, and declared on every surface`
   though `make`'s types accept it. Drop the `Unauthenticated` and `Forbidden` 0.8.0 declared in
-  `ActionHttp.make`'s `errors` for the authentication's 401 and the hook's 403: every endpoint
+  `ActionHttp.make`'s `errors` for the authentication's 401 and the authorizer's 403: every endpoint
   declares the built-in ones. Replace an `Unauthenticated` or `Forbidden` of your own with the
-  built-in one, in hooks and handlers too. One kept there still compiles, since its `_tag` and
+  built-in one, in authorizers and handlers too. One kept there still compiles, since its `_tag` and
   `message` match the built-in's. It is then sent as the built-in without its other fields, so
   0.8.0's example's `permission` would be lost. Use
   ``new Action.Forbidden({ message: `Requires ${permission}.` })``, adding `scopes` only for
@@ -159,12 +183,11 @@ Each area below lists what is renamed or removed, then what changes without a re
 - A helper passing implementations it is given beside its own takes them as one type parameter,
   `<const Apps extends ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, and spreads it,
   `[...apps, double]`, or takes one, `<App extends Action.AnyImplementation>(app: App)`, and
-  lists it, `[app, double]`, as 0.8.0's `Http.layer([app, double])` took it. A helper may share
-  actions its type parameters stand for, `Action.share([action], app)`. A value typed
+  lists it, `[app, double]`, as 0.8.0's `Http.layer([app, double])` took it. A value typed
   `Action.AnyImplementation` owes `unknown`, on every surface's layer.
-- An implementation is served, shared and called only by the installed copy of the package
-  whose `Action.implement` made it. Another copy's surfaces, `Action.client`, `Action.share`
-  and `Action.layer` throw
+- An implementation is served and called only by the installed copy of the package
+  whose `Action.implement` made it. Another copy's surfaces, `Action.client` and `Action.layer`
+  throw
   `Not an implementation made by this Action.implement: is effect-actions installed twice?`,
   a local CLI command when it runs, where 0.8.0 served it. Install one copy. Contracts and
   bindings still cross copies.
@@ -173,10 +196,10 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 | 0.8.0                                                                                  | 0.10.0                                                                                                                                                                                                                                                                     |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, errors? })`: `prefix: "/api/users"` keeps `/api/users/getUser`                                                                                                                                                                        |
+| `ActionHttp.make({ apiPath, errors }, ...groups)`                                      | `ActionHttp.make(actions, { prefix?, errors?, authentication? })`: `prefix: "/api/users"` keeps `/api/users/getUser`; `authentication` is required for a protected action                                                                                                  |
 | The `ActionHttp.Http` type, `Http.groups`                                              | `ActionHttp.Binding`, `Http.actions`                                                                                                                                                                                                                                       |
-| `ActionHttp.Api`, `ActionHttp.LayerOptions`                                            | `typeof Http.api`; `layer` takes no options                                                                                                                                                                                                                                |
-| `Http.layer(implementations, { before })`                                              | `ActionHttp.layer(Http, implementations)`                                                                                                                                                                                                                                  |
+| `ActionHttp.Api`, `ActionHttp.LayerOptions`                                            | `typeof Http.api`; `ActionHttp.LayerOptions` is now `layer`'s `middleware`                                                                                                                                                                                                 |
+| `Http.layer(implementations, { before })`                                              | `ActionHttp.layer(Http, implementations, { middleware? })`, with the binding's authentication provider: `.pipe(Layer.provide(authenticate))`                                                                                                                               |
 | A group left out of `ActionHttp.make`, implemented apart, to keep its actions off HTTP | The actions left out of `ActionHttp.make`, implemented with the others                                                                                                                                                                                                     |
 | `Http.openApi()`                                                                       | `HttpRouter.add("GET", path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)))`, the route 0.6.0's `openApi` replaced: `Http.api` is native                                                                                                                        |
 | `ActionCatalog`                                                                        | `OpenApi.fromApi(ActionHttp.make(actions).api)` of the actions to describe, offline. A binding no layer serves may hold actions HTTP leaves out, such as a tool for agents, which `Http.api` omits. Or use an MCP endpoint's `tools/list`. Hints are each action's `hints` |
@@ -198,23 +221,33 @@ Each area below lists what is renamed or removed, then what changes without a re
   `No action of this implementation is in this HTTP binding: x`. Two implementations of one
   served action throw `Duplicate served action: <name>`, where 0.8.0 threw
   `Duplicate implementation group: <group>`; actions the binding leaves out may repeat. A layer
-  owes per request its implementations' hooks and the handlers of the actions it serves. It
-  serves every bound action its implementations hold, so a layer without authentication takes
-  only implementations of public actions; where one implementation holds public and protected
-  actions, each layer takes an `Action.share` of its own
-  ([ActionHttp.md](docs/ActionHttp.md#rules)).
-- Every endpoint declares its action's errors, its binding's, and the three built-in ones, and
-  every tool its action's and the three. Any handler may fail with the built-in ones unlisted.
-  Input that does not decode, malformed JSON included, is a 400 `InvalidInput` carrying the
-  schema's message and its `issues`, each a `path` into the input and a `message`, which a
-  handler refusing input that decodes may name too, so an application's own error for bad
-  input, kept for its structured issues, is deleted; and a result that does not encode is an empty 500; 0.8.0 answered both
-  with an empty 400, or with its group's `schemaError` answers. Nothing replaces
-  `schemaError`: input needs no error of your own, since every surface declares
-  `InvalidInput`, and a success that does not encode means the handler broke its contract
-  after it ran, so any write it made has already happened, which a declared error would
-  misreport. Defects, crashes and proxies send a 5xx without a declared body anyway. Delete
-  the policy, and its `internal` error unless a handler fails with it.
+  owes per request its implementations' authorizers, the checks and the handlers of the actions
+  it serves.
+- One layer serves a binding's public and protected actions, from one implementation or
+  several: a protected route is authenticated by the binding's descriptor, through the
+  provider the layer requires, before anything reads its body, so it answers 401 before a 415
+  or a 400; a public route ignores credentials. 0.8.0 authenticated whatever layer the host
+  wrapped, public and protected actions in separate layers: merge them into one
+  ([ActionHttp.md](docs/ActionHttp.md#rules)). A test or a raw request asserting a 415 or a 400
+  on a protected route sends a token.
+- The OpenAPI document states each protected operation's security requirement, from the
+  descriptor's native security middleware, the one that enforces it, and a public one's
+  `security: []`; 0.8.0 stated none. Its scheme is keyed by the descriptor's name as it is,
+  `example.Login`, so distinct descriptors never share a key in one combined document. A name
+  is an OpenAPI component key, letters, digits, `_`, `.` and `-`: `make` throws
+  `Invalid authentication name` for any other, such as `example/Login`.
+- Every endpoint declares its action's errors, its binding's, and the three built-in ones, and every
+  tool its action's and the three. Any handler may fail with the built-in ones unlisted. Input that
+  does not decode, malformed JSON included, is a 400 `InvalidInput` carrying the schema's message
+  and its `issues`, each a `path` into the input and a `message`, which a handler refusing input
+  that decodes may name too, so an application's own error for bad input, kept for its structured
+  issues, is deleted; and a result that does not encode is an empty 500; 0.8.0 answered both with an
+  empty 400, or with its group's `schemaError` answers. Nothing replaces `schemaError`: input needs
+  no error of your own, since every surface declares `InvalidInput`, and a success that does not
+  encode means the handler broke its contract after it ran, so any write it made has already
+  happened, which a declared error would misreport. Defects, crashes and proxies send a 5xx without
+  a declared body anyway. Delete the policy, and its `internal` error unless a handler fails with
+  it.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one
   sends each member at its own. Annotate `{ httpApiStatus: 500 }` to keep the old status.
 - `ActionHttp` answers a request without a content type with 415, as an MCP endpoint does;
@@ -228,10 +261,13 @@ Each area below lists what is renamed or removed, then what changes without a re
   with under the same tag, as on native routes and in a Toolkit call; a startup value only
   fills in one the request lacks. 0.8.0 let the startup value win: an identity provided at a
   server's root replaced the authenticated caller, and routes built inside a span parented
-  their action spans to it. A value provided around `HttpRouter.serve` or the program is the
+  their action spans to it. A protected action's identity is no longer such a value: only its
+  authentication provider gives it, and nothing provided at startup or per request satisfies
+  a layer serving it. A value provided around `HttpRouter.serve` or the program is the
   request's too, so it also wins over one provided to a single surface's layer, which 0.8.0
   let override it there; scope such a value with `HttpRouter.provideRequest`. Still never
-  provide an identity at startup: a route no authentication covers serves every caller as it.
+  provide an identity at startup: a public handler or a route of the host's own reading it
+  would serve every caller as it.
 - A typed client drops an undeclared input field when it encodes, nested ones too, instead of
   failing with `SchemaError` before sending: `ActionHttp.client`, the native `HttpApiClient` on
   `Http.api`, and `Testing.mcpClient`. This reverses 0.8.0's "Typed HTTP clients fail with
@@ -245,41 +281,77 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Authentication
 
-| 0.8.0                                                                            | 0.10.0                                                                                                                                                                                                                                                                |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Authentication.middleware(tag, authenticate).layer`                             | For a bearer credential, `Authentication.make(tag, Effect.succeed(authenticate), resource?).layer`, where `authenticate` may fail with a refusal; for a session cookie, Effect's `HttpRouter.middleware`, answering its own 401 and setting `Cache-Control: no-store` |
-| `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.Options`, `make`'s third argument                                                                                                                                                                                                                     |
-| `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `make`'s third argument, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusal`                                                                                                                                 |
-| A 401 challenge naming a scope                                                   | `scopesRequired` in `make`'s third argument                                                                                                                                                                                                                           |
-| An insufficient-scope error of your own and a hand-built challenge               | `new Action.Forbidden({ message, scopes: [scope] })`                                                                                                                                                                                                                  |
+| 0.8.0                                                                            | 0.10.0                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Authentication.middleware(tag, authenticate).layer`                             | The descriptor `Authentication.make("app.Login", tag)`, named by the binding and every MCP endpoint serving protected actions, and its provider `Authentication.layer(Login, verify, { protectedResource })`, provided to their layers, where `verify` takes the credential Effect's native scheme decodes and may fail with a refusal; a session cookie, an API key or Basic is the descriptor's one scheme, `{ security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }) }` |
+| `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.Options`, `layer`'s `protectedResource`                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `layer`'s `protectedResource`, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusal`                                                                                                                                                                                                                                                                                                                                            |
+| A 401 challenge naming a scope                                                   | `scopesRequired` in the protected resource                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| An insufficient-scope error of your own and a hand-built challenge               | `new Action.Forbidden({ message, scopes: [scope] })`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Middleware provided around a layer to authenticate it                            | The contracts' `auth` decides, and the layer requires the provider: a protected action is authenticated on every layer serving it, a public one on none                                                                                                                                                                                                                                                                                                                                |
+| Middleware reading the identity, after authentication                            | `ActionHttp.layer(Http, apps, { middleware: [LogCaller] })`, native `HttpApiMiddleware`; over HTTP only                                                                                                                                                                                                                                                                                                                                                                                |
 
-- Under `Authentication.make`, `Unauthenticated`, or a `Forbidden` naming `scopes`, from a hook
-  or a handler, is answered with its HTTP status, challenge and JSON, on MCP too instead of a
-  tool result, as MCP authorization defines. If an MCP handler's notification has already
-  started the response, a later refusal remains a tool error in that stream. Without
-  `Authentication.make`, such a refusal is a declared error.
-- `Authentication.make` gives every 401 it covers without a challenge a `Bearer` one, naming
+- Authentication covers action endpoints alone, not a host's own routes: an `HttpRouter.add`
+  route that sat under 0.8.0's middleware reads the token with `Authentication.bearerToken`,
+  verifies it with the function given to `Authentication.layer`, and answers a refusal with
+  `Authentication.refusal(error, { protectedResource, authorization })`
+  ([Authentication.md](docs/Authentication.md#a-route-of-your-own)).
+- `make` is a browser-safe declaration: its name literal identifies the one provider that satisfies
+  it, so a provider of another descriptor of the same identity does not. It names one native
+  `HttpApiSecurity` scheme, Bearer unless `security` gives another, such as a session cookie,
+  `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`, or `HttpApiSecurity.basic`; a record
+  of schemes, or anything else, throws `Authentication takes one native HttpApiSecurity scheme`, and
+  the types refuse it, as they do a misspelled option; its options type is
+  `Authentication.MakeOptions`, and options that may leave `security` out type the credential as
+  that scheme's or Bearer's. OAuth is Bearer's: only a Bearer descriptor's provider takes a
+  `protectedResource` (another scheme's throws
+  `A protected resource is published only for a Bearer scheme`), and only under one does a protected
+  action's refusal step up; over HTTP it answers the refusal as it leaves a layer's `middleware`,
+  which may recover from it or turn it into an error the binding declares, and a public route's or
+  public tool's never steps up, signed in or not. Another scheme's 401 carries the challenge it has,
+  an `Http` scheme naming itself, Basic `Basic realm="<descriptor name>"`, an API key none; its
+  other refusals are their JSON and status over HTTP, and an `isError` tool result over MCP.
+- A verifier receives the credential Effect's native scheme decodes: a `Redacted` token or key,
+  or Basic's credentials, presented when its user-id or its password is non-empty, so a token
+  sent as the password reaches it. An empty one, as the native decoder gives for one absent or
+  malformed, never reaches it; its 401 says `A bearer token is required.`, or
+  `A credential is required.` for another scheme. Its type is `Authentication.Verify`.
+- On a protected route, or any route of an MCP endpoint naming a Bearer descriptor,
+  `Unauthenticated`, or a `Forbidden` naming `scopes`, from authentication, an authorizer or a
+  handler, is answered with its HTTP status, challenge and JSON, on MCP too instead of a tool
+  result, as MCP authorization defines. If an MCP handler's notification has already started the
+  response, a later refusal remains a tool error in that stream. Elsewhere, such a refusal is a
+  declared error. A defect or an interruption after such a refusal, such as a finalizer dying, is
+  the route's own, answered as one, not hidden behind the refusal's answer.
+- Every 401 a Bearer descriptor covers without a challenge gets a `Bearer` one, naming
   `scopesRequired` and the metadata URL of a protected resource, and `invalid_token` when the
-  request presented a bearer token. 0.8.0 left each 401 as the host rendered it.
-- `Authentication.make`'s second argument is a builder, as `implement`'s may be: what it
-  yields is a startup requirement of the middleware's layer, built once per layer graph
-  (`authentication.layer.pipe(Layer.provide(Verifier.layer))`), and it returns the
-  per-request authentication. What that yields beyond the request is still a request
-  requirement, which only middleware combined before it supplies
-  (`authentication.combine(resolveTenant).layer`). 0.8.0's `authenticate` had no startup
-  phase: every service it yielded was a request requirement.
-- A protected resource's discovery is published by the middleware's layer, once per layer
-  graph, whichever composition builds it, where 0.8.0's `discovery.layer` was merged beside the
+  request presented a bearer token, a malformed one such as `Bearer a b` included (RFC 6750
+  §3.1). 0.8.0 left each 401 as the host rendered it.
+- `layer`'s second argument is the verifier, or a builder of it, as `implement`'s may be: what
+  a builder yields is a startup requirement of the provider's layer, built once per layer graph
+  (`Authentication.layer(Login, build).pipe(Layer.provide(Verifier.layer))`), and it returns
+  the verifier. What a verifier yields beyond the request is a request requirement, which
+  native router middleware provided after the authentication supplies, in a `Layer.provide` of
+  its own: `routes.pipe(Layer.provide(authenticate), Layer.provide(resolveTenant.layer))`. One
+  array, `Layer.provide([authenticate, resolveTenant.layer])`, leaves it owed. 0.8.0's
+  `authenticate` had no startup phase: every service it yielded was a request requirement.
+- Nothing but the provider supplies a protected action's identity to a remote surface: an
+  identity provided at startup, per request with `HttpRouter.provideRequest`, or around
+  `Testing.layer`, no longer satisfies a layer serving one. A test serves its routes behind the
+  real provider, or a test verifier of the same descriptor, and gives each client its token
+  ([Testing.md](docs/Testing.md#signed-in-callers)).
+- A protected resource's discovery is published by the provider's layer, once per layer graph,
+  however many layers it is provided to, where 0.8.0's `discovery.layer` was merged beside the
   routes. It carries `Access-Control-Allow-Origin: *` and answers its own CORS preflight (204,
   allowing `GET`, `HEAD` and `OPTIONS` and the requested headers), so a browser MCP client
   reads it after a 401. Where the host's CORS middleware runs first, its policy answers
   discovery's preflight and adds its headers to discovery's reads, which keep the `*` where it
   sets no origin.
-- `Authentication.make` keeps a route's own `Cache-Control`, which 0.8.0's `middleware`
-  replaced with `no-store`; every other response of its routes, and a failure enclosing
-  middleware serializes, is still `no-store`. A route stating its own says `private` unless
-  its answer is the same for every caller: a credential a proxy forwards is invisible to a
-  cache in front of that proxy.
+- Authentication keeps a route's own `Cache-Control`, which 0.8.0's `middleware` replaced
+  with `no-store`; every other response of its routes, and a failure enclosing middleware
+  serializes, is still `no-store`. A route stating its own says `private` unless its answer is
+  the same for every caller: a credential a proxy forwards is invisible to a cache in front of
+  that proxy.
 
 #### MCP
 
@@ -288,14 +360,32 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `ActionMcp.Options<Errors, R>` of `layerHttp`, `ActionMcp.StdioOptions<Errors, R>` | `ActionMcp.LayerHttpOptions<E, R>`; `ActionMcp.Options<E, R>` is the server's, which `layerHttp` and `runStdio` both take; `E` and `R` are its `features`' |
 | `Layer.launch(ActionMcp.layerStdio(implementations, options))`                     | `ActionMcp.runStdio(implementations, options)`, which succeeds when the host closes stdin                                                                  |
 
-- `runStdio` gives its program a `Console` whose every method writes to stderr, so console
-  loggers such as `Logger.consoleJson`, `Console.log`, and the counters, timers and group labels
-  Node's console prints on stdout never corrupt the protocol from its builders, hooks and
+- An endpoint serving a protected action names its descriptor, `authentication: Login`, and requires
+  its provider. One endpoint serves public and protected tools on one URL: discovery,
+  `server/discover` and `tools/list`, and a public tool's call pass without a credential, or with
+  one the scheme decodes as empty, a credential they present is verified, and refused with 401 if it
+  does not verify, as MCP authorization requires, and every other request authenticates before the
+  endpoint reads its body, a protected tool's call and every native feature's request, listings,
+  completions and subscriptions included. An endpoint of protected tools alone authenticates every
+  request. 0.8.0 authenticated whatever endpoint the host wrapped, and kept public tools on an
+  endpoint of their own: merge them, or keep two endpoints to leave the protected tools unlisted to
+  signed-out callers ([ActionMcp.md](docs/ActionMcp.md#rules)). The routing headers decide as they
+  are: a Base64-encoded tool name names no public tool, and authenticates. A protected tool's call
+  without a credential is a 401 before its arguments are decoded, malformed ones included, on a
+  mixed endpoint too. A public tool never gets an identity, and a public prompt or resource beside
+  protected tools takes an endpoint of its own.
+- `runStdio` takes no `authentication`: the host provides the identity of its protected tools
+  around it.
+- `runStdio` gives its program a `Console` whose every method writes to stderr, so console loggers
+  such as `Logger.consoleJson`, `Console.log`, and the counters, timers and group labels Node's
+  console prints on stdout never corrupt the protocol from its builders, authorizers, checks and
   handlers. A counter or a timer prints its label and its count or the milliseconds since it
-  started, a group prints its label without indenting what follows, and `clear` does nothing.
-  Layers provided around it run outside its program: keep `Logger.LogToStderr` outermost, as in
-  0.8.0. It moves their default logger to stderr, but not their `Console` output or
-  `Logger.consoleJson`: log JSON there with `Logger.withConsoleError(Logger.formatJson)`.
+  started, a group prints its label without indenting what follows, and `clear` does nothing. Layers
+  provided around it run outside its program: apply `ActionCli.onStderr` last, before `runMain`, in
+  place of 0.8.0's `Logger.LogToStderr` outermost, `disableErrorReporting` and `tapCause` block. It
+  moves their default logger to stderr, and reports there what `runMain` would report on stdout, but
+  does not move their `Console` output or `Logger.consoleJson`: log JSON there with
+  `Logger.withConsoleError(Logger.formatJson)`.
 - `ActionMcp.layerHttp` and `runStdio` throw for an action whose input is not one object with
   keys, such as a union, an array, a scalar, or an object without keys such as a given
   `Schema.Struct({})`, naming the actions:
@@ -318,21 +408,21 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Toolkit
 
-| 0.8.0                                                                    | 0.10.0                                                                                                                                                                      |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionToolkit.Binding<Tools, E, R>`, `ActionToolkit.Options<Errors, R>` | `ActionToolkit.Tools<T, E, R>`, the same `{ toolkit, layer }`, each type argument required; `ActionToolkit.Options<A>`, over the served actions, holds only `needsApproval` |
+| 0.8.0                                                                    | 0.10.0                                                                                                                                                                                                |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ActionToolkit.Binding<Tools, E, R>`, `ActionToolkit.Options<Errors, R>` | `ActionToolkit.Tools<T, E, R>`, the same `{ toolkit, layer }`, each type argument required; `ActionToolkit.Options<A>`, over every action of the implementations, holds `actions` and `needsApproval` |
 
 - A Toolkit tool takes and gives JSON, as MCP's does: `tools.handle` takes JSON arguments, and
   a tool's schemas are `Schema.toCodecJson` of the action's. 0.8.0 decoded a model's JSON with
   the action's schemas, refusing an ISO string for a `Schema.Date`. Pass `tools.handle` the
   JSON a model sends, such as that ISO string.
 - A Toolkit tool belongs to its implementation. Two implementations with tools of one name,
-  such as one and an `Action.share` of it behind another hook, never run each other's
+  such as two of one action behind different authorizers, never run each other's
   handlers, their layers provided together in either order; 0.8.0 found a tool's handler by
   its name alone, so one layer answered every toolkit's tool of that name, behind that
   layer's own `before`. The `layer` of any `make` call serves the tools of its
-  implementations in any `toolkit`, and of an `Action.share` of one that keeps its hook, such
-  as an agent's fewer tools, so toolkits made per agent or per approval policy run with one
+  implementations in any `toolkit`, an agent's fewer tools included, so toolkits made per agent
+  or per approval policy run with one
   handler layer, built once. Two layers of one implementation, built apart with
   different services and provided together, serve its tools from one of them: use separate
   implementations for separate services. `toolkit` is still a native `Toolkit`, which
@@ -345,8 +435,8 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.command(Http, GetUser, { client: { baseUrl } })`, `ActionCli.make(Http, { name, client })`: `client` takes `ActionHttp.client`'s options, on the host's `HttpClient`                                                                                                                                                                                                                                                                     |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                                                                                                                                                                                                                                                           |
 | `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command`, local or remote; `ActionCli.Options` is `make`'s; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                                                                                    |
-| A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` is the failure: `Effect.catchTag("UserError", (error) => error.cause instanceof UserNotFound ? ... : Effect.fail(error))`                                                                                                                                                                                                                                                   |
-| `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith` | `Command.run(cli, { version })` on `NodeRuntime.runMain`, unless stdout feeds scripts (below)                                                                                                                                                                                                                                                                                                                                                       |
+| A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` and `reason` are the failure: `Effect.catchReason("UserError", "UserNotFound", ...)`, Effect's own                                                                                                                                                                                                                                                                          |
+| `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith` | `Command.run(cli, { version })` on `NodeRuntime.runMain`, after `ActionCli.onStderr` where stdout feeds scripts (below)                                                                                                                                                                                                                                                                                                                             |
 | `--input '<json>'`, `--input-file`, `parameters` and its `input` mapper                                                          | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct; a syntax `name`, `positional` and `render` cannot express, such as a flag alias, a flag named apart from its field, or nested input built from several flags, is a native `Command.make` calling `Action.client`, or `ActionHttp.client` over HTTP, whose failures it maps to `CliError.UserError` ([ActionCli.md](docs/ActionCli.md#rules)) |
 
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch;
@@ -372,7 +462,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   raw `Cause` on stderr instead; delete that block. A failure no schema encodes, a builder's or
   the transport's, prints as its tag, or an error's name, and its message, and each cause's, up
   to one already printed, never its other fields. `Command.run` prints a command's failure
-  before a host's `Effect.catchTag("UserError", ...)` runs, so a host that recovered silently or
+  before a host's `Effect.catchReason("UserError", ...)` runs, so a host that recovered silently or
   printed its own text provides a `formatError` through `CliOutput.layer`, or runs with
   `renderErrors: false`.
 - A command refuses input that does not decode with `Action.InvalidInput`, as HTTP does,
@@ -383,18 +473,21 @@ Each area below lists what is renamed or removed, then what changes without a re
   a `SchemaError`.
 - A success that does not encode is a defect, as it is HTTP's empty 500, and nothing prints it
   as a result; 0.8.0 failed the command with a `SchemaError`.
-- What a command runs, the builder, hook and handler, or a remote command's client call, and the
-  codecs of its input, success and failures, writes its Effect logs and `Console` output to
-  stderr, whatever logger prints them, and the command writes only its result to stdout. 0.8.0
-  wrote them to stdout unless the program provided `Logger.LogToStderr`, which moves only the
+- What a command runs, the builder, authorizer, checks and handler, or a remote command's client
+  call, and the codecs of its input, success and failures, writes its Effect logs and `Console`
+  output to stderr, whatever logger prints them, and the command writes only its result to stdout.
+  0.8.0 wrote them to stdout unless the program provided `Logger.LogToStderr`, which moves only the
   default logger. The global `console.log` and other direct writes bypass Effect and still reach
   stdout: keep them off stdout. Layers the host provides, on the command or around the run, log
-  outside the command, and `runMain` reports a defect, and a failure of such a layer, on stdout:
-  a CLI whose stdout feeds scripts keeps `Logger.LogToStderr` outermost, which moves those
-  layers' default logger but not their `Console` output or `Logger.consoleJson`, runs `runMain`
-  with `disableErrorReporting`, and reports on stderr itself
+  outside the command, and `runMain` reports a defect, and a failure of such a layer, on stdout: a
+  CLI whose stdout feeds scripts applies `ActionCli.onStderr` last, before `runMain`, which moves
+  those layers' default logger to stderr and reports there what `runMain` would, with its exit code,
+  but does not move their `Console` output or `Logger.consoleJson`
   ([ActionCli.md](docs/ActionCli.md#rules)).
-- A local command's `Failure` includes `Action.BuiltIn`, whatever its implementation's hook.
+- A local command's `Failure` includes `Action.BuiltIn`, whatever its implementation's authorizer.
+- A protected action's command, a Toolkit tool and an `Action.client` method owe its identity
+  per call, whether or not the handler reads it; one call without it anyway fails with
+  `Unauthenticated` before `authorize` runs.
 
 #### Testing
 
@@ -408,6 +501,14 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 ### Additions
 
+- `Authentication.make` refuses, in its types, a `security` that is no native scheme, such as a
+  record of them, before the run time throws; `layer` refuses a `protectedResource` for a
+  scheme other than Bearer the same way.
+- `Action.make` refuses a `Context.Reference` as `auth`, in its types and at run time
+  (`Invalid auth: an identity is a Context.Service, not a Context.Reference`): a reference is
+  never missing, so its default would stand in for every caller who supplies none.
+- `Action.implement` throws `A public-only target takes no authorize` when plain JavaScript gives
+  `authorize` to public actions alone, which would never run, as its types already refuse.
 - `ActionHttp.fetchClient(Http, { baseUrl, transformClient, fetch })` is `client` built once
   over `fetch`, outside an Effect: its methods are the same Effects and require nothing, so a
   browser app or a script runs each call with `Effect.runPromise`. A call sends with the
@@ -425,38 +526,56 @@ Each area below lists what is renamed or removed, then what changes without a re
   default or with `--json`; a custom `render` may print text.
 - An `undefined` option takes its default, as an omitted one does, and one that may be either
   is typed as either: `success: enabled ? Schema.String : undefined` gives `string | void`.
-- A hook may be an Effect that builds it, as a builder builds handlers. What the Effect yields,
-  such as a permission store, is a startup requirement, provided once beside the builders'
-  services; what the hook it returns yields, such as the caller, stays per request. It is built
-  once per layer graph for its implementation, and per invocation of a local command. A 0.8.0
-  hook that read a store owed it per request, supplied with `HttpRouter.provideRequest` on each
-  surface: yield the store in the Effect instead, and provide its layer at startup. A 0.8.0
-  hook built in `Layer.unwrap` around a surface becomes that Effect, passed to `implement`,
-  which builds it once per implementation in each layer graph: build what several
-  implementations or the surfaces share outside it. A service whose value is the hook,
-  `implement(actions, handlers, Guard)`, is built once for every implementation it guards.
-- `Action.share(actions, implementation, before?)` serves some of an implementation's actions
-  behind its hook, or `before` instead, sharing its builder's one run per layer graph. `before`
-  may be `Action.allowAll`, for a public subset, or built, as `implement`'s may; given one, the
-  source's hook is neither built nor run for its actions, and its startup services are not
-  required. It throws `Not implemented by this implementation: <names>` for an action its
-  source does not implement.
-- `Action.client(implementations)` calls implementations in process: one method per action,
-  taking its input directly, as `ActionHttp.client`'s methods do, so moving between an
-  in-process and a remote caller changes the line acquiring it. A call runs as a remote one
-  does, through the dispatch every surface shares: its input passes through its JSON codec,
-  encoded to JSON text then decoded, the hook and the handler run in a scope of their own, and
-  the success or the failure passes through its codec too. It fails with the action's errors and
-  the built-in ones, as a remote caller decodes them: input that does not pass is
-  `InvalidInput`, before the hook, and a success or a failure that does not, an error the action
-  does not declare included, is a defect, as it is an empty 500 over HTTP: its `SchemaError`,
-  then the failure itself. Each call owes what the hook and the handler read, the caller's
-  identity included, provided around the call, never around the acquisition. Acquiring it builds
-  the implementations into the layer graph around it, as a layer does, sharing each builder's
-  run with the surfaces of that graph: acquire it in a builder, a layer or a scoped program,
-  never per request. It is how an implementation's own behavior is tested, several callers in
-  one test, an action no binding holds included; `Testing.layer` tests what a surface adds.
-  `Action.Client<Apps>` is its type.
+- `authorize` may be an Effect that builds it, as a builder builds handlers. What the Effect
+  yields, such as a permission store, is a startup requirement, provided once beside the
+  builders' services; what the authorizer it returns yields, such as the caller, stays per
+  request. It is built once per layer graph for its implementation, and per invocation of a
+  local command. A 0.8.0 hook that read a store owed it per request, supplied with
+  `HttpRouter.provideRequest` on each surface: yield the store in the Effect instead, and
+  provide its layer at startup. A 0.8.0 hook built in `Layer.unwrap` around a surface becomes
+  that Effect, which `implement` builds once per implementation in each layer graph: build what
+  several implementations or the surfaces share outside it. A service whose value is the
+  authorizer, `{ authorize: Guard }`, is built once for every implementation it guards.
+- Checks, `Action.Check` and `Action.check`: an operational rule, such as a rate limit,
+  declared once with its error and the request services it reads, listed on the contracts it
+  applies to, whose errors then include its error, and implemented once as a layer, built once
+  per layer graph, so every surface counts against one state ([Action.md](docs/Action.md#checks)).
+
+  ```ts
+  class Limited extends Action.Check<Limited>()("app/Limited", {
+    error: RateLimited,
+    requires: CurrentActor,
+  }) {}
+  const Invite = Action.make("invite", { ..., auth: CurrentActor, checks: [Limited] });
+  const LimitedLive = Action.check(
+    Limited,
+    Effect.map(Limiter, (limiter) => () => Effect.flatMap(CurrentActor, ({ id }) => limiter.take(id))),
+  );
+  ```
+
+- `ActionHttp.layer(Http, implementations, { middleware })` runs native `HttpApiMiddleware`
+  around every route it serves, inside authentication and outside decoding, the first listed
+  innermost. It may require the identity where every action the layer serves is protected, and
+  fails only with the binding's `errors` or a built-in error, such as an address allowlist's
+  `Action.Forbidden`, so a limit keyed by the caller runs before decoding; one after decoding,
+  on every surface, is a check. It may fail with a binding error only where the binding surely
+  declares it, in a slot of its own of a list of fixed length.
+- `Action.client(implementations)` calls implementations in process: one method per action, taking
+  its input directly, as `ActionHttp.client`'s methods do, so moving between an in-process and a
+  remote caller changes the line acquiring it. A call runs as a remote one does, through the
+  dispatch every surface shares: its input passes through its JSON codec, encoded to JSON text then
+  decoded, the authorizer, the checks and the handler run in a scope of their own, and the success
+  or the failure passes through its codec too. It fails with the action's errors and the built-in
+  ones, as a remote caller decodes them: input that does not pass is `InvalidInput`, before the
+  authorizer, and a success or a failure that does not, an error the action does not declare
+  included, is a defect, as it is an empty 500 over HTTP: its `SchemaError`, then the failure
+  itself. Each call owes what the authorizer, the checks and the handler read, the caller's identity
+  included, provided around the call, never around the acquisition. Acquiring it builds the
+  implementations into the layer graph around it, as a layer does, sharing each builder's run with
+  the surfaces of that graph: acquire it in a builder, a layer or a scoped program, never per
+  request. It is how an implementation's own behavior is tested, several callers in one test, an
+  action no binding holds included; `Testing.layer` tests what a surface adds. `actions` lists fewer
+  of their actions. `Action.Client<Apps>` is its type.
 
   ```ts
   const asAlice = Effect.provideService(CurrentActor, alice); // each call's caller
@@ -467,21 +586,6 @@ Each area below lists what is renamed or removed, then what changes without a re
   });
   ```
 
-- `ActionHttp.make(actions, { security, public })` states in the OpenAPI document what the
-  authentication around the routes reads: `security` takes Effect's own schemes, keyed by
-  their OpenAPI name, and every endpoint but a `public` action's requires one of them.
-  `OpenApi.fromApi`, Swagger and Scalar show them, and a combined document keeps each
-  binding's. Without it, as in 0.8.0, the document states no security, and Swagger offers no
-  Authorize. It enforces nothing: `layer` serves every endpoint without it, the
-  authentication around a layer admits or refuses, and clients are unchanged.
-
-  ```ts
-  ActionHttp.make([Status, GetUser], {
-    security: { bearer: HttpApiSecurity.bearer },
-    public: [Status],
-  });
-  ```
-
 - A binding states where it mounts, `Http.prefix`: `/api` by default, `/` at the root, without
   a trailing slash.
 - The package declares `"sideEffects": false`, so a bundler may drop what a browser client
@@ -489,44 +593,90 @@ Each area below lists what is renamed or removed, then what changes without a re
   ([setup.md](docs/setup.md#browser)).
 - `scopesRequired` names the scopes every 401 of a protected resource asks for, so a first
   login requests the least rather than every scope supported.
-- `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`. Under
-  `Authentication.make` it is a 403 with an `insufficient_scope` challenge, on which an MCP
+- `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`. On an
+  authenticated route it is a 403 with an `insufficient_scope` challenge, on which an MCP
   client re-authorizes and retries.
 - `Authentication.bearerToken` reads the request's bearer token as a `Redacted<string>`,
-  failing with `Unauthenticated` without one; `Effect.option(bearerToken)` where it is optional.
-- `Authentication.refusal(error, { protectedResource, authorization })` is the response
-  `Authentication.make` answers a refusal with: its status, JSON, `Cache-Control: no-store` and
-  challenge. A caller the router never routes, such as a Node `upgrade` handler admitting a
-  socket, refuses with it rather than building a challenge of its own
-  ([Authentication.md](docs/Authentication.md#outside-the-router)).
+  failing with `Unauthenticated` without one, for native middleware on routes of the host's own,
+  such as a WebSocket upgrade; a verifier is given the token instead.
+- `Authentication.refusal(error, { authentication, protectedResource, authorization })` is the
+  response authentication answers a refusal with: its status, JSON, `Cache-Control: no-store` and
+  challenge. A caller the router never routes, such as a Node `upgrade` handler admitting a socket,
+  refuses with it rather than building a challenge of its own
+  ([Authentication.md](docs/Authentication.md#outside-the-router)). Given `authentication`, a
+  descriptor of another scheme, it answers as that descriptor's routes do: its 401 names that
+  scheme, and nothing steps up.
 - `Authentication.bearerTokenOf(authorization)` reads an `Authorization` header value as
   `bearerToken` reads a request's, an `Option` of the `Redacted` token, for that same caller,
-  which holds the header and no request.
-- `Authentication.make`'s `protectedResource` may be an Effect that builds it, as `build`
-  builds the authentication: for a resource known only at startup, such as one read from a
-  service. It runs once per layer graph, and the result is still the middleware, so it
-  combines with other middleware, which `Layer.unwrap` around `make(...).layer` gave up.
+  which holds the header and no request. Both read it as Effect's `HttpApiSecurity.bearer`
+  does, the reading a Bearer descriptor's verifier receives: the whitespace around the value
+  stripped, as HTTP parsers do, then the rest of the header after the scheme and its spaces,
+  `a b` for `Bearer a b`.
+- `Authentication.layer`'s `protectedResource` may be an Effect that builds it, as a builder
+  builds the verifier: for a resource known only at startup, such as one read from a
+  service. It runs once per layer graph.
 - `ActionMcp.runStdio` serves MCP 2025-11-25 and 2025-06-18, beside 2026-07-28, as the host
-  negotiates, so hosts that open with `initialize`, such as Claude Code and Codex, connect; a
-  host asking for an earlier revision is offered 2025-11-25. This reverses 0.6.0's "Stdio hosts must speak 2026-07-28", which 0.7.0 kept on
-  purpose for uniformity with HTTP, and which made 0.8.0's `layerStdio` refuse them. HTTP
-  still serves 2026-07-28 only: Codex, which opens HTTP with `initialize` as well, connects
-  over stdio ([ActionMcp.md](docs/ActionMcp.md#failure-modes)). MCP successes stay bare on
-  every transport and revision, as in 0.8.0: on 2026-07-28 `structuredContent` is the encoded
-  success and the text content is its JSON. On the revisions 0.8.0 refused, Effect's adapters
-  decide what is structured: 2025-11-25 and 2025-06-18 carry only an object success as
-  `structuredContent` and list only an object-rooted `outputSchema`. A success they do not
-  structure is text alone, its JSON or, for a string
-  success, the string itself, so a host on those revisions reads a non-object success from the
-  text.
+  negotiates, so hosts that open with `initialize`, such as Claude Code and Codex, connect; a host
+  asking for an earlier revision is offered 2025-11-25. This reverses 0.6.0's "Stdio hosts must
+  speak 2026-07-28", which 0.7.0 kept on purpose for uniformity with HTTP, and which made 0.8.0's
+  `layerStdio` refuse them. HTTP still serves 2026-07-28 only: Codex, which opens HTTP with
+  `initialize` as well, connects over stdio ([ActionMcp.md](docs/ActionMcp.md#failure-modes)). MCP
+  successes stay bare on every transport and revision, as in 0.8.0: on 2026-07-28
+  `structuredContent` is the encoded success and the text content is its JSON. On the revisions
+  0.8.0 refused, Effect's adapters decide what is structured: 2025-11-25 and 2025-06-18 carry only
+  an object success as `structuredContent` and list only an object-rooted `outputSchema`. A success
+  they do not structure is text alone, its JSON or, for a string success, the string itself, so a
+  host on those revisions reads a non-object success from the text.
+- `ActionMcp.layerHttp`, `runStdio`, `ActionToolkit.make` and `ActionCli.make` take `actions`, the
+  actions they serve among the implementations', as HTTP's binding lists its own: each keeps its
+  implementation's authorizer and its builder's one run, an implementation holding none is not
+  built, and only the listed actions' inputs and names are checked for the surface. The types take
+  only actions of the implementations, and owe only what the listed actions, and the builders
+  holding them, need. A listed action none of them holds throws
+  `Listed in actions, but no implementation holds it: <names>`. Omitted, every action is served, as
+  before. `ActionCli.make` takes it from a binding too. Options whose `actions` may be absent, an
+  optional property or a union with options lacking it, serve every action, so they owe what every
+  action owes; `Action.client` gives such options methods, and `ActionToolkit.make` tools, only for
+  the actions they may list. `needsApproval`'s `call` is typed by every action of the
+  implementations, which a check of `call.name` narrows, so a reusable `ActionToolkit.Options` value
+  is typed by all of them. An explicit type argument names the options' type, not the actions, and
+  requires the options argument:
+  `ActionMcp.layerHttp<typeof app, { readonly actions: readonly [typeof Status] }>(...)`.
+  `ActionHttp.layer`, which takes options or none, reads `middleware` that may be absent the same
+  way: such options owe what any of the middleware requires and provide nothing; a reusable value
+  names its tuple, `ActionHttp.LayerOptions<readonly [typeof Audit]>`. `ActionHttp.make` reads
+  `errors` so: options that may leave them out declare them or none, as the binding has at run time,
+  so clients decode them and no layer middleware may fail with them, and explicit type arguments
+  naming `errors` require the options argument; a layer middleware fails only with an error a fixed
+  tuple slot of its own declares, never one of an array of unknown length or a slot of several.
+  `make` takes public-only actions alone, or any actions with options: a helper forwarding options
+  that may be absent passes `options ?? {}`. A misspelled option is a type error beside `actions`
+  and `middleware` too, on every surface, each CLI command's options included.
+
+  ```ts
+  export const Tools = [GetUser, RenameUser] as const; // beside the contracts
+  ActionMcp.layerHttp([users, pages], { name, version, authentication: Login, actions: Tools });
+  ActionToolkit.make(users, { actions: Tools });
+  ```
+
+- `ActionCli.onStderr`, applied last before `runMain`, keeps stdout to a program's results: the
+  default logger of every layer within writes to stderr, and what `runMain` would report on
+  stdout, a defect or a failure of a layer the host provides, is reported on stderr once, with
+  the exit code `runMain` gives, the defect standing for it carrying the original `Cause` as its
+  `cause`. A command's failure `Command.run` printed is not reported
+  again. An MCP subprocess applies it after `runStdio`.
+- A command's `Failure` has a `reason`, its `cause`, so Effect's own
+  `Effect.catchReason("UserError", "UserNotFound", f)` and `catchReasons` match an action's
+  failure by its tag.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`, where 0.8.0 required it.
 - `ActionMcp.layerHttp` and `runStdio` take `features`, a layer of Effect's own
   `McpServer.resource`, `McpServer.prompt` and `McpServer.toolkit`, served beside the actions'
   tools on the same endpoint. Merged beside the endpoint instead, they register on another
-  registry and are not served.
+  registry and are not served. A native tool of an action's name is refused when the endpoint
+  builds, `Duplicate MCP tool: <name>, claimed by an action and a native feature`.
 - `ActionToolkit.make(implementations, { needsApproval })` has `LanguageModel` ask for
   approval of a model's call before it runs, through Effect's native `Tool.needsApproval`:
-  one check over every call, `(call, context) =>` a boolean or an `Effect` of one, where
+  one rule over every call, `(call, context) =>` a boolean or an `Effect` of one, where
   `call` holds the action's `name`, the `action` and the decoded `input`. Checking
   `call.name` narrows `call.input`, across implementations too. The check requires nothing
   and runs in the caller's context, so it reads the caller with `Effect.serviceOption`, and
@@ -541,7 +691,10 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 - A CLI flag's help text is its field's schema description.
 - `ActionCli.make(target, { name, commands })` gives a subcommand the options `command` takes,
-  by action name: `commands: { readFile: { positional: ["path"], render } }`.
+  by action name: `commands: { readFile: { positional: ["path"], render } }`. It takes any
+  action of the target, so one record serves aggregates of several `actions`: a command of an
+  action left out is unused, and a key naming no action of the target throws
+  `Unknown commands: <keys>`.
 - `ActionCli.command(implementations, Action, { positional: ["path"] })` takes the listed fields
   of a struct input as positional arguments, locally and over HTTP. A suspended input or field,
   as a recursive schema is written, takes the flags and arguments of the schema it stands for,
@@ -573,37 +726,20 @@ Each area below lists what is renamed or removed, then what changes without a re
   such a surface as `Layer.mergeAll`'s order decides
   ([ActionToolkit.md](docs/ActionToolkit.md#rules)).
 - The failure modes of a forgotten authentication show what TypeScript reports,
-  `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched,
-  `Expected 2 arguments, but got 1` at a web handler's `handler(request)`, and
-  `Request<"Requires", CurrentActor>` in a layer's type, where 0.8.0's named
-  `HttpRouter.Request.From<"Requires", CurrentActor>`, which TypeScript does not print. They
-  warn against the fix that error invites: an identity provided around `HttpRouter.serve` or
-  the program, or passed as every `handler(request, context)` call's context, compiles, and
-  every request to those routes then runs as that identity, one without credentials included
+  `Provider<CurrentActor, "example.Login">` among a layer's requirements, and
+  `Type 'Provider<...>' is not assignable to type 'never'` where the server is launched,
+  and why no identity provided at startup or per request stands in for it
   ([Authentication.md](docs/Authentication.md#failure-modes)).
-- Authentication.md shows one MCP URL for signed-out and signed-in callers
-  ([examples/mcp-sign-in.ts](examples/mcp-sign-in.ts)). The authentication provides an
-  optional identity, and only reading the credential is optional,
-  `Effect.option(Authentication.bearerToken)`, so a presented token that does not verify is
-  still a 401. The hook of each protected implementation refuses a signed-out caller with
-  `Unauthenticated`: the 401 on which the official MCP client signs in and retries the call;
-  whether another host does is the host's. Signed-out callers then list every tool, get a
-  protected tool's input errors before its 401, and call every implementation whose hook and
-  handlers do not refuse them, so separate endpoints stay the default, as in the example app.
-- Authentication.md adds a rule: the per-request authentication verifies a token's audience,
-  that it was issued for this `resource`, as MCP authorization requires (RFC 8707). `make`
-  reads no token; one issued for another resource fails with `Unauthenticated`, as any token
-  that does not verify.
-- Authentication.md adds a rule: route middleware provided around routes runs before the
-  authentication inside them only while that authentication is not combined into other
-  middleware, as the `b` of an `a.combine(b)` or inside one, since Effect runs a route's
-  middleware deepest first in a combination. A check that must run before any credential is
-  read, such as a Host or Origin policy, is global middleware,
-  `HttpRouter.middleware(check, { global: true })`, merged beside the routes, as the example
-  app's request policy now is.
-- guarantees.md adds a rule: a handler or hook maps another service's refusals before failing
+- Authentication.md adds a rule: the verifier checks a token's audience, that it was issued for this
+  `resource`, as MCP authorization requires (RFC 8707). `Authentication.layer` reads no token; one
+  issued for another resource fails with `Unauthenticated`, as any token that does not verify.
+- Authentication.md adds a rule: router middleware provided around routes runs before their
+  authentication, and a check that must also cover discovery and unrouted requests, such as a
+  Host or Origin policy, is global middleware, `HttpRouter.middleware(check, { global: true })`,
+  merged beside the routes, as the example app's request policy now is.
+- guarantees.md adds a rule: a handler maps another service's refusals before failing
   with them. An `Unauthenticated` or `Forbidden` that a client such as `ActionHttp.client`
-  decodes is, passed on as it is, this server's own: under `Authentication.make` it sends a
+  decodes is, passed on as it is, this server's own: on an authenticated route it sends a
   caller whose token is valid to sign in again, its 401 naming `invalid_token`, or to
   re-authorize for the other service's scopes
   ([authorization](docs/guarantees.md#authorization)).
@@ -622,25 +758,28 @@ Each area below lists what is renamed or removed, then what changes without a re
   shut a server down; a script piping requests keeps stdin open until it has read every
   answer.
 - The docs and examples provide a command's services and caller on the command,
-  `Command.provide(Users.layer)` and `Command.provideSync(CurrentActor, actor)`, built or read
-  when the command runs, before its input is decoded, so input the action's schema refuses is
-  refused after they are built; `--help` and the parser's errors, such as a missing or unknown
-  flag, never build them. Provided around the run, as 0.8.0 showed, they are built before the
-  arguments are parsed. A remote command's connection is configured on the command too, with
-  `client` or, for settings read when it runs, `Command.provideEffect(HttpClient.HttpClient, ...)`,
-  so no other request of the program takes its URL or credentials. `make`'s aggregate run alone still builds its provisions before
-  showing its help, and fails instead if one fails.
+  `Command.provide(Users.layer)` and `Command.provideSync(CurrentActor, actor)`, built or read when
+  the command runs, before its input is decoded, so input the action's schema refuses is refused
+  after they are built; `--help` and the parser's errors, such as a missing or unknown flag, never
+  build them. Provided around the run, as 0.8.0 showed, they are built before the arguments are
+  parsed. A remote command's connection is configured on the command too, with `client` or, for
+  settings read when it runs, `Command.provideEffect(HttpClient.HttpClient, ...)`, so no other
+  request of the program takes its URL or credentials. `make`'s aggregate run alone still builds its
+  provisions before showing its help, and fails instead if one fails.
 - The docs state what a message for input that does not decode says on every surface: what
   the schema expects and, where Effect's decoder reports one, each issue's path, never a value
   sent; a path names the keys it passes through, a record's included
   ([guarantees.md](docs/guarantees.md#wire-behavior)).
-- The skill, read from the repository whatever version a project installs, sends an agent in
-  a project that installs the package to that version's own pages in node_modules, and shows
-  the module its snippets import for the identity and the hook. The routing table says when to
-  read each page, CONTEXT.md included, and CONTEXT.md defines a layer graph, a share and its
-  source, and startup services.
+- The skill, read from the repository whatever version a project installs, sends an agent in a
+  project that installs the package to that version's own pages in node_modules, and shows the
+  module its snippets import for the identity and `authorize`. The routing table says when to read
+  each page, CONTEXT.md included, and CONTEXT.md defines a layer graph, a public and a protected
+  action, an authorizer, a check, an authentication descriptor and its provider, and startup
+  services.
 - The examples implement the agent-only `listChanges` beside the other user actions, which
-  HTTP's binding leaves out, and document the bearer scheme in the OpenAPI document.
+  HTTP's binding leaves out, serve public and protected actions from one HTTP layer and one MCP
+  endpoint, declare a rate limit as a check (`examples/checks.ts`), and give an operator's CLI
+  a trusted identity beside remote callers (`examples/cli-admin.ts`).
 
 ## 0.9.0
 

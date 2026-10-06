@@ -12,31 +12,53 @@ import {
   type Stdio,
 } from "effect";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
-import type { HttpRouter } from "effect/http";
+import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
+import type * as Action from "./Action.js";
+import {
+  assertAuthentication,
+  promote,
+  type Any as Authentication,
+  type ProviderOf,
+  type Matching,
+  type RemoteRequest,
+  type Required as RequiredAuthentication,
+} from "./internal/authentication.js";
 import { defaultPath, httpProtocol, isJsonObject } from "./internal/mcp.js";
 import { recordStepUp } from "./internal/refusal.js";
-import { onStderr } from "./internal/console.js";
+import { logToStderr } from "./internal/console.js";
 import { bindTools, type Projection } from "./internal/tools.js";
 import {
+  type Protected,
+  type ActionOf,
   type AnyImplementation,
   type BuildContext,
   type BuildError,
+  type Holding,
   type Member,
   provideHandlers,
-  type RequestContext,
+  select,
+  type Known,
+  type Selected,
+  type Selection,
   type Served,
+  type ServedRequest,
   toList,
 } from "./internal/implementation.js";
 
 /**
  * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option except
- * `protocols`, the server information, `instructions` and `extensions`, and the native
- * features it serves beside its tools.
+ * `protocols`, the server information, `instructions` and `extensions`, the actions `A` that
+ * are its tools, and the native features it serves beside them.
  */
-export interface Options<E = never, R = never> extends Omit<
+export interface Options<E = never, R = never, A extends Action.Any = Action.Any> extends Omit<
   Parameters<typeof McpServer.layerStdio>[0],
   "protocols"
 > {
+  /**
+   * The actions that are tools, among the implementations' actions: `[GetUser, RenameUser]`.
+   * Each keeps its implementation's authorization and builder. Defaults to every action of them.
+   */
+  readonly actions?: ReadonlyArray<A> | undefined;
   /**
    * Native MCP features served beside the actions' tools, such as `McpServer.resource`,
    * `McpServer.prompt` and `McpServer.toolkit` layers merged into one. They register on this
@@ -49,10 +71,11 @@ export interface Options<E = never, R = never> extends Omit<
  * One Streamable HTTP MCP endpoint: `Options`, and every native `McpServer.layerHttp` option
  * except `protocols`, `allowedOrigins` among them, with `path` defaulting to `/mcp`.
  */
-export interface LayerHttpOptions<E = never, R = never>
-  extends Options<E, R>, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
+export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
+  extends Options<E, R, A>, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
+  readonly authentication?: Authentication;
 }
 
 /**
@@ -80,13 +103,11 @@ type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provi
 /**
  * MCP has a JSON-only wire contract. Success is the encoded success as structured content,
  * and its JSON as text; declared failures are returned as JSON text. The native server
- * refuses undeclared arguments and publishes closed input schemas. A step-up refusal is
- * recorded, so that under `Authentication.make` it answers the request.
+ * refuses undeclared arguments and publishes closed input schemas.
  */
 const projection: Projection = {
   label: "MCP tool",
   tool: (tool) => tool.annotate(Tool.Strict, true),
-  handler: (run) => (input) => recordStepUp(run(input)),
 };
 
 /** Whether a JSON Schema is one the native server takes for a tool's arguments. */
@@ -218,17 +239,45 @@ const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
   features: Layer.Layer<never, unknown, unknown> = Layer.empty,
+  authentication?: Authentication,
 ) => {
-  const binding = bindTools(apps, projection);
+  const binding = bindTools(
+    apps,
+    authentication === undefined
+      ? projection
+      : {
+          ...projection,
+          // A protected tool's step-up refusal answers its request; a public one's is its
+          // result, signed in or not, as a public route's is over HTTP.
+          handler: (run, action) => (input) =>
+            action.auth === "public"
+              ? run(input)
+              : recordStepUp(promote(authentication, run(input))),
+        },
+  );
+
   const texts = textFields(apps);
 
   assertObjectInputs(apps);
+
+  const names = new Set(apps.flatMap((app) => app.actions.map(({ name }) => name)));
 
   // Registered with only the registry and the tool handlers: the native server lays the
   // context it registers in over every call's. Each handler keeps what it was built with,
   // which, as in a `Toolkit` call, fills in only what the call's request lacks.
   const register = Effect.gen(function* () {
     const registry = yield* McpServer.McpServer;
+
+    // The features are registered first. A native tool of an action's name would replace
+    // the action's, and with it the access the endpoint's authentication decides by name.
+    const claimed = registry.tools.flatMap(({ tool }) => (names.has(tool.name) ? [tool.name] : []));
+
+    if (claimed.length > 0) {
+      return yield* Effect.die(
+        `Duplicate MCP tool: ${claimed.join(", ")}, claimed by an action and a native feature`,
+      );
+    }
+
     const handlers = yield* Layer.build(binding.layer);
 
     yield* McpServer.registerToolkit(binding.toolkit).pipe(
@@ -237,8 +286,9 @@ const server = <Out, R>(
   });
 
   // Native features provide the native registry themselves, so they register on this one
-  // only when built in its graph.
-  return Layer.mergeAll(Layer.effectDiscard(register), features).pipe(
+  // only when built in its graph, before the actions.
+  return Layer.effectDiscard(register).pipe(
+    Layer.provide(features),
     Layer.provide(transport),
     // The native registry is mutable; every endpoint/subprocess gets its own one. Only
     // the registry: handlers are provided outside it, so builders stay shared, and so are
@@ -249,38 +299,134 @@ const server = <Out, R>(
 };
 
 /**
+ * What an anonymous caller of a mixed endpoint may send besides a public tool's call:
+ * discovering the server and its tools, which the contracts describe, and cancelling.
+ * Everything else, a native feature's listing, completion or subscription among them, and
+ * any method a later revision adds, authenticates.
+ */
+const anonymous = new Set(["server/discover", "tools/list", "notifications/cancelled"]);
+
+/**
+ * Whether a request to an endpoint serving `actions` must authenticate before the native
+ * server reads its body. An endpoint whose every tool is protected authenticates every
+ * request, so a host signs in when it connects. Otherwise the request's routing headers
+ * decide, which the native server refuses when they disagree with the body: discovery and a
+ * call of a public tool authenticate only a caller presenting credentials, and everything
+ * else authenticates, so native features are protected too. A request whose headers name
+ * no public tool as it is authenticates: it fails closed.
+ */
+const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
+  const open = new Set(actions.filter(({ auth }) => auth === "public").map(({ name }) => name));
+
+  return (headers: Headers.Headers): boolean => {
+    if (open.size === 0) return true;
+
+    const method = headers["mcp-method"];
+
+    if (method === undefined) return true;
+
+    if (anonymous.has(method)) return false;
+
+    if (method !== "tools/call") return true;
+
+    // Tool names are ASCII, which the header carries as it is: any other value, a Base64
+    // encoded one included, names no public tool.
+    const name = headers["mcp-name"];
+
+    return name === undefined || !open.has(name);
+  };
+};
+
+/**
+ * Where `D`, the descriptor given, is inferred, so the provider owed is that descriptor's.
+ * Without one, tools `A` all public take none, even past a `D` given explicitly; protected
+ * ones state theirs in `RequiredAuthentication` alone, as an absent `authentication` and the
+ * one they require would intersect to `never`, reading as every option being wrong.
+ */
+type Inferring<D, A extends Action.Any> = [D] extends [undefined]
+  ? [Protected<A>] extends [never]
+    ? { readonly authentication?: undefined }
+    : unknown
+  : { readonly authentication?: D };
+
+/**
  * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28 only.
  *
- * An endpoint is one route: middleware provided around this layer, such as
- * authentication, covers every tool of it, tool listing included, with the normal HTTP
- * lifetime. Tools under different middleware go on endpoints of their own. Under
- * `Authentication.make`, a call refused with `Unauthenticated`, or with `Forbidden` naming
- * scopes, is answered with its HTTP status and challenge, 401 or 403, as MCP authorization
- * requires; any other failure, and every failure without it, is a tool result. In a tool
- * call, what middleware provides per request wins over what the endpoint was built with;
- * native `features` read only what they were built with, never a request's. Still, never
- * provide an identity at startup, which a route no authentication covers serves to anyone.
+ * Protected tools need the `authentication` descriptor their contracts name, and the
+ * provider `Authentication.layer` builds from it. On an endpoint of protected tools only,
+ * every request authenticates before it is decoded. On a mixed endpoint, anyone may discover
+ * the server, list its tools, cancel, and call a public tool; everything else authenticates
+ * first, so a protected tool's description is listed to anyone but run only for its caller.
+ * A call refused with `Unauthenticated`, or with `Forbidden` naming scopes, is answered with
+ * its HTTP status and challenge, 401 or 403, as MCP authorization requires; any other
+ * failure is a tool result. In a tool call, what middleware provides per request wins over
+ * what the endpoint was built with; native `features` read only what they were built with,
+ * never a request's. Never provide an identity at startup: a tool call takes its identity
+ * only from the request it authenticated.
  */
-export function layerHttp<const Apps extends Served, E = never, R = never>(
+export function layerHttp<
+  const Apps extends Served,
+  E = never,
+  R = never,
+  const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const D extends Authentication | undefined = undefined,
+>(
   implementations: Apps,
-  options: LayerHttpOptions<E, R>,
+  options: LayerHttpOptions<E, R, ActionOf<Member<Apps>>> &
+    O &
+    NoInfer<Known<O, LayerHttpOptions<E, R, Action.Any>>> &
+    NoInfer<RequiredAuthentication<Selected<O, ActionOf<Member<Apps>>>>> &
+    Matching<NoInfer<Selected<O, ActionOf<Member<Apps>>>>, NoInfer<D>> &
+    Inferring<D, NoInfer<Selected<O, ActionOf<Member<Apps>>>>>,
 ): Layer.Layer<
   never,
-  BuildError<Member<Apps>> | Cause.IllegalArgumentError | E,
-  | BuildContext<Member<Apps>>
+  | BuildError<
+      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
+      Selected<O, ActionOf<Member<Apps>>>
+    >
+  | Cause.IllegalArgumentError
+  | E,
+  | BuildContext<
+      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
+      Selected<O, ActionOf<Member<Apps>>>
+    >
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", HttpToolRequestContext<RequestContext<Member<Apps>>>>
+  | HttpRouter.Request.From<
+      "Requires",
+      HttpToolRequestContext<RemoteRequest<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>>
+    >
+  | ProviderOf<D>
   | R
 >;
 export function layerHttp(
   apps: Served,
-  { features, path, ...options }: LayerHttpOptions<unknown, unknown>,
+  { actions, features, path, authentication, ...options }: LayerHttpOptions<unknown, unknown>,
 ) {
-  return server(
-    toList(apps),
+  const selected = select(toList(apps), actions);
+  const served = selected.flatMap((app) => app.actions);
+  assertAuthentication(served, authentication);
+
+  const transport = server(
+    selected,
     McpServer.layerHttp({ ...options, path: path ?? defaultPath, protocols: [httpProtocol] }),
     features,
+    authentication,
   );
+
+  if (authentication === undefined) return transport;
+  const required = requiresAuthentication(served);
+
+  const middleware = HttpRouter.middleware(
+    Effect.map(
+      authentication["~provider"],
+      (runtime) => (route) =>
+        Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+          runtime.http(route, !required(request.headers)),
+        ),
+    ),
+  );
+
+  return transport.pipe(Layer.provide(middleware.layer));
 }
 
 /**
@@ -291,19 +437,38 @@ export function layerHttp(
  *
  * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
  * `Stdio` service and the identity. Arguments are tool input only and never establish
- * request identity or authority; each implementation's `before` hook runs.
+ * request identity or authority; each implementation's `authorize` runs for its protected actions.
  */
-export function runStdio<const Apps extends Served, E = never, R = never>(
+export function runStdio<
+  const Apps extends Served,
+  E = never,
+  R = never,
+  const O extends Selection<ActionOf<Member<Apps>>> = {},
+>(
   implementations: Apps,
-  options: Options<E, R>,
+  options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
 ): Effect.Effect<
   void,
-  BuildError<Member<Apps>> | Cause.IllegalArgumentError | E,
-  BuildContext<Member<Apps>> | Stdio.Stdio | ToolRequestContext<RequestContext<Member<Apps>>> | R
+  | BuildError<
+      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
+      Selected<O, ActionOf<Member<Apps>>>
+    >
+  | Cause.IllegalArgumentError
+  | E,
+  | BuildContext<
+      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
+      Selected<O, ActionOf<Member<Apps>>>
+    >
+  | Stdio.Stdio
+  | ToolRequestContext<ServedRequest<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>>
+  | R
 >;
-export function runStdio(apps: Served, { features, ...options }: Options<unknown, unknown>) {
+export function runStdio(
+  apps: Served,
+  { actions, features, ...options }: Options<unknown, unknown>,
+) {
   const transport = server(
-    toList(apps),
+    select(toList(apps), actions),
     McpServer.layerStdio({ ...options, protocols: stdioProtocols }),
     features,
   );
@@ -312,7 +477,7 @@ export function runStdio(apps: Served, { features, ...options }: Options<unknown
   // its side. Built in a child, that is a normal end, while an interruption of the program
   // itself, such as a signal, stays one. Stdout carries the protocol, so logs go to stderr.
   return Layer.launch(transport).pipe(
-    onStderr,
+    logToStderr,
     Effect.forkChild,
     Effect.flatMap(Fiber.await),
     Effect.flatMap((exit) =>

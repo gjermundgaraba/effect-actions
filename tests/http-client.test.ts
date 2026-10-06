@@ -1,10 +1,14 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Schema, SchemaTransformation } from "effect";
+import { Cause, Effect, Layer, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as Testing from "../src/Testing.js";
+import { authenticate } from "../examples/authentication.js";
+import { CurrentActor } from "../examples/authorization.js";
+import { Login } from "../examples/binding.js";
+import { as } from "./requests.js";
 import { type Handler, httpClient, serve } from "./serve.js";
 
 class NotFound extends Schema.TaggedError<NotFound>()(
@@ -16,6 +20,7 @@ class NotFound extends Schema.TaggedError<NotFound>()(
 const Get = Action.make("get", {
   description: "Read a note",
   access: "read",
+  auth: "public",
   input: { id: Schema.String },
   success: { id: Schema.String, at: Schema.DateTimeUtcFromString },
   errors: [NotFound],
@@ -24,16 +29,18 @@ const Get = Action.make("get", {
 const Count = Action.make("count", {
   description: "Count notes",
   access: "read",
+  auth: "public",
   success: Schema.Finite,
 });
 
 const Remove = Action.make("remove", {
   description: "Remove every note",
   access: "write",
+  auth: CurrentActor,
   success: Schema.Null,
 });
 
-const Http = ActionHttp.make([Get, Count, Remove]);
+const Http = ActionHttp.make([Get, Count, Remove], { authentication: Login });
 
 const at = new Date("2026-09-23T00:00:00.000Z");
 
@@ -50,14 +57,15 @@ const apps = Action.implement(
     count: () => Effect.succeed(Infinity),
     remove: () => Effect.succeed(null),
   },
-  (action) => (action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void),
+  // Run for `remove` alone, the one protected action, once its caller is signed in.
+  { authorize: () => Effect.fail(new Action.Forbidden()) },
 );
 
 /** The notes served in memory, recording each request they answer. */
 const serveNotes = () => {
   const requests: Array<Request> = [];
 
-  const web = serve(ActionHttp.layer(Http, apps));
+  const web = serve(ActionHttp.layer(Http, apps).pipe(Layer.provide(authenticate)));
 
   const handler: Handler = (request) => {
     requests.push(request.clone());
@@ -79,7 +87,8 @@ it.effect("gives the Effect client each action's success and every declared fail
         missing: Effect.flip(client.get({ id: "missing" })),
         // No argument: the action has no input.
         unencodable: Effect.flip(client.count()),
-        forbidden: Effect.flip(client.remove()),
+        // Protected, and called without a token.
+        unauthenticated: Effect.flip(client.remove()),
       }),
     );
 
@@ -93,7 +102,7 @@ it.effect("gives the Effect client each action's success and every declared fail
       HttpClientError.isHttpClientError(results.unencodable) &&
         results.unencodable.response?.status,
     ).toBe(500);
-    expect(results.forbidden).toEqual(new Action.Forbidden());
+    expect(results.unauthenticated).toBeInstanceOf(Action.Unauthenticated);
     expect(requests[0]?.url).toBe("http://localhost/api/get");
     expect(yield* Effect.promise(async () => requests[0]?.json())).toEqual({ id: "a" });
     expect(requests[0]?.headers.has("authorization")).toBe(false);
@@ -114,17 +123,18 @@ it.effect("passes the native client options through, such as a bearer token on e
   Effect.gen(function* () {
     const { handler, requests } = serveNotes();
 
+    // Signed in, `remove` reaches its implementation's refusal.
     const forbidden = yield* Effect.flatMap(
       httpClient(Http, handler, {
-        transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")),
+        transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
       }),
       (client) => Effect.andThen(client.get({ id: "a" }), Effect.flip(client.remove())),
     );
 
     expect(forbidden).toEqual(new Action.Forbidden());
     expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
-      "Bearer t0k",
-      "Bearer t0k",
+      "Bearer alice",
+      "Bearer alice",
     ]);
   }),
 );
@@ -179,6 +189,7 @@ it.effect(
       const Double = Action.make("double", {
         description: "Transform in both directions",
         access: "write",
+        auth: "public",
         input: { value: Schema.FiniteFromString },
         success: Schema.FiniteFromString,
       });
@@ -186,6 +197,7 @@ it.effect(
       const Optional = Action.make("optional", {
         description: "Optional input",
         access: "write",
+        auth: "public",
         input: { value: Schema.optional(Schema.Number) },
         success: Schema.Number,
       });
@@ -203,6 +215,7 @@ it.effect(
       const Nullable = Action.make("nullable", {
         description: "Nullable object",
         access: "write",
+        auth: "public",
         input: Schema.NullOr(Schema.Struct({ value: Schema.optional(Schema.Number) })),
         success: Schema.String,
       });
@@ -210,6 +223,7 @@ it.effect(
       const UndefinedValue = Action.make("undefinedValue", {
         description: "Undefined is real decoded data",
         access: "write",
+        auth: "public",
         input: undefinedFromString,
         success: Schema.String,
       });
@@ -218,6 +232,7 @@ it.effect(
       const EmptyRecord = Action.make("emptyRecord", {
         description: "A hand-written empty-record input",
         access: "read",
+        auth: "public",
         input: Schema.Record(Schema.String, Schema.Never),
         success: Schema.Boolean,
       });
@@ -229,17 +244,13 @@ it.effect(
       const web = serve(
         ActionHttp.layer(
           Inputs,
-          Action.implement(
-            [Double, Optional, Nullable, UndefinedValue, EmptyRecord],
-            {
-              double: ({ value }) => Effect.succeed(value * 2),
-              optional: ({ value }) => Effect.succeed(value ?? 7),
-              nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
-              undefinedValue: (input) => Effect.succeed(String(input)),
-              emptyRecord: () => Effect.succeed(true),
-            },
-            Action.allowAll,
-          ),
+          Action.implement([Double, Optional, Nullable, UndefinedValue, EmptyRecord], {
+            double: ({ value }) => Effect.succeed(value * 2),
+            optional: ({ value }) => Effect.succeed(value ?? 7),
+            nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
+            undefinedValue: (input) => Effect.succeed(String(input)),
+            emptyRecord: () => Effect.succeed(true),
+          }),
         ),
       );
 
@@ -281,6 +292,7 @@ it.effect("takes a left-out argument as the input {} decodes to, an input class'
     const List = Action.make("list", {
       description: "List notes, all of them without a tag",
       access: "read",
+      auth: "public",
       input: Filters,
       success: Schema.String,
     });
@@ -292,10 +304,8 @@ it.effect("takes a left-out argument as the input {} decodes to, an input class'
     const web = serve(
       ActionHttp.layer(
         Lists,
-        Action.implement(
-          List,
-          (filters) => Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
-          Action.allowAll,
+        Action.implement(List, (filters) =>
+          Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
         ),
       ),
     );
@@ -325,10 +335,11 @@ it.effect("decodes two errors that share a status by their tag", () =>
       { httpApiStatus: 403 },
     ) {}
 
-    // Each action declares its own 403 beside the built-in `Forbidden` the hook raises.
+    // Each action declares its own 403 beside the built-in `Forbidden` its authorizer raises.
     const Refuse = Action.make("refuse", {
-      description: "Refused by the hook",
+      description: "Refused by its authorizer",
       access: "write",
+      auth: CurrentActor,
       success: Schema.String,
       errors: [Rejected],
     });
@@ -336,11 +347,12 @@ it.effect("decodes two errors that share a status by their tag", () =>
     const Reject = Action.make("reject", {
       description: "Rejected by the handler",
       access: "read",
+      auth: "public",
       success: Schema.String,
       errors: [Rejected],
     });
 
-    const binding = ActionHttp.make([Refuse, Reject]);
+    const binding = ActionHttp.make([Refuse, Reject], { authentication: Login });
 
     const routes = ActionHttp.layer(
       binding,
@@ -350,11 +362,12 @@ it.effect("decodes two errors that share a status by their tag", () =>
           refuse: () => Effect.succeed("unreachable"),
           reject: () => Effect.fail(new Rejected({ reason: "closed" })),
         },
-        (action) => (action.access === "read" ? Effect.void : Effect.fail(new Action.Forbidden())),
+        // Run for `refuse` alone, the one protected action.
+        { authorize: () => Effect.fail(new Action.Forbidden()) },
       ),
-    );
+    ).pipe(Layer.provide(authenticate));
 
-    const refused = yield* Effect.flatMap(ActionHttp.client(binding), (client) =>
+    const refused = yield* Effect.flatMap(ActionHttp.client(binding, as("alice")), (client) =>
       Effect.all([Effect.flip(client.refuse()), Effect.flip(client.reject())]),
     ).pipe(Effect.provide(Testing.layer(routes)));
 

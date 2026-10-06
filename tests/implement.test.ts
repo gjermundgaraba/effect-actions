@@ -1,16 +1,19 @@
 import { assert, describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Layer, Schema, Stdio } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Redacted, Schema, Stdio } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { exec } from "./cli-services.js";
 import { defectOf } from "./defect.js";
-import { serve, serveWithContext } from "./serve.js";
-import { post, send } from "./requests.js";
-import { actors, CurrentActor } from "../examples/authorization.js";
+import { serve } from "./serve.js";
+import { as, post, send, withBearer } from "./requests.js";
+import { authenticate } from "../examples/authentication.js";
+import { CurrentActor } from "../examples/authorization.js";
+import { Login } from "../examples/binding.js";
 import { Permissions, whoAmI as storedWhoAmI } from "../examples/authorization-built.js";
 import { WhoAmI as WhoAmIContract } from "../examples/contracts.js";
 
@@ -20,17 +23,22 @@ describe("implement", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
     access: "write",
+    auth: "public",
     input: { name: Schema.String },
     success: Schema.String,
   });
 
-  const Bye = Action.make("bye", { description: "Parts", access: "write", success: Schema.String });
+  const Bye = Action.make("bye", {
+    description: "Parts",
+    access: "write",
+    auth: "public",
+    success: Schema.String,
+  });
 
   it.each([
     {
       form: "one action, a handler",
-      make: () =>
-        Action.implement(Hello, ({ name }) => Effect.succeed(`hi ${name}`), Action.allowAll),
+      make: () => Action.implement(Hello, ({ name }) => Effect.succeed(`hi ${name}`)),
       hello: "hi Ada",
       bye: undefined,
     },
@@ -45,7 +53,6 @@ describe("implement", () => {
               ({ name }) =>
                 Effect.succeed(`hi ${name}@${tenant}`),
           ),
-          Action.allowAll,
         ),
       hello: "hi Ada@acme",
       bye: undefined,
@@ -53,14 +60,10 @@ describe("implement", () => {
     {
       form: "several actions, a record",
       make: () =>
-        Action.implement(
-          [Hello, Bye],
-          {
-            hello: ({ name }) => Effect.succeed(`hi ${name}`),
-            bye: () => Effect.succeed("bye"),
-          },
-          Action.allowAll,
-        ),
+        Action.implement([Hello, Bye], {
+          hello: ({ name }) => Effect.succeed(`hi ${name}`),
+          bye: () => Effect.succeed("bye"),
+        }),
       hello: "hi Ada",
       bye: "bye",
     },
@@ -77,7 +80,6 @@ describe("implement", () => {
               bye: () => Effect.succeed(`bye@${tenant}`),
             };
           }),
-          Action.allowAll,
         ),
       hello: "hi Ada@acme",
       bye: "bye@acme",
@@ -97,16 +99,12 @@ describe("implement", () => {
   });
 
   it("returns one implementation of every action it binds, with its actions as its only data", () => {
-    const app = Action.implement(
-      [Hello, Bye],
-      {
-        hello: () => Effect.succeed("hi"),
-        bye: () => Effect.succeed("bye"),
-      },
-      Action.allowAll,
-    );
+    const app = Action.implement([Hello, Bye], {
+      hello: () => Effect.succeed("hi"),
+      bye: () => Effect.succeed("bye"),
+    });
 
-    const one = Action.implement(Hello, () => Effect.succeed("hi"), Action.allowAll);
+    const one = Action.implement(Hello, () => Effect.succeed("hi"));
 
     expect(app.actions).toEqual([Hello, Bye]);
     expect(one.actions).toEqual([Hello]);
@@ -115,9 +113,9 @@ describe("implement", () => {
   });
 
   it("refuses duplicate actions at implement", () => {
-    expect(() =>
-      Action.implement([Hello, Hello], { hello: () => Effect.succeed("hi") }, Action.allowAll),
-    ).toThrow("Duplicate action: hello");
+    expect(() => Action.implement([Hello, Hello], { hello: () => Effect.succeed("hi") })).toThrow(
+      "Duplicate action: hello",
+    );
   });
 
   // The types require a function for every action; plain JavaScript, a cast or a record
@@ -148,7 +146,6 @@ describe("implement", () => {
         Action.implement(
           [Hello, Bye],
           pair((h) => Reflect.deleteProperty(h, "bye")),
-          Action.allowAll,
         ),
     },
     {
@@ -157,7 +154,6 @@ describe("implement", () => {
         Action.implement(
           [Hello, Bye],
           pair((h) => Reflect.set(h, "bye", undefined)),
-          Action.allowAll,
         ),
     },
     {
@@ -166,12 +162,11 @@ describe("implement", () => {
         Action.implement(
           [Hello, Bye],
           pair((h) => Reflect.set(h, "bye", "bye")),
-          Action.allowAll,
         ),
     },
     {
       handlers: "a record with an inherited method",
-      make: () => Action.implement([Hello, Bye], new Inherited(), Action.allowAll),
+      make: () => Action.implement([Hello, Bye], new Inherited()),
     },
   ])("throws at implement for $handlers", ({ make }) => {
     expect(make).toThrow("Missing handlers: bye");
@@ -182,7 +177,6 @@ describe("implement", () => {
       const app = Action.implement(
         [Hello, Bye],
         Effect.sync(() => pair((h) => Reflect.deleteProperty(h, "bye"))),
-        Action.allowAll,
       );
 
       const routes = ActionHttp.layer(ActionHttp.make([Hello, Bye]), app);
@@ -212,22 +206,17 @@ describe("implement", () => {
   it.effect("refuses a record key that names no action: a plain one at implement", () =>
     Effect.gen(function* () {
       expect(() =>
-        Action.implement(
-          [Hello],
-          {
-            hello: () => Effect.succeed("hi"),
-            // @ts-expect-error A record names only its actions.
-            stale: () => Effect.succeed("stale"),
-          },
-          Action.allowAll,
-        ),
+        Action.implement([Hello], {
+          hello: () => Effect.succeed("hi"),
+          // @ts-expect-error A record names only its actions.
+          stale: () => Effect.succeed("stale"),
+        }),
       ).toThrow("Unknown handlers: stale");
 
       const built = Action.implement(
         [Hello],
         // @ts-expect-error A builder's record names only its actions.
         Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
-        Action.allowAll,
       );
 
       expect(yield* defectOf(Layer.build(ActionToolkit.make(built).layer))).toMatchObject({
@@ -237,84 +226,85 @@ describe("implement", () => {
   );
 });
 
-describe("hooks", () => {
+describe("authorization", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
     access: "read",
+    auth: CurrentActor,
     success: Schema.String,
   });
 
   const hello = () => Effect.succeed("hi");
-  const missing = "Missing hook: pass an authorization hook, or Action.allowAll";
+  const missing = "Protected actions require authorize, or Action.allowAll";
+  const notAFunction = "Missing authorize: pass an authorization function, or Action.allowAll";
 
-  class Actor extends Context.Service<Actor, string>()("implement-test/Actor") {}
+  it.effect(
+    "refuses an implementation of protected actions stating no authorize, as plain JavaScript may write it",
+    () =>
+      Effect.gen(function* () {
+        // @ts-expect-error A protected action's implementation states who may call.
+        expect(() => Action.implement(Hello, hello)).toThrow(missing);
+        // @ts-expect-error Nor may its options leave it out.
+        expect(() => Action.implement(Hello, hello, {})).toThrow(missing);
+        // @ts-expect-error `undefined` is not an authorizer.
+        expect(() => Action.implement(Hello, hello, { authorize: undefined })).toThrow(missing);
+        // @ts-expect-error Nor is anything else but a function or an Effect building one.
+        expect(() => Action.implement(Hello, hello, { authorize: "allowAll" })).toThrow(
+          notAFunction,
+        );
 
-  it.effect("refuses an implementation that states no hook, as plain JavaScript may write it", () =>
-    Effect.gen(function* () {
-      // @ts-expect-error Every implementation states who may call.
-      expect(() => Action.implement(Hello, hello)).toThrow(missing);
-      // @ts-expect-error `undefined` is not a hook.
-      expect(() => Action.implement(Hello, hello, undefined)).toThrow(missing);
-      // @ts-expect-error Nor is anything else but a function or an Effect building one.
-      expect(() => Action.implement(Hello, hello, "allowAll")).toThrow(missing);
+        // A built authorizer is checked when its layer builds, as a builder's record is.
+        // @ts-expect-error An Effect building something other than an authorizer.
+        const unbuilt = Action.implement(Hello, hello, { authorize: Effect.succeed("allowAll") });
 
-      // Left out, a share's hook is its source's; given, it is checked as `implement`'s.
-      const app = Action.implement(Hello, hello, Action.allowAll);
-
-      expect(Action.share(Hello, app).actions).toEqual([Hello]);
-      // @ts-expect-error Not a hook.
-      expect(() => Action.share(Hello, app, null)).toThrow(missing);
-      // @ts-expect-error Given, `undefined` is not a hook either.
-      expect(() => Action.share(Hello, app, undefined)).toThrow(missing);
-
-      // A built hook is checked when its layer builds, as a builder's record is.
-      // @ts-expect-error An Effect building something other than a hook.
-      const unbuilt = Action.implement(Hello, hello, Effect.succeed("allowAll"));
-
-      expect(yield* defectOf(Layer.build(ActionToolkit.make(unbuilt).layer))).toMatchObject({
-        message: missing,
-      });
-    }),
+        expect(yield* defectOf(Layer.build(ActionToolkit.make(unbuilt).layer))).toMatchObject({
+          message: notAFunction,
+        });
+      }),
   );
 
-  it("builds a hook once per layer graph for every surface, and runs what it built per call", async () => {
+  it("refuses an authorize given to public actions alone, which would never run", () => {
+    const Open = Action.make("open", { description: "", access: "read", auth: "public" });
+
+    expect(() =>
+      // @ts-expect-error A public-only target takes no authorize.
+      Action.implement(Open, () => Effect.void, { authorize: Action.allowAll }),
+    ).toThrow("A public-only target takes no authorize");
+  });
+
+  it("builds authorize once per layer graph for every surface, and runs what it built per call", async () => {
     const called: Array<string> = [];
     let built = 0;
 
-    const app = Action.implement(
-      Hello,
-      hello,
-      // What the build yields is a startup service; what the hook yields, each call's.
-      Effect.gen(function* () {
+    const app = Action.implement(Hello, hello, {
+      // What the build yields is a startup service; what the authorizer yields, each call's.
+      authorize: Effect.gen(function* () {
         const tenant = yield* Tenant;
 
         built++;
 
         return () =>
-          Effect.flatMap(Actor, (actor) => {
-            called.push(`${actor}@${tenant}`);
+          Effect.flatMap(CurrentActor, ({ id }) => {
+            called.push(`${id}@${tenant}`);
 
-            return actor === "alice" ? Effect.void : Effect.fail(new Action.Forbidden());
+            return id === "alice" ? Effect.void : Effect.fail(new Action.Forbidden());
           });
       }),
-    );
+    });
 
-    const web = serveWithContext(
+    const web = serve(
       Layer.mergeAll(
-        ActionHttp.layer(ActionHttp.make([Hello]), app),
-        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-      ).pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
+        ActionHttp.layer(ActionHttp.make([Hello], { authentication: Login }), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: Login }),
+      ).pipe(Layer.provide([authenticate, Layer.succeed(Tenant, "acme")])),
     );
 
-    const as = (actor: string) => (request: Request) =>
-      web.handler(request, Context.make(Actor, actor));
-
-    expect(await (await as("alice")(post("/api/hello"))).json()).toBe("hi");
-    expect((await as("bob")(post("/api/hello"))).status).toBe(403);
+    expect(await (await web.handler(withBearer(post("/api/hello"), "alice"))).json()).toBe("hi");
+    expect((await web.handler(withBearer(post("/api/hello"), "bob"))).status).toBe(403);
     expect(
       await Effect.runPromise(
-        Effect.flatMap(Testing.mcpClient([Hello]), (mcp) => mcp.hello()).pipe(
-          Effect.provide(Testing.layer(as("alice"))),
+        Effect.flatMap(Testing.mcpClient([Hello], as("alice")), (mcp) => mcp.hello()).pipe(
+          Effect.provide(Testing.layer(web.handler)),
         ),
       ),
     ).toBe("hi");
@@ -323,16 +313,18 @@ describe("hooks", () => {
       called: ["alice@acme", "bob@acme", "alice@acme"],
     });
   });
-  it("builds a hook passed as a service once for every implementation it guards", async () => {
+
+  it("builds authorize passed as a service once for every implementation it guards", async () => {
     const Bye = Action.make("bye", {
       description: "Parts",
       access: "read",
+      auth: CurrentActor,
       success: Schema.String,
     });
 
     let built = 0;
 
-    class Guard extends Context.Service<Guard, Action.Before<Action.Any>>()(
+    class Guard extends Context.Service<Guard, Action.Authorize<Action.Any>>()(
       "implement-test/Guard",
     ) {
       static readonly layer = Layer.effect(
@@ -345,48 +337,63 @@ describe("hooks", () => {
       );
     }
 
-    const hi = Action.implement(Hello, hello, Guard);
-    const bye = Action.implement(Bye, () => Effect.succeed("bye"), Guard);
-    const Both = ActionHttp.make([Hello, Bye]);
+    const hi = Action.implement(Hello, hello, { authorize: Guard });
+    const bye = Action.implement(Bye, () => Effect.succeed("bye"), { authorize: Guard });
+    const Both = ActionHttp.make([Hello, Bye], { authentication: Login });
 
     const handler = serve(
       Layer.mergeAll(
         ActionHttp.layer(Both, hi),
         ActionHttp.layer(Both, bye),
-        ActionMcp.layerHttp([hi, bye], { name: "test", version: "0" }),
-      ).pipe(Layer.provide(Guard.layer)),
+        ActionMcp.layerHttp([hi, bye], { name: "test", version: "0", authentication: Login }),
+      ).pipe(Layer.provide([authenticate, Guard.layer])),
     ).handler;
 
-    expect(await (await handler(post("/api/hello"))).json()).toBe("hi");
-    expect(await (await handler(post("/api/bye"))).json()).toBe("bye");
+    expect(await (await handler(withBearer(post("/api/hello"), "alice"))).json()).toBe("hi");
+    expect(await (await handler(withBearer(post("/api/bye"), "alice"))).json()).toBe("bye");
     expect(built).toBe(1);
   });
 
-  it("serves the documented built hook: its store provided at startup, the actor per call", async () => {
-    const Http = ActionHttp.make([WhoAmIContract]);
+  it("serves the documented built authorizer: its store provided at startup, the actor per call", async () => {
+    const Http = ActionHttp.make([WhoAmIContract], { authentication: Login });
 
-    const web = serveWithContext(
-      ActionHttp.layer(Http, storedWhoAmI).pipe(Layer.provide(Permissions.layerMemory)),
+    // A test verifier naming the actor by its token, carrying no permissions: the authorizer
+    // reads them from the store.
+    const signIn = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+      Effect.succeed({ id: Redacted.value(token), tenantId: "acme", permissions: [] }),
     );
 
-    const nobody = { id: "nobody", tenantId: "acme", permissions: [] };
+    const web = serve(
+      ActionHttp.layer(Http, storedWhoAmI).pipe(Layer.provide([signIn, Permissions.layerMemory])),
+    );
 
     // The identity per request, as authentication provides it; the store was built at startup.
-    const as = (actor: typeof actors.reader | typeof nobody) =>
-      web.handler(post("/api/whoAmI"), Context.make(CurrentActor, actor));
+    const as = (token: string) => web.handler(withBearer(post("/api/whoAmI"), token));
 
-    expect(await (await as(actors.reader)).json()).toEqual({ id: "reader", tenantId: "acme" });
-    expect((await as(nobody)).status).toBe(403);
+    expect(await (await as("reader")).json()).toEqual({ id: "reader", tenantId: "acme" });
+    expect((await as("nobody")).status).toBe(403);
   });
 });
 
 describe("builder acquisition", () => {
-  const One = Action.make("one", { description: "One", access: "write", success: Schema.Number });
-  const Two = Action.make("two", { description: "Two", access: "write", success: Schema.Number });
+  const One = Action.make("one", {
+    description: "One",
+    access: "write",
+    auth: "public",
+    success: Schema.Number,
+  });
+
+  const Two = Action.make("two", {
+    description: "Two",
+    access: "write",
+    auth: "public",
+    success: Schema.Number,
+  });
 
   const Solo = Action.make("solo", {
     description: "Solo",
     access: "write",
+    auth: "public",
     success: Schema.String,
   });
 
@@ -404,13 +411,11 @@ describe("builder acquisition", () => {
     const pair = Action.implement(
       [One, Two],
       builder("pair", { one: () => Effect.succeed(1), two: () => Effect.succeed(2) }),
-      Action.allowAll,
     );
 
     const solo = Action.implement(
       Solo,
       builder("solo", () => Effect.succeed("solo")),
-      Action.allowAll,
     );
 
     return { built, pair, solo };
@@ -469,12 +474,11 @@ describe("builder acquisition", () => {
     Effect.gen(function* () {
       class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 
-      const Solo = Action.make("solo", { description: "", access: "read" });
+      const Solo = Action.make("solo", { description: "", access: "read", auth: "public" });
 
       const failing = Action.implement(
         Solo,
         Effect.as(Effect.fail(new Unavailable()), () => Effect.void),
-        Action.allowAll,
       );
 
       const exit = yield* Effect.exit(

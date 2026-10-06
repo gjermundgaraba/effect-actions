@@ -1,25 +1,16 @@
 import { Layer } from "effect";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { authenticate } from "./authentication.js";
+import { Login } from "./binding.js";
 import { double, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-// An MCP endpoint is one route, so authentication covers all of its tools. The public tool
-// gets an endpoint of its own, which keeps the protected tools unlisted to signed-out callers.
-const publicMcp = ActionMcp.layerHttp(status, {
-  name: "effect-actions-public",
-  version: "0.0.0",
-  path: "/mcp/public",
-  allowedOrigins,
-});
-
-// A list of implementations serves all of their actions, `listChanges` included, which HTTP
-// leaves out. `path` defaults to `/mcp`.
-const mcp = ActionMcp.layerHttp([userActions, double], {
+// One URL: discovery and `status` answer anyone; a protected tool's call authenticates
+// before its arguments are decoded, with the 401 an MCP client signs in on.
+export const layer = ActionMcp.layerHttp([status, userActions, double], {
   name: "effect-actions",
   version: "0.0.0",
   allowedOrigins,
+  authentication: Login,
 }).pipe(Layer.provide(authenticate));
-
-export const layer = Layer.mergeAll(publicMcp, mcp);

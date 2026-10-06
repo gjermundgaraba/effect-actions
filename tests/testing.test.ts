@@ -26,7 +26,9 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { layer as host } from "../examples/app.js";
-import { Http } from "../examples/binding.js";
+import { authenticate } from "../examples/authentication.js";
+import { CurrentActor } from "../examples/authorization.js";
+import { Http, Login } from "../examples/binding.js";
 import {
   Double,
   GetUser,
@@ -99,17 +101,22 @@ describe("mcpClient", () => {
 
   it.effect("decodes a built-in error a tool returns as its class", () =>
     Effect.gen(function* () {
-      const Refuse = Action.make("refuse", { description: "Refuses", access: "write" });
-      const Reject = Action.make("reject", { description: "Rejects its input", access: "write" });
+      const Refuse = Action.make("refuse", {
+        description: "Refuses",
+        access: "write",
+        auth: "public",
+      });
 
-      const app = Action.implement(
-        [Refuse, Reject],
-        {
-          refuse: () => Effect.fail(new Action.Forbidden({ message: "Never." })),
-          reject: () => Effect.fail(new Action.InvalidInput({ message: "Out of range." })),
-        },
-        Action.allowAll,
-      );
+      const Reject = Action.make("reject", {
+        description: "Rejects its input",
+        access: "write",
+        auth: "public",
+      });
+
+      const app = Action.implement([Refuse, Reject], {
+        refuse: () => Effect.fail(new Action.Forbidden({ message: "Never." })),
+        reject: () => Effect.fail(new Action.InvalidInput({ message: "Out of range." })),
+      });
 
       const results = yield* Effect.gen(function* () {
         const mcp = yield* Testing.mcpClient([Refuse, Reject]);
@@ -131,12 +138,13 @@ describe("mcpClient", () => {
       const Fail = Action.make("fail", {
         description: "Fails with a string",
         access: "write",
+        auth: "public",
         success: Schema.String,
         errors: [Schema.String],
       });
 
       const routes = ActionMcp.layerHttp(
-        Action.implement(Fail, () => Effect.fail("failure"), Action.allowAll),
+        Action.implement(Fail, () => Effect.fail("failure")),
         { name: "test", version: "0" },
       );
 
@@ -184,12 +192,13 @@ describe("mcpClient", () => {
       const Slow = Action.make("slow", {
         description: "Fails late",
         access: "read",
+        auth: "public",
         success: Schema.String,
         errors: [Late],
       });
 
       const routes = ActionMcp.layerHttp(
-        Action.implement(Slow, () => Effect.fail(new Late({ reason: "busy" })), Action.allowAll),
+        Action.implement(Slow, () => Effect.fail(new Late({ reason: "busy" }))),
         { name: "test", version: "0" },
       );
 
@@ -204,9 +213,9 @@ describe("mcpClient", () => {
 
   it.effect("returns nothing for an action that returns nothing, over HTTP and MCP alike", () =>
     Effect.gen(function* () {
-      const Reset = Action.make("reset", { description: "Reset", access: "write" });
+      const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
       const Http = ActionHttp.make([Reset]);
-      const reset = Action.implement(Reset, () => Effect.void, Action.allowAll);
+      const reset = Action.implement(Reset, () => Effect.void);
 
       const routes = Layer.mergeAll(
         ActionHttp.layer(Http, reset),
@@ -234,14 +243,13 @@ describe("mcpClient", () => {
       const List = Action.make("list", {
         description: "List notes, all of them without a tag",
         access: "read",
+        auth: "public",
         input: Filters,
         success: Schema.String,
       });
 
-      const list = Action.implement(
-        List,
-        (filters) => Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
-        Action.allowAll,
+      const list = Action.implement(List, (filters) =>
+        Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
       );
 
       const results = yield* Effect.flatMap(Testing.mcpClient([List]), (mcp) =>
@@ -260,6 +268,7 @@ describe("mcpClient", () => {
       const Loose = Action.make("getUser", {
         description: "The host's getUser, with an input it refuses",
         access: "read",
+        auth: "public",
         input: { id: Schema.Finite },
         success: Schema.String,
       });
@@ -267,6 +276,7 @@ describe("mcpClient", () => {
       const Missing = Action.make("missing_tool", {
         description: "Not served",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
@@ -333,6 +343,7 @@ describe("mcpClient", () => {
   const Listed = Action.make("listed", {
     description: "Lists numbers",
     access: "read",
+    auth: "public",
     success: Schema.Array(Schema.Finite),
   });
 
@@ -491,8 +502,8 @@ describe("mcpRequest", () => {
       // The default is relative, so the test server's client sends it to the server itself.
       const response = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
 
-      // Unauthenticated, as the listening host answers it.
-      expect(response.status).toBe(401);
+      // Listed to anyone, as the listening host's mixed endpoint answers it.
+      expect(response.status).toBe(200);
     }).pipe(
       Effect.provide(
         HttpRouter.serve(host, { disableLogger: true, disableListenLog: true }).pipe(
@@ -860,6 +871,7 @@ describe("layer", () => {
       const Ping = Action.make("ping", {
         description: "Ping",
         access: "read",
+        auth: "public",
         success: Schema.Boolean,
       });
 
@@ -873,7 +885,6 @@ describe("layer", () => {
 
             return () => Effect.succeed(true);
           }),
-          Action.allowAll,
         ),
       );
 
@@ -884,18 +895,27 @@ describe("layer", () => {
 
       expect(failure).toEqual(new Unavailable());
 
-      // A hook's builder fails the routes the same way, with its typed failure.
-      const hooked = ActionHttp.layer(
-        ActionHttp.make([Ping]),
-        Action.implement(Ping, () => Effect.succeed(true), Effect.fail(new Unavailable())),
-      );
+      const Guarded = Action.make("ping", {
+        description: "Ping",
+        access: "read",
+        auth: CurrentActor,
+        success: Schema.Boolean,
+      });
 
-      const hookFailure = yield* HttpClient.get("/api/ping").pipe(
-        Effect.provide(Testing.layer(hooked)),
+      // An authorizer's builder fails the routes the same way, with its typed failure.
+      const guarded = ActionHttp.layer(
+        ActionHttp.make([Guarded], { authentication: Login }),
+        Action.implement(Guarded, () => Effect.succeed(true), {
+          authorize: Effect.fail(new Unavailable()),
+        }),
+      ).pipe(Layer.provide(authenticate));
+
+      const authorizeFailure = yield* HttpClient.get("/api/ping").pipe(
+        Effect.provide(Testing.layer(guarded)),
         Effect.flip,
       );
 
-      expect(hookFailure).toEqual(new Unavailable());
+      expect(authorizeFailure).toEqual(new Unavailable());
     }),
   );
 
@@ -906,13 +926,13 @@ describe("layer", () => {
       const Visit = Action.make("visit", {
         description: "Count a visit.",
         access: "write",
+        auth: "public",
         success: Schema.Finite,
       });
 
       const visit = Action.implement(
         Visit,
         Effect.map(Visits, (seen) => () => Effect.sync(() => ++seen.count)),
-        Action.allowAll,
       );
 
       const Http = ActionHttp.make([Visit]);
@@ -1000,6 +1020,7 @@ describe("layer", () => {
         const Read = Action.make("read", {
           description: "Reads a file with its builder's services and with its request's.",
           access: "read",
+          auth: "public",
           input: { name: Schema.String },
           success: Schema.Array(Schema.String),
         });
@@ -1027,7 +1048,6 @@ describe("layer", () => {
                 return [atStartup, perRequest];
               }).pipe(Effect.orDie);
           }),
-          Action.allowAll,
         );
 
         const Http = ActionHttp.make([Read]);
@@ -1066,6 +1086,7 @@ describe("layer", () => {
       const Exists = Action.make("exists", {
         description: "Whether a file exists, to its builder's file system and to its request's.",
         access: "read",
+        auth: "public",
         input: { path: Schema.String },
         success: Schema.Array(Schema.Boolean),
       });
@@ -1080,7 +1101,6 @@ describe("layer", () => {
                 Effect.all([fs.exists(path), perRequest.exists(path)]),
               ).pipe(Effect.orDie),
         ),
-        Action.allowAll,
       );
 
       const Http = ActionHttp.make([Exists]);

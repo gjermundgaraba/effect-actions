@@ -1,20 +1,30 @@
 import { Context, Effect, Layer, Redacted } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApiMiddleware } from "effect/http-api";
 import * as Action from "../src/Action.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import * as Authentication from "../src/Authentication.js";
 import { type Actor, actors, CurrentActor } from "./authorization.js";
+import { Http, Login } from "./binding.js";
+import { userActions } from "./handlers.js";
 
 /** Each request's tenant: the first label of its host, `acme` for acme.example.com. */
 export class Tenant extends Context.Service<Tenant, string>()("example/Tenant") {}
 
+// Outer: native router middleware, providing what the verifier reads per request.
 const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
     Effect.provideService(route, Tenant, request.headers.host?.split(".")[0] ?? ""),
   ),
 );
 
-// Reads the identity: names the authenticated caller on each response.
-const logCaller = HttpRouter.middleware()((route) =>
+// Inner: reads the identity, so it is native endpoint middleware, which the layer runs inside
+// the authentication of every route it serves, all of them protected.
+export class LogCaller extends HttpApiMiddleware.Service<LogCaller, { requires: CurrentActor }>()(
+  "example/LogCaller",
+) {}
+
+const LogCallerLive = Layer.succeed(LogCaller, (route) =>
   Effect.flatMap(CurrentActor, ({ id }) =>
     Effect.map(route, HttpServerResponse.setHeader("x-actor", id)),
   ),
@@ -43,25 +53,30 @@ export class Verifier extends Context.Service<
 
 // Like a handler builder: the verifier once, at startup; the token and the tenant per
 // request. An actor of another tenant is refused.
-const authentication = Authentication.make(
-  CurrentActor,
+const authenticate = Authentication.layer(
+  Login,
   Effect.gen(function* () {
     const verifier = yield* Verifier;
 
-    return Effect.gen(function* () {
-      const actor = yield* verifier.verify(yield* Authentication.bearerToken);
+    return (token: Redacted.Redacted<string>) =>
+      Effect.gen(function* () {
+        const actor = yield* verifier.verify(token);
 
-      if (actor.tenantId !== (yield* Tenant)) {
-        return yield* new Action.Forbidden({ message: "Not a member of this tenant." });
-      }
+        if (actor.tenantId !== (yield* Tenant)) {
+          return yield* new Action.Forbidden({ message: "Not a member of this tenant." });
+        }
 
-      return actor;
-    });
+        return actor;
+      });
   }),
 );
 
-// `resolveTenant` runs first, providing what the authentication reads; `logCaller` runs
-// last, reading the identity the authentication provides.
-export const authenticate = logCaller
-  .combine(authentication.combine(resolveTenant))
-  .layer.pipe(Layer.provide(Verifier.layer));
+// Provided in order: each `Layer.provide` gives what the layers before it still owe, so
+// `resolveTenant`, last, gives the Tenant the verifier reads per request. One array,
+// `Layer.provide([authenticate, resolveTenant.layer])`, would leave it owed: an array's
+// members provide to the routes, not to one another.
+export const routes = ActionHttp.layer(Http, userActions, { middleware: [LogCaller] }).pipe(
+  Layer.provide([authenticate, LogCallerLive]),
+  Layer.provide(Verifier.layer),
+  Layer.provide(resolveTenant.layer),
+);

@@ -1,13 +1,35 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Redacted } from "effect";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpApiMiddleware } from "effect/http-api";
 import * as Action from "../src/Action.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
+import { post, rawToolCall, withBearer } from "./requests.js";
 import { serve } from "./serve.js";
 
 const prefix = "/.well-known/oauth-protected-resource";
 
 class Caller extends Context.Service<Caller, string>()("protected-resource/Caller") {}
+
+const Login = Authentication.make("protected-resource.Login", Caller);
+
+const Identify = Action.make("identify", {
+  description: "Name the caller.",
+  access: "read",
+  auth: Caller,
+  success: Schema.String,
+});
+
+const identify = Action.implement(Identify, () => Caller, { authorize: Action.allowAll });
+
+/** `identify`'s route under `path`, behind `authentication`. */
+const route = <ROut, E, R>(path: `/${string}`, authentication: Layer.Layer<ROut, E, R>) =>
+  ActionHttp.layer(
+    ActionHttp.make([Identify], { authentication: Login, prefix: path }),
+    identify,
+  ).pipe(Layer.provide(authentication));
 
 let routes = 0;
 
@@ -22,42 +44,34 @@ const published = (
     readonly resourceName?: string;
   } = {},
 ) =>
-  HttpRouter.add("GET", `/private/${(routes += 1)}`, HttpServerResponse.text("private")).pipe(
-    Layer.provide(
-      Authentication.make(Caller, Effect.succeed(Effect.succeed("caller")), {
+  route(
+    `/private/${(routes += 1)}`,
+    Authentication.layer(Login, () => Effect.succeed("caller"), {
+      protectedResource: {
         resource,
         authorizationServers: ["https://auth.example.com"],
         ...options,
-      }).layer,
-    ),
+      },
+    }),
   );
 
 /** Authentication refusing every request, as the protected resource `resource`. */
 const refusing = (resource = "https://api.example.com/mcp") =>
-  Authentication.make(Caller, Effect.succeed(Effect.fail(new Action.Unauthenticated())), {
-    resource,
-    authorizationServers: ["https://auth.example.com"],
+  Authentication.layer(Login, () => Effect.fail(new Action.Unauthenticated()), {
+    protectedResource: { resource, authorizationServers: ["https://auth.example.com"] },
   });
 
 it("answers before routing, so the authentication publishing it never covers it", async () => {
-  const web = serve(
-    HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)).pipe(
-      Layer.provide(refusing().layer),
-    ),
-  );
+  const web = serve(route("/private", refusing()));
 
   expect((await web.handler(new Request(`https://api.example.com${prefix}/mcp`))).status).toBe(200);
-  expect((await web.handler(new Request("https://api.example.com/private"))).status).toBe(401);
+  expect((await web.handler(post("/private/identify"))).status).toBe(401);
 });
 
 it("escapes a challenge's quoted metadata URL, whose query may hold a backslash", async () => {
-  const web = serve(
-    HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)).pipe(
-      Layer.provide(refusing("https://api.example.com/mcp?tenant=alice\\").layer),
-    ),
-  );
+  const web = serve(route("/private", refusing("https://api.example.com/mcp?tenant=alice\\")));
 
-  const refused = await web.handler(new Request("https://api.example.com/private"));
+  const refused = await web.handler(post("/private/identify"));
 
   expect(refused.headers.get("www-authenticate")).toBe(
     `Bearer resource_metadata="https://api.example.com${prefix}/mcp?tenant=alice\\\\"`,
@@ -67,81 +81,88 @@ it("escapes a challenge's quoted metadata URL, whose query may hold a backslash"
 it("publishes discovery for every layer it authenticates, which share one build of it", async () => {
   let built = 0;
 
-  // Discovery is published where the middleware is built, so one build publishes it once.
-  const authenticate = Authentication.make(
-    Caller,
+  // Discovery is published where the verifier is built, so one build publishes it once.
+  const authenticate = Authentication.layer(
+    Login,
     Effect.sync(() => {
       built++;
 
-      return Effect.succeed("caller");
+      return () => Effect.succeed("caller");
     }),
     {
-      resource: "https://api.example.com/mcp",
-      authorizationServers: ["https://auth.example.com"],
+      protectedResource: {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+      },
     },
-  ).layer;
-
-  const web = serve(
-    Layer.mergeAll(
-      HttpRouter.add("GET", "/a", HttpServerResponse.text("a")).pipe(Layer.provide(authenticate)),
-      HttpRouter.add("GET", "/b", HttpServerResponse.text("b")).pipe(Layer.provide(authenticate)),
-    ),
   );
+
+  const web = serve(Layer.mergeAll(route("/a", authenticate), route("/b", authenticate)));
 
   const response = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
-  expect(await (await web.handler(new Request("https://api.example.com/b"))).text()).toBe("b");
+  expect(await (await web.handler(withBearer(post("/b/identify"), "b"))).json()).toBe("caller");
   expect(built).toBe(1);
 });
 
-it("publishes discovery from every composition of its middleware", async () => {
+it("publishes discovery once per layer graph, whatever middleware runs around or inside it", async () => {
   class Tenant extends Context.Service<Tenant, string>()("protected-resource/Tenant") {}
 
+  // Outer: the host's router middleware, feeding the verifier.
   const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
     Effect.provideService(route, Tenant, "acme"),
   );
 
-  const logCaller = HttpRouter.middleware()((route) =>
+  // Inner: the layer's middleware, reading the identity.
+  class LogCaller extends HttpApiMiddleware.Service<LogCaller, { requires: Caller }>()(
+    "protected-resource/LogCaller",
+  ) {}
+
+  const logCaller = Layer.succeed(LogCaller, (route) =>
     Effect.flatMap(Caller, (caller) =>
       Effect.map(route, HttpServerResponse.setHeader("x-caller", caller)),
     ),
   );
 
-  const authentication = (resource: string) =>
-    Authentication.make(
-      Caller,
-      Effect.succeed(Effect.map(Tenant, (tenant) => `caller@${tenant}`)),
-      {
-        resource,
+  let built = 0;
+
+  const authenticate = Authentication.layer(
+    Login,
+    Effect.sync(() => {
+      built++;
+
+      return (token: Redacted.Redacted<string>) =>
+        Effect.map(Tenant, (tenant) => `${Redacted.value(token)}@${tenant}`);
+    }),
+    {
+      protectedResource: {
+        resource: "https://api.example.com/mcp",
         authorizationServers: ["https://auth.example.com"],
       },
-    );
-
-  // With middleware combined before it, and with middleware combined after it too: each
-  // build publishes its resource.
-  const web = serve(
-    Layer.mergeAll(
-      HttpRouter.add("GET", "/a", Effect.map(Caller, HttpServerResponse.text)).pipe(
-        Layer.provide(authentication("https://api.example.com/a").combine(resolveTenant).layer),
-      ),
-      HttpRouter.add("GET", "/b", Effect.map(Caller, HttpServerResponse.text)).pipe(
-        Layer.provide(
-          logCaller.combine(authentication("https://api.example.com/b").combine(resolveTenant))
-            .layer,
-        ),
-      ),
-    ),
+    },
   );
 
-  for (const path of ["/a", "/b"]) {
-    const response = await web.handler(new Request(`https://api.example.com${prefix}${path}`));
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ resource: `https://api.example.com${path}` });
-  }
+  // The tenant comes in a later provide than the verifier reading it.
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([Identify], { authentication: Login }), identify, {
+        middleware: [LogCaller],
+      }),
+      ActionMcp.layerHttp(identify, { name: "test", version: "0", authentication: Login }),
+    ).pipe(Layer.provide([authenticate, logCaller]), Layer.provide(resolveTenant.layer)),
+  );
 
-  const b = await web.handler(new Request("https://api.example.com/b"));
-  expect([await b.text(), b.headers.get("x-caller")]).toEqual(["caller@acme", "caller@acme"]);
+  const response = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
+
+  const http = await web.handler(withBearer(post("/api/identify"), "alice"));
+  expect([await http.json(), http.headers.get("x-caller")]).toEqual(["alice@acme", "alice@acme"]);
+
+  const tool = await web.handler(withBearer(rawToolCall("identify"), "bob"));
+  expect(await tool.json()).toMatchObject({ result: { structuredContent: "bob@acme" } });
+  expect(built).toBe(1);
 });
 
 describe("a resource built at startup", () => {
@@ -159,46 +180,36 @@ describe("a resource built at startup", () => {
   const built = () => {
     const builds = { count: 0 };
 
-    const authentication = Authentication.make(
-      Caller,
-      Effect.succeed(
-        Effect.gen(function* () {
-          const token = yield* Authentication.bearerToken;
+    const authentication = Authentication.layer(
+      Login,
+      (token: Redacted.Redacted<string>) =>
+        Effect.map(Tenant, (tenant) => `${Redacted.value(token)}@${tenant}`),
+      {
+        protectedResource: Effect.map(Resources, (resource) => {
+          builds.count += 1;
 
-          return `${Redacted.value(token)}@${yield* Tenant}`;
+          return resource;
         }),
-      ),
-      Effect.map(Resources, (resource) => {
-        builds.count += 1;
-
-        return resource;
-      }),
+      },
     );
 
     return { builds, authentication };
   };
 
-  /** Two routes under one layer of `authentication`, combined, its resource `resource`. */
+  /** Two routes under one layer of `authentication`, its resource `resource`. */
   const routes = (
     authentication: ReturnType<typeof built>["authentication"],
     resource: Authentication.Options | undefined,
   ) => {
-    // The middleware itself, so it combines as one made with a plain resource does.
-    const authenticate = authentication
-      .combine(resolveTenant)
-      .layer.pipe(Layer.provide(Layer.succeed(Resources, resource)));
+    const authenticate = authentication.pipe(Layer.provide(Layer.succeed(Resources, resource)));
 
-    return Layer.mergeAll(
-      HttpRouter.add("GET", "/a", Effect.map(Caller, HttpServerResponse.text)).pipe(
-        Layer.provide(authenticate),
-      ),
-      HttpRouter.add("GET", "/b", Effect.map(Caller, HttpServerResponse.text)).pipe(
-        Layer.provide(authenticate),
-      ),
+    // The tenant the verifier reads comes in a later provide.
+    return Layer.mergeAll(route("/a", authenticate), route("/b", authenticate)).pipe(
+      Layer.provide(resolveTenant.layer),
     );
   };
 
-  it("publishes its discovery and names it in every challenge, built once, and combines", async () => {
+  it("publishes its discovery and names it in every challenge, built once", async () => {
     const { builds, authentication } = built();
 
     const web = serve(
@@ -214,19 +225,17 @@ describe("a resource built at startup", () => {
     expect(discovered.status).toBe(200);
     expect(await discovered.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
 
-    const anonymous = await web.handler(new Request("https://api.example.com/a"));
+    const anonymous = await web.handler(post("/a/identify"));
 
     expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([
       401,
       `Bearer scope="docs:read", resource_metadata="https://api.example.com${prefix}/mcp"`,
     ]);
 
-    // The request service comes from the middleware combined before it.
-    const admitted = await web.handler(
-      new Request("https://api.example.com/b", { headers: { authorization: "Bearer alice" } }),
-    );
+    // The request service comes from the middleware provided after it.
+    const admitted = await web.handler(withBearer(post("/b/identify"), "alice"));
 
-    expect(await admitted.text()).toBe("alice@acme");
+    expect(await admitted.json()).toBe("alice@acme");
     expect(builds.count).toBe(1);
   });
 
@@ -234,7 +243,7 @@ describe("a resource built at startup", () => {
     const web = serve(routes(built().authentication, undefined));
 
     const discovered = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
-    const anonymous = await web.handler(new Request("https://api.example.com/a"));
+    const anonymous = await web.handler(post("/a/identify"));
 
     expect(discovered.status).toBe(404);
     expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([401, "Bearer"]);
@@ -249,7 +258,7 @@ describe("a resource built at startup", () => {
       }),
     );
 
-    await expect(web.handler(new Request("https://api.example.com/a"))).rejects.toThrow(
+    await expect(web.handler(post("/a/identify"))).rejects.toThrow(
       'Invalid scope in scopesRequired: "docs read"',
     );
   });
@@ -277,11 +286,7 @@ describe("discovery across origins", () => {
       },
     });
 
-  const protectedRoutes = HttpRouter.add(
-    "GET",
-    "/private",
-    HttpServerResponse.text("private"),
-  ).pipe(Layer.provide(refusing().layer));
+  const protectedRoutes = route("/private", refusing());
 
   it("lets any origin read the metadata and preflight it, unless the host's CORS runs first", async () => {
     // CORS merged after the authenticated routes: discovery answers before it runs.
@@ -332,11 +337,7 @@ describe("discovery across origins", () => {
   });
 
   it("answers the preflight at its URL alone, allowing only the headers asked for", async () => {
-    const web = serve(
-      HttpRouter.add("GET", "/private", HttpServerResponse.text("private")).pipe(
-        Layer.provide(refusing().layer),
-      ),
-    );
+    const web = serve(route("/private", refusing()));
 
     // Another path's preflight is the host's.
     const other = await web.handler(

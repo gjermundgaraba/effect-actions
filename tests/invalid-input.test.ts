@@ -18,9 +18,12 @@ import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
+import { authenticate } from "../examples/authentication.js";
+import { CurrentActor } from "../examples/authorization.js";
+import { Login } from "../examples/binding.js";
 import { exec, printed } from "./cli-services.js";
 import { serve } from "./serve.js";
-import { mcpRequest, post, rawToolCall, send } from "./requests.js";
+import { mcpRequest, post, rawToolCall, send, withBearer } from "./requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -31,6 +34,7 @@ class Rejected extends Schema.TaggedError<Rejected>()(
 const Echo = Action.make("echo", {
   description: "Echo",
   access: "write",
+  auth: "public",
   input: { value: Schema.Finite },
   success: Schema.Finite,
   errors: [Rejected],
@@ -50,15 +54,12 @@ const issuesOf = (failure: Action.BuiltIn) =>
 const counted = () => {
   const calls = { count: 0 };
 
-  const app = Action.implement(
-    Echo,
-    ({ value }) =>
-      Effect.sync(() => {
-        calls.count++;
+  const app = Action.implement(Echo, ({ value }) =>
+    Effect.sync(() => {
+      calls.count++;
 
-        return value;
-      }),
-    Action.allowAll,
+      return value;
+    }),
   );
 
   return { app, calls };
@@ -161,13 +162,14 @@ it.effect(
         const Rename = Action.make("rename", {
           description: "Rename",
           access: "write",
+          auth: "public",
           input: Schema.Struct({ name: Schema.String }).pipe(encoding),
           success: Schema.String,
         });
 
         const Renaming = ActionHttp.make([Rename]);
 
-        const app = Action.implement(Rename, ({ name }) => Effect.succeed(name), Action.allowAll);
+        const app = Action.implement(Rename, ({ name }) => Effect.succeed(name));
 
         yield* Effect.gen(function* () {
           for (const [type, body] of [
@@ -215,6 +217,52 @@ it("names the content type a 415 refuses, or none", async () => {
   ]);
 });
 
+it("authenticates a protected route before it checks the content type or decodes the input", async () => {
+  const Guarded = Action.make("guarded", {
+    description: "Echo, signed in",
+    access: "write",
+    auth: CurrentActor,
+    input: { value: Schema.Finite },
+    success: Schema.Finite,
+  });
+
+  let calls = 0;
+
+  const web = serve(
+    ActionHttp.layer(
+      ActionHttp.make([Guarded], { authentication: Login }),
+      Action.implement(
+        Guarded,
+        ({ value }) =>
+          Effect.sync(() => {
+            calls++;
+
+            return value;
+          }),
+        { authorize: Action.allowAll },
+      ),
+    ).pipe(Layer.provide(authenticate)),
+  );
+
+  const untyped = () =>
+    new Request("http://localhost/api/guarded", {
+      method: "POST",
+      body: new Blob([JSON.stringify({ value: 1 })]),
+    });
+
+  const malformed = () => post("/api/guarded", { value: "not a number" });
+
+  // Without a token, a caller learns nothing of the body: 401, whatever is wrong with it.
+  for (const request of [untyped(), malformed()]) {
+    expect((await web.handler(request)).status).toBe(401);
+  }
+
+  // Signed in, the body is checked as a public route's is.
+  expect((await web.handler(withBearer(untyped(), "alice"))).status).toBe(415);
+  expect((await web.handler(withBearer(malformed(), "alice"))).status).toBe(400);
+  expect(calls).toBe(0);
+});
+
 it.effect(
   "refuses undeclared input fields on the server, nested ones too; every typed client drops them",
   () =>
@@ -224,17 +272,14 @@ it.effect(
       const Save = Action.make("save", {
         description: "Save",
         access: "write",
+        auth: "public",
         input: { value: Schema.Finite, owner: Schema.Struct({ id: Schema.String }) },
         success: Schema.Finite,
       });
 
       const SaveHttp = ActionHttp.make([Save]);
 
-      const app = Action.implement(
-        Save,
-        (input) => Effect.sync(() => seen.push(input)),
-        Action.allowAll,
-      );
+      const app = Action.implement(Save, (input) => Effect.sync(() => seen.push(input)));
 
       // As the OpenAPI document says: the input is closed, at its root and nested.
       const input = OpenApi.fromApi(SaveHttp.api).paths["/api/save"]?.post?.requestBody?.content[
@@ -286,6 +331,7 @@ it("refuses undeclared fields in the input only: a wider success is encoded to i
   const Profile = Action.make("profile", {
     description: "A profile, from a record holding more",
     access: "read",
+    auth: "public",
     success: { id: Schema.String },
   });
 
@@ -295,7 +341,7 @@ it("refuses undeclared fields in the input only: a wider success is encoded to i
   const web = serve(
     ActionHttp.layer(
       ActionHttp.make([Profile]),
-      Action.implement(Profile, () => Effect.succeed(stored), Action.allowAll),
+      Action.implement(Profile, () => Effect.succeed(stored)),
     ),
   );
 
@@ -309,19 +355,20 @@ it("answers InvalidInput on every binding and every layer of one router", async 
   const Other = Action.make("other", {
     description: "Other",
     access: "read",
+    auth: "public",
     input: { value: Schema.Finite },
     success: Schema.Finite,
   });
 
   const both = ActionHttp.make([Echo, Other]);
   const second = ActionHttp.make([Other], { prefix: "/second" });
-  const other = Action.implement(Other, ({ value }) => Effect.succeed(value), Action.allowAll);
+  const other = Action.implement(Other, ({ value }) => Effect.succeed(value));
 
   const web = serve(
     Layer.mergeAll(
       ActionHttp.layer(
         both,
-        Action.implement(Echo, ({ value }) => Effect.succeed(value), Action.allowAll),
+        Action.implement(Echo, ({ value }) => Effect.succeed(value)),
       ),
       ActionHttp.layer(both, other),
       ActionHttp.layer(second, other),
@@ -339,13 +386,10 @@ it("answers InvalidInput on every binding and every layer of one router", async 
 const decodeMcp = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }));
 
 it("answers a handler's own InvalidInput as declared", async () => {
-  const app = Action.implement(
-    Echo,
-    ({ value }) =>
-      value > 10
-        ? Effect.fail(new Action.InvalidInput({ message: "Too large" }))
-        : Effect.succeed(value),
-    Action.allowAll,
+  const app = Action.implement(Echo, ({ value }) =>
+    value > 10
+      ? Effect.fail(new Action.InvalidInput({ message: "Too large" }))
+      : Effect.succeed(value),
   );
 
   const web = serve(ActionHttp.layer(Http, app));
@@ -360,6 +404,7 @@ it.effect("names each issue of input that does not decode by its path, on every 
     const Order = Action.make("order", {
       description: "Order",
       access: "write",
+      auth: "public",
       input: {
         kind: Schema.Literal("order"),
         lines: Schema.Array(Schema.Struct({ sku: Schema.String, count: Schema.Finite })),
@@ -367,18 +412,15 @@ it.effect("names each issue of input that does not decode by its path, on every 
       success: Schema.String,
     });
 
-    const app = Action.implement(
-      Order,
-      ({ lines }) =>
-        lines.length === 0
-          ? Effect.fail(
-              new Action.InvalidInput({
-                message: "An order needs a line",
-                issues: [{ path: ["lines"], message: "Expected a line" }],
-              }),
-            )
-          : Effect.succeed("ordered"),
-      Action.allowAll,
+    const app = Action.implement(Order, ({ lines }) =>
+      lines.length === 0
+        ? Effect.fail(
+            new Action.InvalidInput({
+              message: "An order needs a line",
+              issues: [{ path: ["lines"], message: "Expected a line" }],
+            }),
+          )
+        : Effect.succeed("ordered"),
     );
 
     const Http = ActionHttp.make([Order]);
@@ -492,6 +534,7 @@ it.effect(
       const Login = Action.make("login", {
         description: "Log in",
         access: "write",
+        auth: "public",
         input: {
           password: Schema.Redacted(Schema.String.check(Schema.isMinLength(12))),
           pin: Schema.String.check(Schema.isPattern(/^\d{4}$/)),
@@ -502,15 +545,12 @@ it.effect(
 
       let calls = 0;
 
-      const app = Action.implement(
-        Login,
-        () =>
-          Effect.sync(() => {
-            calls++;
+      const app = Action.implement(Login, () =>
+        Effect.sync(() => {
+          calls++;
 
-            return "in";
-          }),
-        Action.allowAll,
+          return "in";
+        }),
       );
 
       const sent = { password: "hunter2", pin: "pin-secret", count: "count-secret" };
@@ -615,11 +655,12 @@ it("executes each input/output transformation once per call", async () => {
   const Counted = Action.make("echo", {
     description: "Count codec operations",
     access: "write",
+    auth: "public",
     input: { value: number },
     success: number,
   });
 
-  const app = Action.implement(Counted, ({ value }) => Effect.succeed(value), Action.allowAll);
+  const app = Action.implement(Counted, ({ value }) => Effect.succeed(value));
 
   const web = serve(
     Layer.merge(
@@ -636,11 +677,16 @@ it("executes each input/output transformation once per call", async () => {
 });
 
 describe("an action without input", () => {
-  const Empty = Action.make("empty", { description: "No input", access: "read" });
-  const app = Action.implement(Empty, () => Effect.void, Action.allowAll);
+  const Empty = Action.make("empty", { description: "No input", access: "read", auth: "public" });
+  const app = Action.implement(Empty, () => Effect.void);
 
   it("has the input of one whose input is {}", () => {
-    const Braces = Action.make("empty", { description: "No input", access: "read", input: {} });
+    const Braces = Action.make("empty", {
+      description: "No input",
+      access: "read",
+      auth: "public",
+      input: {},
+    });
 
     expect(Braces.input).toBe(Empty.input);
   });
@@ -686,11 +732,16 @@ describe("an action without input", () => {
 });
 
 it("publishes `success: {}` as the closed empty object", async () => {
-  const Empty = Action.make("empty", { description: "Empty", access: "read", success: {} });
+  const Empty = Action.make("empty", {
+    description: "Empty",
+    access: "read",
+    auth: "public",
+    success: {},
+  });
 
   const { handler } = serve(
     ActionMcp.layerHttp(
-      Action.implement(Empty, () => Effect.succeed({}), Action.allowAll),
+      Action.implement(Empty, () => Effect.succeed({})),
       { name: "test", version: "0" },
     ),
   );

@@ -14,7 +14,7 @@ const program = Effect.gen(function* () {
   const users = yield* Action.client(userActions);
 
   // The methods of `ActionHttp.client(Http)`, with no transport between: each call decodes
-  // its input, runs the hook, then the handler, and checks the success or the failure.
+  // its input, runs `authorize`, then the handler, and checks the success or the failure.
   const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
   const refused = yield* Effect.flip(users.renameUser({ id: "1", name: "Cy" }).pipe(asReader));
   const { changes } = yield* users.listChanges().pipe(asReader); // not an HTTP route

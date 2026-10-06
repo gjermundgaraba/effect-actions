@@ -86,9 +86,10 @@ describe("descriptions", () => {
     const Describe = Action.make("describe", {
       description: "What this action does, for every caller.",
       access: "read",
+      auth: "public",
     });
 
-    const app = Action.implement(Describe, () => Effect.void, Action.allowAll);
+    const app = Action.implement(Describe, () => Effect.void);
     const { description } = Describe;
 
     const operation = OpenApi.fromApi(ActionHttp.make([Describe]).api).paths["/api/describe"]?.post;
@@ -145,11 +146,12 @@ describe("projection boundaries", () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
       access: "write",
+      auth: "public",
       input: Schema.String,
       success: Schema.String,
     });
 
-    const web = makeTestHttp(Action.implement(Echo, Effect.succeed, Action.allowAll), {
+    const web = makeTestHttp(Action.implement(Echo, Effect.succeed), {
       prefix: "/rpc",
     });
 
@@ -165,17 +167,14 @@ describe("projection boundaries", () => {
       const Fail = Action.make("fail", {
         description: "Declared failure",
         access: "write",
+        auth: "public",
         success: Schema.String,
         errors: [Failure],
       });
 
-      const apps = Action.implement(
-        [Fail],
-        {
-          fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
-        },
-        Action.allowAll,
-      );
+      const apps = Action.implement([Fail], {
+        fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
+      });
 
       const Http = ActionHttp.make([Fail]);
 
@@ -207,19 +206,16 @@ describe("projection boundaries", () => {
       const Fail = Action.make("fail", {
         description: "Two failures",
         access: "write",
+        auth: "public",
         input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
         success: Schema.String,
         errors,
       });
 
-      const apps = Action.implement(
-        [Fail],
-        {
-          fail: ({ which }) =>
-            which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
-        },
-        Action.allowAll,
-      );
+      const apps = Action.implement([Fail], {
+        fail: ({ which }) =>
+          which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
+      });
 
       const Http = ActionHttp.make([Fail]);
       const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
@@ -250,7 +246,9 @@ describe("projection boundaries", () => {
     const statuses = (errors: ReadonlyArray<Schema.Codec<unknown, unknown>>) =>
       Object.keys(
         OpenApi.fromApi(
-          ActionHttp.make([Action.make("fail", { description: "", access: "write", errors })]).api,
+          ActionHttp.make([
+            Action.make("fail", { description: "", access: "write", auth: "public", errors }),
+          ]).api,
         ).paths["/api/fail"]?.post?.responses ?? {},
       ).sort();
 
@@ -275,30 +273,29 @@ describe("projection boundaries", () => {
     const Lookup = Action.make("lookup", {
       description: "Look up",
       access: "read",
+      auth: "public",
       hints: { idempotent: true, openWorld: false },
     });
 
     const Append = Action.make("append", {
       description: "Append",
       access: "write",
+      auth: "public",
       hints: { destructive: false },
     });
 
     const Wipe = Action.make("wipe", {
       description: "Wipe",
       access: "write",
+      auth: "public",
       hints: { idempotent: true },
     });
 
-    const app = Action.implement(
-      [Lookup, Append, Wipe],
-      {
-        lookup: () => Effect.void,
-        append: () => Effect.void,
-        wipe: () => Effect.void,
-      },
-      Action.allowAll,
-    );
+    const app = Action.implement([Lookup, Append, Wipe], {
+      lookup: () => Effect.void,
+      append: () => Effect.void,
+      wipe: () => Effect.void,
+    });
 
     const hints = {
       lookup: {
@@ -348,11 +345,12 @@ describe("projection boundaries", () => {
     const Declared = Action.make("whoAmI", {
       description: "Name the authenticated principal",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
     const { tools } = ActionToolkit.make(
-      Action.implement(Declared, () => Effect.succeed("ada"), Action.allowAll),
+      Action.implement(Declared, () => Effect.succeed("ada")),
     ).toolkit;
 
     // Each built-in's JSON decodes to its class: the tool declares all three.
@@ -390,18 +388,15 @@ describe("projection boundaries", () => {
     const Fail = Action.make("fail", {
       description: "Error with a message",
       access: "write",
+      auth: "public",
       success: Schema.String,
       errors: [Denied],
     });
 
     const mcp = makeTestMcp(
-      Action.implement(
-        [Fail],
-        {
-          fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
-        },
-        Action.allowAll,
-      ),
+      Action.implement([Fail], {
+        fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
+      }),
     );
 
     expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
@@ -428,11 +423,12 @@ describe("projection boundaries", () => {
       const Tree = Action.make("tree", {
         description: "Recursive object",
         access: "write",
+        auth: "public",
         input: Node,
         success: Node,
       });
 
-      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }, Action.allowAll));
+      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }));
 
       const tools = await listTools(web.handler);
       expect(tools).toHaveLength(1);
@@ -464,9 +460,8 @@ describe("projection boundaries", () => {
   const implementations = (inputs: Readonly<Record<string, Action.Any["input"] | undefined>>) =>
     Object.entries(inputs).map(([name, input]) =>
       Action.implement(
-        Action.make(name, { description: name, access: "read", input }),
+        Action.make(name, { description: name, access: "read", auth: "public", input }),
         () => Effect.void,
-        Action.allowAll,
       ),
     );
 
@@ -524,9 +519,8 @@ describe("projection boundaries", () => {
     const refused = implementations(inputs);
 
     const status = Action.implement(
-      Action.make("status", { description: "Status", access: "read" }),
+      Action.make("status", { description: "Status", access: "read", auth: "public" }),
       () => Effect.void,
-      Action.allowAll,
     );
 
     const options = { name: "test", version: "0" };
@@ -538,8 +532,29 @@ describe("projection boundaries", () => {
 
   // An endpoint's registry is its own: native features register on it as its `features`, and
   // elsewhere when merged beside it.
+  // The endpoint's authentication decides by tool name, so a native tool never takes an
+  // action's: it would replace the action's tool, and inherit a public one's access.
+  it("refuses a native feature's tool of an action's name", async () => {
+    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
+    const Native = Toolkit.make(Tool.make("ping", { success: Schema.String }));
+
+    const native = McpServer.toolkit(Native).pipe(
+      Layer.provide(Native.toLayer({ ping: () => Effect.succeed("native") })),
+    );
+
+    const app = Action.implement(Ping, () => Effect.void);
+
+    const served = serve(
+      ActionMcp.layerHttp(app, { name: "test", version: "0", features: native }),
+    );
+
+    await expect(listTools(served.handler)).rejects.toThrow(
+      "Duplicate MCP tool: ping, claimed by an action and a native feature",
+    );
+  });
+
   it("serves native resources, prompts and tools given as features, and none merged beside", async () => {
-    const Ping = Action.make("ping", { description: "Ping", access: "read" });
+    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
     const Native = Toolkit.make(Tool.make("native", { success: Schema.String }));
 
     const native = Layer.mergeAll(
@@ -550,7 +565,7 @@ describe("projection boundaries", () => {
       ),
     );
 
-    const app = Action.implement(Ping, () => Effect.void, Action.allowAll);
+    const app = Action.implement(Ping, () => Effect.void);
     const options = { name: "test", version: "0" };
 
     const served = serve(ActionMcp.layerHttp(app, { ...options, features: native }));
@@ -606,9 +621,8 @@ describe("projection boundaries", () => {
         );
 
         const app = Action.implement(
-          Action.make("ping", { description: "Ping", access: "read" }),
+          Action.make("ping", { description: "Ping", access: "read", auth: "public" }),
           () => Effect.void,
-          Action.allowAll,
         );
 
         const endpoints = Layer.mergeAll(
@@ -644,17 +658,14 @@ describe("projection boundaries", () => {
     const Scalar = Action.make("scalar", {
       description: "Scalar error",
       access: "write",
+      auth: "public",
       success: Schema.String,
       errors: [Schema.String],
     });
 
-    const apps = Action.implement(
-      [Scalar],
-      {
-        scalar: () => Effect.fail("failure"),
-      },
-      Action.allowAll,
-    );
+    const apps = Action.implement([Scalar], {
+      scalar: () => Effect.fail("failure"),
+    });
 
     const web = makeTestHttp(apps);
 
@@ -672,6 +683,7 @@ describe("projection boundaries", () => {
     const Broken = Action.make("broken", {
       description: "Bad output",
       access: "write",
+      auth: "public",
       success: Schema.Finite,
     });
 
@@ -680,6 +692,7 @@ describe("projection boundaries", () => {
     const Refused = Action.make("refused", {
       description: "Bad declared error",
       access: "write",
+      auth: "public",
       success: Schema.String,
       errors: [Domain],
     });
@@ -687,19 +700,16 @@ describe("projection boundaries", () => {
     const Boom = Action.make("boom", {
       description: "Defect",
       access: "write",
+      auth: "public",
       success: Schema.String,
     });
 
-    const apps = Action.implement(
-      [Broken, Refused, Boom],
-      {
-        broken: () => Effect.succeed(Infinity),
-        // Construction checks bypassed deliberately: the surface must reject this value.
-        refused: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
-        boom: () => Effect.die(new Error("secret database password")),
-      },
-      Action.allowAll,
-    );
+    const apps = Action.implement([Broken, Refused, Boom], {
+      broken: () => Effect.succeed(Infinity),
+      // Construction checks bypassed deliberately: the surface must reject this value.
+      refused: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
+      boom: () => Effect.die(new Error("secret database password")),
+    });
 
     const web = makeTestHttp(apps);
 
@@ -723,11 +733,12 @@ describe("projection boundaries", () => {
     const Stamp = Action.make("stamp", {
       description: "Date round trip",
       access: "write",
+      auth: "public",
       input: Schema.Struct({ d: Schema.Date }),
       success: Schema.Struct({ d: Schema.Date }),
     });
 
-    const apps = Action.implement([Stamp], { stamp: Effect.succeed }, Action.allowAll);
+    const apps = Action.implement([Stamp], { stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
     const web = makeTestHttp(apps);
 
@@ -751,20 +762,17 @@ describe("projection boundaries", () => {
       const Slow = Action.make("slow", {
         description: "Wait",
         access: "write",
+        auth: "public",
         success: Schema.String,
       });
 
-      const apps = Action.implement(
-        [Slow],
-        {
-          slow: () =>
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(Deferred.succeed(stopped, undefined)),
-            ),
-        },
-        Action.allowAll,
-      );
+      const apps = Action.implement([Slow], {
+        slow: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(stopped, undefined)),
+          ),
+      });
 
       yield* Effect.gen(function* () {
         const running = yield* Effect.forkChild(send(post("/api/slow")));
@@ -782,28 +790,30 @@ describe("MCP registration", () => {
   const WhoAmI = Action.make("whoAmI", {
     description: "Current user",
     access: "write",
+    auth: "public",
     success: Schema.String,
   });
 
   const Invoice = Action.make("invoice", {
     description: "Invoice total",
     access: "write",
+    auth: "public",
     success: Schema.String,
   });
 
   const Audit = Action.make("audit", {
     description: "Audit",
     access: "write",
+    auth: "public",
     success: Schema.String,
   });
 
-  const whoAmI = Action.implement(WhoAmI, () => Effect.succeed("ada"), Action.allowAll);
+  const whoAmI = Action.implement(WhoAmI, () => Effect.succeed("ada"));
 
-  const billing = Action.implement(
-    [Invoice, Audit],
-    { invoice: () => Effect.succeed("4"), audit: () => Effect.succeed("clean") },
-    Action.allowAll,
-  );
+  const billing = Action.implement([Invoice, Audit], {
+    invoice: () => Effect.succeed("4"),
+    audit: () => Effect.succeed("clean"),
+  });
 
   it("serves several implementations as the tools of one endpoint", async () => {
     const web = makeTestMcp([whoAmI, billing]);
@@ -820,7 +830,12 @@ describe("MCP registration", () => {
 
   it("names each tool after its action, and checks names where tools are served", () => {
     const same = () =>
-      Action.make("same", { description: "", access: "write", success: Schema.String });
+      Action.make("same", {
+        description: "",
+        access: "write",
+        auth: "public",
+        success: Schema.String,
+      });
 
     const First = same();
     const Second = same();
@@ -829,8 +844,8 @@ describe("MCP registration", () => {
     expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action: same");
 
     const apps = [
-      Action.implement(First, () => Effect.succeed("a"), Action.allowAll),
-      Action.implement(Second, () => Effect.succeed("b"), Action.allowAll),
+      Action.implement(First, () => Effect.succeed("a")),
+      Action.implement(Second, () => Effect.succeed("b")),
     ];
 
     const options = { name: "test", version: "0" };
@@ -841,14 +856,12 @@ describe("MCP registration", () => {
     const Other = Action.make("other", {
       description: "",
       access: "write",
+      auth: "public",
       success: Schema.String,
     });
 
     expect(() =>
-      ActionMcp.layerHttp(
-        [whoAmI, Action.implement(Other, () => Effect.succeed("b"), Action.allowAll)],
-        options,
-      ),
+      ActionMcp.layerHttp([whoAmI, Action.implement(Other, () => Effect.succeed("b"))], options),
     ).not.toThrow();
   });
 });

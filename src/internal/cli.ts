@@ -12,7 +12,7 @@ import {
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../Action.js";
 import { assertDistinct, literalValues, members, projectedErrors, unsuspended } from "./actions.js";
-import { onStderr } from "./console.js";
+import { logToStderr } from "./console.js";
 import { InvalidInput } from "./errors.js";
 
 /**
@@ -274,7 +274,9 @@ interface FieldParam {
 /** What the field parameters parse to, by field. */
 type Parsed = Readonly<Record<string, Option.Option<unknown>>>;
 
-/** The fields of a struct, or of a class, which declares them as its one type parameter, by name. */
+/**
+ * The fields of a struct, or of a class, which declares them as its one type parameter, by name.
+ */
 const fieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> => {
   const fields = SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast;
 
@@ -397,6 +399,14 @@ const output = <A extends Action.Any>(
  */
 export class Failure<out E = unknown> extends CliError.UserError {
   declare readonly cause: E;
+
+  /**
+   * The action's failure, as Effect names an error's nested one, so the native
+   * `Effect.catchReason("UserError", "UserNotFound", f)` and `catchReasons` match it by tag.
+   */
+  get reason(): E {
+    return this.cause;
+  }
 
   override get [Runtime.errorExitCode](): number {
     return Runtime.getErrorExitCode(this.cause);
@@ -554,7 +564,7 @@ export const command = <A extends Action.Any, E, R>(
       Effect.flatMap(execute),
       Effect.catch(failure),
       Effect.flatMap((value) => output(action, value, rendered)),
-      onStderr,
+      logToStderr,
       Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Console.log })),
     );
 

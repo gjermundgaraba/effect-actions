@@ -2,6 +2,7 @@ import { Effect, type Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
+import type { Any as Authentication } from "./authentication.js";
 import { type Call, inputOf } from "./call.js";
 import type { BuiltIns } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
@@ -43,6 +44,7 @@ type Method<A extends Action.Any, E extends BindingError> = Call<
  * invariant in their endpoints; `actions` carries the types.
  */
 export interface AnyHttp {
+  readonly authentication?: Authentication | undefined;
   readonly actions: ReadonlyArray<Action.Any>;
   readonly errors: ReadonlyArray<BindingError>;
   readonly prefix: `/${string}`;

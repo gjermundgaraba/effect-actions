@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { type Client, InsufficientScopeError } from "@modelcontextprotocol/client";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import { McpSchema } from "effect/ai";
-import { HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -67,6 +67,7 @@ describe("one implementation, both transports", () => {
   it("exposes schemas and MCP tools from the same contracts", async () => {
     const reply = await withMcp((client) => client.listTools());
     expect(reply.tools.map((tool) => tool.name)).toEqual([
+      "status",
       "getUser",
       "renameUser",
       "whoAmI",
@@ -216,8 +217,8 @@ describe("one implementation, both transports", () => {
 
     expect((await app.handler(foreign)).status).toBe(403);
 
-    // The policy is global middleware, so it covers the credential-free group too, and,
-    // merged first, the discovery the authentication publishes.
+    // The policy is global middleware, so it covers the public routes too, and, merged first,
+    // the discovery the authentication publishes.
     const foreignPublic = new Request(
       "http://attacker.example/api/status",
       anonymous("/api/status", {}),
@@ -310,7 +311,7 @@ describe("one implementation, both transports", () => {
   });
 });
 
-describe("actions under their own middleware", () => {
+describe("public and protected actions of one host", () => {
   it("serves status and the document without credentials, the user actions only with them", async () => {
     const status = await app.handler(anonymous("/api/status", {}));
     expect(status.status).toBe(200);
@@ -330,7 +331,7 @@ describe("actions under their own middleware", () => {
     const document = OpenApi.fromApi(Http.api);
 
     expect(document.components.securitySchemes).toEqual({
-      bearer: { type: "http", scheme: "Bearer" },
+      "example.Login": { type: "http", scheme: "Bearer" },
     });
     expect(
       Object.fromEntries(
@@ -338,15 +339,15 @@ describe("actions under their own middleware", () => {
       ),
     ).toEqual({
       "/api/status": [],
-      "/api/getUser": [{ bearer: [] }],
-      "/api/renameUser": [{ bearer: [] }],
-      "/api/double": [{ bearer: [] }],
-      "/api/whoAmI": [{ bearer: [] }],
+      "/api/getUser": [{ "example.Login": [] }],
+      "/api/renameUser": [{ "example.Login": [] }],
+      "/api/double": [{ "example.Login": [] }],
+      "/api/whoAmI": [{ "example.Login": [] }],
     });
 
     // Swagger UI reads the same document, so it offers to send a token.
     expect(await (await app.handler(anonymous("/docs"))).text()).toContain(
-      '"securitySchemes":{"bearer":{"type":"http","scheme":"Bearer"}}',
+      '"securitySchemes":{"example.Login":{"type":"http","scheme":"Bearer"}}',
     );
   });
 
@@ -366,7 +367,7 @@ describe("actions under their own middleware", () => {
       const result = {
         status: yield* client.status(),
         identity: yield* client.whoAmI(),
-        // The authentication middleware's 401 and the hook's 403, as typed failures.
+        // The authentication's 401 and the authorizer's 403, as typed failures.
         unauthenticated: yield* Effect.flip((yield* as()).whoAmI()),
         forbidden: yield* Effect.flip(
           (yield* as("reader")).renameUser({ id: "1", name: "Reader" }),
@@ -382,33 +383,29 @@ describe("actions under their own middleware", () => {
     }),
   );
 
-  it("splits MCP access by endpoint, since middleware covers every tool of one", async () => {
-    const tools = await withMcpClient(
-      {
-        fetch: app.handler,
-        path: "/mcp/public",
-      },
-      (client) => client.listTools(),
-    );
+  it("serves one MCP endpoint whose public tools answer anyone, its protected ones only the signed in", async () => {
+    // Discovery is anonymous, and lists every tool: the protected ones too.
+    const tools = await withMcpClient({ fetch: app.handler }, (client) => client.listTools());
 
-    expect(tools.tools.map((item) => item.name)).toEqual(["status"]);
+    expect(tools.tools.map((item) => item.name)).toContain("whoAmI");
 
-    const status = await withMcpClient(
-      {
-        fetch: app.handler,
-        path: "/mcp/public",
-      },
-      (client) => client.callTool({ name: "status", arguments: {} }),
+    const status = await withMcpClient({ fetch: app.handler }, (client) =>
+      client.callTool({ name: "status", arguments: {} }),
     );
 
     expect(status.structuredContent).toEqual({ service: "effect-actions", users: 2 });
 
-    const anonymous = await app.handler(mcpRequest({ method: "tools/list" }));
+    // A protected tool's call is refused before it runs, with the challenge to sign in on.
+    const anonymous = await app.handler(
+      mcpRequest({ method: "tools/call", params: { name: "whoAmI", arguments: {} } }),
+    );
 
     expect(anonymous.status).toBe(401);
-    expect(
-      (await withMcp((client) => client.listTools())).tools.map((item) => item.name),
-    ).not.toContain("status");
+    expect(anonymous.headers.get("www-authenticate")).toBe(challenge);
+    expect((await tool("whoAmI", {})).structuredContent).toEqual({
+      id: "alice",
+      tenantId: "acme",
+    });
   });
 
   it("serves an MCP-only action as a tool, sharing state with the HTTP actions", async () => {
@@ -427,10 +424,11 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
   const Ping = Action.make("ping", {
     description: "Answer the caller",
     access: "read",
+    auth: "public",
     success: Schema.String,
   });
 
-  const app = Action.implement(Ping, () => Effect.succeed("pong"), Action.allowAll);
+  const app = Action.implement(Ping, () => Effect.succeed("pong"));
 
   const serveMcp = (allowedOrigins?: ReadonlyArray<string>) => {
     const web = serve(
@@ -478,39 +476,46 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
   expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
 });
 
-it("runs wrapping authentication before the native MCP Origin check", async () => {
+it("runs an endpoint's authentication before the native MCP Origin check", async () => {
   class Identity extends Context.Service<Identity, string>()("origin/Identity") {}
+
+  const Login = Authentication.make("origin.Login", Identity);
+
+  // Every tool protected, so every request authenticates.
+  const Who = Action.make("who", {
+    description: "The caller",
+    access: "read",
+    auth: Identity,
+    success: Schema.String,
+  });
 
   let authentications = 0;
 
-  const authentication = Authentication.make(
-    Identity,
-    Effect.succeed(
-      Effect.gen(function* () {
-        authentications++;
-        const request = yield* HttpServerRequest.HttpServerRequest;
+  const verify = (token: Redacted.Redacted<string>) =>
+    Effect.suspend(() => {
+      authentications++;
 
-        if (request.headers.authorization !== "Bearer accepted") {
-          return yield* Effect.fail(HttpServerResponse.empty({ status: 401 }));
-        }
-
-        return "caller";
-      }),
-    ),
-  );
+      return Redacted.value(token) === "accepted"
+        ? Effect.succeed("caller")
+        : Effect.fail(new Action.Unauthenticated());
+    });
 
   const web = serve(
-    ActionMcp.layerHttp([], {
-      name: "origin-order",
-      version: "0",
-      allowedOrigins: ["https://allowed.example"],
-    }).pipe(Layer.provide(authentication.layer)),
+    ActionMcp.layerHttp(
+      Action.implement(Who, () => Identity, { authorize: Action.allowAll }),
+      {
+        name: "origin-order",
+        version: "0",
+        allowedOrigins: ["https://allowed.example"],
+        authentication: Login,
+      },
+    ).pipe(Layer.provide(Authentication.layer(Login, verify))),
   );
 
   const rejected = await web.handler(
     mcpRequest({
       method: "tools/list",
-      headers: { origin: "https://disallowed.example" },
+      headers: { origin: "https://disallowed.example", authorization: "Bearer rejected" },
     }),
   );
 
@@ -532,14 +537,12 @@ it("supplies the native request context to handlers without a router requirement
   const ClientName = Action.make("client", {
     description: "The connected client's declared name",
     access: "write",
+    auth: "public",
     success: Schema.String,
   });
 
-  const app = Action.implement(
-    ClientName,
-    () =>
-      Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? "anonymous"),
-    Action.allowAll,
+  const app = Action.implement(ClientName, () =>
+    Effect.map(McpSchema.McpRequestContext, (context) => context.clientInfo?.name ?? "anonymous"),
   );
 
   // No `path`: the endpoint is served at `/mcp`.

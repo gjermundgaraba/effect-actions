@@ -13,31 +13,29 @@ The example listens on 127.0.0.1:3000. It uses an in-memory repository and delib
 
 Do not deploy these credentials or this authentication implementation. State resets when the process restarts.
 
-Every action declares `access: "read"` or `access: "write"`. The protected implementations name
-their hook once, `authorize`: the HTTP and MCP layers serving them authenticate the bearer
-token, and every surface, the CLI and the Toolkit included, runs the `before` hook, which maps
-`access` to `users:read` / `users:write` and refuses with the built-in `Action.Forbidden`,
-naming the scope the caller lacks. The public `status` states `Action.allowAll` instead. No
-handler repeats this action-level policy, and no surface can leave the rule out. Record-level
-access stays in `Users`, which scopes data by tenant.
+Every action declares `access: "read"` or `access: "write"`, and who may call it: `status` is
+`auth: "public"`, every other action `auth: CurrentActor`. The HTTP and MCP layers serving a
+protected action verify the bearer token through `authenticate`, the verifier of the binding's
+`Login`, before decoding its input. The protected implementations state their authorization
+once, `authorize`, which every surface, the CLI and the Toolkit included, runs before each
+handler: it maps `access` to `users:read` / `users:write` and refuses with the built-in
+`Action.Forbidden`, naming the scope the caller lacks. `status` states none, and no
+authorization runs for it. No handler repeats this action-level policy, and no surface can
+leave the rule out. Record-level access stays in `Users`, which scopes data by tenant.
 
-The application serves its implementations under three access rules:
-
-| Implementation | Actions                           | HTTP           | MCP                           |
-| -------------- | --------------------------------- | -------------- | ----------------------------- |
-| `status`       | `status`                          | no credentials | `/mcp/public`, no credentials |
-| `userActions`  | `getUser`, `renameUser`, `whoAmI` | bearer token   | `/mcp`, bearer token          |
-| `double`       | `double`                          | bearer token   | `/mcp`, bearer token          |
-| `userActions`  | `listChanges`                     | not served     | `/mcp`, bearer token          |
+| Implementation | Actions                           | HTTP           | MCP (`/mcp`)                   |
+| -------------- | --------------------------------- | -------------- | ------------------------------ |
+| `status`       | `status`                          | no credentials | no credentials                 |
+| `userActions`  | `getUser`, `renameUser`, `whoAmI` | bearer token   | bearer token; listed to anyone |
+| `double`       | `double`                          | bearer token   | bearer token; listed to anyone |
+| `userActions`  | `listChanges`                     | not served     | bearer token; listed to anyone |
 
 Every HTTP action is in one binding, `Http`: one mount path, one document, one client, served
-by two `ActionHttp.layer` calls, the protected one with the authentication around it. The
-binding decides what HTTP serves, so `listChanges`, which it leaves out, has no route, though
-`userActions` holds it. The `Users` builder runs once, though HTTP and MCP both serve
-`userActions`. An MCP endpoint is a single
-route, so authentication around it covers every tool: the public tool has an endpoint of its
-own, which keeps the protected tools unlisted to signed-out callers.
-[mcp-sign-in.ts](mcp-sign-in.ts) serves both kinds from one URL instead.
+by one `ActionHttp.layer`, which authenticates the protected routes and leaves `status` public.
+The binding decides what HTTP serves, so `listChanges`, which it leaves out, has no route,
+though `userActions` holds it. The `Users` builder runs once, though HTTP and MCP both serve
+`userActions`. One MCP endpoint serves every tool: discovery and `status` answer anyone, and
+every other request authenticates before the endpoint decodes it.
 The OpenAPI document (`/api/openapi.json`) and a Swagger UI (`/docs`) are public as well; both
 are Effect's own tools reading the native `Http.api`, which states the bearer scheme on every
 route but `status`.
@@ -74,8 +72,8 @@ curl -s http://127.0.0.1:3000/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"double","arguments":{"value":"21"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"}}}}'
 # ... "structuredContent":42 ...
 
-# The public MCP endpoint lists and runs its one tool without a token
-curl -s http://127.0.0.1:3000/mcp/public \
+# The MCP endpoint lists every tool, and runs `status`, without a token
+curl -s http://127.0.0.1:3000/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'MCP-Protocol-Version: 2026-07-28' \
@@ -87,9 +85,9 @@ curl -s http://127.0.0.1:3000/mcp/public \
 curl -s http://127.0.0.1:3000/api/openapi.json
 ```
 
-For MCP discovery, use `MCP-Method: tools/list` and `"method":"tools/list"` with the same `_meta`. Every actor sees the same tool list. A tool call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope. The implementation carries that hook, so HTTP runs the same check before the handler.
+Every caller, signed in or not, sees the same tool list. A tool call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope. The implementation carries that `authorize`, so HTTP runs the same check before the handler.
 
-Without a token, a protected route or the `/mcp` endpoint answers 401
+Without a token, a protected route or tool call answers 401, before its input is decoded,
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
 `WWW-Authenticate: Bearer scope="users:read", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"`;
 with an unknown one, the message is `Unknown demo token.`, and the challenge also names
@@ -100,38 +98,43 @@ which is public.
 
 - [quickstart.ts](quickstart.ts), [quickstart-server.ts](quickstart-server.ts), [quickstart-client.ts](quickstart-client.ts): the minimal program's contract and binding, its server, and its typed client.
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `access`.
-- [binding.ts](binding.ts): the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of it, so HTTP does not serve it. It documents the bearer scheme, `status` public.
-- [authorization.ts](authorization.ts): demo actors, identity, permissions, and the `before` hook the protected implementations name.
-- [authorization-built.ts](authorization-built.ts): the same rule as a hook built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
+- [binding.ts](binding.ts): the `Login` authentication descriptor and the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of the binding, so HTTP does not serve it. Its protected routes require the bearer scheme, enforced and documented; `status` is public.
+- [authorization.ts](authorization.ts): demo actors, the identity `CurrentActor` the protected contracts declare, permissions, and the `authorize` rule the protected implementations state.
+- [authorization-built.ts](authorization-built.ts): the same rule built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
+- [checks.ts](checks.ts): a declared check, not served by the app: a rate limit whose error joins the contract's errors, built once per layer graph and run after `authorize`.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
-- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the hook of the protected ones.
-- [authentication.ts](authentication.ts): `Authentication.make`'s router middleware for an OAuth protected resource, and its layer `authenticate`, publishing its RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
-- [authentication-tenant.ts](authentication-tenant.ts): authentication combined with other middleware, not served by the app: a verifier built once at startup, each request's tenant from middleware combined before it, and middleware reading the identity combined after it.
-- [authentication-upgrade.ts](authentication-upgrade.ts): `Authentication.refusal` for a caller the router never routes, not served by the app: a socket upgrade authenticating its own header, refused with the response the middleware answers the same refusal with.
-- [http.ts](http.ts): the public and the authenticated HTTP layers of one binding, plus the OpenAPI document and Swagger UI.
-- [mcp.ts](mcp.ts): the public and the protected MCP endpoints.
-- [mcp-sign-in.ts](mcp-sign-in.ts): one MCP URL for signed-out and signed-in callers, not served by the app: an optional identity, a public tool, and a protected one whose hook answers a signed-out caller with the 401 an MCP client signs in on.
+- [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the `authorize` of the protected ones.
+- [authentication.ts](authentication.ts): `Authentication.layer`, the server-only verifier of `Login`, as `authenticate`, publishing its OAuth protected resource's RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
+- [authentication-tenant.ts](authentication-tenant.ts): authentication beside other middleware, not served by the app: a verifier built once at startup, each request's tenant from router middleware provided after it, and endpoint middleware reading the identity, the layer's `middleware`.
+- [authentication-route.ts](authentication-route.ts): a route of the host's own beside the actions, not served by the app: it reads the bearer token, verifies it with the verifier `authenticate` uses, and refuses with `Authentication.refusal`, as authentication refuses on an action's route.
+- [authentication-upgrade.ts](authentication-upgrade.ts): `Authentication.refusal` for a caller the router never routes, not served by the app: a socket upgrade authenticating its own header, refused with the response authentication answers the same refusal with on a route.
+- [http.ts](http.ts): one HTTP layer serving the public and the protected actions of one binding, plus the OpenAPI document and Swagger UI.
+- [mcp.ts](mcp.ts): one MCP endpoint serving the public and the protected tools.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, global router middleware, which refuses a foreign Host or Origin before any credential is read.
 - [app.ts](app.ts): every surface of the host, behind that policy, merged first so it covers discovery too.
 - [server.ts](server.ts): the Node HTTP server, its request body limit, and shutdown handling.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
+- [cli-admin.ts](cli-admin.ts): a trusted operator's command beside remote callers, not served by the app: one implementation and one `authorize`, an identity typed in two parts, so no verified token names the operator the host supplies.
 - [promise-client.ts](promise-client.ts): `ActionHttp.fetchClient`, the client built once outside an Effect, each call a promise.
 
 ## Follow a request
 
 ```text
 HTTP /api/getUser / MCP tool getUser
-  → the authentication around the route provides CurrentActor
+  → authentication verifies the bearer token and provides CurrentActor (without one, a 401
+    before the input is read)
+  → the HTTP layer's own middleware, if any
   → the surface decodes input (invalid input is a 400 InvalidInput over HTTP and an isError
-    result over MCP; the hook and handler never run)
-  → before hook reads access: "read" and checks users:read
+    result over MCP; authorize and the handler never run)
+  → authorize reads access: "read" and checks users:read
+  → the action's declared checks, none here
   → handler calls Users.get(actor.tenantId, id)
   → the surface encodes the user or the declared error
 ```
 
 `UserNotFound` uses HTTP 404 and is declared on the actions that can raise it. `Forbidden`
 (403) and `Unauthenticated` (401) are built in: every endpoint and tool declares them, because
-the hook and the authentication produce them rather than a handler. That is what
+authentication and `authorize` produce them rather than a handler. That is what
 lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
 authentication carry `cache-control: no-store`; other routes use the host's cache policy. MCP over HTTP answers
 a refusal with the same status and body as HTTP. Tool discovery is not filtered by actor.
@@ -145,10 +148,10 @@ See [dependency lifetimes](../docs/guarantees.md#dependency-lifetimes) for how t
 handlers share `Users` while resolving `CurrentActor` on each request.
 
 Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
-Authentication establishes `CurrentActor` on each request, over any value provided at startup.
-Never provide it at a server's startup all the same: a route no authentication covers would
-serve every caller as that actor. In memory, [testing-caller.ts](testing-caller.ts) provides
-one caller around the layer.
+Authentication establishes `CurrentActor` on each protected request, and nothing provided at
+startup satisfies a protected route: its layer owes `Login`'s verifier. In memory,
+[testing-caller.ts](testing-caller.ts) serves the routes behind `authenticate`, each client
+sending its caller's token.
 
 ## Other surfaces
 
@@ -182,13 +185,13 @@ around it. Keep the global `console.log` and other direct writes off stdout.
 [mcp-browser.ts](mcp-browser.ts) exports public stateless MCP routes with an explicit Origin
 allowlist and separate router CORS configuration; mount them with a platform server.
 [toolkit-authorized.ts](toolkit-authorized.ts) demonstrates a Toolkit with the shared
-authorization hook and the caller's identity provided per invocation.
+`authorize` and the caller's identity provided per invocation.
 [toolkit-approval.ts](toolkit-approval.ts) asks a model's caller to approve its writes, one
-check over every call reading the call and the caller.
+rule over every call reading the call and the caller.
 Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-memory HTTP and
 MCP calls with cleanup.
-[testing-caller.ts](testing-caller.ts) tests `userActions` behind their hook as one caller,
-without authentication, sharing the in-memory `Users` with the program.
+[testing-caller.ts](testing-caller.ts) tests `userActions` over HTTP behind their real
+authentication, a client per caller's token, sharing the in-memory `Users` with the program.
 [in-process.ts](in-process.ts) calls `userActions`, `listChanges` included, which no binding
 holds, in process with `Action.client`, as two callers, each given around its own calls: what
 the implementation does, with no transport.

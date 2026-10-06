@@ -1,17 +1,26 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
-import { mcpRequest, rawToolCall } from "./requests.js";
+import { as, mcpRequest, rawToolCall, withBearer } from "./requests.js";
 import { defectOf } from "./defect.js";
 import { serve } from "./serve.js";
 import { converse } from "./stdio-host.js";
 
+/** The caller every page tool reads, signed in by a bearer token naming them. */
 class Principal extends Context.Service<Principal, string>()("text-test/Principal") {}
+
+const SignIn = Authentication.make("text-test.SignIn", Principal);
+
+/** Signs in whoever the token names. */
+const signIn = Authentication.layer(SignIn, (token: Redacted.Redacted<string>) =>
+  Effect.succeed(Redacted.value(token)),
+);
 
 class PageNotFound extends Schema.TaggedError<PageNotFound>()(
   "PageNotFound",
@@ -31,6 +40,7 @@ const page = (access: Action.Access) => ({
   success: Page,
   errors: [PageNotFound],
   access,
+  auth: Principal,
 });
 
 const Fetch = Action.make("fetch", { ...page("read"), hints: { text: "body" } });
@@ -46,6 +56,7 @@ const StoreJson = Action.make("storeJson", page("write"));
 const Head = Action.make("head", {
   description: "The start of a document.",
   access: "read",
+  auth: Principal,
   input: { url: Schema.String },
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
   hints: { text: "markdown" },
@@ -54,6 +65,7 @@ const Head = Action.make("head", {
 const Excerpt = Action.make("excerpt", {
   description: "An excerpt of a document, when it has one.",
   access: "read",
+  auth: Principal,
   input: { url: Schema.String },
   success: { markdown: Schema.optionalKey(Schema.String), url: Schema.String },
   hints: { text: "markdown" },
@@ -71,7 +83,7 @@ const fetchPage = ({ url }: { readonly url: string }) =>
     return { body: tricky, end: url === "invalid" ? -1 : tricky.length, owner };
   });
 
-// Refuses writes, so a hook refusal is exercised on both result shapes.
+// Refuses writes, so an authorizer refusal is exercised on both result shapes.
 const app = Action.implement(
   [Fetch, Store, FetchJson, StoreJson, Head, Excerpt],
   {
@@ -82,21 +94,28 @@ const app = Action.implement(
     head: () => Effect.succeed({ markdown: tricky }),
     excerpt: ({ url }) => Effect.succeed(url === "none" ? { url } : { markdown: tricky, url }),
   },
-  (action) =>
-    action.access === "write"
-      ? Effect.fail(new Action.Forbidden({ message: "Read only." }))
-      : Effect.void,
+  {
+    authorize: (action) =>
+      action.access === "write"
+        ? Effect.fail(new Action.Forbidden({ message: "Read only." }))
+        : Effect.void,
+  },
 );
 
 const server = { name: "pages", version: "1.0.0" } as const;
 
 const rest = { end: tricky.length, owner: "ada" };
 
-const endpoint = ActionMcp.layerHttp(app, server);
+const endpoint = ActionMcp.layerHttp(app, { ...server, authentication: SignIn }).pipe(
+  Layer.provide(signIn),
+);
 
-/** The endpoint in memory, as the caller `ada`. */
-const serveHttp = () =>
-  serve(endpoint.pipe(HttpRouter.provideRequest(Layer.succeed(Principal, "ada"))));
+/** The endpoint in memory, each request signed in as the caller `ada`. */
+const serveHttp = () => {
+  const web = serve(endpoint);
+
+  return { handler: (request: Request) => web.handler(withBearer(request, "ada")) };
+};
 
 /** The same server over stdio, as the caller `ada`. */
 const stdio = ActionMcp.runStdio(app, server).pipe(Effect.provideService(Principal, "ada"));
@@ -157,7 +176,7 @@ describe("MCP text fields", () => {
 
   it.each([
     ["a declared error", "fetch", { url: "missing" }],
-    ["a hook refusal", "store", { url: "a" }],
+    ["an authorizer refusal", "store", { url: "a" }],
     ["invalid arguments", "fetch", { url: 1 }],
     ["an undeclared argument", "fetch", { url: "a", extra: true }],
     ["an unencodable success", "fetch", { url: "invalid" }],
@@ -220,7 +239,7 @@ describe("MCP text fields", () => {
   it.effect("are read from the text blocks by mcpClient, which reads the same hints", () =>
     Effect.gen(function* () {
       const whole = { body: tricky, ...rest };
-      const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt]);
+      const mcp = yield* Testing.mcpClient([Fetch, FetchJson, Head, Excerpt], as("ada"));
 
       const results = [
         yield* mcp.fetch({ url: "a" }),
@@ -237,9 +256,7 @@ describe("MCP text fields", () => {
         { markdown: tricky, url: "a" },
         { url: "none" },
       ]);
-    }).pipe(
-      Effect.provide(Testing.layer(endpoint).pipe(Layer.provide(Layer.succeed(Principal, "ada")))),
-    ),
+    }).pipe(Effect.provide(Testing.layer(endpoint))),
   );
 
   it("reach the official client as text alone, with no listed schema to check", async () => {
@@ -293,11 +310,12 @@ describe("a text field MCP cannot send", () => {
       const Single = Action.make("single", {
         description: "A page, as a union of one struct",
         access: "read",
+        auth: "public",
         success: Schema.Union([Schema.Struct({ body: Schema.String })]),
         hints: { text: "body" },
       });
 
-      const single = Action.implement(Single, () => Effect.succeed({ body: "x" }), Action.allowAll);
+      const single = Action.implement(Single, () => Effect.succeed({ body: "x" }));
 
       expect(
         yield* defectOf(
@@ -316,35 +334,30 @@ describe("a text field MCP cannot send", () => {
       ]),
     ],
     ["a missing", Schema.Struct({ title: Schema.String })],
-  ] as const)("fails the layer build for %s field of an erased success", ([, success]) =>
-    Effect.gen(function* () {
-      // Typed only as `string`, a hint the types leave to the layer build.
-      const text: string = "body";
+  ] as const)(
+    "fails the layer build for %s field named by a hint the types cannot read",
+    ([, success]) =>
+      Effect.gen(function* () {
+        // Typed only as `string`, a hint the types leave to the layer build.
+        const text: string = "body";
 
-      const Erased = Action.make("erased", {
-        description: "A success the types cannot read",
-        access: "read",
-        success,
-        hints: { text },
-      });
+        const Erased = Action.make("erased", {
+          description: "A success the types cannot read",
+          access: "read",
+          auth: "public",
+          success,
+          hints: { text },
+        });
 
-      // Erased, as in a list of implementations typed as any: any field compiles.
-      const erased: Action.Implementation<
-        Action.Any,
-        { readonly [name: string]: never },
-        never,
-        never
-      > = Action.implement(
-        Erased,
-        () => Effect.succeed({ body: "x", kind: "a" as const }),
-        Action.allowAll,
-      );
+        const erased = Action.implement(Erased, () =>
+          Effect.succeed({ body: "x", kind: "a" as const }),
+        );
 
-      expect(
-        yield* defectOf(
-          Layer.build(ActionMcp.layerHttp(erased, server).pipe(Layer.provide(HttpRouter.layer))),
-        ),
-      ).toBe(cannot("erased"));
-    }),
+        expect(
+          yield* defectOf(
+            Layer.build(ActionMcp.layerHttp(erased, server).pipe(Layer.provide(HttpRouter.layer))),
+          ),
+        ).toBe(cannot("erased"));
+      }),
   );
 });

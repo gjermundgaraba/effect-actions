@@ -21,11 +21,16 @@ const asAlice = Effect.provideService(CurrentActor, actors.alice);
 
 const asReader = Effect.provideService(CurrentActor, actors.reader);
 
-const Ping = Action.make("ping", { description: "Ping", access: "read", success: Schema.Number });
+const Ping = Action.make("ping", {
+  description: "Ping",
+  access: "read",
+  auth: "public",
+  success: Schema.Number,
+});
 
 describe("Action.client", () => {
   it.effect(
-    "calls each action with its input, behind its hook, as the caller around each call",
+    "calls each action with its input, behind its authorize, as the caller around each call",
     () =>
       Effect.gen(function* () {
         const users = yield* Action.client(userActions);
@@ -66,12 +71,13 @@ describe("Action.client", () => {
       acquiredAsAlice((users) => users.whoAmI()),
     );
 
+    // Refused before authorize and the handler run, as a remote call without a credential is.
     assert(Exit.isFailure(exit));
-    expect(Cause.pretty(exit.cause)).toContain("example/CurrentActor");
+    expect(Cause.squash(exit.cause)).toBeInstanceOf(Action.Unauthenticated);
   });
 
   it.effect(
-    "refuses input that does not pass through its codec with InvalidInput, before the hook",
+    "refuses input that does not pass through its codec with InvalidInput, before authorize",
     () =>
       Effect.gen(function* () {
         const calls: Array<string> = [];
@@ -81,6 +87,7 @@ describe("Action.client", () => {
         const Rename = Action.make("rename", {
           description: "Rename",
           access: "write",
+          auth: CurrentActor,
           input: { id: NonEmpty, name: NonEmpty },
           success: Schema.String,
         });
@@ -89,23 +96,23 @@ describe("Action.client", () => {
           Rename,
           (input) =>
             Effect.sync(() => (calls.push(`handler ${JSON.stringify(input)}`), input.name)),
-          () => Effect.sync(() => void calls.push("hook")),
+          { authorize: () => Effect.sync(() => void calls.push("authorize")) },
         );
 
         // Wider than the input declares, as TypeScript lets a variable through.
         const wider = { id: "1", name: "Bea", admin: true };
 
         const client = yield* Action.client(app);
-        const invalid = yield* Effect.flip(client.rename({ id: "", name: "" }));
+        const invalid = yield* Effect.flip(client.rename({ id: "", name: "" }).pipe(asAlice));
         // The undeclared field is dropped, as a typed client's encoding drops it.
-        const dropped = yield* client.rename(wider);
+        const dropped = yield* client.rename(wider).pipe(asAlice);
 
         // Every issue, as over HTTP.
         expect(invalid).toBeInstanceOf(Action.InvalidInput);
         expect(invalid.message).toContain('at ["id"]');
         expect(invalid.message).toContain('at ["name"]');
         expect(dropped).toBe("Bea");
-        expect(calls).toEqual(["hook", 'handler {"id":"1","name":"Bea"}']);
+        expect(calls).toEqual(["authorize", 'handler {"id":"1","name":"Bea"}']);
       }),
   );
 
@@ -118,6 +125,7 @@ describe("Action.client", () => {
       const Double = Action.make("double", {
         description: "Double",
         access: "read",
+        auth: "public",
         input: { value: Schema.FiniteFromString },
         success: Schema.Finite,
       });
@@ -125,6 +133,7 @@ describe("Action.client", () => {
       const Search = Action.make("search", {
         description: "Search",
         access: "read",
+        auth: "public",
         input: Filters,
         success: Schema.String,
       });
@@ -133,6 +142,7 @@ describe("Action.client", () => {
       const Greet = Action.make("greet", {
         description: "Greet",
         access: "read",
+        auth: "public",
         input: { name: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())) },
         success: Schema.String,
       });
@@ -141,20 +151,17 @@ describe("Action.client", () => {
       const Zero = Action.make("zero", {
         description: "Zero",
         access: "read",
+        auth: "public",
         input: { value: Schema.Number },
         success: Schema.Array(Schema.Number),
       });
 
-      const app = Action.implement(
-        [Double, Search, Greet, Zero],
-        {
-          double: ({ value }) => Effect.succeed(value * 2),
-          search: (filters) => Effect.succeed(filters instanceof Filters ? "instance" : "plain"),
-          greet: ({ name }) => Effect.succeed(`Hello, ${name}`),
-          zero: ({ value }) => Effect.succeed([value, -0]),
-        },
-        Action.allowAll,
-      );
+      const app = Action.implement([Double, Search, Greet, Zero], {
+        double: ({ value }) => Effect.succeed(value * 2),
+        search: (filters) => Effect.succeed(filters instanceof Filters ? "instance" : "plain"),
+        greet: ({ name }) => Effect.succeed(`Hello, ${name}`),
+        zero: ({ value }) => Effect.succeed([value, -0]),
+      });
 
       const client = yield* Action.client(app);
       const doubled = yield* client.double({ value: 21 });
@@ -184,25 +191,36 @@ describe("Action.client", () => {
           () => Effect.sync(() => log.push(`${name} release`)),
         );
 
-      // The handlers and the hook are each built by an Effect of their own.
+      const Guarded = Action.make("ping", {
+        description: "Ping",
+        access: "read",
+        auth: CurrentActor,
+        success: Schema.Number,
+      });
+
+      // The handlers and the authorizer are each built by an Effect of their own.
       const app = Action.implement(
-        Ping,
+        Guarded,
         Effect.as(logged("builder"), () => Effect.as(logged("handler"), 1)),
-        Effect.as(logged("hook builder"), () => Effect.asVoid(logged("hook"))),
+        {
+          authorize: Effect.as(logged("authorize builder"), () =>
+            Effect.asVoid(logged("authorize")),
+          ),
+        },
       );
 
       yield* Effect.gen(function* () {
         const client = yield* Action.client(app);
 
         log.push("acquired");
-        yield* client.ping();
-        yield* client.ping();
+        yield* client.ping().pipe(asAlice);
+        yield* client.ping().pipe(asAlice);
         log.push("called twice");
       }).pipe(Effect.scoped);
 
-      const built = ["builder acquire", "hook builder acquire"];
-      const call = ["hook acquire", "handler acquire", "handler release", "hook release"];
-      const released = ["builder release", "hook builder release"];
+      const built = ["authorize builder acquire", "builder acquire"];
+      const call = ["authorize acquire", "handler acquire", "handler release", "authorize release"];
+      const released = ["authorize builder release", "builder release"];
 
       // Built once, when acquired; each call releases what it acquired; the builders last.
       expect(log.slice(0, 2).toSorted()).toEqual(built);
@@ -216,37 +234,40 @@ describe("Action.client", () => {
       const Name = Action.make("name", {
         description: "A name",
         access: "read",
+        auth: "public",
         success: Schema.String.check(Schema.isMinLength(1)),
       });
 
       const Profile = Action.make("profile", {
         description: "A profile",
         access: "read",
+        auth: "public",
         success: { id: Schema.String },
       });
 
-      const Nothing = Action.make("nothing", { description: "Returns nothing", access: "write" });
+      const Nothing = Action.make("nothing", {
+        description: "Returns nothing",
+        access: "write",
+        auth: "public",
+      });
 
       // Trimmed when decoded, and sent as given: a remote caller gets it trimmed.
       const Label = Action.make("label", {
         description: "A label",
         access: "read",
+        auth: "public",
         success: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())),
       });
 
       // Wider than the success declares, as TypeScript lets a variable through.
       const stored = { id: "1", secret: "s" };
 
-      const app = Action.implement(
-        [Name, Profile, Nothing, Label],
-        {
-          name: () => Effect.succeed(""),
-          profile: () => Effect.succeed(stored),
-          nothing: () => Effect.void,
-          label: () => Effect.succeed(" Bea "),
-        },
-        Action.allowAll,
-      );
+      const app = Action.implement([Name, Profile, Nothing, Label], {
+        name: () => Effect.succeed(""),
+        profile: () => Effect.succeed(stored),
+        nothing: () => Effect.void,
+        label: () => Effect.succeed(" Bea "),
+      });
 
       const client = yield* Action.client(app);
       const defect = yield* defectOf(client.name());
@@ -294,33 +315,32 @@ describe("Action.client", () => {
         const Label = Action.make("label", {
           description: "A label",
           access: "read",
+          auth: "public",
           errors: [Mislabeled],
         });
 
         const Profile = Action.make("profile", {
           description: "A profile",
           access: "read",
+          auth: "public",
           errors: [Missing],
         });
 
         const Queue = Action.make("queue", {
           description: "A queue",
           access: "read",
+          auth: "public",
           errors: [Busy],
         });
 
         // Wider than the error declares, as TypeScript lets a variable through.
         const missing = { ...Missing.make({ id: "1" }), secret: "s" };
 
-        const app = Action.implement(
-          [Label, Profile, Queue],
-          {
-            label: () => Effect.fail(new Mislabeled({ label: " Bea " })),
-            profile: () => Effect.fail(missing),
-            queue: () => Effect.fail(new Busy({ reason: "full" })),
-          },
-          Action.allowAll,
-        );
+        const app = Action.implement([Label, Profile, Queue], {
+          label: () => Effect.fail(new Mislabeled({ label: " Bea " })),
+          profile: () => Effect.fail(missing),
+          queue: () => Effect.fail(new Busy({ reason: "full" })),
+        });
 
         const client = yield* Action.client(app);
         const mislabeled = yield* Effect.flip(Effect.sandbox(client.label()));
@@ -349,19 +369,16 @@ describe("Action.client", () => {
       const Count = Action.make("count", {
         description: "Count",
         access: "read",
+        auth: "public",
         errors: [Counted],
       });
 
-      const app = Action.implement(
-        [Count, Ping],
-        {
-          // Made without its check, as TypeScript lets any number through.
-          count: () => Effect.fail(new Counted({ count: 1.5 }, { disableChecks: true })),
-          // @ts-expect-error `ping` does not declare `Unlisted`; plain JavaScript can still fail with it.
-          ping: () => Effect.fail(new Unlisted()),
-        },
-        Action.allowAll,
-      );
+      const app = Action.implement([Count, Ping], {
+        // Made without its check, as TypeScript lets any number through.
+        count: () => Effect.fail(new Counted({ count: 1.5 }, { disableChecks: true })),
+        // @ts-expect-error `ping` does not declare `Unlisted`; plain JavaScript can still fail with it.
+        ping: () => Effect.fail(new Unlisted()),
+      });
 
       const client = yield* Action.client(app);
       const unencoded = yield* defectOf(client.count());
@@ -386,20 +403,18 @@ describe("Action.client", () => {
         const Where = Action.make("where", {
           description: "Name the span it runs in",
           access: "read",
+          auth: "public",
           success: { name: Schema.String, parent: Schema.String },
         });
 
-        const app = Action.implement(
-          Where,
-          () =>
-            Effect.map(Effect.orDie(Effect.currentSpan), (span) => ({
-              name: span.name,
-              parent: Option.match(span.parent, {
-                onNone: () => "",
-                onSome: (parent) => (Predicate.isTagged(parent, "Span") ? parent.name : ""),
-              }),
-            })),
-          Action.allowAll,
+        const app = Action.implement(Where, () =>
+          Effect.map(Effect.orDie(Effect.currentSpan), (span) => ({
+            name: span.name,
+            parent: Option.match(span.parent, {
+              onNone: () => "",
+              onSome: (parent) => (Predicate.isTagged(parent, "Span") ? parent.name : ""),
+            }),
+          })),
         );
 
         const client = yield* Action.client(app).pipe(Effect.withSpan("acquisition"));
@@ -417,34 +432,40 @@ describe("Action.client", () => {
       }),
   );
 
-  it.effect("calls a share's actions with its source's builder, behind the share's own hook", () =>
+  it.effect("calls a selection of its actions with its builder and its authorize", () =>
     Effect.gen(function* () {
       let built = 0;
 
-      const Read = Action.make("read", { description: "Read", access: "read" });
-      const Write = Action.make("write", { description: "Write", access: "write" });
+      const Read = Action.make("read", { description: "Read", access: "read", auth: CurrentActor });
 
-      const source = Action.implement(
+      const Write = Action.make("write", {
+        description: "Write",
+        access: "write",
+        auth: CurrentActor,
+      });
+
+      const app = Action.implement(
         [Read, Write],
         Effect.sync(() => {
           built++;
 
           return { read: () => Effect.void, write: () => Effect.void };
         }),
-        (action) => (action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void),
+        {
+          authorize: (action) =>
+            action.access === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
+        },
       );
 
-      const trusted = Action.share([Write], source, Action.allowAll);
-
       // Both acquired in one layer graph, `Layer.empty`'s, where the builder runs once.
-      const guarded = yield* Action.client(source);
-      const admin = yield* Action.client(trusted);
-      const refused = yield* Effect.flip(guarded.write());
-      const written = yield* admin.write();
+      const all = yield* Action.client(app);
+      const writer = yield* Action.client(app, { actions: [Write] });
 
-      expect(refused).toBeInstanceOf(Action.Forbidden);
-      expect(written).toBeUndefined();
-      expect(Object.keys(admin)).toEqual(["write"]);
+      // Selection never changes who may call.
+      expect(yield* Effect.flip(all.write().pipe(asAlice))).toBeInstanceOf(Action.Forbidden);
+      expect(yield* Effect.flip(writer.write().pipe(asAlice))).toBeInstanceOf(Action.Forbidden);
+      expect(yield* all.read().pipe(asAlice)).toBeUndefined();
+      expect(Object.keys(writer)).toEqual(["write"]);
       expect(built).toBe(1);
     }).pipe(Effect.provide(Layer.empty)),
   );
@@ -459,7 +480,6 @@ describe("Action.client", () => {
 
         return () => Effect.succeed(run);
       }),
-      Action.allowAll,
     );
 
     const twice = Effect.gen(function* () {
@@ -487,12 +507,12 @@ describe("Action.client", () => {
 
             return () => Effect.succeed(run);
           }),
-          Action.allowAll,
         );
 
         const Pong = Action.make("pong", {
           description: "Pong",
           access: "read",
+          auth: "public",
           success: Schema.Number,
         });
 
@@ -500,7 +520,6 @@ describe("Action.client", () => {
         const outer = Action.implement(
           Pong,
           Effect.map(Action.client(inner), (client) => () => client.ping()),
-          Action.allowAll,
         );
 
         const { toolkit, layer: composite } = ActionToolkit.make(outer);
@@ -523,8 +542,8 @@ describe("Action.client", () => {
   );
 
   it("refuses a name twice, and a value no Action.implement made, where it is made", () => {
-    const again = Action.implement(Ping, () => Effect.succeed(2), Action.allowAll);
-    const ping = Action.implement(Ping, () => Effect.succeed(1), Action.allowAll);
+    const again = Action.implement(Ping, () => Effect.succeed(2));
+    const ping = Action.implement(Ping, () => Effect.succeed(1));
 
     expect(() => Action.client([ping, again])).toThrow("Duplicate action: ping");
 

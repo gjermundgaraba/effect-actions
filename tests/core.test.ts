@@ -10,11 +10,12 @@ import { serve } from "./serve.js";
 
 describe("contracts", () => {
   it("defaults to no input, Schema.Void and no errors, an undefined option as an omitted one", () => {
-    const Reset = Action.make("reset", { description: "Reset", access: "write" });
+    const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
 
     const Undefined = Action.make("reset", {
       description: "Reset",
       access: "write",
+      auth: "public",
       input: undefined,
       success: undefined,
       errors: undefined,
@@ -43,6 +44,7 @@ describe("contracts", () => {
     const Write = Action.make("write", {
       description: "Default hints",
       access: "write",
+      auth: "public",
       success: Schema.String,
     });
 
@@ -55,6 +57,7 @@ describe("contracts", () => {
     const Read = Action.make("read", {
       description: "A read stating destructive",
       access: "read",
+      auth: "public",
       success: Schema.String,
       // @ts-expect-error A read is never destructive; plain JavaScript can still say so.
       hints: { destructive: true },
@@ -75,14 +78,24 @@ describe("contracts", () => {
     // most 128 characters.
     for (const name of ["bad name", "then", "", "x".repeat(129)]) {
       expect(() =>
-        Action.make(name, { description: "", access: "write", success: Schema.String }),
+        Action.make(name, {
+          description: "",
+          access: "write",
+          auth: "public",
+          success: Schema.String,
+        }),
       ).toThrow("Invalid action name");
     }
 
     // A leading digit or underscore is fine.
     for (const name of ["x".repeat(128), "1st", "_private"]) {
       expect(
-        Action.make(name, { description: "", access: "write", success: Schema.String }).name,
+        Action.make(name, {
+          description: "",
+          access: "write",
+          auth: "public",
+          success: Schema.String,
+        }).name,
       ).toBe(name);
     }
   });
@@ -130,7 +143,12 @@ describe("contracts", () => {
     // Refused where the contract is made, so neither a server nor a client of it meets one.
     for (const [error, tag] of errors) {
       expect(() =>
-        Action.make("guarded", { description: "", access: "write", errors: [error] }),
+        Action.make("guarded", {
+          description: "",
+          access: "write",
+          auth: "public",
+          errors: [error],
+        }),
       ).toThrow(`Action "guarded": error _tag "${tag}" is built in, and declared on every surface`);
     }
 
@@ -138,15 +156,14 @@ describe("contracts", () => {
     const Allowed = Action.make("allowed", {
       description: "",
       access: "write",
+      auth: "public",
       errors: [
         Schema.TaggedStruct("Busy", {}),
         Schema.Union([Schema.TaggedStruct("Late", {}), Schema.TaggedStruct("Gone", {})]),
       ],
     });
 
-    expect(Action.implement(Allowed, () => Effect.void, Action.allowAll).actions).toEqual([
-      Allowed,
-    ]);
+    expect(Action.implement(Allowed, () => Effect.void).actions).toEqual([Allowed]);
   });
 
   it.effect(
@@ -159,6 +176,7 @@ describe("contracts", () => {
         const Register = Action.make("register", {
           description: "",
           access: "write",
+          auth: "public",
           input: { field: Schema.Literals(["email", "name"]) },
           errors: [EmailInvalid, NameInvalid],
         });
@@ -166,13 +184,10 @@ describe("contracts", () => {
         // A binding may list one of them too.
         const Http = ActionHttp.make([Register], { errors: [NameInvalid] });
 
-        const app = Action.implement(
-          Register,
-          ({ field }) =>
-            field === "email"
-              ? Effect.fail(EmailInvalid.make({ field }))
-              : Effect.fail(NameInvalid.make({ field })),
-          Action.allowAll,
+        const app = Action.implement(Register, ({ field }) =>
+          field === "email"
+            ? Effect.fail(EmailInvalid.make({ field }))
+            : Effect.fail(NameInvalid.make({ field })),
         );
 
         const local = yield* Action.client(app);
@@ -196,15 +211,12 @@ describe("contracts", () => {
     const Loose = Action.make("loose", {
       description: "An error schema any object with a message matches",
       access: "write",
+      auth: "public",
       errors: [Schema.Struct({ message: Schema.String })],
     });
 
     const web = makeTestHttp(
-      Action.implement(
-        Loose,
-        () => Effect.fail(new Action.Forbidden({ message: "no" })),
-        Action.allowAll,
-      ),
+      Action.implement(Loose, () => Effect.fail(new Action.Forbidden({ message: "no" }))),
     );
 
     const refused = await web.handler(post("/api/loose"));
@@ -224,6 +236,7 @@ describe("contracts", () => {
     const Fields = Action.make("fields", {
       description: "Fields shorthand",
       access: "read",
+      auth: "public",
       input: { id: Schema.String, limit: Schema.optionalKey(Schema.FiniteFromString) },
       success: { total: Schema.Finite },
     });
@@ -231,6 +244,7 @@ describe("contracts", () => {
     const Schemas = Action.make("schemas", {
       description: "Schemas",
       access: "read",
+      auth: "public",
       input: Schema.Struct({ id: Schema.String }),
       success: Schema.Finite,
     });
@@ -261,6 +275,7 @@ describe("contracts", () => {
     const Keyed = Action.make("keyed", {
       description: "Symbol-keyed fields",
       access: "read",
+      auth: "public",
       input: { [key]: Schema.String },
       success: Schema.String,
     });
@@ -275,12 +290,13 @@ describe("contracts", () => {
     const Create = Action.make("create", {
       description: "Creates, answering 201",
       access: "write",
+      auth: "public",
       success: created,
     });
 
     expect(Create.success).toBe(created);
 
-    const web = makeTestHttp(Action.implement(Create, () => Effect.succeed({}), Action.allowAll));
+    const web = makeTestHttp(Action.implement(Create, () => Effect.succeed({})));
     const response = await web.handler(post("/api/create"));
 
     expect(response.status).toBe(201);
@@ -293,7 +309,7 @@ describe("contracts", () => {
     expect(contracts.getUser).toBe(GetUser);
     expect(contracts.renameUser.success).toBe(RenameUser.success);
 
-    const Again = Action.make("getUser", { description: "Again", access: "read" });
+    const Again = Action.make("getUser", { description: "Again", access: "read", auth: "public" });
 
     expect(() => Action.byName([GetUser, Again])).toThrow("Duplicate action: getUser");
   });
@@ -303,13 +319,14 @@ describe("implementations", () => {
   const Hello = Action.make("hello", {
     description: "Greets",
     access: "write",
+    auth: "public",
     input: { name: Schema.String },
     success: Schema.String,
   });
 
   it("keeps same-contract implementations apart", async () => {
-    const appA = Action.implement(Hello, () => Effect.succeed("from A"), Action.allowAll);
-    const appB = Action.implement(Hello, () => Effect.succeed("from B"), Action.allowAll);
+    const appA = Action.implement(Hello, () => Effect.succeed("from A"));
+    const appB = Action.implement(Hello, () => Effect.succeed("from B"));
 
     const web = serve(
       Layer.mergeAll(
@@ -325,18 +342,18 @@ describe("implementations", () => {
   const Proto = Action.make("__proto__", {
     description: "Prototype-safe",
     access: "write",
+    auth: "public",
     success: Schema.String,
   });
 
   it.each([
     {
       form: "one action",
-      make: () => Action.implement(Proto, () => Effect.succeed("safe"), Action.allowAll),
+      make: () => Action.implement(Proto, () => Effect.succeed("safe")),
     },
     {
       form: "a record",
-      make: () =>
-        Action.implement([Proto], { ["__proto__"]: () => Effect.succeed("safe") }, Action.allowAll),
+      make: () => Action.implement([Proto], { ["__proto__"]: () => Effect.succeed("safe") }),
     },
   ])("routes prototype-sensitive action names through native HTTP: $form", async ({ make }) => {
     const web = makeTestHttp(make());

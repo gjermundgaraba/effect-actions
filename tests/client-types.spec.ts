@@ -1,5 +1,5 @@
 // Compile-only assertions on `Action.client`, included by `vp check`.
-import { Effect, Schema, type Scope } from "effect";
+import { Context, Effect, Schema, type Scope } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -24,7 +24,8 @@ export const methodTypes = Effect.gen(function* () {
   const renamed = users.renameUser({ id: "1", name: "Bea" });
 
   // The decoded success; the action's errors and the built-in ones, as an HTTP client decodes
-  // them, without a transport's; and per call, what the handler and the hook read.
+  // them, without a transport's; and per call, what the handler and `authorize` read, and the
+  // contract's identity.
   expectTypeOf<Effect.Success<typeof renamed>>().toEqualTypeOf<typeof User.Type>();
   expectTypeOf<Effect.Error<typeof renamed>>().toEqualTypeOf<UserNotFound | Action.BuiltIn>();
   expectTypeOf<Effect.Services<typeof renamed>>().toEqualTypeOf<CurrentActor>();
@@ -69,8 +70,8 @@ export const listTypes = Effect.gen(function* () {
   void actions.double({ value: "21" });
 });
 
-// A built hook: what builds it is a startup service of the acquisition, what it reads per call
-// the method's.
+// A built authorizer: what builds it is a startup service of the acquisition, what it reads per
+// call the method's.
 const stored = Action.client(storedWhoAmI);
 
 export const builtHookTypes = Effect.gen(function* () {
@@ -84,13 +85,17 @@ export const builtHookTypes = Effect.gen(function* () {
 // A builder's failure is the acquisition's; calls never fail with it.
 class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 
-const Ping = Action.make("ping", { description: "Ping", access: "read", success: Schema.Number });
+const Ping = Action.make("ping", {
+  description: "Ping",
+  access: "read",
+  auth: "public",
+  success: Schema.Number,
+});
 
 const failing = Action.client(
   Action.implement(
     Ping,
     Effect.as(Effect.fail(new Unavailable()), () => Effect.succeed(1)),
-    Action.allowAll,
   ),
 );
 
@@ -101,51 +106,51 @@ export const buildErrorTypes = Effect.gen(function* () {
   expectTypeOf<Effect.Error<ReturnType<typeof client.ping>>>().toEqualTypeOf<Action.BuiltIn>();
 });
 
-// A share: its actions alone, its hook's requirements, its source's builder.
-export const shareTypes = Effect.gen(function* () {
-  const trusted = Action.client(Action.share([GetUser], userActions, Action.allowAll));
-  const client = yield* trusted;
+// A selection: its actions alone, its implementation's builder and authorization.
+export const selectionTypes = Effect.gen(function* () {
+  const selected = Action.client(userActions, { actions: [GetUser] });
+  const client = yield* selected;
   const got = client.getUser({ id: "1" });
 
-  expectTypeOf<Effect.Services<typeof trusted>>().toEqualTypeOf<Users | Scope.Scope>();
-  // Its handler still reads the caller; its hook reads nothing.
+  expectTypeOf<Effect.Services<typeof selected>>().toEqualTypeOf<Users | Scope.Scope>();
   expectTypeOf<Effect.Services<typeof got>>().toEqualTypeOf<CurrentActor>();
-  // @ts-expect-error A share's client has only the share's actions.
+  // @ts-expect-error A selection's client has only the selected actions.
   // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
   void client.renameUser({ id: "1", name: "Bea" });
 });
 
-// A hook's error that the actions declare is each call's own declared error.
+// A check's error is each call's own declared error, and the check is built with the client:
+// what its callback reads per call, the call owes.
 class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {}) {}
 
-const Limited = Action.make("limited", {
-  description: "Limited",
+class Quota extends Context.Service<Quota, number>()("client-types/Quota") {}
+
+class Limited extends Action.Check<Limited>()("client-types/Limited", {
+  error: RateLimited,
+  requires: Quota,
+}) {}
+
+const Metered = Action.make("metered", {
+  description: "Metered",
   access: "read",
-  errors: [RateLimited],
+  auth: "public",
+  checks: [Limited],
 });
 
-export const hookErrorTypes = Effect.gen(function* () {
-  const client = yield* Action.client(
-    Action.implement(
-      Limited,
-      () => Effect.void,
-      () => Effect.fail(new RateLimited()),
-    ),
-  );
+export const checkTypes = Effect.gen(function* () {
+  const acquiring = Action.client(Action.implement(Metered, () => Effect.void));
+  const client = yield* acquiring;
+  const metered = client.metered();
 
-  expectTypeOf<Effect.Error<ReturnType<typeof client.limited>>>().toEqualTypeOf<
-    RateLimited | Action.BuiltIn
-  >();
+  expectTypeOf<Effect.Services<typeof acquiring>>().toEqualTypeOf<Limited | Scope.Scope>();
+  expectTypeOf<Effect.Error<typeof metered>>().toEqualTypeOf<RateLimited | Action.BuiltIn>();
+  expectTypeOf<Effect.Services<typeof metered>>().toEqualTypeOf<Quota>();
 });
 
 // A handler acquiring a resource owes no scope per call: each call has its own.
 export const scopeTypes = Effect.gen(function* () {
   const client = yield* Action.client(
-    Action.implement(
-      Ping,
-      () => Effect.acquireRelease(Effect.succeed(1), () => Effect.void),
-      Action.allowAll,
-    ),
+    Action.implement(Ping, () => Effect.acquireRelease(Effect.succeed(1), () => Effect.void)),
   );
 
   expectTypeOf<Effect.Services<ReturnType<typeof client.ping>>>().toBeNever();

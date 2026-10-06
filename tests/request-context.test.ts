@@ -12,18 +12,15 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
 import { layer as host } from "../examples/app.js";
-import { authenticate } from "../examples/authentication.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
 import { Http } from "../examples/binding.js";
-import { GetUser, RenameUser, WhoAmI } from "../examples/contracts.js";
+import { GetUser, RenameUser, Status, WhoAmI } from "../examples/contracts.js";
+import { status, userActions } from "../examples/handlers.js";
+import { layer as http } from "../examples/http.js";
+import { layer as mcp } from "../examples/mcp.js";
+import { Users } from "../examples/users.js";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
@@ -35,25 +32,16 @@ import { serve, serveWithContext } from "./serve.js";
 import { converse } from "./stdio-host.js";
 
 describe("the identity authentication provides", () => {
-  // A native route under the example's authentication, reading the identity as handlers do.
-  const native = HttpRouter.add(
-    "POST",
-    "/native/whoAmI",
-    Effect.map(CurrentActor, ({ id }) => HttpServerResponse.text(id)),
-  ).pipe(Layer.provide(authenticate));
-
-  // An action reading the caller, served where no authentication covers it.
+  // An action reading the caller as an ordinary request service: public, so no
+  // authentication covers it.
   const Caller = Action.make("caller", {
     description: "Name the caller.",
     access: "read",
+    auth: "public",
     success: Schema.String,
   });
 
-  const caller = Action.implement(
-    Caller,
-    () => Effect.map(CurrentActor, ({ id }) => id),
-    Action.allowAll,
-  );
+  const caller = Action.implement(Caller, () => Effect.map(CurrentActor, ({ id }) => id));
 
   const Public = ActionHttp.make([Caller], { prefix: "/public" });
 
@@ -63,11 +51,11 @@ describe("the identity authentication provides", () => {
   );
 
   it.effect(
-    "wins over a caller provided around Testing.layer, which reaches only the other routes",
+    "wins over a caller provided around Testing.layer, which reaches only the public routes",
     () =>
       Effect.gen(function* () {
         // One caller for the routes no authentication covers, and tokens for the rest.
-        const harness = Testing.layer(Layer.mergeAll(host, native, uncovered)).pipe(
+        const harness = Testing.layer(Layer.mergeAll(host, uncovered)).pipe(
           Layer.provide(Layer.succeed(CurrentActor, actors.reader)),
         );
 
@@ -75,17 +63,12 @@ describe("the identity authentication provides", () => {
           const http = yield* ActionHttp.client(Http, as("alice"));
           const mcp = yield* Testing.mcpClient([WhoAmI, RenameUser], as("alice"));
 
-          const nativeId = yield* HttpClient.execute(
-            HttpClientRequest.post("/native/whoAmI").pipe(HttpClientRequest.bearerToken("alice")),
-          ).pipe(Effect.flatMap((response) => response.text));
-
           const identities = {
             http: (yield* http.whoAmI()).id,
             mcp: (yield* mcp.whoAmI()).id,
-            native: nativeId,
           };
 
-          // The hook reads the identity too: alice may write, where the caller may only read.
+          // The authorizer reads the identity too: alice may write, where the reader may not.
           const renamed = [
             yield* http.renameUser({ id: "1", name: "Bea" }),
             yield* mcp.renameUser({ id: "1", name: "Cy" }),
@@ -102,7 +85,7 @@ describe("the identity authentication provides", () => {
         }).pipe(Effect.provide(harness));
 
         expect(answered).toEqual({
-          identities: { http: "alice", mcp: "alice", native: "alice" },
+          identities: { http: "alice", mcp: "alice" },
           renamed: [
             { id: "1", name: "Bea" },
             { id: "1", name: "Cy" },
@@ -136,6 +119,70 @@ describe("the identity authentication provides", () => {
         ]);
       }),
   );
+
+  it("never stands in for authentication: a caller presenting no token is refused", async () => {
+    // A startup identity owes no verifier, so the routes still authenticate every request.
+    const web = serve(
+      Layer.mergeAll(http, mcp).pipe(
+        Layer.provide(Layer.succeed(CurrentActor, actors.alice)),
+        Layer.provide(Users.layerMemory),
+      ),
+    );
+
+    expect((await web.handler(post("/api/whoAmI"))).status).toBe(401);
+    expect((await web.handler(rawToolCall("whoAmI"))).status).toBe(401);
+  });
+});
+
+describe("the caller of a local surface", () => {
+  it.effect("is read per call by Action.client, and a public selection needs none", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client(userActions, { actions: [GetUser, WhoAmI] });
+      const whoAmI = client.whoAmI();
+
+      expect(yield* whoAmI.pipe(Effect.provideService(CurrentActor, actors.alice))).toEqual({
+        id: "alice",
+        tenantId: "acme",
+      });
+      expect(yield* whoAmI.pipe(Effect.provideService(CurrentActor, actors.bob))).toEqual({
+        id: "bob",
+        tenantId: "other",
+      });
+
+      // One client, a caller per call: each reads its own tenant's user.
+      expect(
+        yield* client.getUser({ id: "1" }).pipe(Effect.provideService(CurrentActor, actors.bob)),
+      ).toEqual({ id: "1", name: "Grace" });
+
+      const open = yield* Action.client([status, userActions], { actions: [Status] });
+
+      expect(yield* open.status()).toEqual({ service: "effect-actions", users: 2 });
+    }).pipe(Effect.provide(Users.layerMemory)),
+  );
+
+  it.effect("is read per call by one Toolkit, the innermost caller winning", () => {
+    const binding = ActionToolkit.make(userActions, { actions: [WhoAmI] });
+
+    return Effect.gen(function* () {
+      const tools = yield* binding.toolkit;
+      const call = Effect.flatMap(tools.handle("whoAmI", {}), Stream.runCollect);
+
+      expect(yield* call.pipe(Effect.provideService(CurrentActor, actors.alice))).toMatchObject([
+        { result: { id: "alice" } },
+      ]);
+      expect(yield* call.pipe(Effect.provideService(CurrentActor, actors.bob))).toMatchObject([
+        { result: { id: "bob" } },
+      ]);
+
+      // A caller provided around another is never widened to the enclosing one.
+      expect(
+        yield* call.pipe(
+          Effect.provideService(CurrentActor, actors.reader),
+          Effect.provideService(CurrentActor, actors.alice),
+        ),
+      ).toMatchObject([{ result: { id: "reader" } }]);
+    }).pipe(Effect.provide(binding.layer), Effect.provide(Users.layerMemory));
+  });
 });
 
 describe("a value provided per request", () => {
@@ -144,10 +191,11 @@ describe("a value provided per request", () => {
   const Where = Action.make("where", {
     description: "Name the request's tenant.",
     access: "read",
+    auth: "public",
     success: Schema.String,
   });
 
-  const where = Action.implement(Where, () => Tenant, Action.allowAll);
+  const where = Action.implement(Where, () => Tenant);
 
   const routes = Layer.mergeAll(
     ActionHttp.layer(ActionHttp.make([Where]), where),
@@ -191,19 +239,30 @@ describe("a value provided per request", () => {
 
       const seen: Array<string> = [];
 
-      const Who = Action.make("who", { description: "Record the caller.", access: "read" });
+      const Who = Action.make("who", {
+        description: "Record the caller.",
+        access: "read",
+        auth: Actor,
+      });
 
       const who = Action.implement(
         Who,
         () => Effect.flatMap(Actor, (actor) => Effect.sync(() => seen.push(`handler: ${actor}`))),
-        () => Effect.flatMap(Actor, (actor) => Effect.sync(() => void seen.push(`hook: ${actor}`))),
+        {
+          authorize: () =>
+            Effect.flatMap(Actor, (actor) =>
+              Effect.sync(() => void seen.push(`authorizer: ${actor}`)),
+            ),
+        },
       );
 
       const tools = ActionToolkit.make(who);
 
+      // Public, reading the caller the host's own middleware provides each request.
       const Chat = Action.make("chat", {
         description: "Call a tool as a narrower delegate of the caller.",
         access: "read",
+        auth: "public",
       });
 
       const chat = Action.implement(
@@ -221,7 +280,6 @@ describe("a value provided per request", () => {
                 ),
             ),
         ),
-        Action.allowAll,
       );
 
       const identify = HttpRouter.middleware<{ provides: Actor }>()((route) =>
@@ -240,7 +298,7 @@ describe("a value provided per request", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(seen).toEqual(["hook: delegate of alice", "handler: delegate of alice"]);
+      expect(seen).toEqual(["authorizer: delegate of alice", "handler: delegate of alice"]);
     },
   );
 });
@@ -249,17 +307,14 @@ describe("what the routes were built with", () => {
   const Level = Action.make("level", {
     description: "Name the current log level.",
     access: "read",
+    auth: "public",
     success: Schema.String,
   });
 
-  const Boom = Action.make("boom", { description: "Die.", access: "write" });
+  const Boom = Action.make("boom", { description: "Die.", access: "write", auth: "public" });
 
   it("fills in a reference a request lacks, but never the log level an MCP client asks for", async () => {
-    const level = Action.implement(
-      Level,
-      () => Effect.service(References.CurrentLogLevel),
-      Action.allowAll,
-    );
+    const level = Action.implement(Level, () => Effect.service(References.CurrentLogLevel));
 
     const web = serve(
       Layer.mergeAll(
@@ -291,17 +346,15 @@ describe("what the routes were built with", () => {
         const Probe = Action.make("probe", {
           description: "Name the stage and the log level.",
           access: "read",
+          auth: "public",
           success: { stage: Schema.String, level: Schema.String },
         });
 
-        const probe = Action.implement(
-          Probe,
-          () =>
-            Effect.all({
-              stage: Effect.service(Stage),
-              level: Effect.service(References.CurrentLogLevel),
-            }),
-          Action.allowAll,
+        const probe = Action.implement(Probe, () =>
+          Effect.all({
+            stage: Effect.service(Stage),
+            level: Effect.service(References.CurrentLogLevel),
+          }),
         );
 
         const bindings = {
@@ -360,7 +413,7 @@ describe("what the routes were built with", () => {
         report: ({ cause }) => void reported.push(Cause.pretty(cause)),
       };
 
-      const boom = Action.implement(Boom, () => Effect.die(new Error("boom")), Action.allowAll);
+      const boom = Action.implement(Boom, () => Effect.die(new Error("boom")));
 
       const routes =
         transport === "HTTP"
@@ -390,7 +443,7 @@ describe("what the routes were built with", () => {
         },
       });
 
-      const level = Action.implement(Level, () => Effect.succeed("ok"), Action.allowAll);
+      const level = Action.implement(Level, () => Effect.succeed("ok"));
 
       const routes =
         transport === "HTTP"
@@ -418,16 +471,16 @@ describe("over stdio", () => {
       const Who = Action.make("who", {
         description: "Name the caller.",
         access: "read",
+        auth: Actor,
         success: Schema.String,
       });
 
-      const hooked: Array<string> = [];
+      const authorized: Array<string> = [];
 
-      const who = Action.implement(
-        Who,
-        () => Actor,
-        () => Effect.flatMap(Actor, (actor) => Effect.sync(() => void hooked.push(actor))),
-      );
+      const who = Action.implement(Who, () => Actor, {
+        authorize: () =>
+          Effect.flatMap(Actor, (actor) => Effect.sync(() => void authorized.push(actor))),
+      });
 
       const [answer] = yield* converse(
         ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
@@ -438,7 +491,7 @@ describe("over stdio", () => {
       );
 
       expect(JSON.parse(answer ?? "")).toMatchObject({ result: { structuredContent: "host" } });
-      expect(hooked).toEqual(["host"]);
+      expect(authorized).toEqual(["host"]);
     }),
   );
 });

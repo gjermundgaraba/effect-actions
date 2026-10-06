@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import * as Action from "../src/Action.js";
+import { CurrentActor } from "./authorization.js";
 
 export const User = Schema.Struct({
   id: Schema.String,
@@ -17,6 +18,7 @@ export const Status = Action.make("status", {
   description: "Report whether the service is up.",
   success: { service: Schema.String, users: Schema.Finite },
   access: "read",
+  auth: "public",
 });
 
 export const GetUser = Action.make("getUser", {
@@ -25,6 +27,7 @@ export const GetUser = Action.make("getUser", {
   success: User,
   errors: [UserNotFound],
   access: "read",
+  auth: CurrentActor,
 });
 
 export const RenameUser = Action.make("renameUser", {
@@ -36,6 +39,7 @@ export const RenameUser = Action.make("renameUser", {
   success: User,
   errors: [UserNotFound],
   access: "write",
+  auth: CurrentActor,
   hints: { destructive: false },
 });
 
@@ -45,6 +49,7 @@ export const Double = Action.make("double", {
   input: { value: Schema.FiniteFromString },
   success: Schema.Finite,
   access: "read",
+  auth: CurrentActor,
 });
 
 // Identity comes from the host's authenticated request context, not action input.
@@ -52,6 +57,7 @@ export const WhoAmI = Action.make("whoAmI", {
   description: "Inspect the authenticated actor.",
   success: { id: Schema.String, tenantId: Schema.String },
   access: "read",
+  auth: CurrentActor,
 });
 
 export const Change = Schema.Struct({
@@ -64,4 +70,5 @@ export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
   success: { changes: Schema.Array(Change) },
   access: "read",
+  auth: CurrentActor,
 });

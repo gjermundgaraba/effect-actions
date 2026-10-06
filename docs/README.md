@@ -15,18 +15,18 @@ Package facts that apply everywhere:
 
 ## Pages
 
-| Read                                   | When you need to                                                                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                         |
-| [Action.md](Action.md)                 | define a contract, bind its handler and hook, use built-in errors, call or test implementations in process (`Action.client`)   |
-| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                      |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                  |
-| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                   |
-| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                               |
-| [Authentication.md](Authentication.md) | authenticate HTTP surfaces' callers, refuse with 401/403, publish RFC 9728 discovery, let signed-out callers share one MCP URL |
-| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                     |
-| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                  |
-| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                   |
+| Read                                   | When you need to                                                                                                                                                                                |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                                                                                          |
+| [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, declare a check such as a rate limit, use built-in errors, call or test implementations in process (`Action.client`) |
+| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                                                       |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                                                                   |
+| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                                                                    |
+| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                                                                |
+| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP and MCP surfaces, refuse with 401/403, publish RFC 9728 discovery                                                            |
+| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                                                                                      |
+| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                                                                                   |
+| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                                                                    |
 
 ## Choose a surface
 
@@ -36,7 +36,7 @@ Package facts that apply everywhere:
 - Callers are humans or scripts in a terminal: `ActionCli`, from implementations to run handlers locally, or from the HTTP binding to call a server.
 - Callers are your own code in the same process, such as a test, a job or a command of your own: `Action.client`, with the methods of `ActionHttp.client`.
 
-Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. An implementation carries its own `before` hook, which every surface runs, `Action.allowAll` where no action-level rule applies; surfaces take only their transport's options. Authentication is router middleware the host provides around the HTTP surfaces.
+Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. A contract states who may call it, `auth`, and an implementation of protected actions carries its own `authorize`, which every surface runs; surfaces take only their transport's options. A remote surface serving protected actions names their authentication descriptor and requires its verifier, `Authentication.layer`; on a local surface the host provides the identity.
 
 For first-time setup, follow the [minimal program](setup.md#minimal-program).
 

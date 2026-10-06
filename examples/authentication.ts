@@ -1,38 +1,39 @@
 import { Effect, Redacted } from "effect";
 import * as Action from "../src/Action.js";
 import * as Authentication from "../src/Authentication.js";
-import { actors, CurrentActor } from "./authorization.js";
+import { type Actor, actors } from "./authorization.js";
+import { Login } from "./binding.js";
 
 // DEMO ONLY: a token is an actor's name. Verify real tokens with your authorization
 // server's library instead, their audience included: issued for this resource.
 const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
 
-// Router middleware providing CurrentActor per request. Like a handler builder, its Effect
-// yields startup services, such as a token verifier, and returns the per-request
-// authentication; this demo needs none. A missing or unknown token is the built-in
-// `Unauthenticated`: a 401 every client decodes. As an OAuth protected resource, it
-// publishes RFC 9728 discovery, public, and every challenge names it, so an MCP client
-// that was refused finds the server issuing its tokens. A first login requests read only;
-// a write refused for its scope steps up.
-export const authentication = Authentication.make(
-  CurrentActor,
-  Effect.succeed(
-    Effect.flatMap(Authentication.bearerToken, (token) => {
-      const name = Redacted.value(token);
+// Each request's token, as the native `HttpApiSecurity.bearer` decodes it, to its actor. A
+// missing or empty token never reaches it; an unknown one is the built-in `Unauthenticated`,
+// a 401 every client decodes, as is a missing one.
+export const verify = (
+  token: Redacted.Redacted<string>,
+): Effect.Effect<Actor, Action.Unauthenticated> => {
+  const name = Redacted.value(token);
 
-      return isActorToken(name)
-        ? Effect.succeed(actors[name])
-        : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
-    }),
-  ),
-  {
-    resource: "http://localhost:3000/mcp",
-    authorizationServers: ["https://auth.example.com"],
-    scopesSupported: ["users:read", "users:write"],
-    scopesRequired: ["users:read"],
-  },
-);
+  return isActorToken(name)
+    ? Effect.succeed(actors[name])
+    : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
+};
 
-// Provided to every layer whose routes it authenticates. Combine the middleware first when
-// it reads another middleware's service, or another reads the identity.
-export const authenticate = authentication.layer;
+// As an OAuth protected resource, it publishes RFC 9728 discovery, public, and every challenge
+// names it, so an MCP client that was refused finds the server issuing its tokens. A first
+// login requests read only; a write refused for its scope steps up.
+export const protectedResource = {
+  resource: "http://localhost:3000/mcp",
+  authorizationServers: ["https://auth.example.com"],
+  scopesSupported: ["users:read", "users:write"],
+  scopesRequired: ["users:read"],
+} satisfies Authentication.Options;
+
+// Server-only: `Login`'s verifier, provided to every layer serving protected actions. An
+// Effect building it instead yields startup services, such as a token verifier, as a handler
+// builder does; this demo needs none.
+export const authenticate = Authentication.layer(Login, verify, {
+  protectedResource,
+});

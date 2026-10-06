@@ -2,15 +2,16 @@ import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Stream } from "effect";
 import * as Action from "../src/Action.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
-import { Double } from "./contracts.js";
+import { Greet } from "./quickstart.js";
 
-const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), Action.allowAll);
+// A public action: no authorization, and its tool owes no caller.
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
-const { toolkit, layer } = ActionToolkit.make(double);
+const { toolkit, layer } = ActionToolkit.make(greet);
 
 const program = Effect.gen(function* () {
   const tools = yield* toolkit;
-  const calls = yield* tools.handle("double", { value: "21" });
+  const calls = yield* tools.handle("greet", { name: "Ada" });
   const results = yield* Stream.runCollect(calls);
   yield* Console.log(results);
 }).pipe(Effect.provide(layer));

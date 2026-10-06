@@ -1,14 +1,23 @@
-// The actions of the large fixtures, as types only: as many as a fixture lists, each declaring
-// errors of its own and the limit every one of them declares.
-import { type Effect, Schema } from "effect";
-import type * as Action from "../src/Action.js";
+// The actions of the large fixtures, typed as `Action.make` types them: as many as a fixture
+// lists, each declaring errors of its own and the limit every one of them checks.
+import { Context, type Effect, Schema } from "effect";
+import * as Action from "../src/Action.js";
 
-/** The limit every action of the large fixtures declares. */
+/** The caller of the large fixtures' protected actions. */
+export class Caller extends Context.Service<Caller, string>()("numbered/Caller") {}
+
+/** The limit every action of the large fixtures declares, through its check. */
 export class Throttled extends Schema.TaggedError<Throttled>()(
   "Throttled",
   {},
   { httpApiStatus: 429 },
 ) {}
+
+/** The check every action of the large fixtures lists: it reads the caller per call. */
+export class Limited extends Action.Check<Limited>()("numbered/Limited", {
+  error: Throttled,
+  requires: Caller,
+}) {}
 
 /** An error one action of the large fixtures declares alone. */
 type Own<Tag extends string> = Schema.Codec<{ readonly _tag: Tag }>;
@@ -26,16 +35,23 @@ type OwnErrors<I extends number> = {
   ];
 };
 
-/** Action `I` of the large fixtures: `K` errors of its own, and the limit. */
+/**
+ * Action `I` of the large fixtures, as `make` types it: `K` errors of its own, the limit its
+ * check joins to them, and `Caller`, who may call it. The identity is written here rather
+ * than passed through `Numbering` as a parameter: carried as a type argument, a class's
+ * type doubles the fixtures' instantiations, a cost no contract `make` returns has.
+ */
 type Numbered<I extends number, K extends 3 | 6> = Action.Action<
   `action${I}`,
   Action.Any["input"],
   Action.Any["success"],
-  readonly [...OwnErrors<I>[K], typeof Throttled],
-  "read"
+  ReadonlyArray<OwnErrors<I>[K][number] | typeof Throttled>,
+  "read",
+  typeof Caller,
+  readonly [typeof Limited]
 >;
 
-/** Actions `0` to `N - 1`, of `K` errors of their own each. */
+/** Protected actions `0` to `N - 1`, of `K` errors of their own each. */
 export type Numbering<
   N extends number,
   K extends 3 | 6,

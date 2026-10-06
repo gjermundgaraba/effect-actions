@@ -13,11 +13,12 @@ class OneRequest extends Context.Service<OneRequest, string>()("cli-types/OneReq
 
 class TwoRequest extends Context.Service<TwoRequest, number>()("cli-types/TwoRequest") {}
 
-class Hooked extends Context.Service<Hooked, string>()("cli-types/Hooked") {}
+class Authorizing extends Context.Service<Authorizing, string>()("cli-types/Authorizing") {}
 
 const One = Action.make("one", {
   description: "One",
   access: "write",
+  auth: "public",
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
 });
@@ -25,6 +26,7 @@ const One = Action.make("one", {
 const Two = Action.make("two", {
   description: "Two",
   access: "write",
+  auth: "public",
   input: Schema.Struct({ value: Schema.Finite }),
   success: Schema.Finite,
 });
@@ -36,7 +38,6 @@ const local = Action.implement(
       Effect.map(OneRequest, (request) => `${prefix}${request}${value}`),
     two: ({ value }: { value: number }) => Effect.map(TwoRequest, (request) => value + request),
   })),
-  Action.allowAll,
 );
 
 const localOne = ActionCli.command(local, One, {
@@ -59,9 +60,19 @@ expectTypeOf<Command.Services<typeof localGroup>>().toEqualTypeOf<
 >();
 
 // Any implementation may refuse, and any handler fail with a built-in error: every local
-// command fails with `BuiltIn`, beside the action's own failures, whatever its hook.
+// command fails with `BuiltIn`, beside the action's own failures, whatever its authorization.
+class Caller extends Context.Service<Caller, string>()("cli-types/Caller") {}
+
+const Guarded = Action.make("guarded", {
+  description: "Guarded",
+  access: "write",
+  auth: Caller,
+  input: Schema.Struct({ value: Schema.String }),
+  success: Schema.String,
+});
+
 const refuse = Effect.fn(function* (action: Action.Any) {
-  yield* Hooked;
+  yield* Authorizing;
 
   if (action.access === "write") return yield* new Action.Unauthenticated();
 
@@ -69,8 +80,8 @@ const refuse = Effect.fn(function* (action: Action.Any) {
 });
 
 const refusing = ActionCli.command(
-  Action.implement(One, ({ value }) => Effect.succeed(value), refuse),
-  One,
+  Action.implement(Guarded, ({ value }) => Effect.succeed(value), { authorize: refuse }),
+  Guarded,
   { render: (output) => output.toUpperCase() },
 );
 
@@ -82,16 +93,21 @@ expectTypeOf<Command.Error<typeof localGroup>>().toEqualTypeOf<ActionCli.Failure
 
 expectTypeOf<Command.Error<typeof refusing>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
 
-// The hook's services are the command's too.
-expectTypeOf<Command.Services<typeof refusing>>().toEqualTypeOf<Hooked>();
+// What `authorize` reads is the command's too, and so is the caller, which the host provides.
+expectTypeOf<Command.Services<typeof refusing>>().toEqualTypeOf<Authorizing | Caller>();
+
+const operated = refusing.pipe(Command.provideSync(Caller, "operator"));
+
+expectTypeOf<Command.Services<typeof operated>>().toEqualTypeOf<Authorizing>();
 
 const Plain = Action.make("plain", {
   description: "Plain",
   access: "write",
+  auth: "public",
   success: Schema.String,
 });
 
-const noService = Action.implement(Plain, () => Effect.succeed("plain"), Action.allowAll);
+const noService = Action.implement(Plain, () => Effect.succeed("plain"));
 
 const plainCommand = ActionCli.command(noService, Plain);
 
@@ -104,7 +120,7 @@ expectTypeOf<Command.Services<typeof plainGroup>>().toBeNever();
 // An implementation written inside the list owes nothing, as every surface's list keeps it:
 // inferring from the list's erased element would make it owe `unknown`.
 const inlineGroup = ActionCli.make(
-  [local, Action.implement(Plain, () => Effect.succeed("plain"), Action.allowAll)],
+  [local, Action.implement(Plain, () => Effect.succeed("plain"))],
   { name: "inline" },
 );
 
@@ -127,6 +143,7 @@ expectTypeOf<Parameters<typeof ActionCli.command>[0]>().toEqualTypeOf<
 const Scoped = Action.make("scoped", {
   description: "Scoped",
   access: "write",
+  auth: "public",
   success: Schema.String,
 });
 
@@ -136,7 +153,6 @@ const scoped = Action.implement(
     Effect.succeed({ scoped: () => Effect.succeed("scoped") }),
     () => Effect.void,
   ),
-  Action.allowAll,
 );
 
 const scopedCommand = ActionCli.command(scoped, Scoped);
@@ -151,13 +167,12 @@ expectTypeOf<Command.Services<typeof scopedGroup>>().toBeNever();
 const ScopedHandler = Action.make("scopedHandler", {
   description: "Scoped handler",
   access: "write",
+  auth: "public",
   success: Schema.String,
 });
 
-const scopedHandler = Action.implement(
-  ScopedHandler,
-  () => Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
-  Action.allowAll,
+const scopedHandler = Action.implement(ScopedHandler, () =>
+  Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void),
 );
 
 const scopedHandlerCommand = ActionCli.command(scopedHandler, ScopedHandler);
@@ -180,6 +195,7 @@ class Domain extends Schema.TaggedError<Domain>()("Domain", {}) {}
 const RemoteAction = Action.make("remote", {
   description: "Remote",
   access: "write",
+  auth: "public",
   input: Schema.Struct({ value: Schema.String }),
   success: Schema.String,
   errors: [Domain],
@@ -188,12 +204,14 @@ const RemoteAction = Action.make("remote", {
 const Count = Action.make("count", {
   description: "Count",
   access: "write",
+  auth: "public",
   success: Schema.Finite,
 });
 
 const Other = Action.make("other", {
   description: "Other",
   access: "write",
+  auth: "public",
   success: Schema.String,
 });
 
@@ -255,6 +273,7 @@ class Gone extends Schema.TaggedError<Gone>()("Gone", {}, { httpApiStatus: 410 }
 const Erring = Action.make("erring", {
   description: "Declares an error",
   access: "read",
+  auth: "public",
   success: Schema.String,
   errors: [Gone],
 });
@@ -337,24 +356,22 @@ ActionCli.command(local, One, { positional: ["other"] });
 const ScalarInput = Action.make("scalarInput", {
   description: "A scalar input",
   access: "read",
+  auth: "public",
   input: Schema.String,
 });
 
 const UnionInput = Action.make("unionInput", {
   description: "A union input",
   access: "read",
+  auth: "public",
   input: Schema.Union([Schema.Struct({ a: Schema.String }), Schema.Struct({ a: Schema.Finite })]),
 });
 
-const shapes = Action.implement(
-  [ScalarInput, UnionInput, Other],
-  {
-    scalarInput: () => Effect.void,
-    unionInput: () => Effect.void,
-    other: () => Effect.succeed("other"),
-  },
-  Action.allowAll,
-);
+const shapes = Action.implement([ScalarInput, UnionInput, Other], {
+  scalarInput: () => Effect.void,
+  unionInput: () => Effect.void,
+  other: () => Effect.succeed("other"),
+});
 
 // Only named fields of one struct may be positional: none for a scalar, a union or no input.
 expectTypeOf<ActionCli.CommandOptions<typeof ScalarInput>["positional"]>().toEqualTypeOf<
@@ -368,12 +385,13 @@ expectTypeOf<ActionCli.CommandOptions<typeof Other>["positional"]>().toEqualType
 // @ts-expect-error A union input has no positional fields, even shared ones.
 ActionCli.command(shapes, UnionInput, { positional: ["a"] });
 
-// A local command's cause is what its action, hook or builder fails with, or a built-in one.
+// A local command's cause is what its action or builder fails with, or a built-in one.
 class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 
 const Declares = Action.make("declares", {
   description: "Declares an error",
   access: "read",
+  auth: "public",
   success: Schema.String,
   errors: [Domain],
 });
@@ -382,7 +400,6 @@ const declares = ActionCli.command(
   Action.implement(
     Declares,
     Effect.as(Effect.fail(new Unavailable()), () => Effect.succeed("declared")),
-    Action.allowAll,
   ),
   Declares,
 );
@@ -400,8 +417,41 @@ Command.runWith(declares, { version: "0" })([]).pipe(
   }),
 );
 
+// Or by the reason's tag, with Effect's own `catchReason`: the parser's `UserError` has none.
+export const recovered = Command.runWith(declares, { version: "0" })([]).pipe(
+  Effect.catchReason("UserError", "Domain", (domain) => {
+    expectTypeOf(domain).toEqualTypeOf<Domain>();
+
+    return Effect.succeed(domain._tag);
+  }),
+);
+
+Command.runWith(declares, { version: "0" })([]).pipe(
+  // @ts-expect-error A tag no failure of the command has.
+  Effect.catchReason("UserError", "Other", Effect.succeed),
+);
+
 const matched = (error: Command.Error<typeof declares>) =>
   // @ts-expect-error `Failure` is a type only: `instanceof` would leave its cause `any`.
   error instanceof ActionCli.Failure;
 
 void matched;
+
+// `actions` lists the subcommands among the implementations' or the binding's actions, and
+// types each subcommand's options and the command's failures by them alone.
+const localListed = ActionCli.make(local, {
+  name: "local",
+  actions: [Two],
+  commands: { two: { render: (output) => output.toFixed() } },
+});
+
+expectTypeOf<Command.Services<typeof localListed>>().toEqualTypeOf<Build | TwoRequest>();
+
+const boundListed = ActionCli.make(Bound, { name: "remote", actions: [Plain] });
+
+expectTypeOf<Command.Error<typeof boundListed>>().toEqualTypeOf<
+  ActionCli.Failure<Action.BuiltIn | Transport>
+>();
+
+// @ts-expect-error An action of neither.
+ActionCli.make(local, { name: "local", actions: [Plain] });

@@ -1,13 +1,30 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Option, Redacted } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
+import { Cause, Context, Effect, Exit, Layer, Option, Redacted, Schema } from "effect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApiBuilder, HttpApiSecurity } from "effect/http-api";
 import * as Action from "../src/Action.js";
+import * as ActionHttp from "../src/ActionHttp.js";
 import * as Authentication from "../src/Authentication.js";
 import { authenticate } from "../examples/authentication.js";
 import { admit } from "../examples/authentication-upgrade.js";
+import { authorize, CurrentActor } from "../examples/authorization.js";
+import { Login } from "../examples/binding.js";
+import { answerStepUp, recordStepUp } from "../src/internal/refusal.js";
+import { post } from "./requests.js";
 import { serve } from "./serve.js";
 
 class Caller extends Context.Service<Caller, string>()("refusal/Caller") {}
+
+const CallerLogin = Authentication.make("refusal.CallerLogin", Caller);
+
+const Private = Action.make("private", {
+  description: "Signed in only",
+  access: "read",
+  auth: Caller,
+  success: Schema.String,
+});
+
+const answering = Action.implement(Private, () => Caller, { authorize: Action.allowAll });
 
 const resource = {
   resource: "https://api.example.com/mcp?tenant=alice\\",
@@ -27,34 +44,44 @@ const read = async (response: Response) => ({
   challenge: response.headers.get("www-authenticate"),
 });
 
-/** `error` as `make` answers it, refusing a request whose header is `authorization`. */
+/**
+ * `error` as a protected route answers it, its verifier refusing a request whose header is
+ * `authorization`.
+ */
 const routed = (
   error: Action.Refusal,
   authorization: string | undefined,
   protectedResource: Authentication.Options | undefined,
-) =>
-  serve(
-    HttpRouter.add("GET", "/private", Effect.map(Caller, HttpServerResponse.text)).pipe(
+) => {
+  const request = new Request("https://api.example.com/api/private", post("/api/private"));
+
+  if (authorization !== undefined) request.headers.set("authorization", authorization);
+
+  return serve(
+    ActionHttp.layer(ActionHttp.make([Private], { authentication: CallerLogin }), answering).pipe(
       Layer.provide(
-        Authentication.make(Caller, Effect.succeed(Effect.fail(error)), protectedResource).layer,
+        Authentication.layer(
+          CallerLogin,
+          () => Effect.fail(error),
+          protectedResource === undefined ? {} : { protectedResource },
+        ),
       ),
     ),
-  ).handler(
-    new Request(
-      "https://api.example.com/private",
-      authorization === undefined ? {} : { headers: { authorization } },
-    ),
-  );
+  ).handler(request);
+};
+
+// A request presenting no bearer credential never reaches the verifier: the layer refuses it.
+const missing = new Action.Unauthenticated({ message: "A bearer token is required." });
 
 const scoped = new Action.Forbidden({ message: "Requires docs:write.", scopes: ["docs:write"] });
 
 describe("refusal", () => {
   it.for([
-    ["a 401 without credentials", new Action.Unauthenticated(), undefined],
+    ["a 401 without credentials", missing, undefined],
     ["a 401 to a bearer token", new Action.Unauthenticated({ message: "Expired." }), "Bearer x"],
     ["a 401 to a lowercase scheme", new Action.Unauthenticated(), "bearer x"],
     ["a 401 to two tokens, which is no bearer token", new Action.Unauthenticated(), "Bearer a b"],
-    ["a 401 to another scheme", new Action.Unauthenticated(), "Basic eA=="],
+    ["a 401 to another scheme", missing, "Basic eA=="],
     ["a 403 naming scopes", scoped, "Bearer x"],
     [
       "a 403 whose message is no RFC 6750 description",
@@ -62,17 +89,20 @@ describe("refusal", () => {
       "Bearer x",
     ],
     ["a 403 naming no scopes", new Action.Forbidden({ message: "Not yours." }), "Bearer x"],
-  ] as const)("answers %s as make does, with and without a resource", async ([, error, header]) => {
-    for (const protectedResource of [undefined, resource]) {
-      const outside = HttpServerResponse.toWeb(
-        Authentication.refusal(error, { protectedResource, authorization: header }),
-      );
+  ] as const)(
+    "answers %s as a protected route does, with and without a resource",
+    async ([, error, header]) => {
+      for (const protectedResource of [undefined, resource]) {
+        const outside = HttpServerResponse.toWeb(
+          Authentication.refusal(error, { protectedResource, authorization: header }),
+        );
 
-      expect(await read(outside)).toEqual(
-        await read(await routed(error, header, protectedResource)),
-      );
-    }
-  });
+        expect(await read(outside)).toEqual(
+          await read(await routed(error, header, protectedResource)),
+        );
+      }
+    },
+  );
 
   it("answers a 401 with its JSON, no-store and the resource's challenge, its metadata URL escaped", async () => {
     const anonymous = Authentication.refusal(new Action.Unauthenticated(), {
@@ -118,7 +148,7 @@ describe("refusal", () => {
     );
   });
 
-  it("refuses a scopesRequired that is no scope token, as make does", () => {
+  it("refuses a scopesRequired that is no scope token, as Authentication.layer does", () => {
     const invalid = { ...resource, scopesRequired: ["docs read"] } satisfies Authentication.Options;
 
     expect(() =>
@@ -127,28 +157,109 @@ describe("refusal", () => {
   });
 });
 
+describe("a step-up refusal answering its request", () => {
+  const stepUp = recordStepUp(Effect.fail(new Action.Forbidden({ scopes: ["write"] })));
+
+  it.effect("answers an MCP request however it ended, its tool's failure being a result", () =>
+    Effect.gen(function* () {
+      const answered = yield* answerStepUp(
+        Effect.catch(stepUp, () => Effect.succeed(HttpServerResponse.empty())),
+        undefined,
+      );
+
+      expect(answered.status).toBe(403);
+      expect((yield* answerStepUp(stepUp, undefined)).status).toBe(403);
+    }),
+  );
+
+  it.effect("keeps a defect after the refusal as the request's own", () =>
+    Effect.gen(function* () {
+      const broken = yield* Effect.exit(
+        answerStepUp(Effect.ensuring(stepUp, Effect.die("finalizer")), undefined),
+      );
+
+      expect(Exit.isFailure(broken) && Cause.hasDies(broken.cause)).toBe(true);
+    }),
+  );
+});
+
 describe("bearerTokenOf", () => {
+  const headers = [
+    undefined,
+    "",
+    "alice",
+    "Bearer",
+    "Bearer ",
+    "Bearer   ",
+    "Bearer alice",
+    "Bearer alice ",
+    " Bearer alice",
+    "Bearer  alice",
+    "bearer alice",
+    "BEARER alice",
+    "Bearer a b",
+    "Bearer\talice",
+    "Bearer alice\t",
+    "Bearerx alice",
+    "Basic x",
+  ];
+
   it.for([
-    [undefined, undefined],
-    ["alice", undefined],
     ["Bearer alice", "alice"],
     ["Bearer alice ", "alice"],
     ["bearer alice", "alice"],
-    ["Bearer a b", undefined],
+    ["Bearer a b", "a b"],
+    ["Bearer", undefined],
+    ["alice", undefined],
     ["Basic x", undefined],
   ] as const)("reads %s", ([header, token]) => {
     expect(
       Option.getOrUndefined(Option.map(Authentication.bearerTokenOf(header), Redacted.value)),
     ).toBe(token);
   });
+
+  it.effect("reads a header as Effect's own Bearer scheme reads a request's", () =>
+    Effect.gen(function* () {
+      for (const header of headers) {
+        const request = new Request("http://localhost/", {
+          headers: header === undefined ? {} : { authorization: header },
+        });
+
+        const native = yield* HttpApiBuilder.securityDecode(HttpApiSecurity.bearer).pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(request),
+          ),
+          Effect.provideService(HttpServerRequest.ParsedSearchParams, {}),
+        );
+
+        const token = Authentication.bearerTokenOf(header ?? undefined);
+
+        expect([header, Option.getOrElse(Option.map(token, Redacted.value), () => "")]).toEqual([
+          header,
+          Redacted.value(native),
+        ]);
+      }
+    }),
+  );
 });
 
 describe("the upgrade example", () => {
+  // A socket writes, so the route refuses a caller without the write scope, as `admit` does.
+  const Write = Action.make("write", {
+    description: "Write",
+    access: "write",
+    auth: CurrentActor,
+  });
+
+  const writing = Action.implement(Write, () => Effect.void, { authorize });
+
   it.for([
     undefined,
     "alice",
     "Bearer alice",
     "Bearer alice ",
+    "Bearer reader",
     "bearer alice",
     "Bearer a b",
     "Basic x",
@@ -163,20 +274,19 @@ describe("the upgrade example", () => {
       }),
     );
 
-    // The example's own authentication, around a route.
+    // The example's own authentication, around a protected route.
+    const request = post("/api/write");
+
+    if (header !== undefined) request.headers.set("authorization", header);
+
     const response = await serve(
-      HttpRouter.add("GET", "/private", HttpServerResponse.empty()).pipe(
+      ActionHttp.layer(ActionHttp.make([Write], { authentication: Login }), writing).pipe(
         Layer.provide(authenticate),
       ),
-    ).handler(
-      new Request(
-        "http://localhost:3000/private",
-        header === undefined ? {} : { headers: { authorization: header } },
-      ),
-    );
+    ).handler(request);
 
     expect(admitted).toEqual({
-      status: response.status === 204 ? 200 : response.status,
+      status: response.status,
       challenge: response.headers.get("www-authenticate"),
     });
   });

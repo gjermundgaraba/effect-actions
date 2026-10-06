@@ -4,8 +4,8 @@ import { authorize, CurrentActor } from "./authorization.js";
 import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
-// Every caller may call, and it owes nothing per request: public wherever no
-// authentication covers it.
+// A public contract: no authorization runs, and it owes nothing per request, on every
+// surface.
 export const status = Action.implement(
   Status,
   Effect.gen(function* () {
@@ -13,12 +13,11 @@ export const status = Action.implement(
 
     return () => Effect.map(users.count, (count) => ({ service: "effect-actions", users: count }));
   }),
-  Action.allowAll,
 );
 
-// Capture Users at startup; resolve CurrentActor per request. Every surface runs the
-// `authorize` hook before each handler, so it has already refused an actor without the
-// permission the action's access needs. HTTP serves only the actions its binding holds:
+// Capture Users at startup; resolve CurrentActor per request. Every surface authenticates
+// the caller, then runs `authorize` before each handler, so it has already refused an actor
+// without the permission the action's access needs. HTTP serves only the actions its binding holds:
 // `listChanges`, which it leaves out, is a tool and a command, never a route.
 export const userActions = Action.implement(
   [GetUser, RenameUser, WhoAmI, ListChanges],
@@ -38,8 +37,10 @@ export const userActions = Action.implement(
         }),
     };
   }),
-  authorize,
+  { authorize },
 );
 
-// Pure: no builder and no services, only the hook.
-export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), authorize);
+// Pure: no builder and no services, only the authorization.
+export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), {
+  authorize,
+});

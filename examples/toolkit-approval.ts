@@ -18,6 +18,6 @@ export const { toolkit, layer } = ActionToolkit.make([userActions, double], {
     ),
 });
 
-// One turn: the caller is provided around it, for the check, the hook and the handlers.
+// One turn: the caller is provided around it, for the approval, `authorize` and the handlers.
 export const chat = (actor: Actor, prompt: string) =>
   LanguageModel.generateText({ prompt, toolkit }).pipe(Effect.provideService(CurrentActor, actor));

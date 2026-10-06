@@ -7,6 +7,7 @@ import {
   Schema,
   SchemaAST,
   Scope,
+  type Types,
 } from "effect";
 import type { Etag, HttpClient, HttpPlatform } from "effect/http";
 import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -17,11 +18,19 @@ import {
   HttpApiGroup,
   HttpApiMiddleware,
   HttpApiSchema,
-  type HttpApiSecurity,
   OpenApi,
 } from "effect/http-api";
 import type * as Action from "./Action.js";
-import { assertOnce, assertOwnTags, projectedErrors } from "./internal/actions.js";
+import {
+  assertAuthentication,
+  type Any as Authentication,
+  type Identity,
+  type Matching,
+  type ServedProvider,
+  type RemoteRequest,
+  type Required as RequiredAuthentication,
+} from "./internal/authentication.js";
+import { assertDistinct, assertOnce, assertOwnTags, projectedErrors } from "./internal/actions.js";
 import {
   type AnyHttp,
   type Client,
@@ -29,22 +38,22 @@ import {
   methods,
   type Options as ClientOptions,
 } from "./internal/client.js";
-import type { BuiltIns } from "./internal/errors.js";
-import { recordStepUp } from "./internal/refusal.js";
+import type { BuiltIn, BuiltIns } from "./internal/errors.js";
 import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
+  type Protected,
   acquire,
-  type ActionOf,
   type AnyImplementation,
   type BuildContext,
   type BuildError,
   type ErasedValue,
+  type Known,
   type Member,
   provideHandlers,
-  type RequestOf,
   type Served,
+  type Serving,
+  select,
   toList,
-  uniqueKey,
 } from "./internal/implementation.js";
 
 /** A client's methods, one per action of the binding. */
@@ -70,35 +79,138 @@ export interface FetchClientOptions extends ClientOptions {
 /** Error schemas, as an action declares them. */
 type Errors = Action.Any["errors"];
 
-/** Native security schemes, keyed by the name the OpenAPI document gives each. */
-type Security = Readonly<Record<string, HttpApiSecurity.HttpApiSecurity>>;
+/** Native endpoint middleware, as `HttpApiMiddleware.Service` declares it. */
+type Middleware = ReadonlyArray<Context.Key<HttpApiMiddleware.AnyId, unknown>>;
 
-/** Contract-level configuration: servers and clients must agree on it. */
-export interface Options<E extends Errors = Errors, A extends Action.Any = Action.Any> {
-  /** Mount path of every route; defaults to `/api`. `/` mounts at the root. */
+/** The identifier a middleware's service key declares. */
+type IdOf<K> = K extends Context.Key<infer I extends HttpApiMiddleware.AnyId, unknown> ? I : never;
+
+/**
+ * What the request owes past the middleware `M`, the first innermost, around what `R` owes:
+ * each removes what it provides and adds what it requires, as native endpoints apply them.
+ * An array of unknown length, which may hold none of them, provides nothing and owes what
+ * any of them requires.
+ */
+type Through<M extends Middleware, R> = number extends M["length"]
+  ? R | HttpApiMiddleware.Requires<IdOf<M[number]>>
+  : M extends readonly [infer K, ...infer Rest extends Middleware]
+    ? Through<Rest, HttpApiMiddleware.ApplyServices<IdOf<K>, R>>
+    : R;
+
+/**
+ * The middleware options `O` install: its `middleware` when always given, an array of unknown
+ * length when it may be absent, which installs none or all of them, and none otherwise.
+ */
+type MiddlewareOf<O> = O extends { readonly middleware: infer M extends Middleware }
+  ? M
+  : O extends { readonly middleware?: infer M extends Middleware | undefined }
+    ? "middleware" extends keyof O
+      ? ReadonlyArray<NonNullable<M>[number]>
+      : []
+    : [];
+
+/**
+ * The layer's middleware, refused when one fails with an error neither the binding, `E`, nor
+ * every endpoint declares, or needs a client counterpart: neither reaches the binding's
+ * clients, which decode only what the binding and the built-ins declare. A failure an
+ * action's callers see after decoding is a check's, declared on the contract and decoded by
+ * every client.
+ */
+type ServerOnly<M extends Middleware, E extends Errors> = [
+  | Exclude<
+      HttpApiMiddleware.Error<IdOf<M[number]>>,
+      Extract<Certain<E>, Errors[number]>["Type"] | BuiltIn
+    >
+  | HttpApiMiddleware.MiddlewareClient<IdOf<M[number]>>,
+] extends [never]
+  ? unknown
+  : {
+      readonly "Layer middleware fails only with the binding's errors and needs no client": never;
+    };
+
+/** `T` where it is one type, not a union: what a list's slot of type `T` surely holds. */
+type Single<T> = true extends Types.IsUnion<T> ? never : T;
+
+/**
+ * The errors a binding of errors `E` surely declares: each slot of one error in a list of
+ * fixed length, never one of an array of unknown length, which may be empty, nor of a list
+ * `E` may be one of several.
+ */
+type Certain<E extends Errors> =
+  true extends Types.IsUnion<E>
+    ? never
+    : number extends E["length"]
+      ? never
+      : { readonly [K in keyof E]: Single<E[K]> }[number];
+
+/** The layer serving `Apps` through the binding `H`, behind the middleware `M`. */
+type HttpLayer<H extends AnyHttp, Apps extends Served, M extends Middleware> = Layer.Layer<
+  never,
+  BuildError<Member<Apps>, H["actions"][number]>,
+  | BuildContext<Member<Apps>, H["actions"][number]>
+  | HttpRouter.HttpRouter
+  | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, H["actions"][number], M>>
+  | ServedProvider<
+      Member<Apps>,
+      H["actions"][number],
+      H extends { readonly authentication: infer D } ? D : never
+    >
+  | IdOf<M[number]>
+  | Etag.Generator
+  | FileSystem.FileSystem
+  | HttpPlatform.HttpPlatform
+  | Path.Path
+>;
+
+/** `ActionHttp.layer`'s options. */
+export interface LayerOptions<M extends Middleware = []> {
+  /**
+   * Native endpoint middleware every served route runs, the first innermost: inside the
+   * authentication of a protected route, outside its decoding. A middleware requiring the
+   * identity needs a layer serving only protected actions.
+   */
+  readonly middleware?: M;
+}
+
+/** What the layer serving `A` of `App` behind middleware `M` owes per request. */
+type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
+  Through<M, RemoteRequest<App, A>>,
+  | HttpRouter.Provided
+  // Authentication, outermost, provides the identity, though only to protected routes.
+  | ([Extract<Serving<App, A>, { readonly auth: "public" }>] extends [never]
+      ? Identity<Protected<Serving<App, A>>>
+      : never)
+>;
+
+/**
+ * The errors options `O` declare, as at run time: those `errors` always gives, or, where it may
+ * be absent, those it gives or none, so clients decode each that may arrive.
+ */
+type ErrorsOf<O> = O extends unknown
+  ? "errors" extends keyof O
+    ? O extends { readonly errors: infer E extends Errors }
+      ? E
+      : Extract<O["errors" & keyof O], Errors> | []
+    : []
+  : never;
+
+/** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
+type PublicOnly<Actions extends ReadonlyArray<Action.Any>> = [
+  Exclude<Actions[number], { readonly auth: "public" }>,
+] extends [never]
+  ? unknown
+  : { readonly "Protected actions take options naming their authentication": never };
+
+/** The descriptor options `O` name, where they always name one. */
+type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D extends Authentication }]
+  ? D
+  : undefined;
+
+/** Contract-level configuration shared by servers and clients. */
+export interface Options<E extends Errors = Errors> {
   readonly prefix?: `/${string}`;
-  /**
-   * Errors every endpoint may answer with besides its action's own, such as a limit
-   * middleware around the routes applies before decoding: declared by every endpoint, so
-   * clients decode them. Handlers and hooks never fail with them; they are the binding's, and
-   * no other surface declares them. None with a built-in error's `_tag`.
-   */
   readonly errors?: E;
-  /**
-   * The credentials the authentication around the routes reads, as Effect's native schemes
-   * keyed by the name OpenAPI gives each: `{ bearer: HttpApiSecurity.bearer }`. The document
-   * states them on every endpoint but `public`'s, any one of them sufficing, and
-   * `OpenApi.fromApi`, Swagger and Scalar show them. Documentation only: it enforces nothing,
-   * and `layer` serves every endpoint without it. The authentication provided around a layer
-   * alone decides who is admitted.
-   */
-  readonly security?: Security;
-  /**
-   * The actions served without that authentication, such as a status check: their endpoints
-   * state no security requirement. Each must be one of the binding's actions; without
-   * `security`, it changes nothing.
-   */
-  readonly public?: ReadonlyArray<A>;
+  readonly authentication?: Authentication;
 }
 
 type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
@@ -126,48 +238,17 @@ type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.
   HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E>, true>
 >;
 
-/** The actions of the implementations `App`. */
-type ActionsOf<App> = Extract<ActionOf<App>, Action.Any>;
-
-/** Whether `A` may be one of `Bound`: either is assignable to the other. */
-type Matches<A extends Action.Any, Bound extends Action.Any> = Bound extends Action.Any
-  ? [A] extends [Bound]
-    ? true
-    : [Bound] extends [A]
-      ? true
-      : never
-  : never;
-
-/**
- * The actions of `App` a layer of the binding's actions `Bound` may serve, as `layer` selects
- * them by identity: an action whose type either is assignable to, or is assigned by, one the
- * binding holds. So an implementation typed wider than its contract, or a binding typed wider
- * than its actions, an erased one included, still counts, and another contract of a bound
- * name, which `layer` leaves out beside an action it serves, does not.
- */
-type Serving<App, Bound extends Action.Any> =
-  ActionsOf<App> extends infer A
-    ? A extends Action.Any
-      ? [Matches<A, Bound>] extends [never]
-        ? never
-        : A
-      : never
-    : never;
-
-/**
- * What each implementation among `App` owes per request where a layer of the actions `Bound`
- * serves it: its hook's services, and the handlers' of the actions it serves.
- */
-type ServedRequest<App, Bound extends Action.Any> = App extends unknown
-  ? RequestOf<App, Serving<App, Bound>>
-  : never;
-
 /**
  * An HTTP binding: actions, the errors every endpoint declares, and where they are mounted.
  * Plain data, so a copy of it, or one made by another installed copy of this package,
  * serves the same; `layer` serves it and `client` calls it.
  */
-export interface Binding<Actions extends ReadonlyArray<Action.Any>, E extends Errors = []> {
+export interface Binding<
+  Actions extends ReadonlyArray<Action.Any>,
+  E extends Errors = [],
+  D extends Authentication | undefined = undefined,
+> {
+  readonly authentication: D;
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
   /** The errors every endpoint declares besides its action's own. */
@@ -276,30 +357,37 @@ const endpointOf = (action: Action.Any, path: `/${string}`, errors: Errors) =>
     error: projectedErrors(action, errors).flatMap(declared),
   });
 
-/**
- * Native security middleware stating `schemes` on the endpoints it is added to, which is
- * how `OpenApi.fromApi` documents a scheme, under a key of each binding's own; none for no
- * scheme. It documents only: `layer` serves its endpoints without it.
- */
-const documentation = (schemes: Security) =>
-  Object.keys(schemes).length === 0
-    ? undefined
-    : HttpApiMiddleware.Service<never>()(`effect-actions/ActionHttp/Security/${uniqueKey()}`, {
-        security: schemes,
-      });
+/** An endpoint wrapped in a layer's middleware, the first innermost. */
+const within = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
+  middleware.reduce((inner, key) => inner.middleware(key), endpoint);
 
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
  * Every endpoint declares its action's errors, the binding's `errors`, and the built-in
  * `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a typed
  * failure. A union's own `httpApiStatus` applies to every member; otherwise, each member
- * of a plain union uses its own status, or 422 without one. `security` documents what the
- * authentication around the routes reads, on every endpoint but `public`'s.
+ * uses its own status, or 422 without one. Protected contracts receive native endpoint
+ * security middleware: the same descriptor documents their credentials and enforces them.
  */
-export function make<const Actions extends ReadonlyArray<Action.Any>, const E extends Errors = []>(
+// Two forms, not one with a conditional rest parameter, through which TypeScript infers no
+// `const` tuple of errors; and so explicit options naming errors require the argument. The
+// first takes public actions by its constraint, which a helper generic in them meets.
+export function make<const Actions extends ReadonlyArray<Action.Any & { readonly auth: "public" }>>(
   actions: Actions,
-  options?: Options<E, Actions[number]>,
-): Binding<Actions, E>;
+): Binding<Actions, [], undefined>;
+export function make<const Actions extends ReadonlyArray<Action.Any>, const O extends Options = {}>(
+  actions: Actions,
+  options: O &
+    RequiredAuthentication<Actions[number]> &
+    Matching<Actions[number], NoInfer<DescriptorOf<O>>> &
+    NoInfer<Known<O, Options>>,
+): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>>;
+// Last, and reached only when the forms above fail: TypeScript reports a call matching no
+// overload by the last one's error alone, so protected actions without options are told to
+// name their authentication, rather than to be public.
+export function make<const Actions extends ReadonlyArray<Action.Any>>(
+  actions: Actions & PublicOnly<Actions>,
+): Binding<Actions, [], undefined>;
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): AnyHttp {
   assertOnce("action", actions);
 
@@ -307,10 +395,10 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
 
   assertOwnTags("ActionHttp binding", errors);
 
-  const open = options.public ?? [];
+  assertAuthentication(actions, options.authentication);
 
   const mount = mountSegments(options.prefix);
-  const security = documentation(options.security ?? {});
+  const security = options.authentication?.["~middleware"];
 
   const endpoints = actions.map((action) => {
     const endpoint = endpointOf(action, route([...mount, action.name]), errors).annotate(
@@ -318,7 +406,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
       action.description,
     );
 
-    return security === undefined || open.includes(action)
+    return security === undefined || action.auth === "public"
       ? endpoint
       : endpoint.middleware(security);
   });
@@ -328,7 +416,13 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   // name, and so no operation ID, repeats across them.
   const api = apiOf(groupName(mount), endpoints);
 
-  return { actions, errors, prefix: route(mount), api };
+  return {
+    actions,
+    errors,
+    prefix: route(mount),
+    api,
+    authentication: options.authentication,
+  };
 }
 
 /**
@@ -342,12 +436,7 @@ const buildAlone = <A, E>(group: Layer.Layer<A, E>): Layer.Layer<A, E> =>
   );
 
 /**
- * Route middleware of one `layer` call, run after the middleware around it. A request
- * without a content type is a 415, as on an MCP endpoint, where `HttpApi` would read it as
- * JSON: a page on any origin sends one, credentials included, without a CORS preflight.
- * Any other request runs over what its routes were built with, which fills in only what
- * the request lacks: what middleware provides per request, authentication included, wins,
- * as on a native route and in a `Toolkit` call.
+ * Restore startup dependencies beneath request context, so a caller's services win.
  */
 const entry = () =>
   HttpRouter.middleware(
@@ -356,76 +445,130 @@ const entry = () =>
       const startup = Context.omit(Scope.Scope)(built);
 
       return (route) =>
-        Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-          request.headers["content-type"] === undefined
-            ? Effect.succeed(
-                HttpServerResponse.text("Unsupported content-type: none", { status: 415 }),
-              )
-            : Effect.updateContext(route, (current: Context.Context<never>) =>
-                Context.merge(startup, current),
-              ),
+        Effect.updateContext(route, (current: Context.Context<never>) =>
+          Context.merge(startup, current),
         );
     }),
   ).layer;
 
 /**
- * Serve the binding's actions among `implementations` in one layer, each implementation's
- * `before` hook running after decoding, before each handler. The binding decides what is
+ * Answers a protected route's step-up refusal, as it leaves the layer's middleware, with its
+ * challenge: the provider's `stepUp`, inside the authentication.
+ */
+class StepUp extends HttpApiMiddleware.Service<StepUp>()("effect-actions/ActionHttp/StepUp") {}
+
+/** Require JSON media typing after endpoint authentication, before payload decoding. */
+class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
+  "effect-actions/ActionHttp/JsonContentType",
+) {}
+
+const jsonContentType = Layer.succeed(JsonContentType, (route) =>
+  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+    request.headers["content-type"] === undefined
+      ? Effect.succeed(HttpServerResponse.text("Unsupported content-type: none", { status: 415 }))
+      : route,
+  ),
+);
+
+/**
+ * Serve the binding's actions among `implementations` in one layer, authenticating a protected
+ * action's request before decoding it, then running its implementation's `authorize` and its
+ * declared checks before each handler. The binding decides what is
  * served: an implementation's actions the binding leaves out have no route here, and one
  * holding none of the binding's is refused when `layer` is called. It mounts only the routes
- * of the actions it serves, so one binding may be served by several layers, such as public
- * routes beside authenticated ones: middleware provided to a layer covers its routes only.
- * Each implementation's builder runs once per layer graph however many layers serve it.
+ * of the actions it serves, so one binding may be served by several layers, each with its own
+ * `middleware`, which covers its routes only. Each implementation's builder runs once per
+ * layer graph however many layers serve it.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
- * each implementation's hook needs and the handlers of the actions it serves, until
- * middleware provided around it, such as authentication, provides them; the router provides
+ * each implementation's authorization, the checks and the handlers of the actions it serves
+ * need, until its `middleware` or middleware provided around it provides them, the identity
+ * of a protected action excepted, which its authentication provides; the router provides
  * its own, such as the request, to every route. Its routes take only requests typed as JSON,
  * and what middleware provides per request wins over what the layer was built with.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   http: H,
   implementations: Apps,
-): Layer.Layer<
-  never,
-  BuildError<Member<Apps>>,
-  | BuildContext<Member<Apps>>
-  | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<
-      "Requires",
-      Exclude<ServedRequest<Member<Apps>, H["actions"][number]>, HttpRouter.Provided>
-    >
-  | Etag.Generator
-  | FileSystem.FileSystem
-  | HttpPlatform.HttpPlatform
-  | Path.Path
->;
-export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown, unknown> {
-  const apps = toList(served);
-  const actions = servedBy(http, apps);
+): HttpLayer<H, Apps, []>;
+// Options apart, so the middleware an options type names is never typed as installed where
+// the options are left out.
+export function layer<
+  const H extends AnyHttp,
+  const Apps extends Served,
+  const O extends LayerOptions<Middleware>,
+>(
+  http: H,
+  implementations: Apps,
+  options: O &
+    ServerOnly<MiddlewareOf<O>, H["errors"]> &
+    NoInfer<Known<O, LayerOptions<Middleware>>>,
+): HttpLayer<H, Apps, MiddlewareOf<O>>;
+export function layer(
+  http: AnyHttp,
+  served: Served,
+  options: LayerOptions<Middleware> = {},
+): Layer.Layer<never, unknown, unknown> {
+  const provided = toList(served);
+  const actions = servedBy(http, provided);
+  const apps = select(provided, actions);
+  assertAuthentication(actions, http.authentication);
+  // Native endpoints keep a middleware's first occurrence only, which the types cannot follow.
+  assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
 
   const mount = mountSegments(http.prefix);
   const name = groupName(mount);
 
-  // Each endpoint anew, at the binding's paths: the binding's own carry what documents its
-  // security, which enforces nothing. The server refuses undeclared payload fields; a client,
-  // on the binding's own API, drops them when it encodes, as TypeScript lets a wider value
-  // through.
+  // Reuse each contract's security descriptor while adding server-only decoding policy.
+  // A client drops excess payload fields when encoding; the server rejects them.
   const api = apiOf(
     name,
-    actions.map((action) =>
-      endpointOf(action, route([...mount, action.name]), http.errors).middleware(SchemaErrors),
-    ),
+    actions.map((action) => {
+      // Applied innermost first: the layer's middleware runs inside the authentication and
+      // its step-up answer, and outside the content type and schema checks.
+      const endpoint = within(
+        endpointOf(action, route([...mount, action.name]), http.errors)
+          .middleware(JsonContentType)
+          .middleware(SchemaErrors),
+        options.middleware,
+      );
+
+      return action.auth === "public" || http.authentication === undefined
+        ? endpoint
+        : endpoint.middleware(StepUp).middleware(http.authentication["~middleware"]);
+    }),
   ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
 
   const handlers = Layer.unwrap(
-    Effect.map(acquire(apps), (bound) => {
+    Effect.gen(function* () {
+      const bound = yield* acquire(apps);
+
+      const auth = actions.some((action) => action.auth !== "public")
+        ? http.authentication
+        : undefined;
+
+      const authentication =
+        auth === undefined
+          ? Layer.empty
+          : yield* Effect.map(auth["~provider"], (provider) =>
+              Layer.mergeAll(
+                Layer.succeed(auth["~middleware"], provider.middleware),
+                Layer.succeed(StepUp, provider.stepUp),
+              ),
+            );
+
+      // The group is built alone, so the layer's middleware is read here, as the host
+      // provides it, and handed to the group.
+      const middleware = yield* Effect.forEach(options.middleware ?? [], (key) =>
+        Effect.map(Effect.service(key), (service) => Layer.succeed(key, service)),
+      );
+
       // Own properties, so an action named `__proto__` is a route, not a prototype. Only the
       // served actions: a native group refuses a handler of an endpoint it lacks.
       const byName = Object.fromEntries(
         bound.flatMap(([action, run]) =>
           actions.includes(action)
-            ? [[action.name, (request: Request) => recordStepUp(run(request.payload))] as const]
+            ? [[action.name, (request: Request) => run(request.payload)] as const]
             : [],
         ),
       );
@@ -437,7 +580,10 @@ export function layer(http: AnyHttp, served: Served): Layer.Layer<never, unknown
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary.
           byName as never,
         ),
-      ).pipe(Layer.provide(schemaErrors), buildAlone);
+      ).pipe(
+        Layer.provide([schemaErrors, jsonContentType, authentication, ...middleware]),
+        buildAlone,
+      );
     }),
   ).pipe(provideHandlers(apps));
 

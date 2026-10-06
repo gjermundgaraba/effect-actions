@@ -9,6 +9,7 @@ export const Greet = Action.make("greet", {
   input: { name: Schema.String },
   success: Schema.String,
   access: "read",
+  auth: "public",
 });
 
 export const Http = ActionHttp.make([Greet]);

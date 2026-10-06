@@ -1,6 +1,6 @@
 // Compile-only assertions on contracts by name and on a record's inferred requirements,
 // included by `vp check`.
-import { Effect, type Layer, Schema } from "effect";
+import { Context, Effect, type Layer, Schema } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import { CurrentActor } from "../examples/authorization.js";
@@ -62,9 +62,19 @@ declare const reader: Effect.Effect<
 
 const refuse = ({ message }: Stale) => Effect.fail(new Action.InvalidInput({ message }));
 
-const Who = Action.make("who", { description: "", access: "read", success: WhoAmI.success });
+const Who = Action.make("who", {
+  description: "",
+  access: "read",
+  auth: "public",
+  success: WhoAmI.success,
+});
 
-const Whom = Action.make("whom", { description: "", access: "read", success: WhoAmI.success });
+const Whom = Action.make("whom", {
+  description: "",
+  access: "read",
+  auth: "public",
+  success: WhoAmI.success,
+});
 
 // A record's handler whose Effect ends in a data-first `Effect.catchTag` infers no
 // requirements: TypeScript reads `catchTag`'s `orElse` services, which no argument gives, from
@@ -72,14 +82,10 @@ const Whom = Action.make("whom", { description: "", access: "read", success: Who
 // so a release of Effect or TypeScript that infers it is noticed, and the card's failure mode
 // with it.
 {
-  const app = Action.implement(
-    [Who, Whom],
-    {
-      who: () => Effect.catchTag(actor, "Stale", refuse),
-      whom: () => actor.pipe(Effect.catchTag("Stale", refuse)),
-    },
-    Action.allowAll,
-  );
+  const app = Action.implement([Who, Whom], {
+    who: () => Effect.catchTag(actor, "Stale", refuse),
+    whom: () => actor.pipe(Effect.catchTag("Stale", refuse)),
+  });
 
   expectTypeOf<(typeof app)["~request"]["who"]>().toBeUnknown();
 
@@ -89,14 +95,10 @@ const Whom = Action.make("whom", { description: "", access: "read", success: Who
 
 // What a handler does read is kept either way, when TypeScript infers it.
 {
-  const app = Action.implement(
-    [Who, Whom],
-    {
-      who: () => Effect.orDie(reader),
-      whom: () => reader.pipe(Effect.catchTag("Stale", refuse)),
-    },
-    Action.allowAll,
-  );
+  const app = Action.implement([Who, Whom], {
+    who: () => Effect.orDie(reader),
+    whom: () => reader.pipe(Effect.catchTag("Stale", refuse)),
+  });
 
   expectTypeOf<(typeof app)["~request"]["who"]>().toEqualTypeOf<CurrentActor>();
   expectTypeOf<(typeof app)["~request"]["whom"]>().toEqualTypeOf<CurrentActor>();
@@ -104,7 +106,7 @@ const Whom = Action.make("whom", { description: "", access: "read", success: Who
 
 // One action's handler is inferred in either form.
 {
-  const app = Action.implement(Who, () => Effect.catchTag(actor, "Stale", refuse), Action.allowAll);
+  const app = Action.implement(Who, () => Effect.catchTag(actor, "Stale", refuse));
 
   expectTypeOf<(typeof app)["~request"]["who"]>().toBeNever();
 }
@@ -116,11 +118,7 @@ export const served = <R>(
   handler: () => Effect.Effect<typeof WhoAmI.success.Type, never, R>,
   layer: Layer.Layer<R>,
 ): Promise<typeof WhoAmI.success.Type> => {
-  const app = Action.implement(
-    [Who, Whom],
-    { who: handler, whom: () => Effect.orDie(actor) },
-    Action.allowAll,
-  );
+  const app = Action.implement([Who, Whom], { who: handler, whom: () => Effect.orDie(actor) });
 
   return Effect.runPromise(
     Effect.flatMap(Action.client(app), (client) => client.who()).pipe(
@@ -129,3 +127,33 @@ export const served = <R>(
     ),
   );
 };
+
+// A reference is never missing, so its default would authenticate every caller.
+const Anyone = Context.Reference<{ readonly id: string }>("spec/Anyone", {
+  defaultValue: () => ({ id: "anyone" }),
+});
+
+Action.make("byDefault", {
+  description: "",
+  access: "read",
+  // @ts-expect-error An identity is a Context.Service, not a Context.Reference.
+  auth: Anyone,
+});
+
+// A misspelled option in one member of a union of options is refused too: it would drop a check.
+declare const checked:
+  | {
+      readonly description: "";
+      readonly access: "read";
+      readonly auth: "public";
+      readonly checks: readonly [];
+    }
+  | {
+      readonly description: "";
+      readonly access: "read";
+      readonly auth: "public";
+      readonly check: readonly [];
+    };
+
+// @ts-expect-error No option `check`.
+Action.make("typoInUnion", checked);

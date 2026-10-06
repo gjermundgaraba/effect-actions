@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { expect, it, vi } from "@effect/vitest";
+import { assert, expect, it, vi } from "@effect/vitest";
 import {
   Cause,
   Console,
@@ -24,8 +24,11 @@ import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Testing from "../src/Testing.js";
+import { authenticate } from "../examples/authentication.js";
+import { actors, authorize, CurrentActor } from "../examples/authorization.js";
+import { Login } from "../examples/binding.js";
 import { causeOf, exec, logged, printed } from "./cli-services.js";
-import { post, send } from "./requests.js";
+import { post, send, withBearer } from "./requests.js";
 
 /** Every line a successful run logs. */
 const lines = flow(
@@ -38,6 +41,12 @@ const lines = flow(
 const failure = <A, E>(exit: Exit.Exit<A, E>): E | undefined =>
   Option.getOrUndefined(Exit.findErrorOption(exit));
 
+/**
+ * The caller of a protected action: no remote caller authenticates on the command line, so
+ * the host provides it, as `Command.provideSync(command, Caller, "alice")`.
+ */
+class Caller extends Context.Service<Caller, string>()("cli-test/Caller") {}
+
 it.effect("takes one flag per input field and no flags for an action without input", () =>
   Effect.gen(function* () {
     const inputs: number[] = [];
@@ -45,6 +54,7 @@ it.effect("takes one flag per input field and no flags for an action without inp
     const NumberAction = Action.make("number", {
       description: "Accept an encoded finite number",
       access: "write",
+      auth: "public",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.FiniteFromString,
     });
@@ -52,27 +62,24 @@ it.effect("takes one flag per input field and no flags for an action without inp
     const Empty = Action.make("empty", {
       description: "No input",
       access: "write",
+      auth: "public",
       success: Schema.String,
     });
 
     const empties: object[] = [];
 
-    const app = Action.implement(
-      [NumberAction, Empty],
-      {
-        number: ({ value }) =>
-          Effect.andThen(
-            Effect.sync(() => inputs.push(value)),
-            () => Effect.succeed(value * 2),
-          ),
-        empty: (input) =>
-          Effect.andThen(
-            Effect.sync(() => empties.push(input)),
-            () => Effect.succeed("empty"),
-          ),
-      },
-      Action.allowAll,
-    );
+    const app = Action.implement([NumberAction, Empty], {
+      number: ({ value }) =>
+        Effect.andThen(
+          Effect.sync(() => inputs.push(value)),
+          () => Effect.succeed(value * 2),
+        ),
+      empty: (input) =>
+        Effect.andThen(
+          Effect.sync(() => empties.push(input)),
+          () => Effect.succeed("empty"),
+        ),
+    });
 
     // `FiniteFromString` is string-encoded, so its flag is a string flag.
     const number = ActionCli.command(app, NumberAction);
@@ -103,6 +110,7 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
     const Flags = Action.make("flags", {
       description: "One field of every kind",
       access: "write",
+      auth: "public",
       input: {
         tenantId: Schema.String,
         count: Schema.Finite,
@@ -118,14 +126,11 @@ it.effect("derives each field's flag from its encoded JSON value", () =>
       success: Schema.String,
     });
 
-    const app = Action.implement(
-      Flags,
-      (input) =>
-        Effect.andThen(
-          Effect.sync(() => inputs.push(input)),
-          () => Effect.succeed("ok"),
-        ),
-      Action.allowAll,
+    const app = Action.implement(Flags, (input) =>
+      Effect.andThen(
+        Effect.sync(() => inputs.push(input)),
+        () => Effect.succeed("ok"),
+      ),
     );
 
     const command = ActionCli.command(app, Flags);
@@ -255,6 +260,7 @@ it.effect(
       const Search = Action.make("search", {
         description: "Search with some providers",
         access: "read",
+        auth: "public",
         input: {
           query: Schema.String,
           provider: Schema.NonEmptyArray(Schema.Literals(["exa", "hn"])),
@@ -266,14 +272,11 @@ it.effect(
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        Search,
-        (input) =>
-          Effect.andThen(
-            Effect.sync(() => inputs.push(input)),
-            () => Effect.succeed("ok"),
-          ),
-        Action.allowAll,
+      const app = Action.implement(Search, (input) =>
+        Effect.andThen(
+          Effect.sync(() => inputs.push(input)),
+          () => Effect.succeed("ok"),
+        ),
       );
 
       const command = ActionCli.command(app, Search, { positional: ["query"] });
@@ -355,6 +358,7 @@ it.effect(
       const Ruled = Action.make("ruled", {
         description: "Fields with rules beyond their kind",
         access: "write",
+        auth: "public",
         input: {
           tags: Schema.Union([
             Schema.String,
@@ -366,11 +370,7 @@ it.effect(
       });
 
       const command = ActionCli.command(
-        Action.implement(
-          Ruled,
-          (input) => Effect.sync(() => void inputs.push(input)),
-          Action.allowAll,
-        ),
+        Action.implement(Ruled, (input) => Effect.sync(() => void inputs.push(input))),
         Ruled,
       );
 
@@ -416,6 +416,7 @@ it.effect("takes an enum's value and a template literal's text as they are, not 
     const Enums = Action.make("enums", {
       description: "Enum and template-literal fields",
       access: "write",
+      auth: "public",
       input: {
         color: Schema.Enum({ Red: "red", Blue: "blue" }),
         level: Schema.Enum({ Low: 1, High: 2 }),
@@ -424,11 +425,7 @@ it.effect("takes an enum's value and a template literal's text as they are, not 
     });
 
     const command = ActionCli.command(
-      Action.implement(
-        Enums,
-        (input) => Effect.sync(() => void inputs.push(input)),
-        Action.allowAll,
-      ),
+      Action.implement(Enums, (input) => Effect.sync(() => void inputs.push(input))),
       Enums,
     );
 
@@ -459,6 +456,7 @@ it.effect("reads a suspended input or field as the schema it stands for, describ
     const Note = Action.make("note", {
       description: "A suspended input of suspended fields",
       access: "write",
+      auth: "public",
       input: Schema.suspend(() =>
         Schema.Struct({
           text: Schema.suspend(() => Schema.String.annotate({ description: "What to note" })),
@@ -470,13 +468,10 @@ it.effect("reads a suspended input or field as the schema it stands for, describ
       ),
     });
 
-    const app = Action.implement(
-      Note,
-      (input) =>
-        Effect.sync(() => {
-          inputs.push(input);
-        }),
-      Action.allowAll,
+    const app = Action.implement(Note, (input) =>
+      Effect.sync(() => {
+        inputs.push(input);
+      }),
     );
 
     // A string field takes `true` as text, a boolean one is a switch, and a field may be
@@ -503,6 +498,7 @@ it.effect("rejects invalid input before acquiring or invoking the handler", () =
     const NumberAction = Action.make("number", {
       description: "A finite number",
       access: "write",
+      auth: "public",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.Number,
     });
@@ -520,7 +516,6 @@ it.effect("rejects invalid input before acquiring or invoking the handler", () =
             ),
         };
       }),
-      Action.allowAll,
     );
 
     const command = ActionCli.command(app, NumberAction);
@@ -540,6 +535,7 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
     const Scalar = Action.make("scalar", {
       description: "Scalar input",
       access: "write",
+      auth: "public",
       input: Schema.String,
       success: Schema.String,
     });
@@ -547,6 +543,7 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
     const Shape = Action.make("shape", {
       description: "A union root",
       access: "write",
+      auth: "public",
       input: Schema.Union([
         Schema.Struct({ kind: Schema.Literal("circle"), radius: Schema.Finite }),
         Schema.Struct({ kind: Schema.Literal("square"), side: Schema.Finite }),
@@ -557,6 +554,7 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
     const Scores = Action.make("scores", {
       description: "A record's keys are not known in advance",
       access: "write",
+      auth: "public",
       input: Schema.Record(Schema.String, Schema.Finite),
       success: Schema.String,
     });
@@ -567,15 +565,11 @@ it.effect("takes an input that is not a struct of fields as one --input JSON fla
         () => Effect.succeed("ok"),
       );
 
-    const app = Action.implement(
-      [Scalar, Shape, Scores],
-      {
-        scalar: record,
-        shape: record,
-        scores: record,
-      },
-      Action.allowAll,
-    );
+    const app = Action.implement([Scalar, Shape, Scores], {
+      scalar: record,
+      shape: record,
+      scores: record,
+    });
 
     yield* exec(ActionCli.command(app, Scalar), ["--input", '"text"']);
     yield* exec(ActionCli.command(app, Shape), ["--input", '{"kind":"square","side":2}']);
@@ -622,6 +616,7 @@ it.effect("decodes --input only when the command runs, with an asynchronous sche
     const Delayed = Action.make("delayed", {
       description: "A record decoded asynchronously",
       access: "write",
+      auth: "public",
       input: Schema.Record(Schema.String, Schema.Finite).pipe(
         Schema.decode({
           decode: SchemaGetter.transformEffect((scores: Readonly<Record<string, number>>) =>
@@ -637,11 +632,7 @@ it.effect("decodes --input only when the command runs, with an asynchronous sche
     });
 
     const command = ActionCli.command(
-      Action.implement(
-        Delayed,
-        (scores) => Effect.succeed(Object.keys(scores).length),
-        Action.allowAll,
-      ),
+      Action.implement(Delayed, (scores) => Effect.succeed(Object.keys(scores).length)),
       Delayed,
     );
 
@@ -659,16 +650,13 @@ it.effect("validates a success before rendering it", () =>
     const Invalid = Action.make("invalid", {
       description: "Invalid",
       access: "write",
+      auth: "public",
       success: Schema.Finite,
     });
 
-    const invalid = Action.implement(
-      [Invalid],
-      {
-        invalid: () => Effect.succeed(Infinity),
-      },
-      Action.allowAll,
-    );
+    const invalid = Action.implement([Invalid], {
+      invalid: () => Effect.succeed(Infinity),
+    });
 
     const exit = yield* Effect.exit(
       exec(ActionCli.command(invalid, Invalid, { render: invalidRenderer }), []),
@@ -684,22 +672,19 @@ it.effect("validates a success before rendering it", () =>
 
 it.effect("prints nothing for an action that returns nothing, but prints a declared null", () =>
   Effect.gen(function* () {
-    const Reset = Action.make("reset", { description: "Reset", access: "write" });
+    const Reset = Action.make("reset", { description: "Reset", access: "write", auth: "public" });
 
     const Clear = Action.make("clear", {
       description: "Clear",
       access: "write",
+      auth: "public",
       success: Schema.Null,
     });
 
-    const app = Action.implement(
-      [Reset, Clear],
-      {
-        reset: () => Effect.void,
-        clear: () => Effect.succeed(null),
-      },
-      Action.allowAll,
-    );
+    const app = Action.implement([Reset, Clear], {
+      reset: () => Effect.void,
+      clear: () => Effect.succeed(null),
+    });
 
     expect(yield* lines(ActionCli.command(app, Reset), [])).toEqual([]);
     expect(yield* lines(ActionCli.command(app, Clear), [])).toEqual(["null"]);
@@ -716,14 +701,13 @@ it.effect("takes flags from a class input's fields, described by their schemas",
     const Read = Action.make("readUser", {
       description: "Read a user",
       access: "read",
+      auth: "public",
       input: Lookup,
       success: Schema.String,
     });
 
-    const app = Action.implement(
-      Read,
-      (lookup) => Effect.succeed(`${lookup.userId} ${lookup.attempts} ${lookup instanceof Lookup}`),
-      Action.allowAll,
+    const app = Action.implement(Read, (lookup) =>
+      Effect.succeed(`${lookup.userId} ${lookup.attempts} ${lookup instanceof Lookup}`),
     );
 
     const command = ActionCli.command(app, Read);
@@ -744,6 +728,7 @@ it.effect(
       const Tag = Action.make("tag", {
         description: "Tags a record",
         access: "write",
+        auth: "public",
         input: Schema.Struct({
           _id: Schema.String,
           a: Schema.String.annotate({ description: "The first" }),
@@ -753,20 +738,16 @@ it.effect(
       });
 
       const command = ActionCli.command(
-        Action.implement(
-          Tag,
-          (input) => Effect.succeed(`${input._id} ${input.a} ${input.b}`),
-          Action.allowAll,
-        ),
+        Action.implement(Tag, (input) => Effect.succeed(`${input._id} ${input.a} ${input.b}`)),
         Tag,
       );
 
       // A name of underscores alone keeps them, rather than naming nothing.
-      const Underscore = Action.make("_", { description: "", access: "read" });
+      const Underscore = Action.make("_", { description: "", access: "read", auth: "public" });
 
       expect(
         ActionCli.command(
-          Action.implement(Underscore, () => Effect.void, Action.allowAll),
+          Action.implement(Underscore, () => Effect.void),
           Underscore,
         ).name,
       ).toBe("_");
@@ -788,6 +769,7 @@ it.effect("takes an optional field's plain value, and leaves it out when its fla
     const Search = Action.make("search", {
       description: "Searches",
       access: "read",
+      auth: "public",
       input: {
         query: Schema.optional(Schema.String),
         limit: Schema.optional(Schema.Number.annotate({ description: "How many to return" })),
@@ -797,7 +779,7 @@ it.effect("takes an optional field's plain value, and leaves it out when its fla
     });
 
     const command = ActionCli.command(
-      Action.implement(Search, (input) => Effect.succeed(JSON.stringify(input)), Action.allowAll),
+      Action.implement(Search, (input) => Effect.succeed(JSON.stringify(input))),
       Search,
     );
 
@@ -820,12 +802,13 @@ it.effect("keeps the null an optional field declares itself, so the flag can sen
     const Note = Action.make("note", {
       description: "Sets or clears a note",
       access: "write",
+      auth: "public",
       input: { note: Schema.optionalKey(Schema.NullOr(Schema.String)) },
       success: Schema.String,
     });
 
     const command = ActionCli.command(
-      Action.implement(Note, (input) => Effect.succeed(JSON.stringify(input)), Action.allowAll),
+      Action.implement(Note, (input) => Effect.succeed(JSON.stringify(input))),
       Note,
     );
 
@@ -851,23 +834,21 @@ it.effect("keeps the null an optional field's codec encodes, under its encoded n
         const Note = Action.make("note", {
           description: "Sets or clears a note",
           access: "write",
+          auth: "public",
           input,
           success: Schema.String,
         });
 
         const command = ActionCli.command(
-          Action.implement(
-            Note,
-            (value) =>
-              Effect.succeed(
-                value.note === undefined
-                  ? "absent"
-                  : Option.match(value.note, {
-                      onNone: () => "none",
-                      onSome: (text) => `some ${text}`,
-                    }),
-              ),
-            Action.allowAll,
+          Action.implement(Note, (value) =>
+            Effect.succeed(
+              value.note === undefined
+                ? "absent"
+                : Option.match(value.note, {
+                    onNone: () => "none",
+                    onSome: (text) => `some ${text}`,
+                  }),
+            ),
           ),
           Note,
         );
@@ -903,6 +884,7 @@ it.effect("takes a number, a non-finite number or a string beside it as JSON or 
     const Page = Action.make("page", {
       description: "Reads a page",
       access: "read",
+      auth: "public",
       input: {
         limit: Schema.Union([Schema.Finite, Schema.Literal("auto")]),
         scale: Schema.optionalKey(Schema.Number),
@@ -911,10 +893,8 @@ it.effect("takes a number, a non-finite number or a string beside it as JSON or 
     });
 
     const command = ActionCli.command(
-      Action.implement(
-        Page,
-        ({ limit, scale }) => Effect.succeed([limit, scale].map(String).join(" ")),
-        Action.allowAll,
+      Action.implement(Page, ({ limit, scale }) =>
+        Effect.succeed([limit, scale].map(String).join(" ")),
       ),
       Page,
     );
@@ -937,6 +917,7 @@ it.effect(
       const Tune = Action.make("tune", {
         description: "Tunes a setting",
         access: "write",
+        auth: "public",
         input: {
           mode: Schema.Union([Schema.Literals(["true", "false"]), Schema.Literal("auto")]),
           label: Schema.optionalKey(Schema.Union([Schema.Literal("auto"), Schema.String])),
@@ -946,10 +927,8 @@ it.effect(
       });
 
       const command = ActionCli.command(
-        Action.implement(
-          Tune,
-          ({ mode, label, extra }) => Effect.succeed(JSON.stringify([mode, label, extra])),
-          Action.allowAll,
+        Action.implement(Tune, ({ mode, label, extra }) =>
+          Effect.succeed(JSON.stringify([mode, label, extra])),
         ),
         Tune,
       );
@@ -982,6 +961,7 @@ it.effect(
       const Whole = Action.make("whole", {
         description: "Takes a pair",
         access: "read",
+        auth: "public",
         input: Pair,
         success: Schema.String,
       });
@@ -989,18 +969,15 @@ it.effect(
       const Nested = Action.make("nested", {
         description: "Takes a pair as a field",
         access: "read",
+        auth: "public",
         input: { pair: Pair },
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        [Whole, Nested],
-        {
-          whole: (input) => Effect.succeed(JSON.stringify(input)),
-          nested: ({ pair }) => Effect.succeed(JSON.stringify(pair)),
-        },
-        Action.allowAll,
-      );
+      const app = Action.implement([Whole, Nested], {
+        whole: (input) => Effect.succeed(JSON.stringify(input)),
+        nested: ({ pair }) => Effect.succeed(JSON.stringify(pair)),
+      });
 
       const pair = '{"a":"bad","b":"keep"}';
       const printed = [JSON.stringify(pair)];
@@ -1017,14 +994,13 @@ it.effect(
       const Settings = Action.make("settings", {
         description: "Has fields named like global flags and like the renderer's flag",
         access: "read",
+        auth: "public",
         input: { help: Schema.String, logLevel: Schema.String, json: Schema.String },
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        Settings,
-        ({ help, logLevel, json }) => Effect.succeed(`${help} ${logLevel} ${json}`),
-        Action.allowAll,
+      const app = Action.implement(Settings, ({ help, logLevel, json }) =>
+        Effect.succeed(`${help} ${logLevel} ${json}`),
       );
 
       const args = ["--help", "a", "--log-level", "b", "--json", "c"];
@@ -1041,11 +1017,12 @@ it.effect(
       const Twice = Action.make("twice", {
         description: "Names one field twice",
         access: "read",
+        auth: "public",
         input: { userId: Schema.String, user_id: Schema.String },
         success: Schema.String,
       });
 
-      const twice = Action.implement(Twice, () => Effect.succeed(""), Action.allowAll);
+      const twice = Action.implement(Twice, () => Effect.succeed(""));
       const clash = "Duplicate flag: --user-id, claimed by field userId and field user_id";
 
       expect(() => ActionCli.command(twice, Twice)).toThrow(clash);
@@ -1053,54 +1030,59 @@ it.effect(
     }),
 );
 
-it.effect("releases a local call's own resources, the hook's included, before its builder's", () =>
-  Effect.gen(function* () {
-    const log: string[] = [];
+it.effect(
+  "releases a local call's own resources, the authorizer's included, before its builder's",
+  () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
 
-    const Scoped = Action.make("scoped", {
-      description: "Opens a resource of its own",
-      access: "write",
-      success: Schema.String,
-    });
+      const Scoped = Action.make("scoped", {
+        description: "Opens a resource of its own",
+        access: "write",
+        auth: Caller,
+        success: Schema.String,
+      });
 
-    const app = Action.implement(
-      Scoped,
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          log.push("builder acquire");
+      const app = Action.implement(
+        Scoped,
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            log.push("builder acquire");
 
-          return () =>
-            Effect.acquireRelease(
-              Effect.sync(() => {
-                log.push("handler acquire");
+            return () =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  log.push("handler acquire");
 
-                return "done";
-              }),
-              () => Effect.sync(() => log.push("handler release")),
-            );
-        }),
-        () => Effect.sync(() => log.push("builder release")),
-      ),
-      () =>
-        Effect.asVoid(
-          Effect.acquireRelease(
-            Effect.sync(() => log.push("hook acquire")),
-            () => Effect.sync(() => log.push("hook release")),
-          ),
+                  return "done";
+                }),
+                () => Effect.sync(() => log.push("handler release")),
+              );
+          }),
+          () => Effect.sync(() => log.push("builder release")),
         ),
-    );
+        {
+          authorize: () =>
+            Effect.asVoid(
+              Effect.acquireRelease(
+                Effect.sync(() => log.push("authorizer acquire")),
+                () => Effect.sync(() => log.push("authorizer release")),
+              ),
+            ),
+        },
+      );
 
-    yield* exec(ActionCli.command(app, Scoped), []);
+      yield* exec(Command.provideSync(ActionCli.command(app, Scoped), Caller, "alice"), []);
 
-    expect(log).toEqual([
-      "builder acquire",
-      "hook acquire",
-      "handler acquire",
-      "handler release",
-      "hook release",
-      "builder release",
-    ]);
-  }),
+      expect(log).toEqual([
+        "builder acquire",
+        "authorizer acquire",
+        "handler acquire",
+        "handler release",
+        "authorizer release",
+        "builder release",
+      ]);
+    }),
 );
 
 it.effect(
@@ -1113,6 +1095,7 @@ it.effect(
       const Counted = Action.make("counted", {
         description: "Counts builds",
         access: "write",
+        auth: "public",
         success: Schema.String,
       });
 
@@ -1129,7 +1112,6 @@ it.effect(
               released++;
             }),
         ),
-        Action.allowAll,
       );
 
       const inside = yield* Effect.gen(function* () {
@@ -1148,43 +1130,45 @@ it.effect(
 );
 
 it.effect(
-  "builds a built hook per invocation, as the builder, and runs it with the caller's services",
+  "builds a built authorizer per invocation, as the builder, and runs it with the caller's services",
   () =>
     Effect.gen(function* () {
-      class Caller extends Context.Service<Caller, string>()("cli-test/Caller") {}
-
       const log: Array<string> = [];
 
       const Guarded = Action.make("guarded", {
-        description: "Behind a built hook",
+        description: "Behind a built authorizer",
         access: "write",
+        auth: Caller,
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        Guarded,
-        () => Effect.succeed("done"),
-        Effect.acquireRelease(
+      const app = Action.implement(Guarded, () => Effect.succeed("done"), {
+        authorize: Effect.acquireRelease(
           Effect.sync(() => {
-            log.push("hook built");
+            log.push("authorizer built");
 
             return () =>
               Effect.flatMap(Caller, (caller) =>
                 caller === "alice" ? Effect.void : Effect.fail(new Action.Forbidden()),
               );
           }),
-          () => Effect.sync(() => log.push("hook released")),
+          () => Effect.sync(() => log.push("authorizer released")),
         ),
-      );
+      });
 
-      // No remote caller: the host provides the one the hook reads.
+      // No remote caller: the host provides the one the authorizer reads.
       const as = (caller: string) =>
         exec(Command.provideSync(ActionCli.command(app, Guarded), Caller, caller), []);
 
       yield* as("alice");
 
       expect(causeOf(yield* Effect.exit(as("bob")))).toBeInstanceOf(Action.Forbidden);
-      expect(log).toEqual(["hook built", "hook released", "hook built", "hook released"]);
+      expect(log).toEqual([
+        "authorizer built",
+        "authorizer released",
+        "authorizer built",
+        "authorizer released",
+      ]);
     }),
 );
 
@@ -1195,23 +1179,21 @@ it.effect(
       const Plain = Action.make("plain", {
         description: "No renderer",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
       const Pretty = Action.make("pretty", {
         description: "Rendered",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        [Plain, Pretty],
-        {
-          plain: () => Effect.succeed("plain"),
-          pretty: () => Effect.succeed("pretty"),
-        },
-        Action.allowAll,
-      );
+      const app = Action.implement([Plain, Pretty], {
+        plain: () => Effect.succeed("plain"),
+        pretty: () => Effect.succeed("pretty"),
+      });
 
       const render = vi.fn((value: string) => `rendered ${value}`);
       const pretty = ActionCli.command(app, Pretty, { render });
@@ -1247,17 +1229,19 @@ it.effect("selects a command's implementation by contract identity, not by name"
     const First = Action.make("same", {
       description: "The first contract named same",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
     const Second = Action.make("same", {
       description: "Another contract with the same name",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
-    const first = Action.implement(First, () => Effect.succeed("first"), Action.allowAll);
-    const second = Action.implement(Second, () => Effect.succeed("second"), Action.allowAll);
+    const first = Action.implement(First, () => Effect.succeed("first"));
+    const second = Action.implement(Second, () => Effect.succeed("second"));
 
     expect(yield* lines(ActionCli.command([first, second], Second), [])).toEqual(['"second"']);
 
@@ -1269,6 +1253,7 @@ it.effect("selects a command's implementation by contract identity, not by name"
     const Missing = Action.make("missing", {
       description: "Not implemented here",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
@@ -1286,17 +1271,19 @@ it.effect(
       const One = Action.make("one", {
         description: "One",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
       const Two = Action.make("two", {
         description: "Two",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
-      const one = Action.implement(One, () => Effect.succeed("one"), Action.allowAll);
-      const two = Action.implement(Two, () => Effect.succeed("two"), Action.allowAll);
+      const one = Action.implement(One, () => Effect.succeed("one"));
+      const two = Action.implement(Two, () => Effect.succeed("two"));
 
       expect(yield* lines(ActionCli.make([one, two], { name: "tool" }), ["two"])).toEqual([
         '"two"',
@@ -1305,17 +1292,14 @@ it.effect(
       const Again = Action.make("one", {
         description: "Again",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
-      const again = Action.implement(Again, () => Effect.succeed("again"), Action.allowAll);
+      const again = Action.implement(Again, () => Effect.succeed("again"));
 
       // One action implemented twice is refused, rather than the first one run.
-      const guarded = Action.implement(
-        One,
-        () => Effect.succeed("guarded"),
-        () => Effect.fail(new Action.Forbidden()),
-      );
+      const guarded = Action.implement(One, () => Effect.succeed("guarded"));
 
       expect(() => ActionCli.command([one, guarded], One)).toThrow(
         'Action "one" is implemented twice here',
@@ -1333,18 +1317,16 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
     const GetUser = Action.make("getUser", {
       description: "Reads a user",
       access: "read",
+      auth: "public",
       input: { userId: Schema.String },
       success: Schema.String,
     });
 
-    const app = Action.implement(
-      GetUser,
-      ({ userId }) =>
-        Effect.andThen(
-          Effect.sync(() => users.push(userId)),
-          () => Effect.succeed(userId),
-        ),
-      Action.allowAll,
+    const app = Action.implement(GetUser, ({ userId }) =>
+      Effect.andThen(
+        Effect.sync(() => users.push(userId)),
+        () => Effect.succeed(userId),
+      ),
     );
 
     const command = ActionCli.command(app, GetUser);
@@ -1355,10 +1337,11 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
     const GetHTTPUser = Action.make("getHTTPUser", {
       description: "Reads a user over HTTP",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
-    const http = Action.implement(GetHTTPUser, () => Effect.succeed("http"), Action.allowAll);
+    const http = Action.implement(GetHTTPUser, () => Effect.succeed("http"));
     expect(ActionCli.command(http, GetHTTPUser).name).toBe("get-http-user");
 
     yield* exec(command, ["--user-id", "alice"]);
@@ -1379,10 +1362,11 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
     const Snake = Action.make("get_user", {
       description: "Another spelling",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
-    const snake = Action.implement(Snake, () => Effect.succeed("snake"), Action.allowAll);
+    const snake = Action.implement(Snake, () => Effect.succeed("snake"));
 
     expect(() => ActionCli.make([app, snake], { name: "users" })).toThrow(
       "Duplicate command: get-user, claimed by action getUser and action get_user",
@@ -1397,12 +1381,14 @@ it.effect("acquires only the builder of the selected command's implementation", 
     const Built = Action.make("built", {
       description: "Built",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
     const Idle = Action.make("idle", {
       description: "Idle",
       access: "read",
+      auth: "public",
       success: Schema.String,
     });
 
@@ -1413,7 +1399,6 @@ it.effect("acquires only the builder of the selected command's implementation", 
 
         return () => Effect.succeed("built");
       }),
-      Action.allowAll,
     );
 
     const idle = Action.implement(
@@ -1423,7 +1408,6 @@ it.effect("acquires only the builder of the selected command's implementation", 
 
         return () => Effect.succeed("idle");
       }),
-      Action.allowAll,
     );
 
     yield* exec(ActionCli.command([built, idle], Built), []);
@@ -1431,6 +1415,165 @@ it.effect("acquires only the builder of the selected command's implementation", 
 
     expect(builds).toEqual(["built", "built"]);
   }),
+);
+
+it.effect("makes subcommands of the listed actions only, from implementations or a binding", () =>
+  Effect.gen(function* () {
+    const builds: string[] = [];
+
+    const Read = Action.make("read", {
+      description: "Read",
+      access: "read",
+      auth: "public",
+      success: Schema.String,
+    });
+
+    const Write = Action.make("write", { description: "Write", access: "write", auth: "public" });
+
+    const Other = Action.make("other", { description: "Other", access: "read", auth: "public" });
+
+    const app = Action.implement(
+      [Read, Write],
+      Effect.sync(() => {
+        builds.push("app");
+
+        return { read: () => Effect.succeed("read"), write: () => Effect.void };
+      }),
+    );
+
+    const other = Action.implement(
+      Other,
+      Effect.sync(() => {
+        builds.push("other");
+
+        return () => Effect.void;
+      }),
+    );
+
+    const local = ActionCli.make([app, other], { name: "tool", actions: [Read] });
+
+    expect(yield* lines(local, ["read"])).toEqual(['"read"']);
+    expect(local.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name))).toEqual([
+      "read",
+    ]);
+    expect(builds).toEqual(["app"]);
+
+    const remote = ActionCli.make(ActionHttp.make([Read, Write]), {
+      name: "tool",
+      actions: [Write],
+    });
+
+    expect(remote.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name))).toEqual([
+      "write",
+    ]);
+
+    // Erased, as plain JavaScript or a helper's binding may be: the types refuse it otherwise.
+    const readOnly: ActionHttp.Any = ActionHttp.make([Read]);
+
+    expect(() => ActionCli.make(readOnly, { name: "tool", actions: [Write] })).toThrow(
+      "Listed in actions, but the binding does not hold it: write",
+    );
+    // A command of an action the list leaves out is unused, so one record serves several
+    // selections; a key no action of the target names is still refused.
+    const shared = { read: {}, write: { name: "put" } };
+    const reader = ActionCli.make(app, { name: "tool", actions: [Read], commands: shared });
+
+    expect(reader.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name))).toEqual([
+      "read",
+    ]);
+    expect(() =>
+      ActionCli.make(readOnly, { name: "tool", commands: Object.fromEntries([["write", {}]]) }),
+    ).toThrow("Unknown commands: write");
+  }),
+);
+
+it.effect(
+  "serves a trusted admin a selection of protected actions through the same authorize and checks",
+  () =>
+    Effect.gen(function* () {
+      // A remote verifier would only ever name a reader; only a host supplies the admin.
+      class Operator extends Context.Service<
+        Operator,
+        { readonly id: string; readonly role: "reader" | "admin" }
+      >()("cli-test/Operator") {}
+
+      class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {
+        id: Schema.String,
+      }) {}
+
+      class Limited extends Action.Check<Limited>()("cli-test/Limited", {
+        error: Throttled,
+        requires: Operator,
+      }) {}
+
+      const Read = Action.make("read", {
+        description: "Who reads",
+        access: "read",
+        auth: Operator,
+        success: Schema.String,
+      });
+
+      const Purge = Action.make("purge", {
+        description: "Purge everything",
+        access: "write",
+        auth: Operator,
+        checks: [Limited],
+      });
+
+      const app = Action.implement(
+        [Read, Purge],
+        { read: () => Effect.map(Operator, ({ id }) => id), purge: () => Effect.void },
+        {
+          authorize: (action) =>
+            Effect.flatMap(Operator, ({ role }) =>
+              role === "admin" || action.access === "read"
+                ? Effect.void
+                : Effect.fail(new Action.Forbidden()),
+            ),
+        },
+      );
+
+      // One purge per operator, however many invocations build the check.
+      const purged: Array<string> = [];
+
+      const limited = Action.check(
+        Limited,
+        Effect.succeed(() =>
+          Effect.flatMap(Operator, ({ id }) =>
+            purged.includes(id)
+              ? Effect.fail(new Throttled({ id }))
+              : Effect.sync(() => {
+                  purged.push(id);
+                }),
+          ),
+        ),
+      );
+
+      const admin = ActionCli.make(app, { name: "admin", actions: [Purge] }).pipe(
+        Command.provide(limited),
+        Command.provideSync(Operator, { id: "ops", role: "admin" }),
+      );
+
+      const users = ActionCli.make(app, { name: "users" }).pipe(
+        Command.provide(limited),
+        Command.provideSync(Operator, { id: "ann", role: "reader" }),
+      );
+
+      expect(admin.subcommands.flatMap(({ commands }) => commands.map(({ name }) => name))).toEqual(
+        ["purge"],
+      );
+
+      // The same rule lets the admin through, and its check still applies to them.
+      yield* exec(admin, ["purge"]);
+      expect(causeOf(yield* Effect.exit(exec(admin, ["purge"])))).toEqual(
+        new Throttled({ id: "ops" }),
+      );
+
+      // The reader is refused before any check runs.
+      expect(causeOf(yield* Effect.exit(exec(users, ["purge"])))).toBeInstanceOf(Action.Forbidden);
+      expect(purged).toEqual(["ops"]);
+      expect(yield* lines(users, ["read"])).toEqual(['"ann"']);
+    }),
 );
 
 it.effect(
@@ -1442,6 +1585,7 @@ it.effect(
       const Copy = Action.make("copy", {
         description: "Copy a file",
         access: "write",
+        auth: "public",
         input: {
           from: Schema.String,
           to: Schema.String,
@@ -1454,14 +1598,11 @@ it.effect(
         success: Schema.String,
       });
 
-      const app = Action.implement(
-        Copy,
-        (input) =>
-          Effect.andThen(
-            Effect.sync(() => inputs.push(input)),
-            () => Effect.succeed("copied"),
-          ),
-        Action.allowAll,
+      const app = Action.implement(Copy, (input) =>
+        Effect.andThen(
+          Effect.sync(() => inputs.push(input)),
+          () => Effect.succeed("copied"),
+        ),
       );
 
       const copy = ActionCli.command(app, Copy, {
@@ -1495,17 +1636,19 @@ it("refuses positional arguments a parser could not read back", () => {
   const Pair = Action.make("pair", {
     description: "A required and an optional field",
     access: "write",
+    auth: "public",
     input: { first: Schema.String, second: Schema.optional(Schema.String) },
   });
 
   const Scalar = Action.make("scalar", {
     description: "Not a struct",
     access: "write",
+    auth: "public",
     input: Schema.String,
   });
 
-  const pair = Action.implement(Pair, () => Effect.void, Action.allowAll);
-  const scalar = Action.implement(Scalar, () => Effect.void, Action.allowAll);
+  const pair = Action.implement(Pair, () => Effect.void);
+  const scalar = Action.implement(Scalar, () => Effect.void);
 
   expect(() => ActionCli.command(pair, Pair, { positional: ["first", "first"] })).toThrow(
     "Duplicate positional argument: first",
@@ -1530,6 +1673,7 @@ it.effect("gives a subcommand of an aggregate the options command takes, by acti
     const Read = Action.make("readFile", {
       description: "Read a file",
       access: "read",
+      auth: "public",
       input: { path: Schema.String, lines: Schema.optional(Schema.Finite) },
       success: Schema.String,
     });
@@ -1537,18 +1681,15 @@ it.effect("gives a subcommand of an aggregate the options command takes, by acti
     const Size = Action.make("size", {
       description: "A file's size",
       access: "read",
+      auth: "public",
       input: { path: Schema.String },
       success: Schema.Finite,
     });
 
-    const app = Action.implement(
-      [Read, Size],
-      {
-        readFile: ({ path, lines }) => Effect.succeed(`${path}:${lines ?? "all"}`),
-        size: () => Effect.succeed(3),
-      },
-      Action.allowAll,
-    );
+    const app = Action.implement([Read, Size], {
+      readFile: ({ path, lines }) => Effect.succeed(`${path}:${lines ?? "all"}`),
+      size: () => Effect.succeed(3),
+    });
 
     const command = ActionCli.make(app, {
       name: "files",
@@ -1615,6 +1756,7 @@ it.effect(
       const Read = Action.make("read", {
         description: "Reads a record",
         access: "read",
+        auth: CurrentActor,
         input: { id: Schema.String.check(Schema.isMinLength(1)) },
         success: Schema.String,
         errors: [Gone, Missing, Over, Busy],
@@ -1622,9 +1764,19 @@ it.effect(
 
       const over = new Over({ limit: 10n, hint: Option.some("lower it") });
 
-      const Write = Action.make("write", { description: "Writes", access: "write" });
+      const Write = Action.make("write", {
+        description: "Writes",
+        access: "write",
+        auth: CurrentActor,
+      });
 
-      let hooked = 0;
+      let authorized = 0;
+
+      // The demo rule, which refuses the reader a write.
+      const refused = new Action.Forbidden({
+        message: "Requires users:write.",
+        scopes: ["users:write"],
+      });
 
       const app = Action.implement(
         [Read, Write],
@@ -1638,25 +1790,32 @@ it.effect(
             ),
           write: () => Effect.void,
         },
-        (action) =>
-          Effect.andThen(
-            Effect.sync(() => hooked++),
-            action.access === "read"
-              ? Effect.void
-              : Effect.fail(
-                  new Action.Forbidden({ message: "Requires write.", scopes: ["write"] }),
-                ),
-          ),
+        {
+          authorize: (action) =>
+            Effect.andThen(
+              Effect.sync(() => authorized++),
+              authorize(action),
+            ),
+        },
       );
 
-      const cli = ActionCli.make(app, { name: "records" });
-      const routes = ActionHttp.layer(ActionHttp.make([Read, Write]), app);
+      // The same caller on both surfaces: provided by the host on the command line, signed in
+      // with a token over HTTP.
+      const cli = ActionCli.make(app, { name: "records" }).pipe(
+        Command.provideSync(CurrentActor, actors.reader),
+      );
+
+      const routes = ActionHttp.layer(
+        ActionHttp.make([Read, Write], { authentication: Login }),
+        app,
+      ).pipe(Layer.provide(authenticate));
 
       /** The body HTTP answers the same call with. */
       const answered = (name: string, body: Schema.Json) =>
-        Effect.flatMap(send(post(`/api/${name}`, body)), (response) => response.text).pipe(
-          Effect.provide(Testing.layer(routes)),
-        );
+        Effect.flatMap(
+          send(withBearer(post(`/api/${name}`, body), "reader")),
+          (response) => response.text,
+        ).pipe(Effect.provide(Testing.layer(routes)));
 
       const cases = [
         {
@@ -1681,7 +1840,7 @@ it.effect(
         {
           args: ["write"],
           body: {},
-          cause: new Action.Forbidden({ message: "Requires write.", scopes: ["write"] }),
+          cause: refused,
           code: 1,
         },
       ];
@@ -1706,15 +1865,15 @@ it.effect(
         expect(Runtime.getErrorReported(reported)).toBe(false);
       }
 
-      // Every call above ran the hook, the command's and HTTP's.
-      expect(hooked).toBe(cases.length * 2);
+      // Every call above ran the authorizer, the command's and HTTP's.
+      expect(authorized).toBe(cases.length * 2);
 
-      // Input that does not decode is the `InvalidInput` HTTP answers, before the hook runs.
+      // Input that does not decode is the `InvalidInput` HTTP answers, before the authorizer runs.
       const [invalid, , stderr] = yield* printed(exec(cli, ["read", "--id", ""]));
 
       const sent = yield* answered("read", { id: "" });
 
-      expect(hooked).toBe(cases.length * 2);
+      expect(authorized).toBe(cases.length * 2);
       expect(causeOf(invalid)).toBeInstanceOf(Action.InvalidInput);
       expect(sent).toContain('"_tag":"InvalidInput"');
       expect(stderr).toEqual([expect.stringContaining(sent)]);
@@ -1744,14 +1903,11 @@ it.effect(
       const Remove = Action.make("remove", {
         description: "Removes",
         access: "write",
+        auth: "public",
         errors: [Gone],
       });
 
-      const app = Action.implement(
-        Remove,
-        () => Effect.fail(new Gone({ id: "x" })),
-        Action.allowAll,
-      );
+      const app = Action.implement(Remove, () => Effect.fail(new Gone({ id: "x" })));
 
       const formatError = (error: CliError.CliError) => `refused: ${error.message}`;
 
@@ -1781,7 +1937,12 @@ it.effect(
       const DbDown = Schema.TaggedStruct("DbDown", { url: Schema.String });
       const UserExists = Schema.TaggedStruct("UserExists", { name: Schema.String });
 
-      const Status = Action.make("status", { description: "Status", access: "read" });
+      const Status = Action.make("status", {
+        description: "Status",
+        access: "read",
+        auth: "public",
+      });
+
       const url = "postgres://admin:hunter2@db";
 
       // A cause leading back to a failure already described ends the description.
@@ -1807,7 +1968,6 @@ it.effect(
         const app = Action.implement(
           Status,
           Effect.as(Effect.fail(failure), () => Effect.void),
-          Action.allowAll,
         );
 
         const [exit, stdout, stderr] = yield* printed(exec(ActionCli.command(app, Status), []));
@@ -1830,6 +1990,7 @@ it.effect(
       const Noisy = Action.make("noisy", {
         description: "Logs",
         access: "read",
+        auth: Caller,
         success: Schema.String,
       });
 
@@ -1839,10 +2000,10 @@ it.effect(
       const app = Action.implement(
         Noisy,
         Effect.as(noise("builder"), () => Effect.as(noise("handler"), "quiet")),
-        () => noise("hook"),
+        { authorize: () => noise("authorizer") },
       );
 
-      const command = ActionCli.command(app, Noisy);
+      const command = Command.provideSync(ActionCli.command(app, Noisy), Caller, "alice");
 
       // The default logger, and a console logger, which writes through `Console.log`.
       for (const logger of [Layer.empty, Logger.layer([Logger.consoleJson])]) {
@@ -1856,7 +2017,7 @@ it.effect(
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(stdout).toEqual(['"quiet"']);
 
-        for (const source of ["builder", "hook", "handler"]) {
+        for (const source of ["builder", "authorizer", "handler"]) {
           expect(written).toContain(`${source} log`);
           expect(written).toContain(`${source} console`);
         }
@@ -1881,17 +2042,15 @@ it.effect(
       const Coded = Action.make("coded", {
         description: "Logs in its codecs",
         access: "read",
+        auth: "public",
         input: { word: logged("input") },
         success: logged("success"),
         errors: [Refused],
       });
 
       const coded = ActionCli.command(
-        Action.implement(
-          Coded,
-          ({ word }) =>
-            word === "no" ? Effect.fail(new Refused({ reason: word })) : Effect.succeed(word),
-          Action.allowAll,
+        Action.implement(Coded, ({ word }) =>
+          word === "no" ? Effect.fail(new Refused({ reason: word })) : Effect.succeed(word),
         ),
         Coded,
       );
@@ -1913,14 +2072,21 @@ it.effect(
       }
 
       // A remote command's client too, configured on the command, which logs as it sends.
-      const Http = ActionHttp.make([Noisy]);
+      const Quiet = Action.make("quiet", {
+        description: "Answers over HTTP",
+        access: "read",
+        auth: "public",
+        success: Schema.String,
+      });
+
+      const Http = ActionHttp.make([Quiet]);
 
       const routes = ActionHttp.layer(
         Http,
-        Action.implement(Noisy, () => Effect.succeed("quiet"), Action.allowAll),
+        Action.implement(Quiet, () => Effect.succeed("quiet")),
       );
 
-      const remote = ActionCli.command(Http, Noisy).pipe(
+      const remote = ActionCli.command(Http, Quiet).pipe(
         Command.provideEffect(
           HttpClient.HttpClient,
           Effect.map(
@@ -1957,6 +2123,7 @@ it.effect(
       const Write = Action.make("write", {
         description: "Writes",
         access: "write",
+        auth: "public",
         input: { value: Schema.String },
         success: Schema.String,
       });
@@ -1969,7 +2136,6 @@ it.effect(
             ({ value }: { readonly value: string }) =>
               Effect.map(Caller, (caller) => `${caller} wrote ${value} to ${database}`),
         ),
-        Action.allowAll,
       );
 
       const database = Layer.effect(
@@ -2056,3 +2222,122 @@ it("runs under Effect's own runner: the result on stdout, a failure's JSON once 
   expect(help.stdout).toContain("rename-user");
   expect(help.stderr).toBe("");
 }, 30_000);
+
+it.effect("matches a failure by its tag with Effect's own catchReason, after Command.run", () =>
+  Effect.gen(function* () {
+    class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
+
+    const Find = Action.make("find", {
+      description: "Find",
+      access: "read",
+      auth: "public",
+      input: { id: Schema.String },
+      errors: [Missing],
+    });
+
+    const find = ActionCli.command(
+      Action.implement(Find, ({ id }) => Effect.fail(new Missing({ id }))),
+      Find,
+    );
+
+    const recovered = yield* exec(find, ["--id", "9"]).pipe(
+      Effect.catchReason("UserError", "Missing", ({ id }) => Effect.succeed(`missing ${id}`)),
+    );
+
+    expect(recovered).toBe("missing 9");
+  }),
+);
+
+it.effect(
+  "reports on stderr what runMain would report, once, and keeps its exit code under onStderr",
+  () =>
+    Effect.gen(function* () {
+      const exitCodeOf = <A, E>(exit: Exit.Exit<A, E>) =>
+        Exit.isFailure(exit) ? Runtime.getErrorExitCode(Cause.squash(exit.cause)) : 0;
+
+      const reportedOf = <A, E>(exit: Exit.Exit<A, E>) =>
+        Exit.isFailure(exit) && Runtime.getErrorReported(Cause.squash(exit.cause));
+
+      // A defect, and a log of a layer the host provides, reach stderr alone.
+      const [defect, defectOut, defectErr] = yield* printed(
+        ActionCli.onStderr(Effect.log("connecting").pipe(Effect.andThen(Effect.die("bug")))),
+      );
+
+      expect(defectOut).toEqual([]);
+      expect(defectErr.join("\n")).toContain("connecting");
+      expect(defectErr.join("\n")).toContain("bug");
+      expect(reportedOf(defect)).toBe(false);
+      expect(exitCodeOf(defect)).toBe(1);
+
+      // The defect standing for the report keeps its cause, for a teardown to read.
+      assert(Exit.isFailure(defect));
+      const report = Cause.squash(defect.cause);
+      assert(report instanceof Error && Cause.isCause(report.cause));
+      expect(Cause.squash(report.cause)).toBe("bug");
+
+      // A command's failure, which `Command.run` printed, is not reported again, and keeps
+      // its exit code.
+      class Exiting extends Schema.TaggedError<Exiting>()("Exiting", {}) {
+        override get [Runtime.errorExitCode]() {
+          return 3;
+        }
+      }
+
+      const Quit = Action.make("quit", {
+        description: "Quit",
+        access: "read",
+        auth: "public",
+        errors: [Exiting],
+      });
+
+      const quit = ActionCli.command(
+        Action.implement(Quit, () => Effect.fail(new Exiting())),
+        Quit,
+      );
+
+      const [failed, failedOut, failedErr] = yield* printed(ActionCli.onStderr(exec(quit, [])));
+
+      expect(failedOut).toEqual([]);
+      expect(failedErr.join("\n").match(/Exiting/g)).toHaveLength(1);
+      expect(exitCodeOf(failed)).toBe(3);
+
+      // An interruption stays one, so the process exits 130.
+      const interrupted = yield* Effect.exit(ActionCli.onStderr(Effect.interrupt));
+
+      assert(Exit.isFailure(interrupted));
+      expect(Cause.hasInterruptsOnly(interrupted.cause)).toBe(true);
+    }),
+);
+
+it.effect(
+  "runs a public command of a mixed implementation without its siblings' authorization",
+  () =>
+    Effect.gen(function* () {
+      // What only the protected sibling's built authorizer needs: a public command owes none.
+      class Boot extends Context.Service<Boot, true>()("cli-test/Boot") {}
+
+      const Open = Action.make("open", {
+        description: "Open to anyone",
+        access: "read",
+        auth: "public",
+        success: Schema.String,
+      });
+
+      const Guarded = Action.make("guarded", {
+        description: "Signed in only",
+        access: "read",
+        auth: CurrentActor,
+        success: Schema.String,
+      });
+
+      const app = Action.implement(
+        [Open, Guarded],
+        { open: () => Effect.succeed("open"), guarded: () => Effect.succeed("guarded") },
+        { authorize: Effect.as(Boot, Action.allowAll) },
+      );
+
+      const [result, lines] = yield* printed(exec(ActionCli.command(app, Open), []));
+
+      expect([Exit.isSuccess(result), lines]).toEqual([true, ['"open"']]);
+    }),
+);

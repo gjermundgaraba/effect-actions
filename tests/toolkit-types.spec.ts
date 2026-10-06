@@ -10,18 +10,21 @@ class Principal extends Context.Service<Principal, string>()("toolkit-types/Prin
 const Named = Action.make("named", {
   description: "A named tool.",
   access: "write",
+  auth: Principal,
   success: Schema.String,
 });
 
 const Guarded = Action.make("guarded", {
   description: "Needs a principal.",
   access: "write",
+  auth: Principal,
   success: Schema.String,
 });
 
 const ServiceFree = Action.make("service_free", {
   description: "Does not need a principal.",
   access: "write",
+  auth: "public",
   success: Schema.String,
 });
 
@@ -32,7 +35,7 @@ const app = Action.implement(
     service_free: () => Effect.succeed("free"),
     guarded: () => Effect.map(Principal, (principal) => principal),
   },
-  Action.allowAll,
+  { authorize: Action.allowAll },
 );
 
 const binding = ActionToolkit.make(app);
@@ -56,13 +59,12 @@ class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
 const Fetch = Action.make("fetch", {
   description: "May be gone.",
   access: "read",
+  auth: "public",
   success: Schema.String,
   errors: [Gone],
 });
 
-const fetched = ActionToolkit.make(
-  Action.implement(Fetch, () => Effect.succeed(""), Action.allowAll),
-);
+const fetched = ActionToolkit.make(Action.implement(Fetch, () => Effect.succeed("")));
 
 // Every tool declares its action's errors plus the built-in ones.
 expectTypeOf<Tool.Failure<typeof fetched.toolkit.tools.fetch>>().toEqualTypeOf<
@@ -73,18 +75,16 @@ expectTypeOf<Tool.Failure<typeof binding.toolkit.tools.named>>().toEqualTypeOf<A
 
 class Clock extends Context.Service<Clock, number>()("toolkit-types/Clock") {}
 
-// A hook's services are owed by every call.
-const hooked = ActionToolkit.make(
-  Action.implement(
-    ServiceFree,
-    () => Effect.succeed("free"),
-    () => Effect.flatMap(Clock, () => Effect.void),
-  ),
+// What `authorize` reads is owed by every call, beside the caller.
+const authorized = ActionToolkit.make(
+  Action.implement(Guarded, () => Effect.succeed("guarded"), {
+    authorize: () => Effect.flatMap(Clock, () => Effect.void),
+  }),
 );
 
-expectTypeOf<
-  Tool.HandlerServices<typeof hooked.toolkit.tools.service_free>
->().toEqualTypeOf<Clock>();
+expectTypeOf<Tool.HandlerServices<typeof authorized.toolkit.tools.guarded>>().toEqualTypeOf<
+  Clock | Principal
+>();
 
 export const toolkitTypes = Effect.gen(function* () {
   const tools = yield* binding.toolkit;
@@ -108,24 +108,28 @@ expectTypeOf<Effect.Services<typeof serviceFreeToolkitCall>>().toBeNever();
 
 class LeftBuild extends Context.Service<LeftBuild, string>()("toolkit-types/LeftBuild") {}
 
-const Left = Action.make("left", { description: "Left", access: "write", success: Schema.String });
+const Left = Action.make("left", {
+  description: "Left",
+  access: "write",
+  auth: "public",
+  success: Schema.String,
+});
 
 const Right = Action.make("right", {
   description: "Right",
   access: "write",
+  auth: "public",
   success: Schema.Number,
 });
 
 const left = Action.implement(
   Left,
   Effect.map(LeftBuild, (value) => () => Effect.succeed(value)),
-  Action.allowAll,
 );
 
 const right = Action.implement(
   Right,
   Effect.fail("right-build" as const).pipe(Effect.as(() => Effect.succeed(1))),
-  Action.allowAll,
 );
 
 const mixed = ActionToolkit.make([left, right]);
@@ -144,7 +148,7 @@ const sharing = Action.implement(
     service_free: () => Effect.succeed(value),
     guarded: () => Effect.map(Principal, (principal) => principal),
   })),
-  Action.allowAll,
+  { authorize: Action.allowAll },
 );
 
 const shared = ActionToolkit.make(sharing);
@@ -169,7 +173,7 @@ export const guardedCall = Effect.gen(function* () {
 // The guarded tool keeps its principal.
 expectTypeOf<Effect.Services<typeof guardedCall>>().toEqualTypeOf<Principal>();
 
-// `needsApproval` reads each call of the implementations' own actions, as `before` reads them.
+// `needsApproval` reads each call of the implementations' own actions, as `authorize` reads them.
 ActionToolkit.make(app, {
   needsApproval: (call) => {
     const name: "named" | "service_free" | "guarded" = call.name;
@@ -204,20 +208,22 @@ ActionToolkit.make(app, { needsApproval: () => Effect.fail("unavailable") });
 const Erase = Action.make("erase", {
   description: "Erase a document.",
   access: "write",
+  auth: "public",
   input: { id: Schema.String, hard: Schema.Boolean },
   success: Schema.String,
 });
 
-const eraser = Action.implement(Erase, () => Effect.succeed("erased"), Action.allowAll);
+const eraser = Action.implement(Erase, () => Effect.succeed("erased"));
 
 const Read = Action.make("read", {
   description: "Read a document.",
   access: "read",
+  auth: "public",
   input: { path: Schema.String },
   success: Schema.String,
 });
 
-const reader = Action.implement(Read, () => Effect.succeed("read"), Action.allowAll);
+const reader = Action.implement(Read, () => Effect.succeed("read"));
 
 // Across several implementations, a call's name narrows its input and its action.
 ActionToolkit.make([app, eraser, reader], {
@@ -258,14 +264,64 @@ const approved = ActionToolkit.make(app, { needsApproval: () => true });
 
 expectTypeOf<typeof approved>().toEqualTypeOf<typeof binding>();
 
-// Each call has a scope of its own: what a hook or a handler acquires never asks its caller
-// for a `Scope`.
+// Each call has a scope of its own: what `authorize` or a handler acquires never asks its
+// caller for a `Scope`; the call owes only the caller.
 const scoped = ActionToolkit.make(
   Action.implement(
     Named,
     () => Effect.acquireRelease(Effect.succeed("opened"), () => Effect.void),
-    () => Effect.asVoid(Effect.acquireRelease(Effect.void, () => Effect.void)),
+    {
+      authorize: () => Effect.asVoid(Effect.acquireRelease(Effect.void, () => Effect.void)),
+    },
   ),
 );
 
-expectTypeOf<Tool.HandlerServices<typeof scoped.toolkit.tools.named>>().toBeNever();
+expectTypeOf<Tool.HandlerServices<typeof scoped.toolkit.tools.named>>().toEqualTypeOf<Principal>();
+
+// Listed actions are the tools, each with its own type and requirements. Approval is typed by
+// every action of the implementations, and narrows by name.
+const listed = ActionToolkit.make(app, {
+  actions: [ServiceFree, Named],
+  needsApproval: (call) => {
+    const name: "guarded" | "named" | "service_free" = call.name;
+
+    return name === "named";
+  },
+});
+
+expectTypeOf<keyof typeof listed.toolkit.tools>().toEqualTypeOf<"named" | "service_free">();
+
+expectTypeOf<typeof listed.toolkit.tools.service_free>().toEqualTypeOf<
+  typeof binding.toolkit.tools.service_free
+>();
+
+// An implementation none of whose actions is listed is not built, so its builder is not owed.
+const leftOut = ActionToolkit.make([left, right], { actions: [Right] });
+
+expectTypeOf<keyof typeof leftOut.toolkit.tools>().toEqualTypeOf<"right">();
+
+expectTypeOf<Layer.Services<typeof leftOut.layer>>().toBeNever();
+
+expectTypeOf<Layer.Error<typeof leftOut.layer>>().toEqualTypeOf<"right-build">();
+
+// @ts-expect-error An action none of the implementations holds.
+ActionToolkit.make(app, { actions: [Left] });
+
+// A misspelled option is refused, beside a list or without one.
+// @ts-expect-error No option `needsAproval`.
+ActionToolkit.make(app, { needsAproval: () => true });
+
+// @ts-expect-error No option `needsAproval`.
+ActionToolkit.make(app, { actions: [Named], needsAproval: () => true });
+
+// A value typed `Action.AnyImplementation` owes `unknown`, its actions listed or not: its
+// erased actions may be any listed one.
+const erasedApp: Action.AnyImplementation = app;
+
+expectTypeOf<
+  Layer.Services<
+    ReturnType<
+      typeof ActionToolkit.make<typeof erasedApp, { readonly actions: readonly [typeof Named] }>
+    >["layer"]
+  >
+>().toBeUnknown();

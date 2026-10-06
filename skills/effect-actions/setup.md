@@ -46,6 +46,7 @@ export const Greet = Action.make("greet", {
   input: { name: Schema.String },
   success: Schema.String,
   access: "read",
+  auth: "public",
 });
 
 export const Http = ActionHttp.make([Greet]);
@@ -60,12 +61,8 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { Greet, Http } from "./quickstart.js";
 
-// Every implementation states who may call it: here, anyone.
-const greet = Action.implement(
-  Greet,
-  ({ name }) => Effect.succeed(`Hello, ${name}!`),
-  Action.allowAll,
-);
+// The contract states who may call it, here anyone, so its implementation takes no `authorize`.
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, greet),
@@ -73,20 +70,22 @@ export const routes = Layer.mergeAll(
 );
 ```
 
-Serve `routes` with `HttpRouter.serve` and a platform server layer, with a request body limit ([guarantees.md](guarantees.md#wire-behavior)). Result: `POST /api/greet` and an MCP tool `greet` at `/mcp`.
+Serve `routes` with `HttpRouter.serve` and a platform server layer, with a request body limit ([guarantees.md](guarantees.md#wire-behavior)). Result: `POST /api/greet` and an MCP tool `greet` at `/mcp`. Anything else the process runs, such as a job or an agent, goes inside the layer `HttpRouter.serve` serves, not merged beside it: beside it, the builders and your own services it shares with the routes may run twice, each with state of its own, and nothing reports it ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
 
 ## Browser
 
 A browser app calls the server with `ActionHttp.client`, or `ActionHttp.fetchClient` outside an
-Effect. It needs the contracts and the HTTP binding, and nothing else of the server. The package
+Effect. It needs the contracts, their identities, the HTTP binding and its authentication
+descriptor, and nothing else of the server. The package
 declares `"sideEffects": false`, so a bundler may drop what a client does not use. Keep the
 contracts and the binding in modules that import no server code, and import those alone from
 the page, as the minimal program does:
 
 ```text
-contracts.ts    Action.make(...) and ActionHttp.make([...]): imports effect only
+identity.ts     Context.Service declarations a protected contract names: imports effect only
+contracts.ts    Action.make(...), Authentication.make(...) and ActionHttp.make([...])
 handlers.ts     Action.implement(...): services, database, @effect/platform-node
-server.ts       ActionHttp.layer, ActionMcp, Authentication
+server.ts       ActionHttp.layer, ActionMcp, Authentication.layer and its verifier
 ```
 
 A module that calls `Action.implement` beside its contracts brings its handlers, and every
@@ -94,7 +93,7 @@ module they import, into the browser bundle: bundlers keep the call as written, 
 Split it. A page on another origin also needs CORS on the host, outside authentication: see
 the browser example in [ActionMcp.md](ActionMcp.md#cross-origin-browsers).
 
-`Action` and `ActionHttp`, and every module they import, import Effect through three
+`Action`, `ActionHttp` and `Authentication`, and every module they import, import Effect through three
 specifiers alone: `effect`, `effect/http` and `effect/http-api`. A page that loads Effect from
 an import map rather than its bundle maps those three. A map pointing at Effect 4.0.0's
 published files maps `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` too,
@@ -120,8 +119,8 @@ What the package does and does not do: [guarantees.md](guarantees.md#scope).
 ## Failure modes
 
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath.
-- A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a module that also holds server code, such as a contract beside its `Action.implement`. Move the contracts and the binding to a module that imports no server code.
-- A page that loads Effect from an import map still bundles a second copy of Effect, or of some of its modules: a module of the page imports an Effect specifier the map does not serve, such as `effect/Schema`. Serve `effect`, `effect/http` and `effect/http-api`, all `Action` and `ActionHttp` import, and import Effect through them in the page's own modules too.
+- A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a module that also holds server code, such as a contract beside its `Action.implement`, or an authentication descriptor beside its `Authentication.layer` verifier. Move the contracts, their identities, the descriptor and the binding to modules that import no server code.
+- A page that loads Effect from an import map still bundles a second copy of Effect, or of some of its modules: a module of the page imports an Effect specifier the map does not serve, such as `effect/Schema`. Serve `effect`, `effect/http` and `effect/http-api`, all `Action`, `ActionHttp` and `Authentication` import, and import Effect through them in the page's own modules too.
 - A page loading Effect from an import map fails before its modules run, with `Failed to resolve module specifier "effect/Cause"` in Chromium: the map points at Effect's published files and lacks a specifier Effect imports itself. Map `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` to the same files, or serve Effect from a build that resolves its own imports.
 - Type errors inside `effect/*` modules after install: `effect` version drift. Install one `effect` 4.0.x release for every package.
 - An unmet peer warning for `effect@~4.0.0`, such as `found 4.1.0`: the installed Effect is a later minor than this release has been tested against. Install `effect` 4.0.x, with every `@effect/*` package on the same release, until a release of this package admits that minor.

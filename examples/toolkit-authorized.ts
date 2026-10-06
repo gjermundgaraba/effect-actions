@@ -5,7 +5,7 @@ import { actors, CurrentActor } from "./authorization.js";
 import { double, userActions } from "./handlers.js";
 import { Users } from "./users.js";
 
-// The implementations' hook runs for the in-process caller as for the servers.
+// The implementations' `authorize` runs for the in-process caller as for the servers.
 const { toolkit, layer } = ActionToolkit.make([userActions, double]);
 
 const program = Effect.gen(function* () {

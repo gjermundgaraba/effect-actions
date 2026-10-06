@@ -1,16 +1,23 @@
+import { Array as Arr } from "effect";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import type * as Action from "../src/Action.js";
-import { type Implementation, toList } from "../src/internal/implementation.js";
+import type { Implementation } from "../src/internal/implementation.js";
 import { layer } from "../examples/app.js";
 import { serve } from "./serve.js";
 
 // Each call builds fresh example state.
 export const makeTestApp = () => serve(layer);
 
-/** An implementation that owes nothing per request or to build, as `serve` requires. */
+/** An action anyone may call, declaring no checks, whose layers a test would provide. */
+type Public = Action.Any & { readonly auth: "public"; readonly checks: readonly [] };
+
+/**
+ * An implementation of public actions that owes nothing per request or to build, as `serve`
+ * requires. A test of protected actions serves its routes itself, with authentication.
+ */
 type Free = Implementation<
-  Action.Any,
+  Public,
   { readonly [name: string]: never },
   unknown,
   never,
@@ -25,12 +32,12 @@ type Frees = Free | ReadonlyArray<Free>;
  * Serve implementations over HTTP, from a binding of exactly their actions. A test whose
  * implementations owe services serves its routes itself.
  */
-export const makeTestHttp = (apps: Frees, options?: Parameters<typeof ActionHttp.make>[1]) =>
+export const makeTestHttp = (apps: Frees, options?: ActionHttp.Options) =>
   serve(
     ActionHttp.layer(
       ActionHttp.make(
-        toList(apps).flatMap((app) => app.actions),
-        options,
+        Arr.ensure(apps).flatMap((app) => app.actions),
+        options ?? {},
       ),
       apps,
     ),

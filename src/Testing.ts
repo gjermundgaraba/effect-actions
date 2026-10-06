@@ -48,8 +48,9 @@ export function layer(
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
  * released with its scope, without request logs. What they still require is this layer's, as
  * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
- * theirs provides, including one a global middleware reads, such as the caller a test stands
- * in for authentication. Provided around it, the test program shares them. It never requires
+ * theirs provides, including one a global middleware reads. The routes keep their real
+ * authentication: a client sends its caller's credential. Provided around it, the test
+ * program shares them. It never requires
  * the platform services, `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`: one
  * provided around it is the routes' too, and `HttpServer.layerServices`' defaults stand in for
  * the rest, whose `FileSystem` is a no-op. A relative URL resolves against `http://localhost`.
@@ -263,8 +264,8 @@ const callTool = (
 
     const text = yield* response.text;
 
-    // Only authentication answers otherwise: a refusal of its own, or a hook's or handler's
-    // step-up refusal.
+    // Only authentication answers otherwise: a refusal of its own, or authorization's or a
+    // handler's step-up refusal.
     if (response.status !== 200) {
       return yield* failWith(refusals, text, other(`answered ${response.status}: ${text}`));
     }

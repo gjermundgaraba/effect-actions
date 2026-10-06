@@ -3,7 +3,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 // Host and origin checks for a server bound to localhost: not the library's concern, but
 // every request to the host passes them first. Global middleware runs before routing, so
-// before every route middleware, however the authentication is combined: a foreign Host or
+// before every route's authentication and the discovery it publishes: a foreign Host or
 // Origin is refused before any credential is read.
 export const requestPolicy = HttpRouter.middleware(
   (httpEffect) =>

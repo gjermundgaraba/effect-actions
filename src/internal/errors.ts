@@ -56,7 +56,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
     });
 }
 
-/** The caller is not authenticated: authentication or an implementation's `before` hook refuses. */
+/** The caller is not authenticated: authentication or an implementation's `authorize` refuses. */
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   "Unauthenticated",
   { message: message("Authentication is required.") },
@@ -69,7 +69,7 @@ export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
 
 /**
- * The caller may not run this action: an implementation's `before` hook refuses. `scopes`,
+ * The caller may not run this action: an implementation's `authorize` refuses. `scopes`,
  * when given, are every OAuth scope the call needs: a refusal naming them is answered with
  * the `insufficient_scope` challenge an OAuth client re-authorizes on.
  */
@@ -83,8 +83,8 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
 ) {}
 
 /**
- * What authentication or a `before` hook refuses a caller with, instead of running a handler.
- * A hook may also fail with an error its actions declare, which is not a refusal.
+ * What authentication or an implementation's `authorize` refuses a caller with, instead of
+ * running a handler. An error an action declares, such as a check's, is not a refusal.
  */
 export type Refusal = Unauthenticated | Forbidden;
 

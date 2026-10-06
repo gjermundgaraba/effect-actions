@@ -1,8 +1,8 @@
-import { Array as Arr, Context, Effect, Layer, Option, Predicate, Schema } from "effect";
+import { Array as Arr, Context, Effect, Layer, Option } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
-import { projectedErrors } from "./actions.js";
-import type { Refusal } from "./errors.js";
+import { type Refusal, Unauthenticated } from "./errors.js";
+import type { CheckCallback, CheckRequests, CheckServices, ServiceOf } from "./checks.js";
 
 /**
  * A random key segment, unique to its caller even across installed copies of this module,
@@ -23,40 +23,20 @@ export type ErasedHandler<R> = {
 /** A surface's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
-/** The errors the actions `A` declare: each action's, in turn. */
-type DeclaredErrors<A extends Action.Any> = A extends unknown ? A["errors"][number]["Type"] : never;
-
-/**
- * What a hook over `A` may fail with besides a refusal: an error one of the actions declares,
- * such as a rate limit. A call fails with it as typed only where its own action declares it;
- * any other is a defect naming the action, which `dispatch` checks for every surface. An
- * erased action's errors are `unknown`, which admits nothing: a hook typed over `Action.Any`
- * only refuses.
- */
-export type HookErrors<A extends Action.Any> =
-  DeclaredErrors<A> extends infer E ? (unknown extends E ? never : E) : never;
-
-/**
- * An implementation's hook: whether a caller may call. It runs once per call on every
- * surface, after the input is decoded and before the selected handler, with its action
- * contract, so a policy reads `access` rather than the action name. It fails with a
- * refusal, answered as a declared error, or over HTTP as its status when an OAuth client
- * steps up on it, or with an error the action it receives declares, such as a rate limit.
- * Its services `RB` are request-time requirements, like a handler's.
- */
-export type Before<A extends Action.Any, RB = never> = (
+/** Authorization runs only for protected actions, after authentication and before checks. */
+export type Authorize<A extends Action.Any, R = never> = (
   action: A,
-) => Effect.Effect<void, Refusal | HookErrors<A>, RB>;
+) => Effect.Effect<void, Refusal, R>;
 
-/** An implementation's hook, erased. */
-export type ErasedBefore = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
+/** An implementation's authorizer, erased. */
+export type ErasedAuthorize = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
 
 /** Each action of an implementation with its handler, as its builder made them. */
 export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
 
 /**
  * What a layer builds once per layer graph, under a key private to it: an implementation's
- * handlers, or its hook. Effect memoizes a layer by reference within one layer graph, so
+ * handlers, or its authorizer. Effect memoizes a layer by reference within one layer graph, so
  * everything in the graph holding this one shares one run.
  */
 export interface Memoized<S, E, R> {
@@ -75,16 +55,15 @@ export const memoized = <S, E, R>(
 };
 
 /**
- * Actions bound to their handlers and their hook: everything one `Action.implement` call
+ * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
  * produced, one builder serving every surface.
- *
- * The private fields make this class nominal: a structurally similar object,
- * including one made by spreading an implementation, is not an implementation.
- * `R` maps each action name to its handler's per-request requirements, and `~hook`, which
- * no action name can be, to its hook's; names typed only as `string` absorb that key, and each
- * then owes the hook's too. `EX` and `RX` are the failures and services of its handlers'
- * builder, and `EH` and `RH` of its hook's, which a share behind another hook leaves out. A
- * plain hook builds nothing.
+ * The private fields make this class nominal: a structurally similar object, including one made by
+ * spreading an implementation, is not an implementation. `R` maps each action name to its handler's
+ * per-request requirements, and `~authorize`, which no action name can be, to its authorizer's; names
+ * typed only as `string` absorb that key, and each then owes the authorizer's too. `EX` and `RX`
+ * are the failures and services of its handlers' builder, and `EH` and `RH` of authorization's
+ * builder. Public-only selections do not acquire authorization. A plain authorization callback
+ * builds nothing.
  */
 export class Implementation<
   A extends Action.Any,
@@ -95,82 +74,85 @@ export class Implementation<
   RH = never,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
-  /** Type-only: each action's handler's per-request requirements, and the hook's. */
+  /** Type-only: each action's handler's per-request requirements, and the authorizer's. */
   declare readonly "~request": R;
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
   /** Type-only: what building its handlers needs. */
   declare readonly "~buildContext": RX;
-  /** Type-only: what building its hook fails with. */
-  declare readonly "~hookBuildError": EH;
-  /** Type-only: what building its hook needs. */
-  declare readonly "~hookBuildContext": RH;
+  /** Type-only: what building its authorizer fails with. */
+  declare readonly "~authorizeBuildError": EH;
+  /** Type-only: what building its authorizer needs. */
+  declare readonly "~authorizeBuildContext": RH;
 
   readonly #handlers: Memoized<Bound, EX, RX>;
-  readonly #hook: Memoized<ErasedBefore, EH, RH>;
+  readonly #authorizer: Memoized<ErasedAuthorize, EH, RH>;
 
   constructor(
     /** The contracts this implementation answers. */
     readonly actions: ReadonlyArray<A>,
     /** Builds each action paired with its handler: its own builder, or the one it shares. */
     handlers: Memoized<Bound, EX, RX>,
-    /** Builds its hook. */
-    hook: Memoized<ErasedBefore, EH, RH>,
+    /** Builds its authorizer. */
+    authorizer: Memoized<ErasedAuthorize, EH, RH>,
   ) {
     this.#handlers = handlers;
-    this.#hook = hook;
+    this.#authorizer = authorizer;
   }
 
-  /**
-   * `actions` of `app` with its handlers, from its builder's one run, behind its hook or
-   * `hook`: given one, the source's is neither built nor run for them.
-   */
-  static share(
-    actions: ReadonlyArray<Action.Any>,
-    app: AnyImplementation,
-    hook: Memoized<ErasedBefore, unknown, unknown> | undefined,
-  ): AnyImplementation {
+  /** Select contracts while retaining their handlers, authorization and shared builder. */
+  static share(actions: ReadonlyArray<Action.Any>, app: AnyImplementation): AnyImplementation {
     const source = Implementation.own(app);
 
-    return new Implementation(actions, source.#handlers, hook ?? source.#hook);
+    return new Implementation(actions, source.#handlers, source.#authorizer);
   }
 
   /**
-   * The key of what runs a call of `app`'s actions: its handlers' builder's and its hook's,
-   * each unique to its memoized layer. A share that keeps its source's hook has its source's
-   * key; one behind another hook does not. Static, so it stays off the public instance type.
+   * The key of what runs a call of `app`'s actions: its handlers' memoized layer's, which each
+   * `implement` makes, so it is unique to the implementation. Every selection retains it.
    */
   static runKey(app: AnyImplementation): string {
-    const source = Implementation.own(app);
-
-    return `${source.#handlers.key.key}+${source.#hook.key.key}`;
+    return Implementation.own(app).#handlers.key.key;
   }
 
   /**
-   * The builders of `app`, its handlers' and its hook's, as a layer. Effect memoizes each
+   * The builders of `app`, its handlers' and its authorizer's, as a layer. Effect memoizes each
    * by reference within one layer graph, so every surface serving `app` there, and every
    * implementation sharing its builder, shares one run. Static, so it stays off the
    * public instance type.
    */
-  static layerOf(app: AnyImplementation): Layer.Layer<Bound | ErasedBefore, unknown, unknown> {
+  static layerOf(app: AnyImplementation): Layer.Layer<never, unknown, unknown> {
     const source = Implementation.own(app);
 
-    return Layer.merge(source.#handlers.layer, source.#hook.layer);
+    return app.actions.some((action) => action.auth !== "public")
+      ? Layer.merge(source.#handlers.layer, source.#authorizer.layer)
+      : source.#handlers.layer;
   }
 
   /**
-   * The actions of `app` with their handlers, behind its hook, from the context
+   * The actions of `app` with their handlers, behind its authorizer, from the context
    * `layerOf(app)` provides.
    */
-  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, Bound | ErasedBefore> {
+  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, unknown> {
     const { actions } = app;
     const source = Implementation.own(app);
 
-    return Effect.zipWith(source.#handlers.key, source.#hook.key, (bound, before) =>
-      bound.flatMap(([action, handle]) =>
-        actions.includes(action) ? [[action, dispatch(action, handle, before)] as const] : [],
-      ),
-    );
+    return Effect.gen(function* () {
+      const bound = yield* source.#handlers.key;
+
+      const before = actions.some((action) => action.auth !== "public")
+        ? yield* source.#authorizer.key
+        : () => Effect.void;
+
+      return yield* Effect.forEach(
+        bound.filter(([action]) => actions.includes(action)),
+        ([action, handle]) =>
+          Effect.map(
+            Effect.forEach(action.checks, (check) => check),
+            (checks) => [action, dispatch(action, handle, before, checks)] as const,
+          ),
+      );
+    });
   }
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
@@ -205,15 +187,177 @@ export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
 /** The implementations `S` stands for. */
 export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
 
+/** Options that may list actions of `A`, the shape every selecting surface's options share. */
+export interface Selection<A extends Action.Any> {
+  readonly actions?: ReadonlyArray<A> | undefined;
+}
+
+/**
+ * The actions options `O` select, of `All`: those its `actions` lists when it always lists
+ * them, and every one otherwise. Options whose `actions` may be absent, being optional or
+ * a union with options lacking it, select every action at run time, so they narrow nothing.
+ */
+export type Selected<O, All extends Action.Any> = O extends {
+  readonly actions: ReadonlyArray<infer A extends Action.Any>;
+}
+  ? A
+  : All;
+
+/**
+ * The actions a client of options `O` offers methods for, of `All`: those `actions` may
+ * list, wherever some member of `O` may list them, as each is present whether the list is
+ * given or not; every one where no member lists any.
+ */
+export type Offered<O, All extends Action.Any> = [Listing<O>] extends [never]
+  ? All
+  : Extract<All, Listing<O> extends ReadonlyArray<infer A extends Action.Any> ? A : never>;
+
+/** The lists of actions the members of `O` may give; none where no member gives one. */
+type Listing<O> = O extends unknown ? NonNullable<O["actions" & keyof O]> : never;
+
+/**
+ * No key of any member of `O` beyond those of `Keys`, so a misspelled option is refused
+ * rather than ignored: options inferred whole, as a type parameter, skip TypeScript's own
+ * check, and `keyof` a union holds only the keys every member has.
+ */
+export type Known<O, Keys> = {
+  readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Keys>]?: never;
+};
+
+/**
+ * The parameters of an optional options argument of type `O`: required where `O` names what
+ * only a given argument holds, such as listed actions, so explicit type arguments cannot
+ * narrow what an omitted argument leaves whole.
+ */
+export type OptionalUnless<O, Given> = {} extends O ? [options?: Given] : [options: Given];
+
 /** A surface's implementations as a list. */
 export const toList = (served: Served): ReadonlyArray<AnyImplementation> => Arr.ensure(served);
 
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
 
+/** Whether `A` may be one of `Listed`: either is assignable to the other. */
+type Matches<A extends Action.Any, Listed extends Action.Any> = Listed extends Action.Any
+  ? [A] extends [Listed]
+    ? true
+    : [Listed] extends [A]
+      ? true
+      : never
+  : never;
+
 /**
- * Per-request requirements of `App`'s hook and handler for each `A` it implements: those of
- * every name `A`'s may be, so a union or an erased name owes each it may stand for.
+ * The actions of `App` a surface given the actions `Listed` may serve, as `select` selects
+ * them by identity: an action whose type either is assignable to, or is assigned by, one
+ * listed. So an implementation typed wider than its contract, or a list typed wider than its
+ * actions, an erased one included, still counts, and another contract of a listed name, which
+ * the surface leaves out beside an action it serves, does not.
+ */
+export type Serving<App, Listed extends Action.Any> =
+  ActionOf<App> extends infer A extends Action.Any
+    ? A extends unknown
+      ? // Each test is cheaper than the next, and the pairwise one is reached only by an
+        // action named in `Listed` that is none of its members: one of `Listed` itself, or a
+        // name it lacks, is decided without comparing the action with each listed one. The
+        // constraint on `infer`, rather than `A extends Action.Any`, compares no action with
+        // `Action.Any`, which cost as much as the rest of a surface over 400 actions.
+        [A] extends [Listed]
+        ? A
+        : // An erased name may be any listed one, as an erased action matches any.
+          string extends A["name"]
+          ? A
+          : [Extract<A["name"], Listed["name"]>] extends [never]
+            ? never
+            : [Matches<A, Listed>] extends [never]
+              ? never
+              : A
+      : never
+    : never;
+
+/**
+ * What each implementation among `App` owes per request where a surface serving the actions
+ * `Listed` serves it: its authorizer's services, and the handlers' of the actions it serves.
+ */
+export type ServedRequest<App, Listed extends Action.Any> = App extends unknown
+  ? RequestOf<App, Serving<App, Listed>>
+  : never;
+
+/** The implementations among `App` holding an action of `Listed`: those a surface builds. */
+export type Holding<App, Listed extends Action.Any> = App extends unknown
+  ? [Serving<App, Listed>] extends [never]
+    ? never
+    : App
+  : never;
+
+/**
+ * Refuse an action of `listed` that `held` lacks, by identity, as a stale list, marking one
+ * of a held name as another contract's.
+ */
+export const assertHeld = (
+  why: string,
+  listed: ReadonlyArray<Action.Any>,
+  held: ReadonlyArray<Action.Any>,
+): void => {
+  const missing = listed.filter((action) => !held.includes(action));
+
+  if (missing.length > 0) {
+    const names = new Set(held.map(({ name }) => name));
+
+    throw new Error(
+      `Listed in actions, but ${why}: ${missing
+        .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
+        .join(", ")}`,
+    );
+  }
+};
+
+/**
+ * Each of `apps` narrowed to the actions `listed` holds, matched by identity, behind its own
+ * authorization and sharing its builder; one holding none of them is
+ * left out, and not built. All of `apps` as they are when nothing is listed. A listed action
+ * none of them holds is refused, as a stale list or another contract of its name.
+ */
+export const select = (
+  apps: ReadonlyArray<AnyImplementation>,
+  listed: ReadonlyArray<Action.Any> | undefined,
+): ReadonlyArray<AnyImplementation> => {
+  if (listed === undefined) return apps;
+
+  assertHeld(
+    "no implementation holds it",
+    listed,
+    apps.flatMap((app) => app.actions),
+  );
+
+  return apps.flatMap((app) => {
+    const own = app.actions.filter((action) => listed.includes(action));
+
+    if (own.length === 0) return [];
+
+    return own.length === app.actions.length ? [app] : [Implementation.share(own, app)];
+  });
+};
+
+/** The protected members of a contract union. */
+export type Protected<A extends Action.Any> = A extends unknown
+  ? A["auth"] extends "public"
+    ? never
+    : A
+  : never;
+
+/**
+ * The identity required by the contract, even when its handler never reads it. An `auth`
+ * narrowed to `"public"`, such as `Action.Any & { auth: "public" }`'s, which TypeScript keeps
+ * as `"public" | (Key & "public")`, requires none.
+ */
+export type AuthenticationOf<A extends Action.Any> = A["auth"] extends "public"
+  ? never
+  : ServiceOf<A["auth"]>;
+
+/**
+ * Per-request requirements of `App`'s authorization, checks and handler for each `A` it
+ * implements: those of every name `A`'s may be, so a union or an erased name owes each it may
+ * stand for.
  */
 export type RequestOf<App, A extends Action.Any> = App extends {
   readonly "~request": infer R;
@@ -221,28 +365,39 @@ export type RequestOf<App, A extends Action.Any> = App extends {
   ? A extends Action.Any
     ? [A["name"] & keyof R] extends [never]
       ? never
-      : R[A["name"] & keyof R] | R["~hook" & keyof R]
+      :
+          | R[A["name"] & keyof R]
+          | (A["auth"] extends "public" ? never : R["~authorize" & keyof R])
+          | AuthenticationOf<A>
+          | CheckRequests<A>
     : never
   : never;
 
-/** Per-request requirements of the implementations a surface can invoke. */
-export type RequestContext<App> = App extends { readonly "~request": infer R } ? R[keyof R] : never;
+type OwnActions<App> = Extract<ActionOf<App>, Action.Any>;
 
-/** Builder failures of the implementations a surface builds, their hooks' included. */
-export type BuildError<App> = App extends {
+/** Builder failures include authorization only if selected protected actions need it. */
+export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App extends {
   readonly "~buildError": infer EX;
-  readonly "~hookBuildError": infer EH;
+  readonly "~authorizeBuildError": infer EH;
 }
-  ? EX | EH
+  ? EX | ([Protected<Serving<App, Listed>>] extends [never] ? never : EH)
   : never;
 
-/** Builder requirements of the implementations a surface builds, their hooks' included. */
-export type BuildContext<App> = App extends {
+/** What the builders of the handlers and authorization of the actions `Listed` read. */
+export type BuilderContext<App, Listed extends Action.Any = OwnActions<App>> = App extends {
   readonly "~buildContext": infer RX;
-  readonly "~hookBuildContext": infer RH;
+  readonly "~authorizeBuildContext": infer RH;
 }
-  ? RX | RH
+  ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RH)
   : never;
+
+/**
+ * What a surface serving the actions `Listed` reads at startup: its builders' services and its
+ * checks', acquired when it is built. What checks read per call stays a request requirement.
+ */
+export type BuildContext<App, Listed extends Action.Any = OwnActions<App>> =
+  | BuilderContext<App, Listed>
+  | CheckServices<Serving<App, Listed>>;
 
 /**
  * Provide `layer` the handlers of `apps`. Each implementation's layer is memoized, so its
@@ -264,7 +419,10 @@ export const builders = (
   apps: ReadonlyArray<AnyImplementation>,
 ): Layer.Layer<never, unknown, unknown> => Layer.empty.pipe(provideHandlers(apps));
 
-/** Every action `apps` serve with its handler, behind its hook, as `provideHandlers` built them. */
+/**
+ * Every action `apps` serve with its handler, behind its authorizer, as `provideHandlers` built
+ * them.
+ */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
 ): Effect.Effect<Bound, never, unknown> =>
@@ -274,7 +432,7 @@ export const acquire = (
   );
 
 /**
- * Every action `apps` serve with its handler, behind its hook, their builders built as layers
+ * Every action `apps` serve with its handler, behind its authorizer, their builders built as layers
  * of the graph being built around the caller, into its memo map, as `HttpRouter` builds a
  * middleware's dependencies: a builder acquiring them shares each builder's one run with the
  * surfaces of its graph, whichever builds first. Outside any graph, a program under
@@ -300,41 +458,19 @@ export const built = (
   });
 };
 
-/** The defect of a hook failing with `error`, which `action` does not declare. */
-const undeclared = (action: Action.Any, error: ErasedValue): Error =>
-  new Error(
-    `Action "${action.name}": its hook failed with an error the action does not declare: ${
-      Predicate.hasProperty(error, "_tag") ? String(error._tag) : String(error)
-    }`,
-  );
-
 /**
- * `before` checked for `action`: a failure the action does not declare, as a hook typed over
- * several actions may fail with another's error, is a defect naming the action and its `_tag`.
- * The check runs as an Effect, as every codec does, so an error schema checked asynchronously
- * passes; a declared failure keeps its whole cause, its trace and any defect beside it.
- */
-const guarded = (action: Action.Any, before: ErasedBefore) => {
-  const declared = Schema.decodeUnknownEffect(Schema.toType(Schema.Union(projectedErrors(action))));
-
-  return () =>
-    before(action).pipe(
-      Effect.tapError((error) =>
-        Effect.catch(Effect.asVoid(declared(error)), () => Effect.die(undeclared(action, error))),
-      ),
-    );
-};
-
-/**
- * One action's handler behind its hook. The hook runs first, outside the action's span,
- * so what it fails with is attributed to the surface rather than to a handler that never ran.
- * Each call has a scope of its own, on every surface: what the hook and the handler acquire is
- * released when the call ends, the handler's first, so no call needs a `Scope` of its caller.
+ * One action's handler behind its admission: a protected action's identity, then its
+ * `authorize`, then its checks in order. These run outside the action's span, so what they
+ * fail with is attributed to the surface rather than to a handler that never ran. Each call
+ * has a scope of its own, on every surface: what `authorize`, the checks and the handler
+ * acquire is released when the call ends, the handler's first, so no call needs a `Scope` of
+ * its caller.
  */
 const dispatch = (
   action: Action.Any,
   handle: ErasedHandler<unknown>,
-  before: ErasedBefore,
+  before: ErasedAuthorize,
+  checks: ReadonlyArray<CheckCallback<unknown, unknown>>,
 ): ErasedHandler<unknown> => {
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -343,7 +479,19 @@ const dispatch = (
     "action.access": action.access,
   };
 
-  const hook = guarded(action, before);
+  const authentication =
+    action.auth === "public"
+      ? Effect.void
+      : Effect.flatMap(Effect.serviceOption(action.auth), (actor) =>
+          Option.isSome(actor) ? Effect.void : Effect.fail(new Unauthenticated()),
+        );
+
+  const authorization =
+    action.auth === "public" ? Effect.void : Effect.suspend(() => before(action));
+
+  const operational = Effect.forEach(checks, (check) => Effect.suspend(() => check(action)), {
+    discard: true,
+  });
 
   return (input) => {
     const handled = Effect.withSpan(
@@ -355,6 +503,12 @@ const dispatch = (
       { captureStackTrace: false, attributes },
     );
 
-    return Effect.scoped(Effect.flatMap(hook(), () => handled));
+    return Effect.scoped(
+      authentication.pipe(
+        Effect.andThen(authorization),
+        Effect.andThen(operational),
+        Effect.andThen(handled),
+      ),
+    );
   };
 };

@@ -15,7 +15,7 @@ export class Permissions extends Context.Service<
 }
 
 // The `authorize` rule, built as handlers are: the store is yielded once, a startup service
-// provided next to `Users`, and the hook it returns yields the actor on every call.
+// provided next to `Users`, and the function it returns yields the actor on every call.
 export const authorizeStored = Effect.gen(function* () {
   const permissions = yield* Permissions;
 
@@ -37,5 +37,5 @@ export const authorizeStored = Effect.gen(function* () {
 export const whoAmI = Action.implement(
   WhoAmI,
   () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
-  authorizeStored,
+  { authorize: authorizeStored },
 );

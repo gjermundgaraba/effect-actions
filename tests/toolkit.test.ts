@@ -1,5 +1,5 @@
-import { assert, describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
 import { actors } from "../examples/authorization.js";
 import { chat, layer as approvalHandlers } from "../examples/toolkit-approval.js";
@@ -12,6 +12,7 @@ class Principal extends Context.Service<Principal, string>()("toolkit-test/Princ
 const Erase = Action.make("erase", {
   description: "Erase",
   access: "write",
+  auth: "public",
   input: { id: Schema.String },
   success: Schema.String,
 });
@@ -51,18 +52,15 @@ describe("ActionToolkit", () => {
         const Read = Action.make("read", {
           description: "Read",
           access: "read",
+          auth: "public",
           input: { path: Schema.String },
           success: Schema.String,
         });
 
-        const app = Action.implement(
-          [Read, Erase],
-          {
-            read: ({ path }) => Effect.sync(() => (calls.push(`read ${path}`), "read")),
-            erase: ({ id }) => Effect.sync(() => (calls.push(`erase ${id}`), "erased")),
-          },
-          Action.allowAll,
-        );
+        const app = Action.implement([Read, Erase], {
+          read: ({ path }) => Effect.sync(() => (calls.push(`read ${path}`), "read")),
+          erase: ({ id }) => Effect.sync(() => (calls.push(`erase ${id}`), "erased")),
+        });
 
         const contexts: Array<readonly [string, number]> = [];
 
@@ -116,10 +114,8 @@ describe("ActionToolkit", () => {
       Effect.gen(function* () {
         const calls: string[] = [];
 
-        const app = Action.implement(
-          Erase,
-          ({ id }) => Effect.sync(() => (calls.push(id), "erased")),
-          Action.allowAll,
+        const app = Action.implement(Erase, ({ id }) =>
+          Effect.sync(() => (calls.push(id), "erased")),
         );
 
         // One make call: a write needs approval unless an admin calls; without a caller, it asks.
@@ -189,11 +185,7 @@ describe("ActionToolkit", () => {
         const calls: string[] = [];
 
         const binding = ActionToolkit.make(
-          Action.implement(
-            Erase,
-            ({ id }) => Effect.sync(() => (calls.push(id), "erased")),
-            Action.allowAll,
-          ),
+          Action.implement(Erase, ({ id }) => Effect.sync(() => (calls.push(id), "erased"))),
           {
             // @ts-expect-error The check's Effect cannot fail in its type; plain JavaScript's can.
             needsApproval: () => Effect.fail("unavailable"),
@@ -225,20 +217,18 @@ describe("ActionToolkit", () => {
         const Schedule = Action.make("schedule", {
           description: "Schedule a reminder.",
           access: "write",
+          auth: "public",
           input: { at: Schema.Date, note: Schema.optional(Schema.String) },
           success: Schema.BigInt,
         });
 
         const binding = ActionToolkit.make(
-          Action.implement(
-            Schedule,
-            (input) =>
-              Effect.sync(() => {
-                received.push(input);
+          Action.implement(Schedule, (input) =>
+            Effect.sync(() => {
+              received.push(input);
 
-                return 42n;
-              }),
-            Action.allowAll,
+              return 42n;
+            }),
           ),
         );
 
@@ -265,13 +255,14 @@ describe("ActionToolkit", () => {
       const Find = Action.make("find", {
         description: "Find a note.",
         access: "read",
+        auth: "public",
         input: { id: Schema.String },
         success: Schema.String,
         errors: [NotFound],
       });
 
       const binding = ActionToolkit.make(
-        Action.implement(Find, ({ id }) => Effect.fail(new NotFound({ id })), Action.allowAll),
+        Action.implement(Find, ({ id }) => Effect.fail(new NotFound({ id }))),
       );
 
       const result = yield* Effect.gen(function* () {
@@ -290,7 +281,7 @@ describe("ActionToolkit", () => {
   );
 
   it.effect(
-    "returns arguments that do not decode as a parameter failure, running neither hook nor handler",
+    "returns arguments that do not decode as a parameter failure, running neither authorize nor handler",
     () =>
       Effect.gen(function* () {
         const ran: string[] = [];
@@ -298,21 +289,20 @@ describe("ActionToolkit", () => {
         const Echo = Action.make("echo", {
           description: "Echo a number.",
           access: "read",
+          auth: Principal,
           input: { value: Schema.Finite },
           success: Schema.Finite,
         });
 
         const binding = ActionToolkit.make(
-          Action.implement(
-            Echo,
-            ({ value }) => Effect.sync(() => (ran.push("handler"), value)),
-            () => Effect.sync(() => void ran.push("hook")),
-          ),
+          Action.implement(Echo, ({ value }) => Effect.sync(() => (ran.push("handler"), value)), {
+            authorize: () => Effect.sync(() => void ran.push("authorize")),
+          }),
         );
 
         const [returned] = yield* Effect.flatMap(binding.toolkit, (tools) =>
           Effect.flatMap(tools.handle("echo", { value: "one" }), Stream.runCollect),
-        ).pipe(Effect.provide(binding.layer));
+        ).pipe(Effect.provideService(Principal, "alice"), Effect.provide(binding.layer));
 
         expect(returned).toMatchObject({ isFailure: true, failureOrigin: "parameters" });
         expect(AiError.isAiError(returned?.result) && returned.result.reason._tag).toBe(
@@ -326,10 +316,13 @@ describe("ActionToolkit", () => {
     const Who = Action.make("who", {
       description: "Current principal",
       access: "read",
+      auth: Principal,
       success: Schema.String,
     });
 
-    const binding = ActionToolkit.make(Action.implement(Who, () => Principal, Action.allowAll));
+    const binding = ActionToolkit.make(
+      Action.implement(Who, () => Principal, { authorize: Action.allowAll }),
+    );
 
     const call = Effect.flatMap(binding.toolkit, (tools) =>
       Effect.flatMap(tools.handle("who", {}), Stream.runCollect),
@@ -338,21 +331,22 @@ describe("ActionToolkit", () => {
     const as = (principal: string) => call.pipe(Effect.provideService(Principal, principal));
 
     // On one layer, concurrent calls with an identity each, then one without, which no
-    // earlier call's identity reaches.
+    // earlier call's identity reaches: it is refused before authorize and the handler run.
     const [[alice, bob], anonymous] = await Effect.runPromise(
       // @ts-expect-error The last call lacks the Principal its tool requires.
-      Effect.all([
-        Effect.all([as("alice"), as("bob")], { concurrency: "unbounded" }),
-        Effect.exit(call),
-      ]).pipe(Effect.provide(binding.layer)),
+      Effect.all([Effect.all([as("alice"), as("bob")], { concurrency: "unbounded" }), call]).pipe(
+        Effect.provide(binding.layer),
+      ),
     );
 
     expect(alice).toMatchObject([{ result: "alice" }]);
     expect(bob).toMatchObject([{ result: "bob" }]);
-    assert(Exit.isFailure(anonymous));
-    expect(Cause.pretty(anonymous.cause)).toContain("toolkit-test/Principal");
+    expect(anonymous).toMatchObject([{ isFailure: true }]);
+    expect(anonymous[0]?.result).toBeInstanceOf(Action.Unauthenticated);
 
-    // What the docs warn against: an identity provided at startup.
+    // What the docs warn against: an identity provided at startup. The types refuse the call
+    // without its own, yet the native toolkit lays the layer's context beneath each call's, so
+    // it fills in; a call's own still wins.
     const startup = binding.layer.pipe(Layer.provide(Layer.succeed(Principal, "startup")));
 
     const [own, lacking] = await Effect.runPromise(
@@ -371,25 +365,28 @@ describe("ActionToolkit", () => {
         const Secret = Action.make("secret", {
           description: "A secret.",
           access: "read",
+          auth: Principal,
           success: Schema.String,
         });
 
-        const guarded = Action.implement(
-          Secret,
-          () => Effect.succeed("secret"),
-          () => Effect.fail(new Action.Forbidden()),
-        );
+        const guarded = Action.implement(Secret, () => Effect.succeed("secret"), {
+          authorize: () => Effect.fail(new Action.Forbidden()),
+        });
 
-        // The same action behind a hook letting everyone through.
+        // The same action, implemented again with an authorizer letting every caller through.
+        const open = Action.implement(Secret, () => Effect.succeed("secret"), {
+          authorize: Action.allowAll,
+        });
+
         const guardedTools = ActionToolkit.make(guarded);
-        const openTools = ActionToolkit.make(Action.share(Secret, guarded, Action.allowAll));
+        const openTools = ActionToolkit.make(open);
 
         const secret = ({ toolkit }: typeof guardedTools) =>
           Effect.flatMap(toolkit, (handled) =>
             Effect.flatMap(handled.handle("secret", {}), Stream.runCollect),
-          );
+          ).pipe(Effect.provideService(Principal, "alice"));
 
-        // Merged either way, each toolkit runs its own implementation's hook.
+        // Merged either way, each toolkit runs its own implementation's authorizer.
         for (const layers of [
           Layer.mergeAll(guardedTools.layer, openTools.layer),
           Layer.mergeAll(openTools.layer, guardedTools.layer),
@@ -419,12 +416,14 @@ describe("ActionToolkit", () => {
       const Read = Action.make("read", {
         description: "Read",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
       const Other = Action.make("other", {
         description: "Other",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
@@ -435,10 +434,9 @@ describe("ActionToolkit", () => {
 
           return { read: () => Effect.succeed("read"), erase: () => Effect.succeed("erased") };
         }),
-        Action.allowAll,
       );
 
-      const other = Action.implement(Other, () => Effect.succeed("other"), Action.allowAll);
+      const other = Action.implement(Other, () => Effect.succeed("other"));
 
       // A toolkit per agent or per policy, each from a make call of its own.
       const approving = ActionToolkit.make(app, {
@@ -484,8 +482,8 @@ describe("ActionToolkit", () => {
 
       expect(split).toEqual([["read"], ["other"]]);
 
-      // A share keeping its source's hook, an agent's fewer tools, runs with its source's layer.
-      const reader = ActionToolkit.make(Action.share(Read, app)).toolkit;
+      // A selection, an agent's fewer tools, runs with its implementation's layer.
+      const reader = ActionToolkit.make(app, { actions: [Read] }).toolkit;
 
       const shared = yield* Effect.flatMap(reader, (handled) =>
         Effect.flatMap(handled.handle("read", {}), Stream.runCollect),
@@ -504,6 +502,7 @@ describe("ActionToolkit", () => {
         const Open = Action.make("open", {
           description: "Opens a resource of its own",
           access: "write",
+          auth: Principal,
           success: Schema.String,
         });
 
@@ -514,11 +513,9 @@ describe("ActionToolkit", () => {
           );
 
         const { toolkit, layer } = ActionToolkit.make(
-          Action.implement(
-            Open,
-            () => Effect.as(logged("handler"), "opened"),
-            () => Effect.asVoid(logged("hook")),
-          ),
+          Action.implement(Open, () => Effect.as(logged("handler"), "opened"), {
+            authorize: () => Effect.asVoid(logged("authorize")),
+          }),
           // Approved below by a response the prompt carries.
           { needsApproval: () => true },
         );
@@ -554,9 +551,14 @@ describe("ActionToolkit", () => {
 
             yield* Effect.addFinalizer(() => Effect.sync(() => log.push("caller's scope closed")));
           }),
-        ).pipe(Effect.provide(layer));
+        ).pipe(Effect.provideService(Principal, "alice"), Effect.provide(layer));
 
-        const call = ["hook acquire", "handler acquire", "handler release", "hook release"];
+        const call = [
+          "authorize acquire",
+          "handler acquire",
+          "handler release",
+          "authorize release",
+        ];
 
         expect(log).toEqual([
           ...call,
@@ -573,12 +575,13 @@ describe("ActionToolkit", () => {
       const Double = Action.make("double", {
         description: "Double a number.",
         access: "read",
+        auth: "public",
         input: { value: Schema.Finite },
         success: Schema.Finite,
       });
 
       const actions = ActionToolkit.make(
-        Action.implement(Double, ({ value }) => Effect.succeed(value * 2), Action.allowAll),
+        Action.implement(Double, ({ value }) => Effect.succeed(value * 2)),
       );
 
       const Now = Tool.make("now", { success: Schema.Finite });
@@ -618,12 +621,14 @@ describe("ActionToolkit", () => {
       const One = Action.make("one", {
         description: "One",
         access: "write",
+        auth: "public",
         success: Schema.Number,
       });
 
       const Two = Action.make("two", {
         description: "Two",
         access: "write",
+        auth: "public",
         success: Schema.Number,
       });
 
@@ -637,7 +642,6 @@ describe("ActionToolkit", () => {
           }),
           () => Effect.sync(() => released++),
         ),
-        Action.allowAll,
       );
 
       const binding = ActionToolkit.make(app);

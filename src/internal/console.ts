@@ -85,9 +85,9 @@ const stderrConsole = (console: Console.Console, clock: Clock.Clock): Console.Co
 /**
  * `effect` writing its console output and Effect logs to stderr alone, through the console
  * it runs with: for what a surface runs where stdout carries data, a stdio server's program
- * or a CLI command's builder, hook and handler.
+ * or a CLI command's builder, authorizer and handler.
  */
-export const onStderr = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+export const logToStderr = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideServiceEffect(
     effect,
     Console.Console,

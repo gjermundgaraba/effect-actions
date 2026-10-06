@@ -7,7 +7,7 @@ import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import { everyConsoleMethod } from "./console-methods.js";
 
-const Status = Action.make("status", { description: "Report", access: "read" });
+const Status = Action.make("status", { description: "Report", access: "read", auth: "public" });
 
 const status = Action.implement(
   Status,
@@ -15,7 +15,6 @@ const status = Action.implement(
     everyConsoleMethod(() => Effect.void),
     () => Effect.log("json logger").pipe(Effect.andThen(Console.log("console log"))),
   ),
-  Action.allowAll,
 );
 
 ActionMcp.runStdio(status, { name: "stdio-console", version: "0" }).pipe(

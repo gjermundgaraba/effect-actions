@@ -1,16 +1,15 @@
-import { HttpApiSecurity } from "effect/http-api";
 import * as ActionHttp from "../src/ActionHttp.js";
+import * as Authentication from "../src/Authentication.js";
+import { CurrentActor } from "./authorization.js";
 import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 
-// Contract-level: the server and its clients share it, and it is plain data. Every
-// endpoint also declares the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`,
-// so a typed client decodes a malformed request, the authentication's 401 and the
-// authorization hook's 403 instead of reporting a decode error. `ListChanges` is a tool
-// for agents reviewing what happened, so HTTP leaves it out.
+// Browser-safe: how a remote caller proves it is CurrentActor, a bearer token unless
+// `security` names another native scheme. The verifier lives in authentication.ts. The literal
+// name identifies the verifier that may provide it.
+export const Login = Authentication.make("example.Login", CurrentActor);
+
+// Protected contracts get native bearer security (enforced and documented); `status`,
+// declared `auth: "public"`, gets none.
 export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI], {
-  // For the OpenAPI document: the credential the authentication around the routes reads,
-  // stated on every endpoint but the public `status`'s. It enforces nothing: the
-  // authentication provided around a layer does.
-  security: { bearer: HttpApiSecurity.bearer },
-  public: [Status],
+  authentication: Login,
 });

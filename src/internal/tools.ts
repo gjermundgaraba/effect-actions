@@ -7,7 +7,9 @@ import { acquire, type AnyImplementation, type ErasedHandler } from "./implement
 /** Native tools and their acquired action handlers, with dynamic names erased. */
 interface BoundTools {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>;
-  /** The tool handlers; they need the implementations' handlers, which `provideHandlers` provides. */
+  /**
+   * The tool handlers; they need the implementations' handlers, which `provideHandlers` provides.
+   */
   readonly layer: Layer.Layer<Tool.HandlersFor<Record<string, Tool.Any>>, unknown, unknown>;
 }
 
@@ -20,8 +22,8 @@ export interface Projection {
   readonly label: string;
   /** The surface's own form of `tool`, the tool of `action`, one of `app`'s. */
   readonly tool: (tool: Tool.Any, action: Action.Any, app: AnyImplementation) => Tool.Any;
-  /** What a call of the tool runs, given the action's handler behind its hook. */
-  readonly handler: (run: ErasedHandler<unknown>) => ErasedHandler<unknown>;
+  /** What a call of the tool runs, given the action's handler behind its authorizer: it by default. */
+  readonly handler?: (run: ErasedHandler<unknown>, action: Action.Any) => ErasedHandler<unknown>;
 }
 
 /** A tool's hints: read-only exactly when its action reads, and the contract's others. */
@@ -35,7 +37,7 @@ const annotate = (tool: Tool.Any, { access, hints }: Action.Any) =>
 /**
  * The native tool of `action`. A model and an MCP client speak JSON, so it takes and gives
  * the JSON encoding its schemas advertise, the whole success; handlers and callers see decoded
- * values. A hook refusal, or a handler's built-in failure, is the implementation's failure, so
+ * values. A refusal by authentication or `authorize`, or a handler's built-in failure, is the implementation's failure, so
  * it declares the built-in errors alongside the action's own, and returns them as its result.
  */
 const toolOf = (action: Action.Any) =>
@@ -68,7 +70,9 @@ export const bindTools = (
 
   const layer = toolkit.toLayer(
     Effect.map(acquire(apps), (bound) =>
-      Object.fromEntries(bound.map(([action, run]) => [action.name, projection.handler(run)])),
+      Object.fromEntries(
+        bound.map(([action, run]) => [action.name, projection.handler?.(run, action) ?? run]),
+      ),
     ),
   );
 

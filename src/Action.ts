@@ -1,4 +1,13 @@
-import { Array as Arr, Cause, Effect, type Layer, Predicate, Schema, type Types } from "effect";
+import {
+  Array as Arr,
+  Cause,
+  Context,
+  Effect,
+  type Layer,
+  Predicate,
+  Schema,
+  type Types,
+} from "effect";
 import type { Scope } from "effect";
 import {
   assertOwnTags,
@@ -11,15 +20,14 @@ import { type Call, inputOf } from "./internal/call.js";
 import { type BuiltIn, type BuiltIns, InvalidInput, type Refusal } from "./internal/errors.js";
 import {
   type ActionOf,
-  type AnyImplementation,
-  type Before,
+  type Authorize,
   type Bound,
   type BuildContext,
+  type BuilderContext,
   type BuildError,
   builders,
   built,
-  type HookErrors,
-  type ErasedBefore,
+  type ErasedAuthorize,
   type ErasedHandler,
   type ErasedValue,
   type Handlers,
@@ -27,21 +35,27 @@ import {
   type Member,
   memoized,
   type RequestOf,
+  type Protected,
+  type Holding,
+  type Known,
+  type Offered,
+  type OptionalUnless,
+  type Selected,
+  type Serving,
+  select,
   type Served,
   toList,
 } from "./internal/implementation.js";
 
+import type { AnyCheck } from "./internal/checks.js";
+
+export { Check, check, type AnyCheck } from "./internal/checks.js";
+
 /** An action bound to its handler; opaque, see `implement`. */
 export type { Implementation } from "./internal/implementation.js";
 
-/**
- * An implementation's hook: whether a caller may call. It receives the selected action and
- * fails with a refusal, or with an error its actions declare, such as a rate limit, which a
- * call of an action that does not declare it gets as a defect; its services are request-time
- * requirements, like a handler's. `implement` and `share` also take an Effect building one,
- * whose services are startup requirements, like a builder's.
- */
-export type { Before } from "./internal/implementation.js";
+/** Authorization for protected contracts; operational failures belong in declared checks. */
+export type { Authorize } from "./internal/implementation.js";
 
 /**
  * Any implementation, with its actions and channels erased: the constraint of a helper
@@ -146,6 +160,8 @@ export {
 
 /** What `make` needs to define an action. */
 export interface Options {
+  readonly auth: "public" | Context.Key<unknown, unknown>;
+  readonly checks?: ReadonlyArray<AnyCheck>;
   readonly description: string;
   /** A schema or struct fields. Omit, or give `{}`, for an action without arguments. */
   readonly input?: Codec | Fields | undefined;
@@ -158,7 +174,7 @@ export interface Options {
   readonly errors?: ReadonlyArray<Codec> | undefined;
   /**
    * What the action does to its resource. Required: an action nobody classified
-   * is the one a reviewer must check. Read by an implementation's `before` hook; the
+   * is the one a reviewer must check. Read by an implementation's `authorize`; the
    * library itself authorizes nothing.
    */
   readonly access: Access;
@@ -168,12 +184,6 @@ export interface Options {
    */
   readonly hints?: Hints;
 }
-
-/**
- * No key beyond `Keys`, so a misspelled option or hint is refused rather than ignored.
- * Checked after inference: `make`'s options are `O & NoInfer<Rules<O>>`.
- */
-type Known<O, Keys> = { readonly [K in Exclude<keyof O, keyof Keys>]: never };
 
 /**
  * The keys beyond `Hints` in the hints of any member of `O`, given or optional, so a
@@ -212,14 +222,32 @@ type OwnErrors<O> = O extends { readonly errors: ReadonlyArray<infer E> }
   : unknown;
 
 /**
+ * No option beyond `Options` in any member of `O`, so a misspelled one is an unknown
+ * property, not ignored: `keyof` a union holds only the keys every member has.
+ */
+type OnlyOptions<O> = {
+  readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Options>]: never;
+};
+
+/**
+ * `auth` is a `Context.Service`: a `Context.Reference` is never missing, so its default would
+ * stand in for every caller who supplies none.
+ */
+type ServiceAuth<O> = O extends { readonly auth: { readonly defaultValue: unknown } }
+  ? { readonly auth: "An identity is a Context.Service, not a Context.Reference" }
+  : unknown;
+
+/**
  * The rules `make` checks beyond `Options`: every option and hint known, a read never
  * destructive, a `text` hint a string field of the success, and no built-in error listed.
  * Options that fail `Options` itself infer as `Options`, whose error the compiler already
- * reports, so they are not checked again.
+ * reports, so they are not checked again. Checked after inference: `make`'s options are
+ * `O & NoInfer<Rules<O>>`.
  */
 type Rules<O> = Options extends O
   ? unknown
-  : Known<O, Options> &
+  : OnlyOptions<O> &
+      ServiceAuth<O> &
       OwnErrors<O> &
       KnownHints<O> &
       TextHint<O> &
@@ -245,7 +273,11 @@ type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf
 >;
 
 /** The declared errors of `O`, none when omitted. */
-type ErrorsOf<O> = Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>;
+type ChecksOf<O> = Extract<OptionOf<O, "checks", []>, ReadonlyArray<AnyCheck>>;
+
+type ErrorsOf<O> = ReadonlyArray<
+  Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>[number] | ChecksOf<O>[number]["error"]
+>;
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
 export interface Action<
@@ -254,7 +286,11 @@ export interface Action<
   Success extends Codec,
   Errors extends ReadonlyArray<Codec>,
   Acc extends Access = Access,
+  Auth extends Options["auth"] = Options["auth"],
+  Checks extends ReadonlyArray<AnyCheck> = ReadonlyArray<AnyCheck>,
 > {
+  readonly auth: Auth;
+  readonly checks: Checks;
   readonly name: Name;
   readonly description: string;
   readonly input: Input;
@@ -297,15 +333,26 @@ export function make<const Name extends string, const O extends Options>(
   SchemaOf<O, "input", typeof NoInput>,
   SchemaOf<O, "success", typeof Schema.Void>,
   ErrorsOf<O>,
-  O["access"]
+  O["access"],
+  O["auth"],
+  ChecksOf<O>
 >;
 export function make(name: string, options: Options): Any {
   assertName("action name", name);
 
-  const { access } = options;
+  const { access, auth } = options;
+
+  if (auth !== "public" && !Context.isKey(auth)) {
+    throw new Error("Missing auth: declare public or an identity service key");
+  }
+
+  // A reference's default is always present, so it would authenticate every caller.
+  if (auth !== "public" && Context.isReference(auth)) {
+    throw new Error("Invalid auth: an identity is a Context.Service, not a Context.Reference");
+  }
 
   // The type is the only thing stopping a third value, and a plain-JavaScript
-  // caller has none: an unclassified action must not reach a hook that reads it.
+  // caller has none: an unclassified action must not reach an authorizer that reads it.
   if (access !== "read" && access !== "write") throw new Error(`Invalid access: ${String(access)}`);
 
   const hints = {
@@ -316,12 +363,16 @@ export function make(name: string, options: Options): Any {
     text: options.hints?.text,
   };
 
+  const checks = options.checks ?? [];
+
   const action: Any = {
+    auth,
+    checks,
     name,
     description: options.description,
     input: codecOf(options.input ?? {}),
     success: options.success === undefined ? Schema.Void : codecOf(options.success),
-    errors: options.errors ?? [],
+    errors: [...new Set([...(options.errors ?? []), ...checks.map((check) => check.error)])],
     access,
     hints,
   };
@@ -351,9 +402,18 @@ export function byName(actions: ReadonlyArray<Any>): { readonly [name: string]: 
 type Target = Any | ReadonlyArray<Any>;
 
 /**
+ * A target of public actions only, which takes no `authorize`. Named for what a protected
+ * target lacks there, as the error a call without `authorize` reports names this type.
+ */
+type ProtectedActionsTakeAuthorize = PublicAction | ReadonlyArray<PublicAction>;
+
+/** An action anyone may call. */
+type PublicAction = Any & { readonly auth: "public" };
+
+/**
  * The actions `T` stands for. One action is extracted rather than taken as it is, so where `T`
  * is deferred, such as a list of a helper's type parameter, the actions are still actions to
- * TypeScript, and a share of them reaches a surface.
+ * TypeScript, and a selection of them reaches a surface.
  */
 type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Extract<T, Any>;
 
@@ -361,11 +421,11 @@ type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Ex
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
 /**
- * What a name `K` owes per request for the hook, `RB`, besides its handler's: nothing, as the
- * hook's requirements have a key of their own, unless `K` is `string`. Names typed only as
- * `string`, such as an `Action.Any`'s, absorb that key, so each owes the hook's too.
+ * What a name `K` owes per request for the authorizer, `RB`, besides its handler's: nothing, as the
+ * authorizer's requirements have a key of their own, unless `K` is `string`. Names typed only as
+ * `string`, such as an `Action.Any`'s, absorb that key, so each owes the authorizer's too.
  */
-type HookOwed<K, RB> = string extends K ? RB : never;
+type AuthorizerOwed<K, RB> = string extends K ? RB : never;
 
 /**
  * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
@@ -376,8 +436,8 @@ type HookOwed<K, RB> = string extends K ? RB : never;
 type NoHandler<R> = { readonly "~list": R };
 
 /**
- * One action's handler, owing `R` per request; a list takes none. It is `Handler` written
- * out, as `Hook`'s hooks are. While `implement` infers, an alias whose argument `R` is not yet
+ * One action's handler, owing `R` per request; a list takes none. It is `Handler` written out, as
+ * `Authorizer`'s are. While `implement` infers, an alias whose argument `R` is not yet
  * inferred is marked, as a whole, as not inferrable (the mark `NoHandler` relies on), so an
  * `Effect.fn(...)` a builder returns would infer nothing from it and take an `any` input.
  */
@@ -411,65 +471,104 @@ type HandlersOf<T extends Target, RS, R> = Single<T, RS> | Several<T, R>;
 type Deferred<T> = [T][T extends unknown ? 0 : never];
 
 /**
- * A hook, or an Effect that builds it, as a builder builds handlers: `EB` and `RBX` are
- * startup failures and services, `RB` what the hook reads per request. Each hook is `Before`
- * written out. TypeScript would infer `RB` from only one branch of a conditional hook whose
- * other branch is typed `Before`, such as `enabled ? authorize : Action.allowAll`. While
- * `implement` infers, an alias whose argument `RB` is not yet inferred is marked, as a whole,
- * as not inferrable, so an `Effect.fn(...)` the Effect returns would infer nothing from it and
- * take an `any` action.
+ * An authorizer, or an Effect that builds it, as a builder builds handlers: `EB` and `RBX` are
+ * startup failures and services, `RB` what the authorizer reads per request. Each authorizer is
+ * `Authorize` written out. TypeScript would infer `RB` from only one branch of a conditional
+ * authorizer whose other branch is typed `Authorize`, such as
+ * `enabled ? authorize : Action.allowAll`. While `implement` infers, an alias whose argument `RB`
+ * is not yet inferred is marked, as a whole, as not inferrable, so an `Effect.fn(...)` the
+ * Effect returns would infer nothing from it and take an `any` action.
  */
-type Hook<A extends Any, RB, EB, RBX> =
-  | ((action: A) => Effect.Effect<void, Refusal | HookErrors<A>, RB>)
-  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal | HookErrors<A>, RB>, EB, RBX>;
+type Authorizer<A extends Any, RB, EB, RBX> =
+  | ((action: A) => Effect.Effect<void, Refusal, RB>)
+  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RB>, EB, RBX>;
 
-/** What `implement` and `share` receive as a hook, erased. */
-type ErasedHook = ErasedBefore | Effect.Effect<ErasedBefore, unknown, unknown>;
+/**
+ * What `implement` returns for `T`: its handlers' per-request requirements keyed by action
+ * name, the authorizer's under `~authorize`, and the startup failures and services of the
+ * builder and the authorizer.
+ */
+type Implemented<T extends Target, R, RS, EX, RX, RB, EB, RBX> = Implementation<
+  ActionsOf<T>,
+  // Each call has a scope of its own, so `Scope` is never a request-time requirement.
+  {
+    readonly [K in NamesOf<T> | "~authorize"]: Exclude<
+      | (K extends "~authorize" ? RB : T extends ReadonlyArray<Any> ? R[K & keyof R] : RS)
+      | AuthorizerOwed<K, RB>,
+      Scope.Scope
+    >;
+  },
+  Deferred<EX>,
+  Deferred<Exclude<RX, Scope.Scope>>,
+  Deferred<EB>,
+  Deferred<Exclude<RBX, Scope.Scope>>
+>;
+
+/** What `implement` receives as authorization, erased. */
+type ErasedAuthorizer = ErasedAuthorize | Effect.Effect<ErasedAuthorize, unknown, unknown>;
 
 /** What `implement` receives, erased: one handler, or a record of them. */
 type Built = Handlers<unknown> | ErasedHandler<unknown>;
 
 /**
- * The hook that decides nothing: every caller a surface admits may call. Authentication
- * around the surface still decides who is admitted. State it where an implementation needs
- * no action-level rule, as `enabled ? authorize : Action.allowAll` does where one depends
- * on the deployment.
+ * Every authenticated caller may call a protected action. The contract's identity
+ * requirement is enforced independently, including when its handler reads no identity.
  */
-export const allowAll: Before<Any> = () => Effect.void;
+export const allowAll: Authorize<Any> = () => Effect.void;
 
 /**
- * `before`, checked: the types require a hook, and plain JavaScript can still pass none,
- * which must not serve every caller.
+ * `authorize`, checked: the types require a function, and plain JavaScript can still pass
+ * none, which must not serve every caller.
  */
-const assertHook = (before: ErasedBefore): ErasedBefore => {
+const assertAuthorizer = (before: ErasedAuthorize): ErasedAuthorize => {
   if (!Predicate.isFunction(before)) {
-    throw new Error("Missing hook: pass an authorization hook, or Action.allowAll");
+    throw new Error("Missing authorize: pass an authorization function, or Action.allowAll");
   }
 
   return before;
 };
 
+/** `authorize`, present wherever a protected action is implemented. */
+const assertAuthorization = (authorize: ErasedAuthorizer | undefined): ErasedAuthorizer => {
+  if (authorize === undefined)
+    throw new Error("Protected actions require authorize, or Action.allowAll");
+
+  return authorize;
+};
+
+/** No `authorize` where only public actions are implemented: it would never run. */
+const assertNoAuthorization = (authorize: ErasedAuthorizer | undefined): ErasedAuthorizer => {
+  if (authorize !== undefined) throw new Error("A public-only target takes no authorize");
+
+  return allowAll;
+};
+
 /**
- * The layer building `before`: a plain hook as it is, a built one once its Effect runs,
- * checked when the layer builds, as a builder's record is. `Effect.isEffect` tells them
- * apart, so a hook written with `Effect.fn` stays plain.
+ * The layer building `authorize`: a plain function as it is, a built one once its Effect
+ * runs, checked when the layer builds, as a builder's record is. `Effect.isEffect` tells them
+ * apart, so one written with `Effect.fn` stays plain.
  */
-const hookOf = (before: ErasedHook) =>
+const authorizerOf = (before: ErasedAuthorizer) =>
   memoized(
-    Effect.isEffect(before) ? Effect.map(before, assertHook) : Effect.succeed(assertHook(before)),
+    Effect.isEffect(before)
+      ? Effect.map(before, assertAuthorizer)
+      : Effect.succeed(assertAuthorizer(before)),
   );
 
 /**
- * Bind handlers to contracts, behind a hook. Pass one action and its handler, or a list of
+ * Bind handlers to contracts, behind authorization. Pass one action and its handler, or a list of
  * actions and a record of handlers keyed by action name. Either may instead be an Effect
  * that builds them: its services are startup requirements, resolved once per layer graph
  * however many surfaces serve the result, while services a handler yields are per-request
  * requirements.
  *
- * `before` is the implementation's hook, which every surface serving it runs before each
- * handler: whether the caller may call. It is required: `Action.allowAll` says every caller
- * may. It may also be an Effect that builds the hook, as a builder builds handlers.
+ * `authorize` is required when the target includes protected contracts and runs only for
+ * them. `Action.allowAll` permits every authenticated caller. An Effect may build the
+ * authorizer once, with startup requirements separate from its per-call requirements.
+ * Declared operational checks run after authorization and before the handler.
  */
+// First, so an authorizer is typed from it: an `Effect.fn` infers its action here, and the
+// diagnostic overload, last, cannot stand in for it.
 export function implement<
   const T extends Target,
   // A list's record has a handler for each of its actions; one action takes no record.
@@ -483,33 +582,65 @@ export function implement<
 >(
   target: T,
   build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
-  before: Hook<ActionsOf<T>, RB, EB, RBX>,
-): Implementation<
-  ActionsOf<T>,
-  // Each call has a scope of its own, so `Scope` is never a request-time requirement.
-  {
-    readonly [K in NamesOf<T> | "~hook"]: Exclude<
-      | (K extends "~hook" ? RB : T extends ReadonlyArray<Any> ? R[K & keyof R] : RS)
-      | HookOwed<K, RB>,
-      Scope.Scope
-    >;
+  options: {
+    // A public-only target is never authorized, so it takes none: the other overload.
+    readonly authorize: [Protected<ActionsOf<T>>] extends [never]
+      ? never
+      : Authorizer<Protected<ActionsOf<T>>, RB, EB, RBX>;
   },
-  Deferred<EX>,
-  Deferred<Exclude<RX, Scope.Scope>>,
-  Deferred<EB>,
-  Deferred<Exclude<RBX, Scope.Scope>>
->;
+): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
+export function implement<
+  const T extends ProtectedActionsTakeAuthorize,
+  // A list's record has a handler for each of its actions; one action takes no record.
+  R extends (T extends ReadonlyArray<Any> ? { readonly [K in NamesOf<T>]: unknown } : never),
+  RS = never,
+  EX = never,
+  RX = never,
+  RB = never,
+  EB = never,
+  RBX = never,
+>(
+  target: T,
+  build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  // Public actions are never authorized: only their checks run.
+  options?: { readonly authorize?: never },
+): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
+// The general overload again, last, so a call matching none is reported against it: a
+// misspelled `authorize` as an unknown key, and one given to public actions by its message.
+export function implement<
+  const T extends Target,
+  // A list's record has a handler for each of its actions; one action takes no record.
+  R extends (T extends ReadonlyArray<Any> ? { readonly [K in NamesOf<T>]: unknown } : never),
+  RS = never,
+  EX = never,
+  RX = never,
+  RB = never,
+  EB = never,
+  RBX = never,
+>(
+  target: T,
+  build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  options: {
+    readonly authorize: [Protected<ActionsOf<T>>] extends [never]
+      ? "A public-only target takes no authorize"
+      : Authorizer<Protected<ActionsOf<T>>, RB, EB, RBX>;
+  },
+): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
 export function implement(
   target: Target,
   build: Built | Effect.Effect<Built, unknown, unknown>,
-  before: ErasedHook,
+  options?: { readonly authorize?: ErasedAuthorizer },
 ): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
   const actions = Arr.ensure(target);
   const names = actions.map((action) => action.name);
 
   assertOnce("action", actions);
 
-  const hook = hookOf(before);
+  const authorizer = authorizerOf(
+    actions.some((action) => action.auth !== "public")
+      ? assertAuthorization(options?.authorize)
+      : assertNoAuthorization(options?.authorize),
+  );
 
   // Handlers are keyed by action name; a single action's handler is its own record. A
   // key no action names is refused, so a stale handler cannot outlive its action, and so
@@ -540,77 +671,7 @@ export function implement(
     ? Effect.map(build, record)
     : Effect.succeed(record(build));
 
-  return new Implementation(actions, memoized(handlers), hook);
-}
-
-/**
- * Serve some of `app`'s actions with its handlers, behind its hook, or `before` instead:
- * `share([Poll], users)` for a surface serving fewer actions, `share(actions, users,
- * trustAdmin)` for an admin CLI, `share([Poll], users, Action.allowAll)` for a public one.
- * The result shares `app`'s builder, which runs once per layer graph however many
- * implementations share it; `before` may be built, as `implement`'s may. Per request, it owes
- * what `app`'s handlers owe for its actions, and what its hook owes, `app`'s or `before`'s; at
- * startup, what `app`'s builder needs, and what building its hook does, `app`'s or `before`'s.
- */
-export function share<App extends AnyImplementation, const T extends Target>(
-  target: T,
-  app: App,
-): Implementation<
-  ActionsOf<T>,
-  { readonly [K in NamesOf<T> | "~hook"]: App["~request"][K & keyof App["~request"]] },
-  App["~buildError"],
-  App["~buildContext"],
-  App["~hookBuildError"],
-  App["~hookBuildContext"]
->;
-export function share<
-  App extends AnyImplementation,
-  const T extends Target,
-  RB = never,
-  EB = never,
-  RBX = never,
->(
-  target: T,
-  app: App,
-  before: Hook<ActionsOf<T>, RB, EB, RBX>,
-): Implementation<
-  ActionsOf<T>,
-  // Each call has a scope of its own, so `Scope` is never a request-time requirement. A name
-  // typed only as `string` reads every key but the source's hook's, which `before` replaces.
-  {
-    readonly [K in NamesOf<T> | "~hook"]: K extends "~hook"
-      ? Exclude<RB, Scope.Scope>
-      :
-          | App["~request"][K & Exclude<keyof App["~request"], "~hook">]
-          | HookOwed<K, Exclude<RB, Scope.Scope>>;
-  },
-  App["~buildError"],
-  App["~buildContext"],
-  Deferred<EB>,
-  Deferred<Exclude<RBX, Scope.Scope>>
->;
-export function share(
-  target: Target,
-  app: AnyImplementation,
-  ...before: [] | [ErasedHook]
-): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
-  const actions = Arr.ensure(target);
-
-  assertOnce("action", actions);
-
-  // Refused here rather than in the types, so a helper may share what its type parameters
-  // stand for.
-  const unknown = actions.filter((action) => !app.actions.includes(action));
-
-  if (unknown.length > 0) {
-    throw new Error(
-      `Not implemented by this implementation: ${unknown.map(({ name }) => name).join(", ")}`,
-    );
-  }
-
-  // Left out, the hook is the source's; given, even as `undefined`, it is checked, as
-  // `implement` checks its own.
-  return Implementation.share(actions, app, before.length === 0 ? undefined : hookOf(before[0]));
+  return new Implementation(actions, memoized(handlers), authorizer);
 }
 
 /**
@@ -621,14 +682,15 @@ export function share(
  */
 export function layer<const Apps extends Served>(
   implementations: Apps,
-): Layer.Layer<never, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
+): Layer.Layer<never, BuildError<Member<Apps>>, BuilderContext<Member<Apps>>>;
 export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
   return builders(toList(implementations));
 }
 
 /**
  * One call of `A` in process: its decoded success, or its declared errors and the built-in
- * ones, owing `R` per call, what its handler and its implementation's hook read.
+ * ones, owing `R` per call, what its handler, its implementation's `authorize` and its
+ * checks read.
  */
 type Method<A extends Any, R> = Call<
   A,
@@ -637,13 +699,13 @@ type Method<A extends Any, R> = Call<
 
 /**
  * Every action of the implementations `Apps`, one or a list, as `client.<action>(input)`: what
- * `client` gives, each method owing per call what its handler and its hook read.
+ * `client` gives, each method owing per call what its handler, `authorize` and checks read.
  */
-export type Client<Apps extends Served> = {
-  readonly [A in Extract<ActionOf<Member<Apps>>, Any> as A["name"]]: Method<
-    A,
-    RequestOf<Member<Apps>, A>
-  >;
+export type Client<
+  Apps extends Served,
+  Listed extends Any = Extract<ActionOf<Member<Apps>>, Any>,
+> = {
+  readonly [A in Serving<Member<Apps>, Listed> as A["name"]]: Method<A, RequestOf<Member<Apps>, A>>;
 };
 
 /** A client method, erased: the implementations' actions restore its exact type. */
@@ -693,10 +755,10 @@ const mapFailures = (
   );
 
 /**
- * `action`'s method, running `run`, its handler behind its hook, as a remote call runs: input
- * that does not pass through its codec is `InvalidInput`, and the hook and the handler never
- * run; a success or a failure that does not is a defect, as it is an empty 500 over HTTP,
- * since the handler or the hook broke its contract. A failure passes through the codec of
+ * `action`'s method, running `run`, its handler behind authorization and checks, as a remote
+ * call runs: input that does not pass through its codec is `InvalidInput`, and nothing else
+ * runs; a success or a failure that does not is a defect, as it is an empty 500 over HTTP,
+ * since the handler broke its contract. A failure passes through the codec of
  * every error the action declares, the built-in ones included.
  */
 const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
@@ -717,27 +779,55 @@ const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
     );
 };
 
+/** What `client` takes: the actions to call. */
+export interface ClientOptions<A extends Any> {
+  /**
+   * The actions to call, among the implementations': `[GetUser]`. Defaults to every action of
+   * them. Options whose `actions` may be absent are typed as every action, as they may run.
+   */
+  readonly actions?: ReadonlyArray<A> | undefined;
+}
+
 /**
  * Call implementations in process: one method per action, taking its input directly, as
  * `ActionHttp.client`'s methods do, `client.renameUser({ id, name })`, so moving between the
  * two changes the line acquiring it. A call runs as a remote one does: its input passes through
- * its JSON codec, encoded then decoded, then the implementation's hook and the handler run, in
- * a scope of their own, and the success or the failure passes through its codec. It fails
- * with the action's errors and the built-in ones, and owes, per call, what the handler and the
- * hook read, the caller's identity included; the caller provides it around the call.
+ * its JSON codec, encoded then decoded, then the implementation's `authorize`, the checks and
+ * the handler run, in a scope of their own, and the success or the failure passes through its
+ * codec. It fails with the action's errors and the built-in ones, and owes, per call, what
+ * they read, the caller's identity included; the caller provides it around the call.
  *
  * Acquiring it builds the implementations' builders, as a layer does, into the layer graph it
  * is acquired in, and its scope holds them: in a builder, it shares their one run with every
  * surface of that graph. Acquire it where builders live, in a builder, a layer or a scoped
  * program, never per request.
  */
-export function client<const Apps extends Served>(
+export function client<
+  const Apps extends Served,
+  const O extends ClientOptions<ActionOf<Member<Apps>>> = {},
+>(
   implementations: Apps,
-): Effect.Effect<Client<Apps>, BuildError<Member<Apps>>, BuildContext<Member<Apps>> | Scope.Scope>;
+  ...options: OptionalUnless<
+    O,
+    ClientOptions<ActionOf<Member<Apps>>> & O & NoInfer<Known<O, ClientOptions<Any>>>
+  >
+): Effect.Effect<
+  Client<Apps, Offered<O, ActionOf<Member<Apps>>>>,
+  BuildError<
+    Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
+    Selected<O, ActionOf<Member<Apps>>>
+  >,
+  | BuildContext<
+      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
+      Selected<O, ActionOf<Member<Apps>>>
+    >
+  | Scope.Scope
+>;
 export function client(
   served: Served,
+  options?: { readonly actions?: ReadonlyArray<Any> | undefined },
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, unknown, unknown> {
-  const apps = toList(served);
+  const apps = select(toList(served), options?.actions);
 
   // Checked where it is made, as a surface checks the names it serves.
   assertOnce(

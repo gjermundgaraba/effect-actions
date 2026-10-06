@@ -12,6 +12,7 @@ import { serve } from "./serve.js";
 const Remote = Action.make("remote", {
   description: "Doubles an encoded finite number",
   access: "write",
+  auth: "public",
   input: Schema.Struct({ value: Schema.FiniteFromString }),
   success: Schema.FiniteFromString,
 });
@@ -23,17 +24,13 @@ const Http = ActionHttp.make([Remote]);
 const recording = () => {
   const decoded: number[] = [];
 
-  const app = Action.implement(
-    [Remote],
-    {
-      remote: ({ value }) =>
-        Effect.andThen(
-          Effect.sync(() => decoded.push(value)),
-          () => Effect.succeed(value * 2),
-        ),
-    },
-    Action.allowAll,
-  );
+  const app = Action.implement([Remote], {
+    remote: ({ value }) =>
+      Effect.andThen(
+        Effect.sync(() => decoded.push(value)),
+        () => Effect.succeed(value * 2),
+      ),
+  });
 
   return { app, decoded };
 };
@@ -83,6 +80,7 @@ it.effect("projects commands through the HTTP client", () =>
     const Lookalike = Action.make("remote", {
       description: "Not the bound contract",
       access: "write",
+      auth: "public",
       input: Schema.Struct({ value: Schema.FiniteFromString }),
       success: Schema.FiniteFromString,
     });
@@ -98,6 +96,7 @@ it.effect("projects a binding as one kebab-case subcommand per action", () =>
     const Echo = Action.make("echoText", {
       description: "Echoes its input",
       access: "read",
+      auth: "public",
       input: { text: Schema.String },
       success: Schema.String,
     });
@@ -107,7 +106,7 @@ it.effect("projects a binding as one kebab-case subcommand per action", () =>
     const web = serve(
       ActionHttp.layer(Flat, [
         recording().app,
-        Action.implement(Echo, ({ text }) => Effect.succeed(text), Action.allowAll),
+        Action.implement(Echo, ({ text }) => Effect.succeed(text)),
       ]),
     );
 

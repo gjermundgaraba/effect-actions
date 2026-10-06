@@ -117,8 +117,8 @@ describe("MCP stdio example", () => {
 });
 
 describe("runStdio's invalid arguments", () => {
-  const Ping = Action.make("ping", { description: "Answer", access: "read" });
-  const ping = Action.implement(Ping, () => Effect.void, Action.allowAll);
+  const Ping = Action.make("ping", { description: "Answer", access: "read", auth: "public" });
+  const ping = Action.implement(Ping, () => Effect.void);
 
   const Answered = Schema.fromJsonString(
     Schema.Union([
@@ -159,7 +159,11 @@ describe("runStdio's invalid arguments", () => {
 });
 
 describe("runStdio's successes", () => {
-  const read = { description: "Succeeds with one kind of JSON value", access: "read" } as const;
+  const read = {
+    description: "Succeeds with one kind of JSON value",
+    access: "read",
+    auth: "public",
+  } as const;
 
   const Ready = Action.make("ready", { ...read, success: { ready: Schema.Boolean } });
   const Count = Action.make("count", { ...read, success: Schema.Finite });
@@ -167,17 +171,13 @@ describe("runStdio's successes", () => {
   const List = Action.make("list", { ...read, success: Schema.Array(Schema.Finite) });
   const Reset = Action.make("reset", read);
 
-  const shapes = Action.implement(
-    [Ready, Count, Greeting, List, Reset],
-    {
-      ready: () => Effect.succeed({ ready: true }),
-      count: () => Effect.succeed(42),
-      greeting: () => Effect.succeed('say "hi"'),
-      list: () => Effect.succeed([1, 2]),
-      reset: () => Effect.void,
-    },
-    Action.allowAll,
-  );
+  const shapes = Action.implement([Ready, Count, Greeting, List, Reset], {
+    ready: () => Effect.succeed({ ready: true }),
+    count: () => Effect.succeed(42),
+    greeting: () => Effect.succeed('say "hi"'),
+    list: () => Effect.succeed([1, 2]),
+    reset: () => Effect.void,
+  });
 
   // Each tool's encoded success: an object, a number, a string, an array and `null`.
   const successes = [
@@ -305,10 +305,11 @@ it.effect(
       const Ping = Action.make("ping", {
         description: "Answer pong",
         access: "read",
+        auth: "public",
         success: Schema.String,
       });
 
-      const ping = Action.implement(Ping, () => Effect.succeed("pong"), Action.allowAll);
+      const ping = Action.implement(Ping, () => Effect.succeed("pong"));
 
       const request = {
         ...statelessRequest("tools/call", { name: "ping", arguments: {} }).body,
@@ -353,7 +354,11 @@ it.live(
   "interrupts a call when stdin closes, and ends once its uninterruptible work completes",
   () =>
     Effect.gen(function* () {
-      const Commit = Action.make("commit", { description: "Commit a write", access: "write" });
+      const Commit = Action.make("commit", {
+        description: "Commit a write",
+        access: "write",
+        auth: "public",
+      });
 
       const call = {
         ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
@@ -366,15 +371,12 @@ it.live(
       let written = "";
 
       // Still running when stdin closes, which it does once the call has started.
-      const commit = Action.implement(
-        Commit,
-        () =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Effect.sleep(100)),
-            Effect.andThen(Effect.sync(() => (committed = true))),
-            Effect.uninterruptible,
-          ),
-        Action.allowAll,
+      const commit = Action.implement(Commit, () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.sleep(100)),
+          Effect.andThen(Effect.sync(() => (committed = true))),
+          Effect.uninterruptible,
+        ),
       );
 
       const stdin = Stream.make(`${JSON.stringify(call)}\n`).pipe(
@@ -400,11 +402,11 @@ it.live(
 
 it.effect("serves native features given as features beside the tools", () =>
   Effect.gen(function* () {
-    const Ping = Action.make("ping", { description: "Ping", access: "read" });
+    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
 
     const [listed = ""] = yield* converse(
       ActionMcp.runStdio(
-        Action.implement(Ping, () => Effect.void, Action.allowAll),
+        Action.implement(Ping, () => Effect.void),
         {
           name: "test",
           version: "0",
@@ -423,11 +425,11 @@ it.effect("serves native features given as features beside the tools", () =>
 // MCP negotiates: the host proceeds on it or disconnects.
 it.effect.each(["2025-03-26", "2024-11-05"])("offers 2025-11-25 to a host asking for %s", (asked) =>
   Effect.gen(function* () {
-    const Ping = Action.make("ping", { description: "Ping", access: "read" });
+    const Ping = Action.make("ping", { description: "Ping", access: "read", auth: "public" });
 
     const line = yield* negotiate(
       ActionMcp.runStdio(
-        Action.implement(Ping, () => Effect.void, Action.allowAll),
+        Action.implement(Ping, () => Effect.void),
         {
           name: "test",
           version: "0",
@@ -446,10 +448,11 @@ describe("runStdio's input schemas", () => {
   const Put = Action.make("put", {
     description: "Store an item",
     access: "write",
+    auth: "public",
     input: { item: Item },
   });
 
-  const put = Action.implement(Put, () => Effect.void, Action.allowAll);
+  const put = Action.implement(Put, () => Effect.void);
 
   const Listed = Schema.fromJsonString(
     Schema.Struct({
@@ -531,13 +534,17 @@ describe("runStdio's console", () => {
   it.effect("writes every method through the host console's error", () =>
     Effect.gen(function* () {
       const host = recording();
-      const Status = Action.make("status", { description: "Report", access: "read" });
+
+      const Status = Action.make("status", {
+        description: "Report",
+        access: "read",
+        auth: "public",
+      });
 
       // The builder runs when the server starts; a host with nothing on stdin then closes it.
       const status = Action.implement(
         Status,
         Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void),
-        Action.allowAll,
       );
 
       yield* ActionMcp.runStdio(status, { name: "console", version: "0" }).pipe(

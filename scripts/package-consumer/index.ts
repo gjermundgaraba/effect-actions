@@ -78,21 +78,19 @@ if (!served.raw.includes('"structuredContent":"Hello, Ada!"'))
 const Page = Action.make("page", {
   description: "Read a page",
   access: "read",
+  auth: "public",
   success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
   hints: { text: "markdown" },
 });
 
-const page = Action.implement(
-  Page,
-  () => Effect.succeed({ markdown: "# Page", next: "2" }),
-  Action.allowAll,
-);
+const page = Action.implement(Page, () => Effect.succeed({ markdown: "# Page", next: "2" }));
 
 void ActionMcp.layerHttp(page, { name: "pages", version: "0" });
 
 Action.make("misnamed", {
   description: "Read a page",
   access: "read",
+  auth: "public",
   success: { markdown: Schema.String },
   // @ts-expect-error `body` is no field of the success.
   hints: { text: "body" },
@@ -102,11 +100,7 @@ Action.make("misnamed", {
 if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))
   throw new Error("The OpenAPI document lacks the greet route");
 
-const greet = Action.implement(
-  Greet,
-  ({ name }) => Effect.succeed(`Hello, ${name}!`),
-  Action.allowAll,
-);
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
 const binding = ActionToolkit.make(greet);
 
@@ -125,11 +119,19 @@ const toolResults = await Effect.gen(function* () {
 
 if (toolResults[0]?.result !== "Hello, Ada!") throw new Error("Native Toolkit projection failed");
 
-const Read = Action.make("read", { description: "Read", access: "read", success: Schema.String });
+class Identity extends Context.Service<Identity, string>()("consumer/Identity") {}
+
+const Read = Action.make("read", {
+  description: "Read",
+  access: "read",
+  auth: Identity,
+  success: Schema.String,
+});
 
 const Write = Action.make("write", {
   description: "Write",
   access: "write",
+  auth: Identity,
   success: Schema.String,
 });
 
@@ -148,12 +150,12 @@ void checkCliTypes;
 if (Read.access !== "read" || Write.access !== "write")
   throw new Error("Published access metadata failed");
 
-class Identity extends Context.Service<Identity, string>()("consumer/Identity") {}
+const Login = Authentication.make("consumer.Login", Identity);
 
 // A token is its own identity here; a real host verifies it.
-const token = Effect.map(Authentication.bearerToken, Redacted.value);
-
-const authenticate = Authentication.make(Identity, Effect.succeed(token)).layer;
+const authenticate = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+  Effect.succeed(Redacted.value(token)),
+);
 
 const guarded = Action.implement(
   [Read, Write],
@@ -161,33 +163,37 @@ const guarded = Action.implement(
     read: () => Effect.map(Identity, (identity) => identity),
     write: () => Effect.succeed("write"),
   },
-  (action) =>
-    action.access === "read"
-      ? Effect.void
-      : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+  {
+    authorize: (action) =>
+      action.access === "read"
+        ? Effect.void
+        : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+  },
 );
 
-const GuardedHttp = ActionHttp.make([Read, Write]);
+const GuardedHttp = ActionHttp.make([Read, Write], { authentication: Login });
 
 class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
 
 const checkHookTypes = () => {
-  Action.implement(
-    Read,
-    () => Effect.succeed("read"),
-    // @ts-expect-error A published hook fails with nothing its actions do not declare.
-    () => Effect.fail(new Denied()),
-  );
-  // A published hook may fail with an error its actions declare.
-  Action.implement(
-    [
-      Action.make("first", { description: "First", access: "read", errors: [Denied] }),
-      Action.make("second", { description: "Second", access: "write", errors: [Denied] }),
-    ],
-    { first: () => Effect.void, second: () => Effect.void },
-    () => Effect.fail(new Denied()),
-  );
-  // @ts-expect-error A published implementation states who may call it.
+  Action.implement(Read, () => Effect.succeed("read"), {
+    // @ts-expect-error A published authorizer only refuses.
+    authorize: () => Effect.fail(new Denied()),
+  });
+
+  // A published check declares its error, which joins the action's errors.
+  class Gate extends Action.Check<Gate>()("consumer/Gate", { error: Denied }) {}
+
+  const Gated = Action.make("gated", {
+    description: "Gated",
+    access: "read",
+    auth: "public",
+    checks: [Gate],
+  });
+
+  const checkGatedErrors = (error: (typeof Gated.errors)[number]["Type"]): Denied => error;
+  void checkGatedErrors;
+  // @ts-expect-error A published protected implementation states who may call it.
   Action.implement(Read, () => Effect.succeed("read"));
   Action.implement(
     Greet,
@@ -195,7 +201,6 @@ const checkHookTypes = () => {
     Effect.fn(function* ({ nam }) {
       return `${String(nam)}${yield* Effect.succeed("!")}`;
     }),
-    Action.allowAll,
   );
   Action.implement(
     Greet,
@@ -205,17 +210,17 @@ const checkHookTypes = () => {
         return `${String(nam)}${yield* Effect.succeed("!")}`;
       }),
     ),
-    Action.allowAll,
   );
   Action.implement(
     [Read, Write],
     { read: () => Effect.succeed("read"), write: () => Effect.succeed("write") },
-    Effect.succeed(
-      Effect.fn(function* (action) {
-        // @ts-expect-error A published built hook's action is typed from its implementation.
-        if (action.acess === "write") return yield* new Action.Forbidden();
-      }),
-    ),
+    {
+      // A built authorizer's action infers from the implementation's protected actions.
+      authorize: Effect.succeed((action) =>
+        // @ts-expect-error A misspelled contract field.
+        action.acess === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
+      ),
+    },
   );
 };
 

@@ -54,3 +54,10 @@ const McpSuccess = Schema.Struct({
 /** The encoded success of a raw MCP tool call's response, as its structured content. */
 export const valueOf = async (response: Response): Promise<Schema.Json> =>
   Schema.decodeUnknownSync(McpSuccess)(await response.json()).result.structuredContent;
+
+/** `request`, signed in as the demo actor `token` names, as `examples/authentication.ts` verifies it. */
+export const withBearer = (request: Request, token: string): Request => {
+  request.headers.set("authorization", `Bearer ${token}`);
+
+  return request;
+};

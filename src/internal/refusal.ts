@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Predicate, Ref, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema } from "effect";
 import { HttpServerResponse } from "effect/http";
 import { type Refusal, refusals, statuses } from "./errors.js";
 
@@ -6,18 +6,24 @@ import { type Refusal, refusals, statuses } from "./errors.js";
 const description = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
 
 /**
- * An RFC 6750 `Bearer` challenge of the parameters given, each a quoted string whose `"` and
- * `\` are escaped: a metadata URL's query may hold a `\`.
+ * An RFC 9110 challenge of `scheme` and the parameters given, each a quoted string whose `"`
+ * and `\` are escaped: a metadata URL's query may hold a `\`.
  */
-export const bearer = (
+export const challenge = (
+  scheme: string,
   parameters: ReadonlyArray<readonly [name: string, value: string | undefined]>,
 ): string => {
   const given = parameters.flatMap(([name, value]) =>
     value === undefined ? [] : [`${name}="${value.replace(/["\\]/g, "\\$&")}"`],
   );
 
-  return given.length === 0 ? "Bearer" : `Bearer ${given.join(", ")}`;
+  return given.length === 0 ? scheme : `${scheme} ${given.join(", ")}`;
 };
+
+/** An RFC 6750 `Bearer` challenge of the parameters given. */
+export const bearer = (
+  parameters: ReadonlyArray<readonly [name: string, value: string | undefined]>,
+): string => challenge("Bearer", parameters);
 
 const Refusals = Schema.Union(refusals);
 
@@ -39,6 +45,10 @@ const insufficientScope = (error: Refusal, metadataUrl: string | undefined): str
       ])
     : undefined;
 
+/** A refusal as its JSON with its status alone, as a scheme no OAuth client acts on answers it. */
+export const plain = (error: Refusal): HttpServerResponse.HttpServerResponse =>
+  HttpServerResponse.jsonUnsafe(encode(error), { status: statuses[error._tag] });
+
 /**
  * A refusal as its JSON with its status, as every endpoint declares it, and its
  * `insufficient_scope` challenge if it has one.
@@ -47,27 +57,33 @@ export const answer = (
   error: Refusal,
   metadataUrl: string | undefined,
 ): HttpServerResponse.HttpServerResponse => {
-  const response = HttpServerResponse.jsonUnsafe(encode(error), { status: statuses[error._tag] });
-  const challenge = insufficientScope(error, metadataUrl);
+  const response = plain(error);
+  const scoped = insufficientScope(error, metadataUrl);
 
-  return challenge === undefined
+  return scoped === undefined
     ? response
-    : HttpServerResponse.setHeader(response, "www-authenticate", challenge);
+    : HttpServerResponse.setHeader(response, "www-authenticate", scoped);
 };
 
-/** The step-up refusal a call under `answerStepUp` failed with, which answers its request. */
+/** The step-up refusal a tool's call under `answerStepUp` failed with, which answers its request. */
 class SteppedUp extends Context.Service<SteppedUp, Ref.Ref<Option.Option<Refusal>>>()(
   "effect-actions/SteppedUp",
 ) {}
 
 /**
- * `call`, whose failure, when an OAuth client acts on it (`Unauthenticated`, or `Forbidden`
- * naming scopes), answers the request under `answerStepUp`. Elsewhere, such as without
- * `Authentication.make` or over stdio, it is `call` as it is.
+ * Whether `error` is a refusal an OAuth client acts on: `Unauthenticated`, or `Forbidden`
+ * naming scopes.
+ */
+export const isStepUp = (error: unknown): error is Refusal =>
+  isRefusal(error) && (!Predicate.isTagged(error, "Forbidden") || error.scopes !== undefined);
+
+/**
+ * A protected MCP tool's `call`, whose step-up refusal answers the request under a Bearer
+ * descriptor's `answerStepUp`. Elsewhere it is `call` as it is.
  */
 export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.tapError(call, (error) =>
-    isRefusal(error) && (!Predicate.isTagged(error, "Forbidden") || error.scopes !== undefined)
+    isStepUp(error)
       ? Effect.flatMap(Effect.serviceOption(SteppedUp), (slot) =>
           Option.isSome(slot) ? Ref.set(slot.value, Option.some(error)) : Effect.void,
         )
@@ -75,9 +91,10 @@ export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effe
   );
 
 /**
- * `route`, answered, when a call in it failed with a step-up refusal, with the refusal's
- * status, JSON and challenge, naming `metadataUrl`, whatever the route answered: an HTTP
- * route's own refusal, or an MCP tool result, where MCP authorization requires 401 or 403.
+ * An MCP request, answered with the step-up refusal a tool's call in it failed with, its
+ * status, JSON and challenge naming `metadataUrl`, however the request ended short of a defect
+ * or an interruption: a tool's failure is a successful result, and MCP authorization requires
+ * 401 or 403.
  */
 export const answerStepUp = <E, R>(
   route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
@@ -85,8 +102,12 @@ export const answerStepUp = <E, R>(
 ): Effect.Effect<HttpServerResponse.HttpServerResponse, E, Exclude<R, SteppedUp>> =>
   Effect.gen(function* () {
     const slot = yield* Ref.make(Option.none<Refusal>());
-    const response = yield* Effect.provideService(route, SteppedUp, slot);
+    const exit = yield* Effect.exit(Effect.provideService(route, SteppedUp, slot));
     const refused = yield* Ref.get(slot);
 
-    return Option.isSome(refused) ? answer(refused.value, metadataUrl) : response;
+    // A defect or an interruption after the refusal is the route's own, answered as it is.
+    const broken =
+      Exit.isFailure(exit) && (Cause.hasDies(exit.cause) || Cause.hasInterrupts(exit.cause));
+
+    return Option.isSome(refused) && !broken ? answer(refused.value, metadataUrl) : yield* exit;
   });
