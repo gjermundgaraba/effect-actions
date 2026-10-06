@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +73,13 @@ try {
 
   // Install outside the repository, without its workspace overrides or source imports.
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
+  // The installed package carries the docs agents are sent to.
+  const docs = join(consumer, "node_modules", manifest.name, "docs");
+
+  for (const page of readdirSync(join(root, "docs"))) {
+    if (!existsSync(join(docs, page))) throw new Error(`docs/${page} is not in the package`);
+  }
+
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
   run(process.execPath, ["index.js"]);
 } finally {

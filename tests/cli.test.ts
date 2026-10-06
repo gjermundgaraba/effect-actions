@@ -1536,7 +1536,7 @@ it.effect(
       // One purge per operator, however many invocations build the check.
       const purged: Array<string> = [];
 
-      const limited = Action.check(
+      const limited = Layer.effect(
         Limited,
         Effect.succeed(() =>
           Effect.flatMap(Operator, ({ id }) =>
@@ -1667,6 +1667,131 @@ it("refuses positional arguments a parser could not read back", () => {
     "Positional arguments need named input fields: length",
   );
 });
+
+it.effect("takes an array field as the last positional, one value per argument", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+
+    const Remove = Action.make("remove", {
+      description: "Remove files",
+      access: "write",
+      auth: "public",
+      input: { force: Schema.Boolean, paths: Schema.Array(Schema.String) },
+      success: Schema.String,
+    });
+
+    const Tag = Action.make("tag", {
+      description: "Tag a file",
+      access: "write",
+      auth: "public",
+      input: {
+        path: Schema.String,
+        tags: Schema.optional(Schema.Array(Schema.Literals(["a", "b"]))),
+      },
+      success: Schema.String,
+    });
+
+    const app = Action.implement([Remove, Tag], {
+      remove: (input) =>
+        Effect.as(
+          Effect.sync(() => inputs.push(input)),
+          "removed",
+        ),
+      tag: (input) =>
+        Effect.as(
+          Effect.sync(() => inputs.push(input)),
+          "tagged",
+        ),
+    });
+
+    const remove = ActionCli.command(app, Remove, { positional: ["paths"] });
+    const tag = ActionCli.command(app, Tag, { positional: ["path", "tags"] });
+
+    yield* exec(remove, ["a", "b", "1"]);
+    // None is `[]`, as for a repeated flag.
+    yield* exec(remove, ["--force"]);
+    yield* exec(tag, ["f", "a", "b"]);
+    // Optional, none leaves it out, and `[]` clears it.
+    yield* exec(tag, ["f"]);
+    yield* exec(tag, ["f", "[]"]);
+
+    expect(inputs).toEqual([
+      { force: false, paths: ["a", "b", "1"] },
+      { force: true, paths: [] },
+      { path: "f", tags: ["a", "b"] },
+      { path: "f" },
+      { path: "f", tags: [] },
+    ]);
+
+    // A choice is still one: another value shows help.
+    expect(failure(yield* Effect.exit(exec(tag, ["f", "c"])))).toBeInstanceOf(CliError.ShowHelp);
+
+    // It takes every value left, so no argument may follow it.
+    expect(() => ActionCli.command(app, Tag, { positional: ["tags", "path"] })).toThrow(
+      "Required positional argument after an optional one: path",
+    );
+    expect(() => ActionCli.command(app, Remove, { positional: ["paths", "force"] })).toThrow(
+      "Repeated positional argument before another one: paths",
+    );
+  }),
+);
+
+it.effect("gives a flag the alias its options name, and shows a positional's value", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+
+    const List = Action.make("list", {
+      description: "List records",
+      access: "read",
+      auth: "public",
+      input: { scale: Schema.Finite, limit: Schema.optional(Schema.Finite), all: Schema.Boolean },
+      success: Schema.String,
+    });
+
+    const app = Action.implement(List, (input) =>
+      Effect.as(
+        Effect.sync(() => inputs.push(input)),
+        "listed",
+      ),
+    );
+
+    const list = ActionCli.command(app, List, {
+      positional: ["scale"],
+      aliases: { limit: "n", all: "a" },
+    });
+
+    yield* exec(list, ["-n", "5", "-a", "2"]);
+    yield* exec(list, ["--limit", "6", "3"]);
+    expect(inputs).toEqual([
+      { scale: 2, limit: 5, all: true },
+      { scale: 3, limit: 6, all: false },
+    ]);
+
+    // JSON or text is shown as a value, an argument's as a flag's.
+    const help = (yield* lines(list, ["--help"])).join("\n");
+    expect(help).toMatch(/^\s+scale value\s*$/m);
+    expect(help).toMatch(/^\s+--limit, -n value\s*$/m);
+    expect(help).toMatch(/^\s+--all, -a\s*$/m);
+
+    // A positional field has no flag to alias.
+    expect(() =>
+      ActionCli.command(app, List, { positional: ["scale"], aliases: { scale: "s" } }),
+    ).toThrow("Not a flag's input field: scale");
+    // Native flags share one namespace of names, checked here rather than on every parse.
+    expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "n" } })).toThrow(
+      "Duplicate flag: --n, claimed by alias of field limit and alias of field all",
+    );
+    expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "-n" } })).toThrow(
+      "Duplicate flag: --n, claimed by alias of field limit and alias of field all",
+    );
+    expect(() => ActionCli.command(app, List, { aliases: { limit: "all" } })).toThrow(
+      "Duplicate flag: --all, claimed by field all and alias of field limit",
+    );
+    expect(() =>
+      ActionCli.command(app, List, { aliases: { limit: "json" }, render: (text) => text }),
+    ).toThrow("Duplicate flag: --json, claimed by render's --json and alias of field limit");
+  }),
+);
 
 it.effect("gives a subcommand of an aggregate the options command takes, by action name", () =>
   Effect.gen(function* () {

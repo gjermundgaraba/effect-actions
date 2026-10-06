@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, type Schema, type Scope } from "effect";
+import { Context, type Effect, type Schema, type Scope } from "effect";
 import type * as Action from "../Action.js";
 
 type Codec = Schema.Codec<unknown, unknown, never, never>;
@@ -42,17 +42,6 @@ export const Check =
  * `Scope`, closed when the call ends, so a caller owes no `Scope` for it.
  */
 type Within<O> = RequiredBy<O> | Scope.Scope;
-
-/**
- * Implement a check: its callback, or an effect building it once per layer graph. Its
- * declared request services remain per call.
- */
-export function check<I, E, R, EX = never, RX = never>(
-  tag: Context.Key<I, CheckCallback<E, R>>,
-  build: NoInfer<CheckCallback<E, R>> | Effect.Effect<NoInfer<CheckCallback<E, R>>, EX, RX>,
-): Layer.Layer<I, EX, Exclude<RX, Scope.Scope>> {
-  return Effect.isEffect(build) ? Layer.effect(tag, build) : Layer.succeed(tag, build);
-}
 
 export type CheckServices<A extends Action.Any> = ServiceOf<A["checks"][number]>;
 

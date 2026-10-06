@@ -181,6 +181,48 @@ describe("Action.client", () => {
     }),
   );
 
+  it.effect("leaves the input out where `{}` is a valid encoded input, and only there", () =>
+    Effect.gen(function* () {
+      // Every field defaulted when decoded: `{}` decodes, to the defaults.
+      const Page = Action.make("page", {
+        description: "Page",
+        access: "read",
+        auth: "public",
+        input: { limit: Schema.Number.pipe(Schema.withDecodingDefaultKey(Effect.succeed(20))) },
+        success: Schema.Number,
+      });
+
+      // Decoded, it takes nothing; encoded, it requires a token, so `{}` does not decode.
+      const Signed = Action.make("signed", {
+        description: "Signed",
+        access: "read",
+        auth: "public",
+        input: Schema.Struct({ token: Schema.String }).pipe(
+          Schema.decodeTo(
+            Schema.Struct({}),
+            SchemaTransformation.transform({ decode: () => ({}), encode: () => ({ token: "t" }) }),
+          ),
+        ),
+        success: Schema.String,
+      });
+
+      const client = yield* Action.client(
+        Action.implement([Page, Signed], {
+          page: ({ limit }) => Effect.succeed(limit),
+          signed: () => Effect.succeed("signed"),
+        }),
+      );
+
+      expect(yield* client.page()).toBe(20);
+      expect(yield* client.signed({})).toBe("signed");
+
+      // @ts-expect-error Its encoded form requires a field: the argument is required.
+      const omitted = yield* Effect.flip(client.signed());
+
+      expect(omitted).toBeInstanceOf(Action.InvalidInput);
+    }),
+  );
+
   it.effect("gives each call a scope of its own, and releases the builders with the client's", () =>
     Effect.gen(function* () {
       const log: Array<string> = [];

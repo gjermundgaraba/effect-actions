@@ -159,6 +159,39 @@ const guarded = ActionHttp.layer(ProtectedOnly, app, { middleware: [NeedsActor] 
 
 expectTypeOf<Owed<typeof guarded>>().toEqualTypeOf<never>();
 
+// So is it on a layer whose `actions` lists only protected ones, of a mixed implementation.
+const selected = ActionHttp.layer(Http, app, { actions: [Who], middleware: [NeedsActor] });
+
+expectTypeOf<Owed<typeof selected>>().toEqualTypeOf<never>();
+
+// `actions` that may be absent selects every action, so it narrows nothing.
+const maybeSelected: ActionHttp.LayerOptions<readonly [typeof NeedsActor], typeof Who> = {
+  middleware: [NeedsActor],
+};
+
+const unselected = ActionHttp.layer(Http, app, maybeSelected);
+
+expectTypeOf<Owed<typeof unselected>>().toEqualTypeOf<Actor>();
+
+const Elsewhere = Action.make("elsewhere", {
+  description: "Bound by no binding here",
+  access: "read",
+  auth: "public",
+  success: Schema.String,
+});
+
+ActionHttp.layer(Http, [app, Action.implement(Elsewhere, () => Effect.succeed("x"))], {
+  // @ts-expect-error Listed actions are the binding's.
+  actions: [Elsewhere],
+});
+
+// A slot that may hold one of several middleware provides nothing, as only one runs.
+const oneOf = ActionHttp.layer(Http, app, {
+  middleware: [NeedsRegion, regional ? GivesRegion : LogCaller],
+});
+
+expectTypeOf<Owed<typeof oneOf>>().toEqualTypeOf<Region>();
+
 // A middleware failing with an error the binding does not declare reaches no client.
 // @ts-expect-error Layer middleware fails only with the binding's errors.
 ActionHttp.layer(Http, app, { middleware: [Fails] });

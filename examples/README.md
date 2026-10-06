@@ -178,7 +178,7 @@ the JSON HTTP sends, such as `{"_tag":"UserNotFound","id":"9"}` for `get-user --
 [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
 stdout for JSON-RPC: `runStdio` writes its program's Effect logs and `Console` output to
-stderr, and `Logger.LogToStderr` moves the default logger there for the layers provided
+stderr, and `ActionCli.onStderr` moves the default logger there for the layers provided
 around it. Keep the global `console.log` and other direct writes off stdout.
 
 [toolkit.ts](toolkit.ts) prints a native Toolkit result.

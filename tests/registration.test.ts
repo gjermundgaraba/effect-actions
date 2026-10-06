@@ -201,6 +201,19 @@ describe("projection boundaries", () => {
   it.effect.each([
     ["listed", [Missing, Conflict]],
     ["in a union", [Schema.Union([Missing, Conflict])]],
+    // As a recursive error is written: native `HttpApi` reads no status through a suspension.
+    ["suspended", [Schema.suspend(() => Missing), Schema.suspend(() => Conflict)]],
+    ["in a suspended union", [Schema.suspend(() => Schema.Union([Missing, Conflict]))]],
+    // A suspension's own status wins over what it suspends, as `HttpApi` reads it.
+    [
+      "on the suspension",
+      [
+        Schema.suspend(() => Schema.TaggedStruct("Missing", {})).annotate({ httpApiStatus: 404 }),
+        Schema.suspend(() => Conflict.annotate({ httpApiStatus: 410 })).annotate({
+          httpApiStatus: 409,
+        }),
+      ],
+    ],
   ] as const)("keeps each declared error's own HTTP status, %s", ([, errors]) =>
     Effect.gen(function* () {
       const Fail = Action.make("fail", {
@@ -339,6 +352,37 @@ describe("projection boundaries", () => {
         ]),
       ),
     ).toEqual(hints);
+  });
+
+  it("carries a title and `_meta` to its MCP and native tools, only where given", async () => {
+    const meta = { "ui/resourceUri": "ui://lookup" };
+
+    const Lookup = Action.make("lookup", {
+      description: "Look up",
+      access: "read",
+      auth: "public",
+      hints: { title: "Look up a record", meta },
+    });
+
+    const Plain = Action.make("plain", { description: "Plain", access: "read", auth: "public" });
+
+    const app = Action.implement([Lookup, Plain], {
+      lookup: () => Effect.void,
+      plain: () => Effect.void,
+    });
+
+    const listed = await listTools(makeTestMcp(app).handler);
+    const lookup = listed.find(({ name }) => name === "lookup");
+    const plain = listed.find(({ name }) => name === "plain");
+
+    expect(lookup?.annotations?.title).toBe("Look up a record");
+    expect(lookup?._meta).toEqual(meta);
+    expect(plain?.annotations).not.toHaveProperty("title");
+    expect(plain?._meta).toBeUndefined();
+
+    const { tools } = ActionToolkit.make(app).toolkit;
+    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Title)).toBe("Look up a record");
+    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Meta)).toEqual(meta);
   });
 
   it("declares each built-in error once on every tool and endpoint", () => {

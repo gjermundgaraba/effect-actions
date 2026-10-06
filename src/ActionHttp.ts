@@ -30,7 +30,13 @@ import {
   type RemoteRequest,
   type Required as RequiredAuthentication,
 } from "./internal/authentication.js";
-import { assertDistinct, assertOnce, assertOwnTags, projectedErrors } from "./internal/actions.js";
+import {
+  assertDistinct,
+  assertOnce,
+  assertOwnTags,
+  projectedErrors,
+  unsuspended,
+} from "./internal/actions.js";
 import {
   type AnyHttp,
   type Client,
@@ -53,6 +59,9 @@ import {
   type Served,
   type Serving,
   select,
+  type Selected,
+  type Holding,
+  assertHeld,
   toList,
 } from "./internal/implementation.js";
 
@@ -89,12 +98,17 @@ type IdOf<K> = K extends Context.Key<infer I extends HttpApiMiddleware.AnyId, un
  * What the request owes past the middleware `M`, the first innermost, around what `R` owes:
  * each removes what it provides and adds what it requires, as native endpoints apply them.
  * An array of unknown length, which may hold none of them, provides nothing and owes what
- * any of them requires.
+ * any of them requires; so does a slot that may hold one of several, as only one runs.
  */
 type Through<M extends Middleware, R> = number extends M["length"]
   ? R | HttpApiMiddleware.Requires<IdOf<M[number]>>
   : M extends readonly [infer K, ...infer Rest extends Middleware]
-    ? Through<Rest, HttpApiMiddleware.ApplyServices<IdOf<K>, R>>
+    ? Through<
+        Rest,
+        true extends Types.IsUnion<IdOf<K>>
+          ? R | HttpApiMiddleware.Requires<IdOf<K>>
+          : HttpApiMiddleware.ApplyServices<IdOf<K>, R>
+      >
     : R;
 
 /**
@@ -143,18 +157,22 @@ type Certain<E extends Errors> =
       ? never
       : { readonly [K in keyof E]: Single<E[K]> }[number];
 
-/** The layer serving `Apps` through the binding `H`, behind the middleware `M`. */
-type HttpLayer<H extends AnyHttp, Apps extends Served, M extends Middleware> = Layer.Layer<
+/**
+ * The layer serving the actions `A` of `Apps` through the binding `H`, behind the middleware
+ * `M`: an implementation holding none of them is not built.
+ */
+type HttpLayer<
+  H extends AnyHttp,
+  Apps extends Served,
+  M extends Middleware,
+  A extends Action.Any = H["actions"][number],
+> = Layer.Layer<
   never,
-  BuildError<Member<Apps>, H["actions"][number]>,
-  | BuildContext<Member<Apps>, H["actions"][number]>
+  BuildError<Holding<Member<Apps>, A>, A>,
+  | BuildContext<Holding<Member<Apps>, A>, A>
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, H["actions"][number], M>>
-  | ServedProvider<
-      Member<Apps>,
-      H["actions"][number],
-      H extends { readonly authentication: infer D } ? D : never
-    >
+  | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, M>>
+  | ServedProvider<Member<Apps>, A, H extends { readonly authentication: infer D } ? D : never>
   | IdOf<M[number]>
   | Etag.Generator
   | FileSystem.FileSystem
@@ -163,7 +181,13 @@ type HttpLayer<H extends AnyHttp, Apps extends Served, M extends Middleware> = L
 >;
 
 /** `ActionHttp.layer`'s options. */
-export interface LayerOptions<M extends Middleware = []> {
+export interface LayerOptions<M extends Middleware = [], A extends Action.Any = never> {
+  /**
+   * The actions it serves, among the binding's actions the implementations hold: `[GetUser]`.
+   * Defaults to every one of them. A layer whose middleware requires the identity lists
+   * protected actions only.
+   */
+  readonly actions?: ReadonlyArray<A> | undefined;
   /**
    * Native endpoint middleware every served route runs, the first innermost: inside the
    * authentication of a protected route, outside its decoding. A middleware requiring the
@@ -287,35 +311,37 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
 };
 
 /**
- * The actions of `apps` the binding holds, matched by identity, each once: an
- * implementation's other actions are not this binding's to serve, nor their names to check.
- * An implementation holding none is refused, as the wrong implementation or the wrong
+ * `apps` narrowed to the actions the layer serves, matched by identity: those `listed`, which
+ * the binding must hold, or every one of the binding's they hold, each once. An
+ * implementation holding none of them is left out, and not built. Implementations holding
+ * none of the binding's actions are refused, as the wrong implementations or the wrong
  * binding; a name the binding holds is marked as another contract's, as a second copy of the
  * contracts module makes one.
  */
 const servedBy = (
   http: AnyHttp,
   apps: ReadonlyArray<AnyImplementation>,
-): ReadonlyArray<Action.Any> => {
-  const bound = new Set(http.actions.map(({ name }) => name));
+  listed: ReadonlyArray<Action.Any> | undefined,
+): ReadonlyArray<AnyImplementation> => {
+  if (listed !== undefined) assertHeld("the binding does not hold it", listed, http.actions);
 
-  const served = apps.flatMap((app) => {
-    const own = app.actions.filter((action) => http.actions.includes(action));
+  const held = apps.flatMap((app) => app.actions);
+  const served = select(apps, listed ?? http.actions.filter((action) => held.includes(action)));
+  const actions = served.flatMap((app) => app.actions);
 
-    if (own.length === 0) {
-      const held = app.actions.map(({ name }) =>
-        bound.has(name) ? `${name} (another contract)` : name,
-      );
+  if (actions.length === 0 && listed === undefined && apps.length > 0) {
+    const bound = new Set(http.actions.map(({ name }) => name));
 
-      throw new Error(
-        `No action of this implementation is in this HTTP binding: ${held.join(", ") || "none"}`,
-      );
-    }
+    throw new Error(
+      `No action of these implementations is in this HTTP binding: ${
+        held
+          .map(({ name }) => (bound.has(name) ? `${name} (another contract)` : name))
+          .join(", ") || "none"
+      }`,
+    );
+  }
 
-    return own;
-  });
-
-  assertOnce("served action", served);
+  assertOnce("served action", actions);
 
   return served;
 };
@@ -323,22 +349,35 @@ const servedBy = (
 /** The status an error schema states, as `HttpApi` reads it. */
 const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 
+/** The status a schema states, or the first one a suspension it wraps states. */
+const statusThrough = (ast: SchemaAST.AST): number | undefined =>
+  statusOf(ast) ?? (SchemaAST.isSuspend(ast) ? statusThrough(ast.thunk()) : undefined);
+
 type Declared = Action.Any["errors"][number];
 
 /**
- * The schemas an endpoint declares for one error, each with the status it is sent with.
- * `HttpApi` reads a status off each declared schema, never off a union's members, so a
- * plain union without a status of its own declares each member. An error without a status
- * is an outcome the action expects, not a server fault: it is sent as 422, rather than
- * `HttpApi`'s 500, which clients and proxies read as the server failing.
+ * The schemas an endpoint declares for one error, each with the status it is sent with. `HttpApi`
+ * reads a status off each declared schema, never off a union's members nor through a suspension, so
+ * a plain union without a status of its own declares each member, and a suspended error, as a
+ * recursive one is written, without a status of its own states the status of what it suspends. An
+ * error without a status is an outcome the action expects, not a server fault: it is sent as 422,
+ * rather than `HttpApi`'s 500, which clients and proxies read as the server failing.
  */
 const declared = (error: Declared): ReadonlyArray<Declared> => {
-  const { ast } = error;
+  const status = statusThrough(error.ast);
 
-  if (statusOf(ast) !== undefined) return [error];
+  if (status !== undefined) {
+    return [statusOf(error.ast) === undefined ? HttpApiSchema.status(status)(error) : error];
+  }
 
-  if (SchemaAST.isUnion(ast) && ast.checks === undefined && ast.encoding === undefined) {
-    return ast.types.flatMap((member) => declared(Schema.make<Declared>(member)));
+  const resolved = unsuspended(error.ast);
+
+  if (
+    SchemaAST.isUnion(resolved) &&
+    resolved.checks === undefined &&
+    resolved.encoding === undefined
+  ) {
+    return resolved.types.flatMap((member) => declared(Schema.make<Declared>(member)));
   }
 
   return [HttpApiSchema.status(422)(error)];
@@ -471,14 +510,15 @@ const jsonContentType = Layer.succeed(JsonContentType, (route) =>
 );
 
 /**
- * Serve the binding's actions among `implementations` in one layer, authenticating a protected
- * action's request before decoding it, then running its implementation's `authorize` and its
- * declared checks before each handler. The binding decides what is
- * served: an implementation's actions the binding leaves out have no route here, and one
- * holding none of the binding's is refused when `layer` is called. It mounts only the routes
- * of the actions it serves, so one binding may be served by several layers, each with its own
- * `middleware`, which covers its routes only. Each implementation's builder runs once per
- * layer graph however many layers serve it.
+ * Serve the binding's actions among `implementations` in one layer, or those its `actions` lists,
+ * authenticating a protected action's request before decoding it, then running its implementation's
+ * `authorize` and its declared checks before each handler. The binding decides what may be served:
+ * an implementation's actions the binding leaves out have no route here, and one holding none of
+ * those served is not built; implementations holding none of the binding's actions at all are
+ * refused when `layer` is called. It mounts only the routes of the actions it serves, so one
+ * binding may be served by several layers, each with its own `actions` and `middleware`, which
+ * covers its routes only. Each implementation's builder runs once per layer graph however many
+ * layers serve it.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
  * each implementation's authorization, the checks and the handlers of the actions it serves
@@ -491,27 +531,26 @@ export function layer<const H extends AnyHttp, const Apps extends Served>(
   http: H,
   implementations: Apps,
 ): HttpLayer<H, Apps, []>;
-// Options apart, so the middleware an options type names is never typed as installed where
-// the options are left out.
+// Options apart, so the middleware or actions an options type names are never typed as
+// installed or selected where the options are left out.
 export function layer<
   const H extends AnyHttp,
   const Apps extends Served,
-  const O extends LayerOptions<Middleware>,
+  const O extends LayerOptions<Middleware, H["actions"][number]>,
 >(
   http: H,
   implementations: Apps,
   options: O &
     ServerOnly<MiddlewareOf<O>, H["errors"]> &
     NoInfer<Known<O, LayerOptions<Middleware>>>,
-): HttpLayer<H, Apps, MiddlewareOf<O>>;
+): HttpLayer<H, Apps, MiddlewareOf<O>, Selected<O, H["actions"][number]>>;
 export function layer(
   http: AnyHttp,
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const provided = toList(served);
-  const actions = servedBy(http, provided);
-  const apps = select(provided, actions);
+  const apps = servedBy(http, toList(served), options.actions);
+  const actions = apps.flatMap((app) => app.actions);
   assertAuthentication(actions, http.authentication);
   // Native endpoints keep a middleware's first occurrence only, which the types cannot follow.
   assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
@@ -563,13 +602,10 @@ export function layer(
         Effect.map(Effect.service(key), (service) => Layer.succeed(key, service)),
       );
 
-      // Own properties, so an action named `__proto__` is a route, not a prototype. Only the
-      // served actions: a native group refuses a handler of an endpoint it lacks.
+      // Own properties, so an action named `__proto__` is a route, not a prototype.
       const byName = Object.fromEntries(
-        bound.flatMap(([action, run]) =>
-          actions.includes(action)
-            ? [[action.name, (request: Request) => run(request.payload)] as const]
-            : [],
+        bound.map(
+          ([action, run]) => [action.name, (request: Request) => run(request.payload)] as const,
         ),
       );
 

@@ -66,7 +66,7 @@ export const bearerToken: Effect.Effect<
 );
 
 /** An OAuth protected resource (RFC 9728), as `layer` publishes it. */
-export interface Options {
+export interface ProtectedResource {
   /** Exact OAuth resource identifier; its path and query select the discovery path. */
   readonly resource: string;
   /** Where clients get tokens: nonempty. */
@@ -86,7 +86,7 @@ export interface Options {
  * The RFC 9728 metadata URL of `options`: `/.well-known/oauth-protected-resource` followed
  * by the resource's path, where MCP clients look when a 401 names no metadata URL.
  */
-const metadataUrl = (options: Options): URL => {
+const metadataUrl = (options: ProtectedResource): URL => {
   const resource = new URL(options.resource);
   const url = new URL(resource);
   url.pathname = `/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}`;
@@ -100,15 +100,11 @@ interface Named {
   readonly metadataUrl: string | undefined;
 }
 
-/** What challenges about `options` name, refusing a `scopesRequired` that is no scope token. */
-const namedOf = (options: Options | undefined): Named => {
-  assertScopes(options);
-
-  return {
-    scope: options?.scopesRequired?.join(" "),
-    metadataUrl: options === undefined ? undefined : metadataUrl(options).href,
-  };
-};
+/** What challenges about `options` name. */
+const namedOf = (options: ProtectedResource | undefined): Named => ({
+  scope: options?.scopesRequired?.join(" "),
+  metadataUrl: options === undefined ? undefined : metadataUrl(options).href,
+});
 
 /** Whether a request whose `Authorization` header is `authorization` presented a bearer token. */
 const tokenPresented = (authorization: string | undefined): boolean =>
@@ -127,11 +123,31 @@ const challengeOf = (named: Named, presented: boolean): string =>
     ["resource_metadata", named.metadataUrl],
   ]);
 
-/** Refuse a `scopesRequired` that is no list of OAuth scope tokens, as `Forbidden` does. */
-const assertScopes = (options: Options | undefined): void => {
-  const invalid = options?.scopesRequired?.find((scope) => !scopeToken.test(scope));
+/**
+ * Refuse a protected resource that cannot be published, as `layer` and `refusal` both do: one
+ * under a scheme other than Bearer (`oauth` false), a `scopesRequired` that is no list of
+ * OAuth scope tokens, as `Forbidden` refuses, and a resource with a fragment, which no
+ * request URL carries, so its discovery would never answer (RFC 9728). A resource an Effect
+ * builds is checked for its scheme alone, and for the rest once built.
+ */
+const assertResource = (
+  oauth: boolean,
+  options: ProtectedResource | Effect.Effect<unknown, unknown, unknown> | undefined,
+): void => {
+  if (options === undefined) return;
+
+  if (!oauth) throw new Error("A protected resource is published only for a Bearer scheme");
+
+  if (Effect.isEffect(options)) return;
+
+  const invalid = options.scopesRequired?.find((scope) => !scopeToken.test(scope));
 
   if (invalid !== undefined) throw new Error(`Invalid scope in scopesRequired: "${invalid}"`);
+
+  // `hash` is empty for a bare `#`, which the URL still keeps.
+  if (new URL(options.resource).href.includes("#")) {
+    throw new Error(`A protected resource has no fragment: ${options.resource}`);
+  }
 };
 
 /**
@@ -159,7 +175,7 @@ export interface RefusalOptions {
    */
   readonly authentication?: Any | undefined;
   /** The OAuth protected resource refusing: the one given to `layer`. */
-  readonly protectedResource?: Options | undefined;
+  readonly protectedResource?: ProtectedResource | undefined;
   /** The request's `Authorization` header, which decides whether a 401 names `invalid_token`. */
   readonly authorization?: string | undefined;
 }
@@ -179,8 +195,10 @@ export const refusal = (
   options?: RefusalOptions,
 ): HttpServerResponse.HttpServerResponse => {
   const authentication = options?.authentication;
+  const oauth = authentication === undefined || isBearer(authentication.security);
+  assertResource(oauth, options?.protectedResource);
 
-  if (authentication !== undefined && !isBearer(authentication.security)) {
+  if (authentication !== undefined && !oauth) {
     return settle(plain(error), schemeChallenge(authentication.security, authentication.name));
   }
 
@@ -200,7 +218,7 @@ export const refusal = (
  * Where the host's CORS middleware runs before it, that policy answers the preflight and
  * adds its headers to reads, which keep the `*` where it sets no origin.
  */
-const discovery = (options: Options) => {
+const discovery = (options: ProtectedResource) => {
   const discoveryUrl = metadataUrl(options);
   const target = discoveryUrl.href.slice(discoveryUrl.origin.length);
 
@@ -255,7 +273,7 @@ const discovery = (options: Options) => {
  * URL, each 401's challenge, to a request that presented a bearer token and to one that did
  * not, and its discovery, none without a resource.
  */
-const answersOf = (options: Options | undefined) => {
+const answersOf = (options: ProtectedResource | undefined) => {
   const named = namedOf(options);
 
   return {
@@ -286,7 +304,7 @@ const schemeChallenge = (security: Security, name: string): string | undefined =
   );
 
 /** What `make` takes besides the name and the identity. */
-export interface MakeOptions {
+export interface Options {
   /** The one native scheme a caller proves the identity by: Bearer when left out. */
   readonly security?: Security;
 }
@@ -305,10 +323,10 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
  * provider identity, like a native Context.Key name, and the scheme's OpenAPI key, so it
  * holds only letters, digits, `_`, `.` and `-`; reuse one name only for one declaration.
  */
-export const make = <const Name extends string, I, A, const O extends MakeOptions = {}>(
+export const make = <const Name extends string, I, A, const O extends Options = {}>(
   name: Name,
   service: Context.Key<I, A>,
-  ...options: OptionalUnless<O, O & NoInfer<Known<O, MakeOptions>>>
+  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>>>
 ): Descriptor<I, A, SecurityOf<O>, Name> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
 
@@ -353,7 +371,9 @@ export type Verify<A, S extends Security, R> = (
 ) => Effect.Effect<A, Refusal | HttpServerResponse.HttpServerResponse, R>;
 
 export interface LayerOptions<EP = never, RP = never> {
-  readonly protectedResource?: Options | Effect.Effect<Options | undefined, EP, RP>;
+  readonly protectedResource?:
+    | ProtectedResource
+    | Effect.Effect<ProtectedResource | undefined, EP, RP>;
 }
 
 /**
@@ -410,13 +430,14 @@ export function layer(
   // Bearer is the scheme OAuth clients challenge, discover and step up under.
   const oauth = isBearer(security);
   const protectedResource = options.protectedResource;
-
-  if (!oauth && protectedResource !== undefined) {
-    throw new Error("A protected resource is published only for a Bearer scheme");
-  }
+  assertResource(oauth, protectedResource);
 
   const resource = Effect.isEffect(protectedResource)
-    ? Effect.map(protectedResource, answersOf)
+    ? Effect.map(protectedResource, (built) => {
+        assertResource(oauth, built);
+
+        return answersOf(built);
+      })
     : Effect.succeed(answersOf(protectedResource));
 
   const missing = new Unauthenticated({

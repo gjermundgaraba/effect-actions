@@ -52,7 +52,7 @@ export class Limiter extends Context.Service<
 
 // Built once per layer graph, so every surface serving `Invite` counts against one limiter;
 // per call it reads only the service `Limited` requires.
-export const LimitedLive = Action.check(
+export const LimitedLive = Layer.effect(
   Limited,
   Effect.map(
     Limiter,

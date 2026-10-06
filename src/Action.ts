@@ -49,7 +49,7 @@ import {
 
 import type { AnyCheck } from "./internal/checks.js";
 
-export { Check, check, type AnyCheck } from "./internal/checks.js";
+export { Check, type AnyCheck } from "./internal/checks.js";
 
 /** An action bound to its handler; opaque, see `implement`. */
 export type { Implementation } from "./internal/implementation.js";
@@ -111,6 +111,13 @@ export interface Hints {
    * body the model reads as it is, such as a page of Markdown. Defaults to none.
    */
   readonly text?: string | undefined;
+  /** The tool's display name, `annotations.title`, beside its name. Defaults to none. */
+  readonly title?: string | undefined;
+  /**
+   * The tool's `_meta` on MCP, JSON such as an MCP App's UI resource, sent as given.
+   * Defaults to none.
+   */
+  readonly meta?: { readonly [key: string]: Schema.Json } | undefined;
 }
 
 /** The keys `E` declares, leaving out an index signature's. */
@@ -361,9 +368,12 @@ export function make(name: string, options: Options): Any {
     idempotent: options.hints?.idempotent ?? false,
     openWorld: options.hints?.openWorld ?? true,
     text: options.hints?.text,
+    title: options.hints?.title,
+    meta: options.hints?.meta,
   };
 
-  const checks = options.checks ?? [];
+  // Each once, as its error is: a spread shared list may repeat one, which would run twice.
+  const checks = [...new Set(options.checks ?? [])];
 
   const action: Any = {
     auth,

@@ -73,10 +73,6 @@ export const declarationTypes = () => {
   Action.make("unclassified", { description: "x", access: "read" });
   Action.make("classified", { description: "x", access: "read", auth: "public" });
 
-  // @ts-expect-error A protected implementation states its authorization.
-  Action.implement(Double, handlers.double);
-  Action.implement(Double, handlers.double, { authorize: Action.allowAll });
-
   // @ts-expect-error A protected binding names how its identity is verified.
   ActionHttp.make([Double]);
   ActionHttp.make([Double], { authentication: Login });
@@ -120,7 +116,7 @@ export const declarationTypes = () => {
   });
 
   // A scheme that may be left out may be Bearer, as at run time: the verifier takes either.
-  const maybeBasic: Authentication.MakeOptions & {
+  const maybeBasic: Authentication.Options & {
     readonly security?: typeof HttpApiSecurity.basic;
   } = {};
 
@@ -202,16 +198,18 @@ export const providerTypes = () => {
 };
 
 export const selectionTypes = () => {
-  // An explicit options type narrows only as far as the options given satisfy it.
-  ActionMcp.layerHttp<typeof app, never, never, { readonly actions: readonly [typeof Status] }>(
+  // An explicit options type, the second type argument as documented, narrows only as far as
+  // the options given satisfy it.
+  ActionMcp.layerHttp<typeof app, { readonly actions: readonly [typeof Status] }>(
     app,
     // @ts-expect-error The selection the type argument states is absent.
     { name: "lie", version: "0" },
   );
-  ActionMcp.layerHttp<typeof app, never, never, { readonly actions: readonly [typeof Status] }>(
-    app,
-    { name: "selected", version: "0", actions: [Status] },
-  );
+  ActionMcp.layerHttp<typeof app, { readonly actions: readonly [typeof Status] }>(app, {
+    name: "selected",
+    version: "0",
+    actions: [Status],
+  });
 
   // In process, the caller is owed by every call, even one nothing reads it in.
   const local = Effect.flatMap(Action.client(app, { actions: [Double] }), (client) =>
@@ -285,23 +283,23 @@ export const checkTypes = () => {
   const limited = Effect.succeed(() => Effect.fail(new RateLimited({ retryAfter: 1 })));
 
   // @ts-expect-error `Limited` declares `RateLimited` alone.
-  Action.check(Limited, unexpected);
-  Action.check(Limited, limited);
+  Layer.effect(Limited, unexpected);
+  Layer.effect(Limited, limited);
 
   const stranger = Effect.succeed(() => Effect.asVoid(Stranger));
   const actor = Effect.succeed(() => Effect.asVoid(CurrentActor));
 
   // @ts-expect-error `Limited` reads `CurrentActor` per call, not `Stranger`.
-  Action.check(Limited, stranger);
-  Action.check(Limited, actor);
+  Layer.effect(Limited, stranger);
+  Layer.effect(Limited, actor);
 
   // A callback that builds nothing, given as it is, is checked the same way.
   // @ts-expect-error `Limited` reads `CurrentActor` per call, not `Stranger`.
-  Action.check(Limited, () => Effect.asVoid(Stranger));
-  Action.check(Limited, () => Effect.asVoid(CurrentActor));
+  Layer.succeed(Limited, () => Effect.asVoid(Stranger));
+  Layer.succeed(Limited, () => Effect.asVoid(CurrentActor));
 
   // The callback receives any action, never its input.
-  Action.check(
+  Layer.effect(
     Limited,
     Effect.succeed((action) => {
       expectTypeOf(action).toEqualTypeOf<Action.Any>();

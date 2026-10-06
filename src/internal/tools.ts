@@ -26,13 +26,21 @@ export interface Projection {
   readonly handler?: (run: ErasedHandler<unknown>, action: Action.Any) => ErasedHandler<unknown>;
 }
 
-/** A tool's hints: read-only exactly when its action reads, and the contract's others. */
-const annotate = (tool: Tool.Any, { access, hints }: Action.Any) =>
-  tool
+/**
+ * A tool's hints: read-only exactly when its action reads, and the contract's others, its
+ * title and `_meta` only where given.
+ */
+const annotate = (tool: Tool.Any, { access, hints }: Action.Any) => {
+  const hinted = tool
     .annotate(Tool.Readonly, access === "read")
     .annotate(Tool.Destructive, hints.destructive)
     .annotate(Tool.Idempotent, hints.idempotent)
     .annotate(Tool.OpenWorld, hints.openWorld);
+
+  const titled = hints.title === undefined ? hinted : hinted.annotate(Tool.Title, hints.title);
+
+  return hints.meta === undefined ? titled : titled.annotate(Tool.Meta, { ...hints.meta });
+};
 
 /**
  * The native tool of `action`. A model and an MCP client speak JSON, so it takes and gives

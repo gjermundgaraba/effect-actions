@@ -66,6 +66,40 @@ it("runs a layer's middleware inside the authentication and outside decoding, ne
   expect(seen).toEqual(["acme:alice", "acme:alice", "anonymous"]);
 });
 
+/** Reads the identity, which only a protected route has. */
+class NamesCaller extends HttpApiMiddleware.Service<NamesCaller, { requires: Actor }>()(
+  "layer-middleware/NamesCaller",
+) {}
+
+it("serves a mixed implementation's protected actions behind middleware reading the identity, its public ones apart", async () => {
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(Http, app, { actions: [Who], middleware: [NamesCaller] }),
+      ActionHttp.layer(Http, app, { actions: [Public] }),
+    ).pipe(
+      Layer.provide([
+        authenticate,
+        Layer.succeed(NamesCaller, (route) =>
+          Effect.flatMap(Actor, (actor) =>
+            Effect.map(route, HttpServerResponse.setHeader("x-caller", actor)),
+          ),
+        ),
+      ]),
+      Layer.provide(resolveTenant.layer),
+    ),
+  );
+
+  const who = await web.handler(withBearer(post("/api/who"), "alice"));
+  expect([who.status, who.headers.get("x-caller")]).toEqual([200, "default:alice"]);
+
+  const open = await web.handler(post("/api/public"));
+  expect([open.status, open.headers.get("x-caller"), await open.json()]).toEqual([
+    200,
+    null,
+    "public",
+  ]);
+});
+
 class Region extends Context.Service<Region, string>()("layer-middleware/Region") {}
 
 /** Reads a request service. */

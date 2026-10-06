@@ -67,6 +67,20 @@ expectTypeOf(ActionMcp.runStdio(status, { ...options, features })).toEqualTypeOf
   Effect.Effect<void, Cause.IllegalArgumentError | Missing, Stdio.Stdio | Docs>
 >();
 
+// A feature registering through the registry, which the endpoint provides it, owes no host
+// the registry.
+const registered = Layer.effectDiscard(
+  McpServer.registerResource({ uri: "docs://notes", name: "Notes", content: Effect.service(Docs) }),
+);
+
+expectTypeOf(ActionMcp.layerHttp(status, { ...options, features: registered })).toEqualTypeOf<
+  Layer.Layer<never, Cause.IllegalArgumentError, HttpRouter.HttpRouter | Docs>
+>();
+
+expectTypeOf(ActionMcp.runStdio(status, { ...options, features: registered })).toEqualTypeOf<
+  Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio | Docs>
+>();
+
 // A `text` hint names a top-level string field of the action's encoded success, an optional
 // one too.
 const success = {
@@ -211,9 +225,9 @@ expectTypeOf<
     ReturnType<
       typeof ActionMcp.layerHttp<
         typeof erasedMixed,
-        never,
-        never,
         { readonly actions: readonly [typeof Open] },
+        never,
+        never,
         undefined
       >
     >

@@ -1,6 +1,5 @@
 import { Result, Schema } from "effect";
 import { type Headers, HttpClient, HttpClientRequest } from "effect/http";
-import type { Params } from "../src/internal/mcp.js";
 import * as Testing from "../src/Testing.js";
 
 /** Send a web request with the `HttpClient` in context, such as `Testing.layer(routes)`'s. */
@@ -16,7 +15,7 @@ export const post = (path: string, body: Schema.Json = {}): Request =>
 /** What `mcpRequest` sends: a method, its parameters, extra headers, and the endpoint path. */
 interface McpRequestOptions {
   readonly method: string;
-  readonly params?: Params;
+  readonly params?: Testing.McpParams;
   readonly headers?: Headers.Input;
   readonly path?: string;
 }

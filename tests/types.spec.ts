@@ -739,7 +739,7 @@ export const checkTypes = () => {
 
   // A check's callback is built once, its limiter a startup service; per call, it reads what
   // the check declares.
-  const LimitedLive = Action.check(
+  const LimitedLive = Layer.effect(
     Limited,
     Effect.gen(function* () {
       const limiter = yield* Limiter;
@@ -1549,7 +1549,7 @@ export const authenticationLayerTypes = () => {
 
   class Resources extends Context.Service<
     Resources,
-    { readonly load: Effect.Effect<Authentication.Options | undefined, Unconfigured> }
+    { readonly load: Effect.Effect<Authentication.ProtectedResource | undefined, Unconfigured> }
   >()("types/Resources") {}
 
   // A resource built at startup is the layer's: what its Effect yields and fails with, beside
@@ -1723,13 +1723,30 @@ export const servedRequirementTypes = () => {
     hint: { idempotent: true },
   });
 
-  // Every hint is resolved on the contract; `text` has no default.
+  // Every hint is resolved on the contract; `text`, `title` and `meta` have no default.
   expectTypeOf<(typeof hintsApp)["actions"][number]["hints"]>().toEqualTypeOf<{
     readonly destructive: boolean;
     readonly idempotent: boolean;
     readonly openWorld: boolean;
     readonly text: string | undefined;
+    readonly title: string | undefined;
+    readonly meta: { readonly [key: string]: Schema.Json } | undefined;
   }>();
+
+  Action.make("titled", {
+    description: "Titled",
+    access: "read",
+    auth: "public",
+    hints: { title: "Titled", meta: { "ui/resourceUri": "ui://titled" } },
+  });
+
+  Action.make("titled", {
+    description: "Titled",
+    access: "read",
+    auth: "public",
+    // @ts-expect-error A title is text.
+    hints: { title: 1 },
+  });
 };
 
 export const mcpClientTypes = Effect.gen(function* () {
@@ -1880,7 +1897,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     Testing.McpParams | undefined
   >();
 
-  const auth: Authentication.Options = {
+  const auth: Authentication.ProtectedResource = {
     resource: "https://api.example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
   };

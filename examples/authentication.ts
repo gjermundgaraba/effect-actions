@@ -29,7 +29,7 @@ export const protectedResource = {
   authorizationServers: ["https://auth.example.com"],
   scopesSupported: ["users:read", "users:write"],
   scopesRequired: ["users:read"],
-} satisfies Authentication.Options;
+} satisfies Authentication.ProtectedResource;
 
 // Server-only: `Login`'s verifier, provided to every layer serving protected actions. An
 // Effect building it instead yields startup services, such as a token verifier, as a handler

@@ -102,7 +102,7 @@ with the API, a canonical snippet, the rules, and the failure modes.
 - [docs/README.md](docs/README.md): start here, includes which module to use for which caller.
 - [docs/guarantees.md](docs/guarantees.md): cross-cutting rules for lifetimes, wire formats, and scope.
 - [docs/CONTEXT.md](docs/CONTEXT.md): the vocabulary the docs and the code use.
-- [examples/](examples/README.md): a runnable authenticated application with public and authenticated actions, two MCP endpoints, OpenAPI, and every other surface.
+- [examples/](examples/README.md): a runnable authenticated application with public and authenticated actions, an MCP endpoint, OpenAPI, and every other surface.
 
 ## For agents
 

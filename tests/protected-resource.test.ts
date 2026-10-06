@@ -168,9 +168,10 @@ it("publishes discovery once per layer graph, whatever middleware runs around or
 describe("a resource built at startup", () => {
   class Tenant extends Context.Service<Tenant, string>()("protected-resource/BuiltTenant") {}
 
-  class Resources extends Context.Service<Resources, Authentication.Options | undefined>()(
-    "protected-resource/Resources",
-  ) {}
+  class Resources extends Context.Service<
+    Resources,
+    Authentication.ProtectedResource | undefined
+  >()("protected-resource/Resources") {}
 
   const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
     Effect.provideService(route, Tenant, "acme"),
@@ -199,7 +200,7 @@ describe("a resource built at startup", () => {
   /** Two routes under one layer of `authentication`, its resource `resource`. */
   const routes = (
     authentication: ReturnType<typeof built>["authentication"],
-    resource: Authentication.Options | undefined,
+    resource: Authentication.ProtectedResource | undefined,
   ) => {
     const authenticate = authentication.pipe(Layer.provide(Layer.succeed(Resources, resource)));
 

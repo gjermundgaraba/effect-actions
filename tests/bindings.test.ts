@@ -991,7 +991,7 @@ describe("HTTP bindings", () => {
     success: Schema.String,
   });
 
-  it("refuses an implementation holding none of its binding's actions, and serves each once", () => {
+  it("refuses implementations holding none of its binding's actions, and serves each once", () => {
     const bound = ActionHttp.make([Alpha]);
 
     const LookAlike = Action.make("alpha", {
@@ -1002,20 +1002,18 @@ describe("HTTP bindings", () => {
     });
 
     const alpha = Action.implement(Alpha, () => Effect.succeed("x"));
+    const lookAlike = Action.implement(LookAlike, () => Effect.succeed("x"));
+    const beta = Action.implement(Beta, () => Effect.succeed("x"));
 
     // Pairing is by identity: the same name and schemas do not make it this action.
-    expect(() =>
-      ActionHttp.layer(
-        bound,
-        Action.implement(LookAlike, () => Effect.succeed("x")),
-      ),
-    ).toThrow("No action of this implementation is in this HTTP binding: alpha (another contract)");
-    expect(() =>
-      ActionHttp.layer(
-        bound,
-        Action.implement(Beta, () => Effect.succeed("x")),
-      ),
-    ).toThrow("No action of this implementation is in this HTTP binding: beta");
+    expect(() => ActionHttp.layer(bound, lookAlike)).toThrow(
+      "No action of these implementations is in this HTTP binding: alpha (another contract)",
+    );
+    expect(() => ActionHttp.layer(bound, beta)).toThrow(
+      "No action of these implementations is in this HTTP binding: beta",
+    );
+    // Beside one serving the binding's, an implementation holding none of them is left out.
+    expect(() => ActionHttp.layer(bound, [alpha, beta])).not.toThrow();
     expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow("Duplicate served action: alpha");
     expect(() =>
       ActionHttp.layer(bound, [alpha, Action.implement(Alpha, () => Effect.succeed("y"))]),
@@ -1030,6 +1028,37 @@ describe("HTTP bindings", () => {
         Action.implement([Audit, Beta], { audit: text, beta: text }),
       ]),
     ).not.toThrow();
+  });
+
+  it("refuses a listed action its binding or the implementations lack", () => {
+    const bound = ActionHttp.make([Alpha, Audit]);
+
+    const LookAlike = Action.make("alpha", {
+      description: "Alpha",
+      access: "write",
+      auth: "public",
+      success: Schema.String,
+    });
+
+    const apps = [
+      Action.implement([Alpha, Beta], {
+        alpha: () => Effect.succeed("x"),
+        beta: () => Effect.succeed("x"),
+      }),
+      Action.implement(LookAlike, () => Effect.succeed("x")),
+    ];
+
+    expect(() =>
+      // @ts-expect-error The binding does not hold it.
+      ActionHttp.layer(bound, apps, { actions: [Beta] }),
+    ).toThrow("Listed in actions, but the binding does not hold it: beta");
+    // Typed alike, so only its identity tells it from the bound action.
+    expect(() => ActionHttp.layer(bound, apps, { actions: [LookAlike] })).toThrow(
+      "Listed in actions, but the binding does not hold it: alpha (another contract)",
+    );
+    expect(() => ActionHttp.layer(bound, apps, { actions: [Audit] })).toThrow(
+      "Listed in actions, but no implementation holds it: audit",
+    );
   });
 
   it("serves the actions its binding holds among an implementation's, and no others", async () => {
@@ -1096,6 +1125,73 @@ describe("HTTP bindings", () => {
 
     expect(answers).toEqual(["alpha", "audit", "beta", 404, 404]);
     expect(built).toBe(1);
+  });
+
+  it("serves one list of implementations through each area's binding, and a selection per layer", async () => {
+    const text = (answer: string) => () => Effect.succeed(answer);
+
+    const apps = [
+      Action.implement(Alpha, text("alpha")),
+      Action.implement([Beta, Audit], { beta: text("beta"), audit: text("audit") }),
+    ];
+
+    const Reads = ActionHttp.make([Alpha], { prefix: "/reads" });
+    const Writes = ActionHttp.make([Beta, Audit], { prefix: "/writes" });
+
+    // Each binding's layer takes the whole list; one implementation's actions split between
+    // two layers over one binding, as each mounts only the routes it selects.
+    const handler = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Reads, apps),
+        ActionHttp.layer(Writes, apps, { actions: [Beta] }),
+        ActionHttp.layer(Writes, apps, { actions: [Audit] }),
+      ),
+    ).handler;
+
+    const answers = await Promise.all(
+      ["/reads/alpha", "/writes/beta", "/writes/audit"].map(async (path) =>
+        (await handler(post(path))).json(),
+      ),
+    );
+
+    expect(answers).toEqual(["alpha", "beta", "audit"]);
+  });
+
+  it("leaves an implementation holding none of the actions served unbuilt, owing nothing for it", async () => {
+    class Store extends Context.Service<Store, string>()("bindings/Store") {}
+
+    let built = 0;
+
+    const alpha = Action.implement(Alpha, () => Effect.succeed("alpha"));
+
+    const writes = Action.implement(
+      [Beta, Audit],
+      Effect.gen(function* () {
+        built += 1;
+        const store = yield* Store;
+
+        return { beta: () => Effect.succeed(store), audit: () => Effect.succeed(store) };
+      }),
+    );
+
+    const unbound = ActionHttp.layer(ActionHttp.make([Alpha]), [alpha, writes]);
+
+    const unselected = ActionHttp.layer(ActionHttp.make([Alpha, Beta]), [alpha, writes], {
+      actions: [Alpha],
+    });
+
+    // Neither layer owes the builder's `Store`.
+    const owes: [Extract<Layer.Services<typeof unbound | typeof unselected>, Store>] extends [never]
+      ? true
+      : false = true;
+
+    expect(owes).toBe(true);
+
+    for (const layer of [unbound, unselected]) {
+      expect(await (await serve(layer).handler(post("/api/alpha"))).json()).toBe("alpha");
+    }
+
+    expect(built).toBe(0);
   });
 
   it("serves a route and another contract's tool of the same name side by side", async () => {

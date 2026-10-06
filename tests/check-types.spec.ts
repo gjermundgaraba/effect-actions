@@ -1,5 +1,5 @@
 // Compile-only pins: a check may read several request services and the call's own scope, and
-// a check is implemented by its callback or by an effect building it.
+// a check is implemented natively, by its callback or by an effect building it.
 import { Context, Effect, Layer, Schema, type Scope } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
@@ -18,7 +18,7 @@ class Limit extends Action.Check<Limit>()("checks/Limit", {
 }) {}
 
 // A callback, reading both declared services and acquiring within the call's scope.
-export const plain = Action.check(Limit, (action) =>
+export const plain = Layer.succeed(Limit, (action) =>
   Effect.gen(function* () {
     expectTypeOf(action).toEqualTypeOf<Action.Any>();
     yield* Actor;
@@ -32,7 +32,7 @@ export const plain = Action.check(Limit, (action) =>
 expectTypeOf(plain).toEqualTypeOf<Layer.Layer<Limit>>();
 
 // Built once: what builds it is the layer's.
-export const built = Action.check(
+export const built = Layer.effect(
   Limit,
   Effect.as(Boot, () => Effect.asVoid(Actor)),
 );
@@ -40,7 +40,7 @@ export const built = Action.check(
 expectTypeOf(built).toEqualTypeOf<Layer.Layer<Limit, never, Boot>>();
 
 // @ts-expect-error `Boot` is not a declared request service.
-export const bad = Action.check(Limit, () => Effect.asVoid(Boot));
+export const bad = Layer.succeed(Limit, () => Effect.asVoid(Boot));
 
 const X = Action.make("x", {
   description: "x",

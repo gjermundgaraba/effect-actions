@@ -42,6 +42,11 @@ export interface Options<A extends Action.Any> {
    * optional field is an optional argument, so it follows every required one.
    */
   readonly positional?: ReadonlyArray<Field<A>>;
+  /**
+   * A short name per input field's flag, such as `{ limit: "n" }` for `-n`, given as
+   * `Param.withAlias` takes it.
+   */
+  readonly aliases?: { readonly [K in Field<A>]?: string };
 }
 
 /**
@@ -147,8 +152,8 @@ type Kind = Param.ParamKind;
  * The native flag or argument parsing one field's encoded JSON value: a string or boolean
  * for those, a choice for string literals and string enums, and JSON or text for anything
  * else, numbers included. A template literal is a string; the action's schema checks its
- * pattern. A suspended type is read as the type it stands for. An argument is shown by its
- * name, a flag's JSON or text as `value`.
+ * pattern. A suspended type is read as the type it stands for. JSON or text, a flag's or an
+ * argument's, is shown as `value`, not as the string it is parsed from.
  */
 const valueParam = (kind: Kind, name: string, field: SchemaAST.AST): Param.Param<Kind, unknown> => {
   const encoded = unsuspended(field);
@@ -162,9 +167,10 @@ const valueParam = (kind: Kind, name: string, field: SchemaAST.AST): Param.Param
 
   if (SchemaAST.isBoolean(encoded)) return Param.Boolean(kind, name);
 
-  const text = Param.String(kind, name).pipe(Param.withSchema(jsonOrText(encoded)));
-
-  return kind === Param.flagKind ? Param.withMetavar(text, "value") : text;
+  return Param.String(kind, name).pipe(
+    Param.withSchema(jsonOrText(encoded)),
+    Param.withMetavar("value"),
+  );
 };
 
 /**
@@ -224,19 +230,19 @@ const empty = "[]";
  * A field's flag or argument, `None` when omitted, from its JSON encoding and its plain one.
  * A required field's is required, so the parser reports it missing; a required boolean flag
  * is a switch instead: omitted, it is `false`, as a switch reads. A boolean argument takes
- * `true` or `false`. A flag of an array of strings or numbers is repeated, one element per
- * occurrence but `[]`, which adds none, and a choice among the element's: none is `[]`, or
- * leaves an optional field out, which `[]` gives instead.
+ * `true` or `false`. A flag or argument of an array of strings or numbers is repeated, one
+ * element per occurrence but `[]`, which adds none, and a choice among the element's: none
+ * is `[]`, or leaves an optional field out, which `[]` gives instead.
  */
 const fieldParam = (
   kind: Kind,
   name: string,
   encoded: SchemaAST.AST,
   plain: SchemaAST.AST | undefined,
-): Param.Param<Kind, Option.Option<unknown>> => {
+): Pick<FieldParam, "param" | "repeats"> => {
   const optional = SchemaAST.isOptional(encoded);
   const value = optional && plain !== undefined && addsNull(plain) ? present(encoded) : encoded;
-  const repeats = kind === Param.flagKind ? repeated(value) : undefined;
+  const repeats = repeated(value);
 
   if (repeats !== undefined) {
     const literals = choices(unsuspended(repeats.element));
@@ -249,18 +255,25 @@ const fieldParam = (
     const listed = (values: ReadonlyArray<unknown>) =>
       Option.some(values.filter((value) => value !== empty));
 
-    return optional
-      ? Param.variadic(elements).pipe(
-          Param.map((values) => (values.length === 0 ? Option.none() : listed(values))),
-        )
-      : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(listed));
+    return {
+      param: optional
+        ? Param.variadic(elements).pipe(
+            Param.map((values) => (values.length === 0 ? Option.none() : listed(values))),
+          )
+        : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(listed)),
+      repeats: true,
+    };
   }
 
-  if (optional) return Param.optional(valueParam(kind, name, value));
+  if (optional) return { param: Param.optional(valueParam(kind, name, value)), repeats: false };
 
-  return kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded))
-    ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
-    : valueParam(kind, name, encoded).pipe(Param.map(Option.some));
+  return {
+    param:
+      kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded))
+        ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
+        : valueParam(kind, name, encoded).pipe(Param.map(Option.some)),
+    repeats: false,
+  };
 };
 
 /** One input field's flag or argument, parsed as its encoded value, `None` when omitted. */
@@ -269,6 +282,8 @@ interface FieldParam {
   readonly param: Param.Param<Kind, Option.Option<unknown>>;
   /** Whether the field may be left out, and so its argument too. */
   readonly optional: boolean;
+  /** Whether it is repeated, an argument taking every value left, so read last. */
+  readonly repeats: boolean;
 }
 
 /** What the field parameters parse to, by field. */
@@ -306,6 +321,7 @@ const fieldParams = (
   encoded: SchemaAST.Objects,
   input: SchemaAST.AST,
   positional: ReadonlyArray<string>,
+  aliases: Readonly<Record<string, string | undefined>>,
 ): ReadonlyArray<FieldParam> => {
   // Encoded without the JSON codec, a field still tells `undefined` from `null`, under its
   // encoded name. Declared, it keeps the description encoding drops from a transformed
@@ -318,7 +334,16 @@ const fieldParams = (
     const field = String(property.name);
     const declaredField = described.get(property.name);
     const kind = positional.includes(field) ? Param.argumentKind : Param.flagKind;
-    const param = fieldParam(kind, kebab(field), property.type, plain.get(property.name));
+
+    const { param, repeats } = fieldParam(
+      kind,
+      kebab(field),
+      property.type,
+      plain.get(property.name),
+    );
+
+    const alias = kind === Param.flagKind ? aliases[field] : undefined;
+    const aliased = alias === undefined ? param : Param.withAlias(param, alias);
     const documented = declaredField ?? property.type;
 
     // Described as a whole, as `optional(X).annotate(...)`, or as its value.
@@ -326,8 +351,9 @@ const fieldParams = (
 
     return {
       field,
-      param: description === undefined ? param : Param.withDescription(param, description),
+      param: description === undefined ? aliased : Param.withDescription(aliased, description),
       optional: SchemaAST.isOptional(property.type),
+      repeats,
     };
   });
 };
@@ -356,6 +382,13 @@ const positionalOrder = (
 
   if (misplaced !== undefined) {
     throw new Error(`Required positional argument after an optional one: ${misplaced.field}`);
+  }
+
+  // A repeated argument takes every value left, so none can follow it.
+  const greedy = ordered.slice(0, -1).find((param) => param.repeats);
+
+  if (greedy !== undefined) {
+    throw new Error(`Repeated positional argument before another one: ${greedy.field}`);
   }
 
   return ordered;
@@ -478,6 +511,7 @@ interface InputConfig<A extends Action.Any> {
 const inputConfig = <A extends Action.Any>(
   action: A,
   positional: ReadonlyArray<string>,
+  aliases: Readonly<Record<string, string | undefined>>,
 ): InputConfig<A> => {
   const codec = Schema.toCodecJson(action.input);
   // A suspended input, as a recursive schema is written, is the input it stands for.
@@ -491,7 +525,15 @@ const inputConfig = <A extends Action.Any>(
     SchemaAST.isObjects(encoded) &&
     encoded.indexSignatures.every((signature) => SchemaAST.isNever(signature.type))
   ) {
-    const params = fieldParams(encoded, unsuspended(action.input.ast), positional);
+    const params = fieldParams(encoded, unsuspended(action.input.ast), positional, aliases);
+
+    const flagged = new Set(
+      params.map(({ field }) => field).filter((field) => !positional.includes(field)),
+    );
+
+    const stray = Object.keys(aliases).find((field) => !flagged.has(field));
+
+    if (stray !== undefined) throw new Error(`Not a flag's input field: ${stray}`);
 
     return {
       flags: Object.fromEntries(
@@ -504,6 +546,10 @@ const inputConfig = <A extends Action.Any>(
 
   if (positional.length > 0) {
     throw new Error(`Positional arguments need named input fields: ${positional.join(", ")}`);
+  }
+
+  if (Object.keys(aliases).length > 0) {
+    throw new Error(`Aliases need named input fields: ${Object.keys(aliases).join(", ")}`);
   }
 
   return {
@@ -531,16 +577,29 @@ export const command = <A extends Action.Any, E, R>(
 ): Command.Command<string, never, {}, Failure<E | InvalidInput>, R> => {
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;
-  const { flags, positional, decode } = inputConfig(action, options?.positional ?? []);
+
+  const { flags, positional, decode } = inputConfig(
+    action,
+    options?.positional ?? [],
+    options?.aliases ?? {},
+  );
+
   const failure = failureOf<E | InvalidInput>(action, errors);
 
-  // Two fields of one kebab-case name, or a `json` field beside a renderer's `--json`.
-  // Global flags are not claimed: a field's flag shadows one on its command.
+  // Two fields of one kebab-case name, a `json` field beside a renderer's `--json`, or an alias
+  // another flag's name or alias takes, its leading dashes dropped as `Param.withAlias` drops them:
+  // native flags share one namespace of names, which a command checks only when it parses. Global
+  // flags are not claimed: a field's flag shadows one on its command.
   assertDistinct(
     "flag",
     [
       ...Object.keys(flags).map((field) => [`--${kebab(field)}`, `field ${field}`] as const),
       ...(render === undefined ? [] : [["--json", "render's --json"] as const]),
+      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
+        Predicate.isString(alias)
+          ? [[`--${alias.replace(/^-+/, "")}`, `alias of field ${field}`] as const]
+          : [],
+      ),
     ],
     ([flag]) => flag,
     ([, claimant]) => claimant,

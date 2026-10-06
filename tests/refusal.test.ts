@@ -30,7 +30,7 @@ const resource = {
   resource: "https://api.example.com/mcp?tenant=alice\\",
   authorizationServers: ["https://auth.example.com"],
   scopesRequired: ["docs:read"],
-} satisfies Authentication.Options;
+} satisfies Authentication.ProtectedResource;
 
 const metadata =
   "https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=alice\\\\";
@@ -51,7 +51,7 @@ const read = async (response: Response) => ({
 const routed = (
   error: Action.Refusal,
   authorization: string | undefined,
-  protectedResource: Authentication.Options | undefined,
+  protectedResource: Authentication.ProtectedResource | undefined,
 ) => {
   const request = new Request("https://api.example.com/api/private", post("/api/private"));
 
@@ -149,11 +149,51 @@ describe("refusal", () => {
   });
 
   it("refuses a scopesRequired that is no scope token, as Authentication.layer does", () => {
-    const invalid = { ...resource, scopesRequired: ["docs read"] } satisfies Authentication.Options;
+    const invalid = {
+      ...resource,
+      scopesRequired: ["docs read"],
+    } satisfies Authentication.ProtectedResource;
 
     expect(() =>
       Authentication.refusal(new Action.Unauthenticated(), { protectedResource: invalid }),
     ).toThrow('Invalid scope in scopesRequired: "docs read"');
+  });
+
+  it("refuses a resource with a fragment, which its discovery would never answer, as Authentication.layer does", () => {
+    const fragment = {
+      ...resource,
+      resource: `${resource.resource}#tools`,
+    } satisfies Authentication.ProtectedResource;
+
+    const message = `A protected resource has no fragment: ${fragment.resource}`;
+
+    expect(() =>
+      Authentication.refusal(new Action.Unauthenticated(), { protectedResource: fragment }),
+    ).toThrow(message);
+    expect(() =>
+      Authentication.layer(CallerLogin, () => Effect.succeed("alice"), {
+        protectedResource: fragment,
+      }),
+    ).toThrow(message);
+
+    // A bare `#` has an empty `hash`, but the URL keeps it.
+    const bare = { ...resource, resource: `${resource.resource}#` };
+    expect(() =>
+      Authentication.refusal(new Action.Unauthenticated(), { protectedResource: bare }),
+    ).toThrow(`A protected resource has no fragment: ${bare.resource}`);
+  });
+
+  it("refuses a protected resource under another scheme, as Authentication.layer does", () => {
+    const Session = Authentication.make("refusal.Session", Caller, {
+      security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
+    });
+
+    expect(() =>
+      Authentication.refusal(new Action.Unauthenticated(), {
+        authentication: Session,
+        protectedResource: resource,
+      }),
+    ).toThrow("A protected resource is published only for a Bearer scheme");
   });
 });
 

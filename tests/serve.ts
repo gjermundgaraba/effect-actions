@@ -2,7 +2,6 @@ import { onTestFinished } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "../src/ActionHttp.js";
-import type { AnyHttp, Client } from "../src/internal/client.js";
 import type { Served } from "../src/internal/memory.js";
 import * as Testing from "../src/Testing.js";
 
@@ -49,9 +48,9 @@ export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
 }
 
 /** `ActionHttp.client` for the binding, calling `handler` in memory. */
-export const httpClient = <const H extends AnyHttp>(
+export const httpClient = <const H extends ActionHttp.Any>(
   http: H,
   handler: Handler,
   options?: Parameters<typeof ActionHttp.client>[1],
-): Effect.Effect<Client<H>> =>
+): Effect.Effect<ActionHttp.Client<H>> =>
   ActionHttp.client(http, options).pipe(Effect.provide(Testing.layer(handler)));

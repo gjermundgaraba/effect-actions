@@ -608,7 +608,7 @@ describe("declared checks", () => {
   it.effect("fails with the error it declares, answered as the action's own everywhere", () =>
     Effect.gen(function* () {
       // Writes are over their quota; reads are not.
-      const limits = Action.check(
+      const limits = Layer.effect(
         Limited,
         Effect.succeed((action: Action.Any) =>
           action.access === "write" ? Effect.fail(limited) : Effect.void,
@@ -693,7 +693,7 @@ describe("declared checks", () => {
       let builds = 0;
 
       // One call per caller, counted across HTTP and MCP.
-      const once = Action.check(
+      const once = Layer.effect(
         Limited,
         Effect.sync(() => {
           builds++;
@@ -730,6 +730,35 @@ describe("declared checks", () => {
     }),
   );
 
+  it.effect("runs once per call, though listed twice", () =>
+    Effect.gen(function* () {
+      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+
+      class Counted extends Action.Check<Counted>()("access-test/Counted", { error: Busy }) {}
+
+      // A spread shared list repeats it.
+      const shared = [Counted];
+
+      const Status = Action.make("status", {
+        description: "A public action listing one check twice",
+        access: "read",
+        auth: "public",
+        checks: [...shared, Counted],
+      });
+
+      expect(Status.checks).toEqual([Counted]);
+
+      let runs = 0;
+
+      const client = yield* Action.client(Action.implement(Status, () => Effect.void)).pipe(
+        Effect.provide(Layer.succeed(Counted, () => Effect.sync(() => void runs++))),
+      );
+
+      yield* client.status();
+      expect(runs).toBe(1);
+    }),
+  );
+
   it.effect("runs for a public action too, before its handler", () =>
     Effect.gen(function* () {
       class Busy extends Schema.TaggedError<Busy>()("Busy", {}, { httpApiStatus: 429 }) {}
@@ -751,7 +780,7 @@ describe("declared checks", () => {
         }),
       );
 
-      const full = Action.check(
+      const full = Layer.effect(
         Capacity,
         Effect.succeed(() => Effect.fail(new Busy())),
       );
@@ -797,7 +826,7 @@ describe("declared checks", () => {
       const log: Array<string> = [];
 
       // A slot held for the call: released when the call ends, whether the check refuses it.
-      const quota = Action.check(Quota, () =>
+      const quota = Layer.succeed(Quota, () =>
         Effect.gen(function* () {
           const region = yield* Region;
           const tenant = yield* Tenant;
@@ -859,12 +888,12 @@ describe("declared checks", () => {
         checks: [Gate],
       });
 
-      const open = Action.check(
+      const open = Layer.effect(
         Gate,
         Effect.succeed(() => Effect.void),
       );
 
-      const closed = Action.check(
+      const closed = Layer.effect(
         Gate,
         Effect.succeed(() => Effect.fail(quota)),
       );
@@ -890,7 +919,7 @@ describe("declared checks", () => {
       const cleanup = new Error("cleanup failed");
 
       // Refused in a span of its own, with a cleanup that dies.
-      const quota = Action.check(
+      const quota = Layer.effect(
         Limited,
         Effect.succeed(() =>
           Effect.fail(limited).pipe(Effect.ensuring(Effect.die(cleanup)), Effect.withSpan("quota")),
@@ -974,7 +1003,7 @@ describe("a trusted local caller", () => {
 
     const counts = new Map<string, number>();
 
-    const limit = Action.check(
+    const limit = Layer.effect(
       Limited,
       Effect.succeed(() =>
         Effect.flatMap(Actor, ({ id }) =>

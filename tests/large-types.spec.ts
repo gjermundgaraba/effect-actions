@@ -1,6 +1,6 @@
 // Compile-only assertions over large implementations, included by `vp check`: a file of
 // their own, checked beside the others rather than after them.
-import { Effect, type Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import type { HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
@@ -55,9 +55,9 @@ export const largeAuthorizationTypes = (
   // The check fails with what it declares alone, whatever else its actions declare.
   const own = () => Effect.fail(Schema.TaggedStruct("0a", {}).make({}));
 
-  Action.check(Limited, () => Effect.fail(new Throttled()));
+  Layer.succeed(Limited, () => Effect.fail(new Throttled()));
   // @ts-expect-error The first action declares it, the check does not.
-  Action.check(Limited, own);
+  Layer.succeed(Limited, own);
 
   // Four hundred actions, listed as a tuple or an array, behind an authorizer written inline
   // or annotated `Action.Authorize`.

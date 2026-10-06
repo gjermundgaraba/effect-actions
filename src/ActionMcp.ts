@@ -5,6 +5,7 @@ import {
   Exit,
   Fiber,
   JsonPointer,
+  type JsonSchema,
   Layer,
   Option,
   Predicate,
@@ -101,6 +102,12 @@ type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext | McpServer.
 type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provided>;
 
 /**
+ * What the native features owe, `R`, beside the registry, which the endpoint provides them,
+ * so one registering through `McpServer.registerResource` owes it no host.
+ */
+type Features<R> = Exclude<R, McpServer.McpServer>;
+
+/**
  * MCP has a JSON-only wire contract. Success is the encoded success as structured content,
  * and its JSON as text; declared failures are returned as JSON text. The native server
  * refuses undeclared arguments and publishes closed input schemas.
@@ -114,31 +121,60 @@ const projection: Projection = {
 const isToolJson = Schema.is(McpSchema.ToolJson);
 
 /**
- * Refuse an action whose input is not one object, as the JSON Schema root of a tool's
- * arguments must be: not a union, an array, a scalar, nor `Schema.Struct({})`, which takes any
- * value but `null`. It reads the JSON Schema the native server reads, a `$ref` at its root
- * resolved, so it refuses what the native server would, but naming every such action, where
- * the native server dies when the layer builds, suggesting `Tool.EmptyParams`.
+ * The JSON Schema root of `schema` as the native server lists it for a tool, a `$ref` at its
+ * root resolved.
  */
-const assertObjectInputs = (apps: ReadonlyArray<AnyImplementation>): void => {
-  const refused = apps
-    .flatMap((app) => app.actions)
-    .filter((action) => {
-      const { schema, definitions } = Schema.toJsonSchemaDocument(Schema.toCodecJson(action.input));
+const rootOf = (schema: Schema.Top): JsonSchema.JsonSchema | undefined => {
+  const document = Schema.toJsonSchemaDocument(Schema.toCodecJson(schema));
 
-      const [scope, key] = Predicate.isString(schema.$ref)
-        ? (JsonPointer.parseUriFragment(schema.$ref) ?? [])
-        : [];
+  const [scope, key] = Predicate.isString(document.schema.$ref)
+    ? (JsonPointer.parseUriFragment(document.schema.$ref) ?? [])
+    : [];
 
-      return !isToolJson(scope === "$defs" && key !== undefined ? definitions[key] : schema);
-    })
+  return scope === "$defs" && key !== undefined ? document.definitions[key] : document.schema;
+};
+
+/** The properties of a listed output schema, which a text field must be one of. */
+const decodeListed = Schema.decodeUnknownOption(
+  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Json) }),
+);
+
+/**
+ * Refuse, when the server is made, the actions of `apps` MCP cannot serve as they are, naming
+ * every one, reading the JSON Schemas the native server reads:
+ * - an input that is not one object, as the root of a tool's arguments must be: not a union,
+ *   an array, a scalar, nor `Schema.Struct({})`, which takes any value but `null`, where the
+ *   native server dies when the layer builds, suggesting `Tool.EmptyParams`;
+ * - a text field that is no top-level property of the success's schema, which no success
+ *   would hold.
+ */
+const assertShapes = (apps: ReadonlyArray<AnyImplementation>): void => {
+  const actions = apps.flatMap((app) => app.actions);
+
+  const inputs = actions
+    .filter((action) => !isToolJson(rootOf(action.input)))
     .map(({ name }) => name);
 
-  if (refused.length > 0) {
-    throw new Error(
-      `MCP tool input must be one object with keys, such as a struct: ${refused.join(", ")}`,
-    );
-  }
+  const texts = actions.flatMap(({ name, hints, success }) => {
+    if (hints.text === undefined) return [];
+
+    const listed = decodeListed(rootOf(success));
+
+    return Option.isSome(listed) && Object.hasOwn(listed.value.properties, hints.text)
+      ? []
+      : [`${name} ('${hints.text}')`];
+  });
+
+  const refused = [
+    ...(inputs.length > 0
+      ? [`MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")}`]
+      : []),
+    ...(texts.length > 0
+      ? [`MCP tool text field must be a top-level property of its success: ${texts.join(", ")}`]
+      : []),
+  ];
+
+  if (refused.length > 0) throw new Error(refused.join("\n"));
 };
 
 /** The native tool registry. */
@@ -147,30 +183,15 @@ type Registry = McpServer.McpServer["Service"];
 /** What the native registry takes for one tool: its listing, and what a call of it runs. */
 type Registration = Parameters<Registry["addTool"]>[0];
 
-/** The properties of a listed output schema, which a text field must be one of. */
-const decodeListed = Schema.decodeUnknownOption(
-  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Json) }),
-);
-
 /**
- * `tool` listing no output schema, for a success sent as text. Its text field `field` must
- * be a top-level property of the success's listed schema; any other field fails the layer
- * build rather than name a field no success holds.
+ * `tool` listing no output schema, for a success sent as text: the native McpSchema.Tool, a
+ * Schema.Class, rebuilt from its own fields but outputSchema, as McpServer.addTool rebuilds
+ * it: the constructor restores the prototype and validates them.
  */
-const listedAsText = (tool: McpSchema.Tool, field: string): Effect.Effect<McpSchema.Tool> => {
-  const listed = decodeListed(tool.outputSchema);
-
-  if (Option.isNone(listed) || !Object.hasOwn(listed.value.properties, field)) {
-    return Effect.die(
-      `MCP tool '${tool.name}' cannot send '${field}' as text: it is not a top-level property of its success`,
-    );
-  }
-
+const listedAsText = (tool: McpSchema.Tool): McpSchema.Tool => {
   const { outputSchema: _, ...listing } = tool;
 
-  // The native McpSchema.Tool, a Schema.Class, rebuilt from its own fields but outputSchema,
-  // as McpServer.addTool rebuilds it: the constructor restores the prototype and validates them.
-  return Effect.succeed(new McpSchema.Tool(listing));
+  return new McpSchema.Tool(listing);
 };
 
 /**
@@ -198,15 +219,14 @@ const textResult = (result: McpSchema.CallToolResult, field: string): McpSchema.
 };
 
 /** A tool's registration whose success is sent as text, its text field `field` raw. */
-const withText = (registration: Registration, field: string): Effect.Effect<Registration> =>
-  Effect.map(listedAsText(registration.tool, field), (tool) => ({
-    ...registration,
-    tool,
-    handle: (payload) =>
-      Effect.map(registration.handle(payload), (result) =>
-        Predicate.isTagged(result, "InputRequired") ? result : textResult(result, field),
-      ),
-  }));
+const withText = (registration: Registration, field: string): Registration => ({
+  ...registration,
+  tool: listedAsText(registration.tool),
+  handle: (payload) =>
+    Effect.map(registration.handle(payload), (result) =>
+      Predicate.isTagged(result, "InputRequired") ? result : textResult(result, field),
+    ),
+});
 
 /**
  * `registry`, registering the tool of each action `texts` names with that text field. The
@@ -221,7 +241,7 @@ const withTexts = (registry: Registry, texts: ReadonlyMap<string, string>): Regi
 
     return field === undefined
       ? registry.addTool(registration)
-      : Effect.flatMap(withText(registration, field), registry.addTool);
+      : registry.addTool(withText(registration, field));
   },
 });
 
@@ -258,7 +278,7 @@ const server = <Out, R>(
 
   const texts = textFields(apps);
 
-  assertObjectInputs(apps);
+  assertShapes(apps);
 
   const names = new Set(apps.flatMap((app) => app.actions.map(({ name }) => name)));
 
@@ -366,9 +386,9 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  */
 export function layerHttp<
   const Apps extends Served,
+  const O extends Selection<ActionOf<Member<Apps>>> = {},
   E = never,
   R = never,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
   const D extends Authentication | undefined = undefined,
 >(
   implementations: Apps,
@@ -396,7 +416,7 @@ export function layerHttp<
       HttpToolRequestContext<RemoteRequest<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>>
     >
   | ProviderOf<D>
-  | R
+  | Features<R>
 >;
 export function layerHttp(
   apps: Served,
@@ -441,9 +461,9 @@ export function layerHttp(
  */
 export function runStdio<
   const Apps extends Served,
+  const O extends Selection<ActionOf<Member<Apps>>> = {},
   E = never,
   R = never,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
 >(
   implementations: Apps,
   options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
@@ -461,7 +481,7 @@ export function runStdio<
     >
   | Stdio.Stdio
   | ToolRequestContext<ServedRequest<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>>
-  | R
+  | Features<R>
 >;
 export function runStdio(
   apps: Served,

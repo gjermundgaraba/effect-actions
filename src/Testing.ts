@@ -22,6 +22,7 @@ import {
   HttpRouter,
   type HttpServerRequest,
 } from "effect/http";
+import { McpSchema } from "effect/ai";
 import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertOnce, projectedErrors } from "./internal/actions.js";
@@ -165,18 +166,16 @@ export type McpClient<Actions extends ReadonlyArray<Action.Any>> = {
   >;
 };
 
-/** A tool result, as `mcpClient` reads it. */
-const ToolResult = Schema.Struct({
-  isError: Schema.optionalKey(Schema.Boolean),
-  structuredContent: Schema.optionalKey(Schema.Json),
-  content: Schema.Array(
-    Schema.Struct({ type: Schema.String, text: Schema.optionalKey(Schema.String) }),
-  ),
-});
+/** One block of a tool result's content. */
+type Block = McpSchema.CallToolResult["content"][number];
 
-/** The JSON-RPC response to a `tools/call`: a tool result or a protocol error. */
+/** The text of a block, none of a block of another kind. */
+const textOf = (block: Block | undefined): string | undefined =>
+  block?.type === "text" ? block.text : undefined;
+
+/** The JSON-RPC response to a `tools/call`: the native tool result, or a protocol error. */
 const ToolReply = Schema.Union([
-  Schema.Struct({ result: ToolResult }),
+  Schema.Struct({ result: McpSchema.CallToolResult }),
   Schema.Struct({ error: Schema.Struct({ code: Schema.Finite, message: Schema.String }) }),
 ]);
 
@@ -190,20 +189,22 @@ const decodeObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Jso
  * whole in one block when the success holds no string there. `None` for any other content.
  */
 const textSuccessOf = (
-  content: (typeof ToolResult.Type)["content"],
+  content: ReadonlyArray<Block>,
   field: string,
 ): Option.Option<Schema.Json> => {
   const [first, second, ...others] = content;
-  const raw = first?.text;
+  const raw = textOf(first);
 
   if (raw === undefined || others.length > 0) return Option.none();
 
   if (second === undefined) return decodeJson(raw);
 
-  return Option.map(
-    second.text === undefined ? Option.none() : decodeObject(second.text),
-    (rest) => ({ ...rest, [field]: raw }),
-  );
+  const json = textOf(second);
+
+  return Option.map(json === undefined ? Option.none() : decodeObject(json), (rest) => ({
+    ...rest,
+    [field]: raw,
+  }));
 };
 
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply));
@@ -283,7 +284,7 @@ const callTool = (
     const { result } = reply.value;
 
     if (result.isError === true) {
-      const error = result.content.find((content) => content.type === "text")?.text ?? "";
+      const error = textOf(result.content.find((block) => block.type === "text")) ?? "";
 
       return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
     }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
-import { HttpRouter } from "effect/http";
 import * as Action from "../src/Action.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
@@ -8,7 +7,6 @@ import * as Authentication from "../src/Authentication.js";
 import * as Testing from "../src/Testing.js";
 import { withMcpClient } from "./mcp-client.js";
 import { as, mcpRequest, rawToolCall, withBearer } from "./requests.js";
-import { defectOf } from "./defect.js";
 import { serve } from "./serve.js";
 import { converse } from "./stdio-host.js";
 
@@ -301,63 +299,50 @@ describe("MCP text fields", () => {
 });
 
 describe("a text field MCP cannot send", () => {
-  const cannot = (name: string) =>
-    `MCP tool '${name}' cannot send 'body' as text: it is not a top-level property of its success`;
+  const cannot = (...names: ReadonlyArray<string>) =>
+    `MCP tool text field must be a top-level property of its success: ${names.map((name) => `${name} ('body')`).join(", ")}`;
 
-  it.effect("fails the layer build when its success has no such top-level property", () =>
-    Effect.gen(function* () {
-      // A union of one struct: an object to the types, `anyOf` to its JSON Schema.
-      const Single = Action.make("single", {
-        description: "A page, as a union of one struct",
-        access: "read",
-        auth: "public",
-        success: Schema.Union([Schema.Struct({ body: Schema.String })]),
-        hints: { text: "body" },
-      });
+  it("is refused when the server is made, naming every such action", () => {
+    // A union of one struct: an object to the types, `anyOf` to its JSON Schema.
+    const Single = Action.make("single", {
+      description: "A page, as a union of one struct",
+      access: "read",
+      auth: "public",
+      success: Schema.Union([Schema.Struct({ body: Schema.String })]),
+      hints: { text: "body" },
+    });
 
-      const single = Action.implement(Single, () => Effect.succeed({ body: "x" }));
+    // Typed only as `string`, a hint the types leave to the server.
+    const text: string = "body";
 
-      expect(
-        yield* defectOf(
-          Layer.build(ActionMcp.layerHttp(single, server).pipe(Layer.provide(HttpRouter.layer))),
-        ),
-      ).toBe(cannot("single"));
-    }),
-  );
-
-  it.effect.each([
-    [
-      "a union's",
-      Schema.Union([
+    const Union = Action.make("union", {
+      description: "A page of either kind, each holding the field",
+      access: "read",
+      auth: "public",
+      success: Schema.Union([
         Schema.Struct({ body: Schema.String, kind: Schema.Literal("a") }),
         Schema.Struct({ body: Schema.String, kind: Schema.Literal("b") }),
       ]),
-    ],
-    ["a missing", Schema.Struct({ title: Schema.String })],
-  ] as const)(
-    "fails the layer build for %s field named by a hint the types cannot read",
-    ([, success]) =>
-      Effect.gen(function* () {
-        // Typed only as `string`, a hint the types leave to the layer build.
-        const text: string = "body";
+      hints: { text },
+    });
 
-        const Erased = Action.make("erased", {
-          description: "A success the types cannot read",
-          access: "read",
-          auth: "public",
-          success,
-          hints: { text },
-        });
+    const Missing = Action.make("missing", {
+      description: "A page without the field",
+      access: "read",
+      auth: "public",
+      success: Schema.Struct({ title: Schema.String }),
+      hints: { text },
+    });
 
-        const erased = Action.implement(Erased, () =>
-          Effect.succeed({ body: "x", kind: "a" as const }),
-        );
+    const refused = [
+      Action.implement(Single, () => Effect.succeed({ body: "x" })),
+      Action.implement(Union, () => Effect.succeed({ body: "x", kind: "a" as const })),
+      Action.implement(Missing, () => Effect.succeed({ title: "x" })),
+    ];
 
-        expect(
-          yield* defectOf(
-            Layer.build(ActionMcp.layerHttp(erased, server).pipe(Layer.provide(HttpRouter.layer))),
-          ),
-        ).toBe(cannot("erased"));
-      }),
-  );
+    const message = cannot("single", "union", "missing");
+
+    expect(() => ActionMcp.layerHttp(refused, server)).toThrow(message);
+    expect(() => ActionMcp.runStdio(refused, server)).toThrow(message);
+  });
 });

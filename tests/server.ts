@@ -2,7 +2,6 @@ import { Array as Arr } from "effect";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 import type * as Action from "../src/Action.js";
-import type { Implementation } from "../src/internal/implementation.js";
 import { layer } from "../examples/app.js";
 import { serve } from "./serve.js";
 
@@ -16,7 +15,7 @@ type Public = Action.Any & { readonly auth: "public"; readonly checks: readonly 
  * An implementation of public actions that owes nothing per request or to build, as `serve`
  * requires. A test of protected actions serves its routes itself, with authentication.
  */
-type Free = Implementation<
+type Free = Action.Implementation<
   Public,
   { readonly [name: string]: never },
   unknown,

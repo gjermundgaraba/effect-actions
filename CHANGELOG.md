@@ -113,18 +113,18 @@ Each area below lists what is renamed or removed, then what changes without a re
   JavaScript it throws `Protected actions require authorize, or Action.allowAll`. `undefined`
   is not an authorizer: `before: enabled ? authorize : undefined` becomes
   `{ authorize: enabled ? authorize : Action.allowAll }`.
-- `authorize` runs only for protected actions, after authentication and input decoding, and
-  fails only with a refusal. A limit is a check, an `Action.Check` such as
-  `Action.Check<Limited>()("app/Limited", { error: RateLimited, requires: CurrentActor })`,
-  listed in each limited action's `checks`, which adds its error to their `errors`, so every
-  surface declares it and every client decodes it: HTTP answers with its status and JSON, MCP
-  with an `isError` tool result, the Toolkit with a typed failure, and a CLI command with the
-  same JSON on stderr. `Action.check(Limited, callback)` implements it, from the callback or an
-  Effect building it once per layer graph, and every surface serving a limited action requires
-  that layer. Checks run after `authorize`, for public actions too. 0.8.0's hook failed with its
-  surface's `errors`, which that surface alone declared, and a CLI's with any error: move a limit
-  into a check, or keep a limit applied before decoding in HTTP middleware, router middleware
-  or the layer's own, with `ActionHttp.make`'s `errors`.
+- `authorize` runs only for protected actions, after authentication and input decoding, and fails
+  only with a refusal. A limit is a check, an `Action.Check` such as
+  `Action.Check<Limited>()("app/Limited", { error: RateLimited, requires: CurrentActor })`, listed
+  in each limited action's `checks`, which adds its error to their `errors`, so every surface
+  declares it and every client decodes it: HTTP answers with its status and JSON, MCP with an
+  `isError` tool result, the Toolkit with a typed failure, and a CLI command with the same JSON on
+  stderr. A native layer implements it, `Layer.succeed(Limited, callback)` or
+  `Layer.effect(Limited, build)` with an Effect building it once per layer graph, and every surface
+  serving a limited action requires that layer. Checks run after `authorize`, for public actions
+  too. 0.8.0's hook failed with its surface's `errors`, which that surface alone declared, and a
+  CLI's with any error: move a limit into a check, or keep a limit applied before decoding in HTTP
+  middleware, router middleware or the layer's own, with `ActionHttp.make`'s `errors`.
 - One action takes its handler, and a builder for it returns the handler, not a record: a
   one-action group's `.implement({ greet: handler })` becomes
   `Action.implement(Greet, handler)`, with `{ authorize }` for a protected action. A list
@@ -212,17 +212,18 @@ Each area below lists what is renamed or removed, then what changes without a re
   operation ID `<group>.<action>`. The OpenAPI tag is the mount path, such as `api/users`, or
   `/` at the root, rather than the group's name.
 - `ActionHttp.layer` serves the binding's actions among the implementations it is given. An
-  implementation's other actions, such as a tool for agents, get no route, and their names are
-  not checked. This reverses 0.7.0's way to keep an action off HTTP, a group of its own that the
-  binding left out, since `Http.layer` refused an implementation of any other group
+  implementation's other actions, such as a tool for agents, get no route, and their names are not
+  checked. This reverses 0.7.0's way to keep an action off HTTP, a group of its own that the binding
+  left out, since `Http.layer` refused an implementation of any other group
   (`Implementation of group "x" is not served by this adapter`): such an action took an
-  implementation of its own, its builder and hook repeated. An implementation holding none of
-  the binding's actions is still refused, as the wrong one, when `layer` is called:
-  `No action of this implementation is in this HTTP binding: x`. Two implementations of one
-  served action throw `Duplicate served action: <name>`, where 0.8.0 threw
-  `Duplicate implementation group: <group>`; actions the binding leaves out may repeat. A layer
-  owes per request its implementations' authorizers, the checks and the handlers of the actions
-  it serves.
+  implementation of its own, its builder and hook repeated. An implementation holding none of the
+  actions served is left out and not built, so one list serves each area's binding; implementations
+  holding none of the binding's actions at all are refused, as the wrong ones, when `layer` is
+  called: `No action of these implementations is in this HTTP binding: x`. Two implementations of
+  one served action throw `Duplicate served action: <name>`, where 0.8.0 threw
+  `Duplicate implementation group: <group>`; actions the binding leaves out may repeat. A layer owes
+  per request its implementations' authorizers, the checks and the handlers of the actions it
+  serves.
 - One layer serves a binding's public and protected actions, from one implementation or
   several: a protected route is authenticated by the binding's descriptor, through the
   provider the layer requires, before anything reads its body, so it answers 401 before a 415
@@ -275,8 +276,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   compiler accepted failed. The server still refuses the field from a raw caller: HTTP with a
   400 `InvalidInput` naming its path, MCP as invalid arguments. No call needs changing; to
   assert the refusal, send a raw request.
-- A client's argument may be omitted exactly when `{}` is a valid input, and then sends the
-  input `{}` decodes to, so an input class whose fields are all optional may be left out. A
+- A client's argument may be omitted exactly when `{}` is a valid encoded input, and then sends
+  the input `{}` decodes to, so an input class whose fields are all optional, or have decoding
+  defaults, may be left out; an input that decodes from fields `{}` lacks needs its argument. A
   given argument is sent as given; 0.8.0's Promise client sent `{}` for `undefined` or `null`.
 
 #### Authentication
@@ -284,7 +286,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | 0.8.0                                                                            | 0.10.0                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Authentication.middleware(tag, authenticate).layer`                             | The descriptor `Authentication.make("app.Login", tag)`, named by the binding and every MCP endpoint serving protected actions, and its provider `Authentication.layer(Login, verify, { protectedResource })`, provided to their layers, where `verify` takes the credential Effect's native scheme decodes and may fail with a refusal; a session cookie, an API key or Basic is the descriptor's one scheme, `{ security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }) }` |
-| `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.Options`, `layer`'s `protectedResource`                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.ProtectedResource`, `layer`'s `protectedResource`                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `layer`'s `protectedResource`, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusal`                                                                                                                                                                                                                                                                                                                                            |
 | A 401 challenge naming a scope                                                   | `scopesRequired` in the protected resource                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | An insufficient-scope error of your own and a hand-built challenge               | `new Action.Forbidden({ message, scopes: [scope] })`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -302,7 +304,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`, or `HttpApiSecurity.basic`; a record
   of schemes, or anything else, throws `Authentication takes one native HttpApiSecurity scheme`, and
   the types refuse it, as they do a misspelled option; its options type is
-  `Authentication.MakeOptions`, and options that may leave `security` out type the credential as
+  `Authentication.Options`, and options that may leave `security` out type the credential as
   that scheme's or Bearer's. OAuth is Bearer's: only a Bearer descriptor's provider takes a
   `protectedResource` (another scheme's throws
   `A protected resource is published only for a Bearer scheme`), and only under one does a protected
@@ -347,11 +349,12 @@ Each area below lists what is renamed or removed, then what changes without a re
   reads it after a 401. Where the host's CORS middleware runs first, its policy answers
   discovery's preflight and adds its headers to discovery's reads, which keep the `*` where it
   sets no origin.
-- Authentication keeps a route's own `Cache-Control`, which 0.8.0's `middleware` replaced
-  with `no-store`; every other response of its routes, and a failure enclosing middleware
-  serializes, is still `no-store`. A route stating its own says `private` unless its answer is
-  the same for every caller: a credential a proxy forwards is invisible to a cache in front of
-  that proxy.
+- Authentication keeps a route's own `Cache-Control`, which 0.8.0's `middleware` replaced with
+  `no-store`; every other response to a request it authenticates, and a failure enclosing middleware
+  serializes, is still `no-store`. An MCP endpoint's answer to an anonymous request, discovery, its
+  listing or a public tool's call, gets none, as a public HTTP route's does. A route stating its own
+  says `private` unless its answer is the same for every caller: a credential a proxy forwards is
+  invisible to a cache in front of that proxy.
 
 #### MCP
 
@@ -401,9 +404,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   success. `text` is typed by `make`: a top-level string field of the encoded success,
   optional or not, which a scalar, array, union or record success does not have.
   0.8.0 accepted a union member's field, or any name for a record, and then failed the layer
-  build. Where the types cannot tell, as for an erased success or a union of one struct, the
-  build still fails with
-  `MCP tool '<name>' cannot send '<field>' as text: it is not a top-level property of its success`.
+  build. Where the types cannot tell, as for an erased success or a union of one struct,
+  `layerHttp` and `runStdio` throw when called, naming every such action:
+  `MCP tool text field must be a top-level property of its success: <name> ('<field>')`.
   Make such a success one struct, or drop the hint.
 
 #### Toolkit
@@ -452,7 +455,9 @@ Each area below lists what is renamed or removed, then what changes without a re
   element per occurrence: `--provider exa --provider hn`. Given none, a required field is `[]`
   and an optional one is left out; a `Schema.NonEmptyArray` field's flag is required once. An
   occurrence of `[]` adds no element, so `--tags '[]'` alone sends `[]`, clearing an optional
-  field. Any other array, and an array taken as a positional argument, takes JSON.
+  field. An array field listed last in `positional` takes the same values as repeated
+  arguments, `rm a b`; listed before another, it throws
+  `Repeated positional argument before another one: <field>`. Any other array takes JSON.
 - A command whose action fails prints the failure on stderr as the JSON HTTP sends for it, such
   as `{"_tag":"UserNotFound","id":"9"}`, through Effect's CLI formatter, and exits 1, or with
   the failure's `Runtime.errorExitCode`. It fails with Effect CLI's `UserError`, whose `cause`
@@ -536,10 +541,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   that Effect, which `implement` builds once per implementation in each layer graph: build what
   several implementations or the surfaces share outside it. A service whose value is the
   authorizer, `{ authorize: Guard }`, is built once for every implementation it guards.
-- Checks, `Action.Check` and `Action.check`: an operational rule, such as a rate limit,
-  declared once with its error and the request services it reads, listed on the contracts it
-  applies to, whose errors then include its error, and implemented once as a layer, built once
-  per layer graph, so every surface counts against one state ([Action.md](docs/Action.md#checks)).
+- Checks, `Action.Check`: an operational rule, such as a rate limit, declared once with its error
+  and the request services it reads, listed on the contracts it applies to, whose errors then
+  include its error, each listed once, and implemented once as a native layer, built once per layer
+  graph, so every surface counts against one state ([Action.md](docs/Action.md#checks)).
 
   ```ts
   class Limited extends Action.Check<Limited>()("app/Limited", {
@@ -547,7 +552,7 @@ Each area below lists what is renamed or removed, then what changes without a re
     requires: CurrentActor,
   }) {}
   const Invite = Action.make("invite", { ..., auth: CurrentActor, checks: [Limited] });
-  const LimitedLive = Action.check(
+  const LimitedLive = Layer.effect(
     Limited,
     Effect.map(Limiter, (limiter) => () => Effect.flatMap(CurrentActor, ({ id }) => limiter.take(id))),
   );
@@ -627,12 +632,13 @@ Each area below lists what is renamed or removed, then what changes without a re
   an object success as `structuredContent` and list only an object-rooted `outputSchema`. A success
   they do not structure is text alone, its JSON or, for a string success, the string itself, so a
   host on those revisions reads a non-object success from the text.
-- `ActionMcp.layerHttp`, `runStdio`, `ActionToolkit.make` and `ActionCli.make` take `actions`, the
-  actions they serve among the implementations', as HTTP's binding lists its own: each keeps its
-  implementation's authorizer and its builder's one run, an implementation holding none is not
-  built, and only the listed actions' inputs and names are checked for the surface. The types take
-  only actions of the implementations, and owe only what the listed actions, and the builders
-  holding them, need. A listed action none of them holds throws
+- `ActionHttp.layer`, `ActionMcp.layerHttp`, `runStdio`, `ActionToolkit.make` and `ActionCli.make`
+  take `actions`, the actions they serve among the implementations', `ActionHttp.layer` among its
+  binding's, so a mixed implementation's protected actions take identity middleware in a layer of
+  their own without being split: each keeps its implementation's authorizer and its builder's one
+  run, an implementation holding none is not built, and only the listed actions' inputs and names
+  are checked for the surface. The types take only actions of the implementations, and owe only what
+  the listed actions, and the builders holding them, need. A listed action none of them holds throws
   `Listed in actions, but no implementation holds it: <names>`. Omitted, every action is served, as
   before. `ActionCli.make` takes it from a binding too. Options whose `actions` may be absent, an
   optional property or a union with options lacking it, serve every action, so they owe what every
@@ -689,7 +695,21 @@ Each area below lists what is renamed or removed, then what changes without a re
   });
   ```
 
-- A CLI flag's help text is its field's schema description.
+- A CLI flag's help text is its field's schema description, and a positional argument's label
+  is its flag's, `value` for one taking JSON or text.
+- `ActionCli.command` and `ActionCli.make`'s `commands` take `aliases`, a flag's short name by
+  field, `{ aliases: { limit: "n" } }`, through native `Param.withAlias`.
+- Hints take `title` and `meta`, an MCP tool's display title and its `_meta`, through native
+  `Tool.Title` and `Tool.Meta`.
+- `ActionMcp.layerHttp` and `runStdio` take the options' type as their second type argument,
+  `<Apps, O, E, R, D>`, as `ActionToolkit.make` and `Action.client` do, and native `features`
+  owe no `McpServer`, which the endpoint provides them.
+- `Authentication.refusal` refuses what `layer` refuses, and both refuse a protected resource
+  with a fragment, which discovery could never answer: `A protected resource has no fragment`.
+- A check listed twice runs once per call. A suspended error keeps its `httpApiStatus` over
+  HTTP. Layer middleware chosen by a condition within one slot provides nothing, so what one
+  choice would provide stays owed.
+- `Testing.mcpClient` reads tool results with the native `McpSchema.CallToolResult`.
 - `ActionCli.make(target, { name, commands })` gives a subcommand the options `command` takes,
   by action name: `commands: { readFile: { positional: ["path"], render } }`. It takes any
   action of the target, so one record serves aggregates of several `actions`: a command of an

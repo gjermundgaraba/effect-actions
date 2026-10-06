@@ -969,6 +969,27 @@ describe("authentication around a surface", () => {
     );
   });
 
+  it("marks an MCP endpoint's answer no-store only where it authenticates the request", async () => {
+    const web = serve(
+      ActionMcp.layerHttp([open, guarded], {
+        name: "test",
+        version: "0",
+        authentication: Login,
+      }).pipe(Layer.provide(authenticate)),
+    );
+
+    // Its listing and a public tool's call without a credential read none, as a public route.
+    for (const sent of [mcpRequest({ method: "tools/list" }), rawToolCall("public")]) {
+      const anyone = await web.handler(sent);
+      expect(anyone.status).toBe(200);
+      expect(anyone.headers.has("cache-control")).toBe(false);
+    }
+
+    const signedIn = await web.handler(withBearer(rawToolCall("secret", { note: "hi" }), "alice"));
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("runs before decoding, so an unauthenticated caller learns nothing of the input", async () => {
     let calls = 0;
 

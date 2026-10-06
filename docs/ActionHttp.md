@@ -4,7 +4,8 @@ JSON `POST` routes on Effect's `HttpApi`. `ActionHttp.make` binds actions to a m
 names the authentication descriptor of its protected actions; the binding is shared by the
 server, every client, and the OpenAPI document. Servers mount it with
 `ActionHttp.layer(Http, implementations)`, serving the binding's actions among the
-implementations: each protected route authenticated before its body is read, then each call
+implementations, or those its `actions` lists: each protected route authenticated before its
+body is read, then each call
 behind its implementation's authorization and its action's checks. Clients call it with
 `ActionHttp.client(Http)`.
 
@@ -20,7 +21,7 @@ Import `@gjermundgaraba/effect-actions/ActionHttp`.
 | `Http.prefix`                            | Where the routes mount: `/api` by default, `/` at the root, without a trailing slash.        |
 | `Http.authentication`                    | The authentication descriptor of its protected actions, or `undefined`.                      |
 | `Http.api`                               | Native Effect `HttpApi` for clients and OpenAPI.                                             |
-| `layer(Http, implementations, options?)` | Mount the routes of the bound actions these implementations hold.                            |
+| `layer(Http, implementations, options?)` | Mount the routes of the bound actions these implementations hold, or the listed ones.        |
 | `client(Http, options?)`                 | An Effect of a typed client; requires the native `HttpClient`, as `HttpApiClient.make` does. |
 | `fetchClient(Http, options?)`            | The same client, built over `fetch` outside an Effect: its methods require nothing.          |
 
@@ -31,6 +32,7 @@ Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Clien
 | `make`: `prefix`            | Mount path of every route; defaults to `/api`. `/` mounts at the root; a trailing slash is dropped.                               |
 | `make`: `errors`            | Errors middleware around the routes sends, such as a limit before decoding: declared by every endpoint, so clients decode them.   |
 | `make`: `authentication`    | The descriptor of the protected actions' identity, `Authentication.make(...)`: required when the binding holds one.               |
+| `layer`: `actions`          | The bound actions it serves, among the implementations': `[GetUser]`. Defaults to every one they hold.                            |
 | `layer`: `middleware`       | Native `HttpApiMiddleware` run around every route the layer serves, inside authentication, outside decoding; the first innermost. |
 | `client`: `baseUrl`         | What routes are resolved against, such as `https://api.example.com`. Omitted: relative routes (the page's origin in a browser).   |
 | `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                     |
@@ -107,15 +109,17 @@ export const layer = Layer.mergeAll(routes, documentation);
 Serve with `HttpRouter.serve(layer).pipe(Layer.provide(NodeHttpServer.layer(createServer, { port })), Layer.launch)`, and set a request body limit ([guarantees.md](guarantees.md#wire-behavior)). Put a job or an agent the process runs inside `layer`, not beside `HttpRouter.serve`, so it shares the routes' builders and services rather than building its own ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
 
 A large API, or two actions that would share a name, gets one binding per area, each with its
-own `prefix` and client, served by one host:
+own `prefix` and client, served by one host, and each documented on its own where they share a
+name ([Failure modes](#failure-modes)):
 
 ```ts
 export const Billing = ActionHttp.make([Invoice, Refund], { prefix: "/api/billing" });
 export const Accounts = ActionHttp.make([GetUser, RenameUser], { prefix: "/api/accounts" });
 
+// Each layer takes the whole list, and serves its binding's actions among it.
 const routes = Layer.mergeAll(
-  ActionHttp.layer(Billing, billing),
-  ActionHttp.layer(Accounts, accounts),
+  ActionHttp.layer(Billing, [billing, accounts]),
+  ActionHttp.layer(Accounts, [billing, accounts]),
 );
 
 // One document for both, when no action name repeats across them:
@@ -162,9 +166,9 @@ await Effect.runPromise(
 );
 ```
 
-The argument may be omitted when `{}` is a valid input, such as for an action declared without
-`input` (`client.whoAmI()`) or one whose fields are all optional, in a struct or a class;
-omitting it sends the input `{}` decodes to. Other headers also go through `transformClient`
+The argument may be omitted when `{}` is a valid encoded input, such as for an action declared
+without `input` (`client.whoAmI()`) or one whose fields are all optional or have a decoding
+default, in a struct or a class; omitting it sends the input `{}` decodes to. Other headers also go through `transformClient`
 (`HttpClient.mapRequest(HttpClientRequest.setHeader("x-agent", agent))`). The options are the
 native `HttpApiClient.make` options except `transformResponse`, which may change a call's
 success, failure or required services, which the method types cannot follow; use
@@ -209,14 +213,14 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 
 - The binding decides what HTTP serves: the actions passed to `make`, and no others; an action has no HTTP switch. To keep an action off HTTP, leave it out of the list. Its implementation may still hold it for MCP, a Toolkit or `ActionCli.make`, which serve the actions their `actions` option lists, or every action of the implementations without it.
 - Action names are unique within a binding. Two bindings with different prefixes may reuse a name and be served side by side, but not combined into one `HttpApi`.
-- `layer(Http, implementations)` mounts the routes of the binding's actions among the implementations it receives, matched by identity: the exact contract values passed to `make`. Their other actions get no route, and their names are not checked. An implementation holding none of the binding's actions is refused when `layer` is called, as the wrong implementation or the wrong binding. An equal-looking copy of a bound action is not the bound action, so it is not served.
+- `layer(Http, implementations)` mounts the routes of the binding's actions among the implementations it receives, matched by identity: the exact contract values passed to `make`. Their other actions get no route, and their names are not checked. `actions` narrows it to the listed ones, each of the binding's and held by an implementation, as on every surface ([guarantees.md](guarantees.md#names)); an implementation holding none of those served is left out, and not built. Implementations holding none of the binding's actions at all are refused when `layer` is called, as the wrong implementations or the wrong binding. An equal-looking copy of a bound action is not the bound action, so it is not served.
 - An action may be served once per call; two implementations there may both hold an action the binding leaves out. An action no layer serves still appears in `Http.api`, OpenAPI and clients, and answers 404.
 - The binding is plain data: `layer` and `client` read everything from its fields, so a copy of the binding, or one made by another installed copy of the package, serves the same.
 - One layer serves a binding's public and protected actions, from one implementation or several. Each action's contract decides: a protected route is authenticated by the binding's descriptor, before its body is read, and a public one is open, ignoring any credential. A binding holding a protected action names its descriptor, and the layer serving it requires the descriptor's provider ([Authentication.md](Authentication.md#rules)); a layer serving only public actions, of a binding or an implementation holding protected ones too, requires none.
 - Without a credential that verifies, a protected route answers 401 before anything reads its body: before a 415 for its content type and a 400 for its input.
 - Router middleware provided to a `layer` call covers that call's routes, before their authentication, and no others. Several layers over one binding, such as one per area of the host, still share one binding, one document and one client.
 - `middleware` takes native `HttpApiMiddleware` services, which run around every route the layer serves, inside a protected route's authentication and outside its content-type and schema checks, so they see a decoding failure as the failure of `route`. The first listed is innermost, as native `.middleware` chaining is. The layer requires each one's service, and owes what each requires, less what one further out provides, in that order; a list not written as a tuple, or options whose `middleware` may be absent, owe what any of them requires, and provide nothing. `layer` takes options or none; an explicit type argument naming middleware requires the options argument, and a misspelled option beside `middleware` is a type error. A reusable options value names its tuple, `ActionHttp.LayerOptions<readonly [typeof Audit]>`, or is written `as const`: bare `ActionHttp.LayerOptions` takes no middleware.
-- A layer middleware may require the identity only where every action the layer serves is protected: on a layer serving a public action too, the identity stays owed. Serve the protected actions from a layer of their own for it.
+- A layer middleware may require the identity only where every action the layer serves is protected: on a layer serving a public action too, the identity stays owed. List the protected actions in its `actions`, and serve the public ones from another layer: `ActionHttp.layer(Http, users, { actions: [RenameUser], middleware: [Audit] })` beside `ActionHttp.layer(Http, users, { actions: [GetUser] })`. Options whose `actions` may be absent narrow nothing.
 - A layer middleware fails only with the binding's `errors` or a built-in error, and needs no client: anything else is a type error, since clients decode only what the binding and every endpoint declare ([Binding errors](#binding-errors)). A middleware refusing a caller, such as an address allowlist, fails with `Action.Forbidden`, which needs no binding error. It is where a limit keyed by the caller runs before decoding, so it counts input that does not decode too; a limit after decoding, on every surface, is a check, which the contract declares ([Action.md](Action.md#checks)). A middleware observing failures uses `Effect.onExit`, not `Effect.map`, which a failure skips. A step-up refusal is answered as it leaves the layer's middleware: one that recovers from it keeps its own response, and one that turns it into another error the binding declares answers with that error ([guarantees.md](guarantees.md#authorization)). MCP endpoints take no layer middleware.
 - Authorization, checks, builders, request-time services and headers follow [guarantees.md](guarantees.md): `ActionHttp` itself sets no header.
 - `Http.api` is a plain `HttpApi`, which Effect's own tools document and call: `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`, `Http.api.addHttpApi(other)` to combine with other APIs, `HttpApiClient.make`. Serve it with `layer`, not the native `HttpApiBuilder`: its protected endpoints carry the descriptor's native security middleware, which `layer` satisfies with the provider and the native builder lacks.
@@ -266,10 +270,11 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 ## Failure modes
 
 - Route returns 404: the action is not in the binding, its implementation was never passed to a `layer` call, or the path lacks the prefix. An implementation's action is served only if the binding holds that very value: an equal-looking copy, such as a test declaring the contract again, is not.
-- `No action of this implementation is in this HTTP binding: x` thrown by `layer`: none of the implementation's actions was passed to this binding's `make`, so it is the wrong implementation or the wrong binding. `x (another contract)` is an action of a bound name that is not the bound value, as a second copy of the contracts module makes: implement the exact contract value the binding received. Matching names and schemas do not establish identity.
+- `No action of these implementations is in this HTTP binding: x` thrown by `layer`: none of the implementations' actions was passed to this binding's `make`, so they are the wrong implementations or it is the wrong binding. `x (another contract)` is an action of a bound name that is not the bound value, as a second copy of the contracts module makes: implement the exact contract value the binding received. Matching names and schemas do not establish identity.
+- `Listed in actions, but the binding does not hold it: <names>`, or `but no implementation holds it`, thrown by `layer`: those actions are not among the binding's or the implementations', by identity. `(another contract)` marks one whose name the binding holds.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same bound action.
 - `Duplicate middleware: <key>` thrown by `layer`: its `middleware` lists one middleware twice, which a native endpoint would run once. List it once.
-- `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action, such as one implementation given to two layers of one binding. Serve each action in one call: one layer serves public and protected actions alike, or give each layer a binding of its own actions.
+- `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `layer` calls serve the same action, such as one implementation given to two layers of one binding. Serve each action in one call: one layer serves public and protected actions alike, or give each layer its own `actions`.
 - `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by `make`: a binding error has a built-in tag, or is a built-in error. Drop a built-in error, which every endpoint declares already; rename an error of your own.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one action value is listed twice. Rename one, or bind it under another prefix.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi` on a combined API: two combined bindings have an action of that name. Rename one, or document each binding on its own.
@@ -293,7 +298,7 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 - Fails with `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: `baseUrl` is omitted, and there is no page to resolve relative routes against. Set `baseUrl`.
 - Type error listing `HttpClient` as an unsatisfied requirement of `client`: provide one, such as `FetchHttpClient.layer`.
 - Property does not exist on the client: the action is not in the binding.
-- `Expected 1 arguments`: `{}` is not a valid input for the action, so it needs its input.
+- `Expected 1 arguments`: `{}` is not a valid encoded input for the action, so it needs its input.
 - Type error passing `undefined` to a method whose argument may be omitted: leave the argument out instead.
 - Fails with `SchemaError` `Expected Filters` given a plain object, which TypeScript may let through: the input is a class, `Filters`, which encodes only its instances. Pass `new Filters({ ... })`, or leave out an argument whose fields are all optional.
 - Type error passing `{ payload: ... }`: that is the native client's shape. These methods take the input itself.

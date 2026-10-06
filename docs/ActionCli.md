@@ -23,6 +23,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `command`: `name`       | Override the command name (default: the action name in kebab case).                                          |
 | `command`: `render`     | Decoded success to human-readable string; adds `--json`.                                                     |
 | `command`: `positional` | Input fields taken as positional arguments instead of flags, in this order.                                  |
+| `command`: `aliases`    | A short name per field's flag: `{ limit: "n" }` takes `-n 5` beside `--limit 5`.                             |
 | `make`: `name`          | The aggregate's name, required.                                                                              |
 | `make`: `actions`       | The actions that are subcommands, among the implementations' or the binding's; defaults to every one.        |
 | `make`: `commands`      | Each subcommand's `command` options, keyed by action name: `{ readFile: { positional: ["path"], render } }`. |
@@ -54,8 +55,8 @@ A repeated flag reads each occurrence as one element, as the flag of that elemen
 required field is `[]` and an optional one is left out; a `Schema.NonEmptyArray` field's flag is
 required once. An occurrence of `[]` adds no element, and is one of a choice's values, so
 `--tags '[]'` alone sends `[]`, clearing an optional field the flag would otherwise leave out; an
-element whose text is `[]` cannot be sent. Any other array, such as one of objects, and an array taken as a positional
-argument take JSON, `--points '[{"x":1}]'`.
+element whose text is `[]` cannot be sent. Any other array, such as one of objects, takes JSON,
+`--points '[{"x":1}]'`.
 A value flag parses its text as JSON when the field's encoding accepts that kind of value
 (`--count 2`, `--owner '{"id":"x"}'`), or else keeps the text (`--limit auto`, `--scale Infinity`
 for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
@@ -74,7 +75,12 @@ for `Schema.optionalKey(Schema.OptionFromNullOr(Schema.String))`, renamed or not
 A field listed in `positional` is an argument instead of a flag, parsed as its flag would
 be, a boolean taking `true` or `false`: `command(implementations, Inspect, { positional: ["path"] })`
 reads `inspect README.md --lines 10`. Arguments are read in the listed order, not the
-input's. An optional field's argument is optional.
+input's. An optional field's argument is optional. An array whose flag repeats is a repeated
+argument, one element per value, as its flag takes them, `[]` included: `remove a.txt b.txt` for
+`{ positional: ["paths"] }`. It takes every value left, so it is listed last. A JSON or text
+argument is shown in help as `value`, as its flag is.
+`aliases` gives a field's flag a short name too, as native `Param.withAlias` does:
+`{ aliases: { limit: "n" } }` takes `-n 5` beside `--limit 5`.
 
 A local command requires what its handler, builder and authorizer require, the layers of its
 action's checks, and a protected action's identity, and the invocation owns its scope. Its
@@ -249,8 +255,8 @@ export const cli = ActionCli.make(cache, { name: "ops" }).pipe(
 - Flags are values in their encoded form: `double --value 21` for a `FiniteFromString` field, which is string-encoded; a value flag takes the encoded JSON, or text. The action's schema then decodes the assembled input before dispatch.
 - A field that is required once encoded has a required flag. Omitted, the parser refuses the command with `Missing required flag: --<flag>` and shows its help, and the implementation is not built. A required boolean is the exception: omitted, its switch is `false`.
 - An optional field's flag is optional. Omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
-- `positional` names fields of a struct or class input, and the types offer none for any other input, a union included. Each is listed once, and every required field before any optional one, since a parser reads arguments in order. Remote commands take it too.
-- The flags follow the schema: renaming a field renames its flag. `name`, `positional` and `render` give a command its name, its arguments and its output, and keep every rule of this page: prefer a derived command wherever they express the syntax. For a syntax they cannot, such as a flag named apart from its field, or a command calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and call the actions in it through `Action.client`, acquired in its handler, inside `Effect.scoped`, so each invocation builds and releases it ([Action.md](Action.md#clients)), or over HTTP through the binding's `ActionHttp.client`. Calling a handler directly bypasses decoding, the implementation's authorizer and the action's checks.
+- `positional` names fields of a struct or class input, and the types offer none for any other input, a union included. Each is listed once, and every required field before any optional one, since a parser reads arguments in order; an array taken as a repeated argument comes last, as it reads every value left. Remote commands take it too, and `aliases`, which names only flagged fields of such an input, each alias once.
+- The flags follow the schema: renaming a field renames its flag. `name`, `positional`, `aliases` and `render` give a command its name, its arguments, its short flags and its output, and keep every rule of this page: prefer a derived command wherever they express the syntax. For a syntax they cannot, such as a flag named apart from its field, or a command calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and call the actions in it through `Action.client`, acquired in its handler, inside `Effect.scoped`, so each invocation builds and releases it ([Action.md](Action.md#clients)), or over HTTP through the binding's `ActionHttp.client`. Calling a handler directly bypasses decoding, the implementation's authorizer and the action's checks.
 - Such a command is the host's own: through `Action.client` the authorizer and every check run, but the output, failure and logging rules of this page do not apply. It prints what it prints, its logs go where the host's logger writes, and a failure it leaves as it is is the action's own, not a `Failure`, which `runMain` reports on stdout with a stack and without its fields. Map it to Effect CLI's `CliError.UserError`, `new CliError.UserError({ cause, userMessage })`, for `Command.run` to print `userMessage` on stderr.
 - Output is validated and encoded before printing. Default output is JSON. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. An action whose `success` is `Schema.Void` prints nothing by default or with `--json`; a custom `render` can still print human output. Rendering cannot bypass validation: a success its schema does not encode is a defect, as on HTTP, and nothing prints it.
 - `--json` is a regular flag of the rendered command only. A command without `render` has no such flag: its output is JSON already. Nothing is declared tree-wide, so a host CLI may declare its own `--json`, global or not.
@@ -275,9 +281,10 @@ export const cli = ActionCli.make(cache, { name: "ops" }).pipe(
 - `InvalidInput` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`. For `--input` or a value flag, the JSON or text may not be the field's encoding; malformed JSON is taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
 - `Invalid value for flag --<flag>: "<value>". Expected: ...`, or `Missing value for flag --<flag>`, from a native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values, or none.
 - `Missing required argument: <field>`, from a native `CliError.ShowHelp` containing `MissingArgument`: a required positional argument was not given. A positional field has no flag, so `--<field>` does not supply it.
-- Thrown by `command` when the command is built: `Duplicate positional argument: <field>` (listed twice), or `Required positional argument after an optional one: <field>` (reorder the list, or make the earlier field required).
+- Thrown by `command` when the command is built: `Duplicate positional argument: <field>` (listed twice), `Required positional argument after an optional one: <field>` (reorder the list, or make the earlier field required), or `Repeated positional argument before another one: <field>` (an array taken as an argument reads every value left: list it last).
+- Thrown by `command` when the command is built: `Not a flag's input field: <field>` (an alias names a field that is positional, or no field), or `Aliases need named input fields: <fields>` (the input is not a struct).
 - Also thrown by `command`, and refused by the types first: `Not an input field: <field>`, or `Positional arguments need named input fields` for an input that is not a struct.
-- `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name. Examples are two input fields with the same kebab-case name (`userId`, `user_id`), or a `json` field beside `render`'s `--json`. Rename the field, or drop `render`.
+- `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name. Examples are two input fields with the same kebab-case name (`userId`, `user_id`), a `json` field beside `render`'s `--json`, or an alias another flag's name or alias takes (`aliases: { limit: "all" }` beside an `all` field). Rename the field or the alias, or drop `render`.
 - A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
 - Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `implementations`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
 - Type error at `command(http, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
