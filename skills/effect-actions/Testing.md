@@ -2,8 +2,7 @@
 
 In-memory calls against served layers, through Effect's own `HttpClient`. Needs no extra
 dependency and opens no port. It tests what the wire does: routes and tools, authentication,
-statuses and codecs as sent. What an implementation does, its authorization, its checks and
-its handlers, is tested in process with `Action.client` ([Implementations](#implementations)).
+statuses and codecs as sent. What an implementation does, its authorization and its handlers, is tested in process with `Action.client` ([Implementations](#implementations)).
 
 ## API
 
@@ -62,8 +61,8 @@ console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(ro
 ### Implementations
 
 What an implementation does, with no transport between: `Action.client` gives the methods
-`ActionHttp.client` gives, and each call runs the authorizer, the action's checks and the
-handler, with every check a surface makes on its input, its success and its failure ([Action.md](Action.md#clients)). Each
+`ActionHttp.client` gives, and each call runs the authorizer and the handler, with every
+check a surface makes on its input, its success and its failure ([Action.md](Action.md#clients)). Each
 call takes its caller, so one test has several, and an action no binding holds, such as a
 tool, has a method like any other.
 
@@ -158,7 +157,7 @@ Any provider of that descriptor satisfies the routes; nothing else does.
 - A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `transformClient`, the same options for `mcpClient` and `ActionHttp.client`: one client per caller, `const alice = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")) }`. `mcpRequest` takes `headers`.
 - A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
-- Test what an implementation does in process, with `Action.client`: its authorizer, its checks, its handlers, and the checks every surface makes on input, success and failure, with several callers, an action no binding holds included. Test what a surface adds under `layer`: authentication, statuses, headers, bodies as sent, MCP results and text fields. The two call the same methods. Cover each surface the application exposes.
+- Test what an implementation does in process, with `Action.client`: its authorizer, its handlers, and the checks every surface makes on input, success and failure, with several callers, an action no binding holds included. Test what a surface adds under `layer`: authentication, statuses, headers, bodies as sent, MCP results and text fields. The two call the same methods. Cover each surface the application exposes.
 
 ## Failure modes
 
@@ -167,7 +166,7 @@ Any provider of that descriptor satisfies the routes; nothing else does.
 - 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call of its binding in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
 - The program reads a service the handlers never changed: it was provided inside the routes and again to the program, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
 - `Type 'Provider<CurrentActor, "example.Login">' is not assignable to type 'never'` where the test runs, such as at `Effect.runPromise`: the routes serve a protected action and no provider of its descriptor is provided to them. Provide it to the routes, `ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate))`, or a test verifier of the same descriptor. A caller provided around `layer` does not satisfy it ([Signed-in callers](#signed-in-callers)).
-- `Type 'CurrentActor' is not assignable to type 'never'` where the test runs: a public action's handler, or a check it lists, reads the identity, which no route provides it. Make the action protected.
+- `Type 'CurrentActor' is not assignable to type 'never'` where the test runs: a public action's handler reads the identity, which no route provides it. Make the action protected.
 - A protected route answers 401 where the test expects a 415 or a 400: the request carries no credential that verifies, and authentication runs first. Send a token with requests about something else.
 - `Argument of type 'Layer<…, FileSystem | Generator | HttpPlatform | HttpRouter | Path>' is not assignable` at `HttpRouter.toWebHandler(routes)`, then `No overload matches this call` at `layer(web.handler)`, its last overload naming `Layer<unknown, unknown, unknown>`, or `Expected 2 arguments, but got 1` at `web.handler(request)`: the web handler's routes lack their platform services. Provide them: `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)))`.
 - A builder or handler finds no file where one exists, failing with `NotFound: FileSystem.<method> (<path>)`, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it, with `Layer.provideMerge` where the program reads files too.

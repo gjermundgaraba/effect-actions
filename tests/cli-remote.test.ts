@@ -156,6 +156,41 @@ it.effect("refuses input that does not decode locally, sending no request", () =
   }),
 );
 
+it.effect("fails with an error its action declares, as the client decodes it", () =>
+  Effect.gen(function* () {
+    class TooLarge extends Schema.TaggedError<TooLarge>()(
+      "TooLarge",
+      { limit: Schema.Finite },
+      { httpApiStatus: 413 },
+    ) {}
+
+    const Bounded = Action.make("bounded", {
+      description: "Refuses a value over its limit",
+      readOnly: true,
+      caller: Action.Anyone,
+      input: { value: Schema.Finite },
+      errors: [TooLarge],
+    });
+
+    const BoundedHttp = ActionHttp.make([Bounded]);
+
+    const web = serve(
+      ActionHttp.layer(
+        BoundedHttp,
+        Action.implement(Bounded, () => Effect.fail(new TooLarge({ limit: 10 }))),
+      ),
+    );
+
+    const [exit, , stderr] = yield* exec(ActionCli.command(BoundedHttp, Bounded), [
+      "--value",
+      "11",
+    ]).pipe(printed, Effect.provide(Testing.layer(web.handler)));
+
+    expect(causeOf(exit)).toEqual(new TooLarge({ limit: 10 }));
+    expect(stderr).toEqual([expect.stringContaining('{"_tag":"TooLarge","limit":10}')]);
+  }),
+);
+
 it.effect(
   "prints a binding's error as its JSON, and a transport failure with the causes beneath it",
   () =>

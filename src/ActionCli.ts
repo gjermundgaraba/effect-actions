@@ -103,8 +103,8 @@ type Owning<App, A extends Action.Any> = App extends unknown
   : never;
 
 /**
- * What one local command of `A` runs: its implementation's builder, authorization and checks,
- * then its handler. Authorization may refuse and any handler fail with a built-in error, so
+ * What one local command of `A` runs: its implementation's builder and authorization, then
+ * its handler. Authorization may refuse and any handler fail with a built-in error, so
  * every one fails with `Action.BuiltIn` too.
  */
 type Local<App, A extends Action.Any> = Effect.Effect<
@@ -115,7 +115,7 @@ type Local<App, A extends Action.Any> = Effect.Effect<
 
 /**
  * Build the implementation's handlers for this call alone, run one action through its
- * authorization, checks and handler, and release them: every local command, selected or aggregated.
+ * authorization and handler, and release them: every local command, selected or aggregated.
  * The call's own scope, which every call has, closes first, so its finalizers run while the
  * builder's resources are still open; a local build never reuses one the host already made.
  */
@@ -124,8 +124,8 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
   action: A,
   input: A["input"]["Type"],
 ): Local<App, A> => {
-  // This action alone, with the shared builder: a protected sibling's authorization and
-  // checks, which its type does not owe, are never built for it.
+  // This action alone, with the shared builder: a protected sibling's authorization, which its
+  // type does not owe, is never built for it.
   const own = Implementation.share([action], app);
 
   const call = Effect.flatMap(acquire([own]), (bound) => {
@@ -137,9 +137,8 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
   const built = call.pipe(Effect.provide(Implementation.layerOf(own), { local: true }));
 
   // SAFETY: the builders' failures and services are the implementation's `EX` and `RX`, the
-  // handler's, authorization's and checks' services its entry of `R`. The handler fails with
-  // the action's errors or a `BuiltIn`, authorization with a refusal, and a check with the
-  // error it declares, which the action's errors include.
+  // handler's and authorization's services its entry of `R`. The handler fails with the
+  // action's errors or a `BuiltIn`, and authorization with a refusal.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased handler boundary: the implementation's type restores every channel.
   return built as Local<App, A>;
 };
@@ -211,8 +210,8 @@ const project = (
  * a struct. From an HTTP binding, the command calls the action over HTTP through its
  * `ActionHttp.client` method, made with the `client` options on the host's `HttpClient`, and fails
  * as the method does. From implementations, it runs the handler in process, behind its
- * implementation's authorization and the action's checks, and needs what they, its handler and its
- * builder need; the host provides the identity. It prints the result on stdout; a failure is a
+ * implementation's authorization, and needs what the authorization, its handler and its builder
+ * need; the host provides the identity. It prints the result on stdout; a failure is a
  * `Failure`, which `Command.run` prints on stderr.
  */
 export function command<const H extends AnyHttp, A extends H["actions"][number]>(

@@ -1127,21 +1127,6 @@ describe("authentication around a surface", () => {
   });
 
   it("is what the binding documents: each protected operation's security, from its contract", () => {
-    class RateLimited extends Schema.TaggedError<RateLimited>()(
-      "RateLimited",
-      { retryAfter: Schema.Finite },
-      { httpApiStatus: 429 },
-    ) {}
-
-    class Limited extends Action.Check<Limited>()("test/Limited", { error: RateLimited }) {}
-
-    const Limit = Action.make("limit", {
-      description: "Limited",
-      readOnly: false,
-      caller: Identity,
-      checks: [Limited],
-    });
-
     const example = OpenApi.fromApi(ExampleHttp.api);
     expect(example.paths["/api/status"]?.post?.security).toEqual([]);
     expect(example.paths["/api/renameUser"]?.post?.security).toEqual([{ "example.Login": [] }]);
@@ -1149,14 +1134,6 @@ describe("authentication around a surface", () => {
     expect(example.components.securitySchemes).toMatchObject({
       "example.Login": { type: "http", scheme: "Bearer" },
     });
-
-    // A check's declared error is the operation's, as the action's own errors are.
-    const limited = OpenApi.fromApi(
-      ActionHttp.make([Public, Limit], { authentication: Login }).api,
-    );
-
-    expect(limited.paths["/api/limit"]?.post?.responses).toHaveProperty("429");
-    expect(limited.paths["/api/public"]?.post?.responses).not.toHaveProperty("429");
   });
 
   it.effect("authenticates every request to an endpoint of protected tools alone", () =>

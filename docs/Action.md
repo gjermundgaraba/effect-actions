@@ -1,14 +1,13 @@
 # Action
 
 One contract: a name, schemas for input, success and declared errors, whether it is read-only
-(`readOnly`), who may call it (`caller`), the checks that run before its handler, and how its tool
-presents itself over MCP (`mcp`). A contract holds no behavior;
+(`readOnly`), who may call it (`caller`), and how its tool presents itself over MCP (`mcp`). A
+contract holds no behavior;
 `implement` binds handlers to contracts, with the authorization every surface runs before a
 protected action's handler: whether this caller may call it. Every surface that runs handlers
 takes an implementation or a list of them, and so does `client`, which calls them in process
-with the methods `ActionHttp.client` has. The module also declares checks, operational rules
-such as a rate limit, and exports the built-in errors every surface declares and any handler may
-fail with.
+with the methods `ActionHttp.client` has. The module also exports the built-in errors every
+surface declares and any handler may fail with.
 
 ## API
 
@@ -23,7 +22,6 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `implement(target, builder, options?)`          | Either form, with an Effect that builds the handler or record once per layer graph.  |
 | `allowAll`                                      | The authorizer without an action-level rule: every authenticated caller may call.    |
 | `Anyone`                                        | The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not.    |
-| `Check<Self>()(name, { error, requires? })`     | Declare a check, its one error and per-call services; a native layer implements it.  |
 | `layer(implementations)`                        | Their builders as one layer: provided above every surface, each runs once for all.   |
 | `client(implementations, { actions? })`         | An Effect of a caller running them in process: `client.<action>(input)`.             |
 | `InvalidInput`, `Unauthenticated`, `Forbidden`  | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.        |
@@ -33,8 +31,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `Action`, `Any`, `Implementation`               | Concrete and erased contracts, and bound implementations.                            |
 | `Client<Apps>`                                  | What `client` gives for the implementations `Apps`, one or a list.                   |
 | `AnyImplementation`, `AnyImplementation<A>`     | Any implementation, or any of actions `A`, erased: a generic helper's constraint.    |
-| `AnyCheck`                                      | Any check declaration, erased: what `checks` takes.                                  |
-| `CheckCallback`, `CheckContext`, `BuildContext` | A check's callback and what it reads, and what a surface reads at startup.           |
+| `BuildContext`                                  | What a surface serving implementations reads at startup: their builders' services.   |
 | `implementation.actions`                        | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.         |
 | `Handler`, `Authorize`                          | Typed handlers, and authorizers `(action) => Effect<void, Refusal, R>`.              |
 | `Handlers`                                      | A list's handlers keyed by name, for a builder written apart from `implement`.       |
@@ -48,7 +45,6 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `input`       | Optional schema or fields; omitted or `{}`, an empty object.                                   |
 | `success`     | Optional schema or fields; omission means `Schema.Void`.                                       |
 | `errors`      | Declared error codecs; defaults to none.                                                       |
-| `checks`      | Declared checks, run in order before the handler; each one's error joins the action's errors.  |
 | `mcp`         | The tool's MCP hints, in MCP's names, its `title` and `_meta`, and the library's `text`.       |
 
 `authorize` is required where the target holds a protected action, and refused where it holds
@@ -312,90 +308,6 @@ export const whoAmI = Action.implement(
 );
 ```
 
-### Checks
-
-An operational rule every surface runs, declared on the contracts it applies to: its
-declaration names its error, `RateLimited`, which joins each listing action's errors, and the
-service it reads per call. A native layer implements it: `Layer.succeed(Limited, callback)`, or,
-as here, `Layer.effect` building the callback once per layer graph from a startup `Limiter`, so
-every surface of the graph counts against one.
-
-```ts example=checks.ts
-import { Context, Effect, Layer, Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import { authenticate } from "./authentication.js";
-import { authorize, CurrentActor } from "./authorization.js";
-import { Login } from "./binding.js";
-
-export class RateLimited extends Schema.TaggedError<RateLimited>()(
-  "RateLimited",
-  { retryAfter: Schema.Finite },
-  { httpApiStatus: 429 },
-) {}
-
-// A declaration, transport-free as a contract is: the error the check may fail with, and the
-// one service it reads per call.
-export class Limited extends Action.Check<Limited>()("example/Limited", {
-  error: RateLimited,
-  requires: CurrentActor,
-}) {}
-
-// `RateLimited` joins the action's errors: every surface declares it, every client decodes it.
-export const Invite = Action.make("invite", {
-  description: "Invite someone to your tenant.",
-  input: { email: Schema.String },
-  readOnly: false,
-  caller: CurrentActor,
-  checks: [Limited],
-});
-
-/** DEMO ONLY: ten calls per caller, counted in memory and never reset. */
-export class Limiter extends Context.Service<
-  Limiter,
-  { readonly take: (key: string) => Effect.Effect<void, RateLimited> }
->()("example/Limiter") {
-  static readonly layerMemory = Layer.sync(Limiter, () => {
-    const counts = new Map<string, number>();
-
-    return Limiter.of({
-      take: (key) =>
-        Effect.suspend(() => {
-          const count = counts.get(key) ?? 0;
-
-          if (count >= 10) return Effect.fail(new RateLimited({ retryAfter: 60 }));
-
-          counts.set(key, count + 1);
-
-          return Effect.void;
-        }),
-    });
-  });
-}
-
-// Built once per layer graph, so every surface serving `Invite` counts against one limiter;
-// per call it reads only the service `Limited` requires.
-export const LimitedLive = Layer.effect(
-  Limited,
-  Effect.map(
-    Limiter,
-    (limiter) => () => Effect.flatMap(CurrentActor, ({ id }) => limiter.take(id)),
-  ),
-).pipe(Layer.provide(Limiter.layerMemory));
-
-// `authorize` refuses, the check limits, and the handler does neither.
-export const invite = Action.implement(Invite, ({ email }) => Effect.log(`Invited ${email}.`), {
-  authorize,
-});
-
-export const InviteHttp = ActionHttp.make([Invite], { authentication: Login });
-
-// Every surface serving `invite` owes `Limited` at startup, as it owes a builder's services.
-export const routes = ActionHttp.layer(InviteHttp, invite).pipe(
-  Layer.provide([authenticate, LimitedLive]),
-);
-```
-
 ### Client
 
 Implementations called in process, by code: a test, a job, a command of your own. The client is
@@ -448,11 +360,10 @@ console.log(
 - A protected contract imports its identity, so the module declaring it stays browser-safe: a `Context.Service` and its type, without the verifier ([setup.md](setup.md#browser)). Never a `Context.Reference`: its default is always present, so it would stand in for every caller who supplies none; the types refuse one, and `make` throws. A contract never imports a transport, its authentication descriptor included.
 - One identity per action, and every protected action one remote surface serves declares the same one, its authentication descriptor's. A tenant or other request context is an ordinary request-time requirement of the handler, never a second identity.
 - Every surface enforces `caller`, whatever the handler reads: a protected action is authenticated remotely and owes its identity per call locally, even where its handler and authorizer read none ([guarantees.md](guarantees.md#authorization)). A public action is neither authenticated nor authorized, and no surface provides it an identity: a public handler that reads one leaves its layer owing it ([Failure modes](#failure-modes)). An action whose answer depends on the caller is protected.
-- `checks` lists the action's checks, run in that order after authorization; each one's `error` joins `errors`, deduplicated, so do not list it there too ([Checks](#checks)).
 - `readOnly` is a boolean and is required: whether the action leaves its resource unchanged. `make` also checks it at runtime, so a caller the compiler never sees cannot define an action no rule classifies. It stays a literal on the action, so a type may select the read-only actions, `Extract<A, { readonly readOnly: true }>`.
 - An implementation's `authorize` reads `readOnly` ([guarantees.md](guarantees.md#authorization)); the library itself authorizes nothing with it. Its only built-in uses are the tool's hints and the span/log annotation.
 - `readOnly` is also the tool's read-only hint, which no option overrides, so authorization and what MCP clients are told cannot disagree. Derive authorization from `readOnly`, never from an `mcp` hint.
-- A contract says nothing about where it is served. Each surface takes the list of actions it serves, from the implementations passed to it: HTTP its binding's, `ActionHttp.make(actions)`, and MCP, a Toolkit and `ActionCli.make` their `actions` option, or every action of the implementations without it. To keep an action off a surface, leave it out of that list, whatever implementation holds it. A listed action keeps its `caller`, its checks, its implementation's authorizer and its builder's one run.
+- A contract says nothing about where it is served. Each surface takes the list of actions it serves, from the implementations passed to it: HTTP its binding's, `ActionHttp.make(actions)`, and MCP, a Toolkit and `ActionCli.make` their `actions` option, or every action of the implementations without it. To keep an action off a surface, leave it out of that list, whatever implementation holds it. A listed action keeps its `caller`, its implementation's authorizer and its builder's one run.
 - List the actions that are tools in one place, beside the contracts, `export const Tools = [GetUser, RenameUser] as const`, and give every MCP endpoint and Toolkit `actions: Tools`: an action added later is no tool until it is listed. List an action only where the model may hold what it takes and returns: a tool call passes both through the model's context, and records its input on a span ([guarantees.md](guarantees.md#observability)).
 - `byName(actions)` keys a list by name: `const contracts = Action.byName(Actions)` gives `contracts.getUser`, its schemas for a test or a mock, `keyof typeof contracts` as the names, and an action's types by name, `(typeof contracts)[K]["input"]["Type"]`, which resolves under a generic `K`, where `Extract` over the list does not. The list is typed by its members ([guarantees.md](guarantees.md#names)). It throws `Duplicate action: <name>` for a name held twice.
 - `make` accepts only the keys listed above, and `mcp` only `title`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `_meta` and `text`: MCP's own names, and the library's `text`. An unknown key is a compile error, beside known ones too, and so is `readOnlyHint`. `text` names a top-level string field of the encoded success, which MCP sends as text ([ActionMcp.md](ActionMcp.md#text-fields)); every other surface ignores it. `title` is the tool's display name, MCP's `annotations.title`, and `_meta` its `_meta`, sent as given, such as an MCP App's UI resource: native `Tool.Title` and `Tool.Meta` on a Toolkit's tool. Neither has a default, and neither is sent when left out.
@@ -470,41 +381,28 @@ console.log(
 - `implement` returns one `Implementation` of everything it binds: `implement(action, handler, options)` one action, `implement([a, b], { a: ..., b: ... }, options)` every listed action. Either may take an Effect that builds the handler or the record instead. One implementation may hold public and protected actions. Every surface takes one implementation or a list: `[status, userActions, double]`. Which actions it exposes follows the [surface selection rules](guarantees.md#names).
 - An implementation holding a protected action states who of the authenticated callers may call: `{ authorize }` is required, and leaving it out is a compile error. `Action.allowAll` lets every authenticated caller call; authentication still decides who that is. An authorizer that depends on the deployment is `enabled ? authorize : Action.allowAll`; its services are owed either way. Plain JavaScript has no types, so `implement` also checks at runtime that it got one.
 - An implementation of public actions alone takes no options: `{ authorize }` there is a compile error, since nothing would run it.
-- `authorize` runs only for protected actions, after authentication and input decoding, before the checks and the handler, on every surface ([guarantees.md](guarantees.md#authorization)). It fails only with a refusal: a limit, or any other failure a caller should see beside a refusal, is a [check](#checks). Typed `Action.Authorize<Action.Any>`, an authorizer fits every implementation, as `Action.allowAll` does.
+- `authorize` runs only for protected actions, after authentication and input decoding, before the handler, on every surface ([guarantees.md](guarantees.md#authorization)). It fails only with a refusal: a limit, or any other failure a caller should see beside a refusal, is the handler's. Typed `Action.Authorize<Action.Any>`, an authorizer fits every implementation, as `Action.allowAll` does.
 - `authorize` may be an Effect that builds it, as a builder builds handlers ([Built authorization](#built-authorization)). Its lifetime, and startup versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Guarding several implementations, it is built once for each: keep state they share in a service the Effect yields, or pass a service whose value is the authorizer itself, `{ authorize: Guard }`, which Effect builds once. `Effect.isEffect` tells the two forms apart, so an authorizer written with `Effect.fn` is a plain one.
 - `authorize` sees `action` typed as the implementation's own actions when it is written in `implement`'s options, as a plain function, an `Effect.fn` or a built one. Defined apart, as a rule several implementations share is, nothing types it there: annotate it, `(action: Action.Any)`.
+- A limit, such as a rate limit, is the handler's: the action declares its error in `errors`, the builder yields the limiter, a startup service shared by every surface of the layer graph, and the handler fails with the error before its work, as with any declared error. Several actions sharing one limit spread one error array into their `errors` and wrap their handlers in one function the builder defines. A limit counting every request, decoded or not, is router middleware over HTTP ([guarantees.md](guarantees.md#authorization)).
 - A record has exactly one own-property function per action, keyed by its name. Missing and extra keys are compile errors, for a plain record and for a builder's. An inherited method does not count. Handlers are called without a receiver. Duplicate action names in one call throw at `implement`.
 - A plain handler or record is checked at `implement`; a builder's record when it is built. A record that slips past the types (plain JavaScript, a cast) throws `Unknown handlers` for a key no action names, and `Missing handlers` for an action without a function. From a builder, the layer build dies with the same message. Nothing is served with a handler missing.
-- Builder lifetime and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Authentication, authorization and checks: [guarantees.md](guarantees.md#authorization). Surfaces keep the two kinds of services separate in their types, per action.
+- Builder lifetime and build-time versus request-time services: [guarantees.md](guarantees.md#dependency-lifetimes). Authentication and authorization: [guarantees.md](guarantees.md#authorization). Surfaces keep the two kinds of services separate in their types, per action.
 - A handler's input is typed from its action however it is written: an arrow, a function typed `Action.Handler`, or a generator, `Effect.fn(function* (input) { ... })` or `Effect.fnUntraced`, alone or in a record, a builder's included. The builder must itself be `implement`'s argument: through `.pipe(...)`, or a wrapper such as `Effect.withSpan(builder, name)`, an `Effect.fn` it returns takes an `any` input, so annotate the input there.
 - Each handler already runs in a span named after its action, and every log line it writes is annotated with `action.name` and `action.read_only` ([guarantees.md](guarantees.md#observability)). Leave `Effect.fn` unnamed: don't wrap a handler in `Effect.fn(name)` or annotate its logs with the action's name yourself.
-- A surface serves fewer of an implementation's actions through its own list ([Contracts](#contracts)), and `client` through `actions`: each listed action keeps its implementation's handlers, builder, authorizer and checks. Selection never changes who may call. A caller trusted on one surface, such as an operator on an admin CLI, is an identity the host supplies there, which the same authorizer admits ([ActionCli.md](ActionCli.md#trusted-callers)). Another authorizer for the same handlers takes another `implement`, of the same builder Effect, which then runs once per implementation in each layer graph. A builder written apart from `implement` returns its record `satisfies Action.Handlers<typeof actions>`, so each handler is typed from its contract, as inside `implement`.
+- A surface serves fewer of an implementation's actions through its own list ([Contracts](#contracts)), and `client` through `actions`: each listed action keeps its implementation's handlers, builder and authorizer. Selection never changes who may call. A caller trusted on one surface, such as an operator on an admin CLI, is an identity the host supplies there, which the same authorizer admits ([ActionCli.md](ActionCli.md#trusted-callers)). Another authorizer for the same handlers takes another `implement`, of the same builder Effect, which then runs once per implementation in each layer graph. A builder written apart from `implement` returns its record `satisfies Action.Handlers<typeof actions>`, so each handler is typed from its contract, as inside `implement`.
 - A helper over implementations is generic, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, so each implementation's requirements reach the surface it passes them to, `ActionHttp.layer` included, whose binding decides what it serves. Beside the helper's own implementations, list or spread the parameter, `[app, double]` or `[...apps, double]`. `AnyImplementation` erases every channel to `unknown`: a value or a parameter typed with it owes `unknown`, which no surface can be given. An implementation's own type is inferred from `implement`: `Implementation`'s type parameters are not meant to be written out, and change as its channels do. Exported from a package that emits declarations, the helper states its return type as the surface's own, `ReturnType<typeof Action.client<Apps>>`, which TypeScript can name where the inferred one cannot.
 - `Implementation` is nominal. Spreading its properties does not produce an implementation. Surfaces match an implementation to an action by object identity, so implement the exact contract value a binding or a CLI selector receives.
-- Test what an implementation does, its authorizer, its checks and its handlers, in process with `client`, each caller provided around its own calls ([Clients](#clients)); test what a surface adds, authentication, statuses and codecs, under `Testing.layer` ([Testing.md](Testing.md)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips authorization and every check. Cover each surface the application exposes.
-
-### Checks
-
-- A check is declared once, `class Limited extends Action.Check<Limited>()("example/Limited", { error, requires })`, a transport-free value contracts list, safe in a browser as a contract is. `error` is one codec, which may be a union; `requires` is the request service the check reads per call, `requires: CurrentActor`, or several, `requires: [CurrentActor, Tenant]`, optional. Each call of an action listing it owes every one. Its name is a service key's: one declaration per name.
-- An action lists a check once: `make` drops a repeat, such as one a spread shared list adds, so it runs once per call.
-- Each action listing it declares its `error`: `make` adds it to the action's `errors`, deduplicated, so every surface declares it for that action and every client decodes it, as any declared error ([guarantees.md](guarantees.md#authorization)). A check reaching the HTTP binding's `errors` instead is not one: those are router middleware's.
-- A native layer implements it: `Layer.succeed(Limited, callback)` with the callback itself, `(action) => Effect<void, error, requires>`. A callback that reads a startup service, such as the limiter, is built instead: `Layer.effect(Limited, build)`, where `build` is an Effect returning the callback, built once per layer graph, as a built authorizer is, and what it yields is a startup service. The callback fails only with the declared `error` and reads per call only the declared `requires`: either otherwise is a compile error.
-- The callback may use the call's own `Scope`, `Effect.addFinalizer` or `Effect.acquireRelease`: it is released when the call ends, whether the check refused it or the handler ran, and no caller owes `Scope`.
-- The callback receives the action, never its input: a rule on the input, or on one record, is the handler's. To apply a check to only some actions, list it only on those, or switch on `action` in the callback.
-- Checks run for public and protected actions alike, after authorization and before the handler, in the order the action lists them. A failing check ends the call; the handler never runs. A check's error is not a refusal, as `make` refuses a built-in `_tag`; a check whose error schema admits a refusal, and that fails with one anyway, is answered as that refusal, stepping up under a Bearer descriptor as a handler's does ([guarantees.md](guarantees.md#authorization)).
-- A check whose `requires` is the identity applies to protected actions alone: a public action listing it owes the identity per call, which no remote surface provides it.
-- Every surface serving an action that lists a check requires the check's layer at startup, as it requires a builder's services: `Layer.provide(LimitedLive)` to an HTTP or MCP layer, `Command.provide(LimitedLive)` on a CLI command, `Effect.provide` around a Toolkit's layer or an `Action.client` acquisition; `layer(implementations)`, which runs builders alone, does not. Provide it once above every surface, so all of them count against one state ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
-- A check runs after decoding, so input that does not decode never counts, and a protected request without a valid credential never reaches it. A limit counting every request is router middleware over HTTP ([guarantees.md](guarantees.md#authorization)).
-- An authorizer that also limited splits into `authorize`, which refuses, and a check, which limits.
+- Test what an implementation does, its authorizer and its handlers, in process with `client`, each caller provided around its own calls ([Clients](#clients)); test what a surface adds, authentication, statuses and codecs, under `Testing.layer` ([Testing.md](Testing.md)). A builder's handlers exist only once it runs, so calling the function passed to `implement` works only for a plain handler, and skips authorization. Cover each surface the application exposes.
 
 ### Clients
 
 - `client(implementations)` takes one implementation or a list, as a surface does, and gives one method per action, named after it and taking its input directly: the methods `ActionHttp.client` gives, so moving between an in-process and a remote caller changes the line acquiring it. The argument may be left out when `{}` is a valid encoded input, such as an input whose every field has a decoding default, and is then what `{}` decodes to; an input whose encoded form requires a field its decoded one lacks takes the argument. Every implemented action has a method, whether or not a surface serves it. An action name twice among the implementations throws `Duplicate action: <name>` where `client` is called.
-- A call runs as a remote one does, through the dispatch every surface shares. Its input passes through its JSON codec, encoded to JSON text then decoded, so the handler receives what a remote handler decodes: an undeclared field dropped, as a client's encoding drops it, a class instance built anew, a decoding transformation such as a trim applied, `0` for `-0`. Authorization runs, then the checks, then the handler, in its action's span, each call in a scope of its own ([guarantees.md](guarantees.md#dependency-lifetimes)). The success passes through its codec the same way, and a failure through the codec of every error the action declares, the built-in ones included, so the caller gets what a remote caller decodes: no undeclared field, a decoding transformation applied, `undefined` for a `Schema.Void` success. A failure keeps its trace: where the authorizer, a check or the handler failed.
-- A call fails with the action's declared errors and the built-in ones, as `ActionHttp.client` decodes them, and with nothing of a transport. Input that does not pass through its codec is `InvalidInput`, with the schema's message and `issues`, and authorization, the checks and the handler never run; a class input is passed as an instance, as over HTTP. A protected action's call without its identity fails with `Unauthenticated` before the authorizer runs. The authorizer's refusal, or a check's declared error, is the call's failure. A success or a failure that does not pass, an error the action does not declare included, is a defect, as it is an empty 500 over HTTP: the handler broke its contract. The defect is its `SchemaError`, and for a failure, the failure itself after it.
-- Each method owes, per call, what its handler, its implementation's authorizer and its checks read, and a protected action's identity whether or not they read it, and the caller provides them around the call, or around a program making several: `users.renameUser(input).pipe(Effect.provideService(CurrentActor, actor))`. A call reads its caller's context, never the one the client was acquired in: provided around the acquisition, a service reaches no call, so neither does a startup identity, and one client serves every caller.
+- A call runs as a remote one does, through the dispatch every surface shares. Its input passes through its JSON codec, encoded to JSON text then decoded, so the handler receives what a remote handler decodes: an undeclared field dropped, as a client's encoding drops it, a class instance built anew, a decoding transformation such as a trim applied, `0` for `-0`. Authorization runs, then the handler, in its action's span, each call in a scope of its own ([guarantees.md](guarantees.md#dependency-lifetimes)). The success passes through its codec the same way, and a failure through the codec of every error the action declares, the built-in ones included, so the caller gets what a remote caller decodes: no undeclared field, a decoding transformation applied, `undefined` for a `Schema.Void` success. A failure keeps its trace: where the authorizer or the handler failed.
+- A call fails with the action's declared errors and the built-in ones, as `ActionHttp.client` decodes them, and with nothing of a transport. Input that does not pass through its codec is `InvalidInput`, with the schema's message and `issues`, and authorization and the handler never run; a class input is passed as an instance, as over HTTP. A protected action's call without its identity fails with `Unauthenticated` before the authorizer runs. The authorizer's refusal is the call's failure. A success or a failure that does not pass, an error the action does not declare included, is a defect, as it is an empty 500 over HTTP: the handler broke its contract. The defect is its `SchemaError`, and for a failure, the failure itself after it.
+- Each method owes, per call, what its handler and its implementation's authorizer read, and a protected action's identity whether or not they read it, and the caller provides them around the call, or around a program making several: `users.renameUser(input).pipe(Effect.provideService(CurrentActor, actor))`. A call reads its caller's context, never the one the client was acquired in: provided around the acquisition, a service reaches no call, so neither does a startup identity, and one client serves every caller.
 - `actions` lists the actions it calls among the implementations', as a surface's `actions` does: an implementation holding none of them is left out, unbuilt, and a listed action none of them holds throws `Listed in actions, but no implementation holds it: <names>`. Where `actions` may be absent, an optional property or a union with options lacking it, the client offers methods only for the actions it may list, which are present either way, while it owes and builds what every action needs ([guarantees.md](guarantees.md#names)). An explicit type argument listing actions requires the options argument.
-- Acquiring a client builds its implementations' builders, every authorizer an Effect builds, and requires the checks of the actions it calls, as a layer does: the acquisition owes their startup services, the check layers and a `Scope`, and fails as they fail; no call does. Where it builds, and what it shares: [dependency lifetimes](guarantees.md#dependency-lifetimes). Acquire it where builders live, once: in a builder, in a layer providing it as a service of type `Action.Client<typeof users>`, or in a scoped program, such as a test, a job or a command. Never per request, in a handler.
+- Acquiring a client builds its implementations' builders and every authorizer an Effect builds, as a layer does: the acquisition owes their startup services and a `Scope`, and fails as they fail; no call does. Where it builds, and what it shares: [dependency lifetimes](guarantees.md#dependency-lifetimes). Acquire it where builders live, once: in a builder, in a layer providing it as a service of type `Action.Client<typeof users>`, or in a scoped program, such as a test, a job or a command. Never per request, in a handler.
 
 ## Failure modes
 
@@ -518,10 +416,8 @@ console.log(
 - `Argument of type '... | undefined' is not assignable` at `implement`'s `authorize`: an authorizer that may be `undefined`, such as `enabled ? authorize : undefined`. Write `enabled ? authorize : Action.allowAll`.
 - `Parameter 'action' implicitly has an 'any' type`, or an `Effect.fn` authorizer whose `action` is `any`, where it is defined apart from `implement`: nothing types it there. Annotate it, `(action: Action.Any)`.
 - Type error `Effect<..., X, ...> is not assignable` at `implement`: the handler fails with an undeclared error `X`. Add it to the action's `errors` or handle it.
-- `Type 'X' is not assignable to type 'Refusal'` at `implement`, ending in a `_tag` mismatch with `"Unauthenticated"`: the authorizer fails with `X`, which is not a refusal. A limit or another failure callers should see is a check: declare it, list it on the actions, and fail with `X` there ([Checks](#checks)).
-- `... is not assignable to type 'CheckCallback<E, R>'` at `Layer.succeed` or `Layer.effect`, such as `Property 'retryAfter' is missing in type 'X' but required in type 'RateLimited'`: the callback fails with an error other than its declaration's `error`, or reads a service its `requires` does not name. Fail with the declared error, or widen the declaration's `error` to a union; add the service to `requires`, a list for several.
-- `Limited` among a layer's, a command's or a program's unprovided requirements, such as `Type 'Limited' is not assignable to type 'never'` where it is launched or run: an action it serves lists the check, and its layer is not provided. Provide `LimitedLive`, `Layer.effect(Limited, build)`, once above every surface.
-- `Type 'CurrentActor' is not assignable to type 'never'`, or `Request<"Requires", CurrentActor>` still owed, for a layer serving only public actions: a public action lists a check requiring the identity, or its handler reads it, and no surface provides an identity to a public action. List the check on protected actions only, or make the action protected.
+- `Type 'X' is not assignable to type 'Refusal'` at `implement`, ending in a `_tag` mismatch with `"Unauthenticated"`: the authorizer fails with `X`, which is not a refusal. A limit or another failure callers should see is the handler's: declare `X` in the action's `errors` and fail with it there.
+- `Type 'CurrentActor' is not assignable to type 'never'`, or `Request<"Requires", CurrentActor>` still owed, for a layer serving only public actions: a public action's handler reads the identity, and no surface provides an identity to a public action. Make the action protected.
 - `Property 'x' is missing in type` at `implement`: the record lacks a handler for action `x`.
 - `Missing handlers: <names>` at `implement`, or when a builder's layer builds: the record has no own-property function for those actions. Add them to the record itself, not to a prototype.
 - `Unknown handlers: <keys>` at `implement` or when a builder's layer builds, or a type error names a key: the record has a handler for an action not in this `implement` call. Remove it, or add its action to the list.
@@ -529,13 +425,13 @@ console.log(
 - `Duplicate action: <name>` at `implement`: the list names one action twice. Thrown by `client`: two of its implementations implement an action of that name. Separate contracts sharing a name are told apart by `actions`, listing one; two implementations of the same contract are not, since listing it keeps both: pass one implementation.
 - Handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
 - `Property 'readOnly' is missing` at `make`: every action declares whether it is read-only. There is no default.
-- A service is resolved once and shared across requests when it should be per request: it was yielded in the builder, or in the Effect building the authorizer or a check. Move the `yield*` into the handler, the authorizer or the check's callback. An identity yielded there is a startup requirement of the layer; never provide one at startup ([guarantees.md](guarantees.md#dependency-lifetimes)).
+- A service is resolved once and shared across requests when it should be per request: it was yielded in the builder, or in the Effect building the authorizer. Move the `yield*` into the handler or the authorizer. An identity yielded there is a startup requirement of the layer; never provide one at startup ([guarantees.md](guarantees.md#dependency-lifetimes)).
 - `HttpRouter.Request<"Requires", X>` still owed, or `Type 'X' is not assignable to type 'never'` at `runMain`, although `X`, a store the authorizer reads, is provided at startup: the authorizer yields it on every call. Yield it in an Effect that builds the authorizer ([Built authorization](#built-authorization)).
 - `unknown` among a surface's requirements, and a type error where it is served or run, such as `Argument of type 'Layer<never, unknown, unknown>' is not assignable` at `HttpRouter.toWebHandler` or `Type 'unknown' is not assignable to type 'never'` where it is launched or run: the implementations are typed `Action.AnyImplementation`, as a helper's parameter or a list's annotation. Make the helper generic over them, or drop the annotation.
 - `Request<"Requires", unknown>` in a type error where an implementation is served, or `unknown` among the services a call or a run still requires: TypeScript inferred no requirements for a handler of a record. A data-first call whose type takes a parameter from no argument does it, `Effect.catchTag(effect, tag, f)` for one, where `Effect.catch`, `Effect.map` and `Effect.orDie` do not. Write that handler's Effect `effect.pipe(Effect.catchTag(tag, f))`, or as a generator.
 - `'readOnlyHint' does not exist in type 'Mcp'` at `make`, or `Type 'true' is not assignable to type 'never'` on `readOnlyHint` beside another hint: a tool's read-only hint is its action's `readOnly`. Set `readOnly` instead.
 - `Type '...' is not assignable to type 'never'` on a key at `make`, in `mcp` too: an option or hint it does not take, or a misspelled one, such as `destructive` for `destructiveHint`.
-- `Type 'H' is not assignable to type 'H & ...'` at `make`, where `H` is a helper's type parameter, as in `<const H extends Action.Mcp>(mcp: H)`: the check cannot read options a type parameter stands for, so it refuses them. An action's type carries no `mcp` types, so type the parameter `Action.Mcp`; the helper loses nothing.
+- `Type 'H' is not assignable to type 'H & ...'` at `make`, where `H` is a helper's type parameter, as in `<const H extends Action.Mcp>(mcp: H)`: `make` cannot read options a type parameter stands for, so it refuses them. An action's type carries no `mcp` types, so type the parameter `Action.Mcp`; the helper loses nothing.
 - Type error on `errors` at `make`, `... is not assignable to type 'readonly never[]'` or naming the remaining errors: it lists a built-in error. Drop it; every surface declares it, and a handler may fail with it anyway.
 - `make` throws `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface`: an error in the action's `errors`, or a member of a union there, encodes with the `_tag` of a built-in error, `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error from `errors`, since a handler may fail with it anyway; rename an error of your own.
 - `ReferenceError` thrown by `make`: an entry of `errors` is a `Schema.suspend` whose thunk reads a `const` declared further down. `make` reads every error's `_tag` when it is called; declare the error first.

@@ -101,7 +101,6 @@ which is public.
 - [binding.ts](binding.ts): the `Login` authentication descriptor and the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of the binding, so HTTP does not serve it. Its protected routes require the bearer scheme, enforced and documented; `status` is public.
 - [authorization.ts](authorization.ts): demo actors, the identity `CurrentActor` the protected contracts declare, permissions, and the `authorize` rule the protected implementations state.
 - [authorization-built.ts](authorization-built.ts): the same rule built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
-- [checks.ts](checks.ts): a declared check, not served by the app: a rate limit whose error joins the contract's errors, built once per layer graph and run after `authorize`.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
 - [handlers.ts](handlers.ts): `Action.implement` for one action or several sharing a builder, with startup and request dependencies, and the `authorize` of the protected ones.
 - [authentication.ts](authentication.ts): `Authentication.layer`, the server-only verifier of `Login`, as `authenticate`, publishing its OAuth protected resource's RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
@@ -127,7 +126,6 @@ HTTP /api/getUser / MCP tool getUser
   → the surface decodes input (invalid input is a 400 InvalidInput over HTTP and an isError
     result over MCP; authorize and the handler never run)
   → authorize reads readOnly: true and checks users:read
-  → the action's declared checks, none here
   → handler calls Users.get(actor.tenantId, id)
   → the surface encodes the user or the declared error
 ```

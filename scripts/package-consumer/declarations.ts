@@ -1,6 +1,6 @@
 // A package that emits declarations exports what it builds, each nameable from the
-// published modules: a descriptor, the binding naming it, its provider, a check, an
-// implementation, the layers serving it on every surface, and a client's methods.
+// published modules: a descriptor, the binding naming it, its provider, an implementation,
+// the layers serving it on every surface, and a client's methods.
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -43,26 +43,18 @@ export class Clock extends Context.Service<Clock, () => number>()("declarations/
 
 export class Limited extends Schema.TaggedError<Limited>()("Limited", {}) {}
 
-// A check reading a request service.
-export class Limit extends Action.Check<Limit>()("declarations/Limit", {
-  error: Limited,
-  requires: Principal,
-}) {}
-
 export const Lookup = Action.make("lookup", {
   description: "Look a record up",
   readOnly: true,
   caller: Principal,
   input: { id: Schema.String },
   success: Schema.String,
-  checks: [Limit],
+  errors: [Limited],
 });
 
 export const LookupHttp = ActionHttp.make([Lookup], { authentication: Login });
 
-export const limit = Layer.succeed(Limit, () => Effect.void);
-
-// A builder yielding two startup services, beside a check's: what each surface owes at startup.
+// A builder yielding two startup services: what each surface owes at startup.
 export const lookup = Action.implement(
   Lookup,
   Effect.gen(function* () {

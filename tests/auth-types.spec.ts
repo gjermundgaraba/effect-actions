@@ -2,7 +2,7 @@
 // every contract, verified remotely by its named descriptor's provider alone, owed per call in
 // process, and never owed by a selection of public actions. Each refusal sits beside the form
 // that compiles, so it fails for the reason it names.
-import { Context, Effect, Layer, Redacted, Schema, type Scope } from "effect";
+import { Context, Effect, Layer, Redacted, type Scope } from "effect";
 import type { HttpRouter } from "effect/http";
 import { type HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import { expectTypeOf } from "@effect/vitest";
@@ -26,26 +26,6 @@ class Stranger extends Context.Service<Stranger, string>()("auth-types/Stranger"
 class Permissions extends Context.Service<Permissions, ReadonlySet<string>>()(
   "auth-types/Permissions",
 ) {}
-
-class RateLimited extends Schema.TaggedError<RateLimited>()(
-  "RateLimited",
-  { retryAfter: Schema.Finite },
-  { httpApiStatus: 429 },
-) {}
-
-class Limited extends Action.Check<Limited>()("auth-types/Limited", {
-  error: RateLimited,
-  requires: CurrentActor,
-}) {}
-
-const Rename = Action.make("rename", {
-  description: "Rename, within the caller's limit.",
-  readOnly: false,
-  caller: CurrentActor,
-  checks: [Limited],
-  input: { name: Schema.String },
-  success: Schema.String,
-});
 
 const handlers = {
   status: () => Effect.succeed({ service: "pins", users: 0 }),
@@ -275,50 +255,6 @@ export const publicReaderTypes = () => {
   >().toEqualTypeOf<CurrentActor>();
   // @ts-expect-error `status` still owes the caller, beside `double`'s authentication.
   void run(Testing.layer(routes));
-};
-
-export const checkTypes = () => {
-  // The declaration, never the callback, decides what a check fails with and reads per call.
-  class Unexpected extends Schema.TaggedError<Unexpected>()("Unexpected", {}) {}
-
-  const unexpected = Effect.succeed(() => Effect.fail(new Unexpected()));
-  const limited = Effect.succeed(() => Effect.fail(new RateLimited({ retryAfter: 1 })));
-
-  // @ts-expect-error `Limited` declares `RateLimited` alone.
-  Layer.effect(Limited, unexpected);
-  Layer.effect(Limited, limited);
-
-  const stranger = Effect.succeed(() => Effect.asVoid(Stranger));
-  const actor = Effect.succeed(() => Effect.asVoid(CurrentActor));
-
-  // @ts-expect-error `Limited` reads `CurrentActor` per call, not `Stranger`.
-  Layer.effect(Limited, stranger);
-  Layer.effect(Limited, actor);
-
-  // A callback that builds nothing, given as it is, is checked the same way.
-  // @ts-expect-error `Limited` reads `CurrentActor` per call, not `Stranger`.
-  Layer.succeed(Limited, () => Effect.asVoid(Stranger));
-  Layer.succeed(Limited, () => Effect.asVoid(CurrentActor));
-
-  // The callback receives any action, never its input.
-  Layer.effect(
-    Limited,
-    Effect.succeed((action) => {
-      expectTypeOf(action).toEqualTypeOf<Action.Any>();
-
-      return Effect.void;
-    }),
-  );
-
-  // A check's error is its actions' own: listed in their errors and decoded by every client.
-  type Client = ActionHttp.Client<ActionHttp.Binding<[typeof Rename]>>;
-
-  expectTypeOf<
-    Extract<Effect.Error<ReturnType<Client["rename"]>>, RateLimited>
-  >().toEqualTypeOf<RateLimited>();
-  expectTypeOf<
-    Extract<(typeof Rename.errors)[number]["Type"], RateLimited>
-  >().toEqualTypeOf<RateLimited>();
 };
 
 // A descriptor's security middleware spells Effect's middleware marker, which Effect does not

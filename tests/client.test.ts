@@ -7,6 +7,7 @@ import {
   Option,
   Predicate,
   Schema,
+  SchemaIssue,
   SchemaTransformation,
   Stream,
 } from "effect";
@@ -271,6 +272,48 @@ describe("Action.client", () => {
     }),
   );
 
+  it.effect("releases what a failed call acquired when it fails, the handler's first", () =>
+    Effect.gen(function* () {
+      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+
+      const log: Array<string> = [];
+
+      const logged = (name: string) =>
+        Effect.acquireRelease(
+          Effect.sync(() => log.push(`${name} acquire`)),
+          () => Effect.sync(() => log.push(`${name} release`)),
+        );
+
+      const Guarded = Action.make("ping", {
+        description: "Ping",
+        readOnly: true,
+        caller: CurrentActor,
+        errors: [Busy],
+      });
+
+      const app = Action.implement(
+        Guarded,
+        () => Effect.andThen(logged("handler"), Effect.fail(new Busy())),
+        { authorize: () => Effect.asVoid(logged("authorize")) },
+      );
+
+      yield* Effect.gen(function* () {
+        const client = yield* Action.client(app);
+
+        expect(yield* Effect.flip(client.ping().pipe(asAlice))).toEqual(new Busy());
+        log.push("failed");
+      }).pipe(Effect.scoped);
+
+      expect(log).toEqual([
+        "authorize acquire",
+        "handler acquire",
+        "handler release",
+        "authorize release",
+        "failed",
+      ]);
+    }),
+  );
+
   it.effect("dies with a success that does not pass through its codec, as a server's 500", () =>
     Effect.gen(function* () {
       const Name = Action.make("name", {
@@ -435,6 +478,69 @@ describe("Action.client", () => {
       expect(defects).toHaveLength(2);
       expect(Schema.isSchemaError(defects[0])).toBe(true);
       expect(defects[1]).toBeInstanceOf(Unlisted);
+    }),
+  );
+
+  it.effect("passes a failure its schema checks asynchronously", () =>
+    Effect.gen(function* () {
+      // A code checked only once a promise settles, as a lookup would.
+      const Code = Schema.declareConstructor<string>()(
+        [],
+        () => (input, ast) =>
+          Effect.promise(() => Promise.resolve()).pipe(
+            Effect.flatMap(() =>
+              Predicate.isString(input)
+                ? Effect.succeed(input)
+                : Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input))),
+            ),
+          ),
+        { toCodecJson: () => undefined },
+      );
+
+      const Quota = Schema.TaggedStruct("Quota", { code: Code });
+      const quota = yield* Quota.makeEffect({ code: "quota" });
+
+      const Status = Action.make("status", {
+        description: "Status",
+        readOnly: true,
+        caller: Action.Anyone,
+        errors: [Quota],
+      });
+
+      const client = yield* Action.client(Action.implement(Status, () => Effect.fail(quota)));
+
+      expect(yield* Effect.flip(client.status())).toEqual(quota);
+    }),
+  );
+
+  it.effect("keeps a failure's whole cause: its trace and a defect beside it", () =>
+    Effect.gen(function* () {
+      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+
+      const Status = Action.make("status", {
+        description: "Status",
+        readOnly: true,
+        caller: Action.Anyone,
+        errors: [Busy],
+      });
+
+      const busy = new Busy();
+      const cleanup = new Error("cleanup failed");
+
+      // Failed in a span of its own, with a cleanup that dies.
+      const client = yield* Action.client(
+        Action.implement(Status, () =>
+          Effect.fail(busy).pipe(Effect.ensuring(Effect.die(cleanup)), Effect.withSpan("quota")),
+        ),
+      );
+
+      const cause = yield* Effect.flip(Effect.sandbox(client.status()));
+
+      expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([busy]);
+      expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
+        cleanup,
+      ]);
+      expect(Cause.pretty(cause)).toMatch(/^\s+at quota \(.*client\.test\.ts/m);
     }),
   );
 

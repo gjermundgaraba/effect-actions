@@ -15,18 +15,18 @@ Package facts that apply everywhere:
 
 ## Pages
 
-| Read                                   | When you need to                                                                                                                                                                                |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                                                                                          |
-| [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, declare a check such as a rate limit, use built-in errors, call or test implementations in process (`Action.client`) |
-| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                                                       |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                                                                   |
-| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                                                                    |
-| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                                                                |
-| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP and MCP surfaces, refuse with 401/403, publish RFC 9728 discovery                                                            |
-| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                                                                                      |
-| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                                                                                   |
-| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                                                                    |
+| Read                                   | When you need to                                                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                                                    |
+| [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, use built-in errors, call or test implementations in process (`Action.client`) |
+| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                 |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                             |
+| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                              |
+| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                          |
+| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP and MCP surfaces, refuse with 401/403, publish RFC 9728 discovery                      |
+| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                                                |
+| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                                             |
+| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                              |
 
 ## Choose a surface
 

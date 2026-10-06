@@ -84,7 +84,7 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
 
 /**
  * What authentication or an implementation's `authorize` refuses a caller with, instead of
- * running a handler. An error an action declares, such as a check's, is not a refusal.
+ * running a handler. An error an action declares, such as a rate limit, is not a refusal.
  */
 export type Refusal = Unauthenticated | Forbidden;
 

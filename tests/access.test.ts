@@ -1,17 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Context,
-  Effect,
-  Latch,
-  Layer,
-  Option,
-  Predicate,
-  Redacted,
-  Schema,
-  SchemaIssue,
-  Stream,
-} from "effect";
+import { Context, Effect, Latch, Layer, Redacted, Schema, Stream } from "effect";
 import { Command } from "effect/cli";
 import { McpServer } from "effect/ai";
 import * as Action from "../src/Action.js";
@@ -573,379 +561,6 @@ describe("the authorizer", () => {
   );
 });
 
-describe("declared checks", () => {
-  class RateLimited extends Schema.TaggedError<RateLimited>()(
-    "RateLimited",
-    { retryAfter: Schema.Finite },
-    { httpApiStatus: 429 },
-  ) {}
-
-  /** A rate limit: its error joins the errors of every action listing it. */
-  class Limited extends Action.Check<Limited>()("access-test/Limited", { error: RateLimited }) {}
-
-  const Ping = Action.make("ping", {
-    description: "Ping",
-    readOnly: true,
-    caller: Caller,
-    success: Schema.String,
-    checks: [Limited],
-  });
-
-  const Poke = Action.make("poke", {
-    description: "Poke",
-    readOnly: false,
-    caller: Caller,
-    input: { value: Schema.String },
-    success: Schema.String,
-    checks: [Limited],
-  });
-
-  const limited = new RateLimited({ retryAfter: 30 });
-
-  const app = Action.implement(
-    [Ping, Poke],
-    { ping: () => Effect.succeed("pong"), poke: ({ value }) => Effect.succeed(value) },
-    { authorize: Action.allowAll },
-  );
-
-  const Http = ActionHttp.make([Ping, Poke], { authentication: AnyCaller });
-
-  it.effect("fails with the error it declares, answered as the action's own everywhere", () =>
-    Effect.gen(function* () {
-      // Writes are over their quota; reads are not.
-      const limits = Layer.effect(
-        Limited,
-        Effect.succeed((action: Action.Any) =>
-          !action.readOnly ? Effect.fail(limited) : Effect.void,
-        ),
-      );
-
-      // Under authentication, which answers a step-up refusal itself: a limit is no refusal.
-      const served = Testing.layer(
-        Layer.mergeAll(
-          ActionHttp.layer(Http, app),
-          ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }),
-        ).pipe(Layer.provide([anyone, limits])),
-      );
-
-      yield* Effect.gen(function* () {
-        expect((yield* send(withBearer(post("/api/ping"), "x"))).status).toBe(200);
-
-        // HTTP answers with the error's own status and JSON, and no challenge.
-        const answered = yield* send(withBearer(post("/api/poke", { value: "x" }), "x"));
-
-        expect(answered.status).toBe(429);
-        expect(answered.headers).not.toHaveProperty("www-authenticate");
-        expect(yield* answered.json).toEqual(Schema.encodeSync(RateLimited)(limited));
-
-        // MCP answers with a tool result the model reads, not an HTTP status.
-        const result = yield* send(withBearer(rawToolCall("poke", { value: "x" }), "x"));
-
-        expect(result.status).toBe(200);
-        expect(yield* result.json).toMatchObject({
-          result: {
-            isError: true,
-            content: [{ type: "text", text: '{"_tag":"RateLimited","retryAfter":30}' }],
-          },
-        });
-
-        // A remote command decodes it, as `ActionHttp.client` does: the cause of its `UserError`.
-        const remote = yield* Effect.exit(
-          exec(ActionCli.command(Http, Poke, { client: as("x") }), ["--value", "x"]),
-        );
-
-        expect(causeOf(remote)).toEqual(limited);
-        expect(causeOf(remote)).toBeInstanceOf(RateLimited);
-      }).pipe(Effect.provide(served));
-
-      yield* Effect.gen(function* () {
-        // `Action.client` fails with it, as an HTTP client decodes it.
-        const called = yield* Effect.flatMap(Action.client(app), (client) =>
-          Effect.flip(client.poke({ value: "x" })),
-        );
-
-        expect(called).toEqual(limited);
-        expect(called).toBeInstanceOf(RateLimited);
-
-        // The Toolkit returns it as the tool's failure.
-        const tools = ActionToolkit.make(app);
-
-        const returned = yield* Effect.gen(function* () {
-          const toolkit = yield* tools.toolkit;
-
-          return yield* Stream.runCollect(yield* toolkit.handle("poke", { value: "x" }));
-        }).pipe(Effect.provide(tools.layer));
-
-        expect(returned).toMatchObject([
-          {
-            isFailure: true,
-            result: limited,
-            encodedResult: Schema.encodeSync(RateLimited)(limited),
-          },
-        ]);
-        expect(returned[0]?.result).toBeInstanceOf(RateLimited);
-
-        // A local command fails with Effect CLI's `UserError`, whose cause it is.
-        const local = yield* Effect.exit(exec(ActionCli.command(app, Poke), ["--value", "x"]));
-
-        expect(causeOf(local)).toBeInstanceOf(RateLimited);
-      }).pipe(Effect.provideService(Caller, "local"), Effect.provide(limits));
-    }),
-  );
-
-  it.effect("is built once per layer graph, so every surface of it shares one limit", () =>
-    Effect.gen(function* () {
-      let builds = 0;
-
-      // One call per caller, counted across HTTP and MCP.
-      const once = Layer.effect(
-        Limited,
-        Effect.sync(() => {
-          builds++;
-          const seen = new Set<string>();
-
-          return () =>
-            Effect.suspend(() =>
-              seen.has("anyone")
-                ? Effect.fail(limited)
-                : Effect.sync(() => void seen.add("anyone")),
-            );
-        }),
-      );
-
-      yield* Effect.gen(function* () {
-        const http = yield* ActionHttp.client(Http, as("x"));
-        const mcp = yield* Testing.mcpClient([Poke], as("x"));
-
-        expect(yield* http.poke({ value: "first" })).toBe("first");
-        expect(yield* Effect.flip(mcp.poke({ value: "second" }))).toEqual(limited);
-        expect(yield* Effect.flip(http.poke({ value: "third" }))).toEqual(limited);
-      }).pipe(
-        Effect.provide(
-          Testing.layer(
-            Layer.mergeAll(
-              ActionHttp.layer(Http, app),
-              ActionMcp.layerHttp(app, { name: "test", version: "0", authentication: AnyCaller }),
-            ).pipe(Layer.provide([anyone, once])),
-          ),
-        ),
-      );
-
-      expect(builds).toBe(1);
-    }),
-  );
-
-  it.effect("runs once per call, though listed twice", () =>
-    Effect.gen(function* () {
-      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
-
-      class Counted extends Action.Check<Counted>()("access-test/Counted", { error: Busy }) {}
-
-      // A spread shared list repeats it.
-      const shared = [Counted];
-
-      const Status = Action.make("status", {
-        description: "A public action listing one check twice",
-        readOnly: true,
-        caller: Action.Anyone,
-        checks: [...shared, Counted],
-      });
-
-      expect(Status.checks).toEqual([Counted]);
-
-      let runs = 0;
-
-      const client = yield* Action.client(Action.implement(Status, () => Effect.void)).pipe(
-        Effect.provide(Layer.succeed(Counted, () => Effect.sync(() => void runs++))),
-      );
-
-      yield* client.status();
-      expect(runs).toBe(1);
-    }),
-  );
-
-  it.effect("runs for a public action too, before its handler", () =>
-    Effect.gen(function* () {
-      class Busy extends Schema.TaggedError<Busy>()("Busy", {}, { httpApiStatus: 429 }) {}
-
-      class Capacity extends Action.Check<Capacity>()("access-test/Capacity", { error: Busy }) {}
-
-      const Status = Action.make("status", {
-        description: "A public action with an operational limit",
-        readOnly: true,
-        caller: Action.Anyone,
-        checks: [Capacity],
-      });
-
-      let handled = false;
-
-      const status = Action.implement(Status, () =>
-        Effect.sync(() => {
-          handled = true;
-        }),
-      );
-
-      const full = Layer.effect(
-        Capacity,
-        Effect.succeed(() => Effect.fail(new Busy())),
-      );
-
-      const client = yield* Action.client(status).pipe(Effect.provide(full));
-      expect(yield* Effect.flip(client.status())).toBeInstanceOf(Busy);
-
-      // Over HTTP too, where no authentication covers it.
-      const response = yield* send(post("/api/status")).pipe(
-        Effect.provide(
-          Testing.layer(
-            ActionHttp.layer(ActionHttp.make([Status]), status).pipe(Layer.provide(full)),
-          ),
-        ),
-      );
-
-      expect(response.status).toBe(429);
-      expect(handled).toBe(false);
-    }),
-  );
-
-  it.effect("reads every request service it declares and releases what it acquires per call", () =>
-    Effect.gen(function* () {
-      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
-
-      class Region extends Context.Service<Region, string>()("access-test/Region") {}
-
-      class Tenant extends Context.Service<Tenant, string>()("access-test/Tenant") {}
-
-      class Quota extends Action.Check<Quota>()("access-test/Quota", {
-        error: Busy,
-        requires: [Region, Tenant],
-      }) {}
-
-      const Status = Action.make("status", {
-        description: "A public action with a per-tenant limit",
-        readOnly: true,
-        caller: Action.Anyone,
-        checks: [Quota],
-      });
-
-      const status = Action.implement(Status, () => Effect.void);
-      const log: Array<string> = [];
-
-      // A slot held for the call: released when the call ends, whether the check refuses it.
-      const quota = Layer.succeed(Quota, () =>
-        Effect.gen(function* () {
-          const region = yield* Region;
-          const tenant = yield* Tenant;
-
-          yield* Effect.acquireRelease(
-            Effect.sync(() => log.push(`acquire ${region}/${tenant}`)),
-            () => Effect.sync(() => log.push(`release ${region}/${tenant}`)),
-          );
-
-          if (tenant === "full") {
-            return yield* Effect.fail(new Busy());
-          }
-        }),
-      );
-
-      const client = yield* Action.client(status).pipe(Effect.provide(quota));
-
-      const call = (tenant: string) =>
-        client
-          .status()
-          .pipe(Effect.provideService(Region, "eu"), Effect.provideService(Tenant, tenant));
-
-      yield* call("open");
-      expect(yield* Effect.flip(call("full"))).toBeInstanceOf(Busy);
-      expect(log).toEqual([
-        "acquire eu/open",
-        "release eu/open",
-        "acquire eu/full",
-        "release eu/full",
-      ]);
-    }),
-  );
-
-  it.effect("passes the error its schema checks asynchronously, as the handler's", () =>
-    Effect.gen(function* () {
-      // A code checked only once a promise settles, as a lookup would.
-      const Code = Schema.declareConstructor<string>()(
-        [],
-        () => (input, ast) =>
-          Effect.promise(() => Promise.resolve()).pipe(
-            Effect.flatMap(() =>
-              Predicate.isString(input)
-                ? Effect.succeed(input)
-                : Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input))),
-            ),
-          ),
-        { toCodecJson: () => undefined },
-      );
-
-      const Quota = Schema.TaggedStruct("Quota", { code: Code });
-      const quota = yield* Quota.makeEffect({ code: "quota" });
-
-      class Gate extends Action.Check<Gate>()("access-test/Gate", { error: Quota }) {}
-
-      const Status = Action.make("status", {
-        description: "Status",
-        readOnly: true,
-        caller: Action.Anyone,
-        checks: [Gate],
-      });
-
-      const open = Layer.effect(
-        Gate,
-        Effect.succeed(() => Effect.void),
-      );
-
-      const closed = Layer.effect(
-        Gate,
-        Effect.succeed(() => Effect.fail(quota)),
-      );
-
-      const fromHandler = Action.client(Action.implement(Status, () => Effect.fail(quota))).pipe(
-        Effect.provide(open),
-      );
-
-      const fromCheck = Action.client(Action.implement(Status, () => Effect.void)).pipe(
-        Effect.provide(closed),
-      );
-
-      for (const made of [fromHandler, fromCheck]) {
-        const client = yield* made;
-
-        expect(yield* Effect.flip(client.status())).toEqual(quota);
-      }
-    }),
-  );
-
-  it.effect("keeps its failure's whole cause: its trace and a defect beside it", () =>
-    Effect.gen(function* () {
-      const cleanup = new Error("cleanup failed");
-
-      // Refused in a span of its own, with a cleanup that dies.
-      const quota = Layer.effect(
-        Limited,
-        Effect.succeed(() =>
-          Effect.fail(limited).pipe(Effect.ensuring(Effect.die(cleanup)), Effect.withSpan("quota")),
-        ),
-      );
-
-      const client = yield* Action.client(app, { actions: [Ping] }).pipe(Effect.provide(quota));
-
-      const cause = yield* Effect.flip(
-        Effect.sandbox(client.ping().pipe(Effect.provideService(Caller, "local"))),
-      );
-
-      expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([limited]);
-      expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
-        cleanup,
-      ]);
-      expect(Cause.pretty(cause)).toMatch(/^\s+at quota \(.*access\.test\.ts/m);
-    }),
-  );
-});
-
 describe("a trusted local caller", () => {
   /** A caller a token can name: what every remote verifier returns. */
   interface RemoteActor {
@@ -961,20 +576,10 @@ describe("a trusted local caller", () => {
 
   class Actor extends Context.Service<Actor, RemoteActor | TrustedActor>()("access-test/Actor") {}
 
-  class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
-    retryAfter: Schema.Finite,
-  }) {}
-
-  class Limited extends Action.Check<Limited>()("access-test/TrustedLimited", {
-    error: RateLimited,
-    requires: Actor,
-  }) {}
-
   const Rename = Action.make("renameUser", {
-    description: "Rename a user, subject to the rate limit",
+    description: "Rename a user",
     readOnly: false,
     caller: Actor,
-    checks: [Limited],
     input: { name: Schema.String },
     success: { name: Schema.String, caller: Schema.String },
   });
@@ -991,8 +596,8 @@ describe("a trusted local caller", () => {
       }
     });
 
-  /** The admin CLI, the limit allowing `maximum` calls per caller, recording each rename. */
-  const cli = (maximum: number) => {
+  /** The admin CLI, recording each rename. */
+  const cli = () => {
     const calls: Array<string> = [];
 
     const app = Action.implement(
@@ -1006,28 +611,9 @@ describe("a trusted local caller", () => {
       { authorize },
     );
 
-    const counts = new Map<string, number>();
-
-    const limit = Layer.effect(
-      Limited,
-      Effect.succeed(() =>
-        Effect.flatMap(Actor, ({ id }) =>
-          Effect.suspend(() => {
-            const count = counts.get(id) ?? 0;
-
-            if (count >= maximum) return Effect.fail(new RateLimited({ retryAfter: 30 }));
-            counts.set(id, count + 1);
-
-            return Effect.void;
-          }),
-        ),
-      ),
-    );
-
     const admin: TrustedActor = { id: "maintenance", role: "trusted-admin" };
 
     const command = ActionCli.make(app, { name: "admin", actions: [Rename] }).pipe(
-      Command.provide(limit),
       Command.provideSync(Actor, admin),
     );
 
@@ -1036,24 +622,13 @@ describe("a trusted local caller", () => {
 
   it.effect("passes the same authorizer and handlers, with no policy override", () =>
     Effect.gen(function* () {
-      const { calls, command } = cli(2);
+      const { calls, command } = cli();
 
       const [exit, stdout] = yield* printed(exec(command, ["rename-user", "--name", "Admin"]));
 
       expect(exit._tag).toBe("Success");
       expect(stdout.join("\n")).toContain('"caller": "maintenance"');
       expect(calls).toEqual(["maintenance"]);
-    }),
-  );
-
-  it.effect("still runs the checks, which refuse it over its limit", () =>
-    Effect.gen(function* () {
-      const { calls, command } = cli(0);
-
-      const [exit] = yield* printed(exec(command, ["rename-user", "--name", "Admin"]));
-
-      expect(causeOf(exit)).toBeInstanceOf(RateLimited);
-      expect(calls).toEqual([]);
     }),
   );
 });

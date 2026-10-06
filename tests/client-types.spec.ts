@@ -1,5 +1,5 @@
 // Compile-only assertions on `Action.client`, included by `vp check`.
-import { Context, Effect, Schema, type Scope } from "effect";
+import { Effect, Schema, type Scope } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -117,34 +117,6 @@ export const selectionTypes = Effect.gen(function* () {
   // @ts-expect-error A selection's client has only the selected actions.
   // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
   void client.renameUser({ id: "1", name: "Bea" });
-});
-
-// A check's error is each call's own declared error, and the check is built with the client:
-// what its callback reads per call, the call owes.
-class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {}) {}
-
-class Quota extends Context.Service<Quota, number>()("client-types/Quota") {}
-
-class Limited extends Action.Check<Limited>()("client-types/Limited", {
-  error: RateLimited,
-  requires: Quota,
-}) {}
-
-const Metered = Action.make("metered", {
-  description: "Metered",
-  readOnly: true,
-  caller: Action.Anyone,
-  checks: [Limited],
-});
-
-export const checkTypes = Effect.gen(function* () {
-  const acquiring = Action.client(Action.implement(Metered, () => Effect.void));
-  const client = yield* acquiring;
-  const metered = client.metered();
-
-  expectTypeOf<Effect.Services<typeof acquiring>>().toEqualTypeOf<Limited | Scope.Scope>();
-  expectTypeOf<Effect.Error<typeof metered>>().toEqualTypeOf<RateLimited | Action.BuiltIn>();
-  expectTypeOf<Effect.Services<typeof metered>>().toEqualTypeOf<Quota>();
 });
 
 // A handler acquiring a resource owes no scope per call: each call has its own.

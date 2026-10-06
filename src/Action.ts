@@ -24,7 +24,6 @@ import {
   type Authorize,
   type Bound,
   type BuildContext,
-  type BuilderContext,
   type BuildError,
   builders,
   built,
@@ -48,27 +47,16 @@ import {
   toList,
 } from "./internal/implementation.js";
 
-import type { AnyCheck } from "./internal/checks.js";
-
-export { Check, type AnyCheck } from "./internal/checks.js";
-
-/**
- * A check's callback, of its error and the services it may read, `CheckContext` of its
- * options: what an `Action.Check` class implements, named so a package emitting declarations
- * can export one.
- */
-export type { CheckCallback, Within as CheckContext } from "./internal/checks.js";
-
 /**
  * What a surface serving the actions `Listed` of the implementations `App` reads at startup:
- * their builders' and built authorizers' services, and their checks'.
+ * their builders' and built authorizers' services.
  */
 export type { BuildContext } from "./internal/implementation.js";
 
 /** An action bound to its handler; opaque, see `implement`. */
 export type { Implementation } from "./internal/implementation.js";
 
-/** Authorization for protected contracts; operational failures belong in declared checks. */
+/** Authorization for protected contracts: it refuses, and fails with nothing else. */
 export type { Authorize } from "./internal/implementation.js";
 
 /**
@@ -185,7 +173,6 @@ export interface Options {
    * which every surface enforces. Required: an action that names no caller is not public.
    */
   readonly caller: typeof Anyone | Context.Key<unknown, unknown>;
-  readonly checks?: ReadonlyArray<AnyCheck>;
   readonly description: string;
   /** A schema or struct fields. Omit, or give `{}`, for an action without arguments. */
   readonly input?: Codec | Fields | undefined;
@@ -286,11 +273,7 @@ type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf
 >;
 
 /** The declared errors of `O`, none when omitted. */
-type ChecksOf<O> = Extract<OptionOf<O, "checks", []>, ReadonlyArray<AnyCheck>>;
-
-type ErrorsOf<O> = ReadonlyArray<
-  Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>[number] | ChecksOf<O>[number]["error"]
->;
+type ErrorsOf<O> = ReadonlyArray<Extract<OptionOf<O, "errors", []>, ReadonlyArray<Codec>>[number]>;
 
 /** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
 export interface Action<
@@ -300,10 +283,8 @@ export interface Action<
   Errors extends ReadonlyArray<Codec>,
   ReadOnly extends boolean = boolean,
   Caller extends Options["caller"] = Options["caller"],
-  Checks extends ReadonlyArray<AnyCheck> = ReadonlyArray<AnyCheck>,
 > {
   readonly caller: Caller;
-  readonly checks: Checks;
   readonly name: Name;
   readonly description: string;
   readonly input: Input;
@@ -357,8 +338,7 @@ export function make<const Name extends string, const O extends Options>(
   SchemaOf<O, "success", typeof Schema.Void>,
   ErrorsOf<O>,
   O["readOnly"],
-  O["caller"],
-  ChecksOf<O>
+  O["caller"]
 >;
 export function make(name: string, options: Options): Any {
   assertName("action name", name);
@@ -380,17 +360,13 @@ export function make(name: string, options: Options): Any {
     throw new Error(`Invalid readOnly: ${String(readOnly)}`);
   }
 
-  // Each once, as its error is: a spread shared list may repeat one, which would run twice.
-  const checks = [...new Set(options.checks ?? [])];
-
   const action: Any = {
     caller,
-    checks,
     name,
     description: options.description,
     input: codecOf(options.input ?? {}),
     success: options.success === undefined ? Schema.Void : codecOf(options.success),
-    errors: [...new Set([...(options.errors ?? []), ...checks.map((check) => check.error)])],
+    errors: options.errors ?? [],
     readOnly,
     mcp: { ...options.mcp },
   };
@@ -583,7 +559,6 @@ const authorizerOf = (before: ErasedAuthorizer) =>
  * `authorize` is required when the target includes protected contracts and runs only for
  * them. `Action.allowAll` permits every authenticated caller. An Effect may build the
  * authorizer once, with startup requirements separate from its per-call requirements.
- * Declared operational checks run after authorization and before the handler.
  */
 // First, so an authorizer is typed from it: an `Effect.fn` infers its action here, and the
 // diagnostic overload, last, cannot stand in for it.
@@ -620,7 +595,7 @@ export function implement<
 >(
   target: T,
   build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
-  // Public actions are never authorized: only their checks run.
+  // Public actions are never authorized.
   options?: { readonly authorize?: never },
 ): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
 // The general overload again, last, so a call matching none is reported against it: a
@@ -700,15 +675,14 @@ export function implement(
  */
 export function layer<const Apps extends Served>(
   implementations: Apps,
-): Layer.Layer<never, BuildError<Member<Apps>>, BuilderContext<Member<Apps>>>;
+): Layer.Layer<never, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
 export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
   return builders(toList(implementations));
 }
 
 /**
  * One call of `A` in process: its decoded success, or its declared errors and the built-in
- * ones, owing `R` per call, what its handler, its implementation's `authorize` and its
- * checks read.
+ * ones, owing `R` per call, what its handler and its implementation's `authorize` read.
  */
 type Method<A extends Any, R> = Call<
   A,
@@ -717,7 +691,7 @@ type Method<A extends Any, R> = Call<
 
 /**
  * Every action of the implementations `Apps`, one or a list, as `client.<action>(input)`: what
- * `client` gives, each method owing per call what its handler, `authorize` and checks read.
+ * `client` gives, each method owing per call what its handler and `authorize` read.
  */
 export type Client<
   Apps extends Served,
@@ -773,7 +747,7 @@ const mapFailures = (
   );
 
 /**
- * `action`'s method, running `run`, its handler behind authorization and checks, as a remote
+ * `action`'s method, running `run`, its handler behind authorization, as a remote
  * call runs: input that does not pass through its codec is `InvalidInput`, and nothing else
  * runs; a success or a failure that does not is a defect, as it is an empty 500 over HTTP,
  * since the handler broke its contract. A failure passes through the codec of
@@ -810,8 +784,8 @@ export interface ClientOptions<A extends Any> {
  * Call implementations in process: one method per action, taking its input directly, as
  * `ActionHttp.client`'s methods do, `client.renameUser({ id, name })`, so moving between the
  * two changes the line acquiring it. A call runs as a remote one does: its input passes through
- * its JSON codec, encoded then decoded, then the implementation's `authorize`, the checks and
- * the handler run, in a scope of their own, and the success or the failure passes through its
+ * its JSON codec, encoded then decoded, then the implementation's `authorize` and the handler
+ * run, in a scope of their own, and the success or the failure passes through its
  * codec. It fails with the action's errors and the built-in ones, and owes, per call, what
  * they read, the caller's identity included; the caller provides it around the call.
  *

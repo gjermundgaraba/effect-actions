@@ -5,20 +5,19 @@
 One contract, one implementation, one rule for who may call. `ActionGroup` is gone: a contract
 states who may call it, `caller: Action.Anyone` or the identity a caller must have, and every
 surface enforces it; `Action.implement` binds handlers to actions, behind the `authorize` an
-implementation of protected actions states, and declared checks, such as a rate limit, run before
-them on every surface. Authentication is a named, browser-safe descriptor the binding names and a
-server-only verifier, enforced and documented as native endpoint security, before any body is read.
-HTTP binds a flat list of actions, and one layer serves the public and the protected ones; one MCP
-endpoint serves signed-out and signed-in callers. Every client calls an action with its input, and
-`Action.client` calls implementations in process, which is how their behavior is tested. Every
-endpoint and tool declares the built-in `InvalidInput` (400), `Unauthenticated` (401) and
-`Forbidden` (403). A builder runs once per layer graph, each call has a scope of its own, and a
-request's own values win over startup ones. CLI flags come from each action's input, and a command
-runs on Effect's own `NodeRuntime.runMain`, printing a failure on stderr as the JSON HTTP sends. The
-client modules merge into `ActionHttp` and `ActionCli`, clients and `Testing` are Effect-only, and
-`ActionCatalog` and `TestingClient` are removed. `access` becomes `readOnly`, `mcp` takes MCP's own
-hint names, and stdio also serves 2025-11-25 and 2025-06-18, so Claude Code and Codex connect. The
-docs say where builders and your own services are built.
+implementation of protected actions states, on every surface. Authentication is a named,
+browser-safe descriptor the binding names and a server-only verifier, enforced and documented as
+native endpoint security, before any body is read. HTTP binds a flat list of actions, and one layer
+serves the public and the protected ones; one MCP endpoint serves signed-out and signed-in callers.
+Every client calls an action with its input, and `Action.client` calls implementations in process,
+which is how their behavior is tested. Every endpoint and tool declares the built-in `InvalidInput`
+(400), `Unauthenticated` (401) and `Forbidden` (403). A builder runs once per layer graph, each call
+has a scope of its own, and a request's own values win over startup ones. CLI flags come from each
+action's input, and a command runs on Effect's own `NodeRuntime.runMain`, printing a failure on
+stderr as the JSON HTTP sends. The client modules merge into `ActionHttp` and `ActionCli`, clients
+and `Testing` are Effect-only, and `ActionCatalog` and `TestingClient` are removed. `access` becomes
+`readOnly`, `mcp` takes MCP's own hint names, and stdio also serves 2025-11-25 and 2025-06-18, so
+Claude Code and Codex connect. The docs say where builders and your own services are built.
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.0`. The `effect` peer narrows
 to `~4.0.0`, Effect's 4.0.x patches: the modules every surface builds on are unstable in Effect,
@@ -66,7 +65,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `mcp.readOnly`                                                            | The contract's `readOnly`: a tool is read-only exactly when its action is                                                                                                                                                                                                           |
 | `mcp: false`                                                              | Leave the action out of the `actions` option of `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make`: list the actions that are tools beside the contracts, `actions: Tools`, and an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
 | `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                                                                               |
-| `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, ReadOnly, Caller, Checks>`; `Action.Options` has none                                                                                                                                                                                  |
+| `Action.Action`'s `Mcp` type parameter, `Action.Options`' type parameters | `Action.Action<Name, Input, Success, Errors, ReadOnly, Caller>`; `Action.Options` has none                                                                                                                                                                                          |
 
 - Every contract states who may call it, `caller`: `Action.Anyone`, or the identity service a caller
   must have, such as `caller: CurrentActor`. Without it `make` does not compile, and from plain
@@ -77,8 +76,6 @@ Each area below lists what is renamed or removed, then what changes without a re
   0.8.0 served without authentication or a hook, and the identity its hook or handler read to every
   other. The module declaring the identity, a `Context.Service`, stays free of server code:
   contracts import it.
-- `checks: [Limited]` lists an action's checks ([Action.md](docs/Action.md#checks)), whose
-  errors join its `errors`.
 - `Action.make` throws `Invalid action name: <name>` for a name over 128 characters, which 0.8.0
   refused only as a tool name: shorten it. Its types refuse an unknown `mcp` key, such as a
   misspelling or `readOnlyHint`, and options typed by a helper's type parameter: type that
@@ -86,19 +83,19 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 #### Implementations and authorization
 
-| 0.8.0                                                                                        | 0.10.0                                                                                                                                                                                                             |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, { authorize })`, `{ authorize }` only for protected actions                                                                                                                      |
-| `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`, inferred, never spelled out: a helper takes implementations as a type parameter ([Action.md](docs/Action.md#rules)); a group is a list of actions                                         |
-| `ActionGroup.contracts(...groups)`, `Contracts`                                              | `Action.byName(actions)`, the list keyed by name, each its exact contract; the list itself is the actions, or a binding's `Http.actions`                                                                           |
-| `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                                                 |
-| `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its authorization and checks, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer`             |
-| A group's `errors`                                                                           | One array spread into each action's `errors`; a check's error joins the `errors` of the actions listing it; `ActionHttp.make(actions, { errors })` for router middleware's; authentication's refusals are built in |
-| A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                            | Nothing: input that does not decode is the built-in `Action.InvalidInput`, and a success that does not encode is a defect, an empty 500                                                                            |
-| `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group` | `Action.implement(actions, handlers, { authorize })`, for an implementation of protected actions                                                                                                                   |
-| A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`      | An authorizer failing with an `Action.Refusal` only; a limit is a check, `Action.Check`, listed in each limited action's `checks`                                                                                  |
-| `before`'s `action`, an `Action.Any`                                                         | `authorize`'s `action`, typed as the implementation's own actions, in a built authorizer too                                                                                                                       |
-| Span `<group>.<action>`, attribute and log annotation `action.group`                         | Span `<action>`                                                                                                                                                                                                    |
+| 0.8.0                                                                                        | 0.10.0                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ActionGroup.make(...)`, `Group.implement(build)`                                            | `Action.implement(actions, build, { authorize })`, `{ authorize }` only for protected actions                                                                                               |
+| `ActionGroup.Implementation`; `Group`, `Any` and `Options`                                   | `Action.Implementation`, inferred, never spelled out: a helper takes implementations as a type parameter ([Action.md](docs/Action.md#rules)); a group is a list of actions                  |
+| `ActionGroup.contracts(...groups)`, `Contracts`                                              | `Action.byName(actions)`, the list keyed by name, each its exact contract; the list itself is the actions, or a binding's `Http.actions`                                                    |
+| `app.group`                                                                                  | `app.actions`, its exact contracts                                                                                                                                                          |
+| `app.build`                                                                                  | `Action.client(app)`, then `client.<action>(input)`: its handlers behind its authorization, in process, the methods `ActionHttp.client` has; a surface's own behavior under `Testing.layer` |
+| A group's `errors`                                                                           | One array spread into each action's `errors`; `ActionHttp.make(actions, { errors })` for router middleware's; authentication's refusals are built in                                        |
+| A group's `schemaError`, `SchemaErrorPolicy`, `SchemaErrorAnswer`                            | Nothing: input that does not decode is the built-in `Action.InvalidInput`, and a success that does not encode is a defect, an empty 500                                                     |
+| `before` of `Http.layer`, `ActionMcp`, `ActionToolkit.make`, `ActionCli.command` and `group` | `Action.implement(actions, handlers, { authorize })`, for an implementation of protected actions                                                                                            |
+| A hook failing with the surface's `errors`; `errors` of `ActionMcp` and `ActionToolkit`      | An authorizer failing with an `Action.Refusal` only; a limit is the handler's, failing with an error its action declares                                                                    |
+| `before`'s `action`, an `Action.Any`                                                         | `authorize`'s `action`, typed as the implementation's own actions, in a built authorizer too                                                                                                |
+| Span `<group>.<action>`, attribute and log annotation `action.group`                         | Span `<action>`                                                                                                                                                                             |
 
 - An implementation of protected actions states who of the authenticated callers may call:
   `{ authorize }` is required, and `Action.allowAll` lets every authenticated caller call. An
@@ -115,17 +112,14 @@ Each area below lists what is renamed or removed, then what changes without a re
   is not an authorizer: `before: enabled ? authorize : undefined` becomes
   `{ authorize: enabled ? authorize : Action.allowAll }`.
 - `authorize` runs only for protected actions, after authentication and input decoding, and fails
-  only with a refusal. A limit is a check, an `Action.Check` such as
-  `Action.Check<Limited>()("app/Limited", { error: RateLimited, requires: CurrentActor })`, listed
-  in each limited action's `checks`, which adds its error to their `errors`, so every surface
-  declares it and every client decodes it: HTTP answers with its status and JSON, MCP with an
-  `isError` tool result, the Toolkit with a typed failure, and a CLI command with the same JSON on
-  stderr. A native layer implements it, `Layer.succeed(Limited, callback)` or
-  `Layer.effect(Limited, build)` with an Effect building it once per layer graph, and every surface
-  serving a limited action requires that layer. Checks run after `authorize`, for public actions
-  too. 0.8.0's hook failed with its surface's `errors`, which that surface alone declared, and a
-  CLI's with any error: move a limit into a check, or keep a limit applied before decoding in HTTP
-  middleware, router middleware or the layer's own, with `ActionHttp.make`'s `errors`.
+  only with a refusal. A limit is the handler's: the action declares its error in `errors`, so
+  every surface declares it and every client decodes it, the builder yields the limiter, a startup
+  service every surface of the layer graph shares, and the handler fails with the error before its
+  work ([Action.md](docs/Action.md#implementations)). 0.8.0's hook failed with its surface's
+  `errors`, which that surface alone declared, and a CLI's with any error: move a limit into the
+  handlers of the actions it applies to, declaring its error on each, or keep a limit applied
+  before decoding in HTTP middleware, router middleware or the layer's own, with
+  `ActionHttp.make`'s `errors`.
 - One action takes its handler, and a builder for it returns the handler, not a record: a
   one-action group's `.implement({ greet: handler })` becomes
   `Action.implement(Greet, handler)`, with `{ authorize }` for a protected action. A list
@@ -151,7 +145,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 - A builder's startup services are one union, `A | B` as written, so providing them in two
   `Layer.provide` calls, one per service, discharges both. 0.8.0 typed them `NoInfer<A | B>`,
   which stayed owed after both calls and showed in every hover.
-- Each call has a scope of its own, on every surface: what an authorizer, a check or a handler
+- Each call has a scope of its own, on every surface: what an authorizer or a handler
   acquires is released when the call ends, the handler's first, and a fiber it forks with
   `Effect.forkScoped` is interrupted. In 0.8.0 a Toolkit call made with `tools.handle`, or
   approved through `LanguageModel`, held it until its caller's scope closed, so with a pooled
@@ -223,8 +217,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   called: `No action of these implementations is in this HTTP binding: x`. Two implementations of
   one served action throw `Duplicate served action: <name>`, where 0.8.0 threw
   `Duplicate implementation group: <group>`; actions the binding leaves out may repeat. A layer owes
-  per request its implementations' authorizers, the checks and the handlers of the actions it
-  serves.
+  per request its implementations' authorizers and the handlers of the actions it serves.
 - One layer serves a binding's public and protected actions, from one implementation or
   several: a protected route is authenticated by the binding's descriptor, through the
   provider the layer requires, before anything reads its body, so it answers 401 before a 415
@@ -381,13 +374,13 @@ Each area below lists what is renamed or removed, then what changes without a re
   around it.
 - `runStdio` gives its program a `Console` whose every method writes to stderr, so console loggers
   such as `Logger.consoleJson`, `Console.log`, and the counters, timers and group labels Node's
-  console prints on stdout never corrupt the protocol from its builders, authorizers, checks and
-  handlers. A counter or a timer prints its label and its count or the milliseconds since it
-  started, a group prints its label without indenting what follows, and `clear` does nothing. Layers
-  provided around it run outside its program: apply `ActionCli.onStderr` last, before `runMain`, in
-  place of 0.8.0's `Logger.LogToStderr` outermost, `disableErrorReporting` and `tapCause` block. It
-  moves their default logger to stderr, and reports there what `runMain` would report on stdout, but
-  does not move their `Console` output or `Logger.consoleJson`: log JSON there with
+  console prints on stdout never corrupt the protocol from its builders, authorizers and handlers. A
+  counter or a timer prints its label and its count or the milliseconds since it started, a group
+  prints its label without indenting what follows, and `clear` does nothing. Layers provided around
+  it run outside its program: apply `ActionCli.onStderr` last, before `runMain`, in place of 0.8.0's
+  `Logger.LogToStderr` outermost, `disableErrorReporting` and `tapCause` block. It moves their
+  default logger to stderr, and reports there what `runMain` would report on stdout, but does not
+  move their `Console` output or `Logger.consoleJson`: log JSON there with
   `Logger.withConsoleError(Logger.formatJson)`.
 - `ActionMcp.layerHttp` and `runStdio` throw for an action whose input is not one object with
   keys, such as a union, an array, a scalar, or an object without keys such as a given
@@ -478,7 +471,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   a `SchemaError`.
 - A success that does not encode is a defect, as it is HTTP's empty 500, and nothing prints it
   as a result; 0.8.0 failed the command with a `SchemaError`.
-- What a command runs, the builder, authorizer, checks and handler, or a remote command's client
+- What a command runs, the builder, authorizer and handler, or a remote command's client
   call, and the codecs of its input, success and failures, writes its Effect logs and `Console`
   output to stderr, whatever logger prints them, and the command writes only its result to stdout.
   0.8.0 wrote them to stdout unless the program provided `Logger.LogToStderr`, which moves only the
@@ -541,40 +534,23 @@ Each area below lists what is renamed or removed, then what changes without a re
   that Effect, which `implement` builds once per implementation in each layer graph: build what
   several implementations or the surfaces share outside it. A service whose value is the
   authorizer, `{ authorize: Guard }`, is built once for every implementation it guards.
-- Checks, `Action.Check`: an operational rule, such as a rate limit, declared once with its error
-  and the request services it reads, listed on the contracts it applies to, whose errors then
-  include its error, each listed once, and implemented once as a native layer, built once per layer
-  graph, so every surface counts against one state ([Action.md](docs/Action.md#checks)).
-
-  ```ts
-  class Limited extends Action.Check<Limited>()("app/Limited", {
-    error: RateLimited,
-    requires: CurrentActor,
-  }) {}
-  const Invite = Action.make("invite", { ..., caller: CurrentActor, checks: [Limited] });
-  const LimitedLive = Layer.effect(
-    Limited,
-    Effect.map(Limiter, (limiter) => () => Effect.flatMap(CurrentActor, ({ id }) => limiter.take(id))),
-  );
-  ```
-
 - `ActionHttp.layer(Http, implementations, { middleware })` runs native `HttpApiMiddleware`
   around every route it serves, inside authentication and outside decoding, the first listed
   innermost. It may require the identity where every action the layer serves is protected, and
   fails only with the binding's `errors` or a built-in error, such as an address allowlist's
   `Action.Forbidden`, so a limit keyed by the caller runs before decoding; one after decoding,
-  on every surface, is a check. It may fail with a binding error only where the binding surely
+  on every surface, is the handler's. It may fail with a binding error only where the binding surely
   declares it, in a slot of its own of a list of fixed length.
 - `Action.client(implementations)` calls implementations in process: one method per action, taking
   its input directly, as `ActionHttp.client`'s methods do, so moving between an in-process and a
   remote caller changes the line acquiring it. A call runs as a remote one does, through the
   dispatch every surface shares: its input passes through its JSON codec, encoded to JSON text then
-  decoded, the authorizer, the checks and the handler run in a scope of their own, and the success
+  decoded, the authorizer and the handler run in a scope of their own, and the success
   or the failure passes through its codec too. It fails with the action's errors and the built-in
   ones, as a remote caller decodes them: input that does not pass is `InvalidInput`, before the
   authorizer, and a success or a failure that does not, an error the action does not declare
   included, is a defect, as it is an empty 500 over HTTP: its `SchemaError`, then the failure
-  itself. Each call owes what the authorizer, the checks and the handler read, the caller's identity
+  itself. Each call owes what the authorizer and the handler read, the caller's identity
   included, provided around the call, never around the acquisition. Acquiring it builds the
   implementations into the layer graph around it, as a layer does, sharing each builder's run with
   the surfaces of that graph: acquire it in a builder, a layer or a scoped program, never per
@@ -707,13 +683,12 @@ Each area below lists what is renamed or removed, then what changes without a re
   owe no `McpServer`, which the endpoint provides them.
 - `Authentication.refusal` refuses what `layer` refuses, and both refuse a protected resource
   with a fragment, which discovery could never answer: `A protected resource has no fragment`.
-- A check listed twice runs once per call. A suspended error keeps its `httpApiStatus` over
+- A suspended error keeps its `httpApiStatus` over
   HTTP. Layer middleware chosen by a condition within one slot provides nothing, so what one
   choice would provide stays owed.
 - `Testing.mcpClient` reads tool results with the native `McpSchema.CallToolResult`.
-- `Action` exports `CheckCallback`, `CheckContext` and `BuildContext`, and `ActionHttp`
-  `MethodError`, the types a check class, a surface's layer and a client's method are written
-  in, so a package emitting declarations may export them.
+- `Action` exports `BuildContext`, and `ActionHttp` `MethodError`, the types a surface's layer
+  and a client's method are written in, so a package emitting declarations may export them.
 - `Action.Handlers<typeof actions>` types a builder's record written apart from `implement`, as
   another authorizer of the same handlers takes, so each handler is typed from its contract.
 - `Authentication` exports `Descriptor` and `Provider`, the types `make` and `layer` return, so
@@ -802,11 +777,11 @@ Each area below lists what is renamed or removed, then what changes without a re
   project that installs the package to that version's own pages in node_modules, and shows the
   module its snippets import for the identity and `authorize`. The routing table says when to read
   each page, CONTEXT.md included, and CONTEXT.md defines a layer graph, a public and a protected
-  action, an authorizer, a check, an authentication descriptor and its provider, and startup
+  action, an authorizer, an authentication descriptor and its provider, and startup
   services.
 - The examples implement the agent-only `listChanges` beside the other user actions, which
   HTTP's binding leaves out, serve public and protected actions from one HTTP layer and one MCP
-  endpoint, declare a rate limit as a check (`examples/checks.ts`), and give an operator's CLI
+  endpoint, and give an operator's CLI
   a trusted identity beside remote callers (`examples/cli-admin.ts`).
 
 ## 0.9.0

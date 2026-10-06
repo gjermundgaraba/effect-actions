@@ -8,8 +8,8 @@ import { serve } from "./serve.js";
 // Each call builds fresh example state.
 export const makeTestApp = () => serve(layer);
 
-/** An action anyone may call, declaring no checks, whose layers a test would provide. */
-type Public = Action.Any & { readonly caller: typeof Action.Anyone; readonly checks: readonly [] };
+/** An action anyone may call. */
+type Public = Action.Any & { readonly caller: typeof Action.Anyone };
 
 /**
  * An implementation of public actions that owes nothing per request or to build, as `serve`

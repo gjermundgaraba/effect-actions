@@ -63,8 +63,8 @@ export const routes = ActionHttp.layer(Http, cache).pipe(
 
 const operator: TrustedOperator = { id: "ops", role: "trusted" };
 
-// The host's own command, `ops purge`: the same implementation and rule, and its checks too,
-// run as the trusted operator the host supplies. Nothing remote can reach it.
+// The host's own command, `ops purge`: the same implementation and rule, run as the trusted
+// operator the host supplies. Nothing remote can reach it.
 export const cli = ActionCli.make(cache, { name: "ops" }).pipe(
   Command.provideSync(Operator, operator),
 );

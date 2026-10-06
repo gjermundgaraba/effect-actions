@@ -37,8 +37,8 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
 >;
 
 /**
- * The tool of each action of `App` among `Listed`. A tool needs what its handler, its
- * implementation's authorization and its action's checks need.
+ * The tool of each action of `App` among `Listed`. A tool needs what its handler and its
+ * implementation's authorization need.
  */
 type ToolFor<App, Listed extends Action.Any> = App extends unknown
   ? Serving<App, Listed> extends infer A extends Action.Any

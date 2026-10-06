@@ -172,24 +172,12 @@ const GuardedHttp = ActionHttp.make([Read, Write], { authentication: Login });
 
 class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
 
-const checkHookTypes = () => {
+const checkImplementTypes = () => {
   Action.implement(Read, () => Effect.succeed("read"), {
     // @ts-expect-error A published authorizer only refuses.
     authorize: () => Effect.fail(new Denied()),
   });
 
-  // A published check declares its error, which joins the action's errors.
-  class Gate extends Action.Check<Gate>()("consumer/Gate", { error: Denied }) {}
-
-  const Gated = Action.make("gated", {
-    description: "Gated",
-    readOnly: true,
-    caller: Action.Anyone,
-    checks: [Gate],
-  });
-
-  const checkGatedErrors = (error: (typeof Gated.errors)[number]["Type"]): Denied => error;
-  void checkGatedErrors;
   // @ts-expect-error A published protected implementation states who may call it.
   Action.implement(Read, () => Effect.succeed("read"));
   Action.implement(
@@ -221,7 +209,7 @@ const checkHookTypes = () => {
   );
 };
 
-void checkHookTypes;
+void checkImplementTypes;
 
 // Authentication provided around the layer: it owes no identity.
 const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(authenticate));

@@ -3,7 +3,6 @@ import type { Scope } from "effect";
 import type * as Action from "../Action.js";
 import { Anyone } from "./actions.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
-import type { CheckCallback, CheckRequests, CheckServices, ServiceOf } from "./checks.js";
 
 /**
  * A random key segment, unique to its caller even across installed copies of this module,
@@ -24,7 +23,7 @@ export type ErasedHandler<R> = {
 /** A surface's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
-/** Authorization runs only for protected actions, after authentication and before checks. */
+/** Authorization runs only for protected actions, after authentication and before the handler. */
 export type Authorize<A extends Action.Any, R = never> = (
   action: A,
 ) => Effect.Effect<void, Refusal, R>;
@@ -145,14 +144,9 @@ export class Implementation<
         ? yield* source.#authorizer.key
         : () => Effect.void;
 
-      return yield* Effect.forEach(
-        bound.filter(([action]) => actions.includes(action)),
-        ([action, handle]) =>
-          Effect.map(
-            Effect.forEach(action.checks, (check) => check),
-            (checks) => [action, dispatch(action, handle, before, checks)] as const,
-          ),
-      );
+      return bound
+        .filter(([action]) => actions.includes(action))
+        .map(([action, handle]) => [action, dispatch(action, handle, before)] as const);
     });
   }
 
@@ -346,6 +340,8 @@ export type Protected<A extends Action.Any> = A extends unknown
     : A
   : never;
 
+type ServiceOf<K> = K extends Context.Key<infer I, unknown> ? I : never;
+
 /**
  * The identity required by the contract, even when its handler never reads it. A `caller`
  * narrowed to `Anyone`, such as `Action.Any & { caller: typeof Anyone }`'s, which TypeScript
@@ -356,7 +352,7 @@ export type AuthenticationOf<A extends Action.Any> = A["caller"] extends typeof 
   : ServiceOf<A["caller"]>;
 
 /**
- * Per-request requirements of `App`'s authorization, checks and handler for each `A` it
+ * Per-request requirements of `App`'s authorization and handler for each `A` it
  * implements: those of every name `A`'s may be, so a union or an erased name owes each it may
  * stand for.
  */
@@ -370,7 +366,6 @@ export type RequestOf<App, A extends Action.Any> = App extends {
           | R[A["name"] & keyof R]
           | (A["caller"] extends typeof Anyone ? never : R["~authorize" & keyof R])
           | AuthenticationOf<A>
-          | CheckRequests<A>
     : never
   : never;
 
@@ -384,21 +379,16 @@ export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App e
   ? EX | ([Protected<Serving<App, Listed>>] extends [never] ? never : EH)
   : never;
 
-/** What the builders of the handlers and authorization of the actions `Listed` read. */
-export type BuilderContext<App, Listed extends Action.Any = OwnActions<App>> = App extends {
+/**
+ * What a surface serving the actions `Listed` reads at startup: the services the builders of
+ * their handlers and authorization read.
+ */
+export type BuildContext<App, Listed extends Action.Any = OwnActions<App>> = App extends {
   readonly "~buildContext": infer RX;
   readonly "~authorizeBuildContext": infer RH;
 }
   ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RH)
   : never;
-
-/**
- * What a surface serving the actions `Listed` reads at startup: its builders' services and its
- * checks', acquired when it is built. What checks read per call stays a request requirement.
- */
-export type BuildContext<App, Listed extends Action.Any = OwnActions<App>> =
-  | BuilderContext<App, Listed>
-  | CheckServices<Serving<App, Listed>>;
 
 /**
  * Provide `layer` the handlers of `apps`. Each implementation's layer is memoized, so its
@@ -461,17 +451,15 @@ export const built = (
 
 /**
  * One action's handler behind its admission: a protected action's identity, then its
- * `authorize`, then its checks in order. These run outside the action's span, so what they
- * fail with is attributed to the surface rather than to a handler that never ran. Each call
- * has a scope of its own, on every surface: what `authorize`, the checks and the handler
- * acquire is released when the call ends, the handler's first, so no call needs a `Scope` of
- * its caller.
+ * `authorize`. These run outside the action's span, so what they fail with is attributed to
+ * the surface rather than to a handler that never ran. Each call has a scope of its own, on
+ * every surface: what `authorize` and the handler acquire is released when the call ends, the
+ * handler's first, so no call needs a `Scope` of its caller.
  */
 const dispatch = (
   action: Action.Any,
   handle: ErasedHandler<unknown>,
   before: ErasedAuthorize,
-  checks: ReadonlyArray<CheckCallback<unknown, unknown>>,
 ): ErasedHandler<unknown> => {
   // The contract's identity, on the span and on every log line the handler
   // writes, so a trace or a log can be filtered by action without parsing names.
@@ -490,10 +478,6 @@ const dispatch = (
   const authorization =
     action.caller === Anyone ? Effect.void : Effect.suspend(() => before(action));
 
-  const operational = Effect.forEach(checks, (check) => Effect.suspend(() => check(action)), {
-    discard: true,
-  });
-
   return (input) => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
@@ -505,11 +489,7 @@ const dispatch = (
     );
 
     return Effect.scoped(
-      authentication.pipe(
-        Effect.andThen(authorization),
-        Effect.andThen(operational),
-        Effect.andThen(handled),
-      ),
+      authentication.pipe(Effect.andThen(authorization), Effect.andThen(handled)),
     );
   };
 };

@@ -1504,7 +1504,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
 );
 
 it.effect(
-  "serves a trusted admin a selection of protected actions through the same authorize and checks",
+  "serves a trusted admin a selection of protected actions through the same authorize",
   () =>
     Effect.gen(function* () {
       // A remote verifier would only ever name a reader; only a host supplies the admin.
@@ -1512,15 +1512,6 @@ it.effect(
         Operator,
         { readonly id: string; readonly role: "reader" | "admin" }
       >()("cli-test/Operator") {}
-
-      class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {
-        id: Schema.String,
-      }) {}
-
-      class Limited extends Action.Check<Limited>()("cli-test/Limited", {
-        error: Throttled,
-        requires: Operator,
-      }) {}
 
       const Read = Action.make("read", {
         description: "Who reads",
@@ -1533,12 +1524,19 @@ it.effect(
         description: "Purge everything",
         readOnly: false,
         caller: Operator,
-        checks: [Limited],
       });
+
+      const purged: Array<string> = [];
 
       const app = Action.implement(
         [Read, Purge],
-        { read: () => Effect.map(Operator, ({ id }) => id), purge: () => Effect.void },
+        {
+          read: () => Effect.map(Operator, ({ id }) => id),
+          purge: () =>
+            Effect.map(Operator, ({ id }) => {
+              purged.push(id);
+            }),
+        },
         {
           authorize: (action) =>
             Effect.flatMap(Operator, ({ role }) =>
@@ -1549,29 +1547,11 @@ it.effect(
         },
       );
 
-      // One purge per operator, however many invocations build the check.
-      const purged: Array<string> = [];
-
-      const limited = Layer.effect(
-        Limited,
-        Effect.succeed(() =>
-          Effect.flatMap(Operator, ({ id }) =>
-            purged.includes(id)
-              ? Effect.fail(new Throttled({ id }))
-              : Effect.sync(() => {
-                  purged.push(id);
-                }),
-          ),
-        ),
-      );
-
       const admin = ActionCli.make(app, { name: "admin", actions: [Purge] }).pipe(
-        Command.provide(limited),
         Command.provideSync(Operator, { id: "ops", role: "admin" }),
       );
 
       const users = ActionCli.make(app, { name: "users" }).pipe(
-        Command.provide(limited),
         Command.provideSync(Operator, { id: "ann", role: "reader" }),
       );
 
@@ -1579,13 +1559,10 @@ it.effect(
         ["purge"],
       );
 
-      // The same rule lets the admin through, and its check still applies to them.
+      // The same rule lets the admin through.
       yield* exec(admin, ["purge"]);
-      expect(causeOf(yield* Effect.exit(exec(admin, ["purge"])))).toEqual(
-        new Throttled({ id: "ops" }),
-      );
 
-      // The reader is refused before any check runs.
+      // The reader is refused before the handler runs.
       expect(causeOf(yield* Effect.exit(exec(users, ["purge"])))).toBeInstanceOf(Action.Forbidden);
       expect(purged).toEqual(["ops"]);
       expect(yield* lines(users, ["read"])).toEqual(['"ann"']);

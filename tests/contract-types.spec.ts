@@ -140,23 +140,24 @@ Action.make("byDefault", {
   caller: Defaulted,
 });
 
-// A misspelled option in one member of a union of options is refused too: it would drop a check.
-declare const checked:
+// A misspelled option in one member of a union of options is refused too: it would drop a
+// declared error.
+declare const misspelled:
   | {
       readonly description: "";
       readonly readOnly: true;
       readonly caller: typeof Action.Anyone;
-      readonly checks: readonly [];
+      readonly errors: readonly [];
     }
   | {
       readonly description: "";
       readonly readOnly: true;
       readonly caller: typeof Action.Anyone;
-      readonly check: readonly [];
+      readonly error: readonly [];
     };
 
-// @ts-expect-error No option `check`.
-Action.make("typoInUnion", checked);
+// @ts-expect-error No option `error`.
+Action.make("typoInUnion", misspelled);
 
 // A builder written apart from `implement`, as another authorizer of the same handlers takes,
 // types its handlers from their contracts through `Action.Handlers`.

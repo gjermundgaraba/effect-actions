@@ -12,7 +12,7 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                                                  |
 | `toolkit`                         | A native `Toolkit`: `toolkit.tools` holds the tool definitions by name, with typed schemas, MCP hints and approval. |
-| `layer`                           | The handler layer: builds handlers and built authorizers in its scope; requires build-time services and checks.     |
+| `layer`                           | The handler layer: builds handlers and built authorizers in its scope; requires build-time services.                |
 
 | Option          | Meaning                                                                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -22,13 +22,13 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 Exported types: `Tools`, what `make` returns; `Options`, what it takes.
 
 A local surface: each implementation's `authorize` runs before the handlers of its protected
-actions, the actions' checks after it, and the caller provides the identity.
+actions, and the caller provides the identity.
 
 Each tool takes and gives the JSON encoding of the action's schemas, as a model speaks and
 as an MCP tool does, combines the action's errors with the built-in `InvalidInput`,
-`Unauthenticated` and `Forbidden` in a native union, and uses `failureMode: "return"`. Its request requirements are its handler's, its authorizer's and its checks', and a protected
-action's identity, whether or not anything reads it; build failures and services, the checks'
-layers included, belong to the handler layer.
+`Unauthenticated` and `Forbidden` in a native union, and uses `failureMode: "return"`. Its request requirements are its handler's and its authorizer's, and a protected
+action's identity, whether or not anything reads it; build failures and services belong to the
+handler layer.
 
 ## Canonical
 
@@ -106,16 +106,16 @@ provide it once. So does one of fewer tools, such as an agent's
 - Every action of the implementations passed becomes a tool, named after the action, with its `mcp` hints, unless `actions` lists the tools: then only those, each behind its implementation's authorizer and from its builder's one run, and an implementation holding none of them is not built. `make(implementations)` accepts one implementation or a list, such as `[userActions, double]`. The types take only actions of the implementations, and type `toolkit` and `layer`'s build services by the listed actions alone; `needsApproval`'s `call` is typed by every action of the implementations. Options whose `actions` may be absent, such as a value typed `ActionToolkit.Options<A>`, serve every action when it is absent and the listed ones when given, so their types owe what every action owes, and hold only the tools present either way ([guarantees.md](guarantees.md#names)).
 - A result's `result` is the action's decoded success or declared failure, and its `encodedResult` the JSON a model reads, such as `"42"` for a `BigInt`. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
 - `tools.handle(name, encodedInput)` takes JSON arguments, as a model sends them: an ISO string for a `Schema.Date`, `null` for an absent `Schema.optional` field. It returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
-- Builders, calls and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and authorization and checks the [authorization rules](guarantees.md#authorization): `layer` builds, a call releases what it acquired when it ends, whether a model's turn or `tools.handle` makes it, and identity is supplied at invocation, never when building the layer. A protected tool's call owes its identity in its type; one call without it anyway, as from plain JavaScript, fails with `Unauthenticated` before `authorize` runs. The innermost caller provided wins: a call made under a narrower identity runs as that one.
+- Builders, calls and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and authorization the [authorization rules](guarantees.md#authorization): `layer` builds, a call releases what it acquired when it ends, whether a model's turn or `tools.handle` makes it, and identity is supplied at invocation, never when building the layer. A protected tool's call owes its identity in its type; one call without it anyway, as from plain JavaScript, fails with `Unauthenticated` before `authorize` runs. The innermost caller provided wins: a call made under a narrower identity runs as that one.
 - A model loop in a route yields `toolkit` in its implementation's builder, `Action.implement(Chat, Effect.map(toolkit, (tools) => ({ prompt }) => ...), { authorize })`, and passes `tools` to `LanguageModel.generateText`; the route's layer takes the toolkit's `layer`, `ActionHttp.layer(ChatHttp, chat).pipe(Layer.provide(layer))`. That is one build, in the routes' layer graph, shared with every surface serving the same implementations. `Effect.provide(layer)` in the handler builds it for every call unless a surface of the graph serves the same implementations, and `HttpRouter.provideRequest(layer)` once, but in a layer graph of its own: a second build when another surface serves them, as `Layer.mergeAll`'s order decides.
-- Each tool carries only its own handler's request requirements, plus its authorizer's and its checks', not those of sibling actions.
+- Each tool carries only its own handler's request requirements, plus its authorizer's, not those of sibling actions.
 - `needsApproval` is one function over every call a model makes, before the call runs: `(call, context) =>`, where `call` is `{ name, action, input }`, the input decoded, and `context` is Effect's native approval context. `call` is typed by every action of the implementations, whatever `actions` lists, and checking `call.name` narrows `call.action` and `call.input` to that action's, across implementations too: `(call) => call.name === "erase" && call.input.id !== "draft"`. It gives a boolean, or an `Effect` of one that requires nothing: it runs in the caller's context, so it reads the caller with `Effect.serviceOption`. Default: no tool needs approval.
 - A `needsApproval` Effect that fails means no approval is needed, as `LanguageModel` decides natively. Its `Effect` cannot fail in its type: decide in `needsApproval` what a failure means, `Effect.orElseSucceed(() => true)` to ask when a policy cannot be read.
 - Tools belong to what runs them, their implementation's handlers behind its authorizer: the `layer` of a `make` call serves the tools it selected in any `toolkit` of the same implementations, a toolkit of fewer `actions` included, so toolkits made per agent or per approval policy run with one handler layer, built once. Two implementations never run each other's handlers, even with tools of one name, such as two implementations of one action behind different authorizers, whatever order their layers are provided in.
 - `toolkit` is a native `Toolkit`: `Toolkit.merge` combines it with other tools, and `yield* toolkit` gives the handled toolkit once the handler layers of all its tools are provided.
 - `LanguageModel` enforces approval; `tools.handle` ignores it, like any caller that is not a model's turn. It is not authorization, which stays the implementation's `authorize`. MCP has no such field, so `ActionMcp` takes no such option.
 - This is not an MCP server. Use `ActionMcp` to expose the same actions to external clients.
-- Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), so an authorizer's refusal, or a handler's built-in failure, is an ordinary returned tool failure, as is a check's declared error.
+- Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), so an authorizer's refusal, or a handler's built-in failure, is an ordinary returned tool failure.
 
 ## Failure modes
 
@@ -129,5 +129,5 @@ provide it once. So does one of fewer tools, such as an agent's
 - `Duplicate tool: <name>` thrown at `make`: two implementations serve actions of the same name. Rename one action. `actions` tells apart only separate contracts sharing a name, listing one; two implementations of the same contract stay both listed: pass one implementation.
 - `Service not found` for a request tag at call time: it was provided only to the stream. Provide it around the whole call effect. Providing a service to `layer` does not fail: that startup value fills in for every call that lacks its own ([guarantees.md](guarantees.md#dependency-lifetimes)), so never provide an identity there; a protected tool's call still owes it in its type.
 - `Type 'CurrentActor' is not assignable to type 'never'` where a program calling a tool runs: the tool's action is protected, and its call owes the caller, whatever the handler reads. Provide it around the call, or around the turn.
-- A returned failure whose `result` is an `AiError` with reason `ToolParameterValidationError` (`failureOrigin: "parameters"`), not a declared error: the arguments did not decode. Authorization, the checks and the handler did not run.
-- Type error on `layer` requirements: a build-time service is missing, or a check's layer, such as `Limited`. Provide its Layer before `layer`.
+- A returned failure whose `result` is an `AiError` with reason `ToolParameterValidationError` (`failureOrigin: "parameters"`), not a declared error: the arguments did not decode. Authorization and the handler did not run.
+- Type error on `layer` requirements: a build-time service is missing. Provide its Layer before `layer`.

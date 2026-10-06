@@ -646,7 +646,7 @@ export const authorizeTypes = () => {
   expectTypeOf<Effect.Services<typeof stdio>>().toEqualTypeOf<Stdio.Stdio | Clock | CurrentActor>();
 };
 
-export const checkTypes = () => {
+export const declaredErrorTypes = () => {
   class RateLimited extends Schema.TaggedError<RateLimited>()(
     "RateLimited",
     { retryAfter: Schema.Finite },
@@ -659,22 +659,16 @@ export const checkTypes = () => {
 
   class Limiter extends Context.Service<
     Limiter,
-    { readonly take: (key: string) => Effect.Effect<boolean> }
+    { readonly take: (key: string) => Effect.Effect<void, RateLimited> }
   >()("types-spec/Limiter") {}
 
-  // A limit the actions it guards declare once, as a check, rather than an error each lists.
-  class Limited extends Action.Check<Limited>()("types-spec/Limited", {
-    error: RateLimited,
-    requires: CurrentActor,
-  }) {}
-
+  // A limit is an error each limited action declares, and its handler's to fail with.
   const Get = Action.make("get", {
     description: "Get",
     readOnly: true,
     caller: CurrentActor,
     success: Schema.String,
-    errors: [NotFound],
-    checks: [Limited],
+    errors: [NotFound, RateLimited],
   });
 
   const Put = Action.make("put", {
@@ -682,17 +676,7 @@ export const checkTypes = () => {
     readOnly: false,
     caller: CurrentActor,
     success: Schema.String,
-    errors: [NotFound, Conflict],
-    checks: [Limited],
-  });
-
-  // Listed in `errors` too, it is declared once.
-  const Ping = Action.make("ping", {
-    description: "Ping",
-    readOnly: true,
-    caller: Action.Anyone,
-    errors: [RateLimited],
-    checks: [Limited],
+    errors: [NotFound, Conflict, RateLimited],
   });
 
   const Status = Action.make("status", {
@@ -701,32 +685,25 @@ export const checkTypes = () => {
     caller: Action.Anyone,
   });
 
-  // Each action's errors: its own and its checks'.
   expectTypeOf<(typeof Put)["errors"][number]["Type"]>().toEqualTypeOf<
     NotFound | Conflict | RateLimited
   >();
-  expectTypeOf<(typeof Ping)["errors"][number]["Type"]>().toEqualTypeOf<RateLimited>();
   expectTypeOf<(typeof Status)["errors"]>().toEqualTypeOf<ReadonlyArray<never>>();
-  expectTypeOf<(typeof Get)["checks"]>().toEqualTypeOf<readonly [typeof Limited]>();
-
-  const handlers = {
-    get: () => Effect.succeed(""),
-    put: () => Effect.succeed(""),
-    ping: () => Effect.void,
-  };
 
   /** What authorization of the actions `A` may fail with. */
   type Fails<A extends Action.Any> = Effect.Error<ReturnType<Action.Authorize<A>>>;
 
   // Authorization only refuses, whatever its actions declare.
   expectTypeOf<Fails<typeof Put>>().toEqualTypeOf<Action.Refusal>();
-  expectTypeOf<Fails<typeof Get | typeof Ping>>().toEqualTypeOf<Action.Refusal>();
+  expectTypeOf<Fails<typeof Get | typeof Put>>().toEqualTypeOf<Action.Refusal>();
   expectTypeOf<Fails<Action.Any>>().toEqualTypeOf<Action.Refusal>();
 
   const limit = () => Effect.fail(new RateLimited({ retryAfter: 30 }));
 
-  // @ts-expect-error The limit is the check's to fail with, though every action declares it.
-  Action.implement([Get, Put, Ping], handlers, { authorize: limit });
+  const handlers = { get: () => Effect.succeed(""), put: () => Effect.succeed("") };
+
+  // @ts-expect-error The limit is the handler's to fail with, though every action declares it.
+  Action.implement([Get, Put], handlers, { authorize: limit });
   // @ts-expect-error So is an error of an action's own.
   Action.implement(Put, handlers.put, { authorize: () => Effect.fail(new Conflict()) });
 
@@ -734,53 +711,34 @@ export const checkTypes = () => {
   const authorize: Action.Authorize<Action.Any> = (action) =>
     action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden());
 
-  const limited = Action.implement([Get, Put, Ping], handlers, { authorize });
-
   // @ts-expect-error Typed over any action, an authorizer cannot fail with an error of its own.
   const unbounded: Action.Authorize<Action.Any> = limit;
 
   void unbounded;
 
-  // A check's callback is built once, its limiter a startup service; per call, it reads what
-  // the check declares.
-  const LimitedLive = Layer.effect(
-    Limited,
+  // The limiter is a startup service of the builder; per call, the handler reads the caller.
+  const limited = Action.implement(
+    [Get, Put],
     Effect.gen(function* () {
       const limiter = yield* Limiter;
 
-      return Effect.fn(function* (action) {
-        const { id } = yield* CurrentActor;
+      const take = (name: string) =>
+        Effect.flatMap(CurrentActor, ({ id }) => limiter.take(`${id}/${name}`));
 
-        if (!(yield* limiter.take(`${id}/${action.name}`))) {
-          return yield* new RateLimited({ retryAfter: 30 });
-        }
-      });
+      return {
+        get: () => Effect.as(take("get"), ""),
+        put: () => Effect.as(take("put"), ""),
+      };
     }),
+    { authorize },
   );
 
-  expectTypeOf(LimitedLive).toEqualTypeOf<Layer.Layer<Limited, never, Limiter>>();
-
-  // Every surface serving a checked action builds the check, and owes per call what it reads;
-  // prebuilding the implementation builds its handlers and authorization alone.
-  expectTypeOf(Action.layer(limited)).toEqualTypeOf<Layer.Layer<never, never, never>>();
-  expectTypeOf<CallServices<typeof limited, "ping">>().toEqualTypeOf<CurrentActor>();
+  expectTypeOf(Action.layer(limited)).toEqualTypeOf<Layer.Layer<never, never, Limiter>>();
   expectTypeOf<CallServices<typeof limited, "get">>().toEqualTypeOf<CurrentActor>();
 
-  // A public action listing it still owes, over HTTP, what its check reads; a protected one's
-  // caller is its authentication's.
-  const routes = ActionHttp.layer(ActionHttp.make([Get, Ping], { authentication: Login }), limited);
-
-  expectTypeOf<RequestServices<typeof routes>>().toEqualTypeOf<CurrentActor>();
-
-  const getOnly = ActionHttp.layer(ActionHttp.make([Get], { authentication: Login }), limited);
-
-  expectTypeOf<RequestServices<typeof getOnly>>().toBeNever();
-  expectTypeOf<Limited>().toExtend<Layer.Services<typeof getOnly>>();
-
-  // An action without the check owes neither its layer nor what it reads.
-  const status = Action.implement(Status, () => Effect.void);
-
-  expectTypeOf(Action.layer(status)).toEqualTypeOf<Layer.Layer<never, never, never>>();
+  // A handler fails only with what its action declares.
+  // @ts-expect-error `Status` declares no limit.
+  Action.implement(Status, limit);
 };
 
 export const requiredAuthorizeTypes = () => {
@@ -1955,8 +1913,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     typeof Profile.success,
     typeof Profile.errors,
     boolean,
-    typeof Action.Anyone,
-    readonly []
+    typeof Action.Anyone
   >;
 
   type WiderSuccess = Action.Action<
@@ -1965,8 +1922,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
     Schema.Codec<string>,
     typeof Profile.errors,
     true,
-    typeof Action.Anyone,
-    readonly []
+    typeof Action.Anyone
   >;
 
   const read = () => Effect.map(CurrentActor, ({ id }) => id);
@@ -2041,8 +1997,7 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
       typeof Profile.success,
       typeof Profile.errors,
       true,
-      typeof Action.Anyone,
-      readonly []
+      typeof Action.Anyone
     >,
     (typeof app)["~request"],
     never,

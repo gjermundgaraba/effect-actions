@@ -1,13 +1,13 @@
 // Compile-only assertions over large implementations, included by `vp check`: a file of
 // their own, checked beside the others rather than after them.
-import { Effect, Layer, Schema } from "effect";
+import { Effect, type Layer, Schema } from "effect";
 import type { HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
 import * as Authentication from "../src/Authentication.js";
-import { Caller, Limited, type NumberedHandlers, type Numbering, Throttled } from "./numbered.js";
+import { Caller, type NumberedHandlers, type Numbering, Throttled } from "./numbered.js";
 
 /** Sixty protected actions of four errors each. */
 type Sixty = Numbering<60, 3>;
@@ -29,7 +29,7 @@ export const largeAuthorizationTypes = (
   fourHundredArray: ReadonlyArray<FourHundred[number]>,
   twoHundred: TwoHundred,
 ) => {
-  // The actions declare their own errors and their check's: one union, linear in the actions.
+  // The actions declare their own errors and the shared limit: one union, linear in the actions.
   type Declared = Sixty[number]["errors"][number]["Type"];
 
   expectTypeOf<Extract<Declared, Throttled>>().toEqualTypeOf<Throttled>();
@@ -44,19 +44,12 @@ export const largeAuthorizationTypes = (
   Action.implement(sixty, sixtyHandlers, {
     authorize: (action) => (action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden())),
   });
-  // @ts-expect-error The limit every action declares is its check's to fail with, not authorization's.
+  // @ts-expect-error The shared limit is the handler's to fail with, not authorization's.
   Action.implement(sixty, sixtyHandlers, { authorize: () => Effect.fail(new Throttled()) });
   Action.implement(sixty, sixtyHandlers, {
     // @ts-expect-error Nor an error of an action's own.
     authorize: () => Effect.fail(Schema.TaggedStruct("0a", {}).make({})),
   });
-
-  // The check fails with what it declares alone, whatever else its actions declare.
-  const own = () => Effect.fail(Schema.TaggedStruct("0a", {}).make({}));
-
-  Layer.succeed(Limited, () => Effect.fail(new Throttled()));
-  // @ts-expect-error The first action declares it, the check does not.
-  Layer.succeed(Limited, own);
 
   // Four hundred actions, listed as a tuple or an array, behind an authorizer written inline
   // or annotated `Action.Authorize`.
@@ -75,8 +68,7 @@ export const largeAuthorizationTypes = (
   const app = Action.implement(fourHundred, fourHundredHandlers, { authorize: Action.allowAll });
   const routes = ActionHttp.layer(ActionHttp.make(fourHundred, { authentication: Login }), app);
 
-  // The check is built with the layer; the caller its callback reads, authentication provides.
-  expectTypeOf<Extract<Layer.Services<typeof routes>, Limited>>().toEqualTypeOf<Limited>();
+  // The caller every handler reads, authentication provides.
   expectTypeOf<HttpRouter.Request.Only<"Requires", Layer.Services<typeof routes>>>().toBeNever();
 
   ActionHttp.layer(ActionHttp.make(twoHundred, { authentication: Login }), app);

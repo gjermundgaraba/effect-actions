@@ -134,8 +134,8 @@ type MiddlewareOf<O> = O extends { readonly middleware: infer M extends Middlewa
  * The layer's middleware, refused when one fails with an error neither the binding, `E`, nor
  * every endpoint declares, or needs a client counterpart: neither reaches the binding's
  * clients, which decode only what the binding and the built-ins declare. A failure an
- * action's callers see after decoding is a check's, declared on the contract and decoded by
- * every client.
+ * action's callers see after decoding is its handler's, declared on the contract and decoded
+ * by every client.
  */
 type ServerOnly<M extends Middleware, E extends Errors> = [
   | Exclude<
@@ -519,7 +519,7 @@ const jsonContentType = Layer.succeed(JsonContentType, (route) =>
 /**
  * Serve the binding's actions among `implementations` in one layer, or those its `actions` lists,
  * authenticating a protected action's request before decoding it, then running its implementation's
- * `authorize` and its declared checks before each handler. The binding decides what may be served:
+ * `authorize` before each handler. The binding decides what may be served:
  * an implementation's actions the binding leaves out have no route here, and one holding none of
  * those served is not built; implementations holding none of the binding's actions at all are
  * refused when `layer` is called. It mounts only the routes of the actions it serves, so one
@@ -528,7 +528,7 @@ const jsonContentType = Layer.succeed(JsonContentType, (route) =>
  * layers serve it.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
- * each implementation's authorization, the checks and the handlers of the actions it serves
+ * each implementation's authorization and the handlers of the actions it serves
  * need, until its `middleware` or middleware provided around it provides them, the identity
  * of a protected action excepted, which its authentication provides; the router provides
  * its own, such as the request, to every route. Its routes take only requests typed as JSON,
