@@ -38,7 +38,8 @@ Exported types: `Binding`; `Any`, any binding; `Client`, a client's type: `Clien
 | `client`: `transformClient` | Wraps the native `HttpClient`. A bearer token: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                     |
 | `fetchClient`: `fetch`      | What each call sends with; it also takes `client`'s options. Omitted: the global `fetch`, looked up on every call.                |
 
-Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action>`. The
+Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action>`. A
+read-only action is a `POST` too: `readOnly` changes neither the method nor caching. The
 OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `/` at the root. Every
 endpoint declares its action's errors, the binding's `error`, and the built-in
 `InvalidInput` (400), `Unauthenticated` (401) and `Forbidden` (403).
