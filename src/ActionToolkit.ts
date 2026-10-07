@@ -5,7 +5,7 @@ import type { BuiltIns } from "./internal/errors.js";
 import { bindTools } from "./internal/tools.js";
 import {
   type ActionOf,
-  type BuildContext,
+  type BuildServices,
   type BuildError,
   type Holding,
   Implementation,
@@ -68,7 +68,7 @@ export interface Tools<T extends Record<string, Tool.Any>, E, R> {
  * One call of a tool, as `needsApproval` receives it: its action's name, the action, and
  * the call's decoded input. Checking `name` narrows the other two to that action's.
  */
-type ToolCall<A extends Action.Any> = A extends Action.Any
+export type ToolCall<A extends Action.Any = Action.Any> = A extends Action.Any
   ? {
       readonly name: A["name"];
       readonly action: A;
@@ -135,7 +135,7 @@ export function make<
     readonly [T in ToolFor<Member<Apps>, Offered<O, ActionOf<Member<Apps>>>> as T["name"]]: T;
   },
   BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
-  BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
 export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   const served = select(toList(apps), options?.actions);

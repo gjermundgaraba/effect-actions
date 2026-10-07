@@ -79,11 +79,11 @@ export class Implementation<
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
   /** Type-only: what building its handlers needs. */
-  declare readonly "~buildContext": RX;
+  declare readonly "~buildServices": RX;
   /** Type-only: what building its authorizer fails with. */
   declare readonly "~authorizeBuildError": EH;
   /** Type-only: what building its authorizer needs. */
-  declare readonly "~authorizeBuildContext": RH;
+  declare readonly "~authorizeBuildServices": RH;
 
   readonly #handlers: Memoized<Bound, EX, RX>;
   readonly #authorizer: Memoized<ErasedAuthorize, EH, RH>;
@@ -386,9 +386,9 @@ export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App e
  * What a surface serving the actions `Listed` reads at startup: the services the builders of
  * their handlers and authorization read.
  */
-export type BuildContext<App, Listed extends Action.Any = OwnActions<App>> = App extends {
-  readonly "~buildContext": infer RX;
-  readonly "~authorizeBuildContext": infer RH;
+export type BuildServices<App, Listed extends Action.Any = OwnActions<App>> = App extends {
+  readonly "~buildServices": infer RX;
+  readonly "~authorizeBuildServices": infer RH;
 }
   ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RH)
   : never;

@@ -52,7 +52,7 @@ import {
   type Protected,
   acquire,
   type AnyImplementation,
-  type BuildContext,
+  type BuildServices,
   type BuildError,
   type ErasedValue,
   type Known,
@@ -177,7 +177,7 @@ type HttpLayer<
 > = Layer.Layer<
   never,
   BuildError<Holding<Member<Apps>, A>, A>,
-  | BuildContext<Holding<Member<Apps>, A>, A>
+  | BuildServices<Holding<Member<Apps>, A>, A>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, M>>
   | ServedProvider<Member<Apps>, A, H extends { readonly authentication: infer D } ? D : never>
@@ -331,18 +331,18 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
  * contracts module makes one.
  */
 const servedBy = (
-  http: AnyHttp,
+  binding: AnyHttp,
   apps: ReadonlyArray<AnyImplementation>,
   listed: ReadonlyArray<Action.Any> | undefined,
 ): ReadonlyArray<AnyImplementation> => {
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, http.actions);
+  if (listed !== undefined) assertHeld("the binding does not hold it", listed, binding.actions);
 
   const held = apps.flatMap((app) => app.actions);
-  const served = select(apps, listed ?? http.actions.filter((action) => held.includes(action)));
+  const served = select(apps, listed ?? binding.actions.filter((action) => held.includes(action)));
   const actions = served.flatMap((app) => app.actions);
 
   if (actions.length === 0 && listed === undefined && apps.length > 0) {
-    const bound = new Set(http.actions.map(({ name }) => name));
+    const bound = new Set(binding.actions.map(({ name }) => name));
 
     throw new Error(
       `No action of these implementations is in this HTTP binding: ${
@@ -542,7 +542,7 @@ const jsonContentType = () =>
  * and what middleware provides per request wins over what the layer was built with.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
-  http: H,
+  binding: H,
   implementations: Apps,
 ): HttpLayer<H, Apps, []>;
 // Options apart, so the middleware or actions an options type names are never typed as
@@ -552,24 +552,24 @@ export function layer<
   const Apps extends Served,
   const O extends LayerOptions<Middleware, H["actions"][number]>,
 >(
-  http: H,
+  binding: H,
   implementations: Apps,
   options: O &
     ServerOnly<MiddlewareOf<O>, H["error"]> &
     NoInfer<Known<O, LayerOptions<Middleware>>>,
 ): HttpLayer<H, Apps, MiddlewareOf<O>, Selected<O, H["actions"][number]>>;
 export function layer(
-  http: AnyHttp,
+  binding: AnyHttp,
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const apps = servedBy(http, toList(served), options.actions);
+  const apps = servedBy(binding, toList(served), options.actions);
   const actions = apps.flatMap((app) => app.actions);
-  assertAuthentication(actions, http.authentication);
+  assertAuthentication(actions, binding.authentication);
   // Native endpoints keep a middleware's first occurrence only, which the types cannot follow.
   assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
 
-  const mount = mountSegments(http.prefix);
+  const mount = mountSegments(binding.prefix);
   const name = groupName(mount);
 
   // Reuse each contract's security descriptor while adding server-only decoding policy.
@@ -580,15 +580,15 @@ export function layer(
       // Applied innermost first: the layer's middleware runs inside the authentication and
       // its step-up answer, and outside the content type and schema checks.
       const endpoint = within(
-        endpointOf(action, route([...mount, action.name]), http.error)
+        endpointOf(action, route([...mount, action.name]), binding.error)
           .middleware(JsonContentType)
           .middleware(SchemaErrors),
         options.middleware,
       );
 
-      return action.caller === Anyone || http.authentication === undefined
+      return action.caller === Anyone || binding.authentication === undefined
         ? endpoint
-        : endpoint.middleware(StepUp).middleware(http.authentication["~middleware"]);
+        : endpoint.middleware(StepUp).middleware(binding.authentication["~middleware"]);
     }),
   ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
 
@@ -597,7 +597,7 @@ export function layer(
       const bound = yield* acquire(apps);
 
       const auth = actions.some((action) => action.caller !== Anyone)
-        ? http.authentication
+        ? binding.authentication
         : undefined;
 
       const authentication =
@@ -642,11 +642,11 @@ export function layer(
 
 /** A binding's client, erased: `client` and `fetchClient` restore its exact type. */
 const erasedClient = (
-  http: AnyHttp,
+  binding: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> =>
-  Effect.map(methods(http, options), (methodOf) =>
-    Object.fromEntries(http.actions.map((action) => [action.name, methodOf(action)])),
+  Effect.map(methods(binding, options), (methodOf) =>
+    Object.fromEntries(binding.actions.map((action) => [action.name, methodOf(action)])),
   );
 
 /**
@@ -663,14 +663,14 @@ const erasedClient = (
  * decode.
  */
 export function client<const H extends AnyHttp>(
-  http: H,
+  binding: H,
   options?: ClientOptions,
 ): Effect.Effect<Client<H>, never, HttpClient.HttpClient>;
 export function client(
-  http: AnyHttp,
+  binding: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
-  return erasedClient(http, options);
+  return erasedClient(binding, options);
 }
 
 /**
@@ -683,14 +683,14 @@ export function client(
  * runs.
  */
 export function fetchClient<const H extends AnyHttp>(
-  http: H,
+  binding: H,
   options?: FetchClientOptions,
 ): Client<H>;
 export function fetchClient(
-  http: AnyHttp,
+  binding: AnyHttp,
   { fetch, ...options }: FetchClientOptions = {},
 ): { readonly [name: string]: ErasedMethod } {
-  return erasedClient(http, options).pipe(
+  return erasedClient(binding, options).pipe(
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(
       FetchHttpClient.Fetch,

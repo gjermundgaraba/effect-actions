@@ -98,7 +98,7 @@ export const localCli = ActionCli.make(lookup, { name: "lookup" });
 export const lookupLayer: Layer.Layer<
   never,
   Action.BuildError<typeof lookup>,
-  Action.BuildContext<typeof lookup>
+  Action.BuildServices<typeof lookup>
 > = Action.layer(lookup);
 
 export const testing = Testing.layer(lookupHttp);

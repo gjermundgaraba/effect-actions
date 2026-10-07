@@ -430,7 +430,7 @@ const output = <A extends Action.Any>(
  * print it again. Its `cause` is the action's failure. The process exits with the cause's
  * `Runtime.errorExitCode`, 1 by default.
  */
-export class Failure<out E = unknown> extends CliError.UserError {
+export class UserError<out E = unknown> extends CliError.UserError {
   declare readonly cause: E;
 
   /**
@@ -477,7 +477,7 @@ const described = <E>(error: E, seen: Set<unknown> = new Set()): string => {
 };
 
 /**
- * The `Failure` of each failure of `action`, its message the JSON HTTP sends for it: encoded
+ * The `UserError` of each failure of `action`, its message the JSON HTTP sends for it: encoded
  * by the first schema that takes it among the built-in errors, the action's and the
  * surface's own `errors`, as an Effect, as HTTP encodes it. A failure none takes, such as a
  * builder's or the transport's, is described instead.
@@ -490,7 +490,7 @@ const failureOf = <E>(action: Action.Any, errors: Action.Any["error"]) => {
   return (error: E) =>
     encode(error).pipe(
       Effect.orElseSucceed(() => described(error)),
-      Effect.flatMap((userMessage) => Effect.fail(new Failure<E>({ cause: error, userMessage }))),
+      Effect.flatMap((userMessage) => Effect.fail(new UserError<E>({ cause: error, userMessage }))),
     );
 };
 
@@ -567,14 +567,14 @@ const inputConfig = <A extends Action.Any>(
  * same name; two flags of the command itself with one name are refused when it is built.
  * Input that does not decode is `InvalidInput`, as over HTTP, and the operation writes its
  * logs and console output to stderr, since stdout carries the result. Every failure is a
- * `Failure`, encoded with the surface's `errors` too, such as a binding's.
+ * `UserError`, encoded with the surface's `errors` too, such as a binding's.
  */
 export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
   options?: Options<A>,
   errors: Action.Any["error"] = [],
-): Command.Command<string, never, {}, Failure<E | InvalidInput>, R> => {
+): Command.Command<string, never, {}, UserError<E | InvalidInput>, R> => {
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;
 

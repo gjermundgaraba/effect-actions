@@ -183,6 +183,18 @@ ActionToolkit.make(app, {
   },
 });
 
+// A rule written apart from `make` names its call's type, which narrows by name as inline.
+const guardedOnly = (
+  call: ActionToolkit.ToolCall<typeof Named | typeof ServiceFree | typeof Guarded>,
+) => {
+  if (call.name !== "guarded") return false;
+  const action: typeof Guarded = call.action;
+
+  return !action.readOnly;
+};
+
+ActionToolkit.make(app, { needsApproval: guardedOnly });
+
 // @ts-expect-error It is a boolean, or an Effect of one.
 ActionToolkit.make(app, { needsApproval: () => "yes" });
 

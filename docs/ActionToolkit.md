@@ -19,7 +19,7 @@ Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 | `actions`       | The actions that are tools, among the implementations': `[GetUser, RenameUser]`. Defaults to every action of them.                         |
 | `needsApproval` | `(call) =>` a boolean, or an `Effect` of one: the calls `LanguageModel` asks approval for instead of running them ([Approval](#approval)). |
 
-Exported types: `Tools`, what `make` returns; `Options`, what it takes.
+Exported types: `Tools`, what `make` returns; `Options`, what it takes; `ToolCall<A>`, the call `needsApproval` receives, `A` the union of its actions, for a rule written apart from `make`.
 
 A local surface: each implementation's `authorize` runs before the handlers of its protected
 actions, and the caller provides the identity.

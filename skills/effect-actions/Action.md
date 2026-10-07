@@ -19,7 +19,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `byName(actions)`                               | A list of actions keyed by name, each its exact contract: `contracts.getUser`.        |
 | `implement(action, handler, { authorize })`     | Bind one handler, and a protected action's authorizer; returns one `Implementation`.  |
 | `implement([actions], handlers, { authorize })` | Bind a record of handlers keyed by action name; returns one `Implementation` of all.  |
-| `implement(target, builder, options?)`          | Either form, with an Effect that builds the handler or record once per layer graph.   |
+| `implement(actions, builder, options?)`         | Either form, with an Effect that builds the handler or record once per layer graph.   |
 | `allowAll`                                      | The authorizer without an action-level rule: every authenticated caller may call.     |
 | `Anyone`                                        | The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not.     |
 | `layer(implementations)`                        | Their builders as one layer: provided above every surface, each runs once for all.    |
@@ -31,7 +31,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `Action`, `Any`, `Implementation`               | Concrete and erased contracts, and bound implementations.                             |
 | `Client<Apps>`                                  | What `client` gives for the implementations `Apps`, one or a list.                    |
 | `AnyImplementation`, `AnyImplementation<A>`     | Any implementation, or any of actions `A`, erased: a generic helper's constraint.     |
-| `BuildContext`, `BuildError`                    | What their builders read and fail with at startup, which a surface serving them owes. |
+| `BuildServices`, `BuildError`                   | What their builders read and fail with at startup, which a surface serving them owes. |
 | `implementation.actions`                        | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.          |
 | `Handler`, `Authorize`                          | Typed handlers, and authorizers `(action) => Effect<void, Refusal, R>`.               |
 | `Handlers`                                      | A list's handlers keyed by name, for a builder written apart from `implement`.        |

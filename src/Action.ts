@@ -15,7 +15,7 @@ import {
   type ActionOf,
   type Authorize,
   type Bound,
-  type BuildContext,
+  type BuildServices,
   type BuildError,
   builders,
   built,
@@ -43,7 +43,7 @@ import {
  * What a surface serving the actions `Listed` of the implementations `App` reads at startup:
  * their builders' and built authorizers' services.
  */
-export type { BuildContext } from "./internal/implementation.js";
+export type { BuildServices } from "./internal/implementation.js";
 
 /**
  * What a surface serving the actions `Listed` of the implementations `App` fails with at
@@ -528,8 +528,8 @@ export function implement<
   EB = never,
   RBX = never,
 >(
-  target: T,
-  build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  actions: T,
+  handlers: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
   options: {
     // A public-only target is never authorized, so it takes none: the other overload.
     readonly authorize: [Protected<ActionsOf<T>>] extends [never]
@@ -548,8 +548,8 @@ export function implement<
   EB = never,
   RBX = never,
 >(
-  target: T,
-  build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  actions: T,
+  handlers: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
   // Public actions are never authorized.
   options?: { readonly authorize?: never },
 ): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
@@ -566,8 +566,8 @@ export function implement<
   EB = never,
   RBX = never,
 >(
-  target: T,
-  build: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  actions: T,
+  handlers: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
   options: {
     readonly authorize: [Protected<ActionsOf<T>>] extends [never]
       ? "A public-only target takes no authorize"
@@ -575,17 +575,17 @@ export function implement<
   },
 ): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
 export function implement(
-  target: Target,
-  build: Built | Effect.Effect<Built, unknown, unknown>,
+  actions: Target,
+  handlers: Built | Effect.Effect<Built, unknown, unknown>,
   options?: { readonly authorize?: ErasedAuthorizer },
 ): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
-  const actions = Arr.ensure(target);
-  const names = actions.map((action) => action.name);
+  const listed = Arr.ensure(actions);
+  const names = listed.map((action) => action.name);
 
-  assertOnce("action", actions);
+  assertOnce("action", listed);
 
   const authorizer = authorizerOf(
-    actions.some((action) => action.caller !== Anyone)
+    listed.some((action) => action.caller !== Anyone)
       ? assertAuthorization(options?.authorize)
       : assertNoAuthorization(options?.authorize),
   );
@@ -594,15 +594,15 @@ export function implement(
   // key no action names is refused, so a stale handler cannot outlive its action, and so
   // is an action without a handler. The result pairs each action with its handler.
   const record = (built: Built): Bound => {
-    const handlers: ErasedHandlers<unknown> = Predicate.isFunction(built)
-      ? Object.fromEntries(Array.isArray(target) ? [] : actions.map(({ name }) => [name, built]))
+    const keyed: ErasedHandlers<unknown> = Predicate.isFunction(built)
+      ? Object.fromEntries(Array.isArray(actions) ? [] : listed.map(({ name }) => [name, built]))
       : built;
 
-    assertKnown("handlers", Object.keys(handlers), names);
+    assertKnown("handlers", Object.keys(keyed), names);
 
     // Own-property functions only: an inherited method is not a handler.
-    const bound = actions.flatMap((action) => {
-      const handle = Object.hasOwn(handlers, action.name) ? handlers[action.name] : undefined;
+    const bound = listed.flatMap((action) => {
+      const handle = Object.hasOwn(keyed, action.name) ? keyed[action.name] : undefined;
 
       return Predicate.isFunction(handle) ? [[action, handle] as const] : [];
     });
@@ -615,11 +615,11 @@ export function implement(
   };
 
   // Plain handlers are checked here; a builder's record when it is built.
-  const handlers = Effect.isEffect(build)
-    ? Effect.map(build, record)
-    : Effect.succeed(record(build));
+  const recorded = Effect.isEffect(handlers)
+    ? Effect.map(handlers, record)
+    : Effect.succeed(record(handlers));
 
-  return new Implementation(actions, memoized(handlers), authorizer);
+  return new Implementation(listed, memoized(recorded), authorizer);
 }
 
 /**
@@ -630,7 +630,7 @@ export function implement(
  */
 export function layer<const Apps extends Served>(
   implementations: Apps,
-): Layer.Layer<never, BuildError<Member<Apps>>, BuildContext<Member<Apps>>>;
+): Layer.Layer<never, BuildError<Member<Apps>>, BuildServices<Member<Apps>>>;
 export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
   return builders(toList(implementations));
 }
@@ -761,7 +761,7 @@ export function client<
 ): Effect.Effect<
   Client<Apps, Offered<O, ActionOf<Member<Apps>>>>,
   BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
-  BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>> | Scope.Scope
+  BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>> | Scope.Scope
 >;
 export function client(
   served: Served,

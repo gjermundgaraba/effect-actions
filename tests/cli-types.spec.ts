@@ -87,11 +87,13 @@ const refusing = ActionCli.command(
 
 // A command fails with Effect CLI's UserError, its cause the action's failure or a built-in
 // one: invalid input included, and no schema error of its own.
-expectTypeOf<Command.Error<typeof localOne>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
+expectTypeOf<Command.Error<typeof localOne>>().toEqualTypeOf<ActionCli.UserError<Action.BuiltIn>>();
 
-expectTypeOf<Command.Error<typeof localGroup>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
+expectTypeOf<Command.Error<typeof localGroup>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn>
+>();
 
-expectTypeOf<Command.Error<typeof refusing>>().toEqualTypeOf<ActionCli.Failure<Action.BuiltIn>>();
+expectTypeOf<Command.Error<typeof refusing>>().toEqualTypeOf<ActionCli.UserError<Action.BuiltIn>>();
 
 // What `authorize` reads is the command's too, and so is the caller, which the host provides.
 expectTypeOf<Command.Services<typeof refusing>>().toEqualTypeOf<Authorizing | Caller>();
@@ -243,6 +245,28 @@ expectTypeOf<Command.Services<typeof connected>>().toEqualTypeOf<HttpClient.Http
 
 expectTypeOf<Command.Services<typeof connectedGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
 
+// Remote options written apart are typed by their own exports, `client` included.
+const remoteOptions: ActionCli.RemoteOptions<typeof RemoteAction | typeof Count> = {
+  name: "remote",
+  client: connection,
+  commands: { remote: { render: String } },
+};
+
+ActionCli.remote(http, remoteOptions);
+
+const remoteCommandOptions: ActionCli.RemoteCommandOptions<typeof RemoteAction> = {
+  client: connection,
+  render: String,
+};
+
+ActionCli.remoteCommand(http, RemoteAction, remoteCommandOptions);
+
+export const unconnected: ActionCli.Options<typeof RemoteAction> = {
+  name: "x",
+  // @ts-expect-error `make`'s options take no client.
+  client: connection,
+};
+
 // @ts-expect-error A local command runs in process and connects nowhere.
 ActionCli.command(local, One, { client: connection });
 
@@ -318,15 +342,15 @@ const boundErring = ActionCli.remoteCommand(Bound, Erring);
 const boundAll = ActionCli.remote(Bound, { name: "remote" });
 
 expectTypeOf<Command.Error<typeof boundPlain>>().toEqualTypeOf<
-  ActionCli.Failure<Action.BuiltIn | Transport>
+  ActionCli.UserError<Action.BuiltIn | Transport>
 >();
 
 expectTypeOf<Command.Error<typeof boundErring>>().toEqualTypeOf<
-  ActionCli.Failure<Gone | Action.BuiltIn | Transport>
+  ActionCli.UserError<Gone | Action.BuiltIn | Transport>
 >();
 
 expectTypeOf<Command.Error<typeof boundAll>>().toEqualTypeOf<
-  ActionCli.Failure<Gone | Action.BuiltIn | Transport>
+  ActionCli.UserError<Gone | Action.BuiltIn | Transport>
 >();
 
 // A binding's own errors are every remote command's failures too.
@@ -339,11 +363,11 @@ const throttledPlain = ActionCli.remoteCommand(Throttling, Plain);
 const throttledAll = ActionCli.remote(Throttling, { name: "remote" });
 
 expectTypeOf<Command.Error<typeof throttledPlain>>().toEqualTypeOf<
-  ActionCli.Failure<Throttled | Action.BuiltIn | Transport>
+  ActionCli.UserError<Throttled | Action.BuiltIn | Transport>
 >();
 
 expectTypeOf<Command.Error<typeof throttledAll>>().toEqualTypeOf<
-  ActionCli.Failure<Throttled | Gone | Action.BuiltIn | Transport>
+  ActionCli.UserError<Throttled | Gone | Action.BuiltIn | Transport>
 >();
 
 // @ts-expect-error An aggregate remote command needs a name.
@@ -437,7 +461,7 @@ const declares = ActionCli.command(
 );
 
 expectTypeOf<Command.Error<typeof declares>>().toEqualTypeOf<
-  ActionCli.Failure<Domain | Unavailable | Action.BuiltIn>
+  ActionCli.UserError<Domain | Unavailable | Action.BuiltIn>
 >();
 
 // Run, a command may fail with any `UserError`, so a host matches the cause itself.
@@ -464,8 +488,8 @@ Command.runWith(declares, { version: "0" })([]).pipe(
 );
 
 const matched = (error: Command.Error<typeof declares>) =>
-  // @ts-expect-error `Failure` is a type only: `instanceof` would leave its cause `any`.
-  error instanceof ActionCli.Failure;
+  // @ts-expect-error `UserError` is a type only: `instanceof` would leave its cause `any`.
+  error instanceof ActionCli.UserError;
 
 void matched;
 
@@ -482,7 +506,7 @@ expectTypeOf<Command.Services<typeof localListed>>().toEqualTypeOf<Build | TwoRe
 const boundListed = ActionCli.remote(Bound, { name: "remote", actions: [Plain] });
 
 expectTypeOf<Command.Error<typeof boundListed>>().toEqualTypeOf<
-  ActionCli.Failure<Action.BuiltIn | Transport>
+  ActionCli.UserError<Action.BuiltIn | Transport>
 >();
 
 // @ts-expect-error An action of neither.

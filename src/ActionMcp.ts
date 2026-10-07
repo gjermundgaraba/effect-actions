@@ -32,7 +32,7 @@ import {
   type Protected,
   type ActionOf,
   type AnyImplementation,
-  type BuildContext,
+  type BuildServices,
   type BuildError,
   type Holding,
   type Member,
@@ -302,7 +302,7 @@ export function layerHttp<
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
@@ -365,7 +365,7 @@ export function runStdio<
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Stdio.Stdio
   | ToolRequestContext<ServedRequest<Member<Apps>, SelectedOf<O, Apps>>>
   | Features<R>

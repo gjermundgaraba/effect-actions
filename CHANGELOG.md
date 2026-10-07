@@ -425,8 +425,8 @@ Each area below lists what is renamed or removed, then what changes without a re
 | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.remoteCommand(Http, GetUser, { client: { baseUrl } })`, `ActionCli.remote(Http, { name, client })`: `client` takes `ActionHttp.client`'s options, on the host's `HttpClient`                                                                                                                                                                                                                                                             |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                                                                                                                                                                                                                                                           |
-| `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command` and `remoteCommand`; `ActionCli.Options` of `make` and `remote`; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                                                                      |
-| A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` and `reason` are the failure: `Effect.catchReason("UserError", "UserNotFound", ...)`, Effect's own                                                                                                                                                                                                                                                                          |
+| `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command`, `RemoteCommandOptions` of `remoteCommand`; `ActionCli.Options` of `make`, `RemoteOptions` of `remote`; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                               |
+| A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.UserError<E>`, Effect CLI's `CliError.UserError` whose `cause` and `reason` are the failure: `Effect.catchReason("UserError", "UserNotFound", ...)`, Effect's own                                                                                                                                                                                                                                                                        |
 | `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith` | `Command.run(cli, { version })` on `NodeRuntime.runMain`, after `ActionCli.logToStderr` where stdout feeds scripts (below)                                                                                                                                                                                                                                                                                                                          |
 | `--input '<json>'`, `--input-file`, `parameters` and its `input` mapper                                                          | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct; a syntax `name`, `positional` and `render` cannot express, such as a flag alias, a flag named apart from its field, or nested input built from several flags, is a native `Command.make` calling `Action.client`, or `ActionHttp.client` over HTTP, whose failures it maps to `CliError.UserError` ([ActionCli.md](docs/ActionCli.md#rules)) |
 
@@ -477,7 +477,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   those layers' default logger to stderr and reports there what `runMain` would, with its exit code,
   but does not move their `Console` output or `Logger.consoleJson`
   ([ActionCli.md](docs/ActionCli.md#rules)).
-- A local command's `Failure` includes `Action.BuiltIn`, whatever its implementation's authorizer.
+- A local command's `UserError` includes `Action.BuiltIn`, whatever its implementation's authorizer.
 - A protected action's command, a Toolkit tool and an `Action.client` method owe its identity
   per call, whether or not the handler reads it; one call without it anyway fails with
   `Unauthenticated` before `authorize` runs.
@@ -643,7 +643,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   the exit code `runMain` gives, the defect standing for it carrying the original `Cause` as its
   `cause`. A command's failure `Command.run` printed is not reported
   again. An MCP subprocess applies it after `runStdio`.
-- A command's `Failure` has a `reason`, its `cause`, so Effect's own
+- A command's `UserError` has a `reason`, its `cause`, so Effect's own
   `Effect.catchReason("UserError", "UserNotFound", f)` and `catchReasons` match an action's
   failure by its tag.
 - `ActionMcp.layerHttp`'s `path` defaults to `/mcp`, where 0.8.0 required it.
@@ -683,14 +683,18 @@ Each area below lists what is renamed or removed, then what changes without a re
   HTTP. Layer middleware chosen by a condition within one slot provides nothing, so what one
   choice would provide stays owed.
 - `Testing.mcpClient` reads tool results with the native `McpSchema.CallToolResult`.
-- `Action` exports `BuildContext` and `BuildError`, and `ActionHttp` `MethodError`, the types a
+- `Action` exports `BuildServices` and `BuildError`, and `ActionHttp` `MethodError`, the types a
   surface's layer and a client's method are written in, so a package emitting declarations may
   export them.
+- `ActionCli` exports `RemoteOptions` and `RemoteCommandOptions`, what `remote` and
+  `remoteCommand` take, `client` included, and `ActionToolkit` `ToolCall`, the call
+  `needsApproval` receives, so options and an approval rule written apart from their call are
+  typed.
 - `Action.Handlers<typeof actions>` types a builder's record written apart from `implement`, as
   another authorizer of the same handlers takes, so each handler is typed from its contract.
 - `Authentication` exports `Descriptor` and `Provider`, the types `make` and `layer` return, so
   a package emitting declarations may export a descriptor, a binding naming one and a provider.
-- `ActionCli.make(implementations, { name, commands })`, and `remote(http, ...)`, give a
+- `ActionCli.make(implementations, { name, commands })`, and `remote(binding, ...)`, give a
   subcommand the options `command` takes, by action name:
   `commands: { readFile: { positional: ["path"], render } }`. Each takes any action of its
   target, so one record serves aggregates of several `actions`: a command of an action left out

@@ -4,7 +4,7 @@ import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "./Action.js";
 import { assertDistinct, assertKnown } from "./internal/actions.js";
 import {
-  type Failure,
+  type UserError,
   command as makeCommand,
   type Options as CommandOptions,
 } from "./internal/cli.js";
@@ -19,7 +19,7 @@ import {
   type ActionOf,
   Implementation,
   type AnyImplementation,
-  type BuildContext,
+  type BuildServices,
   type BuildError,
   assertHeld,
   type Holding,
@@ -38,12 +38,12 @@ import {
 export type { Options as CommandOptions } from "./internal/cli.js";
 
 /**
- * What a command fails with when its action fails: Effect CLI's `UserError`, whose `cause`
- * and `reason` are the action's failure and whose message is its JSON, which `Command.run`
- * prints on stderr. A type only: after `Command.run`, match the reason by its tag,
- * `Effect.catchReason("UserError", "UserNotFound", f)`.
+ * What a command fails with when its action fails: Effect CLI's `UserError`, typed with the
+ * action's failure as its `cause` and `reason`, and whose message is its JSON, which
+ * `Command.run` prints on stderr. A type only: after `Command.run`, match the reason by its
+ * tag, `Effect.catchReason("UserError", "UserNotFound", f)`.
  */
-export type { Failure } from "./internal/cli.js";
+export type { UserError } from "./internal/cli.js";
 
 /**
  * An aggregate command of the actions `A`: its name, the actions that are its subcommands,
@@ -111,7 +111,7 @@ type Owning<App, A extends Action.Any> = App extends unknown
 type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
   A["error"][number]["Type"] | BuildError<App, A> | Action.BuiltIn,
-  RequestOf<App, A> | BuildContext<App, A>
+  RequestOf<App, A> | BuildServices<App, A>
 >;
 
 /**
@@ -177,18 +177,18 @@ const inProcess = <A extends Action.Any>(
  * host's `HttpClient`, whose failures include the binding's errors.
  */
 const overHttp = <A extends Action.Any>(
-  http: AnyHttp,
+  binding: AnyHttp,
   action: A,
   options: CommandOptions<A> | undefined,
   client: ClientOptions | undefined,
 ) => {
-  assertInBinding(http.actions, action);
+  assertInBinding(binding.actions, action);
 
   return makeCommand(
     action,
-    (input) => Effect.flatMap(methods(http, client), (methodOf) => methodOf(action)(input)),
+    (input) => Effect.flatMap(methods(binding, client), (methodOf) => methodOf(action)(input)),
     options,
-    http.error,
+    binding.error,
   );
 };
 
@@ -248,7 +248,7 @@ const commandsOf = (
  * case with one flag per field of its input (`--user-id`), or `--input` taking the whole input
  * as JSON when it is not a struct. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
- * `Failure`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
+ * `UserError`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
  */
 // Options are inferred whole, so a key of no command option, such as a remote command's
 // `client`, is refused from a variable too, not only from a literal.
@@ -260,7 +260,7 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
   string,
   never,
   {},
-  Failure<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
+  UserError<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
 > {
   // SAFETY: the command runs `action` by its one implementation among `implementations`,
@@ -280,19 +280,19 @@ export function remoteCommand<
   A extends H["actions"][number],
   const O = {},
 >(
-  http: H,
+  binding: H,
   action: A,
   options?: O &
     NoInfer<RemoteCommandOptions<A>> &
     NoInfer<Known<O, RemoteCommandOptions<Action.Any>>>,
-): Command.Command<string, never, {}, HttpFailure<H, A>, HttpClient.HttpClient> {
+): Command.Command<string, never, {}, HttpUserError<H, A>, HttpClient.HttpClient> {
   const { client, ...syntax } = options ?? {};
 
-  return overHttp(http, action, options === undefined ? undefined : syntax, client);
+  return overHttp(binding, action, options === undefined ? undefined : syntax, client);
 }
 
 /** A remote command's options, its action `A`. */
-type RemoteCommandOptions<A extends Action.Any> = CommandOptions<A> & {
+export type RemoteCommandOptions<A extends Action.Any = Action.Any> = CommandOptions<A> & {
   /**
    * Its client's options, as `ActionHttp.client` takes them: `baseUrl`, and
    * `transformClient` for credentials. They reach this command's requests alone.
@@ -301,7 +301,7 @@ type RemoteCommandOptions<A extends Action.Any> = CommandOptions<A> & {
 };
 
 /** A remote aggregate command's options, its actions `A`. */
-type RemoteOptions<A extends Action.Any> = Options<A> & {
+export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
   /**
    * Every subcommand's client options, as `ActionHttp.client` takes them: `baseUrl`, and
    * `transformClient` for credentials. They reach this aggregate's requests alone.
@@ -310,7 +310,7 @@ type RemoteOptions<A extends Action.Any> = Options<A> & {
 };
 
 /** What an aggregate command over binding `H` fails with, running its actions `A`. */
-type HttpFailure<H extends AnyHttp, A extends Action.Any> = Failure<
+type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
   | A["error"][number]["Type"]
   | H["error"][number]["Type"]
   | Action.BuiltIn
@@ -339,7 +339,7 @@ export function make<
   string,
   {},
   {},
-  Failure<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>,
+  UserError<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>,
   Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
 > {
   const apps = toList(implementations);
@@ -375,7 +375,7 @@ export function remote<
   const H extends AnyHttp,
   const O extends Selection<H["actions"][number]> = {},
 >(
-  http: H,
+  binding: H,
   options: O &
     NoInfer<RemoteOptions<H["actions"][number]>> &
     NoInfer<KnownOptions<O, RemoteOptions<Action.Any>, H["actions"][number]>>,
@@ -383,20 +383,20 @@ export function remote<
   string,
   {},
   {},
-  HttpFailure<H, Selected<O, H["actions"][number]>>,
+  HttpUserError<H, Selected<O, H["actions"][number]>>,
   HttpClient.HttpClient
 > {
   const listed = options.actions;
 
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, http.actions);
+  if (listed !== undefined) assertHeld("the binding does not hold it", listed, binding.actions);
 
-  const commands = commandsOf(options.commands, http.actions);
+  const commands = commandsOf(options.commands, binding.actions);
 
   const group = aggregate(
     options.name,
-    http.actions.filter((action) => listed?.includes(action) ?? true),
+    binding.actions.filter((action) => listed?.includes(action) ?? true),
     commands,
-    (action, syntax) => overHttp(http, action, syntax, options.client),
+    (action, syntax) => overHttp(binding, action, syntax, options.client),
   );
 
   // SAFETY: every subcommand calls one action through the binding's client, so the
