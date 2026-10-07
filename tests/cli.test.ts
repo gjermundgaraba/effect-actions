@@ -1474,7 +1474,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
     ]);
     expect(builds).toEqual(["app"]);
 
-    const remote = ActionCli.make(ActionHttp.make([Read, Write]), {
+    const remote = ActionCli.remote(ActionHttp.make([Read, Write]), {
       name: "tool",
       actions: [Write],
     });
@@ -1486,7 +1486,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
     // Erased, as plain JavaScript or a helper's binding may be: the types refuse it otherwise.
     const readOnly: ActionHttp.Any = ActionHttp.make([Read]);
 
-    expect(() => ActionCli.make(readOnly, { name: "tool", actions: [Write] })).toThrow(
+    expect(() => ActionCli.remote(readOnly, { name: "tool", actions: [Write] })).toThrow(
       "Listed in actions, but the binding does not hold it: write",
     );
     // A command of an action the list leaves out is unused, so one record serves several
@@ -1498,7 +1498,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
       "read",
     ]);
     expect(() =>
-      ActionCli.make(readOnly, { name: "tool", commands: Object.fromEntries([["write", {}]]) }),
+      ActionCli.remote(readOnly, { name: "tool", commands: Object.fromEntries([["write", {}]]) }),
     ).toThrow("Unknown commands: write");
   }),
 );
@@ -2204,7 +2204,7 @@ it.effect(
         Action.implement(Quiet, () => Effect.succeed("quiet")),
       );
 
-      const remote = ActionCli.command(Http, Quiet).pipe(
+      const remote = ActionCli.remoteCommand(Http, Quiet).pipe(
         Command.provideEffect(
           HttpClient.HttpClient,
           Effect.map(
@@ -2366,16 +2366,18 @@ it.effect("matches a failure by its tag with Effect's own catchReason, after Com
   }),
 );
 
+/** The exit code `runMain` gives an exit. */
+const exitCodeOf = <A, E>(exit: Exit.Exit<A, E>) =>
+  Exit.isFailure(exit) ? Runtime.getErrorExitCode(Cause.squash(exit.cause)) : 0;
+
+/** Whether `runMain` would report an exit's failure itself. */
+const reportedOf = <A, E>(exit: Exit.Exit<A, E>) =>
+  Exit.isFailure(exit) && Runtime.getErrorReported(Cause.squash(exit.cause));
+
 it.effect(
   "reports on stderr what runMain would report, once, and keeps its exit code under onStderr",
   () =>
     Effect.gen(function* () {
-      const exitCodeOf = <A, E>(exit: Exit.Exit<A, E>) =>
-        Exit.isFailure(exit) ? Runtime.getErrorExitCode(Cause.squash(exit.cause)) : 0;
-
-      const reportedOf = <A, E>(exit: Exit.Exit<A, E>) =>
-        Exit.isFailure(exit) && Runtime.getErrorReported(Cause.squash(exit.cause));
-
       // A defect, and a log of a layer the host provides, reach stderr alone.
       const [defect, defectOut, defectErr] = yield* printed(
         ActionCli.onStderr(Effect.log("connecting").pipe(Effect.andThen(Effect.die("bug")))),
@@ -2425,6 +2427,54 @@ it.effect(
       assert(Exit.isFailure(interrupted));
       expect(Cause.hasInterruptsOnly(interrupted.cause)).toBe(true);
     }),
+);
+
+it.effect("reports a failing host layer and its logs on stderr under onStderr", () =>
+  Effect.gen(function* () {
+    class Unreachable extends Data.TaggedError("Unreachable")<{}> {}
+
+    class Database extends Context.Service<Database, string>()("cli-test/Database") {}
+
+    // The host's own layers, which log while they are built, then fail or die.
+    const failing = Layer.effect(
+      Database,
+      Effect.log("connecting").pipe(Effect.andThen(Effect.fail(new Unreachable()))),
+    );
+
+    const dying = Layer.effect(
+      Database,
+      Effect.log("connecting").pipe(Effect.andThen(Effect.die(new Error("no driver")))),
+    );
+
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.String,
+    });
+
+    const ping = ActionCli.command(
+      Action.implement(Ping, () => Effect.map(Database, (name) => `pong from ${name}`)),
+      Ping,
+    );
+
+    // Provided on the command, the failing layer is built when it runs; around the run, the
+    // dying one before it parses.
+    const runs = [
+      [ActionCli.onStderr(exec(ping.pipe(Command.provide(failing)), [])), /Unreachable/g],
+      [ActionCli.onStderr(exec(ping, []).pipe(Effect.provide(dying))), /no driver/g],
+    ] as const;
+
+    for (const [run, report] of runs) {
+      const [exit, stdout, stderr] = yield* printed(run);
+
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("connecting");
+      expect(stderr.join("\n").match(report)).toHaveLength(1);
+      expect(reportedOf(exit)).toBe(false);
+      expect(exitCodeOf(exit)).toBe(1);
+    }
+  }),
 );
 
 it.effect(

@@ -146,8 +146,11 @@ describe("a mixed MCP endpoint", () => {
     // A public tool's malformed arguments still get the native answer.
     const open = await web.handler(rawToolCall("status", { unexpected: "x" }));
 
+    const answered = await open.text();
+
     expect(open.status).toBe(200);
-    expect(await open.json()).toMatchObject({ result: { isError: true } });
+    expect(JSON.parse(answered)).toMatchObject({ result: { isError: true } });
+    expect(answered).toContain("Invalid parameters for tool 'status'");
 
     // A header naming a public tool over a body naming a protected one: the native runtime
     // refuses the mismatch, and the call never reaches the protected tool.
@@ -260,6 +263,22 @@ describe("a mixed MCP endpoint", () => {
         );
 
         expect(response.status).toBe(400);
+      }
+    }
+
+    // A header claiming discovery over a request the native runtime does validate, calling a
+    // protected tool or reading a resource: it refuses the mismatch before anything runs.
+    for (const method of ["tools/list", "server/discover"]) {
+      for (const sent of [
+        rawToolCall("renameUser", rename.arguments),
+        mcpRequest({ method: "resources/read", params: { uri: "docs://readme" } }),
+      ]) {
+        sent.headers.set("mcp-method", method);
+
+        const response = await web.handler(sent);
+
+        expect([method, response.status]).toEqual([method, 400]);
+        expect(await response.json()).toMatchObject({ error: { code: -32020 } });
       }
     }
 

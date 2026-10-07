@@ -1,7 +1,6 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { type HttpApiClient, OpenApi } from "effect/http-api";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
@@ -74,28 +73,6 @@ if (served.listed !== 200) throw new Error("MCP request failed");
 if (!served.raw.includes('"structuredContent":"Hello, Ada!"'))
   throw new Error(`Unexpected MCP result: ${served.raw}`);
 
-// A published text hint names a string field of the success.
-const Page = Action.make("page", {
-  description: "Read a page",
-  readOnly: true,
-  caller: Action.Anyone,
-  success: { markdown: Schema.String, next: Schema.optionalKey(Schema.String) },
-  mcp: { text: "markdown" },
-});
-
-const page = Action.implement(Page, () => Effect.succeed({ markdown: "# Page", next: "2" }));
-
-void ActionMcp.layerHttp(page, { name: "pages", version: "0" });
-
-Action.make("misnamed", {
-  description: "Read a page",
-  readOnly: true,
-  caller: Action.Anyone,
-  success: { markdown: Schema.String },
-  // @ts-expect-error `body` is no field of the success.
-  mcp: { text: "body" },
-});
-
 // A consumer's binding is a native HttpApi: Effect's own generator documents it.
 if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))
   throw new Error("The OpenAPI document lacks the greet route");
@@ -137,7 +114,7 @@ const Write = Action.make("write", {
 
 const checkCliTypes = (failure: ActionCli.Failure<Action.Forbidden>) => {
   // @ts-expect-error Remote commands accept only the binding's own actions.
-  ActionCli.command(Http, Read);
+  ActionCli.remoteCommand(Http, Read);
 
   // A command fails with Effect CLI's `UserError`, whose cause is the action's failure.
   const refused: Action.Forbidden = failure.cause;

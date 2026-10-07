@@ -1099,19 +1099,24 @@ describe("authentication around a surface", () => {
 
     const web = serve(ActionHttp.layer(Http, counted).pipe(Layer.provide(authenticate)));
 
-    /** The secret's request, its body `body` and its content type `type`. */
+    /**
+     * The secret's request, its body `body` and its content type `type`, or none: a `Blob`
+     * body, where a string would be sent as `text/plain`.
+     */
     const raw = (body: string, type?: string) =>
       new Request("http://localhost/api/secret", {
         method: "POST",
         headers: type === undefined ? {} : { "content-type": type },
-        body,
+        body: new Blob([body]),
       });
 
-    // Malformed JSON, an invalid input, and no content type: each refused unauthenticated.
+    // Malformed JSON, an invalid input, no content type and another one: each refused
+    // unauthenticated.
     for (const sent of [
       raw("{", "application/json"),
       call("secret", { note: 42 }),
       raw('{"note":"hi"}'),
+      raw('{"note":"hi"}', "text/plain"),
     ]) {
       const response = await web.handler(sent);
 
@@ -1122,7 +1127,17 @@ describe("authentication around a surface", () => {
     // Authenticated, each is decoding's.
     expect((await web.handler(withBearer(raw("{", "application/json"), "alice"))).status).toBe(400);
     expect((await web.handler(call("secret", { note: 42 }, "alice"))).status).toBe(400);
-    expect((await web.handler(withBearer(raw('{"note":"hi"}'), "alice"))).status).toBe(415);
+
+    for (const [type, refused] of [
+      [undefined, "none"],
+      ["text/plain", "text/plain"],
+    ] as const) {
+      const response = await web.handler(withBearer(raw('{"note":"hi"}', type), "alice"));
+
+      expect(response.status).toBe(415);
+      expect(await response.text()).toContain(refused);
+    }
+
     expect(calls).toBe(0);
   });
 

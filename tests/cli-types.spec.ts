@@ -128,18 +128,6 @@ expectTypeOf<Command.Services<typeof inlineGroup>>().toEqualTypeOf<
   Build | OneRequest | TwoRequest
 >();
 
-// TypeScript reports a call no overload matches by the last overload's error alone, so the
-// last, for `make` as for `command`, takes a binding or implementations and is reached only
-// when both precise forms fail: a mistake in either form is named, such as a misspelled
-// `commands` key, `Did you mean to write 'one'?`, rather than reported against the other form.
-expectTypeOf<Parameters<typeof ActionCli.make>[0]>().toEqualTypeOf<
-  ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
->();
-
-expectTypeOf<Parameters<typeof ActionCli.command>[0]>().toEqualTypeOf<
-  ActionHttp.Any | Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>
->();
-
 const Scoped = Action.make("scoped", {
   description: "Scoped",
   readOnly: false,
@@ -217,15 +205,15 @@ const Other = Action.make("other", {
 
 const http = ActionHttp.make([RemoteAction, Count, Other]);
 
-const remote = ActionCli.command(http, RemoteAction, {
+const remote = ActionCli.remoteCommand(http, RemoteAction, {
   render: (output) => output.toUpperCase(),
 });
 
-const remoteCount = ActionCli.command(http, Count, {
+const remoteCount = ActionCli.remoteCommand(http, Count, {
   render: (output) => String(output.toFixed()),
 });
 
-const remoteGroup = ActionCli.make(http, { name: "remote" });
+const remoteGroup = ActionCli.remote(http, { name: "remote" });
 
 // A remote command owes only the client; its failures are checked below.
 expectTypeOf<Command.Services<typeof remote>>().toEqualTypeOf<HttpClient.HttpClient>();
@@ -235,7 +223,7 @@ expectTypeOf<Command.Services<typeof remoteGroup>>().toEqualTypeOf<HttpClient.Ht
 void remoteCount;
 
 // @ts-expect-error A remote command selects an action of the binding.
-ActionCli.command(http, Plain);
+ActionCli.remoteCommand(http, Plain);
 
 // A remote command or aggregate takes its client's options, as `ActionHttp.client` does, and
 // still owes only the client they configure.
@@ -244,9 +232,12 @@ const connection: ActionHttp.ClientOptions = {
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("secret")),
 };
 
-const connected = ActionCli.command(http, RemoteAction, { client: connection, render: String });
+const connected = ActionCli.remoteCommand(http, RemoteAction, {
+  client: connection,
+  render: String,
+});
 
-const connectedGroup = ActionCli.make(http, { name: "remote", client: connection });
+const connectedGroup = ActionCli.remote(http, { name: "remote", client: connection });
 
 expectTypeOf<Command.Services<typeof connected>>().toEqualTypeOf<HttpClient.HttpClient>();
 
@@ -258,8 +249,46 @@ ActionCli.command(local, One, { client: connection });
 // @ts-expect-error So does a local aggregate.
 ActionCli.make(local, { name: "local", client: connection });
 
+// Options built apart are refused too, not ignored: such a command would run in process.
+const connecting = { client: connection };
+
+// @ts-expect-error A local command's options from a variable.
+ActionCli.command(local, One, connecting);
+
+const misspelled = { ...connecting, rendr: String };
+
+// @ts-expect-error No option `rendr` on a remote command, from a variable either.
+ActionCli.remoteCommand(http, RemoteAction, misspelled);
+
+// @ts-expect-error A binding is a remote command's, never a local one's.
+ActionCli.command(http, RemoteAction);
+
+// @ts-expect-error Nor a local aggregate's.
+ActionCli.make(http, { name: "remote" });
+
+// @ts-expect-error Implementations are a local command's.
+ActionCli.remoteCommand(local, One);
+
+// @ts-expect-error And a local aggregate's.
+ActionCli.remote(local, { name: "local" });
+
+// A binding or implementations chosen by a condition is neither form: build a command from
+// each and choose between them.
+declare const remotely: boolean;
+
+// @ts-expect-error Neither implementations nor a binding.
+ActionCli.make(remotely ? http : local, { name: "either" });
+
+const either = remotely
+  ? ActionCli.remote(http, { name: "either" })
+  : ActionCli.make(local, { name: "either" });
+
+expectTypeOf<Command.Services<typeof either>>().toEqualTypeOf<
+  HttpClient.HttpClient | Build | OneRequest | TwoRequest
+>();
+
 // One connection per aggregate: a subcommand takes none of its own.
-ActionCli.make(http, {
+ActionCli.remote(http, {
   name: "remote",
   // @ts-expect-error A subcommand's options are its syntax alone.
   commands: { remote: { client: connection } },
@@ -282,11 +311,11 @@ const Bound = ActionHttp.make([Plain, Erring]);
 
 type Transport = HttpClientError.HttpClientError | Schema.SchemaError;
 
-const boundPlain = ActionCli.command(Bound, Plain);
+const boundPlain = ActionCli.remoteCommand(Bound, Plain);
 
-const boundErring = ActionCli.command(Bound, Erring);
+const boundErring = ActionCli.remoteCommand(Bound, Erring);
 
-const boundAll = ActionCli.make(Bound, { name: "remote" });
+const boundAll = ActionCli.remote(Bound, { name: "remote" });
 
 expectTypeOf<Command.Error<typeof boundPlain>>().toEqualTypeOf<
   ActionCli.Failure<Action.BuiltIn | Transport>
@@ -305,9 +334,9 @@ class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpA
 
 const Throttling = ActionHttp.make([Plain, Erring], { error: [Throttled] });
 
-const throttledPlain = ActionCli.command(Throttling, Plain);
+const throttledPlain = ActionCli.remoteCommand(Throttling, Plain);
 
-const throttledAll = ActionCli.make(Throttling, { name: "remote" });
+const throttledAll = ActionCli.remote(Throttling, { name: "remote" });
 
 expectTypeOf<Command.Error<typeof throttledPlain>>().toEqualTypeOf<
   ActionCli.Failure<Throttled | Action.BuiltIn | Transport>
@@ -318,9 +347,9 @@ expectTypeOf<Command.Error<typeof throttledAll>>().toEqualTypeOf<
 >();
 
 // @ts-expect-error An aggregate remote command needs a name.
-ActionCli.make(Bound, {});
+ActionCli.remote(Bound, {});
 
-// The options exported for each function, the same locally and over HTTP.
+// The options exported for each aggregate and each command, the same locally and over HTTP.
 const commandOptions: ActionCli.CommandOptions<typeof RemoteAction> = {
   render: (output) => output,
 };
@@ -330,25 +359,28 @@ const makeOptions: ActionCli.Options<typeof RemoteAction> = {
   commands: { remote: { positional: ["value"], render: (output) => output.toUpperCase() } },
 };
 
-ActionCli.command(http, RemoteAction, commandOptions);
+ActionCli.remoteCommand(http, RemoteAction, commandOptions);
 
-ActionCli.make(http, makeOptions);
+ActionCli.remote(http, makeOptions);
 
 // A subcommand's options are typed by its own action.
-ActionCli.make(http, { name: "r", commands: { count: { render: (output) => output.toFixed() } } });
+ActionCli.remote(http, {
+  name: "r",
+  commands: { count: { render: (output) => output.toFixed() } },
+});
 
 ActionCli.make(local, { name: "l", commands: { one: { positional: ["value"] } } });
 
 // @ts-expect-error A subcommand's renderer receives its own action's success.
-ActionCli.make(http, { name: "r", commands: { count: { render: (output: string) => output } } });
+ActionCli.remote(http, { name: "r", commands: { count: { render: (output: string) => output } } });
 
 // @ts-expect-error No action is named so.
-ActionCli.make(http, { name: "r", commands: { missing: {} } });
+ActionCli.remote(http, { name: "r", commands: { missing: {} } });
 
 // Positional arguments name a struct input's own fields, locally and over HTTP.
 ActionCli.command(local, One, { positional: ["value"] });
 
-ActionCli.command(http, RemoteAction, { positional: ["value"] });
+ActionCli.remoteCommand(http, RemoteAction, { positional: ["value"] });
 
 // @ts-expect-error Not a field of the input.
 ActionCli.command(local, One, { positional: ["other"] });
@@ -447,7 +479,7 @@ const localListed = ActionCli.make(local, {
 
 expectTypeOf<Command.Services<typeof localListed>>().toEqualTypeOf<Build | TwoRequest>();
 
-const boundListed = ActionCli.make(Bound, { name: "remote", actions: [Plain] });
+const boundListed = ActionCli.remote(Bound, { name: "remote", actions: [Plain] });
 
 expectTypeOf<Command.Error<typeof boundListed>>().toEqualTypeOf<
   ActionCli.Failure<Action.BuiltIn | Transport>

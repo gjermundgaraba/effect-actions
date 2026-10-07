@@ -1,4 +1,4 @@
-import { Cause, Effect, Logger, Predicate, Runtime, type Schema } from "effect";
+import { Cause, Effect, Logger, Runtime, type Schema } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "./Action.js";
@@ -28,6 +28,7 @@ import {
   select,
   type Known,
   type Selected,
+  type SelectedOf,
   type Selection,
   type Served,
   toList,
@@ -131,7 +132,7 @@ const local = <App extends AnyImplementation, A extends Action.Any>(
   const call = Effect.flatMap(acquire([own]), (bound) => {
     const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
 
-    return run === undefined ? Effect.die(`No handler for ${action.name}`) : run(input);
+    return run === undefined ? Effect.die(new Error(`No handler for ${action.name}`)) : run(input);
   });
 
   const built = call.pipe(Effect.provide(Implementation.layerOf(own), { local: true }));
@@ -160,14 +161,25 @@ const implementationOf = (
   return app;
 };
 
+/** One command running `action` in process, by its one implementation among `apps`. */
+const inProcess = <A extends Action.Any>(
+  apps: ReadonlyArray<AnyImplementation>,
+  action: A,
+  options: CommandOptions<A> | undefined,
+) => {
+  const app = implementationOf(apps, action);
+
+  return makeCommand(action, (input) => local(app, action, input), options);
+};
+
 /**
  * One command calling `action` through the binding's client, made with `client` on the
  * host's `HttpClient`, whose failures include the binding's errors.
  */
-const remote = (
+const overHttp = <A extends Action.Any>(
   http: AnyHttp,
-  action: Action.Any,
-  options: CommandOptions<Action.Any> | undefined,
+  action: A,
+  options: CommandOptions<A> | undefined,
   client: ClientOptions | undefined,
 ) => {
   assertInBinding(http.actions, action);
@@ -180,100 +192,116 @@ const remote = (
   );
 };
 
-// A binding declares its native `api`; an implementation never does.
-const isHttp = (value: AnyHttp | Served): value is AnyHttp => Predicate.hasProperty(value, "api");
+/**
+ * One aggregate command named `name`, a subcommand per action of `actions`, each made by
+ * `project` with its options in `commands`: a local aggregate's and a remote one's.
+ */
+const aggregate = (
+  name: string,
+  actions: ReadonlyArray<Action.Any>,
+  commands: NonNullable<Options["commands"]>,
+  project: (
+    action: Action.Any,
+    options: CommandOptions<Action.Any> | undefined,
+  ) => Command.Command<string, never, {}, unknown, unknown>,
+) => {
+  const subcommands = actions.map((action) => ({
+    action,
+    command: project(
+      action,
+      Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
+    ),
+  }));
 
-/** Refuse client options for implementations, which run in process and connect nowhere. */
-const assertClient = (target: AnyHttp | Served, client: ClientOptions | undefined): void => {
-  if (client !== undefined && !isHttp(target)) {
-    throw new Error("Client options are for a command over HTTP: pass a binding");
-  }
+  // An action served twice has one name twice, so this refuses it too.
+  assertDistinct(
+    "command",
+    subcommands,
+    ({ command }) => command.name,
+    ({ action }) => `action ${action.name}`,
+  );
+
+  return Command.make(name).pipe(
+    Command.withSubcommands(subcommands.map(({ command }) => command)),
+  );
 };
 
-/** `action`'s command: called over HTTP from a binding, or run by its one implementation. */
-const project = (
-  target: AnyHttp | Served,
-  action: Action.Any,
-  options: CommandOptions<Action.Any> | undefined,
-  client: ClientOptions | undefined,
-): Command.Command<string, never, {}, unknown, unknown> => {
-  if (isHttp(target)) return remote(target, action, options, client);
+/** A command of any action of the target, so one record serves several selections. */
+const commandsOf = (
+  commands: Options["commands"],
+  actions: ReadonlyArray<Action.Any>,
+): NonNullable<Options["commands"]> => {
+  const given = commands ?? {};
 
-  const app = implementationOf(toList(target), action);
+  assertKnown(
+    "commands",
+    Object.keys(given),
+    actions.map((action) => action.name),
+  );
 
-  return makeCommand(action, (input) => local(app, action, input), options);
+  return given;
 };
 
 /**
- * Project one action into a native Effect CLI command, named after it in kebab case with one flag
- * per field of its input (`--user-id`), or `--input` taking the whole input as JSON when it is not
- * a struct. From an HTTP binding, the command calls the action over HTTP through its
- * `ActionHttp.client` method, made with the `client` options on the host's `HttpClient`, and fails
- * as the method does. From implementations, it runs the handler in process, behind its
- * implementation's authorization, and needs what the authorization, its handler and its builder
+ * Project one implemented action into a native Effect CLI command that runs its handler in
+ * process, behind its implementation's authorization. It is named after the action in kebab
+ * case with one flag per field of its input (`--user-id`), or `--input` taking the whole input
+ * as JSON when it is not a struct. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
- * `Failure`, which `Command.run` prints on stderr.
+ * `Failure`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
  */
-export function command<const H extends AnyHttp, A extends H["actions"][number]>(
-  http: H,
-  action: A,
-  options?: CommandOptions<A> & {
-    /**
-     * Its client's options, as `ActionHttp.client` takes them: `baseUrl`, and
-     * `transformClient` for credentials. They reach this command's requests alone.
-     */
-    readonly client?: ClientOptions;
-  },
-): Command.Command<
-  string,
-  never,
-  {},
-  Failure<
-    | A["error"][number]["Type"]
-    | H["error"][number]["Type"]
-    | Action.BuiltIn
-    | HttpClientError.HttpClientError
-    | Schema.SchemaError
-  >,
-  HttpClient.HttpClient
->;
-export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>>(
+// Options are inferred whole, so a key of no command option, such as a remote command's
+// `client`, is refused from a variable too, not only from a literal.
+export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
   implementations: Apps,
   action: A,
-  options?: CommandOptions<A>,
+  options?: O & NoInfer<CommandOptions<A>> & NoInfer<Known<O, CommandOptions<Action.Any>>>,
 ): Command.Command<
   string,
   never,
   {},
   Failure<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
->;
-// Last, and reached only when both forms above fail: TypeScript reports a call matching no
-// overload by the last one's error alone, and this one's names the mistake in either form,
-// such as a positional argument that is not a field. A target that is a binding or
-// implementations, chosen by a condition, reaches it too, and owes `unknown`.
-export function command<
-  const T extends AnyHttp | Served,
-  A extends (T extends AnyHttp ? T["actions"][number] : ActionOf<Member<T>>),
->(
-  target: T,
-  action: A,
-  options?: CommandOptions<A> & (T extends AnyHttp ? { readonly client?: ClientOptions } : unknown),
-): Command.Command<string, never, {}, unknown, unknown>;
-export function command(
-  target: AnyHttp | Served,
-  action: Action.Any,
-  options?: CommandOptions<Action.Any> & { readonly client?: ClientOptions },
-): Command.Command<string, never, {}, unknown, unknown> {
-  const { client, ...syntax } = options ?? {};
-
-  assertClient(target, client);
-
-  return project(target, action, options === undefined ? undefined : syntax, client);
+> {
+  // SAFETY: the command runs `action` by its one implementation among `implementations`,
+  // so its channels are what `Local` states for that implementation.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the selected one's type restores the channels.
+  return inProcess(toList(implementations), action, options) as never;
 }
 
-/** An aggregate command's options over HTTP, its actions `A`. */
-type HttpOptions<A extends Action.Any> = Options<A> & {
+/**
+ * Project one action of an HTTP binding into a native Effect CLI command, derived as `command`
+ * derives it, that calls the action over HTTP through its `ActionHttp.client` method, made with
+ * the `client` options on the host's `HttpClient`, and fails as the method does. It runs
+ * nothing locally.
+ */
+export function remoteCommand<
+  const H extends AnyHttp,
+  A extends H["actions"][number],
+  const O = {},
+>(
+  http: H,
+  action: A,
+  options?: O &
+    NoInfer<RemoteCommandOptions<A>> &
+    NoInfer<Known<O, RemoteCommandOptions<Action.Any>>>,
+): Command.Command<string, never, {}, HttpFailure<H, A>, HttpClient.HttpClient> {
+  const { client, ...syntax } = options ?? {};
+
+  return overHttp(http, action, options === undefined ? undefined : syntax, client);
+}
+
+/** A remote command's options, its action `A`. */
+type RemoteCommandOptions<A extends Action.Any> = CommandOptions<A> & {
+  /**
+   * Its client's options, as `ActionHttp.client` takes them: `baseUrl`, and
+   * `transformClient` for credentials. They reach this command's requests alone.
+   */
+  readonly client?: ClientOptions;
+};
+
+/** A remote aggregate command's options, its actions `A`. */
+type RemoteOptions<A extends Action.Any> = Options<A> & {
   /**
    * Every subcommand's client options, as `ActionHttp.client` takes them: `baseUrl`, and
    * `transformClient` for credentials. They reach this aggregate's requests alone.
@@ -291,27 +319,14 @@ type HttpFailure<H extends AnyHttp, A extends Action.Any> = Failure<
 >;
 
 /**
- * Project every action as a subcommand of one aggregate command, each named after its
- * action in kebab case: each action of an HTTP binding called over HTTP, or each
- * implemented action run in process. `commands` gives a subcommand the options `command`
- * takes, by action name; over HTTP, `client` configures every subcommand's client.
+ * Project every implemented action as a subcommand of one aggregate command, each named after
+ * its action in kebab case and run in process. `commands` gives a subcommand the options
+ * `command` takes, by action name. `remote` calls a server instead.
  */
 // Without `actions`, every action is a command; options whose `actions` may be absent may run
 // every action, so they type every command. `commands` is typed by every action of the
-// target, so one record serves aggregates of different selections: a command of an action
-// left out is unused.
-export function make<const H extends AnyHttp, const O extends Selection<H["actions"][number]> = {}>(
-  http: H,
-  options: O &
-    NoInfer<HttpOptions<H["actions"][number]>> &
-    NoInfer<KnownOptions<O, HttpOptions<Action.Any>, H["actions"][number]>>,
-): Command.Command<
-  string,
-  {},
-  {},
-  HttpFailure<H, Selected<O, H["actions"][number]>>,
-  HttpClient.HttpClient
->;
+// implementations, so one record serves aggregates of different selections: a command of an
+// action left out is unused.
 export function make<
   const Apps extends Served,
   const O extends Selection<ActionOf<Member<Apps>>> = {},
@@ -324,87 +339,68 @@ export function make<
   string,
   {},
   {},
-  Failure<
-    Effect.Error<
-      Local<
-        Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-        Selected<O, ActionOf<Member<Apps>>>
-      >
-    >
-  >,
-  Effect.Services<
-    Local<
-      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-      Selected<O, ActionOf<Member<Apps>>>
-    >
-  >
->;
-// Last, and reached only when the forms above fail: TypeScript reports a call matching no
-// overload by the last one's error alone, and this one's names every option mistake in
-// either form, such as a misspelled `commands` key. A target that is a binding or
-// implementations, chosen by a condition, reaches it too, and owes `unknown`.
-export function make<const T extends AnyHttp | Served>(
-  target: T,
-  options: NoInfer<
-    Options<T extends AnyHttp ? T["actions"][number] : ActionOf<Member<T>>> &
-      (T extends AnyHttp ? { readonly client?: ClientOptions } : unknown)
-  >,
-): Command.Command<string, {}, {}, unknown, unknown>;
-export function make(
-  target: AnyHttp | Served,
-  options: Options & { readonly client?: ClientOptions },
-): Command.Command<string, {}, {}, unknown, unknown> {
-  const commands = options.commands ?? {};
+  Failure<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>,
+  Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
+> {
+  const apps = toList(implementations);
 
-  assertClient(target, options.client);
+  const commands = commandsOf(
+    options.commands,
+    apps.flatMap((app) => app.actions),
+  );
 
-  // The listed actions only, each projected as before: a binding's, or those an
-  // implementation holds, sharing its builder and authorization.
+  // The listed actions only, those an implementation holds, sharing its builder and
+  // authorization.
+  const served = select(apps, options.actions);
+
+  const group = aggregate(
+    options.name,
+    served.flatMap((app) => app.actions),
+    commands,
+    (action, syntax) => inProcess(served, action, syntax),
+  );
+
+  // SAFETY: every subcommand runs one action by its implementation, so the aggregate's
+  // channels are the unions of what `Local` states over them.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list.
+  return group as never;
+}
+
+/**
+ * Project every action of an HTTP binding as a subcommand of one aggregate command, derived as
+ * `make` derives it, each calling its action over HTTP. `client` configures every
+ * subcommand's client; `commands` gives a subcommand the options `command` takes.
+ */
+export function remote<
+  const H extends AnyHttp,
+  const O extends Selection<H["actions"][number]> = {},
+>(
+  http: H,
+  options: O &
+    NoInfer<RemoteOptions<H["actions"][number]>> &
+    NoInfer<KnownOptions<O, RemoteOptions<Action.Any>, H["actions"][number]>>,
+): Command.Command<
+  string,
+  {},
+  {},
+  HttpFailure<H, Selected<O, H["actions"][number]>>,
+  HttpClient.HttpClient
+> {
   const listed = options.actions;
 
-  if (isHttp(target) && listed !== undefined) {
-    assertHeld("the binding does not hold it", listed, target.actions);
-  }
+  if (listed !== undefined) assertHeld("the binding does not hold it", listed, http.actions);
 
-  // A command of any action of the target, so one record serves several selections.
-  assertKnown(
-    "commands",
-    Object.keys(commands),
-    (isHttp(target) ? target.actions : toList(target).flatMap((app) => app.actions)).map(
-      (action) => action.name,
-    ),
+  const commands = commandsOf(options.commands, http.actions);
+
+  const group = aggregate(
+    options.name,
+    http.actions.filter((action) => listed?.includes(action) ?? true),
+    commands,
+    (action, syntax) => overHttp(http, action, syntax, options.client),
   );
 
-  const served = isHttp(target) ? target : select(toList(target), listed);
-
-  const actions = isHttp(served)
-    ? served.actions.filter((action) => listed?.includes(action) ?? true)
-    : toList(served).flatMap((app) => app.actions);
-
-  const subcommands = actions.map((action) => ({
-    action,
-    command: project(
-      served,
-      action,
-      Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
-      options.client,
-    ),
-  }));
-
-  // An action served twice has one name twice, so this refuses it too.
-  assertDistinct(
-    "command",
-    subcommands,
-    ({ command }) => command.name,
-    ({ action }) => `action ${action.name}`,
-  );
-
-  const group = Command.make(options.name).pipe(
-    Command.withSubcommands(subcommands.map(({ command }) => command)),
-  );
-
-  // SAFETY: every subcommand runs or calls one action, so the aggregate's channels are
-  // the unions of what `Local` and a client method state over them.
+  // SAFETY: every subcommand calls one action through the binding's client, so the
+  // aggregate's channels are the unions of what a client method states over them.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list.
   return group as never;
 }

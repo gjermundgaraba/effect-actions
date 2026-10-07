@@ -179,34 +179,6 @@ const ToolReply = Schema.Union([
   Schema.Struct({ error: Schema.Struct({ code: Schema.Finite, message: Schema.String }) }),
 ]);
 
-const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
-
-const decodeObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject));
-
-/**
- * The success a tool with the text field `field` sends as text, without structured content:
- * the field raw in the first block and the JSON of the rest in the second, or the JSON of the
- * whole in one block when the success holds no string there. `None` for any other content.
- */
-const textSuccessOf = (
-  content: ReadonlyArray<Block>,
-  field: string,
-): Option.Option<Schema.Json> => {
-  const [first, second, ...others] = content;
-  const raw = textOf(first);
-
-  if (raw === undefined || others.length > 0) return Option.none();
-
-  if (second === undefined) return decodeJson(raw);
-
-  const json = textOf(second);
-
-  return Option.map(json === undefined ? Option.none() : decodeObject(json), (rest) => ({
-    ...rest,
-    [field]: raw,
-  }));
-};
-
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply));
 
 /**
@@ -238,20 +210,14 @@ const failWith = (errors: Action.Any["error"], text: string, otherwise: McpCallE
     Effect.flatMap(Effect.fail),
   );
 
-/**
- * The tool call of `action` with `input` on `client`, sending to `url`, whose success the
- * tool sends as text when the action names an `mcp.text`.
- */
+/** The tool call of `action` with `input` on `client`, sending to `url`. */
 const callTool = (
   client: HttpClient.HttpClient,
   url: string,
   action: Action.Any,
   input: Action.Any["input"]["Type"],
 ): Effect.Effect<unknown, unknown> => {
-  const {
-    name,
-    mcp: { text: field },
-  } = action;
+  const { name } = action;
 
   const other = (answer: string) =>
     new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
@@ -289,32 +255,23 @@ const callTool = (
       return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
     }
 
-    // A tool with a text field sends its success as text; any other, as structured content.
-    const success =
-      field !== undefined
-        ? textSuccessOf(result.content, field)
-        : result.structuredContent === undefined
-          ? Option.none()
-          : Option.some(result.structuredContent);
-
-    if (Option.isNone(success)) {
-      const missing = field === undefined ? "no structured content" : "no success as text";
-
-      return yield* Effect.fail(other(`returned ${missing}: ${text}`));
+    if (result.structuredContent === undefined) {
+      return yield* Effect.fail(other(`returned no structured content: ${text}`));
     }
 
-    return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(success.value);
+    return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(
+      result.structuredContent,
+    );
   });
 };
 
 /**
  * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
  * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
- * encoded with the action's schema, and the success decoded, from the text blocks of a tool
- * whose action names an `mcp.text`. A declared error the tool returns, the action's own or a
- * refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
- * with. The argument may be omitted when `{}` is a valid input. Requires the native
- * `HttpClient`, such as the one `layer` provides.
+ * encoded with the action's schema, and the success decoded from its structured content. A
+ * declared error the tool returns, the action's own or a refusal, is its decoded value, and so
+ * is a refusal the endpoint's authentication answers with. The argument may be omitted when
+ * `{}` is a valid input. Requires the native `HttpClient`, such as the one `layer` provides.
  */
 export function mcpClient<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions,

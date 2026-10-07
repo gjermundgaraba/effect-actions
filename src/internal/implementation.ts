@@ -198,6 +198,9 @@ export type Selected<O, All extends Action.Any> = O extends {
   ? A
   : All;
 
+/** The actions options `O` select of the implementations `Apps` stand for. */
+export type SelectedOf<O, Apps extends Served> = Selected<O, ActionOf<Member<Apps>>>;
+
 /**
  * The actions a client of options `O` offers methods for, of `All`: those `actions` may
  * list, wherever some member of `O` may list them, as each is present whether the list is

@@ -13,10 +13,6 @@ export const httpProtocol = McpProtocol.v2026_07_28;
 /** Where `ActionMcp.layerHttp` serves, and `Testing.mcpClient` calls, by default. */
 export const defaultPath = "/mcp";
 
-/** A JSON value that is an object: neither null, a scalar nor an array. */
-export const isJsonObject = (value: Schema.Json | undefined): value is Schema.JsonObject =>
-  Predicate.isObject(value);
-
 /** An MCP request's parameters: JSON, leaving out an `undefined` one, as a caller may. */
 export interface Params {
   readonly _meta?: { readonly [key: string]: Schema.Json };

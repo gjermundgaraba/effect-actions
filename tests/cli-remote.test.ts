@@ -43,7 +43,7 @@ it.effect("projects commands through the HTTP client", () =>
     const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
 
     // The host configures its client: every remote command calls through it.
-    const command = ActionCli.make(Http, { name: "cli" });
+    const command = ActionCli.remote(Http, { name: "cli" });
 
     const host = Effect.updateService(
       HttpClient.HttpClient,
@@ -85,7 +85,7 @@ it.effect("projects commands through the HTTP client", () =>
       success: Schema.FiniteFromString,
     });
 
-    expect(() => ActionCli.command(Http, Lookalike)).toThrow(
+    expect(() => ActionCli.remoteCommand(Http, Lookalike)).toThrow(
       'Action "remote" is not in this HTTP binding',
     );
   }),
@@ -119,7 +119,7 @@ it.effect("projects a binding as one kebab-case subcommand per action", () =>
     });
 
     // A subcommand takes the options `command` takes, positional arguments over HTTP included.
-    const command = ActionCli.make(Flat, {
+    const command = ActionCli.remote(Flat, {
       name: "cli",
       commands: { remote: { positional: ["value"] } },
     });
@@ -141,7 +141,7 @@ it.effect("refuses input that does not decode locally, sending no request", () =
   Effect.gen(function* () {
     let requests = 0;
 
-    const invalid = yield* exec(ActionCli.command(Http, Remote), ["--value", "x"]).pipe(
+    const invalid = yield* exec(ActionCli.remoteCommand(Http, Remote), ["--value", "x"]).pipe(
       Effect.provide(
         Testing.layer(async () => {
           requests++;
@@ -181,7 +181,7 @@ it.effect("fails with an error its action declares, as the client decodes it", (
       ),
     );
 
-    const [exit, , stderr] = yield* exec(ActionCli.command(BoundedHttp, Bounded), [
+    const [exit, , stderr] = yield* exec(ActionCli.remoteCommand(BoundedHttp, Bounded), [
       "--value",
       "11",
     ]).pipe(printed, Effect.provide(Testing.layer(web.handler)));
@@ -202,7 +202,7 @@ it.effect(
       ) {}
 
       const Throttling = ActionHttp.make([Remote], { error: [Throttled] });
-      const command = ActionCli.command(Throttling, Remote);
+      const command = ActionCli.remoteCommand(Throttling, Remote);
 
       const stderrOf = (answer: (request: Request) => Promise<Response>) =>
         exec(command, ["--value", "21"]).pipe(printed, Effect.provide(Testing.layer(answer)));
@@ -254,7 +254,7 @@ it.effect(
       });
 
       // The remote commands' URL and token, read when one of them runs.
-      const api = ActionCli.make(Http, { name: "api" }).pipe(
+      const api = ActionCli.remote(Http, { name: "api" }).pipe(
         Command.provideEffect(
           HttpClient.HttpClient,
           Effect.gen(function* () {
@@ -332,8 +332,8 @@ it.effect("connects through its client options, which no other command's request
 
     const cli = Command.make("acme").pipe(
       Command.withSubcommands([
-        ActionCli.make(Http, { name: "api", client }),
-        ActionCli.command(Http, Remote, { name: "double", client }),
+        ActionCli.remote(Http, { name: "api", client }),
+        ActionCli.remoteCommand(Http, Remote, { name: "double", client }),
         login,
       ]),
     );
@@ -353,14 +353,3 @@ it.effect("connects through its client options, which no other command's request
     ]);
   }),
 );
-
-it("refuses client options for implementations, which run in process", () => {
-  const { app } = recording();
-  const client = { baseUrl: "http://api.example.com" };
-  const refusal = "Client options are for a command over HTTP: pass a binding";
-
-  // @ts-expect-error A local command connects nowhere.
-  expect(() => ActionCli.command(app, Remote, { client })).toThrow(refusal);
-  // @ts-expect-error A local aggregate connects nowhere.
-  expect(() => ActionCli.make(app, { name: "cli", client })).toThrow(refusal);
-});

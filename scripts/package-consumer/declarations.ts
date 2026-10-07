@@ -88,9 +88,9 @@ export const remoteLookup = ActionHttp.fetchClient(LookupHttp).lookup;
 export const lookUp = (id: string) => ActionHttp.fetchClient(LookupHttp).lookup({ id });
 
 // A remote command, aggregates and a test client over the same contracts.
-export const remoteCommand = ActionCli.command(LookupHttp, Lookup);
+export const remoteCommand = ActionCli.remoteCommand(LookupHttp, Lookup);
 
-export const remoteCli = ActionCli.make(LookupHttp, { name: "lookup" });
+export const remoteCli = ActionCli.remote(LookupHttp, { name: "lookup" });
 
 export const localCli = ActionCli.make(lookup, { name: "lookup" });
 

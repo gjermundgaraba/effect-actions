@@ -41,12 +41,11 @@ import {
 const bearerScheme = /^[ \t]*Bearer +([^ \t](?:.*[^ \t])?)[ \t]*$/i;
 
 /**
- * The bearer token of an `Authorization` header, `authorization`, or none: the one reading
- * of the header, which every challenge and a Bearer descriptor's verifier share, as Effect's
- * `HttpApiSecurity.bearer` reads it. It is for a caller the router never routes, which holds
- * the header and no request; a route of the host's own is authenticated by `protect`. The
- * scheme is matched case-insensitively, as RFC 9110 requires, and the token is `Redacted`, as
- * Effect's own decoder gives it.
+ * The bearer token of an `Authorization` header, `authorization`, or none, read as Effect's
+ * `HttpApiSecurity.bearer` reads it for routes and MCP, which a test holds equal. It is for a
+ * caller the router never routes, which holds the header and no request; a route of the host's
+ * own is authenticated by `protect`. The scheme is matched case-insensitively, as RFC 9110
+ * requires, and the token is `Redacted`, as Effect's own decoder gives it.
  */
 export const bearerTokenOf = (
   authorization: string | undefined,
@@ -202,6 +201,13 @@ export const refusal = (
 };
 
 /**
+ * Whether a request URL may resolve to a discovery path, which every other request skips
+ * parsing: the URL parser copies `.well-known` as it is, removing only a tab or a newline. Node
+ * refuses a target holding those before routing; a platform passing one through still parses.
+ */
+const mayDiscover = /\.well-known|[\t\n\r]/;
+
+/**
  * RFC 9728 discovery of `options` at its metadata URL, as global router middleware: it
  * answers before routing, so no route middleware, authentication included, ever covers it.
  * The metadata is public to every origin, as a browser client needs it after a 401: it
@@ -247,6 +253,7 @@ const discovery = (options: ProtectedResource) => {
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
       // A request no URL parses, such as `//[x`, is no discovery request: the host answers it.
       const targeted =
+        mayDiscover.test(request.url) &&
         URL.canParse(request.url, discoveryUrl.origin) &&
         new URL(request.url, discoveryUrl.origin).href.slice(discoveryUrl.origin.length) === target;
 

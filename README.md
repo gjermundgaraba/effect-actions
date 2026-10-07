@@ -42,24 +42,15 @@ export const routes = Layer.mergeAll(
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter` and a platform server, with a request body limit:
-
-```ts
-HttpRouter.serve(routes).pipe(
-  Layer.provide(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 3000 })),
-  Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
-  Layer.launch,
-  NodeRuntime.runMain,
-);
-```
-
-and you have `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greet`
+Serve `routes` with Effect's `HttpRouter.serve` and a platform server, with a request body
+limit, as [examples/server.ts](examples/server.ts) serves the example application, and you
+have `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greet`
 implementation is also:
 
 ```ts
 const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolkit and its handler layer
 const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --name Ada
-const remote = ActionCli.command(Http, Greet, { client: { baseUrl } }); // greet --name Ada, over HTTP
+const remote = ActionCli.remoteCommand(Http, Greet, { client: { baseUrl } }); // greet --name Ada, over HTTP
 const local = Action.client(greet); // the HTTP client's methods, in process
 ```
 

@@ -513,13 +513,15 @@ class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
   "effect-actions/ActionHttp/JsonContentType",
 ) {}
 
-const jsonContentType = Layer.succeed(JsonContentType, (route) =>
-  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    request.headers["content-type"] === undefined
-      ? Effect.succeed(HttpServerResponse.text("Unsupported content-type: none", { status: 415 }))
-      : route,
-  ),
-);
+/** `JsonContentType`'s server side, built by `layer` alone, so a client's bundle leaves it out. */
+const jsonContentType = () =>
+  Layer.succeed(JsonContentType, (route) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      request.headers["content-type"] === undefined
+        ? Effect.succeed(HttpServerResponse.text("Unsupported content-type: none", { status: 415 }))
+        : route,
+    ),
+  );
 
 /**
  * Serve the binding's actions among `implementations` in one layer, or those its `actions` lists,
@@ -629,7 +631,7 @@ export function layer(
           byName as never,
         ),
       ).pipe(
-        Layer.provide([schemaErrors, jsonContentType, authentication, ...middleware]),
+        Layer.provide([schemaErrors(), jsonContentType(), authentication, ...middleware]),
         buildAlone,
       );
     }),

@@ -22,9 +22,11 @@ export class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
   { error: [InvalidInput] },
 ) {}
 
-export const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
-  responseKinds.has(failure.kind)
-    ? // Its cause, not the native failure: the failure itself renders as a 400.
-      Effect.die(failure.cause)
-    : Effect.fail(InvalidInput.fromSchemaError(failure.cause)),
-);
+/** `SchemaErrors`' server side, built by `ActionHttp.layer` alone, so a client's bundle leaves it out. */
+export const schemaErrors = () =>
+  HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
+    responseKinds.has(failure.kind)
+      ? // Its cause, not the native failure: the failure itself renders as a 400.
+        Effect.die(failure.cause)
+      : Effect.fail(InvalidInput.fromSchemaError(failure.cause)),
+  );

@@ -1,0 +1,3 @@
+# Written return types
+
+Surfaces write their return types out, as `ActionMcp.layerHttp` does: `ActionHttp.layer`, `ActionToolkit.make` and `ActionCli`'s `command`, `make`, `remoteCommand` and `remote`. A hover then shows what a layer or command still needs and fails with, `Layer<never, never, … | Request<"Requires", CurrentActor> | Users>`, where a private alias named the implementations (`ActionHttp.layer(Http, [userActions, double])`'s hover: about 600 characters, now about 145). A remote command's failure is written out as its client method's, the action's errors, the binding's, the built-in ones and the transport's, where the client's private `MethodError` hid them. `layer`'s `Apps` drops the redundant `Served &`.

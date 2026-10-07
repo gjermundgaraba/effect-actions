@@ -7,7 +7,6 @@ import {
   JsonPointer,
   type JsonSchema,
   Layer,
-  Option,
   Predicate,
   Schema,
   type Stdio,
@@ -25,7 +24,7 @@ import {
   type Required as RequiredAuthentication,
 } from "./internal/authentication.js";
 import { Anyone } from "./internal/actions.js";
-import { defaultPath, httpProtocol, isJsonObject } from "./internal/mcp.js";
+import { defaultPath, httpProtocol } from "./internal/mcp.js";
 import { recordStepUp } from "./internal/refusal.js";
 import { logToStderr } from "./internal/console.js";
 import { bindTools, type Projection } from "./internal/tools.js";
@@ -40,7 +39,7 @@ import {
   provideHandlers,
   select,
   type Known,
-  type Selected,
+  type SelectedOf,
   type Selection,
   type Served,
   type ServedRequest,
@@ -135,126 +134,25 @@ const rootOf = (schema: Schema.Top): JsonSchema.JsonSchema | undefined => {
   return scope === "$defs" && key !== undefined ? document.definitions[key] : document.schema;
 };
 
-/** The properties of a listed output schema, which a text field must be one of. */
-const decodeListed = Schema.decodeUnknownOption(
-  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Json) }),
-);
-
 /**
- * Refuse, when the server is made, the actions of `apps` MCP cannot serve as they are, naming
- * every one, reading the JSON Schemas the native server reads:
- * - an input that is not one object, as the root of a tool's arguments must be: not a union,
- *   an array, a scalar, nor `Schema.Struct({})`, which takes any value but `null`, where the
- *   native server dies when the layer builds, suggesting `Tool.EmptyParams`;
- * - a text field that is no top-level property of the success's schema, which no success
- *   would hold.
+ * Refuse, when the server is made, the actions of `apps` whose input is not one object, as the
+ * root of a tool's arguments must be, naming every one, reading the JSON Schema the native
+ * server reads: not a union, an array, a scalar, nor `Schema.Struct({})`, which takes any value
+ * but `null`, where the native server dies when the layer builds, suggesting
+ * `Tool.EmptyParams`.
  */
 const assertShapes = (apps: ReadonlyArray<AnyImplementation>): void => {
-  const actions = apps.flatMap((app) => app.actions);
-
-  const inputs = actions
+  const inputs = apps
+    .flatMap((app) => app.actions)
     .filter((action) => !isToolJson(rootOf(action.input)))
     .map(({ name }) => name);
 
-  const texts = actions.flatMap(({ name, mcp, success }) => {
-    if (mcp.text === undefined) return [];
-
-    const listed = decodeListed(rootOf(success));
-
-    return Option.isSome(listed) && Object.hasOwn(listed.value.properties, mcp.text)
-      ? []
-      : [`${name} ('${mcp.text}')`];
-  });
-
-  const refused = [
-    ...(inputs.length > 0
-      ? [`MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")}`]
-      : []),
-    ...(texts.length > 0
-      ? [`MCP tool text field must be a top-level property of its success: ${texts.join(", ")}`]
-      : []),
-  ];
-
-  if (refused.length > 0) throw new Error(refused.join("\n"));
+  if (inputs.length > 0) {
+    throw new Error(
+      `MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")}`,
+    );
+  }
 };
-
-/** The native tool registry. */
-type Registry = McpServer.McpServer["Service"];
-
-/** What the native registry takes for one tool: its listing, and what a call of it runs. */
-type Registration = Parameters<Registry["addTool"]>[0];
-
-/**
- * `tool` listing no output schema, for a success sent as text: the native McpSchema.Tool, a
- * Schema.Class, rebuilt from its own fields but outputSchema, as McpServer.addTool rebuilds
- * it: the constructor restores the prototype and validates them.
- */
-const listedAsText = (tool: McpSchema.Tool): McpSchema.Tool => {
-  const { outputSchema: _, ...listing } = tool;
-
-  return new McpSchema.Tool(listing);
-};
-
-/**
- * A success as text alone, without structured content: one whose text field holds a string as
- * two text blocks, the string once, raw, then the JSON of the rest; any other as the JSON of
- * the whole, the native text. A host preferring structured content has none, so it shows the
- * text. An error is the native result.
- */
-const textResult = (result: McpSchema.CallToolResult, field: string): McpSchema.CallToolResult => {
-  if (result.isError === true) return result;
-
-  const { structuredContent: structured, ...native } = result;
-  const whole: Schema.JsonObject = isJsonObject(structured) ? structured : {};
-  const { [field]: detached, ...rest } = whole;
-
-  return new McpSchema.CallToolResult({
-    ...native,
-    content: Predicate.isString(detached)
-      ? [
-          { type: "text", text: detached },
-          { type: "text", text: JSON.stringify(rest) },
-        ]
-      : native.content,
-  });
-};
-
-/** A tool's registration whose success is sent as text, its text field `field` raw. */
-const withText = (registration: Registration, field: string): Registration => ({
-  ...registration,
-  tool: listedAsText(registration.tool),
-  handle: (payload) =>
-    Effect.map(registration.handle(payload), (result) =>
-      Predicate.isTagged(result, "InputRequired") ? result : textResult(result, field),
-    ),
-});
-
-/**
- * `registry`, registering the tool of each action `texts` names with that text field. The
- * native `registerToolkit` registers every tool through `addTool`, and builds each listing
- * and result, always with the whole success as structured content; a text field's tool is
- * registered without it, so decoding, failures and defects stay native.
- */
-const withTexts = (registry: Registry, texts: ReadonlyMap<string, string>): Registry => ({
-  ...registry,
-  addTool: (registration) => {
-    const field = texts.get(registration.tool.name);
-
-    return field === undefined
-      ? registry.addTool(registration)
-      : registry.addTool(withText(registration, field));
-  },
-});
-
-/** The `mcp.text` of each of `apps`' actions that has one, by action name. */
-const textFields = (apps: ReadonlyArray<AnyImplementation>): ReadonlyMap<string, string> =>
-  new Map(
-    apps.flatMap((app) =>
-      app.actions.flatMap(({ name, mcp }) =>
-        mcp.text === undefined ? [] : [[name, mcp.text] as const],
-      ),
-    ),
-  );
 
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
@@ -277,8 +175,6 @@ const server = <Out, R>(
         },
   );
 
-  const texts = textFields(apps);
-
   assertShapes(apps);
 
   const names = new Set(apps.flatMap((app) => app.actions.map(({ name }) => name)));
@@ -295,14 +191,16 @@ const server = <Out, R>(
 
     if (claimed.length > 0) {
       return yield* Effect.die(
-        `Duplicate MCP tool: ${claimed.join(", ")}, claimed by an action and a native feature`,
+        new Error(
+          `Duplicate MCP tool: ${claimed.join(", ")}, claimed by an action and a native feature`,
+        ),
       );
     }
 
     const handlers = yield* Layer.build(binding.layer);
 
     yield* McpServer.registerToolkit(binding.toolkit).pipe(
-      Effect.setContext(Context.add(handlers, McpServer.McpServer, withTexts(registry, texts))),
+      Effect.setContext(Context.add(handlers, McpServer.McpServer, registry)),
     );
   });
 
@@ -396,25 +294,19 @@ export function layerHttp<
   options: LayerHttpOptions<E, R, ActionOf<Member<Apps>>> &
     O &
     NoInfer<Known<O, LayerHttpOptions<E, R, Action.Any>>> &
-    NoInfer<RequiredAuthentication<Selected<O, ActionOf<Member<Apps>>>>> &
-    Matching<NoInfer<Selected<O, ActionOf<Member<Apps>>>>, NoInfer<D>> &
-    Inferring<D, NoInfer<Selected<O, ActionOf<Member<Apps>>>>>,
+    NoInfer<RequiredAuthentication<SelectedOf<O, Apps>>> &
+    Matching<NoInfer<SelectedOf<O, Apps>>, NoInfer<D>> &
+    Inferring<D, NoInfer<SelectedOf<O, Apps>>>,
 ): Layer.Layer<
   never,
-  | BuildError<
-      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-      Selected<O, ActionOf<Member<Apps>>>
-    >
+  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | BuildContext<
-      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-      Selected<O, ActionOf<Member<Apps>>>
-    >
+  | BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      HttpToolRequestContext<RemoteRequest<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>>
+      HttpToolRequestContext<RemoteRequest<Member<Apps>, SelectedOf<O, Apps>>>
     >
   | ProviderOf<D>
   | Features<R>
@@ -470,18 +362,12 @@ export function runStdio<
   options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
 ): Effect.Effect<
   void,
-  | BuildError<
-      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-      Selected<O, ActionOf<Member<Apps>>>
-    >
+  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | BuildContext<
-      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-      Selected<O, ActionOf<Member<Apps>>>
-    >
+  | BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Stdio.Stdio
-  | ToolRequestContext<ServedRequest<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>>
+  | ToolRequestContext<ServedRequest<Member<Apps>, SelectedOf<O, Apps>>>
   | Features<R>
 >;
 export function runStdio(

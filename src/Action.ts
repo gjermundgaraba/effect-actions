@@ -1,13 +1,4 @@
-import {
-  Array as Arr,
-  Cause,
-  Context,
-  Effect,
-  type Layer,
-  Predicate,
-  Schema,
-  type Types,
-} from "effect";
+import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import {
   Anyone,
@@ -41,7 +32,7 @@ import {
   type Known,
   type Offered,
   type OptionalUnless,
-  type Selected,
+  type SelectedOf,
   type Serving,
   select,
   type Served,
@@ -113,47 +104,7 @@ export interface Mcp {
   readonly openWorldHint?: boolean | undefined;
   /** The tool's `_meta`, JSON such as an MCP App's UI resource, sent as given. */
   readonly _meta?: { readonly [key: string]: Schema.Json } | undefined;
-  /**
-   * The library's own, not MCP's: a top-level string field of the encoded success, which the
-   * tool sends once, raw, as the first text block, then the JSON of the rest as the second,
-   * with no `structuredContent` and no listed `outputSchema`, so every host shows the model
-   * both: a body the model reads as it is, such as a page of Markdown.
-   */
-  readonly text?: string | undefined;
 }
-
-/** The keys `E` declares, leaving out an index signature's. */
-type DeclaredKey<E> = keyof {
-  [
-    K in keyof E as string extends K
-      ? never
-      : number extends K
-        ? never
-        : symbol extends K
-          ? never
-          : K
-  ]: E[K];
-};
-
-/**
- * The fields of an encoded success `E` its tool may send as text: the top-level string fields
- * a struct or class declares, optional ones included, and not the keys of an index signature,
- * such as a struct with rest's record. None of any other success, a union or a record among
- * them, whose JSON Schema has no top-level property for it. An erased success may name any;
- * the MCP server refuses what the types cannot see when its layer is built.
- */
-type TextField<E> = unknown extends E
-  ? string
-  : true extends Types.IsUnion<E>
-    ? never
-    : E extends ReadonlyArray<unknown>
-      ? never
-      : E extends object
-        ? {
-            readonly [K in DeclaredKey<E>]-?: Required<E>[K] extends string ? K : never;
-          }[DeclaredKey<E>] &
-            string
-        : never;
 
 /**
  * The failures every surface declares and any handler may fail with, and the refusals among
@@ -206,20 +157,6 @@ type UnknownMcp<O> = O extends { readonly mcp?: infer H }
 /** No key beyond `Mcp`, whichever member of `O` gives it. */
 type KnownMcp<O> = { readonly mcp?: { readonly [K in UnknownMcp<O>]: never } };
 
-/**
- * A `text` naming a top-level string field of the encoded success. One typed only as
- * `string`, such as options built apart, is left for the MCP server to check.
- */
-type TextOption<O> = O extends { readonly mcp?: { readonly text?: infer F } }
-  ? string extends F
-    ? unknown
-    : {
-        readonly mcp?: {
-          readonly text?: TextField<SchemaOf<O, "success", typeof Schema.Void>["Encoded"]>;
-        };
-      }
-  : unknown;
-
 /** The schemas an `error` option of type `G` declares: one, or each of a list. */
 type ErrorMembers<G> = G extends ReadonlyArray<infer E> ? E : G;
 
@@ -255,14 +192,14 @@ type ServiceCaller<O> = O extends { readonly caller: { readonly defaultValue: un
   : unknown;
 
 /**
- * The rules `make` checks beyond `Options`: every option and `mcp` key known, a `text` a
- * string field of the success, and no built-in error listed. Options that fail `Options`
- * itself infer as `Options`, whose error the compiler already reports, so they are not
- * checked again. Checked after inference: `make`'s options are `O & NoInfer<Rules<O>>`.
+ * The rules `make` checks beyond `Options`: every option and `mcp` key known, and no built-in
+ * error listed. Options that fail `Options` itself infer as `Options`, whose error the
+ * compiler already reports, so they are not checked again. Checked after inference: `make`'s
+ * options are `O & NoInfer<Rules<O>>`.
  */
 type Rules<O> = Options extends O
   ? unknown
-  : OnlyOptions<O> & ServiceCaller<O> & OwnErrors<O> & KnownMcp<O> & TextOption<O>;
+  : OnlyOptions<O> & ServiceCaller<O> & OwnErrors<O> & KnownMcp<O>;
 
 /**
  * Option `K` of `O` as given, or also `Default` wherever it may be omitted or undefined, as
@@ -817,15 +754,8 @@ export function client<
   >
 ): Effect.Effect<
   Client<Apps, Offered<O, ActionOf<Member<Apps>>>>,
-  BuildError<
-    Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-    Selected<O, ActionOf<Member<Apps>>>
-  >,
-  | BuildContext<
-      Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-      Selected<O, ActionOf<Member<Apps>>>
-    >
-  | Scope.Scope
+  BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
+  BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>> | Scope.Scope
 >;
 export function client(
   served: Served,

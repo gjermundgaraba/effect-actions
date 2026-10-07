@@ -45,7 +45,7 @@ const Login = Authentication.make("app.Login", CurrentActor);
 const Http = ActionHttp.make([GetUser, RenameUser], { authentication: Login });
 const authenticate = Authentication.layer(Login, verify, { protectedResource });
 ActionHttp.layer(Http, users).pipe(Layer.provide(authenticate));
-const ReadPage = Action.make("readPage", { ..., caller: CurrentActor, mcp: { text: "markdown" } });
+const ReadPage = Action.make("readPage", { ..., caller: CurrentActor });
 const pages = Action.implement(ReadPage, read, { authorize });
 ActionMcp.layerHttp([users, pages], { name, version, authentication: Login }).pipe(
   Layer.provide(authenticate),
@@ -63,6 +63,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `action.mcp`, `Action.McpOptions`                                         | `action.mcp`, the options as given, without defaults, `Action.Mcp`                                                                                                                                                                                                                  |
 | `mcp.name`                                                                | The action's name, which is the tool's: `get_user` becomes the tool `getUser`, so update hosts' allowed tools and prompts. To keep a tool's name, give it to the action, which also names its route, client method and command                                                      |
 | `mcp.readOnly`                                                            | The contract's `readOnly`: a tool is read-only exactly when its action is                                                                                                                                                                                                           |
+| `mcp: { text: "markdown" }`                                               | Removed: the tool sends the whole success as structured content, plus its JSON as text                                                                                                                                                                                              |
 | `mcp: false`                                                              | Leave the action out of the `actions` option of `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make`: list the actions that are tools beside the contracts, `actions: Tools`, and an action added later is no tool until it is listed ([Action.md](docs/Action.md#contracts)) |
 | `errors: [UserNotFound]`, `action.errors`                                 | `error: UserNotFound` or `error: [UserNotFound, Conflict]`, as `HttpApiEndpoint` takes it; `action.error`, always a list                                                                                                                                                            |
 | `Action.Codec`                                                            | `Action.Any["input"]`                                                                                                                                                                                                                                                               |
@@ -388,20 +389,13 @@ Each area below lists what is renamed or removed, then what changes without a re
   `Schema.Struct({})`, naming the actions:
   `MCP tool input must be one object with keys, such as a struct: <name>`. Such input compiled,
   and the layer build died with `McpServer cannot register tool '<name>'`.
-- A text field's tool sends text alone: a success holding the field as a string is two text
-  blocks, the field once, raw, then the JSON of the rest, and any other success the JSON of the
-  whole, with no `structuredContent`, and the tool lists no `outputSchema`. 0.8.0 sent the rest
-  as `structuredContent` too, where a host preferring structured content showed the model the
-  rest without the field, and listed an `outputSchema` without the field. A program reading
-  the rest as structured content reads the JSON of the second text block instead;
-  `Testing.mcpClient`, reading the same `text`, does. Every other surface serves the whole
-  success. `text` is typed by `make`: a top-level string field of the encoded success,
-  optional or not, which a scalar, array, union or record success does not have.
-  0.8.0 accepted a union member's field, or any name for a record, and then failed the layer
-  build. Where the types cannot tell, as for an erased success or a union of one struct,
-  `layerHttp` and `runStdio` throw when called, naming every such action:
-  `MCP tool text field must be a top-level property of its success: <name> ('<field>')`.
-  Make such a success one struct, or drop `text`.
+- `mcp.text` is removed, and every tool's result is Effect's own, as each revision sends it: on
+  2026-07-28 the whole encoded success as `structuredContent`, and its JSON as one text block, with
+  the success's `outputSchema` listed ([ActionMcp.md](docs/ActionMcp.md#rules)). 0.8.0 sent the
+  field raw as the first text block, then the rest, leaving it out of `structuredContent` and
+  `outputSchema`; the field is now in both, and JSON-escaped in the text. A program reading the rest
+  from `structuredContent` finds the field there too, and `Testing.mcpClient` decodes every success
+  from it.
 
 #### Toolkit
 
@@ -429,9 +423,9 @@ Each area below lists what is renamed or removed, then what changes without a re
 
 | 0.8.0                                                                                                                            | 0.10.0                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.command(Http, GetUser, { client: { baseUrl } })`, `ActionCli.make(Http, { name, client })`: `client` takes `ActionHttp.client`'s options, on the host's `HttpClient`                                                                                                                                                                                                                                                                     |
+| `ActionCliClient.command(Http, "users", "getUser", { connection })`, `ActionCliClient.group(...)`                                | `ActionCli.remoteCommand(Http, GetUser, { client: { baseUrl } })`, `ActionCli.remote(Http, { name, client })`: `client` takes `ActionHttp.client`'s options, on the host's `HttpClient`                                                                                                                                                                                                                                                             |
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                                                                                                                                                                                                                                                           |
-| `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command`, local or remote; `ActionCli.Options` is `make`'s; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                                                                                    |
+| `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command` and `remoteCommand`; `ActionCli.Options` of `make` and `remote`; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                                                                      |
 | A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` and `reason` are the failure: `Effect.catchReason("UserError", "UserNotFound", ...)`, Effect's own                                                                                                                                                                                                                                                                          |
 | `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith` | `Command.run(cli, { version })` on `NodeRuntime.runMain`, after `ActionCli.onStderr` where stdout feeds scripts (below)                                                                                                                                                                                                                                                                                                                             |
 | `--input '<json>'`, `--input-file`, `parameters` and its `input` mapper                                                          | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct; a syntax `name`, `positional` and `render` cannot express, such as a flag alias, a flag named apart from its field, or nested input built from several flags, is a native `Command.make` calling `Action.client`, or `ActionHttp.client` over HTTP, whose failures it maps to `CliError.UserError` ([ActionCli.md](docs/ActionCli.md#rules)) |
@@ -439,9 +433,9 @@ Each area below lists what is renamed or removed, then what changes without a re
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch;
   any other required field's flag, left out, is refused by the parser before the implementation
   is built, `Missing required flag: --<flag>` on stderr after the command's help on stdout.
-  Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built. A
-  remote command or aggregate takes its connection as `client`, the options `ActionHttp.client`
-  takes, `baseUrl` and `transformClient`, which reach its own requests alone: 0.8.0's
+  Colliding names throw `Duplicate command` or `Duplicate flag` when the command is built.
+  `remoteCommand` and `remote` take their connection as `client`, the options `ActionHttp.client`
+  takes, `baseUrl` and `transformClient`, which reach their own requests alone: 0.8.0's
   `connection` without `transformResponse`. A URL or token read when a command runs, as from
   `Config`, configures the `HttpClient` provided on the command,
   `Command.provideEffect(HttpClient.HttpClient, ...)`.
@@ -493,7 +487,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | 0.8.0                                                                                                                                     | 0.10.0                                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Testing.httpClient(api, handler)`, `Testing.Handler`                                                                                     | `Testing.layer(handler)`: the native `HttpClient`, answered by the web handler, on which `ActionHttp.client(Http)` and every other client call it; `Testing.layer(routes)` builds the routes itself                                                                                                                                              |
-| `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure. An action with a `text` hint has its success read from its text blocks                                                                                                                                            |
+| `Testing.mcpCall(handler, { url, name, arguments, headers })`, resolving `{ isError: false, value, text? }` or `{ isError: true, error }` | `Testing.mcpClient(actions, { url?, transformClient? })`, then `mcp.<action>(input)`: the decoded success, or a typed failure                                                                                                                                                                                                                    |
 | `Testing.mcpRequest({ url, method, params, headers })`, a `Request`                                                                       | `Testing.mcpRequest(method, params?, { url?, headers? })`, the native request: send it with `HttpClient.execute`, or as a web `Request`, `HttpClientRequest.toWebResult`                                                                                                                                                                         |
 | `Testing.McpCallOptions`, `McpCallResult`, `McpRequestParams`, `McpRequestValue`                                                          | None: `mcpClient` types each call, and `params` are JSON                                                                                                                                                                                                                                                                                         |
 | `TestingClient.withMcpClient`, `McpClientOptions`, the optional `@modelcontextprotocol/client` peer                                       | Depend on the official client, `new Client(info, { versionNegotiation: { mode: { pin: "2026-07-28" } } })`. Give its transport `fetch: (input, init) => web.handler(new Request(input, init))`, with `web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)))` as 0.8.0's tests built it; or use `Testing.mcpClient` |
@@ -618,7 +612,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   are checked for the surface. The types take only actions of the implementations, and owe only what
   the listed actions, and the builders holding them, need. A listed action none of them holds throws
   `Listed in actions, but no implementation holds it: <names>`. Omitted, every action is served, as
-  before. `ActionCli.make` takes it from a binding too. Options whose `actions` may be absent, an
+  before. `ActionCli.remote` takes it from a binding too. Options whose `actions` may be absent, an
   optional property or a union with options lacking it, serve every action, so they owe what every
   action owes; `Action.client` gives such options methods, and `ActionToolkit.make` tools, only for
   the actions they may list. `needsApproval`'s `call` is typed by every action of the
@@ -694,15 +688,15 @@ Each area below lists what is renamed or removed, then what changes without a re
   another authorizer of the same handlers takes, so each handler is typed from its contract.
 - `Authentication` exports `Descriptor` and `Provider`, the types `make` and `layer` return, so
   a package emitting declarations may export a descriptor, a binding naming one and a provider.
-- `ActionCli.make(target, { name, commands })` gives a subcommand the options `command` takes,
-  by action name: `commands: { readFile: { positional: ["path"], render } }`. It takes any
-  action of the target, so one record serves aggregates of several `actions`: a command of an
-  action left out is unused, and a key naming no action of the target throws
-  `Unknown commands: <keys>`.
+- `ActionCli.make(implementations, { name, commands })`, and `remote(http, ...)`, give a
+  subcommand the options `command` takes, by action name:
+  `commands: { readFile: { positional: ["path"], render } }`. Each takes any action of its
+  target, so one record serves aggregates of several `actions`: a command of an action left out
+  is unused, and a key naming no action of the target throws `Unknown commands: <keys>`.
 - `ActionCli.command(implementations, Action, { positional: ["path"] })` takes the listed fields
-  of a struct input as positional arguments, locally and over HTTP. A suspended input or field,
-  as a recursive schema is written, takes the flags and arguments of the schema it stands for,
-  and its description.
+  of a struct input as positional arguments, as `remoteCommand` does over HTTP. A suspended
+  input or field, as a recursive schema is written, takes the flags and arguments of the schema
+  it stands for, and its description.
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the
   native `HttpApiClient`, a remote `ActionCli` command and `Testing.mcpClient`, which calls
   tools as `ActionHttp.client` calls routes. Requests run in the context it is built in, as
@@ -727,7 +721,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   shared with every surface of the routes' graph serving its implementations. `Effect.provide`
   in the handler builds it for every call unless a surface of the graph serves the same
   implementations, and `HttpRouter.provideRequest` in a graph of its own, a second time beside
-  such a surface as `Layer.mergeAll`'s order decides
+  such a surface that has not built them first
   ([ActionToolkit.md](docs/ActionToolkit.md#rules)).
 - The failure modes of a forgotten authentication show what TypeScript reports,
   `Provider<CurrentActor, "example.Login">` among a layer's requirements, and

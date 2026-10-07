@@ -149,5 +149,5 @@ export const promote = <A, E, R>(
     (actor): Effect.Effect<A, E | Unauthenticated, R> =>
       Option.isSome(actor)
         ? Effect.provideService(run, auth.service, actor.value)
-        : Effect.fail(new Unauthenticated({ message: "Authentication is required." })),
+        : Effect.fail(new Unauthenticated()),
   );

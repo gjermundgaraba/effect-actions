@@ -92,6 +92,20 @@ it("lists every example in examples/README.md", () => {
   for (const example of examples) expect(index, example).toContain(`](${example})`);
 });
 
+// Notes are cited by title, so CONTRIBUTING.md's index names each note in design/ by its own.
+it("indexes every design note in CONTRIBUTING.md by its title", () => {
+  const indexed = Array.from(
+    read("CONTRIBUTING.md").matchAll(/^- \[(.+)\]\(design\/(.+)\)$/gm),
+    ([, title, file]) => `${file}: ${title}`,
+  );
+
+  const notes = readdirSync(new URL("../design/", import.meta.url)).map(
+    (file) => `${file}: ${read(`design/${file}`).split("\n")[0]?.replace(/^# /, "")}`,
+  );
+
+  expect(indexed.toSorted()).toEqual(notes.toSorted());
+});
+
 // The skill is a copy of docs/, so every relative link must resolve inside docs/.
 it("keeps relative links in docs/ inside docs/", () => {
   const pages = readdirSync(docsDirectory).filter((name) => name.endsWith(".md"));

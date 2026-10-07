@@ -1679,11 +1679,11 @@ export const mcpOptionTypes = (built: Action.Mcp, dangerous: boolean) => {
   // An action's type carries no option types: a helper typing its parameter `Action.Mcp`
   // compiles.
   const generic = <const H extends Action.Mcp>(mcp: H) =>
-    // @ts-expect-error Type 'H' is not assignable to type 'H & ...'.
     Action.make("generic", {
       description: "Options of a type parameter",
       readOnly: false,
       caller: Action.Anyone,
+      // @ts-expect-error Type 'H' is not assignable to type 'H & ...'.
       mcp,
     });
 

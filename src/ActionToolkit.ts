@@ -16,7 +16,7 @@ import {
   provideHandlers,
   type RequestOf,
   select,
-  type Selected,
+  type SelectedOf,
   type Served,
   type Serving,
   toList,
@@ -134,14 +134,8 @@ export function make<
   {
     readonly [T in ToolFor<Member<Apps>, Offered<O, ActionOf<Member<Apps>>>> as T["name"]]: T;
   },
-  BuildError<
-    Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-    Selected<O, ActionOf<Member<Apps>>>
-  >,
-  BuildContext<
-    Holding<Member<Apps>, Selected<O, ActionOf<Member<Apps>>>>,
-    Selected<O, ActionOf<Member<Apps>>>
-  >
+  BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
+  BuildContext<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
 export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   const served = select(toList(apps), options?.actions);

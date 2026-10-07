@@ -80,7 +80,7 @@ describe("refusal", () => {
     ["a 401 without credentials", missing, undefined],
     ["a 401 to a bearer token", new Action.Unauthenticated({ message: "Expired." }), "Bearer x"],
     ["a 401 to a lowercase scheme", new Action.Unauthenticated(), "bearer x"],
-    ["a 401 to two tokens, which is no bearer token", new Action.Unauthenticated(), "Bearer a b"],
+    ["a 401 to a token holding a space, `a b`", new Action.Unauthenticated(), "Bearer a b"],
     ["a 401 to another scheme", missing, "Basic eA=="],
     ["a 403 naming scopes", scoped, "Bearer x"],
     [
