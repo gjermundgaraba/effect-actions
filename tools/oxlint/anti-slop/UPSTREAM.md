@@ -10,7 +10,9 @@
 ## Verification
 
 These files are excluded from this repository's own lint and format runs so they keep
-upstream's style. They are type-checked through the regression tests that import them.
+upstream's style. Only the rules imported by the regression tests and their transitive
+dependencies are included in the repository's TypeScript program; the full vendored plugin
+is not type-checked here.
 Upstream's test suite at the pinned commit is the evidence for unchanged rules; the local
 corrections below are covered by `tools/oxlint/tests/rules.test.ts` (rule level, via
 `RuleTester`) and `tools/oxlint/tests/configuration.test.ts` (through `vp lint` and the
@@ -25,19 +27,26 @@ Preserve these when updating from upstream.
 
 - `rules/no-unknown-parameters.ts`: removed the name-based exemption for parameters named
   `cause`. A name grants no evidence; thrown-value boundaries use an explained directive.
-- `rules/no-module-mocking.ts`: `vi` imported from `vite-plus/test` (this repository's test
-  import, Vite+'s re-export of Vitest) is recognized alongside `vitest`. Without this the
-  rule was enabled but never matched a real test file here.
+- `rules/no-module-mocking.ts`: `vi` imported from `@effect/vitest` (this repository's test
+  import, Effect's re-export of Vitest) or `vite-plus/test` (Vite+'s) is recognized alongside
+  `vitest`. Without this the rule was enabled but never matched a real test file here.
 - `rules/no-known-value-widening.ts`: a destructured `const` binding now resolves to the
   property or element it selects from a literal initializer (`selectFromPattern`), instead of
   inheriting the whole initializer object's evidence. A spread that could supply or override
   the position, a computed key, a rest binding, or a non-literal initializer yields no
   evidence. A computed key that is not a literal is treated like a spread. Previously
-  `const { user } = { user: load() }` counted as a known literal.
+  `const { user } = { user: load() }` counted as a known literal. An array pattern stops at
+  the first spread element, which narrows each remaining element to an expression.
 - `shared/dictionary-types.ts`, `classifyWideningTarget`: an inline mapped type is an open
   dictionary only when its key constraint is broad (`isBroadMappedKey`), matching the alias
   path below it. Previously `{ readonly [K in "a" | "b"]: number }` was reported as widening,
   which the baseline forbids for finite mapped keys.
+- `shared/dictionary-types.ts`, `unsafeDirectValue`: a top-level interface is the value a
+  reference names only when no type parameter or nearer declaration shadows it
+  (`isProgramTypeBinding` in `shared/type-alias-resolution.ts`, beside `visibleTypeAlias`, which
+  the alias path already used). Previously `interface Value {}` made `Record<string, Value>`
+  under `<Value extends string>`, or under an inner `type Value = string`, an empty-object
+  dictionary.
 - `shared/dictionary-types.ts`: `unsafeMembers[0] ?? null` so the file type-checks under
   `noUncheckedIndexedAccess`, which the regression tests' program requires.
 

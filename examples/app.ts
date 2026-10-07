@@ -1,97 +1,12 @@
-import { Effect, Layer, Option } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { HttpApiSwagger } from "effect/http-api";
-import * as ActionMcp from "../src/ActionMcp.js";
-import * as Authentication from "../src/Authentication.js";
-import { actors, authorize, CurrentActor, Forbidden, Unauthenticated } from "./auth.js";
-import { Http } from "./contracts.js";
-import { AuditApp, PublicApp, UserApp } from "./handlers.js";
+import { Layer } from "effect";
+import { layer as http } from "./http.js";
+import { layer as mcp } from "./mcp.js";
+import { requestPolicy } from "./request-policy.js";
 import { Users } from "./users.js";
 
-const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
-
-const authenticate = (request: HttpServerRequest.HttpServerRequest) => {
-  const authorization = request.headers.authorization;
-  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
-
-  return isActorToken(token) ? Option.some(actors[token]) : Option.none();
-};
-
-// The host renders its own 401; Authentication provides CurrentActor per request.
-const unauthenticated = HttpServerResponse.schemaJson(Unauthenticated)(
-  new Unauthenticated({ message: "A demo bearer token is required." }),
-  { status: 401, headers: { "www-authenticate": "Bearer" } },
-).pipe(Effect.orDie);
-
-const authentication = Authentication.middleware(
-  CurrentActor,
-  Effect.gen(function* () {
-    const actor = authenticate(yield* HttpServerRequest.HttpServerRequest);
-
-    if (Option.isNone(actor)) return yield* Effect.flip(unauthenticated);
-
-    return actor.value;
-  }),
-);
-
-const requestPolicy = HttpRouter.middleware((httpEffect) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request.modify({ url: request.originalUrl }));
-
-    if (Option.isNone(url) || !["localhost", "127.0.0.1"].includes(url.value.hostname)) {
-      return HttpServerResponse.text("Host not allowed", { status: 403 });
-    }
-
-    const origin = request.headers.origin;
-
-    if (origin !== undefined && origin !== url.value.origin) {
-      return HttpServerResponse.text("Origin not allowed", { status: 403 });
-    }
-
-    return yield* httpEffect;
-  }),
-);
-
-// One layer per group: middleware provided to a layer applies to that group
-// alone. The public group needs no credentials, so it binds no hook; the user
-// group authorizes each decoded invocation before its handler runs.
-const http = Layer.mergeAll(
-  Http.layer([PublicApp]),
-  Http.layer([UserApp], { before: authorize }).pipe(Layer.provide(authentication.layer)),
-);
-
-// `Http.api` is a native HttpApi, so documents are Effect's own: the OpenAPI
-// JSON as a plain route, and a Swagger UI reading the same contract.
-const documentation = Layer.mergeAll(
-  Http.openApi("/openapi.json"),
-  HttpApiSwagger.layer(Http.api, { path: "/docs" }),
-);
-
-const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
-
-// An MCP endpoint is one route, so its middleware, authentication included,
-// covers all of its tools; its `before` hook still authorizes each tool. Tools
-// that need no credentials at all therefore get their own endpoint, which
-// compiles because this implementation requires nothing per request.
-const publicMcp = ActionMcp.layerHttp([PublicApp], {
-  name: "effect-actions-public",
-  version: "0.0.0",
-  path: "/mcp/public",
-  allowedOrigins,
-});
-
-const mcp = ActionMcp.layerHttp([UserApp, AuditApp], {
-  name: "effect-actions",
-  version: "0.0.0",
-  path: "/mcp",
-  allowedOrigins,
-  // The same rule as HTTP, declared here so a refusal is an ordinary tool error.
-  errors: [Forbidden],
-  before: authorize,
-}).pipe(Layer.provide(authentication.layer));
-
-export const layer = Layer.mergeAll(http, documentation, publicMcp, mcp).pipe(
-  Layer.provide(requestPolicy.layer),
+// Every surface of one host, behind its request policy: merged first, beside the routes, so
+// it runs before the discovery the authentication publishes too. Each builder runs once,
+// however many of these layers serve its implementation.
+export const layer = Layer.mergeAll(requestPolicy, http, mcp).pipe(
   Layer.provide(Users.layerMemory),
 );

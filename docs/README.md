@@ -1,91 +1,47 @@
 # effect-actions reference
 
-Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Every module page is a
-card with the same sections: **API** (inventory and options), **Canonical** (the one right way to write
+Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Each public-module
+card has the same sections: **API** (inventory and options), **Canonical** (the one right way to write
 it), **Rules** (must and never), **Failure modes** (what you see when it is wrong, and the fix).
-[setup.md](setup.md), [guarantees.md](guarantees.md), and [CONTEXT.md](CONTEXT.md) are cross-cutting pages with their own structure.
+Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
 Read the card for a module before writing code that uses it. Exported TypeScript declarations are the exact signature reference. Vocabulary is defined in
 [CONTEXT.md](CONTEXT.md); the pages use those terms exactly.
 
 Package facts that apply everywhere:
 
 - Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
-- The `effect` peer is `^4.0.0`. The package is built and tested against `4.0.0`.
-- Contracts are pure values. Nothing runs, binds, or acquires services until an adapter layer is built.
+- The `effect` peer is `~4.0.0`: Effect's 4.0.x patches. Effect marks the HTTP, HTTP API, AI and CLI modules the surfaces build on unstable, so a minor release may change them; a later minor is admitted once the package is tested against it. The package is built and tested against `4.0.0`.
+- Action contracts are pure values. Defining contracts and implementations runs neither handlers nor builder Effects. Builder services are acquired when a layer is built, an `Action.client` is acquired, or a local CLI command runs; see [dependency lifetimes](guarantees.md#dependency-lifetimes).
 
 ## Pages
 
-| Read                                       | When you need to                                                                       |
-| ------------------------------------------ | -------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                       | install, pin versions, pick entry points, know what the package does not do            |
-| [Action.md](Action.md)                     | define one contract: input, success, errors, read/write access, HTTP and MCP flags     |
-| [ActionGroup.md](ActionGroup.md)           | group contracts, declare shared errors, bind handlers, map every contract by name      |
-| [ActionHttp.md](ActionHttp.md)             | serve JSON POST routes, declare surface errors and one hook, publish OpenAPI, call it  |
-| [ActionHttpClient.md](ActionHttpClient.md) | call the HTTP API with Promises, from code that does not run Effects                   |
-| [ActionMcp.md](ActionMcp.md)               | serve MCP 2026-07-28 tools over Streamable HTTP or stdio                               |
-| [ActionToolkit.md](ActionToolkit.md)       | use actions as a native Effect AI `Toolkit` without a server                           |
-| [ActionCli.md](ActionCli.md)               | run handlers in-process from a terminal command                                        |
-| [ActionCliClient.md](ActionCliClient.md)   | call the HTTP API from a terminal command                                              |
-| [ActionCatalog.md](ActionCatalog.md)       | export contracts as an offline JSON document                                           |
-| [Authentication.md](Authentication.md)     | provide a per-request identity, publish RFC 9728 discovery, build bearer challenges    |
-| [Testing.md](Testing.md)                   | call routes and tools in memory, build MCP requests, drive the official MCP client     |
-| [guarantees.md](guarantees.md)             | cross-cutting rules: dependency lifetimes, wire formats, spans, request context, scope |
+| Read                                   | When you need to                                                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                                                    |
+| [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, use built-in errors, call or test implementations in process (`Action.client`) |
+| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                 |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                             |
+| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                              |
+| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                          |
+| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP and MCP surfaces, refuse with 401/403, publish RFC 9728 discovery                      |
+| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                                                |
+| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                                             |
+| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                              |
 
-## Choose an adapter
+## Choose a surface
 
-- Callers speak JSON over HTTP: `ActionHttp`. Clients use Effect's `HttpApiClient` on `Http.api`, or `ActionHttpClient.promise(Http)` where nothing runs Effects.
-- Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.layerStdio` for a subprocess.
+- Callers speak JSON over HTTP: `ActionHttp`. Clients use `ActionHttp.client(Http)`.
+- Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess.
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
-- Callers are humans or scripts in a terminal, handlers run locally: `ActionCli`.
-- Callers are humans or scripts in a terminal, handlers run on a server: `ActionCliClient`.
-- Nothing runs, only the contract is published: `ActionCatalog`.
+- Callers are humans or scripts in a terminal: `ActionCli`, `make` and `command` from implementations to run handlers locally, or `remote` and `remoteCommand` from the HTTP binding to call a server.
+- Callers are your own code in the same process, such as a test, a job or a command of your own: `Action.client`, with the methods of `ActionHttp.client`.
 
-One implementation (`group.implement(...)`) feeds every adapter.
+Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. A contract states who may call it, `caller`, and an implementation of protected actions carries its own `authorize`, which every surface runs; surfaces take only their transport's options. A remote surface serving protected actions names their authentication descriptor and requires its verifier, `Authentication.layer`; on a local surface the host provides the identity.
 
-## Minimal program
-
-```ts
-import { Effect, Layer, Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-
-const Greet = Action.make("greet", {
-  description: "Greet someone by name.",
-  input: Schema.Struct({ name: Schema.String }),
-  success: Schema.String,
-  access: "read",
-});
-
-export const Actions = ActionGroup.make({ name: "greetings" }, Greet);
-
-export const Http = ActionHttp.make({ apiPath: "/api/actions" }, Actions);
-
-const app = Actions.implement({
-  greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
-});
-
-export const routes = Layer.mergeAll(
-  Http.layer([app]),
-  ActionMcp.layerHttp([app], {
-    name: "greetings",
-    version: "1.0.0",
-    path: "/mcp",
-  }),
-);
-```
-
-Serve `routes` with `HttpRouter.serve` and a platform server layer. Result: `POST /api/actions/greetings/greet` and an MCP tool `greet` at `/mcp`.
+For first-time setup, follow the [minimal program](setup.md#minimal-program).
 
 ## Runnable examples
 
-Repository directory `examples/` ([on GitHub](https://github.com/gjermundgaraba/effect-actions/tree/main/examples)):
-
-- `quickstart.ts`, `quickstart-client.ts`: the minimal program and its typed client.
-- `promise-client.ts`: the Promise client, with a declared error and an unreachable server.
-- `contracts.ts`, `auth.ts`, `users.ts`, `handlers.ts`, `app.ts`, `server.ts`, `client.ts`: an authenticated application with three groups, per-group middleware, two MCP endpoints, OpenAPI and Swagger.
-- `toolkit.ts`, `catalog.ts`, `cli.ts`, `cli-client.ts`, `mcp-stdio.ts`: one file per other projection.
-- `mcp-browser.ts`: a stateless MCP endpoint with a separate browser CORS policy.
-- `toolkit-authorized.ts`: native Toolkit invocation with authorization and correctly scoped identity.
-- `testing.ts`: in-memory HTTP and MCP calls with cleanup.
+Repository directory `examples/`: the minimal program, an authenticated application served on
+every surface, and one file per other surface, each listed in its
+[README](https://github.com/gjermundgaraba/effect-actions/tree/main/examples#readme).

@@ -1,9 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import manifest from "../package.json" with { type: "json" };
+import { published } from "./published.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -47,44 +56,43 @@ try {
         noImplicitOverride: true,
         noFallthroughCasesInSwitch: true,
         skipLibCheck: false,
+        // As a library built on this one emits them: every exported value is nameable.
+        declaration: true,
         types: [],
         lib: ["es2023", "esnext.disposable", "dom", "dom.iterable"],
       },
       include: ["*.ts"],
     }),
   );
-  // The testing consumer needs the optional client peer; it joins in the second phase.
-  cpSync(join(root, "scripts/package-consumer"), consumer, {
-    recursive: true,
-    filter: (source) => !source.endsWith("testing.ts"),
-  });
-  writeFileSync(
-    join(consumer, "quickstart.ts"),
-    readFileSync(join(root, "examples/quickstart.ts"), "utf8").replace(
-      /"\.\.\/src\/(\w+)\.js"/g,
-      `"${manifest.name}/$1"`,
-    ),
-  );
-  // Install outside the repository, without its workspace overrides or source imports.
-  run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
-  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
-  run(process.execPath, ["index.js"]);
+  cpSync(join(root, "scripts/package-consumer"), consumer, { recursive: true });
 
-  if (existsSync(join(consumer, "node_modules/@modelcontextprotocol/client"))) {
-    throw new Error("The optional testing peer was installed for a core and raw-request consumer");
+  for (const file of ["quickstart.ts", "quickstart-server.ts"]) {
+    writeFileSync(
+      join(consumer, file),
+      published(readFileSync(join(root, "examples", file), "utf8")),
+    );
   }
 
-  run("vp", [
-    "add",
-    "--ignore-scripts",
-    `@modelcontextprotocol/client@${manifest.devDependencies["@modelcontextprotocol/client"]}`,
-    `@types/node@${manifest.devDependencies["@types/node"]}`,
-  ]);
-  cpSync(join(root, "scripts/package-consumer/testing.ts"), join(consumer, "testing.ts"));
-  // The optional official client exposes Buffer in its declarations. Keep Node
-  // types out of the core/browser consumer above, and enable them only here.
-  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc"), "--types", "node"]);
-  run(process.execPath, ["testing.js"]);
+  // Install outside the repository, without its workspace overrides or source imports.
+  run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
+  // The installed package carries the docs agents are sent to.
+  const docs = join(consumer, "node_modules", manifest.name, "docs");
+
+  for (const page of readdirSync(join(root, "docs"))) {
+    if (!existsSync(join(docs, page))) throw new Error(`docs/${page} is not in the package`);
+  }
+
+  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
+
+  // What a library built on this one publishes names nothing internal: no `~` key, which
+  // would bind its declarations to this package's private type-only fields.
+  const internal = readFileSync(join(consumer, "declarations.d.ts"), "utf8").match(/"~[^"]*"/g);
+
+  if (internal !== null) {
+    throw new Error(`declarations.d.ts prints internal keys: ${[...new Set(internal)].join(", ")}`);
+  }
+
+  run(process.execPath, ["index.js"]);
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

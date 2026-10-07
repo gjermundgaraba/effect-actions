@@ -1,34 +1,388 @@
-import { expect, it, onTestFinished } from "vite-plus/test";
-import { Layer } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import { describe, expect, it } from "@effect/vitest";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpApiMiddleware } from "effect/http-api";
+import * as Action from "../src/Action.js";
+import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionMcp from "../src/ActionMcp.js";
 import * as Authentication from "../src/Authentication.js";
+import { post, rawToolCall, withBearer } from "./requests.js";
+import { serve } from "./serve.js";
 
-it("publishes standalone metadata and a bearer challenge", async () => {
-  const resource = "https://api.example.com/mcp?tenant=alice";
+const prefix = "/.well-known/oauth-protected-resource";
 
-  const discovery = Authentication.protectedResource({
-    resource,
-    authorizationServers: ["https://auth.example.com"],
-    scopesSupported: ["admin:read", "admin:write"],
+class Caller extends Context.Service<Caller, string>()("protected-resource/Caller") {}
+
+const Login = Authentication.make("protected-resource.Login", Caller);
+
+const Identify = Action.make("identify", {
+  description: "Name the caller.",
+  readOnly: true,
+  caller: Caller,
+  success: Schema.String,
+});
+
+const identify = Action.implement(Identify, () => Caller, { authorize: Action.allowAll });
+
+/** `identify`'s route under `path`, behind `authentication`. */
+const route = <ROut, E, R>(path: `/${string}`, authentication: Layer.Layer<ROut, E, R>) =>
+  ActionHttp.layer(
+    ActionHttp.make([Identify], { authentication: Login, prefix: path }),
+    identify,
+  ).pipe(Layer.provide(authentication));
+
+let routes = 0;
+
+/**
+ * A route of its own authenticated as the protected resource `resource`, which publishes
+ * the resource's discovery.
+ */
+const published = (
+  resource: string,
+  options: {
+    readonly scopesSupported?: ReadonlyArray<string>;
+    readonly resourceName?: string;
+  } = {},
+) =>
+  route(
+    `/private/${(routes += 1)}`,
+    Authentication.layer(Login, () => Effect.succeed("caller"), {
+      protectedResource: {
+        resource,
+        authorizationServers: ["https://auth.example.com"],
+        ...options,
+      },
+    }),
+  );
+
+/** Authentication refusing every request, as the protected resource `resource`. */
+const refusing = (resource = "https://api.example.com/mcp") =>
+  Authentication.layer(Login, () => Effect.fail(new Action.Unauthenticated()), {
+    protectedResource: { resource, authorizationServers: ["https://auth.example.com"] },
   });
 
-  expect(discovery.metadataUrl).toBe(
-    "https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=alice",
-  );
-  expect(
-    Authentication.protectedResource({
-      resource: "https://api.example.com",
-      authorizationServers: ["https://auth.example.com"],
-    }).metadataUrl,
-  ).toBe("https://api.example.com/.well-known/oauth-protected-resource");
+it("answers before routing, so the authentication publishing it never covers it", async () => {
+  const web = serve(route("/private", refusing()));
 
-  const web = HttpRouter.toWebHandler(
-    discovery.layer.pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+  expect((await web.handler(new Request(`https://api.example.com${prefix}/mcp`))).status).toBe(200);
+  expect((await web.handler(post("/private/identify"))).status).toBe(401);
+});
+
+it("escapes a challenge's quoted metadata URL, whose query may hold a backslash", async () => {
+  const web = serve(route("/private", refusing("https://api.example.com/mcp?tenant=alice\\")));
+
+  const refused = await web.handler(post("/private/identify"));
+
+  expect(refused.headers.get("www-authenticate")).toBe(
+    `Bearer resource_metadata="https://api.example.com${prefix}/mcp?tenant=alice\\\\"`,
+  );
+});
+
+it("publishes discovery for every layer it authenticates, which share one build of it", async () => {
+  let built = 0;
+
+  // Discovery is published where the verifier is built, so one build publishes it once.
+  const authenticate = Authentication.layer(
+    Login,
+    Effect.sync(() => {
+      built++;
+
+      return () => Effect.succeed("caller");
+    }),
+    {
+      protectedResource: {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+      },
+    },
   );
 
-  onTestFinished(() => web.dispose());
-  const response = await web.handler(new Request(discovery.metadataUrl));
+  const web = serve(Layer.mergeAll(route("/a", authenticate), route("/b", authenticate)));
+
+  const response = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
+  expect(await (await web.handler(withBearer(post("/b/identify"), "b"))).json()).toBe("caller");
+  expect(built).toBe(1);
+});
+
+it("publishes discovery once per layer graph, whatever middleware runs around or inside it", async () => {
+  class Tenant extends Context.Service<Tenant, string>()("protected-resource/Tenant") {}
+
+  // Outer: the host's router middleware, feeding the verifier.
+  const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
+    Effect.provideService(route, Tenant, "acme"),
+  );
+
+  // Inner: the layer's middleware, reading the identity.
+  class LogCaller extends HttpApiMiddleware.Service<LogCaller, { requires: Caller }>()(
+    "protected-resource/LogCaller",
+  ) {}
+
+  const logCaller = Layer.succeed(LogCaller, (route) =>
+    Effect.flatMap(Caller, (caller) =>
+      Effect.map(route, HttpServerResponse.setHeader("x-caller", caller)),
+    ),
+  );
+
+  let built = 0;
+
+  const authenticate = Authentication.layer(
+    Login,
+    Effect.sync(() => {
+      built++;
+
+      return (token: Redacted.Redacted<string>) =>
+        Effect.map(Tenant, (tenant) => `${Redacted.value(token)}@${tenant}`);
+    }),
+    {
+      protectedResource: {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+      },
+    },
+  );
+
+  // The tenant comes in a later provide than the verifier reading it.
+  const web = serve(
+    Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([Identify], { authentication: Login }), identify, {
+        middleware: [LogCaller],
+      }),
+      ActionMcp.layerHttp(identify, { name: "test", version: "0", authentication: Login }),
+    ).pipe(Layer.provide([authenticate, logCaller]), Layer.provide(resolveTenant.layer)),
+  );
+
+  const response = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
+
+  const http = await web.handler(withBearer(post("/api/identify"), "alice"));
+  expect([await http.json(), http.headers.get("x-caller")]).toEqual(["alice@acme", "alice@acme"]);
+
+  const tool = await web.handler(withBearer(rawToolCall("identify"), "bob"));
+  expect(await tool.json()).toMatchObject({ result: { structuredContent: "bob@acme" } });
+  expect(built).toBe(1);
+});
+
+describe("a resource built at startup", () => {
+  class Tenant extends Context.Service<Tenant, string>()("protected-resource/BuiltTenant") {}
+
+  class Resources extends Context.Service<
+    Resources,
+    Authentication.ProtectedResource | undefined
+  >()("protected-resource/Resources") {}
+
+  const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
+    Effect.provideService(route, Tenant, "acme"),
+  );
+
+  /** Authentication whose resource is the `Resources` service's, counting its builds. */
+  const built = () => {
+    const builds = { count: 0 };
+
+    const authentication = Authentication.layer(
+      Login,
+      (token: Redacted.Redacted<string>) =>
+        Effect.map(Tenant, (tenant) => `${Redacted.value(token)}@${tenant}`),
+      {
+        protectedResource: Effect.map(Resources, (resource) => {
+          builds.count += 1;
+
+          return resource;
+        }),
+      },
+    );
+
+    return { builds, authentication };
+  };
+
+  /** Two routes under one layer of `authentication`, its resource `resource`. */
+  const routes = (
+    authentication: ReturnType<typeof built>["authentication"],
+    resource: Authentication.ProtectedResource | undefined,
+  ) => {
+    const authenticate = authentication.pipe(Layer.provide(Layer.succeed(Resources, resource)));
+
+    // The tenant the verifier reads comes in a later provide.
+    return Layer.mergeAll(route("/a", authenticate), route("/b", authenticate)).pipe(
+      Layer.provide(resolveTenant.layer),
+    );
+  };
+
+  it("publishes its discovery and names it in every challenge, built once", async () => {
+    const { builds, authentication } = built();
+
+    const web = serve(
+      routes(authentication, {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+        scopesRequired: ["docs:read"],
+      }),
+    );
+
+    const discovered = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+
+    expect(discovered.status).toBe(200);
+    expect(await discovered.json()).toMatchObject({ resource: "https://api.example.com/mcp" });
+
+    const anonymous = await web.handler(post("/a/identify"));
+
+    expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([
+      401,
+      `Bearer scope="docs:read", resource_metadata="https://api.example.com${prefix}/mcp"`,
+    ]);
+
+    // The request service comes from the middleware provided after it.
+    const admitted = await web.handler(withBearer(post("/b/identify"), "alice"));
+
+    expect(await admitted.json()).toBe("alice@acme");
+    expect(builds.count).toBe(1);
+  });
+
+  it("publishes nothing and challenges with a bare Bearer when it builds none", async () => {
+    const web = serve(routes(built().authentication, undefined));
+
+    const discovered = await web.handler(new Request(`https://api.example.com${prefix}/mcp`));
+    const anonymous = await web.handler(post("/a/identify"));
+
+    expect(discovered.status).toBe(404);
+    expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([401, "Bearer"]);
+  });
+
+  it("refuses a scopesRequired that is no scope token when its layer builds", async () => {
+    const web = serve(
+      routes(built().authentication, {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+        scopesRequired: ["docs read"],
+      }),
+    );
+
+    await expect(web.handler(post("/a/identify"))).rejects.toThrow(
+      'Invalid scope in scopesRequired: "docs read"',
+    );
+  });
+
+  it("refuses a scopesSupported that is no scope token when its layer builds", async () => {
+    const web = serve(
+      routes(built().authentication, {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+        scopesSupported: ["docs:read", "docs write"],
+      }),
+    );
+
+    await expect(web.handler(post("/a/identify"))).rejects.toThrow(
+      'Invalid scope in scopesSupported: "docs write"',
+    );
+  });
+});
+
+describe("discovery across origins", () => {
+  const metadata = `https://api.example.com${prefix}/mcp`;
+  const origin = "https://ui.example.com";
+
+  /** The host's CORS for its own routes, as the browser example configures it. */
+  const cors = HttpRouter.cors({
+    allowedOrigins: [origin],
+    allowedMethods: ["POST"],
+    allowedHeaders: ["Content-Type", "Authorization", "MCP-Protocol-Version"],
+  });
+
+  /** The preflight of a read from `from` sending the MCP protocol version. */
+  const preflight = (from: string) =>
+    new Request(metadata, {
+      method: "OPTIONS",
+      headers: {
+        origin: from,
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "mcp-protocol-version",
+      },
+    });
+
+  const protectedRoutes = route("/private", refusing());
+
+  it("lets any origin read the metadata and preflight it, unless the host's CORS runs first", async () => {
+    // CORS merged after the authenticated routes: discovery answers before it runs.
+    const after = serve(Layer.mergeAll(protectedRoutes, cors));
+
+    for (const method of ["GET", "HEAD"]) {
+      const read = await after.handler(new Request(metadata, { method, headers: { origin } }));
+      expect([read.status, read.headers.get("access-control-allow-origin")]).toEqual([200, "*"]);
+    }
+
+    const allowed = await after.handler(preflight(origin));
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("*");
+    expect(allowed.headers.get("access-control-allow-methods")).toBe("GET, HEAD, OPTIONS");
+    expect(allowed.headers.get("access-control-allow-headers")).toBe("mcp-protocol-version");
+    expect(allowed.headers.get("vary")).toBe("Access-Control-Request-Headers");
+
+    // CORS merged first runs first: the host's own policy applies.
+    const before = serve(Layer.mergeAll(cors, protectedRoutes));
+    const read = await before.handler(new Request(metadata, { headers: { origin } }));
+    expect([read.status, read.headers.get("access-control-allow-origin")]).toEqual([200, origin]);
+  });
+
+  it("lets the host's CORS, where it runs first, answer the preflight and set a read's origin, keeping * where it sets none", async () => {
+    // A policy of several origins sets none for an origin it refuses.
+    const refused = "https://other.example.com";
+
+    const web = serve(
+      Layer.mergeAll(
+        HttpRouter.cors({ allowedOrigins: [origin, "https://admin.example.com"] }),
+        protectedRoutes,
+      ),
+    );
+
+    const allowed = await web.handler(new Request(metadata, { headers: { origin } }));
+    expect([allowed.status, allowed.headers.get("access-control-allow-origin")]).toEqual([
+      200,
+      origin,
+    ]);
+
+    // A refused origin's read keeps discovery's own `*`; the policy refuses its preflight.
+    const read = await web.handler(new Request(metadata, { headers: { origin: refused } }));
+    expect([read.status, read.headers.get("access-control-allow-origin")]).toEqual([200, "*"]);
+
+    const refusedPreflight = await web.handler(preflight(refused));
+    expect(refusedPreflight.status).toBe(204);
+    expect(refusedPreflight.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("answers the preflight at its URL alone, allowing only the headers asked for", async () => {
+    const web = serve(route("/private", refusing()));
+
+    // Another path's preflight is the host's.
+    const other = await web.handler(
+      new Request(`https://api.example.com${prefix}/other`, { method: "OPTIONS" }),
+    );
+
+    expect(other.status).toBe(404);
+    expect(other.headers.get("access-control-allow-origin")).toBeNull();
+
+    // A preflight asking for no header allows the metadata's methods alone.
+    const bare = await web.handler(new Request(metadata, { method: "OPTIONS" }));
+    expect(bare.status).toBe(204);
+    expect(bare.headers.get("access-control-allow-headers")).toBeNull();
+  });
+});
+
+it("publishes metadata at the resource's well-known URL", async () => {
+  const resource = "https://api.example.com/mcp?tenant=alice";
+
+  const web = serve(
+    Layer.mergeAll(
+      published(resource, { scopesSupported: ["admin:read", "admin:write"] }),
+      published("https://api.example.com", { resourceName: "Root" }),
+    ),
+  );
+
+  const response = await web.handler(
+    new Request(`https://api.example.com${prefix}/mcp?tenant=alice`),
+  );
+
   expect(response.status).toBe(200);
   expect(response.headers.get("content-type")).toContain("application/json");
   expect(await response.json()).toEqual({
@@ -37,72 +391,16 @@ it("publishes standalone metadata and a bearer challenge", async () => {
     scopes_supported: ["admin:read", "admin:write"],
     bearer_methods_supported: ["header"],
   });
-  expect(
-    discovery.challenge({
-      error: "insufficient_scope",
-      errorDescription: "Owner access required",
-      scope: "admin:write",
-    }),
-  ).toBe(
-    `Bearer resource_metadata="${discovery.metadataUrl}", error="insufficient_scope", error_description="Owner access required", scope="admin:write"`,
-  );
-});
 
-// Every quoted-string value round-trips through RFC 7230 quoted-string parsing.
-const quotedStrings = (header: string) =>
-  Object.fromEntries(
-    Array.from(
-      header.matchAll(/(\w+)="((?:[^"\\]|\\.)*)"/g),
-      ([, name, value]): [string, string] => [
-        // SAFETY: neither group is optional, so both participate in every match of this pattern.
-        name!,
-        value!.replace(/\\(.)/g, "$1"),
-      ],
-    ),
-  );
-
-it("quotes and escapes bearer challenge parameters", () => {
-  const discovery = Authentication.protectedResource({
-    resource: "https://example.com/mcp",
-    authorizationServers: ["https://auth.example.com"],
+  // A resource at the origin's root is discovered at the bare well-known path.
+  const root = await web.handler(new Request(`https://api.example.com${prefix}`));
+  expect(root.status).toBe(200);
+  expect(await root.json()).toEqual({
+    resource: "https://api.example.com",
+    authorization_servers: ["https://auth.example.com"],
+    bearer_methods_supported: ["header"],
+    resource_name: "Root",
   });
-
-  const value = 'both\\"mixed"\\';
-
-  const header = discovery.challenge({
-    error: "insufficient_scope",
-    errorDescription: value,
-    scope: value,
-  });
-
-  expect(quotedStrings(header)).toEqual({
-    resource_metadata: discovery.metadataUrl,
-    error: "insufficient_scope",
-    error_description: value,
-    scope: value,
-  });
-});
-
-it("percent-encodes quote characters in the discovery challenge URL", () => {
-  const discovery = Authentication.protectedResource({
-    resource: 'https://example.com/mcp"',
-    authorizationServers: ["https://auth.example.com"],
-  });
-
-  expect(discovery.challenge()).toBe(
-    'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp%22"',
-  );
-});
-
-it("escapes a query backslash in the discovery challenge", () => {
-  const discovery = Authentication.protectedResource({
-    resource: "https://example.com/mcp?tenant=alice\\",
-    authorizationServers: ["https://auth.example.com"],
-  });
-
-  expect(discovery.challenge({ error: "invalid_token" })).toBe(
-    'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp?tenant=alice\\\\", error="invalid_token"',
-  );
 });
 
 it("matches literal resource paths exactly and delegates other requests to the host", async () => {
@@ -112,42 +410,31 @@ it("matches literal resource paths exactly and delegates other requests to the h
     "/mcp/trailing/",
     "/mcp?tenant=alice",
     "/mcp?tenant=a%2Fb&mode=read",
+    "/mcp?tenant=alice\\",
+    '/mcp"',
     "/mcp?",
     "/mcp",
   ];
 
-  const discoveries = paths.map((path) =>
-    Authentication.protectedResource({
-      resource: `https://api.example.com${path}`,
-      authorizationServers: ["https://auth.example.com"],
-    }),
-  );
-
-  const prefix = "/.well-known/oauth-protected-resource";
-
-  const web = HttpRouter.toWebHandler(
+  const web = serve(
     Layer.mergeAll(
       HttpRouter.add("GET", `${prefix}/mcp/unrelated`, HttpServerResponse.text("host route")),
       HttpRouter.add("POST", `${prefix}/mcp/*`, HttpServerResponse.text("host post")),
-      ...discoveries.map((discovery) => discovery.layer),
-    ).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+      ...paths.map((path) => published(`https://api.example.com${path}`)),
+    ),
   );
 
-  onTestFinished(() => web.dispose());
-
-  for (const [index, discovery] of discoveries.entries()) {
-    const response = await web.handler(new Request(discovery.metadataUrl));
+  // The discovery URL inserts the well-known prefix before the resource's path and query.
+  for (const path of paths) {
+    const response = await web.handler(new Request(`https://api.example.com${prefix}${path}`));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      resource: `https://api.example.com${paths[index]}`,
-    });
+    expect(await response.json()).toMatchObject({ resource: `https://api.example.com${path}` });
   }
 
-  const representative = discoveries[0];
+  const head = await web.handler(
+    new Request(`https://api.example.com${prefix}/mcp/:tenant*`, { method: "HEAD" }),
+  );
 
-  if (representative === undefined) throw new Error("Expected a discovery document");
-  const head = await web.handler(new Request(representative.metadataUrl, { method: "HEAD" }));
   expect(head.status).toBe(200);
   expect(await head.text()).toBe("");
 

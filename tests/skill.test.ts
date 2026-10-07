@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
 import { renderSkill, skillDirectory } from "../scripts/skill.ts";
 
 const sorted = (names: ReadonlyArray<string>) =>

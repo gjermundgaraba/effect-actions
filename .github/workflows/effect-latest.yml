@@ -1,0 +1,36 @@
+name: Latest Effect 4
+
+# The `effect` peer admits only 4.0.x patches, since the modules the surfaces build on are
+# unstable in Effect and a minor release may change them. This runs the full check against the
+# newest 4.x, so a minor that passes can be admitted (CONTRIBUTING.md#release).
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@v1.21.1
+        with:
+          node-version: 26
+          cache: true
+          run-install: false
+      - run: vp install --frozen-lockfile
+      # Every Effect package on the same newest 4.x release, as setup.md requires.
+      - run: vp add -D effect@^4 @effect/platform-node@^4 @effect/vitest@^4
+      - name: Show the Effect releases under test
+        run: >-
+          node -e 'for (const p of ["effect", "@effect/platform-node", "@effect/vitest"])
+          console.log(p, JSON.parse(require("fs").readFileSync(`node_modules/${p}/package.json`, "utf8")).version)'
+      - run: vp check
+      - run: vp test
+      - run: vp run test:package

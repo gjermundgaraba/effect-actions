@@ -170,9 +170,13 @@ catalogs:
     vite-plus:
       specifier: 1.0.0
       version: 1.0.0
+    vitest:
+      specifier: 5.0.1
+      version: 5.0.1
 
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vitest@*: 5.0.1
 
 importers:
 
@@ -181,6 +185,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)(redis@6.2.1)
+      '@effect/vitest':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(vitest@5.0.1)
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
@@ -202,6 +209,9 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 1.0.0(@types/node@26.6.2)(@vitest/ui@5.0.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.1(@types/node@26.6.2)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@26.6.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))
 
 packages:
 
@@ -232,6 +242,12 @@ packages:
     peerDependencies:
       effect: ^4.0.0
       redis: '>=5.0.0 <7.0.0'
+
+  '@effect/vitest@4.0.0':
+    resolution: {integrity: sha512-kGElCPFGtP+CgMCwV/HjJWqtE3zYo6I1+8MSA54l+EI24lPU9p2Efa+TBp1jfkg9j711KKzEqgSAy3VzTsb76Q==}
+    peerDependencies:
+      effect: ^4.0.0
+      vitest: 5.0.1
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1625,6 +1641,11 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/vitest@4.0.0(effect@4.0.0)(vitest@5.0.1)':
+    dependencies:
+      effect: 4.0.0
+      vitest: 5.0.1(@types/node@26.6.2)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@26.6.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true

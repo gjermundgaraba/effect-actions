@@ -1,9 +1,9 @@
-import { describe, it } from "vite-plus/test";
+import { describe, it } from "@effect/vitest";
 import { RuleTester } from "vite-plus/lint/plugins-dev";
 import { noKnownValueWideningRule } from "../anti-slop/rules/no-known-value-widening.ts";
 import { noModuleMockingRule } from "../anti-slop/rules/no-module-mocking.ts";
-import { noRuntimeTypeofRule } from "../anti-slop/rules/no-runtime-typeof.ts";
 import { noUnknownParametersRule } from "../anti-slop/rules/no-unknown-parameters.ts";
+import { noUnsafeDictionaryTypeRule } from "../anti-slop/rules/no-unsafe-dictionary-type.ts";
 
 // Regression tests for the local corrections recorded in ../anti-slop/UPSTREAM.md.
 // Each probe pairs an accepted case with a case the rule must still reject.
@@ -36,10 +36,15 @@ tester.run("no-unknown-parameters", noUnknownParametersRule, {
 
 tester.run("no-module-mocking", noModuleMockingRule, {
   valid: [
-    "import { vi } from 'vite-plus/test'; vi.fn();",
+    "import { vi } from '@effect/vitest'; vi.fn();",
     "import { vi } from 'vite-plus/test'; vi.spyOn(console, 'log');",
   ],
   invalid: [
+    {
+      name: "the Effect re-export of vi is recognized",
+      code: "import { vi } from '@effect/vitest'; vi.mock('./users.js');",
+      errors: [{ messageId: "moduleMock" }],
+    },
     {
       name: "the Vite+ re-export of vi is recognized",
       code: "import { vi } from 'vite-plus/test'; vi.mock('./users.js');",
@@ -48,28 +53,6 @@ tester.run("no-module-mocking", noModuleMockingRule, {
     {
       code: "import { vi } from 'vitest'; vi.doMock('./users.js');",
       errors: [{ messageId: "moduleMock" }],
-    },
-  ],
-});
-
-tester.run("no-runtime-typeof", noRuntimeTypeofRule, {
-  valid: [
-    {
-      name: "a type predicate may probe its subject when allowed",
-      code: "function isText(value: unknown): value is string { return typeof value === 'string'; }",
-      options: [{ allowInTypeGuards: true }],
-    },
-  ],
-  invalid: [
-    {
-      name: "outside a type predicate typeof is still rejected when predicates are allowed",
-      code: "function label(value: string | number) { return typeof value === 'string' ? value : ''; }",
-      options: [{ allowInTypeGuards: true }],
-      errors: [{ messageId: "runtimeTypeof" }],
-    },
-    {
-      code: "function isText(value: unknown): value is string { return typeof value === 'string'; }",
-      errors: [{ messageId: "runtimeTypeof" }],
     },
   ],
 });
@@ -145,6 +128,32 @@ tester.run("no-known-value-widening", noKnownValueWideningRule, {
       name: "a mapped type over string is still an open dictionary",
       code: "const table: { [K in string]: number } = { a: 1, b: 2 };",
       errors: [{ messageId: "widening" }],
+    },
+  ],
+});
+
+tester.run("no-unsafe-dictionary-type", noUnsafeDictionaryTypeRule, {
+  valid: [
+    {
+      name: "a type parameter shadowing an empty interface is not that interface",
+      code: [
+        "interface Value {}",
+        "export function make<Value extends string>(): Record<string, Value> { return {}; }",
+      ].join("\n"),
+    },
+    {
+      name: "an inner alias shadowing an empty interface is resolved as the alias",
+      code: [
+        "interface Value {}",
+        "namespace Inner { type Value = string; export const table: Record<string, Value> = {}; }",
+      ].join("\n"),
+    },
+  ],
+  invalid: [
+    {
+      name: "an empty interface the reference names is still an empty-object value",
+      code: ["interface Value {}", "export const table: Record<string, Value> = {};"].join("\n"),
+      errors: [{ messageId: "unsafeDictionary" }],
     },
   ],
 });

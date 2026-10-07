@@ -1,7 +1,7 @@
 {
   "name": "@gjermundgaraba/effect-actions",
-  "version": "0.9.0",
-  "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, catalogs, and CLIs.",
+  "version": "0.10.0",
+  "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, and CLIs.",
   "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
   "bugs": {
     "url": "https://github.com/gjermundgaraba/effect-actions/issues"
@@ -16,19 +16,15 @@
     "docs"
   ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
     "./Action": "./dist/Action.mjs",
-    "./ActionCatalog": "./dist/ActionCatalog.mjs",
     "./ActionCli": "./dist/ActionCli.mjs",
-    "./ActionCliClient": "./dist/ActionCliClient.mjs",
-    "./ActionGroup": "./dist/ActionGroup.mjs",
     "./ActionHttp": "./dist/ActionHttp.mjs",
-    "./ActionHttpClient": "./dist/ActionHttpClient.mjs",
     "./ActionMcp": "./dist/ActionMcp.mjs",
     "./ActionToolkit": "./dist/ActionToolkit.mjs",
     "./Authentication": "./dist/Authentication.mjs",
     "./Testing": "./dist/Testing.mjs",
-    "./TestingClient": "./dist/TestingClient.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -47,22 +43,18 @@
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0",
+    "@effect/vitest": "4.0.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "26.6.2",
     "effect": "4.0.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
-    "effect": "^4.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@modelcontextprotocol/client": {
-      "optional": true
-    }
+    "effect": "~4.0.0"
   },
   "devEngines": {
     "packageManager": {

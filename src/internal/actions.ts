@@ -1,77 +1,33 @@
+import { Predicate, Schema, SchemaAST } from "effect";
 import type * as Action from "../Action.js";
-import type { HttpApiError } from "effect/http-api";
-
-/** One side of a schema-error policy: the error it answers with, and how to make it. */
-export interface SchemaErrorAnswer<E extends Action.Codec> {
-  /** A declared error schema; its `httpApiStatus` is the HTTP status of the answer. */
-  readonly schema: E;
-  readonly make: (failure: HttpApiError.HttpApiSchemaError) => NoInfer<E["Type"]>;
-}
+import { builtIns, statuses } from "./errors.js";
 
 /**
- * Pure HTTP policy for native schema failures, split by whose fault they are. The
- * library owns the split, so every group draws it the same way.
+ * The list an `error` option stands for: one schema, a list as given, or none, as
+ * `HttpApiEndpoint` takes it.
  */
-export interface SchemaErrorPolicy<
-  Invalid extends Action.Codec = Action.Codec,
-  Internal extends Action.Codec = Action.Codec,
-> {
-  /** The request did not decode: its payload, or its params, headers or query. */
-  readonly invalid: SchemaErrorAnswer<Invalid>;
-  /** The handler's result did not encode: its body or its response headers. */
-  readonly internal: SchemaErrorAnswer<Internal>;
-}
+export const errorList = (
+  error: Action.Errors[number] | Action.Errors | undefined,
+): Action.Errors => (error === undefined ? [] : Schema.isSchema(error) ? [error] : error);
 
-/** The contract half of a group: what adapters and clients need, without `implement`. */
-export interface Actions<
-  Name extends string = string,
-  A extends ReadonlyArray<Action.Any> = ReadonlyArray<Action.Any>,
-  PolicyError extends Action.Codec = Action.Codec,
-> {
-  readonly name: Name;
-  readonly actions: A;
-  /** How HTTP answers failed decoding or encoding; native behavior without one. MCP is unaffected. */
-  readonly schemaError: SchemaErrorPolicy<PolicyError, PolicyError> | undefined;
-}
-
-/** The errors a group's policy may answer with, by lookup rather than a conditional type. */
-export type PolicyError<G extends Actions> = NonNullable<
-  G["schemaError"]
->[keyof SchemaErrorPolicy]["schema"];
-
-/** Each distinct error a policy may answer with, invalid first. */
-export const policyErrors = (policy: SchemaErrorPolicy): ReadonlyArray<Action.Codec> => [
-  ...new Set([policy.invalid.schema, policy.internal.schema]),
+/**
+ * What a projection of an action declares: the built-in errors, the action's own, and any
+ * its surface adds, such as a binding's. The built-ins come first, since a failure encodes
+ * and decodes with the first schema that accepts it, and they are classes, which accept
+ * only their own instances: a loose schema of the action's never captures one. A schema
+ * listed twice is not repeated.
+ */
+export const projectedErrors = (action: Action.Any, surface: Action.Errors = []): Action.Errors => [
+  ...new Set([...builtIns, ...action.error, ...surface]),
 ];
 
 /**
- * `HttpApiBuilder` reports these kinds while encoding the handler's answer, after the
- * handler ran; every other kind (`Payload`, `Params`, `Headers`, `Query`) comes from
- * decoding the request before it.
+ * The caller of a public action: anyone, signed in or not. Registered globally, so two copies
+ * of the package agree on it, as they agree on a name.
  */
-const responseKinds: ReadonlySet<HttpApiError.HttpApiSchemaError["kind"]> = new Set([
-  "Body",
-  "ResponseHeaders",
-]);
+export const Anyone: unique symbol = Symbol.for("@gjermundgaraba/effect-actions/Anyone");
 
-/** The policy's answer to one native failure: `internal` for the response side, else `invalid`. */
-export const answerSchemaError = (
-  policy: SchemaErrorPolicy,
-  failure: HttpApiError.HttpApiSchemaError,
-) =>
-  responseKinds.has(failure.kind) ? policy.internal.make(failure) : policy.invalid.make(failure);
-
-/**
- * An action's own failures plus the ones its surface answers with, which is what
- * a projection of that action declares. A schema the action already declares is
- * not repeated.
- */
-export const projectedErrors = (
-  action: Action.Any,
-  surface: ReadonlyArray<Action.Codec> | undefined,
-): ReadonlyArray<Action.Codec> => [...new Set([...action.errors, ...(surface ?? [])])];
-
-const validName = /^[A-Za-z0-9_-]+$/;
+const validName = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Names become path segments, OpenAPI identifiers and client method keys. */
 export const assertName = (what: string, name: string): void => {
@@ -79,29 +35,97 @@ export const assertName = (what: string, name: string): void => {
 };
 
 /**
- * The one item of `items` named `name`, narrowed to that contract. A caller passes
- * a literal name, so a miss is a programming error reported as `Unknown <what>`.
+ * Names are checked by whoever owns them: an implementation, a binding, a CLI, or the MCP
+ * tools. `claimantOf` says who claims a name, so a clash between two claimants names both.
  */
-export const selectNamed = <T extends { readonly name: string }, Name extends T["name"]>(
-  items: ReadonlyArray<T>,
-  name: Name,
+export const assertDistinct = <T>(
   what: string,
-): Extract<T, { readonly name: Name }> => {
-  const item = items.find(
-    (candidate): candidate is Extract<T, { readonly name: Name }> => candidate.name === name,
-  );
+  items: ReadonlyArray<T>,
+  nameOf: (item: T) => string,
+  claimantOf: (item: T) => string = nameOf,
+): void => {
+  const seen = new Map<string, string>();
 
-  if (item === undefined) throw new Error(`Unknown ${what}`);
+  for (const item of items) {
+    const name = nameOf(item);
+    const claimant = claimantOf(item);
+    const other = seen.get(name);
 
-  return item;
+    if (other !== undefined) {
+      const by = other === claimant ? "" : `, claimed by ${other} and ${claimant}`;
+
+      throw new Error(`Duplicate ${what}: ${name}${by}`);
+    }
+
+    seen.set(name, claimant);
+  }
 };
 
-/** Each namespace is checked by whoever owns it: a group, the routes, or the MCP tools. */
-export const assertDistinct = (what: string, names: ReadonlyArray<string>): void => {
-  const seen = new Set<string>();
+/** Refuse an action name `actions` hold twice. */
+export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void =>
+  assertDistinct(what, actions, (action) => action.name);
 
-  for (const name of names) {
-    if (seen.has(name)) throw new Error(`Duplicate ${what}: ${name}`);
-    seen.add(name);
+/**
+ * Refuse a key of options keyed by action name, such as handlers, tools or commands, that no
+ * action of `names` has, so a stale option cannot outlive its action.
+ */
+export const assertKnown = (
+  what: string,
+  keys: ReadonlyArray<string>,
+  names: ReadonlyArray<string>,
+): void => {
+  const unknown = keys.filter((key) => !names.includes(key));
+
+  if (unknown.length > 0) throw new Error(`Unknown ${what}: ${unknown.join(", ")}`);
+};
+
+/** `ast` with any suspension at its top resolved, as a recursive schema's is. */
+export const unsuspended = (ast: SchemaAST.AST): SchemaAST.AST =>
+  SchemaAST.isSuspend(ast) ? unsuspended(ast.thunk()) : ast;
+
+/** The members of a union, nested and suspended ones included, or the one type otherwise. */
+export const members = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => {
+  const resolved = unsuspended(ast);
+
+  return SchemaAST.isUnion(resolved) ? resolved.types.flatMap(members) : [resolved];
+};
+
+/**
+ * The values a literal or an enum accepts, or `undefined` for any other type, which has no
+ * fixed set.
+ */
+export const literalValues = (ast: SchemaAST.AST): ReadonlyArray<unknown> =>
+  SchemaAST.isLiteral(ast)
+    ? [ast.literal]
+    : SchemaAST.isEnum(ast)
+      ? ast.enums.map(([, value]) => value)
+      : [undefined];
+
+/**
+ * The `_tag`s a schema's encoding carries: each member's of a union, every value of a union of
+ * literals or of an enum, and a suspended schema's, as a recursive error is written.
+ */
+const tagsOf = (ast: SchemaAST.AST): ReadonlyArray<string> =>
+  members(SchemaAST.toEncoded(ast)).flatMap((member) => {
+    const tag = SchemaAST.isObjects(member)
+      ? member.propertySignatures.find((property) => property.name === "_tag")?.type
+      : undefined;
+
+    return tag === undefined ? [] : members(tag).flatMap(literalValues).filter(Predicate.isString);
+  });
+
+/**
+ * Refuse an error that encodes with a built-in error's `_tag`, the built-in itself included:
+ * every endpoint and tool declares the built-in errors already, a client decoding the answer
+ * could not tell a look-alike from them, and a look-alike of a refusal would step up. Checked
+ * where the action or the binding is made, so every surface and client of it may rely on it.
+ */
+export const assertOwnTags = (what: string, errors: Action.Errors): void => {
+  const tag = errors
+    .flatMap((error) => tagsOf(error.ast))
+    .find((tag) => Object.hasOwn(statuses, tag));
+
+  if (tag !== undefined) {
+    throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
   }
 };

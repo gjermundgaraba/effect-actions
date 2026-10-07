@@ -1,47 +1,47 @@
-import { Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
-import type * as ActionGroup from "../src/ActionGroup.js";
+import { Array as Arr } from "effect";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import type { HandlersContext } from "../src/internal/implementation.js";
+import type * as Action from "../src/Action.js";
 import { layer } from "../examples/app.js";
-
-/** Test-local mount paths; production callers must pass their own. */
-export const testApiPath = "/api/actions" as const;
-
-export const testMcpPath = "/mcp" as const;
-
-export const testMcpUrl = "http://localhost/mcp";
+import { serve } from "./serve.js";
 
 // Each call builds fresh example state.
-export const makeTestApp = () =>
-  HttpRouter.toWebHandler(layer.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+export const makeTestApp = () => serve(layer);
 
-/** Serve an implementation over HTTP; `request` supplies its per-request services. */
-export const makeTestHttp = <Group extends ActionGroup.Any, H, EX>(
-  app: ActionGroup.Implementation<Group, H, EX, never>,
-  request: Layer.Layer<NoInfer<HandlersContext<H>>>,
-  options?: { readonly apiPath?: `/${string}` },
-) =>
-  HttpRouter.toWebHandler(
-    ActionHttp.make({ apiPath: options?.apiPath ?? testApiPath }, app.group)
-      .layer([app])
-      .pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+/** An action anyone may call. */
+type Public = Action.Any & { readonly caller: typeof Action.Anyone };
+
+/**
+ * An implementation of public actions that owes nothing per request or to build, as `serve`
+ * requires. A test of protected actions serves its routes itself, with authentication.
+ */
+type Free = Action.Implementation<
+  Public,
+  { readonly [name: string]: never },
+  unknown,
+  never,
+  unknown,
+  never
+>;
+
+/** What the helpers serve: one free implementation, or a list of them. */
+type Frees = Free | ReadonlyArray<Free>;
+
+/**
+ * Serve implementations over HTTP, from a binding of exactly their actions. A test whose
+ * implementations owe services serves its routes itself.
+ */
+export const makeTestHttp = (apps: Frees, options?: ActionHttp.Options) =>
+  serve(
+    ActionHttp.layer(
+      ActionHttp.make(
+        Arr.ensure(apps).flatMap((app) => app.actions),
+        options ?? {},
+      ),
+      apps,
+    ),
   );
 
-/** Serve an implementation over MCP; `request` supplies its per-request services. */
-export const makeTestMcp = <Group extends ActionGroup.Any, H, EX>(
-  app: ActionGroup.Implementation<Group, H, EX, never>,
-  request: Layer.Layer<NoInfer<HandlersContext<H>>>,
-) =>
-  HttpRouter.toWebHandler(
-    ActionMcp.layerHttp([app], {
-      name: "test",
-      version: "0",
-      path: testMcpPath,
-    }).pipe(HttpRouter.provideRequest(request), Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
-  );
+/** Serve implementations over MCP at `/mcp`, as `makeTestHttp` serves them over HTTP. */
+export const makeTestMcp = (apps: Frees) =>
+  serve(ActionMcp.layerHttp(apps, { name: "test", version: "0" }));

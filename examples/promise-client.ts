@@ -1,27 +1,11 @@
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
-import * as ActionHttpClient from "../src/ActionHttpClient.js";
-import { Http, UserNotFound } from "./contracts.js";
+import { Effect } from "effect";
+import * as ActionHttp from "../src/ActionHttp.js";
+import { Http } from "./binding.js";
 
-// Promises in, Promises out: for code that does not run Effects, such as a browser page.
-// The options are the native `HttpApiClient.make` options plus `fetch`; a bearer token is
-// a `transformClient`.
-const client = ActionHttpClient.promise(Http, {
-  baseUrl: "http://127.0.0.1:3000",
-  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
-});
+// Built once, outside any Effect: its methods need nothing more.
+export const api = ActionHttp.fetchClient(Http);
 
-export const userName = async (id: string): Promise<string> => {
-  try {
-    return (await client.users.getUser({ id })).name;
-  } catch (error) {
-    // A declared error rejects as its own value...
-    if (error instanceof UserNotFound) return "(no such user)";
-
-    // ...and what the contract cannot account for as Effect's own `HttpClientError`.
-    if (HttpClientError.isHttpClientError(error) && error.response === undefined) {
-      return "(server unreachable)";
-    }
-
-    throw error;
-  }
-};
+// A promise per call. A declared error rejects it as its decoded value, so
+// `error instanceof UserNotFound` holds in a `catch`.
+export const userName = async (id: string): Promise<string> =>
+  (await Effect.runPromise(api.getUser({ id }))).name;

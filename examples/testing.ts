@@ -1,38 +1,19 @@
-import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { Effect } from "effect";
+import * as ActionHttp from "../src/ActionHttp.js";
 import * as Testing from "../src/Testing.js";
-import * as TestingClient from "../src/TestingClient.js";
-import { Http, routes } from "./quickstart.js";
+import { Greet, Http } from "./quickstart.js";
+import { routes } from "./quickstart-server.js";
 
-const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)));
+const program = Effect.gen(function* () {
+  const client = yield* ActionHttp.client(Http);
+  const greeting = yield* client.greet({ name: "Ada" });
 
-try {
-  const greeting = await Effect.runPromise(
-    Effect.gen(function* () {
-      const client = yield* Testing.httpClient(Http.api, web.handler);
+  // The same action as a tool of `/mcp`, called like the client's method.
+  const mcp = yield* Testing.mcpClient([Greet]);
+  const called = yield* mcp.greet({ name: "Ada" });
 
-      return yield* client.greetings.greet({ payload: { name: "Ada" } });
-    }),
-  );
+  return { greeting, called };
+});
 
-  // Raw MCP request; this stateless revision needs no initialize handshake.
-  const listed = await web.handler(
-    Testing.mcpRequest({ url: "http://localhost/mcp", method: "tools/list" }),
-  );
-
-  // One tool call, answered as `{ isError: false, value: "Hello, Ada!" }`.
-  const called = await Testing.mcpCall(web.handler, {
-    url: "http://localhost/mcp",
-    name: "greet",
-    arguments: { name: "Ada" },
-  });
-
-  // The official client uses the same in-memory handler.
-  const result = await TestingClient.withMcpClient({ fetch: web.handler, path: "/mcp" }, (client) =>
-    client.callTool({ name: "greet", arguments: { name: "Ada" } }),
-  );
-
-  console.log({ greeting, listStatus: listed.status, called, result });
-} finally {
-  await web.dispose();
-}
+// The routes answer in memory for the program's scope, and are released after it.
+console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(routes)))));

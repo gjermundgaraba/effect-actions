@@ -1,21 +1,17 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionCatalog from "@gjermundgaraba/effect-actions/ActionCatalog";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionCliClient from "@gjermundgaraba/effect-actions/ActionCliClient";
-import * as ActionGroup from "@gjermundgaraba/effect-actions/ActionGroup";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionHttpClient from "@gjermundgaraba/effect-actions/ActionHttpClient";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import type { HttpApiClient } from "effect/http-api";
+import { type HttpApiClient, OpenApi } from "effect/http-api";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { httpClient, mcpCall, mcpRequest } from "@gjermundgaraba/effect-actions/Testing";
-import { Effect, Layer, Schema, Stream } from "effect";
-import { Argument } from "effect/cli";
-import { HttpRouter, HttpServer } from "effect/http";
-import { Actions, Http, routes } from "./quickstart.js";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { Greet, Http } from "./quickstart.js";
+import { routes } from "./quickstart-server.js";
 
 // Subpaths are the only entry points: one module each, so nothing loads the MCP
-// server or the optional client peer by accident.
+// server by accident.
 const packageRoot: string = "@gjermundgaraba/effect-actions";
 
 const rootImport = await import(packageRoot).then(
@@ -27,10 +23,10 @@ if (rootImport !== "absent") throw new Error("The package root must not be an en
 
 const checkTypes = (client: HttpApiClient.ForApi<typeof Http.api>) => {
   // @ts-expect-error Published declarations must reject incorrect input.
-  client.greetings.greet({ payload: { name: 123 } });
+  client.greet({ payload: { name: 123 } });
 
   // @ts-expect-error Published declarations must retain the result type.
-  const wrong: Effect.Effect<number, unknown, unknown> = client.greetings.greet({
+  const wrong: Effect.Effect<number, unknown, unknown> = client.greet({
     payload: { name: "Ada" },
   });
 
@@ -39,88 +35,51 @@ const checkTypes = (client: HttpApiClient.ForApi<typeof Http.api>) => {
 
 void checkTypes;
 
-const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-  disableLogger: true,
-});
+const served = await Effect.gen(function* () {
+  // `Testing.layer` resolves the relative URL, so the client needs no `baseUrl`.
+  const client = yield* ActionHttp.client(Http);
 
-try {
-  const response = await web.handler(
-    mcpRequest({ method: "tools/list", url: "http://localhost/mcp" }),
-  );
+  const checkClientTypes = () => {
+    // @ts-expect-error Published declarations must type the client's input.
+    void client.greet({ name: 123 });
 
-  if (response.status !== 200)
-    throw new Error("Stateless MCP request failed without the optional client peer");
-
-  const greeting = await Effect.gen(function* () {
-    const client = yield* httpClient(Http.api, web.handler);
-
-    return yield* client.greetings.greet({ payload: { name: "Ada" } });
-  }).pipe(Effect.runPromise);
-
-  if (greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${greeting}`);
-
-  const promised = ActionHttpClient.promise(Http, {
-    baseUrl: "http://localhost",
-    fetch: (input, init) => web.handler(new Request(input, init)),
-  });
-
-  const checkPromiseTypes = () => {
-    // @ts-expect-error Published declarations must type Promise client input.
-    void promised.greetings.greet({ name: 123 });
-
-    // @ts-expect-error Published declarations must retain the Promise client's result type.
-    const wrong: Promise<number> = promised.greetings.greet({ name: "Ada" });
+    // @ts-expect-error Published declarations must retain the client's result type.
+    const wrong: Effect.Effect<number, unknown> = client.greet({ name: "Ada" });
 
     return wrong;
   };
 
-  void checkPromiseTypes;
+  void checkClientTypes;
 
-  if ((await promised.greetings.greet({ name: "Ada" })) !== "Hello, Ada!")
-    throw new Error("Promise client failed");
+  const greeting = yield* client.greet({ name: "Ada" });
+  const mcp = yield* Testing.mcpClient([Greet]);
+  const called = yield* mcp.greet({ name: "Ada" });
+  const listed = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
 
-  const called = await mcpCall(web.handler, {
-    url: "http://localhost/mcp",
-    name: "greet",
-    arguments: { name: "Ada" },
-  });
-
-  if (called.isError || called.value !== "Hello, Ada!") throw new Error("MCP tool call failed");
-} finally {
-  await web.dispose();
-}
-
-const documents = HttpRouter.toWebHandler(Http.openApi(), { disableLogger: true });
-
-try {
-  const document = await documents.handler(
-    new Request("http://localhost/api/actions/openapi.json"),
+  const raw = yield* HttpClient.execute(
+    Testing.mcpRequest("tools/call", { name: "greet", arguments: { name: "Ada" } }),
   );
 
-  if (document.status !== 200) throw new Error("The OpenAPI route failed");
-} finally {
-  await documents.dispose();
-}
+  return { greeting, called, listed: listed.status, raw: yield* raw.text };
+}).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise);
 
-const discovery = Authentication.protectedResource({
-  resource: "https://example.com/mcp",
-  authorizationServers: ["https://example.com/auth"],
-});
+if (served.greeting !== "Hello, Ada!") throw new Error(`Unexpected greeting: ${served.greeting}`);
 
-if (!discovery.challenge().includes(discovery.metadataUrl))
-  throw new Error("Missing discovery challenge");
+if (served.called !== "Hello, Ada!") throw new Error("MCP tool call failed");
 
-const catalog = ActionCatalog.make(Actions);
+if (served.listed !== 200) throw new Error("MCP request failed");
 
-if (catalog.version !== "4" || catalog.actions[0]?.input.type !== "object") {
-  throw new Error("Catalog JSON Schema projection failed");
-}
+// A tool sends its encoded success itself as structured content.
+if (!served.raw.includes('"structuredContent":"Hello, Ada!"'))
+  throw new Error(`Unexpected MCP result: ${served.raw}`);
 
-const app = Actions.implement({
-  greet: ({ name }) => Effect.succeed(`Hello, ${name}!`),
-});
+// A consumer's binding is a native HttpApi: Effect's own generator documents it.
+if (!Object.hasOwn(OpenApi.fromApi(Http.api).paths, "/api/greet"))
+  throw new Error("The OpenAPI document lacks the greet route");
 
-const binding = ActionToolkit.make([app]);
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+
+const binding = ActionToolkit.make(greet);
 
 const checkToolkitTypes = () => {
   // @ts-expect-error Published Toolkit names must remain literal.
@@ -137,99 +96,139 @@ const toolResults = await Effect.gen(function* () {
 
 if (toolResults[0]?.result !== "Hello, Ada!") throw new Error("Native Toolkit projection failed");
 
-const localCommand = ActionCli.group(app);
+class Identity extends Context.Service<Identity, string>()("consumer/Identity") {}
 
-if (localCommand.name !== "greetings") throw new Error("Local CLI projection failed");
-
-const remoteCommand = ActionCliClient.group(Http, "greetings");
-
-if (remoteCommand.name !== "greetings") throw new Error("Remote CLI projection failed");
-
-const configuredCommand = ActionCli.command(app, "greet", {
-  parameters: { name: Argument.String("name") },
-  input: ({ name }) => ({ name }),
-  render: (greeting) => greeting.toUpperCase(),
+const Read = Action.make("read", {
+  description: "Read",
+  readOnly: true,
+  caller: Identity,
+  success: Schema.String,
 });
 
-if (configuredCommand.name !== "greet") throw new Error("Configured CLI projection failed");
-
-const configuredRemote = ActionCliClient.command(Http, "greetings", "greet", {
-  parameters: { name: Argument.String("name") },
-  input: ({ name }) => ({ name }),
-  render: (greeting) => greeting.toUpperCase(),
+const Write = Action.make("write", {
+  description: "Write",
+  readOnly: false,
+  caller: Identity,
+  success: Schema.String,
 });
 
-if (configuredRemote.name !== "greet") throw new Error("Configured remote CLI projection failed");
+const checkCliTypes = (failure: ActionCli.UserError<Action.Forbidden>) => {
+  // @ts-expect-error Remote commands accept only the binding's own actions.
+  ActionCli.remoteCommand(Http, Read);
 
-const checkCliTypes = () => {
-  // @ts-expect-error Remote selectors accept binding-owned names, not another contract.
-  ActionCliClient.command(Http, Actions, "greet");
-  // @ts-expect-error Names are constrained to the selected HTTP binding.
-  ActionCliClient.command(Http, "missing", "greet");
+  // A command fails with Effect CLI's `UserError`, whose cause is the action's failure.
+  const refused: Action.Forbidden = failure.cause;
+
+  void refused;
 };
 
 void checkCliTypes;
 
-class Denied extends Schema.TaggedError<Denied>()("Denied", {}, { httpApiStatus: 403 }) {}
+if (!Read.readOnly || Write.readOnly) throw new Error("Published readOnly metadata failed");
 
-class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
-  "Unauthenticated",
-  {},
-  { httpApiStatus: 401 },
-) {}
+const Login = Authentication.make("consumer.Login", Identity);
 
-const Guarded = ActionGroup.make(
-  { name: "guarded" },
-  Action.make("read", { description: "Read", access: "read", success: Schema.String }),
-  Action.make("write", { description: "Write", access: "write", success: Schema.String }),
+// A token is its own identity here; a real host verifies it.
+const authenticate = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+  Effect.succeed(Redacted.value(token)),
 );
 
-if (Guarded.actions[0]?.access !== "read" || Guarded.actions[1]?.access !== "write")
-  throw new Error("Published access metadata failed");
-
-const contracts = ActionGroup.contracts(Actions, Guarded);
-
-if (contracts["guarded.write"].access !== "write" || contracts["greetings.greet"].name !== "greet")
-  throw new Error("Published contract map failed");
-
-const guarded = Guarded.implement({
-  read: () => Effect.succeed("read"),
-  write: () => Effect.succeed("write"),
-});
-
-const GuardedHttp = ActionHttp.make(
-  { apiPath: "/api", errors: [Unauthenticated, Denied] },
-  Guarded,
+const guarded = Action.implement(
+  [Read, Write],
+  {
+    read: () => Effect.map(Identity, (identity) => identity),
+    write: () => Effect.succeed("write"),
+  },
+  {
+    authorize: (action) =>
+      action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden({ message: "Read only." })),
+  },
 );
 
-const guardedWeb = HttpRouter.toWebHandler(
-  GuardedHttp.layer([guarded], {
-    before: (action) => (action.access === "read" ? Effect.void : Effect.fail(new Denied())),
-  }).pipe(Layer.provide(HttpServer.layerServices)),
-  { disableLogger: true },
-);
+const GuardedHttp = ActionHttp.make([Read, Write], { authentication: Login });
 
-const call = (action: string) =>
-  guardedWeb.handler(
-    new Request(`http://localhost/api/guarded/${action}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
+class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
+
+const checkImplementTypes = () => {
+  Action.implement(Read, () => Effect.succeed("read"), {
+    // @ts-expect-error A published authorizer only refuses.
+    authorize: () => Effect.fail(new Denied()),
+  });
+
+  // @ts-expect-error A published protected implementation states who may call it.
+  Action.implement(Read, () => Effect.succeed("read"));
+  Action.implement(
+    Greet,
+    // @ts-expect-error A published `Effect.fn` handler is typed from its action.
+    Effect.fn(function* ({ nam }) {
+      return `${String(nam)}${yield* Effect.succeed("!")}`;
     }),
   );
-
-try {
-  if ((await call("read")).status !== 200) throw new Error("Published hook refused a read");
-
-  if ((await call("write")).status !== 403) throw new Error("Published hook allowed a write");
-} finally {
-  await guardedWeb.dispose();
-}
-
-const checkSurfaceTypes = (client: HttpApiClient.ForApi<typeof GuardedHttp.api>) =>
-  client.guarded.read({ payload: {} }).pipe(
-    Effect.catchTag("Unauthenticated", () => Effect.succeed("")),
-    Effect.catchTag("Denied", () => Effect.succeed("")),
+  Action.implement(
+    Greet,
+    Effect.succeed(
+      // @ts-expect-error So is one a published builder returns.
+      Effect.fn(function* ({ nam }) {
+        return `${String(nam)}${yield* Effect.succeed("!")}`;
+      }),
+    ),
   );
+  Action.implement(
+    [Read, Write],
+    { read: () => Effect.succeed("read"), write: () => Effect.succeed("write") },
+    {
+      // A built authorizer's action infers from the implementation's protected actions.
+      authorize: Effect.succeed((action) =>
+        // @ts-expect-error A misspelled contract field.
+        action.acess === "write" ? Effect.fail(new Action.Forbidden()) : Effect.void,
+      ),
+    },
+  );
+};
 
-void checkSurfaceTypes;
+void checkImplementTypes;
+
+// Authentication provided around the layer: it owes no identity.
+const guardedRoutes = ActionHttp.layer(GuardedHttp, guarded).pipe(Layer.provide(authenticate));
+
+const refusals = await Effect.gen(function* () {
+  const anonymous = yield* ActionHttp.client(GuardedHttp);
+
+  const client = yield* ActionHttp.client(GuardedHttp, {
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("ada")),
+  });
+
+  const checkErrorTypes = () =>
+    client.read().pipe(
+      Effect.catchTag("Unauthenticated", () => Effect.succeed("")),
+      Effect.catchTag("Forbidden", () => Effect.succeed("")),
+      Effect.catchTag("InvalidInput", () => Effect.succeed("")),
+      // @ts-expect-error Published clients must type their failures precisely.
+      Effect.catchTag("Denied", () => Effect.succeed("")),
+    );
+
+  void checkErrorTypes;
+
+  return {
+    unauthenticated: yield* Effect.flip(anonymous.read()),
+    forbidden: yield* Effect.flip(client.write()),
+  };
+}).pipe(Effect.provide(Testing.layer(guardedRoutes)), Effect.runPromise);
+
+if (!(refusals.unauthenticated instanceof Action.Unauthenticated))
+  throw new Error("Published authentication allowed an anonymous read");
+
+if (!(refusals.forbidden instanceof Action.Forbidden))
+  throw new Error("Published hook allowed a write");
+
+// In process, the client's methods: each call owes its caller.
+const checkLocalTypes = Effect.gen(function* () {
+  const actions = yield* Action.client(guarded);
+
+  // @ts-expect-error A published in-process call owes its caller.
+  const owed: Effect.Effect<string, Action.BuiltIn> = actions.read();
+
+  return owed;
+});
+
+void checkLocalTypes;

@@ -1,27 +1,26 @@
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Console, Effect, Layer, Logger, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionMcp from "../src/ActionMcp.js";
 
 const Status = Action.make("status", {
   description: "Report whether the subprocess is ready.",
-  success: Schema.Struct({ ready: Schema.Boolean }),
-  access: "read",
+  success: { ready: Schema.Boolean },
+  readOnly: true,
+  caller: Action.Anyone,
 });
 
-const app = ActionGroup.make({ name: "stdio" }, Status).implement({
-  status: () => Effect.log("status called").pipe(Effect.as({ ready: true })),
-});
+const status = Action.implement(Status, () =>
+  Effect.log("status called").pipe(Effect.as({ ready: true })),
+);
 
-const layer = ActionMcp.layerStdio([app], {
-  name: "effect-actions-stdio",
-  version: "0.1.0",
-}).pipe(Layer.provide(NodeStdio.layer));
-
-// Protocol messages use stdout exclusively. Runtime diagnostics remain on stderr.
-Layer.launch(layer).pipe(
-  Effect.tapCause((cause) => Console.error(cause)),
-  Effect.provideService(Logger.LogToStderr, true),
-  NodeRuntime.runMain({ disableErrorReporting: true }),
+// Serves until the host closes stdin, then exits 0. Protocol messages use stdout
+// exclusively: runStdio writes its program's Effect logs and `Console` output to stderr, and
+// `logToStderr`, applied last, does so for the layers provided around it, and reports a failure
+// there rather than as runMain would, on stdout.
+ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
+  Effect.provide(NodeStdio.layer),
+  ActionCli.logToStderr,
+  NodeRuntime.runMain,
 );

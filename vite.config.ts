@@ -1,4 +1,4 @@
-import { defineConfig } from "vite-plus";
+import { defaultExclude, defineConfig } from "vite-plus";
 
 export default defineConfig({
   staged: {
@@ -6,21 +6,18 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
+    // Lint-configuration probes are fixtures another run writes and deletes mid-run.
+    exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
   },
   pack: {
     entry: {
       Action: "src/Action.ts",
-      ActionGroup: "src/ActionGroup.ts",
       ActionHttp: "src/ActionHttp.ts",
-      ActionHttpClient: "src/ActionHttpClient.ts",
       ActionMcp: "src/ActionMcp.ts",
       ActionToolkit: "src/ActionToolkit.ts",
-      ActionCatalog: "src/ActionCatalog.ts",
       ActionCli: "src/ActionCli.ts",
-      ActionCliClient: "src/ActionCliClient.ts",
       Authentication: "src/Authentication.ts",
       Testing: "src/Testing.ts",
-      TestingClient: "src/TestingClient.ts",
     },
     // Preserve module boundaries for JS and declarations. Bundled declarations
     // currently emit a dangling __exportAll export with this toolchain.
@@ -45,6 +42,8 @@ export default defineConfig({
       ".roo/**",
       ".windsurf/**",
       "tools/oxlint/anti-slop/**",
+      // Transient lint-configuration probes; see tools/oxlint/tests/configuration.test.ts.
+      "tools/oxlint/tests/probe-*/**",
     ],
   },
   lint: {
@@ -64,6 +63,9 @@ export default defineConfig({
       ".roo/**",
       ".windsurf/**",
       "tools/oxlint/anti-slop/**",
+      // Transient lint-configuration probes hold findings on purpose. Only their own run,
+      // which sets LINT_PROBE, lints them (tools/oxlint/tests/configuration.test.ts).
+      ...(process.env["LINT_PROBE"] === undefined ? ["tools/oxlint/tests/probe-*/**"] : []),
     ],
     jsPlugins: [
       { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
@@ -102,7 +104,9 @@ export default defineConfig({
       "anti-slop/no-unknown-returns": "error",
       "anti-slop/no-unknown-type-aliases": "error",
       "anti-slop/no-unsafe-dictionary-type": "error",
-      "anti-slop/no-widen-then-assert": "error",
+      // Off: the widening is no-known-value-widening's and the narrowing assertion is
+      // typescript/no-unsafe-type-assertion's, which reads types where this rule reads syntax.
+      "anti-slop/no-widen-then-assert": "off",
       "anti-slop/require-readable-spacing": "error",
       "anti-slop/require-safety-comment-for-type-assertion": "error",
       // `any` escape routes the syntactic rules cannot see: untyped JSON, SDK generics,
@@ -116,7 +120,9 @@ export default defineConfig({
       "anti-slop-effect/no-manual-effect-error-tag": "error",
       "anti-slop-effect/no-manual-tag-comparison": "error",
       "anti-slop-effect/no-manual-tagged-construction": "error",
-      "anti-slop-effect/no-service-constructor-imports": "error",
+      // Off: a `make[A-Z]` name cannot establish that an import is a service constructor, and
+      // a namespace import bypasses it.
+      "anti-slop-effect/no-service-constructor-imports": "off",
       "anti-slop-effect/prefer-effect-match": "error",
     },
   },

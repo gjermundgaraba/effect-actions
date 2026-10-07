@@ -1,0 +1,3 @@
+# Error option
+
+`Action.make` and `ActionHttp.make` take `error`, one schema or a list, as `HttpApiEndpoint` takes it and `Rpc.make` names it, where both took `errors`, a list alone; the contract and the binding hold it as a list, `action.error` and `Http.error`, as an endpoint holds its errors under `error`. `success` already matched. `input` stays, though `HttpApiEndpoint` and `Rpc.make` say `payload`: MCP calls it `inputSchema`, a CLI command's whole input is `--input`, the built-in `InvalidInput` names it on the wire, and the handler and client methods take an input, so `payload` would match two Effect APIs and contradict two of the library's surfaces and its wire format.

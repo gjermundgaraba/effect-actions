@@ -1,18 +1,20 @@
-import { HttpRouter, HttpServer } from "effect/http";
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
-import { Deferred, Effect, JsonPointer, Layer, Predicate, Schema } from "effect";
-import { McpSchema } from "effect/ai";
+import { describe, expect, it } from "@effect/vitest";
+import { Context, Deferred, Effect, Fiber, JsonPointer, Layer, Predicate, Schema } from "effect";
+import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { HttpClient } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
+import * as ActionCli from "../src/ActionCli.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
-import { makeTestHttp, makeTestMcp, testMcpUrl } from "./server.js";
-import { mcpRequest } from "../src/Testing.js";
-import { post, rawToolCall } from "./requests.js";
+import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Testing from "../src/Testing.js";
+import { makeTestHttp, makeTestMcp } from "./server.js";
+import { mcpRequest, post, rawToolCall, send } from "./requests.js";
+import { type Handler, serve } from "./serve.js";
 
-it("serves MCP 2026-07-28 only and passes the native server options through", async () => {
-  const web = HttpRouter.toWebHandler(
+it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
+  const web = serve(
     ActionMcp.layerHttp([], {
       name: "configured",
       version: "0",
@@ -21,15 +23,10 @@ it("serves MCP 2026-07-28 only and passes the native server options through", as
       websiteUrl: "https://example.com",
       icons: [{ src: "https://example.com/icon.png" }],
       extensions: { "io.example/extension": {} },
-    }).pipe(Layer.provide(HttpServer.layerServices)),
-    { disableLogger: true },
+    }),
   );
 
-  onTestFinished(() => web.dispose());
-
-  const discovered = await web.handler(
-    mcpRequest({ url: "http://localhost/mcp", method: "server/discover" }),
-  );
+  const discovered = await web.handler(mcpRequest({ method: "server/discover" }));
 
   expect(discovered.status).toBe(200);
   expect(await discovered.json()).toMatchObject({
@@ -74,7 +71,7 @@ it("serves MCP 2026-07-28 only and passes the native server options through", as
 });
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
-  const response = await handler(mcpRequest({ url: testMcpUrl, method: "tools/list" }));
+  const response = await handler(mcpRequest({ method: "tools/list" }));
   expect(response.status).toBe(200);
 
   const reply = Schema.decodeUnknownSync(
@@ -84,7 +81,31 @@ const listTools = async (handler: (request: Request) => Promise<Response>) => {
   return reply.result.tools;
 };
 
-const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
+describe("descriptions", () => {
+  it("describes each action on every surface by its contract's description", async () => {
+    const Describe = Action.make("describe", {
+      description: "What this action does, for every caller.",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const app = Action.implement(Describe, () => Effect.void);
+    const { description } = Describe;
+
+    const operation = OpenApi.fromApi(ActionHttp.make([Describe]).api).paths["/api/describe"]?.post;
+    const [tool] = await listTools(makeTestMcp(app).handler);
+
+    expect({
+      http: operation?.description,
+      mcp: tool?.description,
+      toolkit: ActionToolkit.make(app).toolkit.tools.describe.description,
+      cli: ActionCli.command(app, Describe).description,
+    }).toEqual({ http: description, mcp: description, toolkit: description, cli: description });
+  });
+});
+
+/** Every `$ref` of a tool schema points into its own `$defs`, and resolves there. */
+const expectReferencesResolve = (document: Schema.Json) => {
   const refs: string[] = [];
 
   const visit = (value: Schema.Json | undefined) => {
@@ -104,7 +125,7 @@ const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
   expect(refs.length).toBeGreaterThan(0);
 
   for (const ref of refs) {
-    expect(ref.startsWith(prefix)).toBe(true);
+    expect(ref.startsWith("#/$defs/")).toBe(true);
     const path = JsonPointer.parseUriFragment(ref);
 
     if (path === undefined) throw new Error(`Invalid JSON pointer: ${ref}`);
@@ -121,107 +142,327 @@ const expectReferencesResolve = (document: Schema.Json, prefix: string) => {
 };
 
 describe("projection boundaries", () => {
-  it("serves HTTP-only scalar input and skips MCP compilation for it", async () => {
+  it("serves scalar input over HTTP", async () => {
     const Echo = Action.make("echo", {
       description: "HTTP scalar input",
-      access: "write",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.String,
       success: Schema.String,
-      mcp: false,
     });
 
-    const Tool = Action.make("tool", {
-      description: "Served",
-      access: "write",
-      success: Schema.String,
+    const web = makeTestHttp(Action.implement(Echo, Effect.succeed), {
+      prefix: "/rpc",
     });
 
-    const app = ActionGroup.make({ name: "test" }, Echo, Tool).implement({
-      echo: Effect.succeed,
-      tool: () => Effect.succeed("tool"),
-    });
-
-    const options = { apiPath: "/rpc" } as const;
-    expect(
-      Object.keys(OpenApi.fromApi(ActionHttp.make(options, app.group).api).paths ?? {}),
-    ).toEqual(["/rpc/test/echo", "/rpc/test/tool"]);
-    const web = makeTestHttp(app, Layer.empty, options);
-    onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
-    onTestFinished(() => mcp.dispose());
-    const response = await web.handler(post("/rpc/test/echo", "hello"));
+    const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
     expect(await response.json()).toBe("hello");
-    expect((await listTools(mcp.handler)).map((tool) => tool.name)).toEqual(["tool"]);
   });
 
-  it.each([409, undefined])(
-    "uses schema HTTP status annotations and native defaults: %s",
-    async (status) => {
+  it.effect("sends a declared error without an HTTP status as 422", () =>
+    Effect.gen(function* () {
       const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
 
       const Fail = Action.make("fail", {
         description: "Declared failure",
-        access: "write",
+        readOnly: false,
+        caller: Action.Anyone,
         success: Schema.String,
-        errors: [status === undefined ? Failure : Failure.annotate({ httpApiStatus: status })],
+        error: [Failure],
       });
 
-      const app = ActionGroup.make({ name: "test" }, Fail).implement({
+      const apps = Action.implement([Fail], {
         fail: () => Effect.fail(Failure.make({ message: "Safe failure" })),
       });
 
-      expect(
-        OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api).paths?.[
-          "/api/actions/test/fail"
-        ]?.post?.responses,
-      ).toHaveProperty(String(status ?? 500));
-      const web = makeTestHttp(app, Layer.empty);
-      onTestFinished(() => web.dispose());
-      const response = await web.handler(post("/api/actions/test/fail"));
-      expect(response.status).toBe(status ?? 500);
-      expect(await response.json()).toEqual(Failure.make({ message: "Safe failure" }));
-    },
+      const Http = ActionHttp.make([Fail]);
+
+      expect(OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses).toHaveProperty("422");
+
+      yield* Effect.gen(function* () {
+        const response = yield* send(post("/api/fail"));
+        expect(response.status).toBe(422);
+        expect(yield* response.json).toEqual(Failure.make({ message: "Safe failure" }));
+
+        // The client reads the status from a binding of its own, as a remote one does.
+        const client = yield* ActionHttp.client(Http);
+
+        expect(yield* Effect.flip(client.fail())).toEqual(
+          Failure.make({ message: "Safe failure" }),
+        );
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))));
+    }),
   );
 
-  it("keeps each declared error's own HTTP status", async () => {
-    const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
-    const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
+  const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
+  const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
 
-    const Fail = Action.make("fail", {
-      description: "Two failures",
-      access: "write",
-      input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
-      success: Schema.String,
-      errors: [Missing, Conflict],
+  it.effect.each([
+    ["listed", [Missing, Conflict]],
+    ["in a union", [Schema.Union([Missing, Conflict])]],
+    // As a recursive error is written: native `HttpApi` reads no status through a suspension.
+    ["suspended", [Schema.suspend(() => Missing), Schema.suspend(() => Conflict)]],
+    ["in a suspended union", [Schema.suspend(() => Schema.Union([Missing, Conflict]))]],
+    // A suspension's own status wins over what it suspends, as `HttpApi` reads it.
+    [
+      "on the suspension",
+      [
+        Schema.suspend(() => Schema.TaggedStruct("Missing", {})).annotate({ httpApiStatus: 404 }),
+        Schema.suspend(() => Conflict.annotate({ httpApiStatus: 410 })).annotate({
+          httpApiStatus: 409,
+        }),
+      ],
+    ],
+  ] as const)("keeps each declared error's own HTTP status, %s", ([, errors]) =>
+    Effect.gen(function* () {
+      const Fail = Action.make("fail", {
+        description: "Two failures",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
+        success: Schema.String,
+        error: errors,
+      });
+
+      const apps = Action.implement([Fail], {
+        fail: ({ which }) =>
+          which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
+      });
+
+      const Http = ActionHttp.make([Fail]);
+      const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
+
+      expect(Object.keys(responses ?? {}).sort()).toEqual([
+        "200",
+        "400",
+        "401",
+        "403",
+        "404",
+        "409",
+      ]);
+
+      yield* Effect.gen(function* () {
+        expect((yield* send(post("/api/fail", { which: "missing" }))).status).toBe(404);
+        expect((yield* send(post("/api/fail", { which: "conflict" }))).status).toBe(409);
+
+        const client = yield* ActionHttp.client(Http);
+
+        expect(yield* Effect.flip(client.fail({ which: "conflict" }))).toEqual(Conflict.make({}));
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))));
+    }),
+  );
+
+  it("sends a union with a status of its own at that status, and a member without one as 422", () => {
+    const Late = Schema.TaggedStruct("Late", {});
+
+    const statuses = (errors: ReadonlyArray<Schema.Codec<unknown, unknown>>) =>
+      Object.keys(
+        OpenApi.fromApi(
+          ActionHttp.make([
+            Action.make("fail", {
+              description: "",
+              readOnly: false,
+              caller: Action.Anyone,
+              error: errors,
+            }),
+          ]).api,
+        ).paths["/api/fail"]?.post?.responses ?? {},
+      ).sort();
+
+    expect(statuses([Schema.Union([Missing, Conflict]).annotate({ httpApiStatus: 410 })])).toEqual([
+      "200",
+      "400",
+      "401",
+      "403",
+      "410",
+    ]);
+    expect(statuses([Schema.Union([Missing, Late])])).toEqual([
+      "200",
+      "400",
+      "401",
+      "403",
+      "404",
+      "422",
+    ]);
+  });
+
+  it("carries each action's mcp hints to its MCP and native tools, MCP's defaults for the rest", async () => {
+    const Lookup = Action.make("lookup", {
+      description: "Look up",
+      readOnly: true,
+      caller: Action.Anyone,
+      mcp: { idempotentHint: true, openWorldHint: false },
     });
 
-    const app = ActionGroup.make({ name: "test" }, Fail).implement({
-      fail: ({ which }) =>
-        which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
+    const Append = Action.make("append", {
+      description: "Append",
+      readOnly: false,
+      caller: Action.Anyone,
+      mcp: { destructiveHint: false },
     });
 
-    const responses = OpenApi.fromApi(ActionHttp.make({ apiPath: "/api/actions" }, app.group).api)
-      .paths?.["/api/actions/test/fail"]?.post?.responses;
+    const Wipe = Action.make("wipe", {
+      description: "Wipe",
+      readOnly: false,
+      caller: Action.Anyone,
+      mcp: { idempotentHint: true },
+    });
 
-    expect(responses).toHaveProperty("404");
-    expect(responses).toHaveProperty("409");
-    expect(responses).not.toHaveProperty("500");
-    const web = makeTestHttp(app, Layer.empty);
-    onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
-    onTestFinished(() => mcp.dispose());
-    expect((await web.handler(post("/api/actions/test/fail", { which: "missing" }))).status).toBe(
-      404,
+    const Purge = Action.make("purge", {
+      description: "A read stating destructive, as given",
+      readOnly: true,
+      caller: Action.Anyone,
+      mcp: { destructiveHint: true },
+    });
+
+    const app = Action.implement([Lookup, Append, Wipe, Purge], {
+      lookup: () => Effect.void,
+      append: () => Effect.void,
+      wipe: () => Effect.void,
+      purge: () => Effect.void,
+    });
+
+    const annotations = {
+      lookup: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      append: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      wipe: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      purge: {
+        readOnlyHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    };
+
+    const mcp = makeTestMcp(app);
+
+    const listed = await listTools(mcp.handler);
+    expect(Object.fromEntries(listed.map((tool) => [tool.name, tool.annotations]))).toMatchObject(
+      annotations,
     );
-    expect((await web.handler(post("/api/actions/test/fail", { which: "conflict" }))).status).toBe(
-      409,
-    );
+
+    const { tools } = ActionToolkit.make(app).toolkit;
     expect(
-      await (await mcp.handler(rawToolCall("fail", { which: "conflict" }))).json(),
-    ).toMatchObject({
-      result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
+      Object.fromEntries(
+        Object.entries(tools).map(([name, { annotations }]) => [
+          name,
+          {
+            readOnlyHint: Context.get(annotations, Tool.Readonly),
+            destructiveHint: Context.get(annotations, Tool.Destructive),
+            idempotentHint: Context.get(annotations, Tool.Idempotent),
+            openWorldHint: Context.get(annotations, Tool.OpenWorld),
+          },
+        ]),
+      ),
+    ).toEqual(annotations);
+
+    // Only what a contract states is stored, beside a read's destructive hint, so Effect's own
+    // defaults, MCP's, stand for the rest rather than copies of them.
+    const hints = [Tool.Destructive, Tool.Idempotent, Tool.OpenWorld];
+
+    expect(
+      Object.fromEntries(
+        Object.entries(tools).map(([name, tool]) => [
+          name,
+          hints.filter(({ key }) => tool.annotations.mapUnsafe.has(key)),
+        ]),
+      ),
+    ).toEqual({
+      lookup: hints,
+      append: [Tool.Destructive],
+      wipe: [Tool.Idempotent],
+      purge: [Tool.Destructive],
     });
+  });
+
+  it("carries a title and `_meta` to its MCP and native tools, only where given", async () => {
+    const meta = { "ui/resourceUri": "ui://lookup" };
+
+    const Lookup = Action.make("lookup", {
+      description: "Look up",
+      readOnly: true,
+      caller: Action.Anyone,
+      mcp: { title: "Look up a record", _meta: meta },
+    });
+
+    const Plain = Action.make("plain", {
+      description: "Plain",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const app = Action.implement([Lookup, Plain], {
+      lookup: () => Effect.void,
+      plain: () => Effect.void,
+    });
+
+    const listed = await listTools(makeTestMcp(app).handler);
+    const lookup = listed.find(({ name }) => name === "lookup");
+    const plain = listed.find(({ name }) => name === "plain");
+
+    expect(lookup?.annotations?.title).toBe("Look up a record");
+    expect(lookup?._meta).toEqual(meta);
+    expect(plain?.annotations).not.toHaveProperty("title");
+    expect(plain?._meta).toBeUndefined();
+
+    const { tools } = ActionToolkit.make(app).toolkit;
+    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Title)).toBe("Look up a record");
+    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Meta)).toEqual(meta);
+  });
+
+  it("declares each built-in error once on every tool and endpoint", () => {
+    const Declared = Action.make("whoAmI", {
+      description: "Name the authenticated principal",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.String,
+    });
+
+    const { tools } = ActionToolkit.make(
+      Action.implement(Declared, () => Effect.succeed("ada")),
+    ).toolkit;
+
+    // Each built-in's JSON decodes to its class: the tool declares all three.
+    for (const error of [
+      new Action.InvalidInput(),
+      new Action.Unauthenticated(),
+      new Action.Forbidden(),
+    ]) {
+      const json = Schema.encodeSync(Schema.toCodecJson(Action.BuiltIn))(error);
+
+      expect(Schema.decodeUnknownSync(tools.whoAmI.failureSchema)(json)).toEqual(error);
+    }
+
+    const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths["/api/whoAmI"]?.post
+      ?.responses;
+
+    expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
+
+    // Declared twice, a status would list its error twice, as an `anyOf`.
+    for (const [status, error] of [
+      ["401", "UnauthenticatedEncoded"],
+      ["403", "ForbiddenEncoded"],
+    ] as const) {
+      expect(responses?.[status]?.content?.["application/json"]?.schema).toEqual({
+        $ref: `#/components/schemas/${error}`,
+      });
+    }
   });
 
   it("reports a declared error as its encoding over MCP, message field included", async () => {
@@ -229,67 +470,24 @@ describe("projection boundaries", () => {
 
     const Fail = Action.make("fail", {
       description: "Error with a message",
-      access: "write",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
-      errors: [Denied],
+      error: [Denied],
     });
 
     const mcp = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Fail).implement({
+      Action.implement([Fail], {
         fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
       }),
-      Layer.empty,
     );
 
-    onTestFinished(() => mcp.dispose());
     expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
       result: {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"Denied","message":"Owner access required"}' }],
       },
     });
-  });
-
-  it("accepts a union of errors for MCP", async () => {
-    const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
-    const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
-
-    const Fail = Action.make("fail", {
-      description: "Union failure",
-      access: "write",
-      success: Schema.String,
-      errors: [Schema.Union([Missing, Conflict])],
-    });
-
-    const app = ActionGroup.make({ name: "test" }, Fail).implement({
-      fail: () => Effect.fail(Conflict.make({})),
-    });
-
-    const mcp = makeTestMcp(app, Layer.empty);
-    onTestFinished(() => mcp.dispose());
-    expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
-      result: { isError: true, content: [{ type: "text", text: '{"_tag":"Conflict"}' }] },
-    });
-  });
-
-  it("keeps schema refs valid when nesting documents in OpenAPI", () => {
-    const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
-
-    const Read = Action.make("read", {
-      description: "Referenced schema",
-      access: "write",
-      success: Schema.Struct({ first: Item, second: Item }),
-    });
-
-    expectReferencesResolve(
-      Schema.decodeUnknownSync(Schema.Json)(
-        OpenApi.fromApi(
-          ActionHttp.make({ apiPath: "/api/actions" }, ActionGroup.make({ name: "test" }, Read))
-            .api,
-        ),
-      ),
-      "#/components/schemas/",
-    );
   });
 
   it.each(["Node", "acme/Node~x", "Node % 雪"])(
@@ -307,17 +505,14 @@ describe("projection boundaries", () => {
 
       const Tree = Action.make("tree", {
         description: "Recursive object",
-        access: "write",
+        readOnly: false,
+        caller: Action.Anyone,
         input: Node,
         success: Node,
       });
 
-      const web = makeTestMcp(
-        ActionGroup.make({ name: "test" }, Tree).implement({ tree: Effect.succeed }),
-        Layer.empty,
-      );
+      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }));
 
-      onTestFinished(() => web.dispose());
       const tools = await listTools(web.handler);
       expect(tools).toHaveLength(1);
       const tool = tools[0];
@@ -330,8 +525,8 @@ describe("projection boundaries", () => {
       );
 
       expect(definitions[identifier]).toMatchObject({ type: "object" });
-      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema), "#/$defs/");
-      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
+      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema));
+      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema));
 
       const value = { name: "root", children: [{ name: "leaf", children: [] }] };
       const response = await web.handler(rawToolCall("tree", value));
@@ -341,162 +536,284 @@ describe("projection boundaries", () => {
     },
   );
 
-  it("publishes nested MCP references without rewriting definitions", async () => {
-    const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
+  // A tool's arguments have a JSON Schema object root.
+  const One = Schema.Struct({ kind: Schema.Literal("one"), id: Schema.String });
 
-    const Nested = Action.make("nested", {
-      description: "Nested references",
-      access: "write",
-      input: Schema.Struct({ item: Item }),
-      success: Schema.Struct({ first: Item, second: Item }),
-    });
+  /** One read action per entry of `inputs`, named by its key, without input for `undefined`. */
+  const implementations = (inputs: Readonly<Record<string, Action.Any["input"] | undefined>>) =>
+    Object.entries(inputs).map(([name, input]) =>
+      Action.implement(
+        Action.make(name, { description: name, readOnly: true, caller: Action.Anyone, input }),
+        () => Effect.void,
+      ),
+    );
 
-    const web = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Nested).implement({
-        nested: ({ item }) => Effect.succeed({ first: item, second: item }),
+  it("serves input whose JSON Schema is one object, a suspended or declared one included", async () => {
+    class Fields extends Schema.Class<Fields>("Fields")({ id: Schema.String }) {}
+
+    // A declared type whose value is JSON as it is, and whose JSON Schema its check states.
+    const Declared = Schema.declare(Schema.is(Schema.Struct({ id: Schema.String })), {
+      toCodecJson: () => undefined,
+    }).check(
+      Schema.makeFilter(() => true, {
+        toJsonSchema: () => ({ type: "object", properties: { id: { type: "string" } } }),
       }),
-      Layer.empty,
     );
 
-    onTestFinished(() => web.dispose());
-    const tools = await listTools(web.handler);
-    const tool = tools[0];
+    const inputs = {
+      none: undefined,
+      struct: One,
+      identified: One.annotate({ identifier: "One" }),
+      optional: Schema.Struct({ id: Schema.optionalKey(One) }),
+      record: Schema.Record(Schema.String, Schema.Number),
+      class: Fields,
+      suspended: Schema.suspend(() => One),
+      declared: Declared,
+    };
 
-    if (tool === undefined) throw new Error("Missing nested tool");
-    expect(tool.inputSchema).toMatchObject({
-      properties: { item: { $ref: "#/$defs/Item" } },
-      $defs: { Item: { type: "object" } },
-    });
-    expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema), "#/$defs/");
-    expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema), "#/$defs/");
-  });
+    const tools = await listTools(makeTestMcp(implementations(inputs)).handler);
 
-  it.each([
-    Schema.String,
-    Schema.Struct({}),
-    // Compiles to a `$ref` root, which the native server inlines and still rejects.
-    Schema.String.annotate({ identifier: "Named" }),
-  ])("the native server rejects non-object MCP input at layer build", async (input) => {
-    const Invalid = Action.make("invalid", {
-      description: "Unusable MCP input",
-      access: "write",
-      input,
-      success: Schema.String,
-    });
-
-    const app = ActionGroup.make({ name: "test" }, Invalid).implement({
-      invalid: () => Effect.succeed("unused"),
-    });
-
-    const layer = ActionMcp.layerHttp([app], {
-      name: "test",
-      version: "0",
-      path: "/mcp",
-    }).pipe(Layer.provide(HttpRouter.layer), Layer.provide(HttpServer.layerServices));
-
-    await expect(Effect.runPromise(Effect.scoped(Layer.build(layer)))).rejects.toThrow(
-      /Expected "object"|Missing key/,
+    expect(tools.map(({ name, inputSchema }) => [name, inputSchema.type])).toEqual(
+      Object.keys(inputs).map((name) => [name, "object"]),
     );
   });
+
+  // Checked when the server is made, where the native server would die building the layer.
+  it("refuses input that is not one object with keys, naming every such action", () => {
+    class NoFields extends Schema.Class<NoFields>("NoFields")({}) {}
+
+    const Other = Schema.Struct({ kind: Schema.Literal("other"), code: Schema.Number });
+
+    const inputs = {
+      union: Schema.Union([One, Other]),
+      nullable: Schema.NullOr(One),
+      // An object to TypeScript, `anyOf` to MCP.
+      single: Schema.Union([One]),
+      scalar: Schema.String,
+      // Compiles to a `$ref` root, which the native server inlines and still rejects.
+      named: Schema.String.annotate({ identifier: "Named" }),
+      array: Schema.Array(One),
+      tuple: Schema.Tuple([Schema.String]),
+      // No keys, and accepts any value but `null`.
+      anything: Schema.Struct({}),
+      fieldless: NoFields,
+    };
+
+    const refused = implementations(inputs);
+
+    const status = Action.implement(
+      Action.make("status", { description: "Status", readOnly: true, caller: Action.Anyone }),
+      () => Effect.void,
+    );
+
+    const options = { name: "test", version: "0" };
+    const message = `MCP tool input must be one object with keys, such as a struct: ${Object.keys(inputs).join(", ")}`;
+
+    expect(() => ActionMcp.layerHttp([status, ...refused], options)).toThrow(message);
+    expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
+  });
+
+  // An endpoint's registry is its own: native features register on it as its `features`, and
+  // elsewhere when merged beside it.
+  // The endpoint's authentication decides by tool name, so a native tool never takes an
+  // action's: it would replace the action's tool, and inherit a public one's access.
+  it("refuses a native feature's tool of an action's name", async () => {
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const Native = Toolkit.make(Tool.make("ping", { success: Schema.String }));
+
+    const native = McpServer.toolkit(Native).pipe(
+      Layer.provide(Native.toLayer({ ping: () => Effect.succeed("native") })),
+    );
+
+    const app = Action.implement(Ping, () => Effect.void);
+
+    const served = serve(
+      ActionMcp.layerHttp(app, { name: "test", version: "0", features: native }),
+    );
+
+    await expect(listTools(served.handler)).rejects.toThrow(
+      "Duplicate MCP tool: ping, claimed by an action and a native feature",
+    );
+  });
+
+  it("serves native resources, prompts and tools given as features, and none merged beside", async () => {
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const Native = Toolkit.make(Tool.make("native", { success: Schema.String }));
+
+    const native = Layer.mergeAll(
+      McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("#") }),
+      McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
+      McpServer.toolkit(Native).pipe(
+        Layer.provide(Native.toLayer({ native: () => Effect.succeed("native") })),
+      ),
+    );
+
+    const app = Action.implement(Ping, () => Effect.void);
+    const options = { name: "test", version: "0" };
+
+    const served = serve(ActionMcp.layerHttp(app, { ...options, features: native }));
+    const beside = serve(Layer.mergeAll(ActionMcp.layerHttp(app, options), native));
+
+    const listed = async (handler: Handler) => {
+      const resources = await handler(mcpRequest({ method: "resources/list" }));
+      const prompts = await handler(mcpRequest({ method: "prompts/list" }));
+
+      return {
+        tools: (await listTools(handler)).map(({ name }) => name).toSorted(),
+        resources: await resources.json(),
+        prompts: await prompts.json(),
+      };
+    };
+
+    expect(await listed(served.handler)).toMatchObject({
+      tools: ["native", "ping"],
+      resources: { result: { resources: [{ uri: "docs://readme", name: "README" }] } },
+      prompts: { result: { prompts: [{ name: "triage" }] } },
+    });
+
+    expect(await listed(beside.handler)).toMatchObject({
+      tools: ["ping"],
+      resources: { result: { resources: [] } },
+      prompts: { error: { code: -32601 } },
+    });
+  });
+
+  it.effect(
+    "reads features with the services provided around the endpoints, built once for all",
+    () =>
+      Effect.gen(function* () {
+        class Docs extends Context.Service<Docs, string>()("registration/Docs") {}
+
+        let built = 0;
+
+        const docs = Layer.effect(
+          Docs,
+          Effect.sync(() => (built++, "# Acme")),
+        );
+
+        const features = Layer.mergeAll(
+          McpServer.resource({
+            uri: "docs://readme",
+            name: "README",
+            content: Effect.service(Docs),
+          }),
+          McpServer.prompt({
+            name: "triage",
+            content: () => Effect.map(Effect.service(Docs), (readme) => `Triage with ${readme}`),
+          }),
+        );
+
+        const app = Action.implement(
+          Action.make("ping", { description: "Ping", readOnly: true, caller: Action.Anyone }),
+          () => Effect.void,
+        );
+
+        const endpoints = Layer.mergeAll(
+          ActionMcp.layerHttp(app, { name: "a", version: "0", path: "/a", features }),
+          ActionMcp.layerHttp(app, { name: "b", version: "0", path: "/b", features }),
+        ).pipe(Layer.provide(docs));
+
+        yield* Effect.gen(function* () {
+          for (const url of ["/a", "/b"]) {
+            const read = yield* HttpClient.execute(
+              Testing.mcpRequest("resources/read", { uri: "docs://readme" }, { url }),
+            );
+
+            expect(yield* read.json).toMatchObject({
+              result: { contents: [{ uri: "docs://readme", text: "# Acme" }] },
+            });
+
+            const got = yield* HttpClient.execute(
+              Testing.mcpRequest("prompts/get", { name: "triage" }, { url }),
+            );
+
+            expect(yield* got.json).toMatchObject({
+              result: { messages: [{ content: { type: "text", text: "Triage with # Acme" } }] },
+            });
+          }
+        }).pipe(Effect.provide(Testing.layer(endpoints)));
+
+        expect(built).toBe(1);
+      }),
+  );
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
     const Scalar = Action.make("scalar", {
       description: "Scalar error",
-      access: "write",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
-      errors: [Schema.String],
+      error: [Schema.String],
     });
 
-    const app = ActionGroup.make({ name: "test" }, Scalar).implement({
+    const apps = Action.implement([Scalar], {
       scalar: () => Effect.fail("failure"),
     });
 
-    const web = makeTestHttp(app, Layer.empty);
-    onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
-    onTestFinished(() => mcp.dispose());
-    const response = await web.handler(post("/api/actions/test/scalar"));
-    expect(response.status).toBe(500);
+    const web = makeTestHttp(apps);
+
+    const mcp = makeTestMcp(apps);
+
+    const response = await web.handler(post("/api/scalar"));
+    expect(response.status).toBe(422);
     expect(await response.json()).toBe("failure");
     expect(await (await mcp.handler(rawToolCall("scalar"))).json()).toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '"failure"' }] },
     });
   });
 
-  it("encodes output and optional input correctly through native MCP", async () => {
-    const Encode = Action.make("encode", {
-      description: "Output transform",
-      access: "write",
-      input: Schema.Struct({ value: Schema.optionalKey(Schema.FiniteFromString) }),
-      success: Schema.FiniteFromString,
-    });
-
-    const web = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Encode).implement({
-        encode: ({ value }) => Effect.succeed(value ?? 42),
-      }),
-      Layer.empty,
-    );
-
-    onTestFinished(() => web.dispose());
-    const response = await web.handler(rawToolCall("encode"));
-    expect(await response.text()).toContain('"structuredContent":"42"');
-  });
-
-  it("reports invalid MCP arguments through the native InvalidParams path, never as a declared failure", async () => {
-    const Echo = Action.make("echo", {
-      description: "Number",
-      access: "write",
-      input: Schema.Struct({ value: Schema.FiniteFromString }),
-      success: Schema.Finite,
-    });
-
-    const web = makeTestMcp(
-      ActionGroup.make({ name: "test" }, Echo).implement({
-        echo: ({ value }) => Effect.succeed(value),
-      }),
-      Layer.empty,
-    );
-
-    onTestFinished(() => web.dispose());
-    // McpServer presents InvalidParams from a tool as an isError result carrying the message.
-    const reply = await (await web.handler(rawToolCall("echo", { value: "nope" }))).json();
-    expect(reply).toMatchObject({ result: { isError: true } });
-    expect(reply).not.toHaveProperty("result.structuredContent");
-    expect(JSON.stringify(reply)).toContain("Expected a finite number");
-  });
-
-  it("turns invalid output and defects into sanitized native failures on both transports", async () => {
+  it("turns invalid output and errors, and defects, into sanitized native failures on both transports", async () => {
     const Broken = Action.make("broken", {
       description: "Bad output",
-      access: "write",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.Finite,
+    });
+
+    const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
+
+    const Refused = Action.make("refused", {
+      description: "Bad declared error",
+      readOnly: false,
+      caller: Action.Anyone,
+      success: Schema.String,
+      error: [Domain],
     });
 
     const Boom = Action.make("boom", {
       description: "Defect",
-      access: "write",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Broken, Boom).implement({
+    const apps = Action.implement([Broken, Refused, Boom], {
       broken: () => Effect.succeed(Infinity),
+      // Construction checks bypassed deliberately: the surface must reject this value.
+      refused: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
       boom: () => Effect.die(new Error("secret database password")),
     });
 
-    const web = makeTestHttp(app, Layer.empty);
-    onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
-    onTestFinished(() => mcp.dispose());
+    const web = makeTestHttp(apps);
 
-    // HttpApi renders a response-encoding failure as an empty 400 and a defect as an
-    // empty 500; the native McpServer reports both as a generic isError tool result.
-    for (const [name, status] of [
-      ["broken", 400],
-      ["boom", 500],
-    ] as const) {
-      const http = await web.handler(post(`/api/actions/test/${name}`));
-      expect(http.status).toBe(status);
+    const mcp = makeTestMcp(apps);
+
+    // A result or a declared error that does not encode is a defect, like any other: HTTP
+    // answers each with an empty 500, and the native McpServer reports each as a generic
+    // isError tool result.
+    for (const name of ["broken", "refused", "boom"]) {
+      const http = await web.handler(post(`/api/${name}`));
+      expect(http.status).toBe(500);
       expect(await http.text()).toBe("");
       const reply = await (await mcp.handler(rawToolCall(name))).text();
       expect(reply).toContain('"isError":true');
@@ -508,20 +825,21 @@ describe("projection boundaries", () => {
   it("lowers declaration schemas to JSON identically on both transports", async () => {
     const Stamp = Action.make("stamp", {
       description: "Date round trip",
-      access: "write",
+      readOnly: false,
+      caller: Action.Anyone,
       input: Schema.Struct({ d: Schema.Date }),
       success: Schema.Struct({ d: Schema.Date }),
     });
 
-    const app = ActionGroup.make({ name: "test" }, Stamp).implement({ stamp: Effect.succeed });
+    const apps = Action.implement([Stamp], { stamp: Effect.succeed });
     const iso = "1970-01-01T00:00:00.000Z";
-    const web = makeTestHttp(app, Layer.empty);
-    onTestFinished(() => web.dispose());
-    const mcp = makeTestMcp(app, Layer.empty);
-    onTestFinished(() => mcp.dispose());
+    const web = makeTestHttp(apps);
+
+    const mcp = makeTestMcp(apps);
+
     const tools = await listTools(mcp.handler);
     expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
-    const http = await web.handler(post("/api/actions/test/stamp", { d: iso }));
+    const http = await web.handler(post("/api/stamp", { d: iso }));
     expect(http.status).toBe(200);
     expect(await http.json()).toEqual({ d: iso });
     expect(await (await mcp.handler(rawToolCall("stamp", { d: iso }))).json()).toMatchObject({
@@ -529,39 +847,114 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("passes HTTP cancellation to the running Effect and finalizes it", async () => {
-    const started = Effect.runSync(Deferred.make<void>());
-    const stopped = Effect.runSync(Deferred.make<void>());
+  it.effect("passes HTTP cancellation to the running Effect and finalizes it", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
 
-    const Slow = Action.make("slow", {
-      description: "Wait",
-      access: "write",
+      const Slow = Action.make("slow", {
+        description: "Wait",
+        readOnly: false,
+        caller: Action.Anyone,
+        success: Schema.String,
+      });
+
+      const apps = Action.implement([Slow], {
+        slow: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(stopped, undefined)),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const running = yield* Effect.forkChild(send(post("/api/slow")));
+
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(running);
+        // The handler's finalizer ran: the request's interruption reached it.
+        yield* Deferred.await(stopped);
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Slow]), apps))));
+    }),
+  );
+});
+
+describe("MCP registration", () => {
+  const WhoAmI = Action.make("whoAmI", {
+    description: "Current user",
+    readOnly: false,
+    caller: Action.Anyone,
+    success: Schema.String,
+  });
+
+  const Invoice = Action.make("invoice", {
+    description: "Invoice total",
+    readOnly: false,
+    caller: Action.Anyone,
+    success: Schema.String,
+  });
+
+  const Audit = Action.make("audit", {
+    description: "Audit",
+    readOnly: false,
+    caller: Action.Anyone,
+    success: Schema.String,
+  });
+
+  const whoAmI = Action.implement(WhoAmI, () => Effect.succeed("ada"));
+
+  const billing = Action.implement([Invoice, Audit], {
+    invoice: () => Effect.succeed("4"),
+    audit: () => Effect.succeed("clean"),
+  });
+
+  it("serves several implementations as the tools of one endpoint", async () => {
+    const web = makeTestMcp([whoAmI, billing]);
+
+    expect((await listTools(web.handler)).map(({ name }) => name).sort()).toEqual([
+      "audit",
+      "invoice",
+      "whoAmI",
+    ]);
+    expect(await (await web.handler(rawToolCall("whoAmI"))).json()).toMatchObject({
+      result: { structuredContent: "ada" },
+    });
+  });
+
+  it("names each tool after its action, and checks names where tools are served", () => {
+    const same = () =>
+      Action.make("same", {
+        description: "",
+        readOnly: false,
+        caller: Action.Anyone,
+        success: Schema.String,
+      });
+
+    const First = same();
+    const Second = same();
+
+    // Two contracts may share a name; whoever serves both refuses them.
+    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action: same");
+
+    const apps = [
+      Action.implement(First, () => Effect.succeed("a")),
+      Action.implement(Second, () => Effect.succeed("b")),
+    ];
+
+    const options = { name: "test", version: "0" };
+    expect(() => ActionMcp.layerHttp(apps, options)).toThrow("Duplicate MCP tool: same");
+    expect(() => ActionMcp.runStdio(apps, options)).toThrow("Duplicate MCP tool: same");
+    expect(() => ActionToolkit.make(apps)).toThrow("Duplicate tool: same");
+
+    const Other = Action.make("other", {
+      description: "",
+      readOnly: false,
+      caller: Action.Anyone,
       success: Schema.String,
     });
 
-    const app = ActionGroup.make({ name: "test" }, Slow).implement({
-      slow: () =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.never),
-          Effect.ensuring(Deferred.succeed(stopped, undefined)),
-        ),
-    });
-
-    const web = makeTestHttp(app, Layer.empty);
-    onTestFinished(() => web.dispose());
-    const abort = new AbortController();
-
-    const request = new Request("http://localhost/api/actions/test/slow", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-      signal: abort.signal,
-    });
-
-    const running = web.handler(request);
-    await Effect.runPromise(Deferred.await(started));
-    abort.abort();
-    expect((await running).status).toBe(499);
-    await Effect.runPromise(Deferred.await(stopped));
+    expect(() =>
+      ActionMcp.layerHttp([whoAmI, Action.implement(Other, () => Effect.succeed("b"))], options),
+    ).not.toThrow();
   });
 });

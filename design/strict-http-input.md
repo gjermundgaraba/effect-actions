@@ -1,0 +1,3 @@
+# Strict HTTP input
+
+HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. Only `layer`'s own API carries it: a client encodes with Effect's default, dropping a field the input does not declare, as TypeScript lets a wider value through. This reverses 0.8.0, whose typed clients failed with `SchemaError` before sending such a call, one the compiler had accepted. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.

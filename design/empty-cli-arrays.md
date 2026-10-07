@@ -1,0 +1,3 @@
+# Empty CLI arrays
+
+An occurrence of `[]` adds no element to a repeated flag, a choice's included, so `--tags '[]'` alone sends `[]`, where no occurrence leaves an optional field out: without it a patch's "clear" could not be sent from derived flags, and `--tags '[]'` wrote `["[]"]`. Lost: an element whose text is `[]`. A repeated positional argument, an array field listed last in `positional`, reads `[]` the same way. Shown: `[]` among a choice's values in help, where it tells a caller how to send an empty list. Rejected: an occurrence holding any JSON array as the whole array, which a choice's flag cannot take, since `Param.variadic` repeats one parameter and `Param.orElse` makes two; and `--input` beside a struct's flags, which a field named `input` collides with.

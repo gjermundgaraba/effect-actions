@@ -1,8 +1,6 @@
 import { Schema } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
-import * as ActionHttp from "../src/ActionHttp.js";
-import { Forbidden, Unauthenticated } from "./auth.js";
+import { CurrentActor } from "./authorization.js";
 
 export const User = Schema.Struct({
   id: Schema.String,
@@ -15,59 +13,51 @@ export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
   { httpApiStatus: 404 },
 ) {}
 
-export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
-  "InvalidRequest",
-  { message: Schema.String },
-  { httpApiStatus: 400 },
-) {}
-
-export class InternalError extends Schema.TaggedError<InternalError>()(
-  "InternalError",
-  { message: Schema.String },
-  { httpApiStatus: 500 },
-) {}
-
 // Reachable without credentials: it must work before anyone has signed in.
 export const Status = Action.make("status", {
   description: "Report whether the service is up.",
-  success: Schema.Struct({ service: Schema.String, users: Schema.Finite }),
-  access: "read",
+  success: { service: Schema.String, users: Schema.Finite },
+  readOnly: true,
+  caller: Action.Anyone,
 });
 
 export const GetUser = Action.make("getUser", {
   description: "Look up a user in your tenant.",
-  input: Schema.Struct({ id: Schema.String }),
+  input: { id: Schema.String },
   success: User,
-  errors: [UserNotFound],
-  access: "read",
-  mcp: { name: "get_user" },
+  error: UserNotFound,
+  readOnly: true,
+  caller: CurrentActor,
 });
 
 export const RenameUser = Action.make("renameUser", {
   description: "Rename a user in your tenant.",
-  input: Schema.Struct({
+  input: {
     id: Schema.String,
     name: Schema.String.check(Schema.isMinLength(1)),
-  }),
+  },
   success: User,
-  errors: [UserNotFound],
-  access: "write",
-  mcp: { name: "rename_user", destructive: false },
+  error: UserNotFound,
+  readOnly: false,
+  caller: CurrentActor,
+  mcp: { destructiveHint: false },
 });
 
 // On either transport, input is { value: "21" }. The handler receives numeric 21.
 export const Double = Action.make("double", {
   description: "Double a finite number supplied as a string.",
-  input: Schema.Struct({ value: Schema.FiniteFromString }),
+  input: { value: Schema.FiniteFromString },
   success: Schema.Finite,
-  access: "read",
+  readOnly: true,
+  caller: CurrentActor,
 });
 
 // Identity comes from the host's authenticated request context, not action input.
 export const WhoAmI = Action.make("whoAmI", {
   description: "Inspect the authenticated actor.",
-  success: Schema.Struct({ id: Schema.String, tenantId: Schema.String }),
-  access: "read",
+  success: { id: Schema.String, tenantId: Schema.String },
+  readOnly: true,
+  caller: CurrentActor,
 });
 
 export const Change = Schema.Struct({
@@ -78,43 +68,7 @@ export const Change = Schema.Struct({
 
 export const ListChanges = Action.make("listChanges", {
   description: "List the renames made in your tenant, oldest first.",
-  success: Schema.Struct({ changes: Schema.Array(Change) }),
-  access: "read",
-  mcp: { name: "list_changes" },
+  success: { changes: Schema.Array(Change) },
+  readOnly: true,
+  caller: CurrentActor,
 });
-
-// Malformed requests and unencodable results each get one typed answer over HTTP.
-const schemaError = {
-  invalid: {
-    schema: InvalidRequest,
-    make: () => new InvalidRequest({ message: "The request does not match the action's input." }),
-  },
-  internal: {
-    schema: InternalError,
-    make: () => new InternalError({ message: "The request could not be completed." }),
-  },
-};
-
-// One group per access rule: the host mounts each under its own middleware.
-export const PublicActions = ActionGroup.make({ name: "public", schemaError }, Status);
-
-export const UserActions = ActionGroup.make(
-  { name: "users", schemaError },
-  GetUser,
-  RenameUser,
-  Double,
-  WhoAmI,
-);
-
-// A tool for agents reviewing what happened: the HTTP binding leaves its group out.
-export const AuditActions = ActionGroup.make({ name: "audit", schemaError }, ListChanges);
-
-// Contract-level: the server and its clients share the mount path, and the
-// failures the surface itself answers with, so a typed client decodes the 401
-// from authentication middleware and the 403 from the authorization hook
-// instead of reporting a decode error. No handler can return either.
-export const Http = ActionHttp.make(
-  { apiPath: "/api/actions", errors: [Unauthenticated, Forbidden] },
-  PublicActions,
-  UserActions,
-);

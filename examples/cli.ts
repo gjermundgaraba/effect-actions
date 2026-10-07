@@ -1,25 +1,26 @@
-import { Console, Effect, Logger } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Effect } from "effect";
+import { Command } from "effect/cli";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as ActionCli from "../src/ActionCli.js";
-import { actors, authorize, CurrentActor } from "./auth.js";
-import { UserApp } from "./handlers.js";
+import { actors, CurrentActor } from "./authorization.js";
+import { userActions } from "./handlers.js";
 import { Users } from "./users.js";
 
-// The CLI binds the same hook as the servers; a local caller is not trusted more.
-const command = ActionCli.command(UserApp, "double", {
-  parameters: { value: Flag.String("value") },
-  input: ({ value }) => ({ value }),
-  before: authorize,
-});
+// `users get-user --id 1`: a subcommand per action, a flag per input field. The
+// implementation's `authorize` runs here as on the servers; a local caller is not trusted more.
+const cli = ActionCli.make(userActions, { name: "users" }).pipe(
+  // Services go on the command: built when an action runs, never for `--help` or a
+  // mistyped flag.
+  Command.provide(Users.layerMemory),
+  // No remote caller to authenticate: the host supplies the identity the contracts declare.
+  Command.provideSync(CurrentActor, actors.alice),
+);
 
-Command.runWith(command, { version: "0.1.0" })(process.argv.slice(2)).pipe(
-  Effect.tapCause((cause) => Console.error(cause)),
-  Effect.provideService(Logger.LogToStderr, true),
-  // The hook runs here too, so a local caller supplies an identity for it
-  // exactly as HTTP middleware does for a request.
-  Effect.provideService(CurrentActor, actors.alice),
-  Effect.provide(Users.layerMemory),
+// Effect's own runner: the result goes to stdout, and a failure to stderr as the JSON HTTP
+// sends, such as `{"_tag":"UserNotFound","id":"9"}`, exiting 1. `logToStderr`, applied last,
+// sends every other report and log there too, so scripts read stdout alone.
+Command.run(cli, { version: "0.1.0" }).pipe(
   Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain({ disableErrorReporting: true }),
+  ActionCli.logToStderr,
+  NodeRuntime.runMain,
 );

@@ -6,33 +6,100 @@ For people and agents changing the library. Consumers read [docs/](docs/README.m
 
 Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` (`devEngines` in `package.json`; CI tests 22, 24 and 26) and [Vite+](https://viteplus.dev). Run `vp install`, then see
 [AGENTS.md](AGENTS.md) for the commands, the repository map, and the validation rules.
+`devEngines` is Vite+'s own Node floor, which only developing the package needs; `engines`,
+`^22.12.0 || ^24.0.0 || >=26.0.0`, is the floor the published package states to consumers.
 
 Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, docs, and tests.
 
 ## Documentation rules
 
 - `README.md` sells the library to humans: the pitch, one showcase snippet, why, install, links. No reference material.
-- `docs/` is for coding agents. Every module card has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. No tutorials, no narrative. State what holds and what breaks. `setup.md`, `guarantees.md` and `CONTEXT.md` are cross-cutting pages with the structure their role needs.
+- `docs/` is for coding agents. Each public-module reference card has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. State what holds and what breaks, without tutorials or narrative. Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
 - `docs/README.md` is the routing table and doubles as the skill body. One line per page saying when to read it.
 - A change to public behavior changes the matching `docs/` page in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
-- `tests/docs.test.ts` compares the README showcase and selected executable examples with files in `examples/`, so those snippets stay type-checked. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
+- A snippet fenced as ` ```ts example=<file> ` stays byte-identical to that file in `examples/`, which `tests/docs.test.ts` checks, so it stays type-checked; the first snippet of every Canonical section is one. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
 - A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
-- Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior.
+- Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Implementation rationale belongs in code comments or below.
+- Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior: the 415, CORS preflight, the generic MCP defect text.
+- Every file in `examples/` is listed in `examples/README.md`, which `tests/docs.test.ts` checks; `docs/README.md` links there rather than keeping a list of its own.
+
+## Tests
+
+- Tests import Vitest through `@effect/vitest`, which re-exports it. The pnpm catalog pins `vitest` to the version Vite+ depends on (`vp toolchain vitest`), and an override holds every package to it, Vite+ included, so one Vitest is installed.
+- A test running an Effect is `it.effect`, which provides a scope, a `TestClock` and a `TestConsole`: it serves its routes with `Testing.layer(routes)` in its scope, sending a raw request with `send`, and what it logs is captured. A command's lines are read from a console of its own run (`logged`, `printed`), so a test running several reads each one's. A codec that completes later awaits a resolved promise, `Effect.promise(() => Promise.resolve())`, which no `TestClock` holds, where `Effect.yieldNow` would still complete synchronously; a test whose handler waits on real time is `it.live`.
+- A test that runs no Effect stays `async`, such as one sending raw requests to a web handler, which `serve` releases when the test finishes. So does a test of an Effect run under no layer, of a context given per request (`serveWithContext`), of `Testing.layer(handler)` run from a Promise test, as a downstream harness runs it, and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead. An `it.effect` test takes `serve`'s handler only to wrap it, recording what a client sends, or to answer a program that provides its own client.
+- Each test provides the layers whose state or builds it reads, such as `Users.layerMemory`, rather than sharing one through `it.layer`.
+- Type pins live in `*.spec.ts` and use `expectTypeOf`; a compile failure is an expression under `@ts-expect-error`, which a runtime test may also put on a call it makes as plain JavaScript would.
 
 ## Design notes
 
-- HTTP input is strict through `HttpApi.PayloadParseOptions` alone. A strict `ParseOptions` would also govern error encoding, where it could turn a declared error into an empty 500. An action without input is `Schema.Record(Schema.String, Schema.Never)`: `Schema.Struct({})` accepts any value but `null`, and has no object root for MCP.
-- MCP sends the encoded success itself as `structuredContent`. This reverses the `{ value }` object every tool output was rooted at through 0.7.0: MCP 2026-07-28, the only revision served, allows any JSON value there and any `outputSchema` root, and the specification's own examples send the value directly.
-- A text field (`mcp.text`) is moved out of what native `McpServer.registerToolkit` registers, which always sends the whole success as structured content. `ActionMcp` runs `registerToolkit` against a copy of the server whose `addTool` removes the field from the listed `outputSchema` and, when it holds a string, from each success, and sends it as a raw text block. Any other result is the native one, so decoding, failures and defects stay the native server's. The tool carries its field as an annotation. A native option for this would delete the copy.
+One file per decision in [`design/`](design/). Each note is titled, and cited by its title. It states the decision, why, what it costs, and the alternative it rejected; a reversal names the decision it reverses, by commit where one recorded it, in a sentence. History beyond that belongs in commit messages.
+
+- [Strict HTTP input](design/strict-http-input.md)
+- [Schema failures](design/schema-failures.md)
+- [MCP over HTTP](design/mcp-over-http.md)
+- [MCP over stdio](design/mcp-over-stdio.md)
+- [Successes unwrapped](design/successes-unwrapped.md)
+- [Text field](design/text-field.md)
+- [Request values win](design/request-values-win.md)
+- [JSON-typed routes](design/json-typed-routes.md)
+- [Authentication descriptor and provider](design/authentication-descriptor-and-provider.md)
+- [One descriptor per name](design/one-descriptor-per-name.md)
+- [Refusals outside the router](design/refusals-outside-the-router.md)
+- [Built protected resource](design/built-protected-resource.md)
+- [Request body size](design/request-body-size.md)
+- [TypeScript 7](design/typescript-7.md)
+- [Handler requirements](design/handler-requirements.md)
+- [Deferred build channels](design/deferred-build-channels.md)
+- [Contract identity](design/contract-identity.md)
+- [Contract fields](design/contract-fields.md)
+- [Error option](design/error-option.md)
+- [Built authorization](design/built-authorization.md)
+- [Limits](design/limits.md)
+- [Toolkit tool ids](design/toolkit-tool-ids.md)
+- [A scope per call](design/a-scope-per-call.md)
+- [Approval](design/approval.md)
+- [CLI failures](design/cli-failures.md)
+- [CLI console](design/cli-console.md)
+- [Error tags](design/error-tags.md)
+- [Native MCP features](design/native-mcp-features.md)
+- [Empty CLI arrays](design/empty-cli-arrays.md)
+- [CLI services](design/cli-services.md)
+- [In-process client](design/in-process-client.md)
+- [Testing implementations](design/testing-implementations.md)
+- [Binding selection](design/binding-selection.md)
+- [Runtime checks](design/runtime-checks.md)
+- [Enforced security](design/enforced-security.md)
+- [Written return types](design/written-return-types.md)
+- [Input values in messages](design/input-values-in-messages.md)
+- [Builder memoization](design/builder-memoization.md)
+- [One MCP URL](design/one-mcp-url.md)
+- [Effect barrels](design/effect-barrels.md)
+- [Testing a web handler](design/testing-a-web-handler.md)
+- [A request, not a send](design/a-request-not-a-send.md)
+- [Surface selection](design/surface-selection.md)
+- [Contracts by name](design/contracts-by-name.md)
+- [Local and remote CLI](design/local-and-remote-cli.md)
+- [Verifier errors](design/verifier-errors.md)
 
 ## Release
 
-The package publishes to the `latest` tag. The `effect` peer is `^4.0.0`; the package is built
-and tested against the Effect release in `devDependencies`. When adopting a newer Effect
-release, bump `devDependencies`, re-run the full check, and raise the peer's lower bound only if
-the package starts to depend on the newer release.
+The package publishes to the `latest` tag. The `effect` peer is `~4.0.0`, Effect's 4.0.x
+patches: Effect marks every module the surfaces build on (`effect/http`, `effect/http-api`,
+`effect/ai`, `effect/cli`, `effect/encoding`) `@stability unstable`, which a minor release may
+change, and none `experimental`, which a patch may. The surfaces also rely on behavior of those
+modules that no type states: a Toolkit finds a tool's handler by the tool's `id`,
+`HttpApiBuilder.group` lays its build context over each request's, and the MCP HTTP runtime
+refuses a stateless request whose `Mcp-Method` or `Mcp-Name` header disagrees with its body
+(400, JSON-RPC `-32020`), which lets a mixed endpoint's authentication gate decide from those
+headers alone. The package is built and
+tested against the Effect release in `devDependencies`; `.github/workflows/effect-latest.yml`
+runs the full check weekly against the newest 4.x. When that passes on a new minor, widen the
+peer's upper bound to admit it, and raise the lower bound only if the package starts to depend on
+the newer release. When adopting a newer Effect release for development, bump `devDependencies`
+and re-run the full check.
 
 To release: set `version` in `package.json`, add its section to [CHANGELOG.md](CHANGELOG.md)
 (every breaking change and how a consumer migrates), commit as `Prepare <version>`, tag
@@ -98,8 +165,7 @@ code exactly as unsafe.
   `no-unknown-type-aliases`, `no-object-parameters`, `no-unsafe-dictionary-type`): decode at the
   I/O boundary and pass owner contracts inward. There is no name-based exemption; a parameter named
   `cause` is as unknown as any other, and thrown-value boundaries use an explained directive.
-- **Evidence loss** (`no-known-value-widening`, `no-widen-then-assert`,
-  `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
+- **Evidence loss** (`no-known-value-widening`, `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
   `typescript/no-unsafe-type-assertion`): keep inference or validate with `satisfies`. A SAFETY
   comment is necessary, not sufficient; the type-aware assertion rule needs its own explained
   directive when an assertion is a genuine erasure boundary.
@@ -113,7 +179,8 @@ code exactly as unsafe.
 - **Reflection** (`no-reflect-apply`, `no-reflect-get`): prefer typed access; keep a concrete
   exception only where receiver or getter semantics matter.
 - **Module mocking** (`no-module-mocking`): replace dependencies through real seams. The rule
-  recognizes `vi` from `vite-plus/test`, this repository's test import, as well as `vitest`.
+  recognizes `vi` from `@effect/vitest`, this repository's test import, and `vite-plus/test`, as
+  well as `vitest`.
 - **Compile-failure fixtures** (`tests/types.spec.ts`): an expression under `@ts-expect-error`
   yields an error type, which the `no-unsafe-*` rules see as `any`. Those lines carry a directive
   stating that nothing runs; the fixture's purpose is the compile failure itself.
@@ -126,17 +193,25 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
   without mutable builders.
 - `anti-slop/no-shape-in-symbol-names`: a substring cannot establish domain ownership; naming is
   reviewed by people.
+- `anti-slop/no-widen-then-assert`: the widening is `no-known-value-widening`'s and the narrowing
+  assertion `typescript/no-unsafe-type-assertion`'s, which reads types; read from syntax, it took
+  a destructured field's evidence from the whole initializer, which its sibling rule corrects.
+- `anti-slop-effect/no-service-constructor-imports`: a `make[A-Z]` name cannot establish that an
+  import is a dependency-bearing service constructor, and a namespace import bypasses it, which
+  rewards the import change the policy calls laundering.
 
 ### Verification
 
 - `tools/oxlint/tests/rules.test.ts` runs the corrected rules through Oxlint's `RuleTester`,
-  with an accepted and a still-rejected case for each correction, and a justified directive
-  paired with its unused counterpart for each corrected rule.
-- `tools/oxlint/tests/configuration.test.ts` runs `vp lint` on fixtures inside the repository, so
-  the probes go through the registered plugin and the effective configuration: unknown parameters
-  named `cause`, module mocking via `vite-plus/test`, `typeof` inside and outside predicates, a
-  justified directive and its unused counterpart, maintained JavaScript, and the three disabled
-  rules.
+  with an accepted and a still-rejected case for each correction.
+- `tools/oxlint/tests/configuration.test.ts` runs `vp lint` once on fixtures inside the
+  repository, so the probes go through the registered plugin and the effective configuration:
+  unknown parameters named `cause`, module mocking via `@effect/vitest`, `typeof` inside and
+  outside predicates, literal evidence in destructured bindings, a justified
+  `no-unknown-parameters` directive and its unused counterpart, and maintained JavaScript.
+  Every other lint, format and type check ignores the fixtures, which hold findings on purpose:
+  the run sets `LINT_PROBE`, which lifts their lint ignore pattern in `vite.config.ts`, so a
+  `vp check` beside `vp test` never reports them.
 
 ### History
 

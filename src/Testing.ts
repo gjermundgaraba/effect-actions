@@ -1,185 +1,331 @@
-import { Option, Predicate, Schema } from "effect";
-import type { HttpApi, HttpApiGroup } from "effect/http-api";
-import { type ClientOptions, fetchApiClient } from "./internal/fetchClient.js";
-
-/** A web handler, such as `HttpRouter.toWebHandler(routes).handler`. */
-export type Handler = (request: Request) => Promise<Response>;
+import {
+  Context,
+  Effect,
+  FileSystem,
+  identity,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  type Scope,
+} from "effect";
+import {
+  Etag,
+  type Headers,
+  HttpClient,
+  type HttpClientError,
+  HttpClientRequest,
+  type HttpClientResponse,
+  HttpEffect,
+  HttpPlatform,
+  HttpRouter,
+  type HttpServerRequest,
+} from "effect/http";
+import { McpSchema } from "effect/ai";
+import { Sse } from "effect/encoding";
+import type * as Action from "./Action.js";
+import { assertOnce, projectedErrors } from "./internal/actions.js";
+import { type Call, inputOf } from "./internal/call.js";
+import { type BuiltIn, Refusal } from "./internal/errors.js";
+import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
+import { clientOf, type Served } from "./internal/memory.js";
 
 /**
- * The native grouped HTTP client, calling `handler` in memory instead of the network.
- * `baseUrl` defaults to `http://localhost`.
+ * The native `HttpClient`, answered by `handler` instead of the network: a web handler the
+ * test serves, which other tests may share, such as
+ * `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices))).handler`,
+ * the routes' platform services provided, as `layer(routes)` provides them itself. It is the
+ * client `layer(routes)` gives, without building anything: the test owns the handler, and
+ * disposes of it.
  */
-export const httpClient = <Id extends string, Groups extends HttpApiGroup.Constraint>(
-  api: HttpApi.HttpApi<Id, Groups>,
-  handler: Handler,
-  options?: ClientOptions,
-) =>
-  fetchApiClient(api, (input, init) => handler(new Request(input, init)), {
-    baseUrl: "http://localhost",
-    ...options,
-  });
-
-/** A stateless 2026-07-28 request. */
-export interface McpRequestOptions {
-  readonly url: string | URL;
-  readonly method: string;
-  readonly params?: McpRequestParams;
-  readonly headers?: ConstructorParameters<typeof Headers>[0];
-}
-
+export function layer(
+  handler: (request: Request) => Promise<Response>,
+): Layer.Layer<HttpClient.HttpClient>;
+// Last: TypeScript reports a call matching no overload by the last one's error alone, so an
+// argument that is neither form is reported against the routes.
 /**
- * What `JSON.stringify` accepts, not only valid JSON: `undefined` fields are
- * dropped, and tests send malformed arguments on purpose.
+ * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
+ * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
+ * released with its scope, without request logs. What they still require is this layer's, as
+ * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
+ * theirs provides, including one a global middleware reads. The routes keep their real
+ * authentication: a client sends its caller's credential. Provided around it, the test
+ * program shares them. It never requires
+ * the platform services, `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`: one
+ * provided around it is the routes' too, and `HttpServer.layerServices`' defaults stand in for
+ * the rest, whose `FileSystem` is a no-op. A relative URL resolves against `http://localhost`.
+ * The client is the layer's own: the program's other HTTP clients get none of its requests,
+ * and it none of theirs.
  */
-export type McpRequestValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | ReadonlyArray<McpRequestValue>
-  | { readonly [key: string]: McpRequestValue };
+export function layer<A, E, R>(
+  routes: Layer.Layer<A, E, R>,
+): Layer.Layer<
+  HttpClient.HttpClient,
+  E,
+  Exclude<
+    | HttpRouter.Request.Without<R>
+    | HttpRouter.Request.Only<"Requires", R>
+    | HttpRouter.Request.Only<"GlobalRequires", R>,
+    Served
+  >
+>;
+export function layer(
+  routes: Layer.Layer<unknown, unknown, unknown> | ((request: Request) => Promise<Response>),
+): Layer.Layer<HttpClient.HttpClient, unknown, unknown> {
+  // A web handler the test serves, which builds and releases its routes itself.
+  if (!Layer.isLayer(routes)) return clientOf(routes);
 
-/** JSON-RPC `params`; `_meta` is merged shallowly over the defaults `mcpRequest` supplies. */
-export interface McpRequestParams {
-  readonly _meta?: { readonly [key: string]: McpRequestValue };
-  readonly [key: string]: McpRequestValue;
-}
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      // The platform services `HttpServer.layerServices` has, beneath the program's own at
+      // build and per request, so one provided around the layer wins. Supplied rather than
+      // required: every `ActionHttp.layer` declares them, so every test would owe them. The
+      // default `HttpPlatform` serves files from the program's `FileSystem`, or else from a
+      // no-op one; built fresh, so that no platform built elsewhere in the program, on another
+      // `FileSystem`, stands in for it.
+      const fileSystem = Option.getOrElse(yield* Effect.serviceOption(FileSystem.FileSystem), () =>
+        FileSystem.makeNoop({}),
+      );
 
-/** Build one stateless 2026-07-28 JSON-RPC request, with client metadata defaulted. */
-export const mcpRequest = ({
-  url,
-  method,
-  params = {},
-  headers: init,
-}: McpRequestOptions): Request => {
-  const headers = new Headers(init);
-  headers.set("content-type", "application/json");
-  headers.set("accept", "application/json, text/event-stream");
-  headers.set("mcp-protocol-version", "2026-07-28");
-  headers.set("mcp-method", method);
-
-  if (Predicate.isString(params.name)) headers.set("mcp-name", params.name);
-
-  return new Request(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: {
-        ...params,
-        _meta: Object.assign(
-          {
-            "io.modelcontextprotocol/clientCapabilities": {},
-            "io.modelcontextprotocol/clientInfo": { name: "test", version: "0" },
-          },
-          params._meta,
-          { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+      const platform = yield* Layer.build(
+        Layer.fresh(
+          Layer.mergeAll(HttpPlatform.layer, Path.layer, Etag.layerWeak).pipe(
+            Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem)),
+          ),
         ),
-      },
+      );
+
+      // Requests run in the context the layer is built in, as under `HttpRouter.serve`: a
+      // `TestClock` or reference provided around the program reaches middleware and handlers.
+      const context = Context.merge(platform, yield* Effect.context<never>());
+
+      const app = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provideContext(context));
+
+      return clientOf(
+        HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
+          context,
+        )(app),
+      );
     }),
-  });
+  );
+}
+
+/** An MCP request's parameters, as `mcpRequest` takes them: JSON, with any `_meta`. */
+export type { Params as McpParams } from "./internal/mcp.js";
+
+/** Where `mcpClient` sends, and through what client. */
+export interface McpClientOptions {
+  /**
+   * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
+   * the default `ActionMcp.layerHttp` path.
+   */
+  readonly url?: string;
+  /** Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token, say. */
+  readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
+}
+
+/** Where an `mcpRequest` goes, and with what headers. */
+export interface McpRequestOptions {
+  /**
+   * The endpoint, resolved by the `HttpClient` that sends the request: relative under `layer`.
+   * Defaults to `/mcp`, as `mcpClient`'s does; converting to a web `Request` needs an absolute
+   * one.
+   */
+  readonly url?: string;
+  readonly headers?: Headers.Input;
+}
+
+/**
+ * An answer a client method cannot decode as the action's success or a declared error,
+ * such as the native server's message for invalid arguments or an unknown tool. Its message
+ * holds the answer.
+ */
+export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
+  message: Schema.String,
+}) {}
+
+/**
+ * What one call of `A` fails with: a declared error value (the action's own or a built-in one
+ * from the tool, or a refusal from the endpoint's authentication), a `SchemaError` when the
+ * input does not encode or the success does not decode, an `HttpClientError` when the
+ * endpoint could not be reached, or an `McpCallError` for any other answer.
+ */
+type CallError<A extends Action.Any> =
+  | A["error"][number]["Type"]
+  | BuiltIn
+  | Schema.SchemaError
+  | HttpClientError.HttpClientError
+  | McpCallError;
+
+/** Every action of `Actions` as `client.<action>(input)`, calling its tool. */
+export type McpClient<Actions extends ReadonlyArray<Action.Any>> = {
+  readonly [A in Actions[number] as A["name"]]: Call<
+    A,
+    Effect.Effect<A["success"]["Type"], CallError<A>>
+  >;
 };
 
-/** One `tools/call` for `mcpCall`: the endpoint, the tool and its arguments. */
-export interface McpCallOptions {
-  readonly url: string | URL;
-  /** The tool name, `mcp.name` of its action. */
-  readonly name: string;
-  /** Defaults to `{}`. Like `params`, it may be malformed on purpose. */
-  readonly arguments?: { readonly [key: string]: McpRequestValue };
-  readonly headers?: ConstructorParameters<typeof Headers>[0];
-}
+/** One block of a tool result's content. */
+type Block = McpSchema.CallToolResult["content"][number];
 
-/**
- * A tool call's outcome: the success from `structuredContent`, with the text an action's
- * `mcp.text` field sent before it; or the error text of an `isError` result, parsed as
- * JSON when it is JSON (a declared error, whatever its shape) and kept as the text
- * otherwise (the native server's own message, such as for invalid arguments).
- */
-export type McpCallResult =
-  | { readonly isError: false; readonly value: Schema.Json; readonly text?: string }
-  | { readonly isError: true; readonly error: Schema.Json };
+/** The text of a block, none of a block of another kind. */
+const textOf = (block: Block | undefined): string | undefined =>
+  block?.type === "text" ? block.text : undefined;
 
-/** The JSON-RPC response to a `tools/call`: a tool result or a protocol error. */
+/** The JSON-RPC response to a `tools/call`: the native tool result, or a protocol error. */
 const ToolReply = Schema.Union([
-  Schema.Struct({
-    result: Schema.Struct({
-      isError: Schema.optionalKey(Schema.Boolean),
-      structuredContent: Schema.optionalKey(Schema.Json),
-      content: Schema.Array(
-        Schema.Struct({ type: Schema.String, text: Schema.optionalKey(Schema.String) }),
-      ),
-    }),
-  }),
+  Schema.Struct({ result: McpSchema.CallToolResult }),
   Schema.Struct({ error: Schema.Struct({ code: Schema.Finite, message: Schema.String }) }),
 ]);
 
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolReply));
 
-const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
-
 /**
- * Call one tool through `handler` with a stateless 2026-07-28 request and return its
- * outcome. A response that is not an HTTP 200 carrying a tool result, such as an
- * authentication refusal or a JSON-RPC error, throws; use `mcpRequest` to inspect one.
+ * The reply in a response: its body when it is one JSON message, or the last reply among an
+ * event stream's events, which notifications may precede.
  */
-export const mcpCall = async (
-  handler: Handler,
-  { url, name, headers, arguments: args = {} }: McpCallOptions,
-): Promise<McpCallResult> => {
-  const response = await handler(
-    mcpRequest({
-      url,
-      method: "tools/call",
-      params: { name, arguments: args },
-      ...(headers === undefined ? {} : { headers }),
-    }),
+const replyOf = (response: HttpClientResponse.HttpClientResponse, text: string) => {
+  if (!(response.headers["content-type"] ?? "").startsWith("text/event-stream")) {
+    return decodeReply(text);
+  }
+
+  const data: Array<string> = [];
+
+  Sse.makeParser((event) => {
+    if (Predicate.isTagged(event, "Event")) data.push(event.data);
+  }).feed(text);
+
+  return Option.fromNullishOr(
+    data.flatMap((message) => Option.toArray(decodeReply(message))).at(-1),
+  );
+};
+
+/** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
+const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
+    text,
+  ).pipe(
+    Effect.mapError(() => otherwise),
+    Effect.flatMap(Effect.fail),
   );
 
-  const body = await response.text();
+/** The tool call of `action` with `input` on `client`, sending to `url`. */
+const callTool = (
+  client: HttpClient.HttpClient,
+  url: string,
+  action: Action.Any,
+  input: Action.Any["input"]["Type"],
+): Effect.Effect<unknown, unknown> => {
+  const { name } = action;
 
-  if (response.status !== 200) {
-    throw new Error(`MCP tools/call "${name}" answered ${response.status}: ${body}`);
-  }
+  const other = (answer: string) =>
+    new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
 
-  // A JSON body is one message; an event stream carries one per `data:` line, and
-  // notifications may precede the reply.
-  const reply = body
-    .split("\n")
-    .map((line) => line.replace(/^data:/, "").trim())
-    .flatMap((line) => Option.toArray(decodeReply(line)))
-    .at(-1);
+  return Effect.gen(function* () {
+    const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
-  if (reply === undefined) throw new Error(`MCP tools/call "${name}" had no reply: ${body}`);
-
-  if ("error" in reply) {
-    throw new Error(
-      `MCP tools/call "${name}" failed with ${reply.error.code}: ${reply.error.message}`,
+    const response = yield* client.execute(
+      mcpRequest("tools/call", { name, arguments: encoded }, { url }),
     );
-  }
 
-  const { result } = reply;
+    const text = yield* response.text;
 
-  if (result.isError === true) {
-    const text = result.content.find((content) => content.type === "text")?.text ?? "";
+    // Only authentication answers otherwise: a refusal of its own, or authorization's or a
+    // handler's step-up refusal.
+    if (response.status !== 200) {
+      return yield* failWith(Refusal.members, text, other(`answered ${response.status}: ${text}`));
+    }
 
-    return { isError: true, error: Option.getOrElse(parseJson(text), () => text) };
-  }
+    const reply = replyOf(response, text);
 
-  if (result.structuredContent === undefined) {
-    throw new Error(`MCP tools/call "${name}" returned no structured content: ${body}`);
-  }
+    if (Option.isNone(reply)) return yield* Effect.fail(other(`had no reply: ${text}`));
 
-  // Every success ends with the JSON copy of its structured content; a text field
-  // comes first.
-  const [text] = result.content.length > 1 ? result.content : [];
+    if ("error" in reply.value) {
+      const { code, message } = reply.value.error;
 
-  return {
-    isError: false,
-    value: result.structuredContent,
-    ...(text?.text === undefined ? {} : { text: text.text }),
-  };
+      return yield* Effect.fail(other(`failed with ${code}: ${message}`));
+    }
+
+    const { result } = reply.value;
+
+    if (result.isError === true) {
+      const error = textOf(result.content.find((block) => block.type === "text")) ?? "";
+
+      return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
+    }
+
+    if (result.structuredContent === undefined) {
+      return yield* Effect.fail(other(`returned no structured content: ${text}`));
+    }
+
+    return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(
+      result.structuredContent,
+    );
+  });
+};
+
+/**
+ * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
+ * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
+ * encoded with the action's schema, and the success decoded from its structured content. A
+ * declared error the tool returns, the action's own or a refusal, is its decoded value, and so
+ * is a refusal the endpoint's authentication answers with. The argument may be omitted when
+ * `{}` is a valid input. Requires the native `HttpClient`, such as the one `layer` provides.
+ */
+export function mcpClient<const Actions extends ReadonlyArray<Action.Any>>(
+  actions: Actions,
+  options?: McpClientOptions,
+): Effect.Effect<McpClient<Actions>, never, HttpClient.HttpClient>;
+export function mcpClient(
+  actions: ReadonlyArray<Action.Any>,
+  { url = defaultPath, transformClient = identity }: McpClientOptions = {},
+): Effect.Effect<
+  {
+    readonly [name: string]: (...input: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>;
+  },
+  never,
+  HttpClient.HttpClient
+> {
+  assertOnce("action", actions);
+
+  return Effect.map(HttpClient.HttpClient, (native) => {
+    const client = transformClient(native);
+
+    return Object.fromEntries(
+      actions.map((action) => {
+        return [
+          action.name,
+          (...args: ReadonlyArray<Action.Any["input"]["Type"]>) =>
+            Effect.flatMap(inputOf(action, args), (input) => callTool(client, url, action, input)),
+        ];
+      }),
+    );
+  });
+}
+
+/**
+ * One stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves it,
+ * as the native request value: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
+ * `params.uri` for `resources/read` and `params.name` otherwise, and the client metadata in
+ * `_meta` are filled in, under any `_meta` given, such as a `progressToken`; the protocol
+ * version is always the request's own. The test sends it: `HttpClient.execute` answers the
+ * response as the endpoint sent it, whatever its status, and `HttpClientRequest.toWebResult`
+ * gives the web `Request` a web handler or `fetch` takes, once `url` is absolute. It is for a test
+ * asserting on what `mcpClient` decodes away, such as `tools/list`, a refusal's challenge, or
+ * a call its types would not send.
+ */
+export const mcpRequest = (
+  method: string,
+  params: Params = {},
+  { headers = {}, url = defaultPath }: McpRequestOptions = {},
+): HttpClientRequest.HttpClientRequest => {
+  const { headers: routing, body } = statelessRequest(method, params);
+
+  // The routing headers go over any the caller sets.
+  return HttpClientRequest.post(url).pipe(
+    HttpClientRequest.setHeaders(headers),
+    HttpClientRequest.setHeaders(routing),
+    HttpClientRequest.bodyJsonUnsafe(body),
+  );
 };

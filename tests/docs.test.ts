@@ -1,39 +1,109 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it, onTestFinished, vi } from "vite-plus/test";
-import { Effect, Layer } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
-import { routes } from "../examples/quickstart.js";
+import { expect, it } from "@effect/vitest";
+import { Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { routes } from "../examples/quickstart-server.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
-import { userName } from "../examples/promise-client.js";
-import { makeTestApp } from "./server.js";
+import manifest from "../package.json" with { type: "json" };
+import { published } from "../scripts/published.mjs";
 import { docsDirectory } from "../scripts/skill.ts";
-import { mcpRequest } from "../src/Testing.js";
+import { mcpRequest } from "./requests.js";
+import { serve } from "./serve.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-// Documented snippets that must stay byte-identical to a type-checked example.
-it.each([
-  ["README.md", "## Looks like this", "quickstart.ts"],
-  ["docs/README.md", "## Minimal program", "quickstart.ts"],
-  ["docs/ActionHttp.md", "### Client", "quickstart-client.ts"],
-  ["docs/ActionHttpClient.md", "## Canonical", "promise-client.ts"],
-  ["docs/ActionCli.md", "## Canonical", "cli.ts"],
-  ["docs/ActionCliClient.md", "## Canonical", "cli-client.ts"],
-  ["docs/ActionCatalog.md", "## Canonical", "catalog.ts"],
-  ["docs/ActionToolkit.md", "## Canonical", "toolkit-authorized.ts"],
-  ["docs/Testing.md", "## Canonical", "testing.ts"],
-  ["docs/ActionMcp.md", "### Cross-origin browsers", "mcp-browser.ts"],
-  ["docs/ActionMcp.md", "### Subprocess", "mcp-stdio.ts"],
-])("keeps %s %s aligned with its type-checked source", (document, heading, file) => {
-  const source = read(`examples/${file}`)
-    .trim()
-    .replace(/"\.\.\/src\/(\w+)\.js"/g, '"@gjermundgaraba/effect-actions/$1"');
+/** README.md and every page of docs/, which the skill copies. */
+const pages = [
+  "README.md",
+  ...readdirSync(docsDirectory)
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => `docs/${name}`),
+];
 
-  const section = read(document).split(`\n${heading}\n`)[1];
-  const snippet = section?.match(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/)?.[1];
-  expect(snippet).toBe(source);
+/** An example as a page shows it, importing the published package. */
+const documented = (file: string) => published(read(`examples/${file}`).trim());
+
+// A snippet fenced as `ts example=<file>` stays byte-identical to that type-checked example.
+const snippets = pages.flatMap((page) =>
+  Array.from(
+    read(page).matchAll(/\x60{3}ts example=(\S+)\n([\s\S]*?)\n\x60{3}/g),
+    ([, file = "", code]) => [page, file, code] as const,
+  ),
+);
+
+it.each(snippets)(
+  "keeps %s's snippet of %s aligned with its type-checked source",
+  (_, file, code) => {
+    expect(code).toBe(documented(file));
+  },
+);
+
+// Code copied from a page's canonical example must compile: the first snippet of every
+// Canonical section is an example. A snippet without the mark, such as a fragment, is not
+// checked.
+it("marks every canonical snippet as a type-checked example", () => {
+  const unmarked = pages.filter((page) => {
+    const [, section] = read(page).split("\n## Canonical\n");
+
+    return (
+      section !== undefined &&
+      !/^[^\x60]*(?:\x60[^\x60]+\x60[^\x60]*)*\x60{3}ts example=/.test(section)
+    );
+  });
+
+  expect(unmarked).toEqual([]);
+});
+
+// The entry points a consumer imports are the modules the package exports, each once.
+it("lists every module the package exports under docs/setup.md's entry points", () => {
+  const section = read("docs/setup.md").split("\n## Entry points\n")[1] ?? "";
+
+  const [block = ""] = Array.from(
+    section.matchAll(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/g),
+    ([, code]) => code,
+  );
+
+  const modules = Object.keys(manifest.exports).flatMap((path) =>
+    path === "./package.json" ? [] : [path.slice("./".length)],
+  );
+
+  expect(block.split("\n").toSorted()).toEqual(
+    modules.map((module) => `import * as ${module} from "${manifest.name}/${module}";`).toSorted(),
+  );
+});
+
+// Docs describe behavior, and ship as the skill: no page names this repository's sources.
+it("names no source path in docs/", () => {
+  for (const page of readdirSync(docsDirectory)) {
+    expect(read(`docs/${page}`), page).not.toMatch(/\bsrc\//);
+  }
+});
+
+// The examples README is their one index.
+it("lists every example in examples/README.md", () => {
+  const index = read("examples/README.md");
+
+  const examples = readdirSync(new URL("../examples/", import.meta.url)).filter((name) =>
+    name.endsWith(".ts"),
+  );
+
+  for (const example of examples) expect(index, example).toContain(`](${example})`);
+});
+
+// Notes are cited by title, so CONTRIBUTING.md's index names each note in design/ by its own.
+it("indexes every design note in CONTRIBUTING.md by its title", () => {
+  const indexed = Array.from(
+    read("CONTRIBUTING.md").matchAll(/^- \[(.+)\]\(design\/(.+)\)$/gm),
+    ([, title, file]) => `${file}: ${title}`,
+  );
+
+  const notes = readdirSync(new URL("../design/", import.meta.url)).map(
+    (file) => `${file}: ${read(`design/${file}`).split("\n")[0]?.replace(/^# /, "")}`,
+  );
+
+  expect(indexed.toSorted()).toEqual(notes.toSorted());
 });
 
 // The skill is a copy of docs/, so every relative link must resolve inside docs/.
@@ -54,49 +124,22 @@ it("keeps relative links in docs/ inside docs/", () => {
   }
 });
 
-it("runs the documented client against the quickstart routes", async () => {
-  const web = HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
+it.effect("runs the documented client against the quickstart routes", () =>
+  Effect.gen(function* () {
+    const web = serve(routes);
 
-  onTestFinished(() => web.dispose());
-
-  const result = await Effect.runPromise(
-    greeting.pipe(
+    const result = yield* greeting.pipe(
       Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
         web.handler(new Request(input, init)),
       ),
-    ),
-  );
+    );
 
-  expect(result).toBe("Hello, Ada!");
-});
-
-it("runs the documented Promise client against the example application", async () => {
-  const web = makeTestApp();
-  onTestFinished(() => web.dispose());
-  onTestFinished(() => {
-    vi.unstubAllGlobals();
-  });
-
-  // The example uses the global fetch; the in-memory application stands in for the server.
-  vi.stubGlobal("fetch", (input: string | URL | Request, init?: RequestInit) =>
-    web.handler(new Request(input, init)),
-  );
-
-  expect(await userName("1")).toBe("Ada");
-  expect(await userName("404")).toBe("(no such user)");
-
-  vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
-  expect(await userName("1")).toBe("(server unreachable)");
-});
+    expect(result).toBe("Hello, Ada!");
+  }),
+);
 
 it("serves browser preflight and MCP calls with the documented CORS configuration", async () => {
-  const web = HttpRouter.toWebHandler(browserRoutes.pipe(Layer.provide(HttpServer.layerServices)), {
-    disableLogger: true,
-  });
-
-  onTestFinished(() => web.dispose());
+  const web = serve(browserRoutes);
 
   const preflight = await web.handler(
     new Request("http://localhost/mcp", {
@@ -119,7 +162,6 @@ it("serves browser preflight and MCP calls with the documented CORS configuratio
 
   const response = await web.handler(
     mcpRequest({
-      url: "http://localhost/mcp",
       method: "tools/call",
       params: { name: "greet", arguments: { name: "Ada" } },
       headers: { origin: "https://ui.example.com" },

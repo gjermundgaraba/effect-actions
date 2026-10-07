@@ -1,27 +1,19 @@
 import { NodeRuntime } from "@effect/platform-node";
-import { Console, Effect, Schema, Stream } from "effect";
+import { Console, Effect, Stream } from "effect";
 import * as Action from "../src/Action.js";
-import * as ActionGroup from "../src/ActionGroup.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import { Greet } from "./quickstart.js";
 
-const Double = Action.make("double", {
-  description: "Double a finite number.",
-  input: Schema.Struct({ value: Schema.FiniteFromString }),
-  success: Schema.Finite,
-  access: "read",
-});
+// A public action: no authorization, and its tool owes no caller.
+const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 
-const app = ActionGroup.make({ name: "math" }, Double).implement({
-  double: ({ value }) => Effect.succeed(value * 2),
-});
-
-const binding = ActionToolkit.make([app]);
+const { toolkit, layer } = ActionToolkit.make(greet);
 
 const program = Effect.gen(function* () {
-  const tools = yield* binding.toolkit;
-  const calls = yield* tools.handle("double", { value: "21" });
+  const tools = yield* toolkit;
+  const calls = yield* tools.handle("greet", { name: "Ada" });
   const results = yield* Stream.runCollect(calls);
   yield* Console.log(results);
-}).pipe(Effect.provide(binding.layer));
+}).pipe(Effect.provide(layer));
 
 program.pipe(NodeRuntime.runMain);

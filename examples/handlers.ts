@@ -1,24 +1,26 @@
 import { Effect } from "effect";
-import { CurrentActor } from "./auth.js";
-import { AuditActions, PublicActions, UserActions } from "./contracts.js";
+import * as Action from "../src/Action.js";
+import { authorize, CurrentActor } from "./authorization.js";
+import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";
 
-// No request requirement at all, so this group can be mounted without authentication.
-export const PublicApp = PublicActions.implement(
+// A public contract: no authorization runs, and it owes nothing per request, on every
+// surface.
+export const status = Action.implement(
+  Status,
   Effect.gen(function* () {
     const users = yield* Users;
 
-    return {
-      status: () =>
-        Effect.map(users.count, (count) => ({ service: "effect-actions", users: count })),
-    };
+    return () => Effect.map(users.count, (count) => ({ service: "effect-actions", users: count }));
   }),
 );
 
-// Capture Users at startup; resolve CurrentActor per request. Each surface binds
-// the `before` hook, which has already refused an actor without the permission
-// the action's access needs.
-export const UserApp = UserActions.implement(
+// Capture Users at startup; resolve CurrentActor per request. Every surface authenticates
+// the caller, then runs `authorize` before each handler, so it has already refused an actor
+// without the permission the action needs. HTTP serves only the actions its binding holds:
+// `listChanges`, which it leaves out, is a tool and a command, never a route.
+export const userActions = Action.implement(
+  [GetUser, RenameUser, WhoAmI, ListChanges],
   Effect.gen(function* () {
     const users = yield* Users;
 
@@ -26,17 +28,7 @@ export const UserApp = UserActions.implement(
       getUser: ({ id }) => Effect.flatMap(CurrentActor, (actor) => users.get(actor.tenantId, id)),
       renameUser: ({ id, name }) =>
         Effect.flatMap(CurrentActor, (actor) => users.rename(actor, id, name)),
-      double: ({ value }) => Effect.succeed(value * 2),
       whoAmI: () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
-    };
-  }),
-);
-
-export const AuditApp = AuditActions.implement(
-  Effect.gen(function* () {
-    const users = yield* Users;
-
-    return {
       listChanges: () =>
         Effect.gen(function* () {
           const actor = yield* CurrentActor;
@@ -45,4 +37,10 @@ export const AuditApp = AuditActions.implement(
         }),
     };
   }),
+  { authorize },
 );
+
+// Pure: no builder and no services, only the authorization.
+export const double = Action.implement(Double, ({ value }) => Effect.succeed(value * 2), {
+  authorize,
+});

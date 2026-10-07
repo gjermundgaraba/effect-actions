@@ -5,25 +5,28 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const root = fileURLToPath(new URL("../", import.meta.url));
+const root = fileURLToPath(new URL("../", import.meta.url));
 
 export const docsDirectory = join(root, "docs");
 
 export const skillDirectory = join(root, "skills", "effect-actions");
 
-export interface SkillFile {
+interface SkillFile {
   /** Relative to the skill directory. */
   readonly path: string;
   readonly content: string;
 }
 
-export const frontmatter = `---
+// The skill's header. Its pages follow the main branch, so it sends a project that installs the
+// package to the installed version's own docs/.
+const frontmatter = `---
 name: effect-actions
 description: >
-  Reference for @gjermundgaraba/effect-actions. Use when defining Effect action contracts
-  (Action, ActionGroup), serving them over HTTP or MCP, projecting them into an Effect AI
-  Toolkit or a CLI, exporting a catalog, wiring Authentication middleware, calling an
-  ActionHttp binding with HttpApiClient, or testing those adapters in memory.
+  Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
+  which defines Effect action contracts once for HTTP, MCP, native Toolkits, and CLIs.
+  These pages follow the repository's main branch, which can be ahead of the latest
+  release; where the package is installed, read the same pages in
+  node_modules/@gjermundgaraba/effect-actions/docs/, which describe the installed version.
 ---
 
 `;
