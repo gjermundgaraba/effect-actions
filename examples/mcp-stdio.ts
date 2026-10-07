@@ -17,10 +17,10 @@ const status = Action.implement(Status, () =>
 
 // Serves until the host closes stdin, then exits 0. Protocol messages use stdout
 // exclusively: runStdio writes its program's Effect logs and `Console` output to stderr, and
-// `onStderr`, applied last, does so for the layers provided around it, and reports a failure
+// `logToStderr`, applied last, does so for the layers provided around it, and reports a failure
 // there rather than as runMain would, on stdout.
 ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
   Effect.provide(NodeStdio.layer),
-  ActionCli.onStderr,
+  ActionCli.logToStderr,
   NodeRuntime.runMain,
 );

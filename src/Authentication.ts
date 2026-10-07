@@ -114,9 +114,9 @@ const challengeOf = (named: Named, presented: boolean): string =>
   ]);
 
 /**
- * Refuse a protected resource that cannot be published, as `layer` and `refusal` both do: one
- * under a scheme other than Bearer (`oauth` false), a `scopesRequired` that is no list of
- * OAuth scope tokens, as `Forbidden` refuses, and a resource with a fragment, which no
+ * Refuse a protected resource that cannot be published, as `layer` and `refusalResponse` both
+ * do: one under a scheme other than Bearer (`oauth` false), a `scopesRequired` that is no list
+ * of OAuth scope tokens, as `Forbidden` refuses, and a resource with a fragment, which no
  * request URL carries, so its discovery would never answer (RFC 9728). A resource an Effect
  * builds is checked for its scheme alone, and for the rest once built.
  */
@@ -157,8 +157,8 @@ const settle = (
       : {}),
   });
 
-/** What `refusal` answers about. */
-export interface RefusalOptions {
+/** What `refusalResponse` answers about. */
+export interface RefusalResponseOptions {
   /**
    * The descriptor refusing, whose scheme decides the challenge: Bearer's, below, when left
    * out; another scheme's 401 names that scheme, and nothing steps up under it.
@@ -180,9 +180,9 @@ export interface RefusalOptions {
  * and status alone, a 401 naming that scheme. `HttpServerResponse.toWeb` gives it as a web
  * `Response`.
  */
-export const refusal = (
+export const refusalResponse = (
   error: Refusal,
-  options?: RefusalOptions,
+  options?: RefusalResponseOptions,
 ): HttpServerResponse.HttpServerResponse => {
   const authentication = options?.authentication;
   const oauth = authentication === undefined || isBearer(authentication.security);
@@ -315,15 +315,15 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
     : HttpApiSecurity.Http;
 
 /**
- * Browser-safe declaration shared by clients and remote surfaces: the identity `service` it
+ * Browser-safe declaration shared by clients and remote surfaces: the `identity` it
  * authenticates, by the one native scheme `security`, Bearer unless it names another, such
- * as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`. The literal name is the
- * provider identity, like a native Context.Key name, and the scheme's OpenAPI key, so it
+ * as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`. The literal name
+ * identifies the provider, like a native Context.Key name, and the scheme's OpenAPI key, so it
  * holds only letters, digits, `_`, `.` and `-`; reuse one name only for one declaration.
  */
 export const make = <const Name extends string, I, A, const O extends Options = {}>(
   name: Name,
-  service: Context.Key<I, A>,
+  identity: Context.Key<I, A>,
   ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>>>
 ): Descriptor<I, A, SecurityOf<O>, Name> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
@@ -343,7 +343,7 @@ export const make = <const Name extends string, I, A, const O extends Options = 
 
   return {
     name,
-    service,
+    identity,
     // SAFETY: `SecurityOf` is the scheme given, or Bearer wherever it may be left out.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options.
     security: security as SecurityOf<O>,
@@ -393,7 +393,7 @@ const presented = (credential: Credential): boolean =>
     : credential.username !== "" || Redacted.value(credential.password) !== "";
 
 /**
- * The provider of `auth`: `verify`, or an Effect building it once per layer graph, run on
+ * The provider of `authentication`: `verify`, or an Effect building it once per layer graph, run on
  * each remote request a protected action receives, with the credential the descriptor's
  * scheme decodes. A Bearer scheme answers each 401 with its challenge, and may publish the
  * OAuth protected resource `protectedResource`.
@@ -409,7 +409,7 @@ export function layer<
   EP = never,
   RP = never,
 >(
-  auth: Descriptor<I, A, S, Name>,
+  authentication: Descriptor<I, A, S, Name>,
   verify:
     | Verify<NoInfer<A>, NoInfer<S>, R>
     | Effect.Effect<Verify<NoInfer<A>, NoInfer<S>, R>, EX, RX>,
@@ -422,13 +422,13 @@ export function layer<
   | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
 >;
 export function layer(
-  auth: Any,
+  authentication: Any,
   verify:
     | Verify<unknown, Security, unknown>
     | Effect.Effect<Verify<unknown, Security, unknown>, unknown, unknown>,
   options: LayerOptions<unknown, unknown> = {},
 ): Layer.Layer<Provider<unknown>, unknown, unknown> {
-  const { security } = auth;
+  const { security } = authentication;
   // Bearer is the scheme OAuth clients challenge, discover and step up under.
   const oauth = isBearer(security);
   const protectedResource = options.protectedResource;
@@ -447,7 +447,7 @@ export function layer(
   });
 
   return Layer.effect(
-    auth["~provider"],
+    authentication["~provider"],
     Effect.gen(function* () {
       const router = yield* HttpRouter.HttpRouter;
       const { metadataUrl, invalid, anonymous, published } = yield* resource;
@@ -476,7 +476,11 @@ export function layer(
       // refusal is answered as any other failure of the route. A Bearer 401 tells a caller
       // who presented a token that it is invalid.
       const challengeOf = (credential: Credential) =>
-        !oauth ? schemeChallenge(security, auth.name) : presented(credential) ? invalid : anonymous;
+        !oauth
+          ? schemeChallenge(security, authentication.name)
+          : presented(credential)
+            ? invalid
+            : anonymous;
 
       const refuse = (error: HttpServerResponse.HttpServerResponse | Refusal) =>
         Effect.succeed(
@@ -510,10 +514,10 @@ export function layer(
         // HTTP: the native security middleware decodes the credential, and the route gets
         // the identity itself.
         middleware: {
-          [auth.name]: (
+          [authentication.name]: (
             route: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>,
             { credential }: { readonly credential: Credential },
-          ) => verified(credential, route, auth.service),
+          ) => verified(credential, route, authentication.identity),
         },
         // HTTP: a step-up refusal leaving the layer's middleware is answered with its
         // challenge; one the middleware turned into another failure, or recovered from, is not.
@@ -535,7 +539,7 @@ export function layer(
                 : verified(
                     credential,
                     oauth ? answerStepUp(route, metadataUrl) : route,
-                    auth["~verified"],
+                    authentication["~verified"],
                   ),
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary.
           )) as Runtime["http"],
@@ -547,7 +551,11 @@ export function layer(
           Effect.flatMap(
             HttpApiBuilder.securityDecode(security),
             (credential) =>
-              verified(credential, Effect.catchIf(route, isRefusal, refuse), auth.service),
+              verified(
+                credential,
+                Effect.catchIf(route, isRefusal, refuse),
+                authentication.identity,
+              ),
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary.
           )) as Runtime["route"],
       };
@@ -560,17 +568,17 @@ type Provides<I> = unknown extends I ? never : I;
 
 /**
  * Native router middleware authenticating a route of the host's own, such as an export, a
- * page frame or a WebSocket upgrade, with `auth`'s provider, as its actions' routes are: the
- * credential its scheme decodes, verified by the same verifier, and the identity provided to
- * the route. It answers as an action route: a missing or invalid credential with the refusal,
- * every response to the request it authenticates `no-store` unless it states its own caching,
- * and a refusal the route fails with, such as a scope check's `Forbidden`, as its status, JSON
- * and challenge, stepping up under Bearer. The layer requires the provider, `layer(auth, ...)`.
- * An erased descriptor, `Any`, provides no service the types can name: its identity is
- * `unknown`, which would discharge every request service the route owes.
+ * page frame or a WebSocket upgrade, with `authentication`'s provider, as its actions' routes
+ * are: the credential its scheme decodes, verified by the same verifier, and the identity
+ * provided to the route. It answers as an action route: a missing or invalid credential with
+ * the refusal, every response to the request it authenticates `no-store` unless it states its
+ * own caching, and a refusal the route fails with, such as a scope check's `Forbidden`, as its
+ * status, JSON and challenge, stepping up under Bearer. The layer requires the provider,
+ * `layer(authentication, ...)`. An erased descriptor, `Any`, provides no service the types can
+ * name: its identity is `unknown`, which would discharge every request service the route owes.
  */
 export const protect = <I, A, S extends Security, Name extends string>(
-  auth: Descriptor<I, A, S, Name>,
+  authentication: Descriptor<I, A, S, Name>,
 ): HttpRouter.Middleware<{
   provides: Provides<I>;
   handles: Refusal;
@@ -580,5 +588,8 @@ export const protect = <I, A, S extends Security, Name extends string>(
   layerRequires: Provider<I, Name>;
 }> =>
   HttpRouter.middleware<{ provides: Provides<I>; handles: Refusal }>()(
-    Effect.map(Effect.service(auth["~provider"]), (runtime) => (route) => runtime.route(route)),
+    Effect.map(
+      Effect.service(authentication["~provider"]),
+      (runtime) => (route) => runtime.route(route),
+    ),
   );

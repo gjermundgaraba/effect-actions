@@ -283,7 +283,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Authentication.middleware(tag, authenticate).layer`                             | The descriptor `Authentication.make("app.Login", tag)`, named by the binding and every MCP endpoint serving protected actions, and its provider `Authentication.layer(Login, verify, { protectedResource })`, provided to their layers, where `verify` takes the credential Effect's native scheme decodes and may fail with a refusal; a session cookie, an API key or Basic is the descriptor's one scheme, `{ security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }) }` |
 | `Authentication.ProtectedResourceOptions`, `BearerChallengeOptions`              | `Authentication.ProtectedResource`, `layer`'s `protectedResource`                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `layer`'s `protectedResource`, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusal`                                                                                                                                                                                                                                                                                                                                            |
+| `Authentication.protectedResource`: its `layer`, `metadataUrl` and `challenge()` | `layer`'s `protectedResource`, which publishes discovery and names its URL in every challenge; outside the router, `Authentication.refusalResponse`                                                                                                                                                                                                                                                                                                                                    |
 | A 401 challenge naming a scope                                                   | `scopesRequired` in the protected resource                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | An insufficient-scope error of your own and a hand-built challenge               | `new Action.Forbidden({ message, scopes: [scope] })`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Middleware provided around a layer to authenticate it                            | The contracts' `caller` decides, and the layer requires the provider: a protected action is authenticated on every layer serving it, a public one on none                                                                                                                                                                                                                                                                                                                              |
@@ -379,10 +379,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   console prints on stdout never corrupt the protocol from its builders, authorizers and handlers. A
   counter or a timer prints its label and its count or the milliseconds since it started, a group
   prints its label without indenting what follows, and `clear` does nothing. Layers provided around
-  it run outside its program: apply `ActionCli.onStderr` last, before `runMain`, in place of 0.8.0's
-  `Logger.LogToStderr` outermost, `disableErrorReporting` and `tapCause` block. It moves their
-  default logger to stderr, and reports there what `runMain` would report on stdout, but does not
-  move their `Console` output or `Logger.consoleJson`: log JSON there with
+  it run outside its program: apply `ActionCli.logToStderr` last, before `runMain`, in place of
+  0.8.0's `Logger.LogToStderr` outermost, `disableErrorReporting` and `tapCause` block. It moves
+  their default logger to stderr, and reports there what `runMain` would report on stdout, but does
+  not move their `Console` output or `Logger.consoleJson`: log JSON there with
   `Logger.withConsoleError(Logger.formatJson)`.
 - `ActionMcp.layerHttp` and `runStdio` throw for an action whose input is not one object with
   keys, such as a union, an array, a scalar, or an object without keys such as a given
@@ -427,7 +427,7 @@ Each area below lists what is renamed or removed, then what changes without a re
 | `ActionCli.command(app, "name")`, `ActionCli.group(app)`                                                                         | `ActionCli.command(implementations, Action)`, `ActionCli.make(implementations, { name })`                                                                                                                                                                                                                                                                                                                                                           |
 | `ActionCli.Options` of `command`, `GroupOptions`; `ActionCliClient.Options`, `GroupOptions`, `Connection`                        | `ActionCli.CommandOptions` of `command` and `remoteCommand`; `ActionCli.Options` of `make` and `remote`; `CommandOptions<typeof Action>` takes the action, where 0.8.0's `Options<Output, …>` took its success                                                                                                                                                                                                                                      |
 | A command failing with the action's failure itself: `Effect.catchTag("UserNotFound", ...)` after `Command.run`                   | `ActionCli.Failure<E>`, Effect CLI's `CliError.UserError` whose `cause` and `reason` are the failure: `Effect.catchReason("UserError", "UserNotFound", ...)`, Effect's own                                                                                                                                                                                                                                                                          |
-| `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith` | `Command.run(cli, { version })` on `NodeRuntime.runMain`, after `ActionCli.onStderr` where stdout feeds scripts (below)                                                                                                                                                                                                                                                                                                                             |
+| `Effect.tapCause(...)`, `Logger.LogToStderr` and `NodeRuntime.runMain({ disableErrorReporting: true })` around `Command.runWith` | `Command.run(cli, { version })` on `NodeRuntime.runMain`, after `ActionCli.logToStderr` where stdout feeds scripts (below)                                                                                                                                                                                                                                                                                                                          |
 | `--input '<json>'`, `--input-file`, `parameters` and its `input` mapper                                                          | Flags from the input: `--tenant-id acme`; `--input "$(cat x.json)"` for an input that is not a struct; a syntax `name`, `positional` and `render` cannot express, such as a flag alias, a flag named apart from its field, or nested input built from several flags, is a native `Command.make` calling `Action.client`, or `ActionHttp.client` over HTTP, whose failures it maps to `CliError.UserError` ([ActionCli.md](docs/ActionCli.md#rules)) |
 
 - Commands and flags are kebab case: `get-user`, `--tenant-id`. A required boolean is a switch;
@@ -473,7 +473,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   default logger. The global `console.log` and other direct writes bypass Effect and still reach
   stdout: keep them off stdout. Layers the host provides, on the command or around the run, log
   outside the command, and `runMain` reports a defect, and a failure of such a layer, on stdout: a
-  CLI whose stdout feeds scripts applies `ActionCli.onStderr` last, before `runMain`, which moves
+  CLI whose stdout feeds scripts applies `ActionCli.logToStderr` last, before `runMain`, which moves
   those layers' default logger to stderr and reports there what `runMain` would, with its exit code,
   but does not move their `Console` output or `Logger.consoleJson`
   ([ActionCli.md](docs/ActionCli.md#rules)).
@@ -577,10 +577,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   verifies the credential its scheme decodes and gives the route the identity, and the route is
   answered as an action's, its refusals and challenges, a `Forbidden` it fails with stepping up
   under Bearer, and `no-store` on every response to a request it authenticates.
-- `Authentication.refusal(error, { authentication, protectedResource, authorization })` is the
-  response authentication answers a refusal with: its status, JSON, `Cache-Control: no-store` and
-  challenge. A caller the router never routes, such as a Node `upgrade` handler admitting a socket,
-  refuses with it rather than building a challenge of its own
+- `Authentication.refusalResponse(error, { authentication, protectedResource, authorization })` is
+  the response authentication answers a refusal with: its status, JSON, `Cache-Control: no-store`
+  and challenge. A caller the router never routes, such as a Node `upgrade` handler admitting a
+  socket, refuses with it rather than building a challenge of its own
   ([Authentication.md](docs/Authentication.md#outside-the-router)). Given `authentication`, a
   descriptor of another scheme, it answers as that descriptor's routes do: its 401 names that
   scheme, and nothing steps up.
@@ -637,7 +637,7 @@ Each area below lists what is renamed or removed, then what changes without a re
   ActionToolkit.make(users, { actions: Tools });
   ```
 
-- `ActionCli.onStderr`, applied last before `runMain`, keeps stdout to a program's results: the
+- `ActionCli.logToStderr`, applied last before `runMain`, keeps stdout to a program's results: the
   default logger of every layer within writes to stderr, and what `runMain` would report on
   stdout, a defect or a failure of a layer the host provides, is reported on stderr once, with
   the exit code `runMain` gives, the defect standing for it carrying the original `Cause` as its
@@ -676,14 +676,16 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `ActionMcp.layerHttp` and `runStdio` take the options' type as their second type argument,
   `<Apps, O, E, R, D>`, as `ActionToolkit.make` and `Action.client` do, and native `features`
   owe no `McpServer`, which the endpoint provides them.
-- `Authentication.refusal` refuses what `layer` refuses, and both refuse a protected resource
-  with a fragment, which discovery could never answer: `A protected resource has no fragment`.
+- `Authentication.refusalResponse` refuses what `layer` refuses, and both refuse a protected
+  resource with a fragment, which discovery could never answer:
+  `A protected resource has no fragment`.
 - A suspended error keeps its `httpApiStatus` over
   HTTP. Layer middleware chosen by a condition within one slot provides nothing, so what one
   choice would provide stays owed.
 - `Testing.mcpClient` reads tool results with the native `McpSchema.CallToolResult`.
-- `Action` exports `BuildContext`, and `ActionHttp` `MethodError`, the types a surface's layer
-  and a client's method are written in, so a package emitting declarations may export them.
+- `Action` exports `BuildContext` and `BuildError`, and `ActionHttp` `MethodError`, the types a
+  surface's layer and a client's method are written in, so a package emitting declarations may
+  export them.
 - `Action.Handlers<typeof actions>` types a builder's record written apart from `implement`, as
   another authorizer of the same handlers takes, so each handler is typed from its contract.
 - `Authentication` exports `Descriptor` and `Provider`, the types `make` and `layer` return, so

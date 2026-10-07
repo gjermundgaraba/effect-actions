@@ -69,7 +69,7 @@ export interface Runtime {
  */
 export interface Descriptor<I, A, S extends Security, Name extends string = string> {
   readonly name: Name;
-  readonly service: Context.Key<I, A>;
+  readonly identity: Context.Key<I, A>;
   readonly security: S;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
   readonly "~middleware": Context.Key<SecurityMiddleware<I, Name>, unknown>;
@@ -130,7 +130,7 @@ export const assertAuthentication = (
   for (const action of actions) {
     if (
       action.caller !== Anyone &&
-      (auth === undefined || action.caller.key !== auth.service.key)
+      (auth === undefined || action.caller.key !== auth.identity.key)
     ) {
       throw new Error(
         `Protected action '${action.name}' requires its matching authentication descriptor`,
@@ -148,6 +148,6 @@ export const promote = <A, E, R>(
     Effect.serviceOption(auth["~verified"]),
     (actor): Effect.Effect<A, E | Unauthenticated, R> =>
       Option.isSome(actor)
-        ? Effect.provideService(run, auth.service, actor.value)
+        ? Effect.provideService(run, auth.identity, actor.value)
         : Effect.fail(new Unauthenticated()),
   );

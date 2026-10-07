@@ -94,7 +94,12 @@ export const remoteCli = ActionCli.remote(LookupHttp, { name: "lookup" });
 
 export const localCli = ActionCli.make(lookup, { name: "lookup" });
 
-export const lookupLayer = Action.layer(lookup);
+// What its builders read and fail with at startup, named from `Action`.
+export const lookupLayer: Layer.Layer<
+  never,
+  Action.BuildError<typeof lookup>,
+  Action.BuildContext<typeof lookup>
+> = Action.layer(lookup);
 
 export const testing = Testing.layer(lookupHttp);
 

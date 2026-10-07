@@ -823,7 +823,7 @@ describe("Basic", () => {
     const route = await web.handler(request());
 
     for (const error of [new Action.Unauthenticated(), new Action.Forbidden({ scopes: ["a"] })]) {
-      const own = Authentication.refusal(error, { authentication: Basic });
+      const own = Authentication.refusalResponse(error, { authentication: Basic });
 
       expect(own.headers["www-authenticate"]).toBe(
         Predicate.isTagged(error, "Unauthenticated")

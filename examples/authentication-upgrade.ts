@@ -21,6 +21,8 @@ export const admit = (authorization: string | undefined): Effect.Effect<Actor, R
       () => new Action.Forbidden({ message: "Requires users:write.", scopes: ["users:write"] }),
     ),
     Effect.mapError((error) =>
-      HttpServerResponse.toWeb(Authentication.refusal(error, { protectedResource, authorization })),
+      HttpServerResponse.toWeb(
+        Authentication.refusalResponse(error, { protectedResource, authorization }),
+      ),
     ),
   );

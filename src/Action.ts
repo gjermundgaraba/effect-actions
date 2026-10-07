@@ -45,6 +45,12 @@ import {
  */
 export type { BuildContext } from "./internal/implementation.js";
 
+/**
+ * What a surface serving the actions `Listed` of the implementations `App` fails with at
+ * startup: their builders' and built authorizers' failures.
+ */
+export type { BuildError } from "./internal/implementation.js";
+
 /** An action bound to its handler; opaque, see `implement`. */
 export type { Implementation } from "./internal/implementation.js";
 

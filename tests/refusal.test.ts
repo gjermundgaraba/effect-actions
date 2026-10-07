@@ -94,7 +94,7 @@ describe("refusal", () => {
     async ([, error, header]) => {
       for (const protectedResource of [undefined, resource]) {
         const outside = HttpServerResponse.toWeb(
-          Authentication.refusal(error, { protectedResource, authorization: header }),
+          Authentication.refusalResponse(error, { protectedResource, authorization: header }),
         );
 
         expect(await read(outside)).toEqual(
@@ -105,7 +105,7 @@ describe("refusal", () => {
   );
 
   it("answers a 401 with its JSON, no-store and the resource's challenge, its metadata URL escaped", async () => {
-    const anonymous = Authentication.refusal(new Action.Unauthenticated(), {
+    const anonymous = Authentication.refusalResponse(new Action.Unauthenticated(), {
       protectedResource: resource,
     });
 
@@ -117,7 +117,7 @@ describe("refusal", () => {
       challenge: `Bearer scope="docs:read", resource_metadata="${metadata}"`,
     });
 
-    const presented = Authentication.refusal(new Action.Unauthenticated(), {
+    const presented = Authentication.refusalResponse(new Action.Unauthenticated(), {
       protectedResource: resource,
       authorization: "Bearer x",
     });
@@ -128,7 +128,7 @@ describe("refusal", () => {
   });
 
   it("answers a 403 naming scopes with insufficient_scope, and one naming none without a challenge", () => {
-    const stepUp = Authentication.refusal(scoped, { protectedResource: resource });
+    const stepUp = Authentication.refusalResponse(scoped, { protectedResource: resource });
 
     expect(stepUp.status).toBe(403);
     expect(stepUp.headers["cache-control"]).toBe("no-store");
@@ -136,16 +136,16 @@ describe("refusal", () => {
       `Bearer error="insufficient_scope", scope="docs:write", resource_metadata="${metadata}", error_description="Requires docs:write."`,
     );
 
-    const plain = Authentication.refusal(new Action.Forbidden({ message: "Not yours." }));
+    const plain = Authentication.refusalResponse(new Action.Forbidden({ message: "Not yours." }));
 
     expect(plain.status).toBe(403);
     expect(plain.headers["www-authenticate"]).toBeUndefined();
   });
 
   it("names no resource without one: a bare Bearer challenge", () => {
-    expect(Authentication.refusal(new Action.Unauthenticated()).headers["www-authenticate"]).toBe(
-      "Bearer",
-    );
+    expect(
+      Authentication.refusalResponse(new Action.Unauthenticated()).headers["www-authenticate"],
+    ).toBe("Bearer");
   });
 
   it("refuses a scopesRequired that is no scope token, as Authentication.layer does", () => {
@@ -155,7 +155,7 @@ describe("refusal", () => {
     } satisfies Authentication.ProtectedResource;
 
     expect(() =>
-      Authentication.refusal(new Action.Unauthenticated(), { protectedResource: invalid }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
     ).toThrow('Invalid scope in scopesRequired: "docs read"');
   });
 
@@ -168,7 +168,7 @@ describe("refusal", () => {
     const message = `A protected resource has no fragment: ${fragment.resource}`;
 
     expect(() =>
-      Authentication.refusal(new Action.Unauthenticated(), { protectedResource: fragment }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: fragment }),
     ).toThrow(message);
     expect(() =>
       Authentication.layer(CallerLogin, () => Effect.succeed("alice"), {
@@ -179,7 +179,7 @@ describe("refusal", () => {
     // A bare `#` has an empty `hash`, but the URL keeps it.
     const bare = { ...resource, resource: `${resource.resource}#` };
     expect(() =>
-      Authentication.refusal(new Action.Unauthenticated(), { protectedResource: bare }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: bare }),
     ).toThrow(`A protected resource has no fragment: ${bare.resource}`);
   });
 
@@ -189,7 +189,7 @@ describe("refusal", () => {
     });
 
     expect(() =>
-      Authentication.refusal(new Action.Unauthenticated(), {
+      Authentication.refusalResponse(new Action.Unauthenticated(), {
         authentication: Session,
         protectedResource: resource,
       }),

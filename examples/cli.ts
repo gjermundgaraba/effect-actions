@@ -17,10 +17,10 @@ const cli = ActionCli.make(userActions, { name: "users" }).pipe(
 );
 
 // Effect's own runner: the result goes to stdout, and a failure to stderr as the JSON HTTP
-// sends, such as `{"_tag":"UserNotFound","id":"9"}`, exiting 1. `onStderr`, applied last,
+// sends, such as `{"_tag":"UserNotFound","id":"9"}`, exiting 1. `logToStderr`, applied last,
 // sends every other report and log there too, so scripts read stdout alone.
 Command.run(cli, { version: "0.1.0" }).pipe(
   Effect.provide(NodeServices.layer),
-  ActionCli.onStderr,
+  ActionCli.logToStderr,
   NodeRuntime.runMain,
 );

@@ -106,7 +106,7 @@ which is public.
 - [authentication.ts](authentication.ts): `Authentication.layer`, the server-only verifier of `Login`, as `authenticate`, publishing its OAuth protected resource's RFC 9728 discovery and answering a missing or unknown token with the built-in 401 and a challenge naming it.
 - [authentication-tenant.ts](authentication-tenant.ts): authentication beside other middleware, not served by the app: a verifier built once at startup, each request's tenant from router middleware provided after it, and endpoint middleware reading the identity, the layer's `middleware`.
 - [authentication-route.ts](authentication-route.ts): a route of the host's own beside the actions, not served by the app: `Authentication.protect(Login)` authenticates it with the provider the actions use and gives it the actor, and a scope it requires is a `Forbidden` answered as an action's.
-- [authentication-upgrade.ts](authentication-upgrade.ts): `Authentication.refusal` for a caller the router never routes, not served by the app: a socket upgrade authenticating its own header, refused with the response authentication answers the same refusal with on a route.
+- [authentication-upgrade.ts](authentication-upgrade.ts): `Authentication.refusalResponse` for a caller the router never routes, not served by the app: a socket upgrade authenticating its own header, refused with the response authentication answers the same refusal with on a route.
 - [http.ts](http.ts): one HTTP layer serving the public and the protected actions of one binding, plus the OpenAPI document and Swagger UI.
 - [mcp.ts](mcp.ts): one MCP endpoint serving the public and the protected tools.
 - [request-policy.ts](request-policy.ts): the Host/Origin policy for a server bound to localhost, global router middleware, which refuses a foreign Host or Origin before any credential is read.
@@ -176,7 +176,7 @@ the JSON HTTP sends, such as `{"_tag":"UserNotFound","id":"9"}` for `get-user --
 [mcp-stdio.ts](mcp-stdio.ts) is a subprocess MCP
 server to launch from an MCP client, not an interactive shell command. It reserves
 stdout for JSON-RPC: `runStdio` writes its program's Effect logs and `Console` output to
-stderr, and `ActionCli.onStderr` moves the default logger there for the layers provided
+stderr, and `ActionCli.logToStderr` moves the default logger there for the layers provided
 around it. Keep the global `console.log` and other direct writes off stdout.
 
 [toolkit.ts](toolkit.ts) prints a native Toolkit result.

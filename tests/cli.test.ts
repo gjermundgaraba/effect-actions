@@ -2375,12 +2375,12 @@ const reportedOf = <A, E>(exit: Exit.Exit<A, E>) =>
   Exit.isFailure(exit) && Runtime.getErrorReported(Cause.squash(exit.cause));
 
 it.effect(
-  "reports on stderr what runMain would report, once, and keeps its exit code under onStderr",
+  "reports on stderr what runMain would report, once, and keeps its exit code under logToStderr",
   () =>
     Effect.gen(function* () {
       // A defect, and a log of a layer the host provides, reach stderr alone.
       const [defect, defectOut, defectErr] = yield* printed(
-        ActionCli.onStderr(Effect.log("connecting").pipe(Effect.andThen(Effect.die("bug")))),
+        ActionCli.logToStderr(Effect.log("connecting").pipe(Effect.andThen(Effect.die("bug")))),
       );
 
       expect(defectOut).toEqual([]);
@@ -2415,21 +2415,21 @@ it.effect(
         Quit,
       );
 
-      const [failed, failedOut, failedErr] = yield* printed(ActionCli.onStderr(exec(quit, [])));
+      const [failed, failedOut, failedErr] = yield* printed(ActionCli.logToStderr(exec(quit, [])));
 
       expect(failedOut).toEqual([]);
       expect(failedErr.join("\n").match(/Exiting/g)).toHaveLength(1);
       expect(exitCodeOf(failed)).toBe(3);
 
       // An interruption stays one, so the process exits 130.
-      const interrupted = yield* Effect.exit(ActionCli.onStderr(Effect.interrupt));
+      const interrupted = yield* Effect.exit(ActionCli.logToStderr(Effect.interrupt));
 
       assert(Exit.isFailure(interrupted));
       expect(Cause.hasInterruptsOnly(interrupted.cause)).toBe(true);
     }),
 );
 
-it.effect("reports a failing host layer and its logs on stderr under onStderr", () =>
+it.effect("reports a failing host layer and its logs on stderr under logToStderr", () =>
   Effect.gen(function* () {
     class Unreachable extends Data.TaggedError("Unreachable")<{}> {}
 
@@ -2461,8 +2461,8 @@ it.effect("reports a failing host layer and its logs on stderr under onStderr", 
     // Provided on the command, the failing layer is built when it runs; around the run, the
     // dying one before it parses.
     const runs = [
-      [ActionCli.onStderr(exec(ping.pipe(Command.provide(failing)), [])), /Unreachable/g],
-      [ActionCli.onStderr(exec(ping, []).pipe(Effect.provide(dying))), /no driver/g],
+      [ActionCli.logToStderr(exec(ping.pipe(Command.provide(failing)), [])), /Unreachable/g],
+      [ActionCli.logToStderr(exec(ping, []).pipe(Effect.provide(dying))), /no driver/g],
     ] as const;
 
     for (const [run, report] of runs) {

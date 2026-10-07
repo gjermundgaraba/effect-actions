@@ -13,29 +13,29 @@ surface declares and any handler may fail with.
 
 Import `@gjermundgaraba/effect-actions/Action`.
 
-| Export                                          | Purpose                                                                              |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `make(name, options)`                           | Define a pure contract; literal names, `readOnly` and `caller` stay typed.           |
-| `byName(actions)`                               | A list of actions keyed by name, each its exact contract: `contracts.getUser`.       |
-| `implement(action, handler, { authorize })`     | Bind one handler, and a protected action's authorizer; returns one `Implementation`. |
-| `implement([actions], handlers, { authorize })` | Bind a record of handlers keyed by action name; returns one `Implementation` of all. |
-| `implement(target, builder, options?)`          | Either form, with an Effect that builds the handler or record once per layer graph.  |
-| `allowAll`                                      | The authorizer without an action-level rule: every authenticated caller may call.    |
-| `Anyone`                                        | The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not.    |
-| `layer(implementations)`                        | Their builders as one layer: provided above every surface, each runs once for all.   |
-| `client(implementations, { actions? })`         | An Effect of a caller running them in process: `client.<action>(input)`.             |
-| `InvalidInput`, `Unauthenticated`, `Forbidden`  | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.        |
-| `InvalidInput.fromSchemaError(error)`           | The `InvalidInput` every surface answers a `Schema.SchemaError` with.                |
-| `Refusal`                                       | `Unauthenticated \| Forbidden`: what authentication or an authorizer refuses with.   |
-| `BuiltIn`                                       | `InvalidInput \| Refusal`: what any handler may fail with beyond its `error`.        |
-| `Action`, `Any`, `Implementation`               | Concrete and erased contracts, and bound implementations.                            |
-| `Client<Apps>`                                  | What `client` gives for the implementations `Apps`, one or a list.                   |
-| `AnyImplementation`, `AnyImplementation<A>`     | Any implementation, or any of actions `A`, erased: a generic helper's constraint.    |
-| `BuildContext`                                  | What a surface serving implementations reads at startup: their builders' services.   |
-| `implementation.actions`                        | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.         |
-| `Handler`, `Authorize`                          | Typed handlers, and authorizers `(action) => Effect<void, Refusal, R>`.              |
-| `Handlers`                                      | A list's handlers keyed by name, for a builder written apart from `implement`.       |
-| `Options`, `ClientOptions`, `Mcp`               | What `make` and `client` take, and `make`'s `mcp` options.                           |
+| Export                                          | Purpose                                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `make(name, options)`                           | Define a pure contract; literal names, `readOnly` and `caller` stay typed.            |
+| `byName(actions)`                               | A list of actions keyed by name, each its exact contract: `contracts.getUser`.        |
+| `implement(action, handler, { authorize })`     | Bind one handler, and a protected action's authorizer; returns one `Implementation`.  |
+| `implement([actions], handlers, { authorize })` | Bind a record of handlers keyed by action name; returns one `Implementation` of all.  |
+| `implement(target, builder, options?)`          | Either form, with an Effect that builds the handler or record once per layer graph.   |
+| `allowAll`                                      | The authorizer without an action-level rule: every authenticated caller may call.     |
+| `Anyone`                                        | The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not.     |
+| `layer(implementations)`                        | Their builders as one layer: provided above every surface, each runs once for all.    |
+| `client(implementations, { actions? })`         | An Effect of a caller running them in process: `client.<action>(input)`.              |
+| `InvalidInput`, `Unauthenticated`, `Forbidden`  | Built-in errors: 400, 401, 403, body `{ _tag, message }`; `message` defaults.         |
+| `InvalidInput.fromSchemaError(error)`           | The `InvalidInput` every surface answers a `Schema.SchemaError` with.                 |
+| `Refusal`                                       | `Unauthenticated \| Forbidden`: what authentication or an authorizer refuses with.    |
+| `BuiltIn`                                       | `InvalidInput \| Refusal`: what any handler may fail with beyond its `error`.         |
+| `Action`, `Any`, `Implementation`               | Concrete and erased contracts, and bound implementations.                             |
+| `Client<Apps>`                                  | What `client` gives for the implementations `Apps`, one or a list.                    |
+| `AnyImplementation`, `AnyImplementation<A>`     | Any implementation, or any of actions `A`, erased: a generic helper's constraint.     |
+| `BuildContext`, `BuildError`                    | What their builders read and fail with at startup, which a surface serving them owes. |
+| `implementation.actions`                        | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.          |
+| `Handler`, `Authorize`                          | Typed handlers, and authorizers `(action) => Effect<void, Refusal, R>`.               |
+| `Handlers`                                      | A list's handlers keyed by name, for a builder written apart from `implement`.        |
+| `Options`, `ClientOptions`, `Mcp`               | What `make` and `client` take, and `make`'s `mcp` options.                            |
 
 | Option        | Meaning                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------- |

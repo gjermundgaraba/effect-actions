@@ -414,7 +414,7 @@ export function remote<
  * one `runMain` gives: the failure's `Runtime.errorExitCode`, 1 by default, or 130 for an
  * interruption.
  */
-export const onStderr = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, never, R> =>
+export const logToStderr = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, never, R> =>
   self.pipe(
     Effect.catchCause((cause) => {
       if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
