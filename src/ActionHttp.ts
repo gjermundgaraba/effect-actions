@@ -5,7 +5,6 @@ import {
   Layer,
   type Path,
   Schema,
-  SchemaAST,
   Scope,
   type Types,
 } from "effect";
@@ -29,6 +28,7 @@ import {
   type ServedProvider,
   type RemoteRequest,
   type Required as RequiredAuthentication,
+  type VerifierError,
 } from "./internal/authentication.js";
 import {
   Anyone,
@@ -37,8 +37,8 @@ import {
   assertOwnTags,
   errorList,
   projectedErrors,
-  unsuspended,
 } from "./internal/actions.js";
+import { declared, type ErrorsOf } from "./internal/declared.js";
 import {
   type AnyHttp,
   type Client,
@@ -214,21 +214,6 @@ type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
       : never)
 >;
 
-/** The list an `error` option of type `G` stands for: one schema is a list of one. */
-type ListOf<G> = G extends Errors ? G : readonly [G];
-
-/**
- * The errors options `O` declare, as at run time: those `error` always gives, or, where it may
- * be absent, those it gives or none, so clients decode each that may arrive.
- */
-type ErrorsOf<O> = O extends unknown
-  ? "error" extends keyof O
-    ? O extends { readonly error: infer G extends Errors | Errors[number] }
-      ? ListOf<G>
-      : ListOf<Extract<O["error" & keyof O], Errors | Errors[number]>> | []
-    : []
-  : never;
-
 /** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
 type PublicOnly<Actions extends ReadonlyArray<Action.Any>> = [
   Exclude<Actions[number], { readonly caller: typeof Anyone }>,
@@ -249,7 +234,7 @@ export interface Options<E extends Errors = Errors> {
   readonly authentication?: Authentication;
 }
 
-type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
+type Endpoint<A extends Action.Any, E extends Errors, D> = A extends Action.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       A["name"],
       "POST",
@@ -259,7 +244,7 @@ type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
       Schema.toCodecJson<A["input"]>,
       never,
       Schema.toCodecJson<A["success"]>,
-      Schema.toCodecJson<A["error"][number] | E[number] | BuiltIns>,
+      Schema.toCodecJson<A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns>,
       never
     >
   : never;
@@ -269,9 +254,9 @@ type Endpoint<A extends Action.Any, E extends Errors> = A extends Action.Any
  * not nested, named after the binding's mount path, `/` at the root, so bindings composed
  * into one host API keep their own groups.
  */
-type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors> = HttpApi.HttpApi<
+type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors, D> = HttpApi.HttpApi<
   "actions",
-  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E>, true>
+  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E, D>, true>
 >;
 
 /**
@@ -291,7 +276,7 @@ export interface Binding<
   readonly error: E;
   /** Where its routes mount: `/api` by default, `/` at the root, without a trailing slash. */
   readonly prefix: `/${string}`;
-  readonly api: Api<Actions, E>;
+  readonly api: Api<Actions, E, D>;
 }
 
 /** A native request, as `HttpApiBuilder.handleAll` passes it to a handler. */
@@ -358,43 +343,6 @@ const servedBy = (
   return served;
 };
 
-/** The status an error schema states, as `HttpApi` reads it. */
-const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
-
-/** The status a schema states, or the first one a suspension it wraps states. */
-const statusThrough = (ast: SchemaAST.AST): number | undefined =>
-  statusOf(ast) ?? (SchemaAST.isSuspend(ast) ? statusThrough(ast.thunk()) : undefined);
-
-type Declared = Action.Any["error"][number];
-
-/**
- * The schemas an endpoint declares for one error, each with the status it is sent with. `HttpApi`
- * reads a status off each declared schema, never off a union's members nor through a suspension, so
- * a plain union without a status of its own declares each member, and a suspended error, as a
- * recursive one is written, without a status of its own states the status of what it suspends. An
- * error without a status is an outcome the action expects, not a server fault: it is sent as 422,
- * rather than `HttpApi`'s 500, which clients and proxies read as the server failing.
- */
-const declared = (error: Declared): ReadonlyArray<Declared> => {
-  const status = statusThrough(error.ast);
-
-  if (status !== undefined) {
-    return [statusOf(error.ast) === undefined ? HttpApiSchema.status(status)(error) : error];
-  }
-
-  const resolved = unsuspended(error.ast);
-
-  if (
-    SchemaAST.isUnion(resolved) &&
-    resolved.checks === undefined &&
-    resolved.encoding === undefined
-  ) {
-    return resolved.types.flatMap((member) => declared(Schema.make<Declared>(member)));
-  }
-
-  return [HttpApiSchema.status(422)(error)];
-};
-
 /**
  * The native endpoint of `action` at `path`, declaring its action's errors, the binding's
  * `errors` and the built-in ones: what `make` documents and `layer` serves. Its payload is
@@ -451,15 +399,19 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   const mount = mountSegments(options.prefix);
   const security = options.authentication?.["~middleware"];
 
-  const endpoints = actions.map((action) => {
-    const endpoint = endpointOf(action, route([...mount, action.name]), errors).annotate(
-      OpenApi.Description,
-      action.description,
-    );
+  // A protected endpoint declares what its descriptor's verifier fails with, too.
+  const verifierErrors = options.authentication?.error ?? [];
 
-    return security === undefined || action.caller === Anyone
-      ? endpoint
-      : endpoint.middleware(security);
+  const endpoints = actions.map((action) => {
+    const isPublic = security === undefined || action.caller === Anyone;
+
+    const endpoint = endpointOf(
+      action,
+      route([...mount, action.name]),
+      isPublic ? errors : [...errors, ...verifierErrors],
+    ).annotate(OpenApi.Description, action.description);
+
+    return isPublic ? endpoint : endpoint.middleware(security);
   });
 
   // The one native group is top level, so its client methods are not nested. Named after

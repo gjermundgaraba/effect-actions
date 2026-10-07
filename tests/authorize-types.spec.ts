@@ -47,7 +47,7 @@ export const authorizeTypes = () => {
     }),
   });
 
-  expectTypeOf<(typeof a)["~request"]["~authorize"]>().toEqualTypeOf<Scopes>();
+  expectTypeOf<(typeof a)["~authorizeRequest"]>().toEqualTypeOf<Scopes>();
 
   // Built authorizer: startup Perms, per-call Scopes.
   const b = Action.implement(
@@ -66,7 +66,22 @@ export const authorizeTypes = () => {
     },
   );
 
-  expectTypeOf<(typeof b)["~request"]["~authorize"]>().toEqualTypeOf<Scopes>();
+  expectTypeOf<(typeof b)["~authorizeRequest"]>().toEqualTypeOf<Scopes>();
+
+  // Written out, as a package's own interface states it: the authorizer's per-request services
+  // are a parameter of their own, after the builder's, and its builder's after them.
+  expectTypeOf(b).toEqualTypeOf<
+    Action.Implementation<
+      typeof Get | typeof Put,
+      { readonly get: never; readonly put: never },
+      never,
+      never,
+      Scopes,
+      never,
+      Perms
+    >
+  >();
+
   // Public only: no authorize.
   Action.implement([Open], { open: handlers.open });
   Action.implement(Open, handlers.open);

@@ -2,7 +2,7 @@ import { Effect, type Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
-import type { Any as Authentication } from "./authentication.js";
+import type { Any as Authentication, VerifierError } from "./authentication.js";
 import { type Call, inputOf } from "./call.js";
 import type { BuiltIns } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
@@ -51,9 +51,15 @@ export interface AnyHttp {
   readonly api: HttpApi.Constraint;
 }
 
-/** Every action of the binding `H`, as `client.<action>(input)`. */
+/**
+ * Every action of the binding `H`, as `client.<action>(input)`: a protected one may also fail
+ * with what its descriptor's verifier declares.
+ */
 export type Client<H extends AnyHttp> = {
-  readonly [A in H["actions"][number] as A["name"]]: Method<A, H["error"][number]>;
+  readonly [A in H["actions"][number] as A["name"]]: Method<
+    A,
+    H["error"][number] | VerifierError<A, H["authentication"]>
+  >;
 };
 
 /** A client method, erased: the binding's actions restore its exact type. */

@@ -42,7 +42,8 @@ Routes: each action is served at `POST <prefix>/<action>`, operation ID `<action
 read-only action is a `POST` too: `readOnly` changes neither the method nor caching. The
 OpenAPI tag is the mount path's segments (`api`, `v2/api`), or `/` at the root. Every
 endpoint declares its action's errors, the binding's `error`, and the built-in
-`InvalidInput` (400), `Unauthenticated` (401) and `Forbidden` (403).
+`InvalidInput` (400), `Unauthenticated` (401) and `Forbidden` (403); a protected one also
+declares its descriptor's `error`, what the verifier may fail with.
 
 Layer failures and startup requirements come from the builders of the supplied
 implementations, and, where it serves a protected action, the descriptor's provider,

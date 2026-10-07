@@ -58,28 +58,31 @@ export const memoized = <S, E, R>(
  * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
  * produced, one builder serving every surface.
  * The private fields make this class nominal: a structurally similar object, including one made by
- * spreading an implementation, is not an implementation. `RequestServices` maps each action name
- * to its handler's per-request requirements, and `~authorize`, which no action name can be, to
- * its authorizer's; names typed only as `string` absorb that key, and each then owes the
- * authorizer's too. `EX` and `RX` are the failures and services of its handlers' builder, and
- * `EAX` and `RAX` of its authorizer's. Public-only selections do not acquire authorization. A
- * plain authorization callback builds nothing.
+ * spreading an implementation, is not an implementation. Its type parameters may be written
+ * out, as a package emitting declarations prints them: `A` its actions, `RequestServices` each
+ * action name's handler's per-request requirements, `EX` and `RX` the failures and services of
+ * its handlers' builder, `RA` what its authorizer reads per request, and `EAX` and `RAX` the
+ * failures and services of the authorizer's builder. Public-only selections do not acquire
+ * authorization. A plain authorization callback builds nothing.
  */
 export class Implementation<
   A extends Action.Any,
   RequestServices extends { readonly [name: string]: unknown },
   EX,
   RX,
+  RA = never,
   EAX = never,
   RAX = never,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
-  /** Type-only: each action's handler's per-request requirements, and the authorizer's. */
+  /** Type-only: each action's handler's per-request requirements. */
   declare readonly "~request": RequestServices;
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
   /** Type-only: what building its handlers needs. */
   declare readonly "~buildServices": RX;
+  /** Type-only: what its authorizer reads per request. */
+  declare readonly "~authorizeRequest": RA;
   /** Type-only: what building its authorizer fails with. */
   declare readonly "~authorizeBuildError": EAX;
   /** Type-only: what building its authorizer needs. */
@@ -170,6 +173,7 @@ export type AnyImplementation<A extends Action.Any = Action.Any> = Implementatio
   A,
   // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Type-only requirements by action name, erased to the top type.
   { readonly [name: string]: unknown },
+  unknown,
   unknown,
   unknown,
   unknown,
@@ -361,13 +365,14 @@ export type AuthenticationOf<A extends Action.Any> = A["caller"] extends typeof 
  */
 export type RequestOf<App, A extends Action.Any> = App extends {
   readonly "~request": infer R;
+  readonly "~authorizeRequest": infer RA;
 }
   ? A extends Action.Any
     ? [A["name"] & keyof R] extends [never]
       ? never
       :
           | R[A["name"] & keyof R]
-          | (A["caller"] extends typeof Anyone ? never : R["~authorize" & keyof R])
+          | (A["caller"] extends typeof Anyone ? never : RA)
           | AuthenticationOf<A>
     : never
   : never;

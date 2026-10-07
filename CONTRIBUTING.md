@@ -81,6 +81,7 @@ One file per decision in [`design/`](design/). Each note is titled, and cited by
 - [Surface selection](design/surface-selection.md)
 - [Contracts by name](design/contracts-by-name.md)
 - [Local and remote CLI](design/local-and-remote-cli.md)
+- [Verifier errors](design/verifier-errors.md)
 
 ## Release
 

@@ -63,21 +63,42 @@ export interface Runtime {
   >;
 }
 
+/** The errors a descriptor declares, as a list. */
+export type Errors = Action.Any["error"];
+
 /**
- * What `Authentication.make` declares: its name, the identity it authenticates and its
- * scheme. The `~` keys are the library's own wiring, which no host composes.
+ * What an erased verifier fails with, a refusal or an error its descriptor declares: a value
+ * of a declared schema either way, as the built-in refusals are schemas too.
  */
-export interface Descriptor<I, A, S extends Security, Name extends string = string> {
+export type VerifierFailure = Errors[number]["Type"];
+
+/**
+ * What `Authentication.make` declares: its name, the identity it authenticates, its scheme,
+ * and what its verifier may fail with besides a refusal. The `~` keys are the library's own
+ * wiring, which no host composes.
+ */
+export interface Descriptor<
+  I,
+  A,
+  S extends Security,
+  Name extends string = string,
+  E extends Errors = readonly [],
+> {
   readonly name: Name;
   readonly identity: Context.Key<I, A>;
   readonly security: S;
+  /**
+   * What its verifier may fail with besides a refusal, as a list: every protected endpoint
+   * declares it, and every remote surface sends it with its status.
+   */
+  readonly error: E;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
   readonly "~middleware": Context.Key<SecurityMiddleware<I, Name>, unknown>;
   /** An MCP request's verified identity, which a protected tool's call promotes. */
   readonly "~verified": Context.Key<never, unknown>;
 }
 
-export type Any = Descriptor<unknown, unknown, Security>;
+export type Any = Descriptor<unknown, unknown, Security, string, Errors>;
 
 export type Identity<A extends Action.Any> = [A] extends [never]
   ? never
@@ -94,10 +115,12 @@ type Covered<A extends Action.Any> =
 
 export type Required<A extends Action.Any> = [Protected<A>] extends [never]
   ? { readonly authentication?: Any }
-  : { readonly authentication: Descriptor<Covered<Protected<A>>, unknown, Security> };
+  : {
+      readonly authentication: Descriptor<Covered<Protected<A>>, unknown, Security, string, Errors>;
+    };
 
 export type ProviderOf<D> =
-  D extends Descriptor<infer I, unknown, Security, infer Name> ? Provider<I, Name> : never;
+  D extends Descriptor<infer I, unknown, Security, infer Name, Errors> ? Provider<I, Name> : never;
 
 /** All protected actions on a surface use the descriptor's single identity key. */
 export type Matching<A extends Action.Any, D> =
@@ -106,7 +129,7 @@ export type Matching<A extends Action.Any, D> =
     : [
           Exclude<
             Covered<Protected<A>>,
-            D extends Descriptor<infer I, unknown, Security> ? I : never
+            D extends Descriptor<infer I, unknown, Security, string, Errors> ? I : never
           >,
         ] extends [never]
       ? unknown
@@ -116,6 +139,16 @@ export type Matching<A extends Action.Any, D> =
 export type RemoteRequest<App, A extends Action.Any> =
   | ServedRequest<App, Extract<A, { readonly caller: typeof Anyone }>>
   | Exclude<ServedRequest<App, Protected<A>>, Identity<Protected<A>>>;
+
+/**
+ * What a call of `A` under the descriptor `D` may fail with from its verifier: the errors `D`
+ * declares, for a protected action; none for a public one, which nothing verifies.
+ */
+export type VerifierError<A extends Action.Any, D> = A["caller"] extends typeof Anyone
+  ? never
+  : D extends { readonly error: infer E extends Errors }
+    ? E[number]
+    : never;
 
 export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
   never,

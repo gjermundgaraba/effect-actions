@@ -3,6 +3,7 @@ import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "./Action.js";
 import { assertDistinct, assertKnown } from "./internal/actions.js";
+import type { VerifierError } from "./internal/authentication.js";
 import {
   type UserError,
   command as makeCommand,
@@ -313,6 +314,7 @@ export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
 type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
   | A["error"][number]["Type"]
   | H["error"][number]["Type"]
+  | VerifierError<A, H["authentication"]>["Type"]
   | Action.BuiltIn
   | HttpClientError.HttpClientError
   | Schema.SchemaError

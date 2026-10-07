@@ -370,13 +370,6 @@ type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Ex
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
 /**
- * What a name `K` owes per request for the authorizer, `RA`, besides its handler's: nothing, as the
- * authorizer's requirements have a key of their own, unless `K` is `string`. Names typed only as
- * `string`, such as an `Action.Any`'s, absorb that key, so each owes the authorizer's too.
- */
-type AuthorizerOwed<K, RA> = string extends K ? RA : never;
-
-/**
  * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
  * stay one: while a builder's inner call, such as `Effect.gen`, is inferred, TypeScript keeps
  * an alias's arguments marked as not yet inferred, where `never` or this type written inline
@@ -434,25 +427,22 @@ type Authorizer<A extends Any, RA, EAX, RAX> =
 
 /**
  * What `implement` returns for `T`: its handlers' per-request requirements keyed by action
- * name, the authorizer's under `~authorize`, and the startup failures and services of the
- * builder and the authorizer.
+ * name, the authorizer's, and the startup failures and services of the builder and the
+ * authorizer.
  */
 type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = Implementation<
   ActionsOf<T>,
   // Each call has a scope of its own, so `Scope` is never a request-time requirement.
   {
-    readonly [K in NamesOf<T> | "~authorize"]: Exclude<
-      | (K extends "~authorize"
-          ? RA
-          : T extends ReadonlyArray<Any>
-            ? RequestServices[K & keyof RequestServices]
-            : R)
-      | AuthorizerOwed<K, RA>,
+    readonly [K in NamesOf<T>]: Exclude<
+      T extends ReadonlyArray<Any> ? RequestServices[K & keyof RequestServices] : R,
       Scope.Scope
     >;
   },
   Deferred<EX>,
   Deferred<Exclude<RX, Scope.Scope>>,
+  // Not deferred, as the handlers' per-request requirements in the record above are not.
+  Exclude<RA, Scope.Scope>,
   Deferred<EAX>,
   Deferred<Exclude<RAX, Scope.Scope>>
 >;
@@ -594,7 +584,7 @@ export function implement(
   actions: Target,
   handlers: Built | Effect.Effect<Built, unknown, unknown>,
   options?: { readonly authorize?: ErasedAuthorizer },
-): Implementation<Any, {}, unknown, unknown, unknown, unknown> {
+): Implementation<Any, {}, unknown, unknown, unknown, unknown, unknown> {
   const listed = Arr.ensure(actions);
   const names = listed.map((action) => action.name);
 

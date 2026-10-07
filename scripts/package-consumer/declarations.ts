@@ -28,8 +28,61 @@ export const provider = Authentication.layer(Login, (token: Redacted.Redacted<st
   Effect.succeed(Redacted.value(token)),
 );
 
+// A descriptor declaring what its verifier fails with besides a refusal, the binding naming it,
+// its provider, and a client method decoding it.
+export class Unavailable extends Schema.TaggedError<Unavailable>()(
+  "Unavailable",
+  {},
+  { httpApiStatus: 503 },
+) {}
+
+export const Checked = Authentication.make("declarations.Checked", Principal, {
+  error: Unavailable,
+});
+
+export const CheckedHttp = ActionHttp.make([Whoami], { authentication: Checked });
+
+export const checkedProvider = Authentication.layer(Checked, (token: Redacted.Redacted<string>) =>
+  Redacted.value(token) === "down"
+    ? Effect.fail(new Unavailable())
+    : Effect.succeed(Redacted.value(token)),
+);
+
+export const checkedWhoami = ActionHttp.fetchClient(CheckedHttp).whoami;
+
 export const app = Action.implement(Whoami, () => Effect.service(Principal), {
   authorize: Action.allowAll,
+});
+
+// An implementation built from a service a generic names, stated in the package's own interface
+// with its parameters written out: the actions, each one's per-request services by name, then
+// what its builder fails with and reads.
+export interface Tenant<Name extends string> {
+  readonly name: Name;
+}
+
+const tenantOf = <Name extends string>(name: Name) =>
+  Context.Service<Tenant<Name>, string>(`declarations/Tenant/${name}`);
+
+export interface Session<Name extends string> {
+  readonly session: Action.Implementation<
+    typeof Whoami,
+    { readonly whoami: Principal },
+    never,
+    Tenant<Name>
+  >;
+}
+
+export const sessionOf = <const Name extends string>(name: Name): Session<Name> => ({
+  session: Action.implement(
+    Whoami,
+    Effect.map(
+      Effect.service(tenantOf(name)),
+      (tenant) => () =>
+        Effect.map(Effect.service(Principal), (principal) => `${principal}@${tenant}`),
+    ),
+    { authorize: Action.allowAll },
+  ),
 });
 
 export const layer = Layer.mergeAll(

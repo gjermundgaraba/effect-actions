@@ -83,6 +83,15 @@ try {
   }
 
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
+
+  // What a library built on this one publishes names nothing internal: no `~` key, which
+  // would bind its declarations to this package's private type-only fields.
+  const internal = readFileSync(join(consumer, "declarations.d.ts"), "utf8").match(/"~[^"]*"/g);
+
+  if (internal !== null) {
+    throw new Error(`declarations.d.ts prints internal keys: ${[...new Set(internal)].join(", ")}`);
+  }
+
   run(process.execPath, ["index.js"]);
 } finally {
   rmSync(consumer, { recursive: true, force: true });

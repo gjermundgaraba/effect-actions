@@ -46,6 +46,19 @@ class Private extends Schema.TaggedError<Private>()("Private", { message: Schema
 /** How a remote caller proves it is an `Identity`: a bearer token. */
 const Login = Authentication.make("test.Login", Identity);
 
+/** The verifier's issuer is unreachable: an error its descriptor declares, sent as 503. */
+class Unavailable extends Schema.TaggedError<Unavailable>()(
+  "Unavailable",
+  { operation: Schema.String },
+  { httpApiStatus: 503 },
+) {}
+
+/** A session the verifier knows to have expired, an error of its own sent as 401. */
+class Expired extends Schema.TaggedError<Expired>()("Expired", {}, { httpApiStatus: 401 }) {}
+
+/** `Login`, declaring what its verifier fails with besides a refusal. */
+const Checked = Authentication.make("test.Checked", Identity, { error: [Unavailable, Expired] });
+
 const Identify = Action.make("identify", {
   description: "Name the authenticated caller",
   readOnly: true,
@@ -174,28 +187,6 @@ describe("Authentication.layer", () => {
     expect(calls).toBe(2);
   });
 
-  it("sends the host's own response instead, with its status and headers", async () => {
-    const own = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
-      Redacted.value(token) === "expired"
-        ? Effect.fail(
-            HttpServerResponse.text("Sign in again", {
-              status: 401,
-              headers: { "www-authenticate": 'Bearer realm="host"' },
-            }),
-          )
-        : Effect.succeed({ id: Redacted.value(token) }),
-    );
-
-    const web = serve(ActionHttp.layer(IdentifyHttp, identify).pipe(Layer.provide(own)));
-
-    const response = await web.handler(withBearer(request(), "expired"));
-    expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe('Bearer realm="host"');
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.text()).toBe("Sign in again");
-    expect(await (await web.handler(withBearer(request(), "alice"))).json()).toBe("alice");
-  });
-
   it("challenges every 401 it covers that has no challenge of its own", async () => {
     const Refuse = Action.make("refuse", {
       description: "Refused by its handler",
@@ -203,23 +194,23 @@ describe("Authentication.layer", () => {
       caller: Identity,
     });
 
-    const own = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+    const own = Authentication.layer(Checked, (token: Redacted.Redacted<string>) =>
       Redacted.value(token) === "expired"
-        ? Effect.fail(HttpServerResponse.text("Sign in again", { status: 401 }))
+        ? Effect.fail(new Expired())
         : Effect.succeed({ id: Redacted.value(token) }),
     );
 
     const web = serve(
       ActionHttp.layer(
-        ActionHttp.make([Refuse], { authentication: Login }),
+        ActionHttp.make([Refuse], { authentication: Checked }),
         Action.implement(Refuse, () => Effect.fail(new Action.Unauthenticated()), {
           authorize: Action.allowAll,
         }),
       ).pipe(Layer.provide(own)),
     );
 
-    // A request presenting no token, the host's own response to one, and a handler's own 401
-    // to a request whose token the authentication took.
+    // A request presenting no token, the verifier's own 401, which its descriptor declares, and
+    // a handler's own 401 to a request whose token the authentication took.
     const anonymous = await web.handler(post("/api/refuse"));
     const host = await web.handler(withBearer(post("/api/refuse"), "expired"));
     const route = await web.handler(withBearer(post("/api/refuse"), "alice"));
@@ -298,7 +289,7 @@ describe("Authentication.layer", () => {
   it("rejects any other failure in the types, and answers it with an empty 500", async () => {
     type Verify = Authentication.Verify<{ readonly id: string }, typeof Login.security, never>;
 
-    // @ts-expect-error Only a refusal or a response may fail authentication; plain JavaScript can still fail with anything.
+    // @ts-expect-error Only a refusal or an error the descriptor declares may fail authentication; plain JavaScript can still fail with anything.
     const leaking: Verify = () => Effect.fail(new Private({ message: "Undeclared" }));
 
     const web = serve(
@@ -657,15 +648,6 @@ describe("Authentication.protect", () => {
     ]);
   });
 
-  it("sends a verifier's own response, such as an unavailable issuer's", async () => {
-    const web = deployment(() =>
-      Effect.fail(HttpServerResponse.text("Issuer unavailable", { status: 503 })),
-    );
-
-    const own = await web.handler(get("/own", "Bearer alice"));
-    expect([own.status, await own.text()]).toEqual([503, "Issuer unavailable"]);
-  });
-
   it("authenticates under another scheme, as its actions are", async () => {
     const Session = Authentication.make("test.ProtectSession", Identity, {
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
@@ -697,6 +679,135 @@ describe("Authentication.protect", () => {
     const anonymous = await web.handler(get("/own"));
     const action = await web.handler(post("/api/identify"));
     expect(await answerOf(anonymous)).toEqual(await answerOf(action));
+  });
+});
+
+describe("an error a descriptor declares", () => {
+  const Open = Action.make("open", {
+    description: "Open to anyone",
+    readOnly: true,
+    caller: Action.Anyone,
+    success: Schema.String,
+  });
+
+  const Http = ActionHttp.make([Identify, Open], { authentication: Checked });
+
+  const apps = [
+    Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id), {
+      authorize: Action.allowAll,
+    }),
+    Action.implement(Open, () => Effect.succeed("open")),
+  ];
+
+  /** Unavailable for the token `down`, the identity the token names otherwise. */
+  const verifier = (token: Redacted.Redacted<string>) =>
+    Redacted.value(token) === "down"
+      ? Effect.fail(new Unavailable({ operation: "verify" }))
+      : Effect.succeed({ id: Redacted.value(token) });
+
+  const provider = Authentication.layer(Checked, verifier);
+
+  const routes = Layer.mergeAll(
+    ActionHttp.layer(Http, apps),
+    ActionMcp.layerHttp(apps, { name: "test", version: "0", authentication: Checked }),
+    HttpRouter.add(
+      "GET",
+      "/own",
+      Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
+    ).pipe(Layer.provide(Authentication.protect(Checked).layer)),
+  ).pipe(Layer.provide(provider));
+
+  const answerOf = async (response: Response) => [
+    response.status,
+    response.headers.get("www-authenticate"),
+    response.headers.get("cache-control"),
+    await response.json(),
+  ];
+
+  it("is declared on every protected endpoint, and decoded by its clients, as their type says", () =>
+    Effect.gen(function* () {
+      const client = yield* ActionHttp.client(Http, as("down"));
+
+      expect(yield* Effect.flip(client.identify())).toEqual(
+        new Unavailable({ operation: "verify" }),
+      );
+      expect(yield* client.open()).toBe("open");
+
+      expectTypeOf<Unavailable>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
+      expectTypeOf<Expired>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
+      expectTypeOf<Unavailable>().not.toExtend<Effect.Error<ReturnType<typeof client.open>>>();
+
+      const document = OpenApi.fromApi(Http.api);
+      expect(Object.keys(document.paths["/api/identify"]?.post?.responses ?? {})).toEqual(
+        expect.arrayContaining(["401", "503"]),
+      );
+      expect(Object.keys(document.paths["/api/open"]?.post?.responses ?? {})).not.toContain("503");
+    }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise));
+
+  it("is sent as its status and JSON, no-store and unchallenged, on every remote surface alike", async () => {
+    const web = serve(routes);
+
+    const unavailable = new Unavailable({ operation: "verify" });
+    const action = await answerOf(await web.handler(withBearer(request(), "down")));
+
+    const mcp = await answerOf(
+      await web.handler(
+        mcpRequest({
+          method: "tools/call",
+          params: { name: "identify", arguments: {} },
+          headers: { authorization: "Bearer down" },
+        }),
+      ),
+    );
+
+    const own = await answerOf(
+      await web.handler(
+        new Request("http://localhost/own", { headers: { authorization: "Bearer down" } }),
+      ),
+    );
+
+    const outside = await answerOf(
+      HttpServerResponse.toWeb(
+        Authentication.refusalResponse(unavailable, {
+          authentication: Checked,
+          authorization: "Bearer down",
+        }),
+      ),
+    );
+
+    expect(action).toEqual([
+      503,
+      null,
+      "no-store",
+      Schema.encodeSync(Schema.toCodecJson(Unavailable))(unavailable),
+    ]);
+    expect([mcp, own, outside]).toEqual([action, action, action]);
+
+    // A public tool presenting a credential is verified over MCP, so it gets the same answer.
+    const openTool = await answerOf(
+      await web.handler(
+        mcpRequest({
+          method: "tools/call",
+          params: { name: "open", arguments: {} },
+          headers: { authorization: "Bearer down" },
+        }),
+      ),
+    );
+
+    expect(openTool).toEqual(action);
+  });
+
+  it("is refused where it encodes with a built-in error's _tag", () => {
+    expect(() =>
+      Authentication.make("test.Builtin", Identity, { error: Action.Forbidden }),
+    ).toThrow('Authentication "test.Builtin": error _tag "Forbidden" is built in');
+  });
+
+  it("is the only failure besides a refusal refusalResponse renders", () => {
+    // @ts-expect-error Without the descriptor declaring it, it is no answer authentication gives.
+    expect(() => Authentication.refusalResponse(new Unavailable({ operation: "verify" }))).toThrow(
+      "Not a refusal, nor an error the authentication declares",
+    );
   });
 });
 

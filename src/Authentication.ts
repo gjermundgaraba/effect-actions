@@ -15,11 +15,15 @@ import {
   type Any,
   type Credential,
   type Descriptor,
+  type Errors,
   type Provider,
   type Runtime,
   type Security,
   type SecurityMiddleware,
+  type VerifierFailure,
 } from "./internal/authentication.js";
+import { assertOwnTags, errorList } from "./internal/actions.js";
+import { declaredResponse, type ErrorsOf } from "./internal/declared.js";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
 import type { Known, OptionalUnless } from "./internal/implementation.js";
 import {
@@ -158,17 +162,23 @@ const settle = (
   });
 
 /** What `refusalResponse` answers about. */
-export interface RefusalResponseOptions {
+export interface RefusalResponseOptions<D extends Any = Any> {
   /**
    * The descriptor refusing, whose scheme decides the challenge: Bearer's, below, when left
-   * out; another scheme's 401 names that scheme, and nothing steps up under it.
+   * out; another scheme's 401 names that scheme, and nothing steps up under it. An error it
+   * declares is sent as its endpoints declare it.
    */
-  readonly authentication?: Any | undefined;
+  readonly authentication?: D | undefined;
   /** The OAuth protected resource refusing: the one given to `layer`. */
   readonly protectedResource?: ProtectedResource | undefined;
   /** The request's `Authorization` header, which decides whether a 401 names `invalid_token`. */
   readonly authorization?: string | undefined;
 }
+
+/** What the descriptor `D` declares its verifier fails with besides a refusal. */
+type DeclaredOf<D> = D extends { readonly error: infer E extends Errors }
+  ? E[number]["Type"]
+  : never;
 
 /**
  * The response `layer` answers a refusal with, for a caller the router never routes, such as
@@ -177,27 +187,36 @@ export interface RefusalResponseOptions {
  * `authorization` presented a bearer token, or the `insufficient_scope` of a `Forbidden`
  * naming scopes. Given the protected resource `layer` was, every challenge names its metadata
  * URL and a 401's its `scopesRequired`. Under a descriptor of another scheme, it is the JSON
- * and status alone, a 401 naming that scheme. `HttpServerResponse.toWeb` gives it as a web
- * `Response`.
+ * and status alone, a 401 naming that scheme. An error `authentication` declares is sent as
+ * its endpoints declare it, its JSON with its status. `HttpServerResponse.toWeb` gives it as a
+ * web `Response`.
  */
-export const refusalResponse = (
-  error: Refusal,
-  options?: RefusalResponseOptions,
+export const refusalResponse = <D extends Any = never>(
+  error: Refusal | DeclaredOf<D>,
+  options?: RefusalResponseOptions<D>,
 ): HttpServerResponse.HttpServerResponse => {
   const authentication = options?.authentication;
   const oauth = authentication === undefined || isBearer(authentication.security);
   assertResource(oauth, options?.protectedResource);
 
-  if (authentication !== undefined && !oauth) {
-    return settle(plain(error), schemeChallenge(authentication.security, authentication.name));
-  }
-
   const named = namedOf(options?.protectedResource);
 
-  return settle(
-    answer(error, named.metadataUrl),
-    challengeOf(named, tokenPresented(options?.authorization)),
-  );
+  const challenge =
+    authentication !== undefined && !oauth
+      ? schemeChallenge(authentication.security, authentication.name)
+      : challengeOf(named, tokenPresented(options?.authorization));
+
+  if (!isRefusal(error)) {
+    const response = declaredResponse(authentication?.error ?? [], error);
+
+    if (response === undefined) {
+      throw new Error("Not a refusal, nor an error the authentication declares");
+    }
+
+    return settle(response, challenge);
+  }
+
+  return settle(oauth ? answer(error, named.metadataUrl) : plain(error), challenge);
 };
 
 /**
@@ -305,6 +324,11 @@ const schemeChallenge = (security: Security, name: string): string | undefined =
 export interface Options {
   /** The one native scheme a caller proves the identity by: Bearer when left out. */
   readonly security?: Security;
+  /**
+   * What the verifier may fail with besides a refusal, such as its provider being unreachable:
+   * one schema, or a list. Every protected endpoint declares it, so clients decode it.
+   */
+  readonly error?: Errors | Errors[number];
 }
 
 /** The scheme options `O` give: Bearer too wherever they may leave it out, as at run time. */
@@ -325,12 +349,15 @@ export const make = <const Name extends string, I, A, const O extends Options = 
   name: Name,
   identity: Context.Key<I, A>,
   ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>>>
-): Descriptor<I, A, SecurityOf<O>, Name> => {
+): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
+  const error = errorList(options[0]?.error);
 
   if (!componentKey.test(name)) {
     throw new Error(`Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key`);
   }
+
+  assertOwnTags(`Authentication "${name}"`, error);
 
   // Checked at run time too: plain JavaScript can pass anything, a record of schemes included.
   if (
@@ -347,6 +374,9 @@ export const make = <const Name extends string, I, A, const O extends Options = 
     // SAFETY: `SecurityOf` is the scheme given, or Bearer wherever it may be left out.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options.
     security: security as SecurityOf<O>,
+    // SAFETY: `ErrorsOf` is the list given, one schema as a list of one, or none.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options.
+    error: error as ErrorsOf<O>,
     "~provider": Context.Service<Provider<I, Name>, Runtime>(
       `effect-actions/Authentication/Provider/${name}`,
     ),
@@ -366,11 +396,12 @@ export type { Any, Descriptor, Provider } from "./internal/authentication.js";
 
 /**
  * A descriptor's verifier: the credential its scheme decodes, as Effect's own decoder gives
- * it, to the identity, or a refusal. Its services belong to the request.
+ * it, to the identity, or a refusal, or an error the descriptor declares, `E`. Its services
+ * belong to the request.
  */
-export type Verify<A, S extends Security, R> = (
+export type Verify<A, S extends Security, R, E = never> = (
   credential: HttpApiSecurity.HttpApiSecurity.Type<S>,
-) => Effect.Effect<A, Refusal | HttpServerResponse.HttpServerResponse, R>;
+) => Effect.Effect<A, Refusal | E, R>;
 
 export interface LayerOptions<EP = never, RP = never> {
   readonly protectedResource?:
@@ -403,16 +434,17 @@ export function layer<
   I,
   A,
   const S extends Security,
+  E extends Errors,
   R,
   EX = never,
   RX = never,
   EP = never,
   RP = never,
 >(
-  authentication: Descriptor<I, A, S, Name>,
+  authentication: Descriptor<I, A, S, Name, E>,
   verify:
-    | Verify<NoInfer<A>, NoInfer<S>, R>
-    | Effect.Effect<Verify<NoInfer<A>, NoInfer<S>, R>, EX, RX>,
+    | Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>
+    | Effect.Effect<Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>, EX, RX>,
   options?: LayerOptions<EP, RP> & ResourceOf<S>,
 ): Layer.Layer<
   Provider<I, Name>,
@@ -424,8 +456,8 @@ export function layer<
 export function layer(
   authentication: Any,
   verify:
-    | Verify<unknown, Security, unknown>
-    | Effect.Effect<Verify<unknown, Security, unknown>, unknown, unknown>,
+    | Verify<unknown, Security, unknown, unknown>
+    | Effect.Effect<Verify<unknown, Security, unknown, unknown>, unknown, unknown>,
   options: LayerOptions<unknown, unknown> = {},
 ): Layer.Layer<Provider<unknown>, unknown, unknown> {
   const { security } = authentication;
@@ -482,14 +514,16 @@ export function layer(
             ? invalid
             : anonymous;
 
-      const refuse = (error: HttpServerResponse.HttpServerResponse | Refusal) =>
-        Effect.succeed(
-          HttpServerResponse.isHttpServerResponse(error)
-            ? error
-            : oauth
-              ? answer(error, metadataUrl)
-              : plain(error),
-        );
+      // A refusal, or an error the descriptor declares, sent as its endpoints declare it;
+      // anything else the verifier fails with is a defect, as no client could decode it.
+      const refuse = (error: VerifierFailure) =>
+        isRefusal(error)
+          ? Effect.succeed(oauth ? answer(error, metadataUrl) : plain(error))
+          : Effect.suspend(() => {
+              const response = declaredResponse(authentication.error, error);
+
+              return response === undefined ? Effect.die(error) : Effect.succeed(response);
+            });
 
       // `route` once `credential` verifies, given the identity as `slot`; refused otherwise.
       const verified = (
@@ -577,8 +611,8 @@ type Provides<I> = unknown extends I ? never : I;
  * `layer(authentication, ...)`. An erased descriptor, `Any`, provides no service the types can
  * name: its identity is `unknown`, which would discharge every request service the route owes.
  */
-export const protect = <I, A, S extends Security, Name extends string>(
-  authentication: Descriptor<I, A, S, Name>,
+export const protect = <I, A, S extends Security, Name extends string, E extends Errors>(
+  authentication: Descriptor<I, A, S, Name, E>,
 ): HttpRouter.Middleware<{
   provides: Provides<I>;
   handles: Refusal;
