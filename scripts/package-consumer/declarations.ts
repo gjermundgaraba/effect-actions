@@ -173,3 +173,24 @@ export const localClient = <
 >(
   apps: Apps,
 ): ReturnType<typeof Action.client<Apps>> => Action.client(apps);
+
+// A package wrapping `protect` names its middleware, and a descriptor's error list, by type.
+export const guard = <const Name extends string, E extends Action.Errors>(
+  authentication: Authentication.Descriptor<
+    Principal,
+    string,
+    Authentication.Any["security"],
+    Name,
+    E
+  >,
+): Authentication.Protection<Principal, Name> => Authentication.protect(authentication);
+
+export const checkedGuard = guard(Checked);
+
+// The built-in failures as schemas, and the issues of input that did not decode.
+export const isRefusal = Schema.is(Action.Refusal);
+
+export const isBuiltIn = Schema.is(Action.BuiltIn);
+
+export const pathsOf = (error: Schema.SchemaError): ReadonlyArray<Action.Issue["path"]> =>
+  Action.InvalidInput.fromSchemaError(error).issues.map(({ path }) => path);

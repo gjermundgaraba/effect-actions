@@ -187,3 +187,37 @@ export const handlersApart = () => {
 
   return [remote, trusted];
 };
+
+// Options shared as one constant object, spread into each contract, keep their exact types.
+class Missing extends Schema.TaggedError<Missing>()("Missing", {}) {}
+
+class Taken extends Schema.TaggedError<Taken>()("Taken", {}) {}
+
+const Owner = { caller: CurrentActor, error: [Missing, Taken] } as const;
+
+const Rename = Action.make("rename", {
+  ...Owner,
+  description: "Rename.",
+  readOnly: false,
+  input: { id: Schema.String },
+});
+
+const RenameInline = Action.make("rename", {
+  caller: CurrentActor,
+  error: [Missing, Taken],
+  description: "Rename.",
+  readOnly: false,
+  input: { id: Schema.String },
+});
+
+expectTypeOf(Rename).toEqualTypeOf(RenameInline);
+
+class Other extends Schema.TaggedError<Other>()("Other", {}) {}
+
+// A handler still fails only with what the shared options declare.
+Action.implement(
+  Rename,
+  // @ts-expect-error -- `Other` is no error `Owner` declares.
+  () => Effect.fail(new Other()),
+  { authorize: Action.allowAll },
+);

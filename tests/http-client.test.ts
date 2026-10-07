@@ -166,6 +166,29 @@ it.effect("fails with Effect's own errors when the contract cannot account for t
   }),
 );
 
+it.effect(
+  "fails input that does not encode as InvalidInput, as every surface does, and sends nothing",
+  () =>
+    Effect.gen(function* () {
+      let sent = 0;
+
+      const client = yield* httpClient(Http, async () => {
+        sent += 1;
+
+        return Response.json({ id: "a" });
+      });
+
+      // @ts-expect-error A caller outside TypeScript passes what it holds.
+      const refused = yield* Effect.flip(client.get({ id: 1 }));
+
+      expect(refused).toBeInstanceOf(Action.InvalidInput);
+      expect(
+        refused instanceof Action.InvalidInput && refused.issues.map(({ path }) => path),
+      ).toEqual([["id"]]);
+      expect(sent).toBe(0);
+    }),
+);
+
 it.effect("fails an unserved action's call by whether the action declares its 404", () =>
   Effect.gen(function* () {
     const reasonOf = <A, E>(call: Effect.Effect<A, E>) =>

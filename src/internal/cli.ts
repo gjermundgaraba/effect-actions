@@ -482,7 +482,7 @@ const described = <E>(error: E, seen: Set<unknown> = new Set()): string => {
  * surface's own `errors`, as an Effect, as HTTP encodes it. A failure none takes, such as a
  * builder's or the transport's, is described instead.
  */
-const failureOf = <E>(action: Action.Any, errors: Action.Any["error"]) => {
+const failureOf = <E>(action: Action.Any, errors: Action.Errors) => {
   const encode = Schema.encodeUnknownEffect(
     Schema.fromJsonString(Schema.toCodecJson(Schema.Union(projectedErrors(action, errors)))),
   );
@@ -573,7 +573,7 @@ export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
   options?: Options<A>,
-  errors: Action.Any["error"] = [],
+  errors: Action.Errors = [],
 ): Command.Command<string, never, {}, UserError<E | InvalidInput>, R> => {
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;

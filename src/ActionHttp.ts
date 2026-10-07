@@ -93,9 +93,6 @@ export interface FetchClientOptions extends ClientOptions {
   readonly fetch?: typeof globalThis.fetch | undefined;
 }
 
-/** Error schemas, as an action declares them. */
-type Errors = Action.Any["error"];
-
 /** Native endpoint middleware, as `HttpApiMiddleware.Service` declares it. */
 type Middleware = ReadonlyArray<Context.Key<HttpApiMiddleware.AnyId, unknown>>;
 
@@ -138,10 +135,10 @@ type MiddlewareOf<O> = O extends { readonly middleware: infer M extends Middlewa
  * action's callers see after decoding is its handler's, declared on the contract and decoded
  * by every client.
  */
-type ServerOnly<M extends Middleware, E extends Errors> = [
+type ServerOnly<M extends Middleware, E extends Action.Errors> = [
   | Exclude<
       HttpApiMiddleware.Error<IdOf<M[number]>>,
-      Extract<Certain<E>, Errors[number]>["Type"] | BuiltIn
+      Extract<Certain<E>, Action.Errors[number]>["Type"] | BuiltIn
     >
   | HttpApiMiddleware.MiddlewareClient<IdOf<M[number]>>,
 ] extends [never]
@@ -158,7 +155,7 @@ type Single<T> = true extends Types.IsUnion<T> ? never : T;
  * fixed length, never one of an array of unknown length, which may be empty, nor of a list
  * `E` may be one of several.
  */
-type Certain<E extends Errors> =
+type Certain<E extends Action.Errors> =
   true extends Types.IsUnion<E>
     ? never
     : number extends E["length"]
@@ -227,14 +224,14 @@ type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D extends A
   : undefined;
 
 /** Contract-level configuration shared by servers and clients. */
-export interface Options<E extends Errors = Errors> {
+export interface Options<E extends Action.Errors = Action.Errors> {
   readonly prefix?: `/${string}`;
   /** Router middleware's errors, which every endpoint declares: one schema, or a list. */
   readonly error?: E | E[number];
   readonly authentication?: Authentication;
 }
 
-type Endpoint<A extends Action.Any, E extends Errors, D> = A extends Action.Any
+type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Action.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       A["name"],
       "POST",
@@ -254,7 +251,7 @@ type Endpoint<A extends Action.Any, E extends Errors, D> = A extends Action.Any
  * not nested, named after the binding's mount path, `/` at the root, so bindings composed
  * into one host API keep their own groups.
  */
-type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors, D> = HttpApi.HttpApi<
+type Api<Actions extends ReadonlyArray<Action.Any>, E extends Action.Errors, D> = HttpApi.HttpApi<
   "actions",
   HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E, D>, true>
 >;
@@ -266,7 +263,7 @@ type Api<Actions extends ReadonlyArray<Action.Any>, E extends Errors, D> = HttpA
  */
 export interface Binding<
   Actions extends ReadonlyArray<Action.Any>,
-  E extends Errors = [],
+  E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
 > {
   readonly authentication: D;
@@ -349,7 +346,7 @@ const servedBy = (
  * JSON whatever encoding the input is annotated with, which no other surface reads either:
  * `HttpApi` would take a form or text body for it, which a page sends without a preflight.
  */
-const endpointOf = (action: Action.Any, path: `/${string}`, errors: Errors) =>
+const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Errors) =>
   HttpApiEndpoint.post(action.name, path, {
     payload: action.input.pipe(HttpApiSchema.asJson()),
     success: action.success,
@@ -555,11 +552,21 @@ export function layer(
       const authentication =
         auth === undefined
           ? Layer.empty
-          : yield* Effect.map(auth["~provider"], (provider) =>
-              Layer.mergeAll(
-                Layer.succeed(auth["~middleware"], provider.middleware),
-                Layer.succeed(StepUp, provider.stepUp),
-              ),
+          : yield* Effect.flatMap(auth["~provider"], (provider) =>
+              // The routes decode and declare with the binding's descriptor, MCP and `protect`
+              // with the provider's: one of the same name built apart may differ in either.
+              provider.descriptor === auth
+                ? Effect.succeed(
+                    Layer.mergeAll(
+                      Layer.succeed(auth["~middleware"], provider.middleware),
+                      Layer.succeed(StepUp, provider.stepUp),
+                    ),
+                  )
+                : Effect.die(
+                    new Error(
+                      `Authentication "${auth.name}": the binding's descriptor is not its provider's; build both from one descriptor`,
+                    ),
+                  ),
             );
 
       // The group is built alone, so the layer's middleware is read here, as the host

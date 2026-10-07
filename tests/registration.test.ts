@@ -439,14 +439,12 @@ describe("projection boundaries", () => {
     ).toolkit;
 
     // Each built-in's JSON decodes to its class: the tool declares all three.
-    const builtIns = Schema.Union([Action.InvalidInput, Action.Unauthenticated, Action.Forbidden]);
-
     for (const error of [
       new Action.InvalidInput(),
       new Action.Unauthenticated(),
       new Action.Forbidden(),
     ]) {
-      const json = Schema.encodeSync(Schema.toCodecJson(builtIns))(error);
+      const json = Schema.encodeSync(Schema.toCodecJson(Action.BuiltIn))(error);
 
       expect(Schema.decodeUnknownSync(tools.whoAmI.failureSchema)(json)).toEqual(error);
     }

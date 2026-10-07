@@ -263,6 +263,20 @@ describe("a resource built at startup", () => {
       'Invalid scope in scopesRequired: "docs read"',
     );
   });
+
+  it("refuses a scopesSupported that is no scope token when its layer builds", async () => {
+    const web = serve(
+      routes(built().authentication, {
+        resource: "https://api.example.com/mcp",
+        authorizationServers: ["https://auth.example.com"],
+        scopesSupported: ["docs:read", "docs write"],
+      }),
+    );
+
+    await expect(web.handler(post("/a/identify"))).rejects.toThrow(
+      'Invalid scope in scopesSupported: "docs write"',
+    );
+  });
 });
 
 describe("discovery across origins", () => {

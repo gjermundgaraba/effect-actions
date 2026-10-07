@@ -114,13 +114,14 @@ export interface Mcp {
 
 /**
  * The failures every surface declares and any handler may fail with, and the refusals among
- * them; see `internal/errors`.
+ * them, each a schema and a type; see `internal/errors`.
  */
 export {
-  type BuiltIn,
+  BuiltIn,
   Forbidden,
   InvalidInput,
-  type Refusal,
+  type Issue,
+  Refusal,
   Unauthenticated,
 } from "./internal/errors.js";
 
@@ -254,6 +255,12 @@ export interface Action<
 
 /** Any action, with its schemas erased. */
 export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
+
+/**
+ * A list of declared errors, as an action's `error` holds it, and a binding's or an
+ * authentication descriptor's: `<E extends Action.Errors>` constrains one.
+ */
+export type Errors = ReadonlyArray<Codec>;
 
 /** Receives decoded input; may fail only with the declared errors and the built-in ones. */
 export type Handler<A extends Any, R = never> = (

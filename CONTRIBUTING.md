@@ -46,6 +46,7 @@ One file per decision in [`design/`](design/). Each note is titled, and cited by
 - [Request values win](design/request-values-win.md)
 - [JSON-typed routes](design/json-typed-routes.md)
 - [Authentication descriptor and provider](design/authentication-descriptor-and-provider.md)
+- [One descriptor per name](design/one-descriptor-per-name.md)
 - [Refusals outside the router](design/refusals-outside-the-router.md)
 - [Built protected resource](design/built-protected-resource.md)
 - [Request body size](design/request-body-size.md)

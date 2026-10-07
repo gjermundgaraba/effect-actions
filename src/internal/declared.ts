@@ -11,12 +11,10 @@ const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 const statusThrough = (ast: SchemaAST.AST): number | undefined =>
   statusOf(ast) ?? (SchemaAST.isSuspend(ast) ? statusThrough(ast.thunk()) : undefined);
 
-type Declared = Action.Any["error"][number];
-
-type Errors = Action.Any["error"];
+type Declared = Action.Errors[number];
 
 /** The list an `error` option of type `G` stands for: one schema is a list of one. */
-type ListOf<G> = G extends Errors ? G : readonly [G];
+type ListOf<G> = G extends Action.Errors ? G : readonly [G];
 
 /**
  * The errors options `O` declare, as at run time: those `error` always gives, or, where it may
@@ -24,9 +22,9 @@ type ListOf<G> = G extends Errors ? G : readonly [G];
  */
 export type ErrorsOf<O> = O extends unknown
   ? "error" extends keyof O
-    ? O extends { readonly error: infer G extends Errors | Errors[number] }
+    ? O extends { readonly error: infer G extends Action.Errors | Action.Errors[number] }
       ? ListOf<G>
-      : ListOf<Extract<O["error" & keyof O], Errors | Errors[number]>> | []
+      : ListOf<Extract<O["error" & keyof O], Action.Errors | Action.Errors[number]>> | []
     : []
   : never;
 

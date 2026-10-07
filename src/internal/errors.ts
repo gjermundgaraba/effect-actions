@@ -16,6 +16,9 @@ const Issue = Schema.Struct({
   message: Schema.String,
 });
 
+/** One thing wrong with an input, as `InvalidInput.issues` lists it. */
+export type Issue = (typeof Issue)["Type"];
+
 const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
 
 /**
@@ -28,7 +31,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   "InvalidInput",
   {
     message: message("The input does not match the action's input."),
-    issues: Schema.optionalKey(Schema.Array(Issue)),
+    issues: Schema.Array(Issue).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
   { httpApiStatus: statuses.InvalidInput },
 ) {
@@ -97,14 +100,18 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
   declare private readonly "~builtIn": unknown;
 }
 
+/** The refusals, as schemas. */
+const refusals = [Unauthenticated, Forbidden] as const;
+
 /**
  * What authentication or an implementation's `authorize` refuses a caller with, instead of
- * running a handler. An error an action declares, such as a rate limit, is not a refusal.
+ * running a handler. An error an action declares, such as a rate limit, is not a refusal. As a
+ * schema, it tells a refusal apart: `Schema.is(Action.Refusal)(error)`.
  */
-export type Refusal = Unauthenticated | Forbidden;
+export const Refusal = Schema.Union(refusals);
 
-/** The refusals, as schemas. */
-export const refusals = [Unauthenticated, Forbidden] as const;
+/** A refusal: `Unauthenticated | Forbidden`. */
+export type Refusal = (typeof Refusal)["Type"];
 
 /**
  * The failures every endpoint and tool declares beyond its action's own, and any handler may
@@ -115,5 +122,8 @@ export const builtIns = [InvalidInput, ...refusals] as const;
 /** The built-in failures' schemas. */
 export type BuiltIns = (typeof builtIns)[number];
 
-/** A built-in failure. */
-export type BuiltIn = InvalidInput | Refusal;
+/** The built-in failures as one schema: `Schema.is(Action.BuiltIn)(error)`. */
+export const BuiltIn = Schema.Union(builtIns);
+
+/** A built-in failure: `InvalidInput | Refusal`. */
+export type BuiltIn = (typeof BuiltIn)["Type"];

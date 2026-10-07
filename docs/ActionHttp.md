@@ -248,12 +248,12 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 
 ### Client methods
 
-- A method fails with exactly what the native client fails with. Declared errors arrive as their decoded values: the action's own, the binding's, and the three built-in errors every endpoint declares. Match them with `Effect.catchTag`.
+- A method fails with what the native client fails with, but for input: input that does not encode is `InvalidInput` with its `issues`, as every surface answers it, and nothing is sent. Declared errors arrive as their decoded values: the action's own, the binding's, and the three built-in errors every endpoint declares. Match them with `Effect.catchTag`.
 - Anything the contract does not account for is Effect's own error:
   - `HttpClientError` with `response` `undefined`: the server could not be reached.
   - `HttpClientError` with `reason._tag` `DecodeError`: the server answered with a status no schema declares, such as the empty 500 of a defect.
   - `HttpClientError` with `StatusCodeError`: a declared status whose body did not decode.
-  - `SchemaError`: the input did not encode, or the success body did not decode.
+  - `SchemaError`: the success body did not decode.
 - The library interprets no status. Which failures mean "signed out" or "try again" is the caller's decision.
 - Nothing is retried. A failed write may or may not have happened; only a declared error says what the server did.
 - Every action of the binding has a method, whether or not a server serves it. An unserved action answers 404 with no body, so its method fails with `HttpClientError`: `DecodeError`, or `StatusCodeError` when the action declares a 404 error, whose body the empty response is not.
@@ -272,6 +272,7 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 
 - Route returns 404: the action is not in the binding, its implementation was never passed to a `layer` call, or the path lacks the prefix. An implementation's action is served only if the binding holds that very value: an equal-looking copy, such as a test declaring the contract again, is not.
 - `No action of these implementations is in this HTTP binding: x` thrown by `layer`: none of the implementations' actions was passed to this binding's `make`, so they are the wrong implementations or it is the wrong binding. `x (another contract)` is an action of a bound name that is not the bound value, as a second copy of the contracts module makes: implement the exact contract value the binding received. Matching names and schemas do not establish identity.
+- `Authentication "<name>": the binding's descriptor is not its provider's`, a defect when `layer` builds: the binding and `Authentication.layer` were given two descriptors of one name. Build both from one descriptor ([Authentication](Authentication.md#failure-modes)).
 - `Listed in actions, but the binding does not hold it: <names>`, or `but no implementation holds it`, thrown by `layer`: those actions are not among the binding's or the implementations', by identity. `(another contract)` marks one whose name the binding holds.
 - `Duplicate served action: <name>`: one `layer` call received two implementations of the same bound action.
 - `Duplicate middleware: <key>` thrown by `layer`: its `middleware` lists one middleware twice, which a native endpoint would run once. List it once.
@@ -301,5 +302,5 @@ In a browser, relative routes resolve against the page; elsewhere, give `baseUrl
 - Property does not exist on the client: the action is not in the binding.
 - `Expected 1 arguments`: `{}` is not a valid encoded input for the action, so it needs its input.
 - Type error passing `undefined` to a method whose argument may be omitted: leave the argument out instead.
-- Fails with `SchemaError` `Expected Filters` given a plain object, which TypeScript may let through: the input is a class, `Filters`, which encodes only its instances. Pass `new Filters({ ... })`, or leave out an argument whose fields are all optional.
+- Fails with `InvalidInput` `Expected Filters` given a plain object, which TypeScript may let through: the input is a class, `Filters`, which encodes only its instances. Pass `new Filters({ ... })`, or leave out an argument whose fields are all optional.
 - Type error passing `{ payload: ... }`: that is the native client's shape. These methods take the input itself.

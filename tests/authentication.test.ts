@@ -500,9 +500,7 @@ describe("Authentication.layer's refusals", () => {
       expect(response.status).toBe(status);
       expect(response.headers.get("www-authenticate")).toBe(challenge);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(await response.json()).toEqual(
-        Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]))(error),
-      );
+      expect(await response.json()).toEqual(Schema.encodeSync(Action.Refusal)(error));
     },
   );
 
@@ -527,6 +525,14 @@ describe("Authentication.layer's refusals", () => {
 
     expect(() => Authentication.layer(Login, verify, { protectedResource: bad })).toThrow(
       'Invalid scope in scopesRequired: "has space"',
+    );
+  });
+
+  it("refuses a supported scope that is no OAuth scope token", () => {
+    const bad = { ...resource, scopesSupported: ["docs:read", "has space"] as const };
+
+    expect(() => Authentication.layer(Login, verify, { protectedResource: bad })).toThrow(
+      'Invalid scope in scopesSupported: "has space"',
     );
   });
 
@@ -887,6 +893,92 @@ describe("a scheme other than Bearer", () => {
     expect([refused.status, refused.headers.get("www-authenticate")]).toEqual([200, null]);
     expect(await refused.json()).toMatchObject({ result: { isError: true } });
   });
+
+  it("serves a cookie the deployment names at startup, to a client whose declaration names another", async () => {
+    // One declaration, its cookie's name known only at startup, such as one a framework
+    // prefixes over HTTPS: the server builds its descriptor and binding then.
+    const declared = (cookie: string) =>
+      Authentication.make("test.DeploymentSession", Identity, {
+        security: HttpApiSecurity.apiKey({ in: "cookie", key: cookie }),
+      });
+
+    const served = declared("__Secure-session");
+
+    const web = serve(
+      ActionHttp.layer(ActionHttp.make([Identify], { authentication: served }), identify).pipe(
+        Layer.provide(
+          Authentication.layer(served, (session) =>
+            Redacted.value(session) === "s1"
+              ? Effect.succeed({ id: "alice" })
+              : Effect.fail(new Action.Unauthenticated()),
+          ),
+        ),
+      ),
+    );
+
+    const sent = (cookie: string) => {
+      const request = post("/api/identify");
+      request.headers.set("cookie", cookie);
+
+      return web.handler(request);
+    };
+
+    expect((await sent("__Secure-session=s1")).status).toBe(200);
+    expect((await sent("session=s1")).status).toBe(401);
+
+    // A browser's binding of the same declaration, built with any name, calls it: a client
+    // never reads the scheme, and the browser sends the cookies it holds.
+    const client = ActionHttp.fetchClient(
+      ActionHttp.make([Identify], { authentication: declared("session") }),
+      {
+        baseUrl: "http://localhost",
+        fetch: (input, init) => {
+          const request = new Request(input, init);
+          request.headers.set("cookie", "__Secure-session=s1");
+
+          return web.handler(request);
+        },
+      },
+    );
+
+    expect(await Effect.runPromise(client.identify())).toBe("alice");
+  });
+
+  // A static descriptor's binding served with a provider built apart, as at startup: from
+  // another scheme the routes would read one credential, MCP and `protect` the other, and from
+  // other errors declare what the verifier does not send.
+  it.each([
+    [
+      { security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }) },
+      { security: HttpApiSecurity.apiKey({ in: "cookie", key: "__Secure-session" }) },
+    ],
+    [{ security: HttpApiSecurity.bearer }, { security: HttpApiSecurity.http({ scheme: "Token" }) }],
+    // Built twice from the same options, it is still another descriptor.
+    [{}, {}],
+  ])(
+    "refuses, when its layer builds, a binding whose descriptor is not its provider's: %#",
+    async (binding, provider) => {
+      const web = serve(
+        ActionHttp.layer(
+          ActionHttp.make([Identify], {
+            authentication: Authentication.make("test.MismatchedSession", Identity, binding),
+          }),
+          identify,
+        ).pipe(
+          Layer.provide(
+            Authentication.layer(
+              Authentication.make("test.MismatchedSession", Identity, provider),
+              () => Effect.succeed({ id: "alice" }),
+            ),
+          ),
+        ),
+      );
+
+      await expect(web.handler(post("/api/identify"))).rejects.toThrow(
+        `Authentication "test.MismatchedSession": the binding's descriptor is not its provider's`,
+      );
+    },
+  );
 
   it("refuses a protected resource, which only a Bearer scheme publishes", () => {
     expect(() =>

@@ -395,8 +395,8 @@ it.effect("names each issue of input that does not decode by its path, on every 
     const http = yield* answered({ ...nested, note: "extra" });
 
     expect(http.issues).toHaveLength(2);
-    expect(http.issues?.map(({ path }) => path)).toContainEqual(["lines", 1, "count"]);
-    expect(http.issues?.map(({ path }) => path)).toContainEqual(["note"]);
+    expect(http.issues.map(({ path }) => path)).toContainEqual(["lines", 1, "count"]);
+    expect(http.issues.map(({ path }) => path)).toContainEqual(["note"]);
     // The message stays the schema's description of them all.
     expect(http.message).toContain('at ["lines"][1]["count"]');
 
@@ -411,6 +411,9 @@ it.effect("names each issue of input that does not decode by its path, on every 
     const own = yield* answered({ kind: "order", lines: [] });
 
     expect(own.issues).toEqual([{ path: ["lines"], message: "Expected a line" }]);
+
+    // One naming none sends them empty.
+    expect(Schema.encodeSync(Action.InvalidInput)(new Action.InvalidInput()).issues).toEqual([]);
 
     // In process, where the input's own type is passed.
     const client = yield* Action.client(app);
@@ -428,7 +431,7 @@ it.effect("names each issue of input that does not decode by its path, on every 
 
     expect(stderr.join("\n")).toContain('"path":["lines",0,"count"]');
 
-    // The OpenAPI document declares them on the 400 every endpoint answers.
+    // The OpenAPI document declares them, always present, on the 400 every endpoint answers.
     const document = OpenApi.fromApi(Http.api);
 
     expect(document.paths["/api/order"]?.post?.responses["400"]).toMatchObject({
@@ -440,7 +443,7 @@ it.effect("names each issue of input that does not decode by its path, on every 
       properties: {
         issues: { type: "array", items: { required: ["path", "message"] } },
       },
-      required: ["_tag", "message"],
+      required: ["_tag", "message", "issues"],
     });
   }),
 );
@@ -457,7 +460,7 @@ it.effect("answers a schema failure of one's own as the surfaces answer input", 
 
     expect(refused).toBeInstanceOf(Action.InvalidInput);
     expect(refused.issues).toMatchObject([{ path: ["page"] }]);
-    expect(refused.issues?.[0]?.message).toContain("number");
+    expect(refused.issues[0]?.message).toContain("number");
     expect(refused.message).toContain('at ["page"]');
     // Never a value sent.
     expect(JSON.stringify(refused)).not.toContain("two");
@@ -473,7 +476,7 @@ it.effect("names a symbol key of an issue's path as its string form, which JSON 
     );
 
     // Told apart from a string key named `secret`.
-    expect(Action.InvalidInput.fromSchemaError(failure).issues?.map(({ path }) => path)).toEqual([
+    expect(Action.InvalidInput.fromSchemaError(failure).issues.map(({ path }) => path)).toEqual([
       ["Symbol(secret)"],
     ]);
   }),

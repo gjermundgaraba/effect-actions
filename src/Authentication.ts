@@ -15,13 +15,13 @@ import {
   type Any,
   type Credential,
   type Descriptor,
-  type Errors,
   type Provider,
   type Runtime,
   type Security,
   type SecurityMiddleware,
   type VerifierFailure,
 } from "./internal/authentication.js";
+import type { Errors } from "./Action.js";
 import { assertOwnTags, errorList } from "./internal/actions.js";
 import { declaredResponse, type ErrorsOf } from "./internal/declared.js";
 import { type Refusal, scopeToken, Unauthenticated } from "./internal/errors.js";
@@ -39,10 +39,10 @@ import {
 /**
  * An `Authorization` header of the `Bearer` scheme, and its token, as Effect's own
  * `HttpApiSecurity.bearer` decodes a request's: the scheme, matched case-insensitively, one or
- * more spaces, then the rest of the header, whatever it holds. The whitespace around a header
- * value is no part of it, and an HTTP parser strips it before any route reads it.
+ * more spaces, then the rest of the header, whatever it holds, a tab included. The whitespace
+ * around a header value is no part of it, and an HTTP parser strips it before any route reads it.
  */
-const bearerScheme = /^[ \t]*Bearer +([^ \t](?:.*[^ \t])?)[ \t]*$/i;
+const bearerScheme = /^[ \t]*Bearer +(.*[^ \t])[ \t]*$/i;
 
 /**
  * The bearer token of an `Authorization` header, `authorization`, or none, read as Effect's
@@ -52,7 +52,7 @@ const bearerScheme = /^[ \t]*Bearer +([^ \t](?:.*[^ \t])?)[ \t]*$/i;
  * requires, and the token is `Redacted`, as Effect's own decoder gives it.
  */
 export const bearerTokenOf = (
-  authorization: string | undefined,
+  authorization: string | null | undefined,
 ): Option.Option<Redacted.Redacted<string>> =>
   Option.map(
     Option.fromNullishOr(bearerScheme.exec(authorization ?? "")?.[1]),
@@ -65,7 +65,10 @@ export interface ProtectedResource {
   readonly resource: string;
   /** Where clients get tokens: nonempty. */
   readonly authorizationServers: Arr.NonEmptyReadonlyArray<string>;
-  /** Every scope the resource accepts, which a client requests when a 401 names none. */
+  /**
+   * Every scope the resource accepts, each an OAuth scope token, which a client requests when a
+   * 401 names none.
+   */
   readonly scopesSupported?: ReadonlyArray<string>;
   /**
    * The scopes every 401 names, each an OAuth scope token: what a client requests when it
@@ -101,7 +104,7 @@ const namedOf = (options: ProtectedResource | undefined): Named => ({
 });
 
 /** Whether a request whose `Authorization` header is `authorization` presented a bearer token. */
-const tokenPresented = (authorization: string | undefined): boolean =>
+const tokenPresented = (authorization: string | null | undefined): boolean =>
   Option.isSome(bearerTokenOf(authorization));
 
 /**
@@ -119,10 +122,11 @@ const challengeOf = (named: Named, presented: boolean): string =>
 
 /**
  * Refuse a protected resource that cannot be published, as `layer` and `refusalResponse` both
- * do: one under a scheme other than Bearer (`oauth` false), a `scopesRequired` that is no list
- * of OAuth scope tokens, as `Forbidden` refuses, and a resource with a fragment, which no
- * request URL carries, so its discovery would never answer (RFC 9728). A resource an Effect
- * builds is checked for its scheme alone, and for the rest once built.
+ * do: one under a scheme other than Bearer (`oauth` false), a `scopesSupported` or
+ * `scopesRequired` that is no list of OAuth scope tokens, as `Forbidden` refuses, and a
+ * resource with a fragment, which no request URL carries, so its discovery would never answer
+ * (RFC 9728). A resource an Effect builds is checked for its scheme alone, and for the rest
+ * once built.
  */
 const assertResource = (
   oauth: boolean,
@@ -134,9 +138,11 @@ const assertResource = (
 
   if (Effect.isEffect(options)) return;
 
-  const invalid = options.scopesRequired?.find((scope) => !scopeToken.test(scope));
+  for (const key of ["scopesSupported", "scopesRequired"] as const) {
+    const invalid = options[key]?.find((scope) => !scopeToken.test(scope));
 
-  if (invalid !== undefined) throw new Error(`Invalid scope in scopesRequired: "${invalid}"`);
+    if (invalid !== undefined) throw new Error(`Invalid scope in ${key}: "${invalid}"`);
+  }
 
   // `hash` is empty for a bare `#`, which the URL still keeps.
   if (new URL(options.resource).href.includes("#")) {
@@ -171,8 +177,11 @@ export interface RefusalResponseOptions<D extends Any = Any> {
   readonly authentication?: D | undefined;
   /** The OAuth protected resource refusing: the one given to `layer`. */
   readonly protectedResource?: ProtectedResource | undefined;
-  /** The request's `Authorization` header, which decides whether a 401 names `invalid_token`. */
-  readonly authorization?: string | undefined;
+  /**
+   * The request's `Authorization` header, as the web `Headers.get` gives it, which decides whether a
+   * 401 names `invalid_token`.
+   */
+  readonly authorization?: string | null | undefined;
 }
 
 /** What the descriptor `D` declares its verifier fails with besides a refusal. */
@@ -545,6 +554,7 @@ export function layer(
       };
 
       return {
+        descriptor: authentication,
         // HTTP: the native security middleware decodes the credential, and the route gets
         // the identity itself.
         middleware: {
@@ -601,6 +611,20 @@ export function layer(
 type Provides<I> = unknown extends I ? never : I;
 
 /**
+ * What `protect` returns for a descriptor named `Name` authenticating the identity `I`: router
+ * middleware providing it, answering a refusal its routes fail with, and requiring the
+ * descriptor's provider. Named so a package emitting declarations can export one.
+ */
+export type Protection<I, Name extends string> = HttpRouter.Middleware<{
+  provides: Provides<I>;
+  handles: Refusal;
+  error: never;
+  requires: never;
+  layerError: never;
+  layerRequires: Provider<I, Name>;
+}>;
+
+/**
  * Native router middleware authenticating a route of the host's own, such as an export, a
  * page frame or a WebSocket upgrade, with `authentication`'s provider, as its actions' routes
  * are: the credential its scheme decodes, verified by the same verifier, and the identity
@@ -613,14 +637,7 @@ type Provides<I> = unknown extends I ? never : I;
  */
 export const protect = <I, A, S extends Security, Name extends string, E extends Errors>(
   authentication: Descriptor<I, A, S, Name, E>,
-): HttpRouter.Middleware<{
-  provides: Provides<I>;
-  handles: Refusal;
-  error: never;
-  requires: never;
-  layerError: never;
-  layerRequires: Provider<I, Name>;
-}> =>
+): Protection<I, Name> =>
   HttpRouter.middleware<{ provides: Provides<I>; handles: Refusal }>()(
     Effect.map(
       Effect.service(authentication["~provider"]),

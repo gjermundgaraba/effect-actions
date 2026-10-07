@@ -1,10 +1,10 @@
-import { Effect, type Schema } from "effect";
+import { Effect, Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
 import type { Any as Authentication, VerifierError } from "./authentication.js";
 import { type Call, inputOf } from "./call.js";
-import type { BuiltIns } from "./errors.js";
+import { type BuiltIns, InvalidInput } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 
 /**
@@ -18,13 +18,13 @@ export type Options = Omit<
 >;
 
 /** An error schema the binding declares on every endpoint. */
-type BindingError = Action.Any["error"][number];
+type BindingError = Action.Errors[number];
 
 /**
  * What one call of `A` fails with: a declared error value (the action's own, one `E` of the
  * binding's, or a built-in `InvalidInput`, `Unauthenticated` or `Forbidden`), a native
  * `HttpClientError` for a failed request or an undeclared answer, or a `SchemaError` when
- * the input does not encode or the success does not decode.
+ * the success does not decode. Input that does not encode is `InvalidInput`, and nothing is sent.
  */
 export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | A["error"][number]["Type"]
@@ -104,7 +104,19 @@ export const methods = (
 
         if (method === undefined) throw new Error(`No client method for ${action.name}`);
 
-        return (...args) => Effect.flatMap(inputOf(action, args), (payload) => method({ payload }));
+        // Input is checked as every surface checks it, each issue reported, before the native
+        // client encodes it, so it fails as `InvalidInput` rather than the `SchemaError` of an
+        // answer that does not decode.
+        const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), {
+          errors: "all",
+        });
+
+        return (...args) =>
+          inputOf(action, args).pipe(
+            Effect.tap(encode),
+            Effect.mapError(InvalidInput.fromSchemaError),
+            Effect.flatMap((payload) => method({ payload })),
+          );
       };
     },
   );

@@ -37,6 +37,8 @@ export interface SecurityMiddleware<I, Name extends string = string> {
 type Response = Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>;
 
 export interface Runtime {
+  /** The descriptor the provider was built from, the one a binding naming it must hold. */
+  readonly descriptor: unknown;
   /** The native security middleware's implementation, keyed by its scheme. */
   readonly middleware: Readonly<
     Record<string, (route: Response, options: { readonly credential: Credential }) => Response>
@@ -63,14 +65,11 @@ export interface Runtime {
   >;
 }
 
-/** The errors a descriptor declares, as a list. */
-export type Errors = Action.Any["error"];
-
 /**
  * What an erased verifier fails with, a refusal or an error its descriptor declares: a value
  * of a declared schema either way, as the built-in refusals are schemas too.
  */
-export type VerifierFailure = Errors[number]["Type"];
+export type VerifierFailure = Action.Errors[number]["Type"];
 
 /**
  * What `Authentication.make` declares: its name, the identity it authenticates, its scheme,
@@ -82,7 +81,7 @@ export interface Descriptor<
   A,
   S extends Security,
   Name extends string = string,
-  E extends Errors = readonly [],
+  E extends Action.Errors = readonly [],
 > {
   readonly name: Name;
   readonly identity: Context.Key<I, A>;
@@ -98,7 +97,7 @@ export interface Descriptor<
   readonly "~verified": Context.Key<never, unknown>;
 }
 
-export type Any = Descriptor<unknown, unknown, Security, string, Errors>;
+export type Any = Descriptor<unknown, unknown, Security, string, Action.Errors>;
 
 export type Identity<A extends Action.Any> = [A] extends [never]
   ? never
@@ -116,11 +115,19 @@ type Covered<A extends Action.Any> =
 export type Required<A extends Action.Any> = [Protected<A>] extends [never]
   ? { readonly authentication?: Any }
   : {
-      readonly authentication: Descriptor<Covered<Protected<A>>, unknown, Security, string, Errors>;
+      readonly authentication: Descriptor<
+        Covered<Protected<A>>,
+        unknown,
+        Security,
+        string,
+        Action.Errors
+      >;
     };
 
 export type ProviderOf<D> =
-  D extends Descriptor<infer I, unknown, Security, infer Name, Errors> ? Provider<I, Name> : never;
+  D extends Descriptor<infer I, unknown, Security, infer Name, Action.Errors>
+    ? Provider<I, Name>
+    : never;
 
 /** All protected actions on a surface use the descriptor's single identity key. */
 export type Matching<A extends Action.Any, D> =
@@ -129,7 +136,7 @@ export type Matching<A extends Action.Any, D> =
     : [
           Exclude<
             Covered<Protected<A>>,
-            D extends Descriptor<infer I, unknown, Security, string, Errors> ? I : never
+            D extends Descriptor<infer I, unknown, Security, string, Action.Errors> ? I : never
           >,
         ] extends [never]
       ? unknown
@@ -146,7 +153,7 @@ export type RemoteRequest<App, A extends Action.Any> =
  */
 export type VerifierError<A extends Action.Any, D> = A["caller"] extends typeof Anyone
   ? never
-  : D extends { readonly error: infer E extends Errors }
+  : D extends { readonly error: infer E extends Action.Errors }
     ? E[number]
     : never;
 

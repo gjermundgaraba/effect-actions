@@ -536,9 +536,7 @@ describe("the authorizer", () => {
       Effect.gen(function* () {
         const response = yield* send(reading(post("/api/write", { value: "x" })));
         expect(response.status).toBe(status);
-        expect(yield* response.json).toEqual(
-          Schema.encodeSync(Schema.Union([Action.Unauthenticated, Action.Forbidden]))(refusal),
-        );
+        expect(yield* response.json).toEqual(Schema.encodeSync(Action.Refusal)(refusal));
         // The authentication challenges a 401, whose request presented a token it took; a
         // refusal naming no scope has nothing to step up to.
         expect(response.headers["www-authenticate"]).toBe(challenge);

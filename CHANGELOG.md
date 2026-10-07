@@ -238,14 +238,15 @@ Each area below lists what is renamed or removed, then what changes without a re
   tool its action's and the three. Any handler may fail with the built-in ones unlisted. Input that
   does not decode, malformed JSON included, is a 400 `InvalidInput` carrying the schema's message
   and its `issues`, each a `path` into the input and a `message`, which a handler refusing input
-  that decodes may name too, so an application's own error for bad input, kept for its structured
-  issues, is deleted; and a result that does not encode is an empty 500; 0.8.0 answered both with an
-  empty 400, or with its group's `schemaError` answers. Nothing replaces `schemaError`: input needs
-  no error of your own, since every surface declares `InvalidInput`, and a success that does not
-  encode means the handler broke its contract after it ran, so any write it made has already
-  happened, which a declared error would misreport. Defects, crashes and proxies send a 5xx without
-  a declared body anyway. Delete the policy, and its `internal` error unless a handler fails with
-  it.
+  that decodes may name too. `issues` is always sent, `[]` when an `InvalidInput` names none, and
+  decoders and the OpenAPI document require it. An application's own error for bad input, kept for
+  its structured issues, is deleted. A result that does not encode is an empty 500. 0.8.0 answered
+  both with an empty 400, or with its group's `schemaError` answers. Nothing replaces `schemaError`:
+  input needs no error of your own, since every surface declares `InvalidInput`, and a success that
+  does not encode means the handler broke its contract after it ran, so any write it made has
+  already happened, which a declared error would misreport. Defects, crashes and proxies send a 5xx
+  without a declared body anyway. Delete the policy, and its `internal` error unless a handler fails
+  with it.
 - A declared error without an `httpApiStatus` is sent as 422, not 500; a union without one
   sends each member at its own. Annotate `{ httpApiStatus: 500 }` to keep the old status.
 - `ActionHttp` answers a request without a content type with 415, as an MCP endpoint does;
@@ -273,6 +274,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   compiler accepted failed. The server still refuses the field from a raw caller: HTTP with a
   400 `InvalidInput` naming its path, MCP as invalid arguments. No call needs changing; to
   assert the refusal, send a raw request.
+- A typed HTTP client fails input that does not encode with `InvalidInput` and its `issues`, as
+  every surface answers it, and sends nothing, in place of the native `SchemaError`, which a
+  caller could not tell from a success that does not decode. `SchemaError` now means only the
+  latter. Match bad input as `InvalidInput`, whichever client sent it.
 - A client's argument may be omitted exactly when `{}` is a valid encoded input, and then sends
   the input `{}` decodes to, so an input class whose fields are all optional, or have decoding
   defaults, may be left out; an input that decodes from fields `{}` lacks needs its argument. A
@@ -597,7 +602,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   does not use. Keep contracts and bindings in modules that import no server code
   ([setup.md](docs/setup.md#browser)).
 - `scopesRequired` names the scopes every 401 of a protected resource asks for, so a first
-  login requests the least rather than every scope supported.
+  login requests the least rather than every scope supported. `layer` and `refusalResponse`
+  refuse a `scopesSupported` or `scopesRequired` entry that is no OAuth scope token, as
+  `Forbidden` refuses one, so an application checks no scope of its own.
+  `Invalid scope in scopesSupported: "<scope>"` names it.
 - `Action.Forbidden` may name the OAuth scopes a call lacks, `scopes: ["users:write"]`. On an
   authenticated route it is a 403 with an `insufficient_scope` challenge, on which an MCP
   client re-authorizes and retries.
@@ -615,9 +623,11 @@ Each area below lists what is renamed or removed, then what changes without a re
   scheme, and nothing steps up.
 - `Authentication.bearerTokenOf(authorization)` reads an `Authorization` header value, an
   `Option` of the `Redacted` token, for that same caller, which holds the header and no
-  request. It reads it as Effect's `HttpApiSecurity.bearer` does, the reading a Bearer
-  descriptor's verifier receives: the whitespace around the value stripped, as HTTP parsers do,
-  then the rest of the header after the scheme and its spaces, `a b` for `Bearer a b`.
+  request. It and `refusalResponse`'s `authorization` take the header as the web `Headers.get`
+  returns it, `null` when absent, with no `?? undefined`. It reads it as Effect's
+  `HttpApiSecurity.bearer` does, the reading a Bearer descriptor's verifier receives: the
+  whitespace around the value stripped, as HTTP parsers do, then the rest of the header after
+  the scheme and its spaces, `a b` for `Bearer a b`.
 - `Authentication.layer`'s `protectedResource` may be an Effect that builds it, as a builder
   builds the verifier: for a resource known only at startup, such as one read from a
   service. It runs once per layer graph.
@@ -721,9 +731,30 @@ Each area below lists what is renamed or removed, then what changes without a re
   typed.
 - `Action.Handlers<typeof actions>` types a builder's record written apart from `implement`, as
   another authorizer of the same handlers takes, so each handler is typed from its contract.
-- `Authentication` exports `Descriptor` and `Provider`, the types `make` and `layer` return, so
-  a package emitting declarations may export a descriptor, a binding naming one and a provider.
-  `Descriptor<I, A, S, Name, E>` carries the errors its verifier declares, `E`, as a list.
+- `Authentication` exports `Descriptor`, `Provider` and `Protection`, the types `make`, `layer`
+  and `protect` return, so a package emitting declarations may export a descriptor, a binding
+  naming one, a provider and router middleware, `Authentication.Protection<Principal, Name>`,
+  rather than writing out `HttpRouter.Middleware<{ ... }>`. `Descriptor<I, A, S, Name, E>`
+  carries the errors its verifier declares, `E`, as a list, which `Action.Errors` constrains,
+  `<E extends Action.Errors>`: the list type every `error` option holds.
+- A descriptor whose scheme the deployment decides, such as a cookie name a framework prefixes
+  over HTTPS, is built at startup under the name and identity of the browser's static one.
+  `ActionHttp.layer` refuses, as a defect when it builds, a binding whose descriptor is not the
+  very value its provider was built from, since the routes would decode one credential and
+  declare one descriptor's errors, and MCP and `protect` another's.
+- `Action.Refusal` and `Action.BuiltIn` are schemas as well as types, so code outside Effect
+  tells a failure apart without listing the classes:
+
+  ```ts
+  // before
+  const isRefusal = Schema.is(Schema.Union([Action.Unauthenticated, Action.Forbidden]));
+  // after
+  const isRefusal = Schema.is(Action.Refusal);
+  const isExpected = Schema.is(Schema.Union([...Action.BuiltIn.members, NotFound]));
+  ```
+
+- `Action.Issue` is one of `InvalidInput`'s `issues`, a `path` and a `message`, so code mapping
+  them names their type rather than declaring its own.
 - `Action.Implementation<Actions, RequestServices, EX, RX, RA, EAX, RAX>` may be written out:
   the actions, each action's per-request services by name, its builder's failures and services,
   then its authorizer's per-request services and its authorizer builder's, each `never` when

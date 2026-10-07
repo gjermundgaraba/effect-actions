@@ -27,7 +27,7 @@ import { Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertOnce, projectedErrors } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
-import { type BuiltIn, refusals } from "./internal/errors.js";
+import { type BuiltIn, Refusal } from "./internal/errors.js";
 import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
@@ -202,7 +202,7 @@ const replyOf = (response: HttpClientResponse.HttpClientResponse, text: string) 
 };
 
 /** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
-const failWith = (errors: Action.Any["error"], text: string, otherwise: McpCallError) =>
+const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
     text,
   ).pipe(
@@ -234,7 +234,7 @@ const callTool = (
     // Only authentication answers otherwise: a refusal of its own, or authorization's or a
     // handler's step-up refusal.
     if (response.status !== 200) {
-      return yield* failWith(refusals, text, other(`answered ${response.status}: ${text}`));
+      return yield* failWith(Refusal.members, text, other(`answered ${response.status}: ${text}`));
     }
 
     const reply = replyOf(response, text);

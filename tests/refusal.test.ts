@@ -159,6 +159,17 @@ describe("refusal", () => {
     ).toThrow('Invalid scope in scopesRequired: "docs read"');
   });
 
+  it("refuses a scopesSupported that is no scope token, as Authentication.layer does", () => {
+    const invalid = {
+      ...resource,
+      scopesSupported: ["docs:read", "docs write"],
+    } satisfies Authentication.ProtectedResource;
+
+    expect(() =>
+      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
+    ).toThrow('Invalid scope in scopesSupported: "docs write"');
+  });
+
   it("refuses a resource with a fragment, which its discovery would never answer, as Authentication.layer does", () => {
     const fragment = {
       ...resource,
@@ -223,6 +234,22 @@ describe("a step-up refusal answering its request", () => {
   );
 });
 
+describe("the Refusal and BuiltIn schemas", () => {
+  class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}) {}
+
+  it("tell a refusal and a built-in failure apart from an error of the application's", () => {
+    const errors = [
+      new Action.Unauthenticated(),
+      new Action.Forbidden(),
+      new Action.InvalidInput(),
+      new Throttled(),
+    ];
+
+    expect(errors.map(Schema.is(Action.Refusal))).toEqual([true, true, false, false]);
+    expect(errors.map(Schema.is(Action.BuiltIn))).toEqual([true, true, true, false]);
+  });
+});
+
 describe("bearerTokenOf", () => {
   const headers = [
     undefined,
@@ -239,6 +266,7 @@ describe("bearerTokenOf", () => {
     "BEARER alice",
     "Bearer a b",
     "Bearer\talice",
+    "Bearer \talice",
     "Bearer alice\t",
     "Bearerx alice",
     "Basic x",
@@ -273,7 +301,8 @@ describe("bearerTokenOf", () => {
           Effect.provideService(HttpServerRequest.ParsedSearchParams, {}),
         );
 
-        const token = Authentication.bearerTokenOf(header ?? undefined);
+        // As a host reads it: `Headers.get` gives `null` for a missing header.
+        const token = Authentication.bearerTokenOf(request.headers.get("authorization"));
 
         expect([header, Option.getOrElse(Option.map(token, Redacted.value), () => "")]).toEqual([
           header,

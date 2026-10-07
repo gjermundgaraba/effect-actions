@@ -1,6 +1,6 @@
 import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema } from "effect";
 import { HttpServerResponse } from "effect/http";
-import { type Refusal, refusals, statuses } from "./errors.js";
+import { Refusal, statuses } from "./errors.js";
 
 /** An RFC 6750 error description: printable ASCII but `"` and `\`. */
 const description = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
@@ -25,12 +25,10 @@ export const bearer = (
   parameters: ReadonlyArray<readonly [name: string, value: string | undefined]>,
 ): string => challenge("Bearer", parameters);
 
-const Refusals = Schema.Union(refusals);
-
-const encode = Schema.encodeSync(Refusals);
+const encode = Schema.encodeSync(Refusal);
 
 /** Whether `error` is a built-in refusal, `Unauthenticated` or `Forbidden`. */
-export const isRefusal = Schema.is(Refusals);
+export const isRefusal = Schema.is(Refusal);
 
 /**
  * The RFC 6750 `insufficient_scope` challenge an OAuth client steps up on, for a `Forbidden`
