@@ -149,10 +149,10 @@ describe("selecting an implementation's actions", () => {
   const Http = ActionHttp.make([identity, secret], { authentication: Login });
 
   /** An implementation of both actions whose builder counts its runs, behind `authorize`. */
-  const counted = <RB = never, EB = never, RBX = never>(
+  const counted = <RA = never, EAX = never, RAX = never>(
     authorize:
-      | Action.Authorize<typeof secret, RB>
-      | Effect.Effect<Action.Authorize<typeof secret, RB>, EB, RBX>,
+      | Action.Authorize<typeof secret, RA>
+      | Effect.Effect<Action.Authorize<typeof secret, RA>, EAX, RAX>,
   ) => {
     const runs = { built: 0 };
 

@@ -1,6 +1,6 @@
 import { McpProtocol, McpSchema, Tool } from "effect/ai";
 // Compile-only assertions, included by `vp check`, never executed by Vitest.
-import { Context, Effect, Layer, Redacted, Schema, type Stdio } from "effect";
+import { Context, Data, Effect, Layer, Redacted, Schema, type Stdio } from "effect";
 import {
   type HttpClient,
   type HttpClientError,
@@ -10,7 +10,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import { HttpApiClient } from "effect/http-api";
+import { HttpApiClient, HttpApiError } from "effect/http-api";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
@@ -453,6 +453,17 @@ export const builtInErrorTypes = () => {
   });
   // @ts-expect-error Only those and the declared errors.
   Action.implement(Echo, () => Effect.fail(new Error("undeclared")));
+
+  // Only the built-in classes are built-in errors: their codecs encode nothing else, so an
+  // error with the same `_tag` and fields, Effect's own or the application's, fails to compile.
+  class Forbidden extends Data.TaggedError("Forbidden")<{ readonly message: string }> {}
+
+  expectTypeOf<HttpApiError.Forbidden>().not.toExtend<Action.Forbidden>();
+  expectTypeOf<Forbidden>().not.toExtend<Action.Forbidden>();
+  // @ts-expect-error Effect's `Forbidden`.
+  Action.implement(Echo, () => Effect.fail(new HttpApiError.Forbidden({})));
+  // @ts-expect-error The application's look-alike.
+  Action.implement(Echo, () => Effect.fail(new Forbidden({ message: "No." })));
 };
 
 export const configuredSurfaceTypes = () => {

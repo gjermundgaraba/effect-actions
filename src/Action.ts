@@ -370,11 +370,11 @@ type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Ex
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
 /**
- * What a name `K` owes per request for the authorizer, `RB`, besides its handler's: nothing, as the
+ * What a name `K` owes per request for the authorizer, `RA`, besides its handler's: nothing, as the
  * authorizer's requirements have a key of their own, unless `K` is `string`. Names typed only as
  * `string`, such as an `Action.Any`'s, absorb that key, so each owes the authorizer's too.
  */
-type AuthorizerOwed<K, RB> = string extends K ? RB : never;
+type AuthorizerOwed<K, RA> = string extends K ? RA : never;
 
 /**
  * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
@@ -397,19 +397,19 @@ type Single<T extends Target, R> = T extends Any
   : NoHandler<R>;
 
 /**
- * A record of handlers, one per key of `R`, each typed from its own action and owing its
- * entry of `R` per request. TypeScript infers `R` from the record, key by key, so each
- * handler, `Effect.fn` included, is typed from its contract; a key no action names takes
- * nothing.
+ * A record of handlers, one per key of `RequestServices`, each typed from its own action and
+ * owing its entry of `RequestServices` per request. TypeScript infers `RequestServices` from the
+ * record, key by key, so each handler, `Effect.fn` included, is typed from its contract; a key
+ * no action names takes nothing.
  */
-type Several<T extends Target, R> = {
-  readonly [K in keyof R]: K extends NamesOf<T>
-    ? Handler<Extract<ActionsOf<T>, { readonly name: K }>, R[K]>
+type Several<T extends Target, RequestServices> = {
+  readonly [K in keyof RequestServices]: K extends NamesOf<T>
+    ? Handler<Extract<ActionsOf<T>, { readonly name: K }>, RequestServices[K]>
     : never;
 };
 
 /** What `implement` binds to `T`: one action's handler, or a list's record. */
-type HandlersOf<T extends Target, RS, R> = Single<T, RS> | Several<T, R>;
+type HandlersOf<T extends Target, R, RequestServices> = Single<T, R> | Several<T, RequestServices>;
 
 /**
  * `T`, never inferred from where it stands: an index TypeScript cannot read until `T` is
@@ -420,37 +420,41 @@ type HandlersOf<T extends Target, RS, R> = Single<T, RS> | Several<T, R>;
 type Deferred<T> = [T][T extends unknown ? 0 : never];
 
 /**
- * An authorizer, or an Effect that builds it, as a builder builds handlers: `EB` and `RBX` are
- * startup failures and services, `RB` what the authorizer reads per request. Each authorizer is
- * `Authorize` written out. TypeScript would infer `RB` from only one branch of a conditional
+ * An authorizer, or an Effect that builds it, as a builder builds handlers: `EAX` and `RAX` are
+ * startup failures and services, `RA` what the authorizer reads per request. Each authorizer is
+ * `Authorize` written out. TypeScript would infer `RA` from only one branch of a conditional
  * authorizer whose other branch is typed `Authorize`, such as
- * `enabled ? authorize : Action.allowAll`. While `implement` infers, an alias whose argument `RB`
+ * `enabled ? authorize : Action.allowAll`. While `implement` infers, an alias whose argument `RA`
  * is not yet inferred is marked, as a whole, as not inferrable, so an `Effect.fn(...)` the
  * Effect returns would infer nothing from it and take an `any` action.
  */
-type Authorizer<A extends Any, RB, EB, RBX> =
-  | ((action: A) => Effect.Effect<void, Refusal, RB>)
-  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RB>, EB, RBX>;
+type Authorizer<A extends Any, RA, EAX, RAX> =
+  | ((action: A) => Effect.Effect<void, Refusal, RA>)
+  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RA>, EAX, RAX>;
 
 /**
  * What `implement` returns for `T`: its handlers' per-request requirements keyed by action
  * name, the authorizer's under `~authorize`, and the startup failures and services of the
  * builder and the authorizer.
  */
-type Implemented<T extends Target, R, RS, EX, RX, RB, EB, RBX> = Implementation<
+type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = Implementation<
   ActionsOf<T>,
   // Each call has a scope of its own, so `Scope` is never a request-time requirement.
   {
     readonly [K in NamesOf<T> | "~authorize"]: Exclude<
-      | (K extends "~authorize" ? RB : T extends ReadonlyArray<Any> ? R[K & keyof R] : RS)
-      | AuthorizerOwed<K, RB>,
+      | (K extends "~authorize"
+          ? RA
+          : T extends ReadonlyArray<Any>
+            ? RequestServices[K & keyof RequestServices]
+            : R)
+      | AuthorizerOwed<K, RA>,
       Scope.Scope
     >;
   },
   Deferred<EX>,
   Deferred<Exclude<RX, Scope.Scope>>,
-  Deferred<EB>,
-  Deferred<Exclude<RBX, Scope.Scope>>
+  Deferred<EAX>,
+  Deferred<Exclude<RAX, Scope.Scope>>
 >;
 
 /** What `implement` receives as authorization, erased. */
@@ -520,60 +524,72 @@ const authorizerOf = (before: ErasedAuthorizer) =>
 export function implement<
   const T extends Target,
   // A list's record has a handler for each of its actions; one action takes no record.
-  R extends (T extends ReadonlyArray<Any> ? { readonly [K in NamesOf<T>]: unknown } : never),
-  RS = never,
+  RequestServices extends (T extends ReadonlyArray<Any>
+    ? { readonly [K in NamesOf<T>]: unknown }
+    : never),
+  R = never,
   EX = never,
   RX = never,
-  RB = never,
-  EB = never,
-  RBX = never,
+  RA = never,
+  EAX = never,
+  RAX = never,
 >(
   actions: T,
-  handlers: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  handlers:
+    | HandlersOf<T, R, RequestServices>
+    | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
   options: {
     // A public-only target is never authorized, so it takes none: the other overload.
     readonly authorize: [Protected<ActionsOf<T>>] extends [never]
       ? never
-      : Authorizer<Protected<ActionsOf<T>>, RB, EB, RBX>;
+      : Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX>;
   },
-): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
+): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
   const T extends ProtectedActionsTakeAuthorize,
   // A list's record has a handler for each of its actions; one action takes no record.
-  R extends (T extends ReadonlyArray<Any> ? { readonly [K in NamesOf<T>]: unknown } : never),
-  RS = never,
+  RequestServices extends (T extends ReadonlyArray<Any>
+    ? { readonly [K in NamesOf<T>]: unknown }
+    : never),
+  R = never,
   EX = never,
   RX = never,
-  RB = never,
-  EB = never,
-  RBX = never,
+  RA = never,
+  EAX = never,
+  RAX = never,
 >(
   actions: T,
-  handlers: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  handlers:
+    | HandlersOf<T, R, RequestServices>
+    | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
   // Public actions are never authorized.
   options?: { readonly authorize?: never },
-): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
+): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 // The general overload again, last, so a call matching none is reported against it: a
 // misspelled `authorize` as an unknown key, and one given to public actions by its message.
 export function implement<
   const T extends Target,
   // A list's record has a handler for each of its actions; one action takes no record.
-  R extends (T extends ReadonlyArray<Any> ? { readonly [K in NamesOf<T>]: unknown } : never),
-  RS = never,
+  RequestServices extends (T extends ReadonlyArray<Any>
+    ? { readonly [K in NamesOf<T>]: unknown }
+    : never),
+  R = never,
   EX = never,
   RX = never,
-  RB = never,
-  EB = never,
-  RBX = never,
+  RA = never,
+  EAX = never,
+  RAX = never,
 >(
   actions: T,
-  handlers: HandlersOf<T, RS, R> | Effect.Effect<HandlersOf<T, RS, R>, EX, RX>,
+  handlers:
+    | HandlersOf<T, R, RequestServices>
+    | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
   options: {
     readonly authorize: [Protected<ActionsOf<T>>] extends [never]
       ? "A public-only target takes no authorize"
-      : Authorizer<Protected<ActionsOf<T>>, RB, EB, RBX>;
+      : Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX>;
   },
-): Implemented<T, R, RS, EX, RX, RB, EB, RBX>;
+): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement(
   actions: Target,
   handlers: Built | Effect.Effect<Built, unknown, unknown>,

@@ -165,9 +165,10 @@ Each area below lists what is renamed or removed, then what changes without a re
   though `make`'s types accept it. Drop the `Unauthenticated` and `Forbidden` 0.8.0 declared in
   `ActionHttp.make`'s `error` for the authentication's 401 and the authorizer's 403: every endpoint
   declares the built-in ones. Replace an `Unauthenticated` or `Forbidden` of your own with the
-  built-in one, in authorizers and handlers too. One kept there still compiles, since its `_tag` and
-  `message` match the built-in's. It is then sent as the built-in without its other fields, so
-  0.8.0's example's `permission` would be lost. Use
+  built-in one, in authorizers and handlers too, and Effect's `HttpApiError.Forbidden` as well:
+  one with the built-in's `_tag` and fields no longer compiles there, since only the built-in
+  classes are built-in errors, and their codecs encode no other. 0.8.0's example's `permission`
+  goes in the message. Use
   ``new Action.Forbidden({ message: `Requires ${permission}.` })``, adding `scopes` only for
   OAuth scopes.
 - `Action.make` refuses an error in `error` that encodes with a built-in error's `_tag`, and

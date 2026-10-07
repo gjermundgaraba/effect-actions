@@ -58,35 +58,35 @@ export const memoized = <S, E, R>(
  * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
  * produced, one builder serving every surface.
  * The private fields make this class nominal: a structurally similar object, including one made by
- * spreading an implementation, is not an implementation. `R` maps each action name to its handler's
- * per-request requirements, and `~authorize`, which no action name can be, to its authorizer's; names
- * typed only as `string` absorb that key, and each then owes the authorizer's too. `EX` and `RX`
- * are the failures and services of its handlers' builder, and `EH` and `RH` of authorization's
- * builder. Public-only selections do not acquire authorization. A plain authorization callback
- * builds nothing.
+ * spreading an implementation, is not an implementation. `RequestServices` maps each action name
+ * to its handler's per-request requirements, and `~authorize`, which no action name can be, to
+ * its authorizer's; names typed only as `string` absorb that key, and each then owes the
+ * authorizer's too. `EX` and `RX` are the failures and services of its handlers' builder, and
+ * `EAX` and `RAX` of its authorizer's. Public-only selections do not acquire authorization. A
+ * plain authorization callback builds nothing.
  */
 export class Implementation<
   A extends Action.Any,
-  R extends { readonly [name: string]: unknown },
+  RequestServices extends { readonly [name: string]: unknown },
   EX,
   RX,
-  EH = never,
-  RH = never,
+  EAX = never,
+  RAX = never,
 > {
   // Type-only fields, one per type parameter, so a type reads each by name.
   /** Type-only: each action's handler's per-request requirements, and the authorizer's. */
-  declare readonly "~request": R;
+  declare readonly "~request": RequestServices;
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
   /** Type-only: what building its handlers needs. */
   declare readonly "~buildServices": RX;
   /** Type-only: what building its authorizer fails with. */
-  declare readonly "~authorizeBuildError": EH;
+  declare readonly "~authorizeBuildError": EAX;
   /** Type-only: what building its authorizer needs. */
-  declare readonly "~authorizeBuildServices": RH;
+  declare readonly "~authorizeBuildServices": RAX;
 
   readonly #handlers: Memoized<Bound, EX, RX>;
-  readonly #authorizer: Memoized<ErasedAuthorize, EH, RH>;
+  readonly #authorizer: Memoized<ErasedAuthorize, EAX, RAX>;
 
   constructor(
     /** The contracts this implementation answers. */
@@ -94,7 +94,7 @@ export class Implementation<
     /** Builds each action paired with its handler: its own builder, or the one it shares. */
     handlers: Memoized<Bound, EX, RX>,
     /** Builds its authorizer. */
-    authorizer: Memoized<ErasedAuthorize, EH, RH>,
+    authorizer: Memoized<ErasedAuthorize, EAX, RAX>,
   ) {
     this.#handlers = handlers;
     this.#authorizer = authorizer;
@@ -377,9 +377,9 @@ type OwnActions<App> = Extract<ActionOf<App>, Action.Any>;
 /** Builder failures include authorization only if selected protected actions need it. */
 export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App extends {
   readonly "~buildError": infer EX;
-  readonly "~authorizeBuildError": infer EH;
+  readonly "~authorizeBuildError": infer EAX;
 }
-  ? EX | ([Protected<Serving<App, Listed>>] extends [never] ? never : EH)
+  ? EX | ([Protected<Serving<App, Listed>>] extends [never] ? never : EAX)
   : never;
 
 /**
@@ -388,9 +388,9 @@ export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App e
  */
 export type BuildServices<App, Listed extends Action.Any = OwnActions<App>> = App extends {
   readonly "~buildServices": infer RX;
-  readonly "~authorizeBuildServices": infer RH;
+  readonly "~authorizeBuildServices": infer RAX;
 }
-  ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RH)
+  ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RAX)
   : never;
 
 /**

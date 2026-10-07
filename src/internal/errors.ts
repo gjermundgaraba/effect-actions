@@ -32,6 +32,11 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   },
   { httpApiStatus: statuses.InvalidInput },
 ) {
+  // Type-only: a private member makes the class nominal, so an error of Effect's or the
+  // application's with the same `_tag` and fields, which this class's codec does not encode,
+  // does not compile as one.
+  declare private readonly "~builtIn": unknown;
+
   /**
    * The `InvalidInput` for input that did not decode, as every surface answers it: the
    * schema's message, and each of its issues by path, for code that decodes input of its own,
@@ -61,7 +66,12 @@ export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   "Unauthenticated",
   { message: message("Authentication is required.") },
   { httpApiStatus: statuses.Unauthenticated },
-) {}
+) {
+  // Type-only: a private member makes the class nominal, so an error of Effect's or the
+  // application's with the same `_tag` and fields, which this class's codec does not encode,
+  // does not compile as one.
+  declare private readonly "~builtIn": unknown;
+}
 
 /** An OAuth scope token (RFC 6749 §3.3): printable ASCII but space, `"` and `\`. */
 export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
@@ -80,7 +90,12 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
     scopes: Schema.optionalKey(Schema.NonEmptyArray(ScopeToken)),
   },
   { httpApiStatus: statuses.Forbidden },
-) {}
+) {
+  // Type-only: a private member makes the class nominal, so an error of Effect's or the
+  // application's with the same `_tag` and fields, which this class's codec does not encode,
+  // does not compile as one.
+  declare private readonly "~builtIn": unknown;
+}
 
 /**
  * What authentication or an implementation's `authorize` refuses a caller with, instead of

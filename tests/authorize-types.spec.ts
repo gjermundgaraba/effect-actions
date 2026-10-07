@@ -2,6 +2,7 @@
 // authorizer, required for protected actions, refused for public-only ones.
 import { Context, Effect, Schema } from "effect";
 import { expectTypeOf } from "@effect/vitest";
+import { HttpApiError } from "effect/http-api";
 import * as Action from "../src/Action.js";
 
 class Actor extends Context.Service<Actor, { readonly id: string }>()("pin/Actor") {}
@@ -38,7 +39,7 @@ const handlers = {
 };
 
 export const authorizeTypes = () => {
-  // Effect.fn authorizer: action inferred as the protected union, RB from its yields.
+  // Effect.fn authorizer: action inferred as the protected union, RA from its yields.
   const a = Action.implement([Get, Put, Open], handlers, {
     authorize: Effect.fn(function* (action) {
       expectTypeOf(action).toEqualTypeOf<typeof Get | typeof Put>();
@@ -74,4 +75,13 @@ export const authorizeTypes = () => {
   // @ts-expect-error Protected actions need authorize.
   Action.implement([Get], { get: handlers.get });
   Action.implement([Get], { get: handlers.get }, { authorize: Action.allowAll });
+  // A refusal is a built-in class: Effect's `Forbidden`, which no refusal codec encodes, is not one.
+  Action.implement(
+    [Get],
+    { get: handlers.get },
+    {
+      // @ts-expect-error Effect's `Forbidden`.
+      authorize: () => Effect.fail(new HttpApiError.Forbidden({})),
+    },
+  );
 };
