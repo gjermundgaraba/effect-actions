@@ -23,12 +23,20 @@ import {
   type HttpServerRequest,
 } from "effect/http";
 import { McpSchema } from "effect/ai";
-import { Sse } from "effect/encoding";
+import { Base64, Sse } from "effect/encoding";
 import type * as Action from "./Action.js";
 import { assertOnce, projectedErrors } from "./internal/actions.js";
 import { type Call, inputOf } from "./internal/call.js";
 import { type BuiltIn, Refusal } from "./internal/errors.js";
-import { defaultPath, type Params, statelessRequest } from "./internal/mcp.js";
+import {
+  defaultPath,
+  type Field,
+  fieldKey,
+  type Lift,
+  liftOf,
+  type Params,
+  statelessRequest,
+} from "./internal/mcp.js";
 import { clientOf, type Served } from "./internal/memory.js";
 
 /**
@@ -201,6 +209,48 @@ const replyOf = (response: HttpClientResponse.HttpClientResponse, text: string) 
   );
 };
 
+/**
+ * The JSON of the media `field` a tool result's blocks hold: those of its kind naming it, or
+ * none, for the whole success, in order; an array, or else the one, if any. Surplus blocks for
+ * one value stay an array, which its decoding refuses.
+ */
+const mediaOf = ({ name, kind, many }: Field, result: McpSchema.CallToolResult) => {
+  const values = result.content.flatMap((block) =>
+    block.type === kind && block._meta?.[fieldKey] === name
+      ? [{ data: Base64.encode(block.data), mimeType: block.mimeType }]
+      : [],
+  );
+
+  return many || values.length > 1 ? values : values[0];
+};
+
+/**
+ * The encoded success of a tool result lifting the media `lift` finds: the whole success's
+ * blocks, or its structured content with each media field taken from its blocks alone, an
+ * empty one when nothing else was left.
+ */
+const reassembled = (lift: Lift, result: McpSchema.CallToolResult) => {
+  const [whole] = lift.fields;
+
+  if (whole !== undefined && whole.name === undefined) return mediaOf(whole, result);
+
+  const { structuredContent = {} } = result;
+
+  // Structured content that is no object is no success's, which its decoding then says.
+  if (!Predicate.isObject(structuredContent)) return structuredContent;
+
+  const lifted = new Set(lift.fields.map(({ name }) => name));
+
+  return Object.fromEntries([
+    ...Object.entries(structuredContent).filter(([key]) => !lifted.has(key)),
+    ...lift.fields.flatMap((field) => {
+      const value = mediaOf(field, result);
+
+      return field.name === undefined || value === undefined ? [] : [[field.name, value] as const];
+    }),
+  ]);
+};
+
 /** Fail with the value of one of `errors` that `text` holds, or else with `otherwise`. */
 const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
@@ -210,11 +260,15 @@ const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) 
     Effect.flatMap(Effect.fail),
   );
 
-/** The tool call of `action` with `input` on `client`, sending to `url`. */
+/**
+ * The tool call of `action`, whose success its tool lifts as `lift` says, with `input` on
+ * `client`, sending to `url`.
+ */
 const callTool = (
   client: HttpClient.HttpClient,
   url: string,
   action: Action.Any,
+  lift: Lift,
   input: Action.Any["input"]["Type"],
 ): Effect.Effect<unknown, unknown> => {
   const { name } = action;
@@ -255,12 +309,12 @@ const callTool = (
       return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
     }
 
-    if (result.structuredContent === undefined) {
+    if (result.structuredContent === undefined && lift.rest !== undefined) {
       return yield* Effect.fail(other(`returned no structured content: ${text}`));
     }
 
     return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(
-      result.structuredContent,
+      reassembled(lift, result),
     );
   });
 };
@@ -268,10 +322,12 @@ const callTool = (
 /**
  * A client of an MCP endpoint served by `ActionMcp.layerHttp`, one method per action calling
  * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
- * encoded with the action's schema, and the success decoded from its structured content. A
- * declared error the tool returns, the action's own or a refusal, is its decoded value, and so
- * is a refusal the endpoint's authentication answers with. The argument may be omitted when
- * `{}` is a valid input. Requires the native `HttpClient`, such as the one `layer` provides.
+ * encoded with the action's schema, and the success decoded from its structured content, each
+ * media field from the blocks whose `_meta` names it, and a success that is media, or whose
+ * every field is, from its blocks alone. A declared error the tool returns, the action's own
+ * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication
+ * answers with. The argument may be omitted when `{}` is a valid input. Requires the native
+ * `HttpClient`, such as the one `layer` provides.
  */
 export function mcpClient<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions,
@@ -294,10 +350,14 @@ export function mcpClient(
 
     return Object.fromEntries(
       actions.map((action) => {
+        const lift = liftOf(action.success);
+
         return [
           action.name,
           (...args: ReadonlyArray<Action.Any["input"]["Type"]>) =>
-            Effect.flatMap(inputOf(action, args), (input) => callTool(client, url, action, input)),
+            Effect.flatMap(inputOf(action, args), (input) =>
+              callTool(client, url, action, lift, input),
+            ),
         ];
       }),
     );

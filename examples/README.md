@@ -178,6 +178,9 @@ server to launch from an MCP client, not an interactive shell command. It reserv
 stdout for JSON-RPC: `runStdio` writes its program's Effect logs and `Console` output to
 stderr, and `ActionCli.logToStderr` moves the default logger there for the layers provided
 around it. Keep the global `console.log` and other direct writes off stdout.
+[mcp-image.ts](mcp-image.ts) is another such server, whose tool returns an image: an
+`Action.Image` field of its success, which the model receives as an image block beside the
+rest of the success.
 
 [toolkit.ts](toolkit.ts) prints a native Toolkit result.
 [mcp-browser.ts](mcp-browser.ts) exports public stateless MCP routes with an explicit Origin

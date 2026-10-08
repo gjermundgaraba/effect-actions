@@ -125,6 +125,15 @@ export {
   Unauthenticated,
 } from "./internal/errors.js";
 
+/**
+ * An image, a media field of a success: `{ data: Uint8Array, mimeType: string }`, `mimeType`
+ * such as `image/png`. A top-level field of a struct success, optional or an array, or the
+ * whole success, one or an array: an MCP tool lifts it into an image block of its own, and
+ * every other surface sends it as JSON, the bytes in base64. `ActionMcp` refuses it anywhere
+ * else.
+ */
+export { Image } from "./internal/media.js";
+
 /** What `make` needs to define an action. */
 export interface Options {
   /**

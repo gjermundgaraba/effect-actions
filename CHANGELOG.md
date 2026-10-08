@@ -26,6 +26,34 @@ answer is written, so a script piping requests may close stdin as soon as it has
 still an empty 500, and `ErrorReporter`s now receive the `HttpApiSchemaError`, with the schema's
 message as its cause, once.
 
+### Additions
+
+- `Action.Image`, a media field, `{ data: Uint8Array, mimeType: string }`, lets an action return an
+  image a model reads: a top-level field of a struct success, optional or an array, or the whole
+  success or an array of it. An MCP tool lifts each into an `image` block after its one text block,
+  in field order, tagged with its field in `_meta` (`"effect-actions/field"`), and sends the rest as
+  any success, its `structuredContent`, `outputSchema` and JSON text; a success whose every field is
+  media sends its blocks alone. A tool without media answers as before. An image an MCP tool cannot
+  lift, nested, in a union or a record, in an optional array field, in a class or an encoded struct,
+  given an encoding of its own, in the input or in an error, is refused when `layerHttp` or
+  `runStdio` is called, naming the actions: `MCP media must be the success or an array of it, or a
+  top-level field of a struct success, one, optional or a required array: <name>, ...`. Every other
+  surface sends it as JSON, the bytes in base64, which OpenAPI lists as `format: byte`; a Toolkit
+  gives a model that text, so leave such an action out of its `actions`. `Testing.mcpClient`
+  reassembles the success from the structured content and the blocks. A tool returning an image was
+  a native feature, with no contract, authorizer, other surface or `Testing.mcpClient` method; it is
+  now an action ([ActionMcp.md](docs/ActionMcp.md#media)).
+
+  ```ts
+  const GetScreenImage = Action.make("get_screen_image", {
+    description: "Fetch the rendered image for a listed screen.",
+    input: { screen_id: Schema.Int },
+    success: { screen: Screen, image: Action.Image },
+    readOnly: true,
+    caller: Action.Anyone,
+  });
+  ```
+
 ### Other changes
 
 - Effect 4.0.2's HTTP tracing follows OpenTelemetry conventions: the server span is named for the

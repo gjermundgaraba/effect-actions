@@ -83,6 +83,7 @@ One file per decision in [`design/`](design/). Each note is titled, and cited by
 - [Contracts by name](design/contracts-by-name.md)
 - [Local and remote CLI](design/local-and-remote-cli.md)
 - [Verifier errors](design/verifier-errors.md)
+- [Media fields](design/media-fields.md)
 
 ## Release
 

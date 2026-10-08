@@ -2,16 +2,21 @@ import {
   Cause,
   Context,
   Effect,
+  ErrorReporter,
   Exit,
   Fiber,
   JsonPointer,
   type JsonSchema,
   Layer,
+  Option,
   Predicate,
+  References,
+  Result,
   Schema,
   type Stdio,
+  Stream,
 } from "effect";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/ai";
+import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
 import type * as Action from "./Action.js";
 import {
@@ -24,7 +29,16 @@ import {
   type Required as RequiredAuthentication,
 } from "./internal/authentication.js";
 import { Anyone } from "./internal/actions.js";
-import { defaultPath, httpProtocol } from "./internal/mcp.js";
+import {
+  defaultPath,
+  fieldKey,
+  httpProtocol,
+  isMisplaced,
+  type Lift,
+  type Lifted,
+  liftedFrom,
+  liftOf,
+} from "./internal/mcp.js";
 import { recordStepUp } from "./internal/refusal.js";
 import { logToStderr } from "./internal/console.js";
 import { bindTools, type Projection } from "./internal/tools.js";
@@ -34,6 +48,7 @@ import {
   type AnyImplementation,
   type BuildServices,
   type BuildError,
+  type ErasedValue,
   type Holding,
   type Member,
   provideHandlers,
@@ -109,8 +124,9 @@ type Features<R> = Exclude<R, McpServer.McpServer>;
 
 /**
  * MCP has a JSON-only wire contract. Success is the encoded success as structured content,
- * and its JSON as text; declared failures are returned as JSON text. The native server
- * refuses undeclared arguments and publishes closed input schemas.
+ * and its JSON as text, but for its media, each lifted into a block of its own; declared
+ * failures are returned as JSON text. The native server refuses undeclared arguments and
+ * publishes closed input schemas.
  */
 const projection: Projection = {
   label: "MCP tool",
@@ -121,30 +137,39 @@ const projection: Projection = {
 const isToolJson = Schema.is(McpSchema.ToolJson);
 
 /**
- * The JSON Schema root of `schema` as the native server lists it for a tool, a `$ref` at its
- * root resolved.
+ * The JSON Schema of `schema`, a JSON codec, as the native server lists it for a tool: a
+ * `$ref` at its root resolved, as MCP requires an object root, and its definitions as `$defs`.
+ * A strict one refuses undeclared keys.
  */
-const rootOf = (schema: Schema.Top): JsonSchema.JsonSchema | undefined => {
-  const document = Schema.toJsonSchemaDocument(Schema.toCodecJson(schema));
+const toolJsonSchema = (schema: Schema.Top, strict: boolean): JsonSchema.JsonSchema | undefined => {
+  const document = Schema.toJsonSchemaDocument(schema, {
+    onExcessProperty: strict ? "error" : "ignore",
+  });
 
   const [scope, key] = Predicate.isString(document.schema.$ref)
     ? (JsonPointer.parseUriFragment(document.schema.$ref) ?? [])
     : [];
 
-  return scope === "$defs" && key !== undefined ? document.definitions[key] : document.schema;
+  const root = scope === "$defs" && key !== undefined ? document.definitions[key] : document.schema;
+
+  return root === undefined || Object.keys(document.definitions).length === 0
+    ? root
+    : { ...root, $defs: document.definitions };
 };
 
 /**
- * Refuse, when the server is made, the actions of `apps` whose input is not one object, as the
- * root of a tool's arguments must be, naming every one, reading the JSON Schema the native
+ * Refuse, when the server is made, the actions whose input is not one object, as the root of a
+ * tool's arguments must be, naming every one, reading the JSON Schema the native
  * server reads: not a union, an array, a scalar, nor `Schema.Struct({})`, which takes any value
  * but `null`, where the native server dies when the layer builds, suggesting
- * `Tool.EmptyParams`.
+ * `Tool.EmptyParams`. Then refuse those holding media where no tool lifts it, as each action's
+ * `Lift` says.
  */
-const assertShapes = (apps: ReadonlyArray<AnyImplementation>): void => {
-  const inputs = apps
-    .flatMap((app) => app.actions)
-    .filter((action) => !isToolJson(rootOf(action.input)))
+const assertShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): void => {
+  const actions = lifted.map(([action]) => action);
+
+  const inputs = actions
+    .filter((action) => !isToolJson(toolJsonSchema(Schema.toCodecJson(action.input), true)))
     .map(({ name }) => name);
 
   if (inputs.length > 0) {
@@ -152,7 +177,239 @@ const assertShapes = (apps: ReadonlyArray<AnyImplementation>): void => {
       `MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")}`,
     );
   }
+
+  const misplaced = lifted
+    .filter(([action, lift]) => isMisplaced(action, lift))
+    .map(([{ name }]) => name);
+
+  if (misplaced.length > 0) {
+    throw new Error(
+      `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: ${misplaced.join(", ")}`,
+    );
+  }
 };
+
+/**
+ * What the native server answers a call that fails other than as its contract declares: a
+ * defect, an invalid success or error, or an unknown tool.
+ */
+const internalError = "Tool execution failed due to an internal server error.";
+
+/** A tool's error result, `text` its one text block. */
+const errorResult = (text: string) =>
+  new McpSchema.CallToolResult({ isError: true, content: [{ type: "text", text }] });
+
+/** The one text block holding `encoded`'s JSON, none for `undefined`, as the native server sends it. */
+const textOf = (encoded: ErasedValue): McpSchema.CallToolResult["content"] =>
+  encoded === undefined ? [] : [{ type: "text", text: JSON.stringify(encoded) }];
+
+/** The content block a lifted media value is sent as, naming its field where it has one. */
+const blockOf = ({ kind, field, value }: Lifted): McpSchema.ContentBlock => ({
+  type: kind,
+  data: value.data,
+  mimeType: value.mimeType,
+  ...(field === undefined ? {} : { _meta: { [fieldKey]: field } }),
+});
+
+/** Why a tool call's arguments failed to decode, as the native server tells it, if they did. */
+const invalidParameters = (error: ErasedValue) =>
+  AiError.isAiError(error) && Predicate.isTagged(error.reason, "ToolParameterValidationError")
+    ? error.reason
+    : undefined;
+
+// Request services come from each call, never from the context a handler was built or
+// registered in, even when that was during a request.
+const omitRequestServices = Context.omit(
+  McpSchema.McpRequestContext,
+  McpSchema.McpServerClient,
+  HttpServerRequest.HttpServerRequest,
+  References.CurrentLogLevel,
+);
+
+/**
+ * Register the tools of `toolkit` on the endpoint's registry, as `McpServer.registerToolkit`
+ * does, lifting the media `lifts` finds in a tool's success into blocks of their own. The native
+ * registration sends every success as structured content and one JSON text block, and takes
+ * no option, so this one follows it: its decode options, failure classification, defect
+ * scrubbing and listing, and the request services it leaves out of what it retains. A tool
+ * whose action holds no media is registered as the native one would be: a test compares their
+ * listings and results, not the services each call runs with.
+ */
+const registerTools = Effect.fnUntraced(function* (
+  toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>,
+  lifts: ReadonlyMap<string, Lift>,
+) {
+  const registry = yield* McpServer.McpServer;
+
+  // Each handler retains the context its layer was built in, but its request services.
+  const built = yield* toolkit.pipe(
+    Effect.updateContext((context: Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>) =>
+      Context.merge(
+        context,
+        Context.mergeAll(
+          ...Object.values(toolkit.tools).flatMap((tool) => {
+            const key = Context.Service<Tool.Handler<string>>(tool.id);
+
+            return Option.toArray(Context.getOption(context, key)).map((handler) =>
+              Context.make(key, { ...handler, context: omitRequestServices(handler.context) }),
+            );
+          }),
+        ),
+      ),
+    ),
+  );
+
+  // What the handlers read, erased, but what each call supplies.
+  const services = omitRequestServices(yield* Effect.context<Tool.HandlerServices<Tool.Any>>());
+
+  // Interruption propagates; anything else is logged, reported and scrubbed.
+  const internalToolError = (cause: Cause.Cause<ErasedValue>) => {
+    const failure = Cause.findFail(cause);
+
+    return Result.isFailure(failure) && !Cause.hasDies(cause)
+      ? Effect.failCause(failure.failure)
+      : Effect.logError(cause).pipe(
+          Effect.andThen(Effect.provideContext(ErrorReporter.report(cause), services)),
+          Effect.as(errorResult(internalError)),
+        );
+  };
+
+  // Invalid arguments are the call's error; any other failure is internal.
+  const handleCause = (cause: Cause.Cause<ErasedValue>) => {
+    const failure = Cause.findFail(cause);
+
+    if (Result.isSuccess(failure)) {
+      const { error } = failure.success;
+      const origin = Context.get(Cause.reasonAnnotations(failure.success), Toolkit.FailureOrigin);
+      const invalid = origin === "parameters" ? invalidParameters(error) : undefined;
+
+      if (invalid !== undefined)
+        return Effect.fail(new McpSchema.InvalidParams({ message: invalid.message }));
+    }
+
+    return internalToolError(cause);
+  };
+
+  const registrations = yield* Effect.forEach(Object.entries(built.tools), ([name, tool]) =>
+    Effect.gen(function* () {
+      const strict = Tool.getStrictMode(tool) === true;
+
+      const decodeOptions = {
+        onExcessProperty: strict ? "error" : "ignore",
+        errors: "all",
+      } as const;
+
+      // A success holding media sends the rest of it as any success is sent, if any is left.
+      const lift = lifts.get(name);
+      const media = lift === undefined || lift.fields.length === 0 ? undefined : lift;
+
+      const structured =
+        media === undefined
+          ? tool.successSchema
+          : media.rest === undefined
+            ? undefined
+            : Schema.toCodecJson(media.rest);
+
+      const outputSchema =
+        structured === undefined
+          ? undefined
+          : yield* Schema.decodeUnknownEffect(McpSchema.ToolOutputJson)(
+              toolJsonSchema(structured, false),
+            ).pipe(Effect.orDie);
+
+      const inputSchema = yield* Schema.decodeUnknownEffect(McpSchema.ToolJson)(
+        toolJsonSchema(tool.parametersSchema, strict),
+      ).pipe(Effect.orDie);
+
+      const lifted = new Set(media?.fields.map(({ name }) => name));
+
+      // A success as structured content and its JSON, as the native server sends it; with
+      // media, the rest of its encoding so, then a block for each media value, taken from the
+      // decoded success, or the blocks alone.
+      const succeeded = ({ encodedResult, result }: Tool.HandlerResult<Tool.Any>) => {
+        if (media === undefined) {
+          return new McpSchema.CallToolResult({
+            isError: false,
+            structuredContent: encodedResult,
+            content: textOf(encodedResult),
+          });
+        }
+
+        const blocks = liftedFrom(media, result).map(blockOf);
+
+        if (structured === undefined) {
+          return new McpSchema.CallToolResult({ isError: false, content: blocks });
+        }
+
+        // Fields are lifted only from a struct without an encoding of its own, whose encoding
+        // is an object keyed by them.
+        const rest = Predicate.isObject(encodedResult)
+          ? Object.fromEntries(Object.entries(encodedResult).filter(([key]) => !lifted.has(key)))
+          : encodedResult;
+
+        return new McpSchema.CallToolResult({
+          isError: false,
+          structuredContent: rest,
+          content: [...textOf(rest), ...blocks],
+        });
+      };
+
+      const listed = new McpSchema.Tool({
+        name,
+        description: Tool.getDescription(tool),
+        inputSchema,
+        outputSchema,
+        annotations: {
+          ...Context.getOption(tool.annotations, Tool.Title).pipe(
+            Option.map((title) => ({ title })),
+            Option.getOrUndefined,
+          ),
+          readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+          destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+          idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+          openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
+        },
+        _meta: Context.getOrUndefined(tool.annotations, Tool.Meta),
+      });
+
+      return {
+        tool: listed,
+        annotations: tool.annotations,
+        handle: (payload: ErasedValue) =>
+          built.handle(name, payload ?? {}, undefined, decodeOptions).pipe(
+            Stream.unwrap,
+            Stream.runLast,
+            Effect.flatMap(Effect.fromOption),
+            // A declared failure is the call's result, its JSON; any other is classified by
+            // where it failed.
+            Effect.flatMap((result) =>
+              !result.isFailure
+                ? Effect.succeed(succeeded(result))
+                : result.failureOrigin === "handler"
+                  ? Effect.succeed(
+                      new McpSchema.CallToolResult({
+                        isError: true,
+                        content: textOf(result.encodedResult),
+                      }),
+                    )
+                  : Effect.failCause(
+                      Cause.annotate(
+                        Cause.fail(result.result),
+                        Context.make(Toolkit.FailureOrigin, result.failureOrigin ?? "result"),
+                      ),
+                    ),
+            ),
+            Effect.catchCause(handleCause),
+            Effect.provideContext(services),
+          ),
+      };
+    }),
+  );
+
+  for (const registration of registrations) {
+    yield* registry.addTool(registration);
+  }
+});
 
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
@@ -175,9 +432,13 @@ const server = <Out, R>(
         },
   );
 
-  assertShapes(apps);
+  const lifted = apps.flatMap((app) =>
+    app.actions.map((action) => [action, liftOf(action.success)] as const),
+  );
 
-  const names = new Set(apps.flatMap((app) => app.actions.map(({ name }) => name)));
+  assertShapes(lifted);
+
+  const lifts = new Map(lifted.map(([{ name }, lift]) => [name, lift]));
 
   // Registered with only the registry and the tool handlers: the native server lays the
   // context it registers in over every call's. Each handler keeps what it was built with,
@@ -187,7 +448,7 @@ const server = <Out, R>(
 
     // The features are registered first. A native tool of an action's name would replace
     // the action's, and with it the access the endpoint's authentication decides by name.
-    const claimed = registry.tools.flatMap(({ tool }) => (names.has(tool.name) ? [tool.name] : []));
+    const claimed = registry.tools.flatMap(({ tool }) => (lifts.has(tool.name) ? [tool.name] : []));
 
     if (claimed.length > 0) {
       return yield* Effect.die(
@@ -199,7 +460,7 @@ const server = <Out, R>(
 
     const handlers = yield* Layer.build(binding.layer);
 
-    yield* McpServer.registerToolkit(binding.toolkit).pipe(
+    yield* registerTools(binding.toolkit, lifts).pipe(
       Effect.setContext(Context.add(handlers, McpServer.McpServer, registry)),
     );
   });

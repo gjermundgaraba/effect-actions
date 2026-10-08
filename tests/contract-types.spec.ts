@@ -221,3 +221,15 @@ Action.implement(
   () => Effect.fail(new Other()),
   { authorize: Action.allowAll },
 );
+
+// An image is its bytes and their MIME type, encoded too: the JSON codec every surface applies
+// carries the bytes in base64.
+expectTypeOf<typeof Action.Image.Type>().toEqualTypeOf<{
+  readonly data: Uint8Array<ArrayBufferLike>;
+  readonly mimeType: string;
+}>();
+
+expectTypeOf<typeof Action.Image.Encoded>().toEqualTypeOf<{
+  readonly data: Uint8Array<ArrayBufferLike>;
+  readonly mimeType: string;
+}>();

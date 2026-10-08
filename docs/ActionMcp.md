@@ -136,6 +136,83 @@ ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).p
 );
 ```
 
+### Media
+
+A tool returning an image is an action like the others: an `Action.Image` field of its success
+([Action.md](Action.md#contracts)) is lifted into an image block, the content a model reads as
+an image, and the rest of the success is sent as any success is.
+
+```ts example=mcp-image.ts
+import { Buffer } from "node:buffer";
+import { NodeRuntime, NodeStdio } from "@effect/platform-node";
+import { Effect, Schema } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+
+const Screen = Schema.Struct({ id: Schema.Int, title: Schema.String });
+
+class TerminusError extends Schema.TaggedError<TerminusError>()("TerminusError", {
+  message: Schema.String,
+}) {}
+
+// The image is a field of the success. Over MCP it is lifted into an image block, after the
+// JSON text of `{ screen }`, which is also the structured content; elsewhere it is JSON, the
+// bytes in base64.
+const GetScreenImage = Action.make("get_screen_image", {
+  description: "Fetch the rendered image for a listed screen.",
+  input: { screen_id: Schema.Int },
+  success: { screen: Screen, image: Action.Image },
+  error: TerminusError,
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+// A one-pixel PNG stands in for a rendered screen.
+const pixel = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+
+const getScreenImage = Action.implement(GetScreenImage, ({ screen_id }) =>
+  screen_id === 1
+    ? Effect.succeed({
+        screen: { id: screen_id, title: "Home" },
+        image: { data: pixel, mimeType: "image/png" },
+      })
+    : Effect.fail(new TerminusError({ message: `No screen ${screen_id}.` })),
+);
+
+// A subprocess MCP server, as mcp-stdio.ts is: launch it from an MCP client.
+ActionMcp.runStdio(getScreenImage, { name: "terminus", version: "0.1.0" }).pipe(
+  Effect.provide(NodeStdio.layer),
+  ActionCli.logToStderr,
+  NodeRuntime.runMain,
+);
+```
+
+`get_screen_image` with `{ "screen_id": 1 }` answers, on every revision, beside the fields the
+native server adds to every result ([Rules](#rules)):
+
+```json
+{
+  "content": [
+    { "type": "text", "text": "{\"screen\":{\"id\":1,\"title\":\"Home\"}}" },
+    {
+      "type": "image",
+      "data": "iVBORw0KGgo...",
+      "mimeType": "image/png",
+      "_meta": { "effect-actions/field": "image" }
+    }
+  ],
+  "structuredContent": { "screen": { "id": 1, "title": "Home" } }
+}
+```
+
+The tool lists the `outputSchema` of `{ screen }`. HTTP, a CLI command and a Toolkit send the
+same success as JSON, the image `{ "data": "<base64>", "mimeType": "image/png" }`
+([guarantees.md](guarantees.md#wire-behavior)).
+
 ### Native features
 
 Effect's own resources, prompts and tools join an endpoint's tools as its `features`, one layer
@@ -181,7 +258,14 @@ satisfy a feature.
 - A handler may yield `McpServer.McpServer`, its endpoint's registry, to send notifications such as progress: the endpoint provides it, and no host owes it. Served on another surface too, where nothing provides it, read it with `Effect.serviceOption`.
 - Every served action's input must be one object with keys, as a tool's arguments are: fields, a struct or a class, identified, recursive or suspended, a record, or a declared type whose JSON Schema is an object. `layerHttp` and `runStdio` read the JSON Schema the native server reads, and throw for any other when they are called, naming the actions: a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Omit `input`, or give `{}`, for a tool with no arguments.
 - A tool's `inputSchema` is its input's JSON Schema, on every revision, closed with `additionalProperties: false` where the input declares its fields; a record's lists its value schema there instead. Undeclared arguments are refused on every revision, as invalid arguments.
-- A success is sent as it is. On 2026-07-28, over HTTP and stdio, it is `structuredContent: <encoded success>`, of any JSON type (`null` for an action that returns nothing), and one text block holding the same JSON, and the tool's `outputSchema` describes the encoded success. Stdio's earlier revisions, 2025-11-25 and 2025-06-18, structure less: they carry only an object as `structuredContent`, and list only an object-rooted `outputSchema`. A success they do not structure is text alone: its JSON, or a string success the string itself. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
+- A success without a media field is sent as it is. On 2026-07-28, over HTTP and stdio, it is `structuredContent: <encoded success>`, of any JSON type (`null` for an action that returns nothing), and one text block holding the same JSON, and the tool's `outputSchema` describes the encoded success. Stdio's earlier revisions, 2025-11-25 and 2025-06-18, structure less: they carry only an object as `structuredContent`, and list only an object-rooted `outputSchema`. A success they do not structure is text alone: its JSON, or a string success the string itself. A declared error is an `isError` result whose text content is the error's JSON encoding, the same bytes HTTP sends as the body, and no `structuredContent`.
+- A media field is lifted out of the result ([Media](#media)): each becomes a content block of its own, after the one text block, in field order: for an `Action.Image`, an `image` block of its `data` in base64 and its `mimeType`. The rest of the success is sent as any success is: `structuredContent` is the encoded success without its media fields, the tool's `outputSchema` describes that, and the text block is its JSON, exactly. The rest is an object, so stdio's 2025 revisions structure it too.
+- An absent optional media field sends no block. An array field sends one block per element, in order.
+- A success that is media, `success: Action.Image`, or whose every field is, sends its blocks alone: no `structuredContent`, no text block, and the tool lists no `outputSchema`. A success that is an array of media, `success: Schema.Array(Action.Image)`, sends one block per element, alone too. Blocks of a success that is media carry no `_meta`, as no field names them.
+- Each block lifted from a field names it in its `_meta`, `{ "effect-actions/field": "image" }`, on every revision, so a client reassembles the success from the structured content and the blocks, as `Testing.mcpClient` does ([Testing.md](Testing.md#rules)). A client that does not know the key ignores it, as MCP's `_meta` is open.
+- Media is lifted only from a top-level field of a struct success (`Schema.Struct` or fields, `Schema.suspend`ed or not), the field bare, `Schema.optional` or `Schema.optionalKey`, or an array, `Schema.Array` or `Schema.NonEmptyArray`, or from a success that is media or such an array. An `Action.Image` anywhere else in an action the endpoint serves is refused when `layerHttp` or `runStdio` is called, naming the actions, as an input that is not one object is: nested in a field, in a union or a record, in an optional array field, whose blocks cannot tell absent from empty, in a `Schema.Class` success or a struct with an encoding of its own, such as `Schema.encodeKeys`, or given an encoding of its own itself, which would send it as something else, in the input or in an error. Only the listed `actions` are checked.
+- A media field's own annotations, such as its `description`, and those of a success that is media, reach no model: the `outputSchema` leaves the field out, a success that is media lists none, and an image block carries no description. Describe the image in the action's `description`.
+- A declared error is unchanged by media: an `isError` result whose text is the error's JSON.
 - On 2026-07-28, over HTTP and over stdio, the native server adds `_meta["io.modelcontextprotocol/serverInfo"]` and `resultType: "complete"` to every result, beside a tool result's own fields (`isError: false` on a success); the earlier revisions stdio speaks add neither. `serverInfo` is the options' `name`, `version`, `description`, `websiteUrl` and `icons`, as given, so a 2026-07-28 result's encoded size is the size of its own fields plus a fixed overhead per endpoint or subprocess.
 - Invalid arguments are answered by the native `McpServer`: from 2025-11-25 on, an `isError` result with a message for the model, such as `Invalid parameters for tool 'greet': Expected string\n  at ["name"]`; on earlier stdio revisions, a JSON-RPC error. HTTP's `InvalidInput` does not apply. A protected tool's call from a caller without a credential that verifies gets the 401 first, before its arguments are decoded, malformed ones included, on a mixed endpoint as on one of protected tools alone.
 - Defects and encoding failures produce the generic `isError` text `Tool execution failed due to an internal server error.`; the cause is logged, not sent.
@@ -201,6 +285,7 @@ satisfy a feature.
 ## Failure modes
 
 - `MCP tool input must be one object with keys, such as a struct: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions' input is a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Wrap a union in a field, `input: { notification: Schema.Union([Email, Sms]) }`, omit `input` (or give `{}`) for no arguments, or leave the action out of `actions`.
+- `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions hold an `Action.Image` a tool cannot lift, nested in a field, in a union or a record, in an optional array field, in a class or an encoded struct, with an encoding of its own, in the input or in an error. Make it a top-level field of a `Schema.Struct` success, the whole success or an array of it, give an optional array field as a required one, empty when absent, or leave the action out of `actions`; the other surfaces send it as JSON.
 - `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched, with `CurrentActor` among the endpoint's startup requirements rather than its `Request<"Requires", ...>`: a feature reads a request service, which it never receives ([native features](#native-features)). Serve that content as an action.
 - A native `McpServer.resource`, `McpServer.prompt` or `McpServer.toolkit` layer merged beside `layerHttp` builds without error and is never served: `resources/list` is empty, `prompts/list` is not found, and `tools/list` lists only the actions. Each endpoint's registry is its own: pass them as its `features`.
 - An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's `authorize`, before the handler runs.

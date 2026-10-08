@@ -13,31 +13,32 @@ surface declares and any handler may fail with.
 
 Import `@gjermundgaraba/effect-actions/Action`.
 
-| Export                                          | Purpose                                                                                                       |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `make(name, options)`                           | Define a pure contract; literal names, `readOnly` and `caller` stay typed.                                    |
-| `byName(actions)`                               | A list of actions keyed by name, each its exact contract: `contracts.getUser`.                                |
-| `implement(action, handler, { authorize })`     | Bind one handler, and a protected action's authorizer; returns one `Implementation`.                          |
-| `implement([actions], handlers, { authorize })` | Bind a record of handlers keyed by action name; returns one `Implementation` of all.                          |
-| `implement(actions, builder, options?)`         | Either form, with an Effect that builds the handler or record once per layer graph.                           |
-| `allowAll`                                      | The authorizer without an action-level rule: every authenticated caller may call.                             |
-| `Anyone`                                        | The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not.                             |
-| `layer(implementations)`                        | Their builders as one layer: provided above every surface, each runs once for all.                            |
-| `client(implementations, { actions? })`         | An Effect of a caller running them in process: `client.<action>(input)`.                                      |
-| `InvalidInput`, `Unauthenticated`, `Forbidden`  | Built-in errors: 400, 401, 403, body `{ _tag, message }`, `InvalidInput`'s with `issues`; `message` defaults. |
-| `InvalidInput.fromSchemaError(error)`           | The `InvalidInput` every surface answers a `Schema.SchemaError` with, `issues` given.                         |
-| `Issue`                                         | One of `InvalidInput`'s `issues`: a `path` into the input and a `message`.                                    |
-| `Refusal`                                       | `Unauthenticated \| Forbidden`, schema and type: what authentication or an authorizer refuses with.           |
-| `BuiltIn`                                       | `InvalidInput \| Refusal`, schema and type: what any handler may fail with.                                   |
-| `Errors`                                        | A list of error schemas, as `error` holds it: `<E extends Action.Errors>`.                                    |
-| `Action`, `Any`, `Implementation`               | Concrete and erased contracts, and bound implementations.                                                     |
-| `Client<Apps>`                                  | What `client` gives for the implementations `Apps`, one or a list.                                            |
-| `AnyImplementation`, `AnyImplementation<A>`     | Any implementation, or any of actions `A`, erased: a generic helper's constraint.                             |
-| `BuildServices`, `BuildError`                   | What their builders read and fail with at startup, which a surface serving them owes.                         |
-| `implementation.actions`                        | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.                                  |
-| `Handler`, `Authorize`                          | Typed handlers, and authorizers `(action) => Effect<void, Refusal, R>`.                                       |
-| `Handlers`                                      | A list's handlers keyed by name, for a builder written apart from `implement`.                                |
-| `Options`, `ClientOptions`, `Mcp`               | What `make` and `client` take, and `make`'s `mcp` options.                                                    |
+| Export                                          | Purpose                                                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `make(name, options)`                           | Define a pure contract; literal names, `readOnly` and `caller` stay typed.                                     |
+| `byName(actions)`                               | A list of actions keyed by name, each its exact contract: `contracts.getUser`.                                 |
+| `implement(action, handler, { authorize })`     | Bind one handler, and a protected action's authorizer; returns one `Implementation`.                           |
+| `implement([actions], handlers, { authorize })` | Bind a record of handlers keyed by action name; returns one `Implementation` of all.                           |
+| `implement(actions, builder, options?)`         | Either form, with an Effect that builds the handler or record once per layer graph.                            |
+| `allowAll`                                      | The authorizer without an action-level rule: every authenticated caller may call.                              |
+| `Anyone`                                        | The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not.                              |
+| `layer(implementations)`                        | Their builders as one layer: provided above every surface, each runs once for all.                             |
+| `client(implementations, { actions? })`         | An Effect of a caller running them in process: `client.<action>(input)`.                                       |
+| `Image`                                         | A media field's schema, `{ data: Uint8Array, mimeType: string }`: an image, which MCP sends as an image block. |
+| `InvalidInput`, `Unauthenticated`, `Forbidden`  | Built-in errors: 400, 401, 403, body `{ _tag, message }`, `InvalidInput`'s with `issues`; `message` defaults.  |
+| `InvalidInput.fromSchemaError(error)`           | The `InvalidInput` every surface answers a `Schema.SchemaError` with, `issues` given.                          |
+| `Issue`                                         | One of `InvalidInput`'s `issues`: a `path` into the input and a `message`.                                     |
+| `Refusal`                                       | `Unauthenticated \| Forbidden`, schema and type: what authentication or an authorizer refuses with.            |
+| `BuiltIn`                                       | `InvalidInput \| Refusal`, schema and type: what any handler may fail with.                                    |
+| `Errors`                                        | A list of error schemas, as `error` holds it: `<E extends Action.Errors>`.                                     |
+| `Action`, `Any`, `Implementation`               | Concrete and erased contracts, and bound implementations.                                                      |
+| `Client<Apps>`                                  | What `client` gives for the implementations `Apps`, one or a list.                                             |
+| `AnyImplementation`, `AnyImplementation<A>`     | Any implementation, or any of actions `A`, erased: a generic helper's constraint.                              |
+| `BuildServices`, `BuildError`                   | What their builders read and fail with at startup, which a surface serving them owes.                          |
+| `implementation.actions`                        | Its exact contract values, as `Testing.mcpClient(users.actions)` takes them.                                   |
+| `Handler`, `Authorize`                          | Typed handlers, and authorizers `(action) => Effect<void, Refusal, R>`.                                        |
+| `Handlers`                                      | A list's handlers keyed by name, for a builder written apart from `implement`.                                 |
+| `Options`, `ClientOptions`, `Mcp`               | What `make` and `client` take, and `make`'s `mcp` options.                                                     |
 
 | Option        | Meaning                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------- |
@@ -372,6 +373,7 @@ console.log(
 - An `undefined` option takes its default, as an omitted one does. One that may be either is typed as either: with `success: enabled ? Schema.String : undefined`, or the same through a conditional spread, the success is `string | void`. The same holds for `input` and `error`.
 - Options annotated with a wide type, such as `Parameters<typeof Action.make>[1]`, are not checked. Their action's schemas are as wide as what may run, so its success is `unknown`. A constant object spread into the options, as above, keeps its exact types and is checked like inline options.
 - MCP input must be one object with keys, an identified, recursive or suspended root included. Scalar, array or union input is fine for HTTP and for a native Toolkit, but `ActionMcp` refuses it when `layerHttp` or `runStdio` is called, naming the action ([ActionMcp.md](ActionMcp.md#rules)). Success and error schemas may be any shape.
+- `Action.Image` is a media field, an image: `{ data: Uint8Array, mimeType: string }`, `mimeType` such as `image/png`. It goes in the success, as a top-level field of a struct, `success: { screen: Screen, image: Action.Image }`, optional, `Schema.optional(Action.Image)`, or an array, `Schema.Array(Action.Image)` or `Schema.NonEmptyArray(Action.Image)`, or as the whole success, `success: Action.Image`, or an array of it. An MCP tool lifts it into an image block, the content a model reads as an image; every other surface sends it as JSON, the bytes in base64 ([guarantees.md](guarantees.md#wire-behavior)). Anywhere else, nested in a field, in a union or a record, in an optional array field, in a class or an encoded struct, given an encoding of its own, in the input or in an error, the other surfaces still send it as JSON, but `ActionMcp` refuses it when `layerHttp` or `runStdio` is called, naming the actions ([ActionMcp.md](ActionMcp.md#media)): leave such an action out of its `actions`, or move the image to a top-level field.
 - The contract keeps `mcp` as given, `action.mcp`, and defaults none of it. A hint left out is not annotated, so the native default, MCP's, stands: `destructiveHint` `true`, `idempotentHint` `false`, `openWorldHint` `true`; but a read-only action's `destructiveHint` is `false` unless it states one. A stated hint is sent as it is, a read-only action's included, which MCP reads only for a tool that is not read-only. `readOnlyHint` is always `readOnly`. Hints are metadata for the model. They do not enforce authorization, approval, or retries; a native Toolkit's approval is `ActionToolkit.make`'s `needsApproval` option.
 - The built-in errors are declared everywhere ([guarantees.md](guarantees.md#wire-behavior)), and any handler may fail with them without listing them: `InvalidInput` for input that decodes but cannot be served, naming `issues` of its own as the library's do ([guarantees.md](guarantees.md#wire-behavior)), `new Action.InvalidInput({ message, issues: [{ path: ["lines"], message }] })`, so an application declares no second error for bad input; a refusal for a step-up. `make` refuses an `error` entry that encodes with a built-in tag, the built-in itself included, since every surface declares it already and a client could not tell a look-alike apart. Only those classes are built-in errors: a handler or an authorizer failing with an error of the same `_tag` and fields, such as Effect's `HttpApiError.Forbidden` or a `Forbidden` of your own, does not compile, since a built-in error's codec encodes its own class alone.
 - Code that decodes input of its own, such as a header, a route parameter or a file's metadata, answers a failure as the surfaces do with `Action.InvalidInput.fromSchemaError(error)`: the schema's message and its `issues`, `Effect.mapError(Action.InvalidInput.fromSchemaError)` after a `Schema.decodeUnknownEffect`. To place the issues under a field of a larger input, decode the value as that field, `Schema.decodeUnknownEffect(Schema.Struct({ payload: Payload }))({ payload })`, so each issue's `path` starts at it.
