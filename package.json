@@ -42,11 +42,11 @@
     "docs:sync": "node --import tsx scripts/sync-skill.ts"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0",
-    "@effect/vitest": "4.0.0",
-    "@modelcontextprotocol/client": "2.0.0",
-    "@types/node": "26.6.2",
-    "effect": "4.0.0",
+    "@effect/platform-node": "4.0.2",
+    "@effect/vitest": "4.0.2",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "26.6.4",
+    "effect": "4.0.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",
@@ -54,7 +54,7 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "effect": "~4.0.0"
+    "effect": "~4.0.2"
   },
   "devEngines": {
     "packageManager": {

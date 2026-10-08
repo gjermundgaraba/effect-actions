@@ -56,6 +56,16 @@ it("marks every canonical snippet as a type-checked example", () => {
   expect(unmarked).toEqual([]);
 });
 
+// The install commands name the peer range, the one place a page states it.
+it("installs Effect at the package's peer range", () => {
+  const range = manifest.peerDependencies.effect;
+
+  for (const page of ["README.md", "docs/setup.md"]) {
+    expect(read(page)).toContain(`effect@${range}`);
+    expect(read(page)).toContain(`@effect/platform-node@${range}`);
+  }
+});
+
 // The entry points a consumer imports are the modules the package exports, each once.
 it("lists every module the package exports under docs/setup.md's entry points", () => {
   const section = read("docs/setup.md").split("\n## Entry points\n")[1] ?? "";

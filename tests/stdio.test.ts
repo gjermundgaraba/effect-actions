@@ -3,7 +3,18 @@ import { once } from "node:events";
 import { format } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Console, Deferred, Effect, Predicate, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Console,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Predicate,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { McpServer } from "effect/ai";
 import { TestClock } from "effect/testing";
 import { describe, expect, it, onTestFinished } from "@effect/vitest";
@@ -355,54 +366,91 @@ it.effect(
     }),
 );
 
-it.live(
-  "interrupts a call when stdin closes, and ends once its uninterruptible work completes",
-  () =>
-    Effect.gen(function* () {
-      const Commit = Action.make("commit", {
-        description: "Commit a write",
-        readOnly: false,
-        caller: Action.Anyone,
-      });
+it.live("answers every call piped before stdin closes, then ends", () =>
+  Effect.gen(function* () {
+    const Commit = Action.make("commit", {
+      description: "Commit a write",
+      readOnly: false,
+      caller: Action.Anyone,
+    });
 
-      const call = {
-        ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
-        id: 1,
-      };
+    const call = (id: number) => ({
+      ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
+      id,
+    });
 
-      const started = yield* Deferred.make<void>();
-      const decoder = new TextDecoder();
-      let committed = false;
-      let written = "";
+    const decoder = new TextDecoder();
+    let written = "";
 
-      // Still running when stdin closes, which it does once the call has started.
-      const commit = Action.implement(Commit, () =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.sleep(100)),
-          Effect.andThen(Effect.sync(() => (committed = true))),
-          Effect.uninterruptible,
-        ),
+    // Still running when stdin closes, right after the two calls.
+    const commit = Action.implement(Commit, () => Effect.sleep(100));
+
+    const stdin = Stream.make(`${JSON.stringify(call(1))}\n${JSON.stringify(call(2))}\n`).pipe(
+      Stream.encodeText,
+    );
+
+    const stdout = () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
       );
 
-      const stdin = Stream.make(`${JSON.stringify(call)}\n`).pipe(
-        Stream.concat(Stream.fromEffectDrain(Deferred.await(started))),
-        Stream.encodeText,
-      );
+    yield* ActionMcp.runStdio(commit, { name: "commit", version: "0" }).pipe(
+      Effect.provide(Stdio.layerTest({ stdin, stdout })),
+    );
 
-      const stdout = () =>
-        Sink.forEach((chunk: string | Uint8Array) =>
-          Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
-        );
+    // As `runStdio` ends: both calls ran to completion, and each answer was written.
+    const Answer = Schema.fromJsonString(
+      Schema.Struct({ id: Schema.Finite, result: Schema.Struct({ isError: Schema.Boolean }) }),
+    );
 
-      yield* ActionMcp.runStdio(commit, { name: "commit", version: "0" }).pipe(
-        Effect.provide(Stdio.layerTest({ stdin, stdout })),
-      );
+    const decode = Schema.decodeUnknownSync(Answer);
 
-      // As `runStdio` ends.
-      expect(committed).toBe(true);
-      // No result for the call: no answer, or a JSON-RPC error.
-      expect(written).not.toContain('"result"');
-    }),
+    const answers = written
+      .trim()
+      .split("\n")
+      .map((line) => decode(line));
+
+    expect(answers.toSorted((a, b) => a.id - b.id)).toEqual([
+      { id: 1, result: { isError: false } },
+      { id: 2, result: { isError: false } },
+    ]);
+  }),
+);
+
+it.live("keeps running a call that never completes after stdin closes, until interrupted", () =>
+  Effect.gen(function* () {
+    const Hang = Action.make("hang", {
+      description: "Never answer",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const call = { ...statelessRequest("tools/call", { name: "hang", arguments: {} }).body, id: 1 };
+    const started = yield* Deferred.make<void>();
+
+    const hang = Action.implement(Hang, () =>
+      Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+
+    const fiber = yield* ActionMcp.runStdio(hang, { name: "hang", version: "0" }).pipe(
+      Effect.provide(
+        Stdio.layerTest({
+          stdin: Stream.make(`${JSON.stringify(call)}\n`).pipe(Stream.encodeText),
+          stdout: () => Sink.drain,
+        }),
+      ),
+      Effect.forkChild,
+    );
+
+    // Stdin has closed, and the call it carried runs on, so `runStdio` has not ended.
+    yield* Deferred.await(started);
+    yield* Effect.sleep(50);
+    expect(fiber.pollUnsafe()).toBeUndefined();
+
+    // A signal interrupts the program, which ends interrupted rather than succeeding.
+    yield* Fiber.interrupt(fiber);
+    expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+  }),
 );
 
 it.effect("serves native features given as features beside the tools", () =>

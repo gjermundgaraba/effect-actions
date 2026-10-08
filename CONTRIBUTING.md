@@ -86,23 +86,25 @@ One file per decision in [`design/`](design/). Each note is titled, and cited by
 
 ## Release
 
-The package publishes to the `latest` tag. The `effect` peer is `~4.0.0`, Effect's 4.0.x
-patches: Effect marks every module the surfaces build on (`effect/http`, `effect/http-api`,
-`effect/ai`, `effect/cli`, `effect/encoding`) `@stability unstable`, which a minor release may
-change, and none `experimental`, which a patch may. The surfaces also rely on behavior of those
+The package publishes to the `latest` tag. The `effect` peer is `~` and the Effect release in
+`devDependencies`, the patches of the release the package is tested against; the install commands
+name it, as `tests/docs.test.ts` checks. Effect marks every module the surfaces build on
+(`effect/http`, `effect/http-api`, `effect/ai`, `effect/cli`, `effect/encoding`)
+`@stability unstable`, which a minor release may change, and none `experimental`, which a patch
+may. The surfaces also rely on behavior of those
 modules that no type states: a Toolkit finds a tool's handler by the tool's `id`,
 `HttpApiBuilder.group` lays its build context over each request's, and the MCP HTTP runtime
 refuses a stateless request whose `Mcp-Method` or `Mcp-Name` header disagrees with its body
 (400, JSON-RPC `-32020`), which lets a mixed endpoint's authentication gate decide from those
-headers alone. The package is built and
-tested against the Effect release in `devDependencies`; `.github/workflows/effect-latest.yml`
-runs the full check weekly against the newest 4.x. When that passes on a new minor, widen the
-peer's upper bound to admit it, and raise the lower bound only if the package starts to depend on
-the newer release. When adopting a newer Effect release for development, bump `devDependencies`
-and re-run the full check.
+headers alone. `.github/workflows/effect-latest.yml` runs the full check weekly against the
+newest 4.x. To adopt a newer Effect release, once it is past pnpm's one-day release age, bump the
+Effect packages in `devDependencies` and the peer with them, and re-run the full check; a new minor
+is admitted that way once that check passes on it.
 
-To release: set `version` in `package.json`, add its section to [CHANGELOG.md](CHANGELOG.md)
-(every breaking change and how a consumer migrates), commit as `Prepare <version>`, tag
+Record each change a consumer notices under `## Unreleased` at the top of
+[CHANGELOG.md](CHANGELOG.md), in the change that makes it: every breaking change and how a
+consumer migrates, and any earlier decision it reverses, and why. To release: set `version` in
+`package.json`, rename `## Unreleased` to the version, commit as `Prepare <version>`, tag
 `v<version>`, and push the commit and tag. The tag runs `.github/workflows/npm.yml`, which checks that the tag
 matches `version`, repeats the CI checks, and publishes. It authenticates as the package's npm
 trusted publisher (this repository and that workflow file, set under the package's npm

@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.2`. The `effect` peer is now
+`~4.0.2`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.0.2 or a later 4.0.x patch.** The peer now always starts at
+the release the package is tested against.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.0.2`.
+
+**`ActionMcp.runStdio` answers the calls in flight when the host closes stdin, instead of
+interrupting them.** This reverses 0.10.0's rule that closing stdin interrupts every call in
+flight: Effect 4.0.1's native stdio server (Effect #8714) drains them, and the surfaces build on
+Effect's servers rather than adding protocol machinery of their own. `runStdio` succeeds once every
+answer is written, so a script piping requests may close stdin as soon as it has written them.
+
+- Migrate: a call that never completes now keeps the subprocess running until a signal
+  interrupts it. MCP hosts send `SIGTERM` when a server does not exit in time; bound long
+  handlers with a timeout if the process must end on stdin alone.
+
+**A result that does not encode over HTTP is Effect's own schema failure, not a defect.** It is
+still an empty 500, and `ErrorReporter`s now receive the `HttpApiSchemaError`, with the schema's
+message as its cause, once.
+
+### Other changes
+
+- Effect 4.0.2's HTTP tracing follows OpenTelemetry conventions: the server span is named for the
+  method (`POST`, was `http.server POST`), a 4xx response no longer fails it, and headers are
+  recorded only through `HttpMiddleware.TracerHeaderFilter`. Update dashboards and alerts that
+  match the old names or statuses.
+
 ## 0.10.0
 
 One contract, one implementation, one rule for who may call. `ActionGroup` is gone: a contract

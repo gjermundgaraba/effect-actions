@@ -743,7 +743,7 @@ it("records a tool call's arguments on its span, a Schema.Redacted value include
 
 describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (transport) => {
   // The MCP span name carries the protocol revision.
-  const requestSpan = transport === "HTTP" ? /^http\.server POST$/ : /^McpServer\..*tools\/call$/;
+  const requestSpan = transport === "HTTP" ? /^POST$/ : /^McpServer\..*tools\/call$/;
 
   // Beside the public `identity`, one whose authorizer runs.
   const Guarded = Action.make("guarded", {

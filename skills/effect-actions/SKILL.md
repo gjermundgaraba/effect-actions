@@ -20,7 +20,7 @@ Read the card for a module before writing code that uses it. Exported TypeScript
 Package facts that apply everywhere:
 
 - Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
-- The `effect` peer is `~4.0.0`: Effect's 4.0.x patches. Effect marks the HTTP, HTTP API, AI and CLI modules the surfaces build on unstable, so a minor release may change them; a later minor is admitted once the package is tested against it. The package is built and tested against `4.0.0`.
+- The `effect` peer admits the patches of the Effect release the package is tested against, and no later minor until a release is tested against it ([setup.md](setup.md#install)).
 - Action contracts are pure values. Defining contracts and implementations runs neither handlers nor builder Effects. Builder services are acquired when a layer is built, an `Action.client` is acquired, or a local CLI command runs; see [dependency lifetimes](guarantees.md#dependency-lifetimes).
 
 ## Pages

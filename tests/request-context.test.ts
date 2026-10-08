@@ -428,6 +428,36 @@ describe("what the routes were built with", () => {
     },
   );
 
+  it("answers a success that does not encode with an empty 500, reported once, over HTTP", async () => {
+    const reported: Array<string> = [];
+
+    const reporter: ErrorReporter.ErrorReporter = {
+      [ErrorReporter.TypeId]: ErrorReporter.TypeId,
+      report: ({ cause }) => void reported.push(Cause.pretty(cause)),
+    };
+
+    const Count = Action.make("count", {
+      description: "Count.",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.Finite,
+    });
+
+    const count = Action.implement(Count, () => Effect.succeed(Infinity));
+
+    const web = serve(
+      ActionHttp.layer(ActionHttp.make([Count]), count).pipe(
+        Layer.provide(ErrorReporter.layer([reporter])),
+      ),
+    );
+
+    const response = await web.handler(post("/api/count"));
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(reported).toEqual([expect.stringContaining("Expected a finite number")]);
+  });
+
   it.each(["HTTP", "MCP"] as const)(
     "never replaces the request span as the action span's parent, over %s",
     async (transport) => {
@@ -457,7 +487,7 @@ describe("what the routes were built with", () => {
       await web.handler(transport === "HTTP" ? post("/api/level") : rawToolCall("level"), context);
 
       expect(parents.get("level")).toMatch(
-        transport === "HTTP" ? /^http\.server POST$/ : /^McpServer\..*tools\/call$/,
+        transport === "HTTP" ? /^POST$/ : /^McpServer\..*tools\/call$/,
       );
     },
   );

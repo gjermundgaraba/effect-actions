@@ -345,8 +345,8 @@ export function layerHttp(
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
  * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates: the whole
- * program of an MCP subprocess, which succeeds once the host closes its side and the calls in
- * flight, which that interrupts, have stopped. A signal interrupts it.
+ * program of an MCP subprocess, which succeeds once the host closes its side and every call
+ * in flight has been answered. A signal interrupts it.
  *
  * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
  * `Stdio` service and the identity. Arguments are tool input only and never establish
@@ -381,8 +381,9 @@ export function runStdio(
   );
 
   // The native transport ends by interrupting the fiber that built it once the host closes
-  // its side. Built in a child, that is a normal end, while an interruption of the program
-  // itself, such as a signal, stays one. Stdout carries the protocol, so logs go to stderr.
+  // its side and the answers in flight are written. Built in a child, that is a normal end,
+  // while an interruption of the program itself, such as a signal, stays one. Stdout carries
+  // the protocol, so logs go to stderr.
   return Layer.launch(transport).pipe(
     logToStderr,
     Effect.forkChild,
