@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Additions
+
+- `ActionCli.command` and `remoteCommand` take `stdin`, a required field of the input read from
+  standard input instead of a flag, such as a secret a flag would leave in the process list and
+  the shell's history: `ActionCli.remoteCommand(Http, PutSecret, { stdin: "value" })` reads
+  `op read op://vault/token | cli put-secret --name gh`. Its text is all of stdin without the
+  line endings that end it: a string's value as it is, any other field's JSON it accepts, such as
+  `["a","b"]` for an array, or else the text, which the action's schema decodes; a terminal is
+  refused as `InvalidInput`. The field has no flag, and help says it is
+  read from stdin. `make`'s and `remote`'s `commands` take it too
+  ([ActionCli.md](docs/ActionCli.md)).
+
 ## 0.11.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.2`. The `effect` peer is now

@@ -353,3 +353,28 @@ it.effect("connects through its client options, which no other command's request
     ]);
   }),
 );
+
+it.effect("sends a field read from stdin as its flag would send it", () =>
+  Effect.gen(function* () {
+    const { app, decoded } = recording();
+    const web = serve(ActionHttp.layer(Http, app));
+    const command = ActionCli.remoteCommand(Http, Remote, { stdin: "value" });
+
+    const [, output] = yield* logged(exec(command, [], { stdin: "21\n" })).pipe(
+      Effect.provide(Testing.layer(web.handler)),
+    );
+
+    // An aggregate's subcommand reads it the same way.
+    const aggregate = ActionCli.remote(Http, {
+      name: "cli",
+      commands: { remote: { stdin: "value" } },
+    });
+
+    yield* exec(aggregate, ["remote"], { stdin: "4" }).pipe(
+      Effect.provide(Testing.layer(web.handler)),
+    );
+
+    expect(decoded).toEqual([21, 4]);
+    expect(output).toEqual(['"42"']);
+  }),
+);

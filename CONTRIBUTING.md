@@ -84,6 +84,7 @@ One file per decision in [`design/`](design/). Each note is titled, and cited by
 - [Local and remote CLI](design/local-and-remote-cli.md)
 - [Verifier errors](design/verifier-errors.md)
 - [Media fields](design/media-fields.md)
+- [Stdin field](design/stdin-field.md)
 
 ## Release
 
