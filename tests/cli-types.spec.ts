@@ -441,6 +441,39 @@ expectTypeOf<ActionCli.CommandOptions<typeof Other>["positional"]>().toEqualType
 // @ts-expect-error A union input has no positional fields, even shared ones.
 ActionCli.command(shapes, UnionInput, { positional: ["a"] });
 
+const Store = Action.make("store", {
+  description: "Store a secret",
+  readOnly: false,
+  caller: Action.Anyone,
+  input: {
+    value: Schema.String,
+    kind: Schema.Literals(["gh", "claude"]),
+    count: Schema.Finite,
+    when: Schema.Date,
+    note: Schema.optional(Schema.String),
+  },
+});
+
+// Only a required field is read from stdin, of any kind: no optional one, and none of an
+// input that is not a struct.
+expectTypeOf<ActionCli.CommandOptions<typeof Store>["stdin"]>().toEqualTypeOf<
+  "value" | "kind" | "count" | "when" | undefined
+>();
+
+expectTypeOf<ActionCli.CommandOptions<typeof ScalarInput>["stdin"]>().toEqualTypeOf<undefined>();
+
+const stored = Action.implement(Store, () => Effect.void);
+
+ActionCli.command(stored, Store, { stdin: "value" });
+
+ActionCli.make(stored, { name: "s", commands: { store: { stdin: "value" } } });
+
+// @ts-expect-error An aggregate's command reads only a required field from stdin.
+ActionCli.make(stored, { name: "s", commands: { store: { stdin: "note" } } });
+
+// @ts-expect-error An optional field is not read from stdin.
+ActionCli.command(stored, Store, { stdin: "note" });
+
 // A local command's cause is what its action or builder fails with, or a built-in one.
 class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
 

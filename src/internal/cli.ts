@@ -1,12 +1,15 @@
 import {
   Console,
   Effect,
+  flow,
   Option,
   Predicate,
   Record,
   Runtime,
   Schema,
   SchemaAST,
+  Stdio,
+  Stream,
   type Types,
 } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
@@ -31,6 +34,11 @@ export type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
         : never
   : never;
 
+/** The fields of `A`'s input that may be read from stdin: all but the optional ones. */
+export type StdinField<A extends Action.Any> = A["input"]["Encoded"] extends infer E
+  ? Exclude<Field<A>, { [K in keyof E]-?: {} extends Pick<E, K> ? K : never }[keyof E]>
+  : never;
+
 /** How one command is named, takes its input and prints its result. */
 export interface Options<A extends Action.Any> {
   /** Override the command name. The action name, in kebab case, is used by default. */
@@ -47,6 +55,11 @@ export interface Options<A extends Action.Any> {
    * `Param.withAlias` takes it.
    */
   readonly aliases?: { readonly [K in Field<A>]?: string };
+  /**
+   * A required field read from stdin instead of a flag, such as a secret, which a flag would
+   * leave in the process list and the shell's history.
+   */
+  readonly stdin?: StdinField<A>;
 }
 
 /**
@@ -148,6 +161,12 @@ const choices = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
 /** A flag or a positional argument. */
 type Kind = Param.ParamKind;
 
+/** Whether an encoding takes its text as it is: a string, a template literal or a choice. */
+const isText = (encoded: SchemaAST.AST): boolean =>
+  choices(encoded) !== undefined ||
+  SchemaAST.isString(encoded) ||
+  SchemaAST.isTemplateLiteral(encoded);
+
 /**
  * The native flag or argument parsing one field's encoded JSON value: a string or boolean
  * for those, a choice for string literals and string enums, and JSON or text for anything
@@ -157,12 +176,11 @@ type Kind = Param.ParamKind;
  */
 const valueParam = (kind: Kind, name: string, field: SchemaAST.AST): Param.Param<Kind, unknown> => {
   const encoded = unsuspended(field);
-  const literals = choices(encoded);
 
-  if (literals !== undefined) return Param.Literals(kind, name, literals);
+  if (isText(encoded)) {
+    const literals = choices(encoded);
 
-  if (SchemaAST.isString(encoded) || SchemaAST.isTemplateLiteral(encoded)) {
-    return Param.String(kind, name);
+    return literals === undefined ? Param.String(kind, name) : Param.Literals(kind, name, literals);
   }
 
   if (SchemaAST.isBoolean(encoded)) return Param.Boolean(kind, name);
@@ -284,6 +302,8 @@ interface FieldParam {
   readonly optional: boolean;
   /** Whether it is repeated, an argument taking every value left, so read last. */
   readonly repeats: boolean;
+  /** The field's description, its flag's or argument's help text. */
+  readonly description: string | undefined;
 }
 
 /** What the field parameters parse to, by field. */
@@ -354,6 +374,7 @@ const fieldParams = (
       param: description === undefined ? aliased : Param.withDescription(aliased, description),
       optional: SchemaAST.isOptional(property.type),
       repeats,
+      description,
     };
   });
 };
@@ -494,30 +515,83 @@ const failureOf = <E>(action: Action.Any, errors: Action.Errors) => {
     );
 };
 
+/**
+ * The `InvalidInput` of a field read from stdin that cannot be: its issue names the field,
+ * as the schema's would.
+ */
+const unreadable = (field: string, message: string) =>
+  new InvalidInput({ message, issues: [{ path: [field], message }] });
+
+/**
+ * A field's value from the text read for it: the text itself for a string, a template literal
+ * or a choice, and JSON the field accepts, or the text, for anything else, an array or a
+ * boolean included, whose flags take no JSON. Decoding never fails: the last member of
+ * `jsonOrText` takes any text.
+ */
+const fromText = (field: SchemaAST.AST): ((text: string) => Schema.Json) => {
+  const encoded = unsuspended(field);
+
+  return isText(encoded) ? (text) => text : Schema.decodeSync(jsonOrText(encoded));
+};
+
+/**
+ * `field`'s text, all of stdin without the line endings that end it, as a shell's command
+ * substitution drops them: what `echo` or `op read` piped in adds. A terminal is refused
+ * rather than read, since what is typed there is shown. `Stdio` is part of the environment
+ * `Command.run` requires of its host, so the command reads it without requiring it in its
+ * own type; it is missing only outside a run.
+ */
+const stdinText = (field: string) =>
+  Effect.gen(function* () {
+    const stdio = yield* Effect.serviceOption(Stdio.Stdio);
+
+    if (Option.isNone(stdio)) return yield* Effect.die(new Error("Stdio is not provided"));
+
+    if (yield* stdio.value.stdinIsTerminal) {
+      return yield* unreadable(
+        field,
+        `${field} is read from stdin, which is a terminal: pipe it in`,
+      );
+    }
+
+    const text = yield* stdio.value.stdin.pipe(
+      Stream.decodeText(),
+      Stream.mkString,
+      Effect.mapError((error) => unreadable(field, `stdin cannot be read: ${error.message}`)),
+    );
+
+    return text.replace(/[\r\n]+$/, "");
+  });
+
 /** An action's input as native flags and positional arguments, and how to decode them. */
 interface InputConfig<A extends Action.Any> {
   /** Flags by field; `input` for the whole input when it is not a struct. */
   readonly flags: Readonly<Record<string, Param.Param<Kind, Option.Option<unknown>>>>;
   /** Positional fields, in the order they are read. */
   readonly positional: ReadonlyArray<FieldParam>;
-  readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], Schema.SchemaError>;
+  readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], InvalidInput>;
+  /** What help says of the field read from stdin, if there is one. */
+  readonly stdinHelp: string | undefined;
 }
 
 /**
  * The action's input as native flags: one per field of a struct input, named after it,
  * or `--input` taking the whole input as JSON otherwise. The `positional` fields of a
- * struct are arguments instead, in that order.
+ * struct are arguments instead, in that order, and the `stdin` field is read from stdin.
  */
 const inputConfig = <A extends Action.Any>(
   action: A,
   positional: ReadonlyArray<string>,
   aliases: Readonly<Record<string, string | undefined>>,
+  stdin: string | undefined,
 ): InputConfig<A> => {
   const codec = Schema.toCodecJson(action.input);
   // A suspended input, as a recursive schema is written, is the input it stands for.
   const encoded = unsuspended(SchemaAST.toEncoded(codec.ast));
   // Undeclared fields are refused, as over HTTP: a misspelled key is an error, not dropped.
-  const decode = Schema.decodeUnknownEffect(codec, { onExcessProperty: "error" });
+  const decodeInput = Schema.decodeUnknownEffect(codec, { onExcessProperty: "error" });
+
+  const decode = flow(decodeInput, Effect.mapError(InvalidInput.fromSchemaError));
 
   // Encoded, a struct or a class is its named fields. A record's keys are not known in
   // advance, so only named fields get flags; an action without input has none.
@@ -527,8 +601,28 @@ const inputConfig = <A extends Action.Any>(
   ) {
     const params = fieldParams(encoded, unsuspended(action.input.ast), positional, aliases);
 
+    const fromStdin = Option.map(Option.fromUndefinedOr(stdin), (field) => {
+      const property = encoded.propertySignatures.find(({ name }) => name === field);
+
+      if (property === undefined || SchemaAST.isOptional(property.type)) {
+        throw new Error(`Not a required input field: ${field}`);
+      }
+
+      if (positional.includes(field)) throw new Error(`Both positional and stdin: ${field}`);
+
+      const description = params.find((param) => param.field === field)?.description;
+
+      return {
+        field,
+        value: fromText(property.type),
+        help: `Reads ${kebab(field)} from stdin${description === undefined ? "." : `: ${description}`}`,
+      };
+    });
+
     const flagged = new Set(
-      params.map(({ field }) => field).filter((field) => !positional.includes(field)),
+      params
+        .map(({ field }) => field)
+        .filter((field) => !positional.includes(field) && field !== stdin),
     );
 
     const stray = Object.keys(aliases).find((field) => !flagged.has(field));
@@ -537,10 +631,18 @@ const inputConfig = <A extends Action.Any>(
 
     return {
       flags: Object.fromEntries(
-        params.flatMap(({ field, param }) => (positional.includes(field) ? [] : [[field, param]])),
+        params.flatMap(({ field, param }) => (flagged.has(field) ? [[field, param]] : [])),
       ),
       positional: positionalOrder(params, positional),
-      decode: (parsed) => decode(Record.getSomes(parsed)),
+      decode: (parsed) =>
+        Option.match(fromStdin, {
+          onNone: () => decode(Record.getSomes(parsed)),
+          onSome: ({ field, value }) =>
+            Effect.flatMap(stdinText(field), (text) =>
+              decode({ ...Record.getSomes(parsed), [field]: value(text) }),
+            ),
+        }),
+      stdinHelp: Option.getOrUndefined(Option.map(fromStdin, ({ help }) => help)),
     };
   }
 
@@ -552,12 +654,15 @@ const inputConfig = <A extends Action.Any>(
     throw new Error(`Aliases need named input fields: ${Object.keys(aliases).join(", ")}`);
   }
 
+  if (stdin !== undefined) throw new Error(`Stdin needs named input fields: ${stdin}`);
+
   return {
     flags: { input: inputFlag(encoded) },
     positional: [],
     // `--input` left off is `{}`, a fresh one each run, so invocations never share a value.
     // The schema decides whether it is valid, when the command runs.
     decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
+    stdinHelp: undefined,
   };
 };
 
@@ -578,10 +683,11 @@ export const command = <A extends Action.Any, E, R>(
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;
 
-  const { flags, positional, decode } = inputConfig(
+  const { flags, positional, decode, stdinHelp } = inputConfig(
     action,
     options?.positional ?? [],
     options?.aliases ?? {},
+    options?.stdin,
   );
 
   const failure = failureOf<E | InvalidInput>(action, errors);
@@ -619,7 +725,6 @@ export const command = <A extends Action.Any, E, R>(
   // the result, printed last.
   const run = (parsed: Parsed, rendered: ((output: A["success"]["Type"]) => string) | undefined) =>
     decode(parsed).pipe(
-      Effect.mapError(InvalidInput.fromSchemaError),
       Effect.flatMap(execute),
       Effect.catch(failure),
       Effect.flatMap((value) => output(action, value, rendered)),
@@ -639,5 +744,10 @@ export const command = <A extends Action.Any, E, R>(
             run(parsedFields(input, values), json ? undefined : render),
         );
 
-  return command.pipe(Command.withDescription(action.description));
+  // Help lists flags and arguments alone, so it says where the stdin field comes from.
+  return command.pipe(
+    Command.withDescription(
+      stdinHelp === undefined ? action.description : `${action.description}\n\n${stdinHelp}`,
+    ),
+  );
 };

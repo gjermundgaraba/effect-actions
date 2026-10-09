@@ -1,38 +1,63 @@
-import { Effect, Exit, FileSystem, Layer, Option, Path, Stdio, Terminal } from "effect";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Stdio,
+  Stream,
+  Terminal,
+} from "effect";
 import { CliError, Command } from "effect/cli";
 import { TestConsole } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 
-/** Every service `Command.runWith` needs, with no terminal input and no subprocesses. */
-const cliServices = Layer.mergeAll(
-  FileSystem.layerNoop({}),
-  Path.layer,
-  Stdio.layerTest({}),
-  Layer.succeed(
-    Terminal.Terminal,
-    Terminal.make({
-      columns: Effect.succeed(80),
-      rows: Effect.succeed(24),
-      readInput: Effect.die("unused"),
-      readLine: Effect.die("unused"),
-      display: () => Effect.void,
-    }),
-  ),
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() => Effect.die("unused")),
-  ),
-);
+/** What a run reads on stdin: text piped in, empty by default, or a terminal. */
+export type Stdin = string | { readonly terminal: true };
+
+/**
+ * Every service `Command.runWith` needs, with `stdin` piped in or a terminal there, no
+ * terminal input otherwise and no subprocesses.
+ */
+const cliServices = (stdin: Stdin) =>
+  Layer.mergeAll(
+    FileSystem.layerNoop({}),
+    Path.layer,
+    Stdio.layerTest(
+      Predicate.isString(stdin)
+        ? { stdin: Stream.make(new TextEncoder().encode(stdin)) }
+        : { stdinIsTerminal: Effect.succeed(true) },
+    ),
+    Layer.succeed(
+      Terminal.Terminal,
+      Terminal.make({
+        columns: Effect.succeed(80),
+        rows: Effect.succeed(24),
+        readInput: Effect.die("unused"),
+        readLine: Effect.die("unused"),
+        display: () => Effect.void,
+      }),
+    ),
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.die("unused")),
+    ),
+  );
 
 /**
  * Run `command` on `args`, as its binary would, with every service it needs but what its
- * actions need: a remote command's `HttpClient`, say.
+ * actions need: a remote command's `HttpClient`, say. `stdin` is what it reads there.
  */
 export const exec = <const Name extends string, Input, E, R, ContextInput>(
   command: Command.Command<Name, Input, ContextInput, E, R>,
   args: ReadonlyArray<string>,
-  options?: { readonly renderErrors?: boolean },
-) => Command.runWith(command, { version: "0", ...options })(args).pipe(Effect.provide(cliServices));
+  { stdin = "", ...options }: { readonly renderErrors?: boolean; readonly stdin?: Stdin } = {},
+) =>
+  Command.runWith(command, { version: "0", ...options })(args).pipe(
+    Effect.provide(cliServices(stdin)),
+  );
 
 /**
  * Run a CLI program against a test console of its own: its result, then every line it logged.

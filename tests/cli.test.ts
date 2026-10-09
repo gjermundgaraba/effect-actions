@@ -1786,6 +1786,138 @@ it.effect("gives a flag the alias its options name, and shows a positional's val
   }),
 );
 
+it.effect("reads the field its options name from stdin, without the line endings ending it", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+
+    const Store = Action.make("store", {
+      description: "Store a secret",
+      readOnly: false,
+      caller: Action.Anyone,
+      input: {
+        name: Schema.String,
+        apiToken: Schema.String.check(Schema.isMinLength(1)).annotate({
+          description: "The token to store",
+        }),
+        note: Schema.optional(Schema.String),
+      },
+    });
+
+    const app = Action.implement(Store, (input) => Effect.sync(() => inputs.push(input)));
+    const store = ActionCli.command(app, Store, { stdin: "apiToken" });
+
+    yield* exec(store, ["--name", "gh"], { stdin: "s3cret\r\n\n" });
+    // Line endings inside it are the value's own.
+    yield* exec(store, ["--name", "pem"], { stdin: "a\nb\n" });
+    expect(inputs).toEqual([
+      { name: "gh", apiToken: "s3cret" },
+      { name: "pem", apiToken: "a\nb" },
+    ]);
+
+    // The field has no flag, and help says where it comes from, with its description.
+    const flagged = yield* Effect.exit(
+      exec(store, ["--name", "gh", "--api-token", "x"], { stdin: "s3cret" }),
+    );
+
+    expect(Exit.isFailure(flagged)).toBe(true);
+    expect(inputs).toHaveLength(2);
+
+    const help = (yield* lines(store, ["--help"])).join("\n");
+
+    expect(help).toContain("Reads api-token from stdin: The token to store");
+    expect(help).not.toContain("--api-token");
+
+    // A terminal is refused rather than read, and nothing piped in is the schema's to refuse:
+    // both as InvalidInput, on stderr as HTTP sends it.
+    const refusal = "apiToken is read from stdin, which is a terminal: pipe it in";
+
+    const [terminal, , refusals] = yield* printed(
+      exec(store, ["--name", "gh"], { stdin: { terminal: true } }),
+    );
+
+    expect(causeOf(terminal)).toEqual(
+      new Action.InvalidInput({
+        message: refusal,
+        issues: [{ path: ["apiToken"], message: refusal }],
+      }),
+    );
+    expect(refusals.join("\n")).toContain('"_tag":"InvalidInput"');
+
+    const [empty] = yield* printed(exec(store, ["--name", "gh"], { stdin: "\n" }));
+    const refused = causeOf(empty);
+
+    expect(refused).toBeInstanceOf(Action.InvalidInput);
+
+    if (refused instanceof Action.InvalidInput) {
+      expect(refused.issues[0]?.path).toEqual(["apiToken"]);
+    }
+
+    expect(inputs).toHaveLength(2);
+
+    // Checked when the command is built, as the types check it first.
+    // @ts-expect-error An optional field is not read from stdin.
+    expect(() => ActionCli.command(app, Store, { stdin: "note" })).toThrow(
+      "Not a required input field: note",
+    );
+    expect(() =>
+      ActionCli.command(app, Store, { stdin: "apiToken", positional: ["apiToken"] }),
+    ).toThrow("Both positional and stdin: apiToken");
+    expect(() =>
+      ActionCli.command(app, Store, { stdin: "apiToken", aliases: { apiToken: "t" } }),
+    ).toThrow("Not a flag's input field: apiToken");
+  }),
+);
+
+it.effect("reads any kind of field from stdin: a string as text, JSON otherwise", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+
+    const Put = Action.make("put", {
+      description: "Put a bundle",
+      readOnly: false,
+      caller: Action.Anyone,
+      input: {
+        keys: Schema.Array(Schema.String),
+        size: Schema.Finite,
+        label: Schema.String,
+        on: Schema.Boolean,
+        when: Schema.Date,
+      },
+    });
+
+    const app = Action.implement(Put, (input) => Effect.sync(() => inputs.push(input)));
+
+    const put = (field: "keys" | "size" | "label" | "on" | "when", stdin: string) =>
+      exec(
+        ActionCli.command(app, Put, { stdin: field }),
+        [
+          ...(field === "size" ? [] : ["--size", "1"]),
+          ...(field === "label" ? [] : ["--label", "x"]),
+          ...(field === "when" ? [] : ["--when", "2026-01-01"]),
+        ],
+        { stdin },
+      );
+
+    // An array whose flag repeats, and a boolean whose flag is a switch, take JSON here.
+    yield* put("keys", '["a","b"]\n');
+    yield* put("size", "2\n");
+    yield* put("on", "true\n");
+    // A string's text stays text, JSON or not; a date is encoded as a string.
+    yield* put("label", '"quoted"');
+    yield* put("when", "2026-10-09\n");
+
+    const day = new Date("2026-01-01");
+
+    expect(inputs).toEqual([
+      { keys: ["a", "b"], size: 1, label: "x", on: false, when: day },
+      { keys: [], size: 2, label: "x", on: false, when: day },
+      { keys: [], size: 1, label: "x", on: true, when: day },
+      { keys: [], size: 1, label: '"quoted"', on: false, when: day },
+      { keys: [], size: 1, label: "x", on: false, when: new Date("2026-10-09") },
+    ]);
+  }),
+);
+
 it.effect("gives a subcommand of an aggregate the options command takes, by action name", () =>
   Effect.gen(function* () {
     const Read = Action.make("readFile", {
