@@ -1,4 +1,4 @@
-import { Schema, SchemaAST } from "effect";
+import { Schema, SchemaAST, type Types } from "effect";
 import { HttpServerResponse } from "effect/http";
 import { HttpApiSchema } from "effect/http-api";
 import type * as Action from "../Action.js";
@@ -27,6 +27,21 @@ export type ErrorsOf<O> = O extends unknown
       : ListOf<Extract<O["error" & keyof O], Action.Errors | Action.Errors[number]>> | []
     : []
   : never;
+
+/** `T` where it is one type, not a union: what a list's slot of type `T` surely holds. */
+type Single<T> = true extends Types.IsUnion<T> ? never : T;
+
+/**
+ * The errors a binding of errors `E` surely declares: each slot of one error in a list of
+ * fixed length, never one of an array of unknown length, which may be empty, nor of a list
+ * `E` may be one of several.
+ */
+export type Certain<E extends Action.Errors> =
+  true extends Types.IsUnion<E>
+    ? never
+    : number extends E["length"]
+      ? never
+      : { readonly [K in keyof E]: Single<E[K]> }[number];
 
 /**
  * The schemas an endpoint declares for one error, each with the status it is sent with. `HttpApi`

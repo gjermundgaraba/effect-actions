@@ -39,6 +39,12 @@ type Response = Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, un
 export interface Runtime {
   /** The descriptor the provider was built from, the one a binding naming it must hold. */
   readonly descriptor: unknown;
+  /**
+   * The verifier itself, for a surface answering refusals its own way, such as RPC: the
+   * credential to the identity, or a refusal, or an error the descriptor declares. An empty
+   * credential is refused without reaching it.
+   */
+  readonly authenticate: (credential: Credential) => Effect.Effect<unknown, unknown, unknown>;
   /** The native security middleware's implementation, keyed by its scheme. */
   readonly middleware: Readonly<
     Record<string, (route: Response, options: { readonly credential: Credential }) => Response>
@@ -129,6 +135,18 @@ export type ProviderOf<D> =
     ? Provider<I, Name>
     : never;
 
+/** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
+export type PublicOnly<Actions extends ReadonlyArray<Action.Any>> = [
+  Exclude<Actions[number], { readonly caller: typeof Anyone }>,
+] extends [never]
+  ? unknown
+  : { readonly "Protected actions take options naming their authentication": never };
+
+/** The descriptor options `O` name, where they always name one. */
+export type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D extends Any }]
+  ? D
+  : undefined;
+
 /** All protected actions on a surface use the descriptor's single identity key. */
 export type Matching<A extends Action.Any, D> =
   unknown extends Covered<Protected<A>>
@@ -178,6 +196,22 @@ export const assertAuthentication = (
     }
   }
 };
+
+/**
+ * The provider of `auth`, as a surface serving a binding that names it reads it: a provider of
+ * another descriptor of the same name, built apart, may differ in what its verifier fails
+ * with, so it is refused.
+ */
+export const providerOf = (auth: Any): Effect.Effect<Runtime, never, Provider<unknown>> =>
+  Effect.flatMap(Effect.service(auth["~provider"]), (provider) =>
+    provider.descriptor === auth
+      ? Effect.succeed(provider)
+      : Effect.die(
+          new Error(
+            `Authentication "${auth.name}": the binding's descriptor is not its provider's; build both from one descriptor`,
+          ),
+        ),
+  );
 
 /** Remote promotion happens at tool entry, before shared dispatch, never in local calls. */
 export const promote = <A, E, R>(

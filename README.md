@@ -1,7 +1,7 @@
 # effect-actions
 
-Define an Effect action once. Serve it over HTTP and MCP, hand it to a model as a native
-Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
+Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a
+native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
 underneath.
 
 ## Looks like this
@@ -52,6 +52,7 @@ const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolki
 const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --name Ada
 const remote = ActionCli.remoteCommand(Http, Greet, { client: { baseUrl } }); // greet --name Ada, over HTTP
 const local = Action.client(greet); // the HTTP client's methods, in process
+const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greet); // Effect RPC, on the protocol the host provides
 ```
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
@@ -72,7 +73,7 @@ const greeting = Effect.gen(function* () {
 - Action-level authorization is written once, on the implementation: `Action.implement(actions, handlers, { authorize })`, required for protected actions. Every surface that serves it runs the rule before each handler, so no surface can leave it out and no handler repeats the access policy; `Action.allowAll` admits every authenticated caller. Operational limits, such as a rate limit, and record-level checks stay in the handler, failing with errors the contract lists.
 - Every action states whether it is read-only (`readOnly`), so that rule reads the contract instead of a hand-maintained list of mutation names.
 - A protected action's handler and rule read the identity its contract names, which only authentication of that request supplies; a startup identity never opens a protected route. Public and protected routes share one binding, one mount path, one OpenAPI document, which states the credentials each needs, and one client, and a handler's startup services are built once per [layer graph](docs/guarantees.md#dependency-lifetimes), however many surfaces serve it.
-- The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency.
+- The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency. RPC is Effect's native `RpcServer` and `RpcClient`, over HTTP, a WebSocket, a socket or stdio.
 - Tests run in memory. `Action.client` calls an implementation in process, with the typed client's methods, behind its `authorize`, as several callers in one test. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpClient`, without opening a port.
 
 ## Install
@@ -108,7 +109,7 @@ release; in a project that installs the package, point the agent at
 ## Status
 
 The `effect` peer admits the patches of the Effect release the package is tested against, since
-the modules the surfaces build on may change in a minor release (see [docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP and MCP: no streaming, uploads, prompts, or resources.
+the modules the surfaces build on may change in a minor release (see [docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming, uploads, prompts, or resources.
 Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [docs/setup.md](docs/setup.md).
 
 ## Acknowledgements

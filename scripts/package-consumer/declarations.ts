@@ -5,6 +5,7 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
@@ -128,6 +129,12 @@ export const lookupMcp = ActionMcp.layerHttp(lookup, {
 });
 
 export const lookupStdio = ActionMcp.runStdio(lookup, { name: "lookup", version: "1.0.0" });
+
+export const LookupRpc = ActionRpc.make([Lookup], { authentication: Login });
+
+export const lookupRpc = ActionRpc.layer(LookupRpc, lookup);
+
+export const rpcClient = ActionRpc.client(LookupRpc);
 
 export const lookupTools = ActionToolkit.make(lookup);
 

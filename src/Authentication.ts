@@ -432,11 +432,17 @@ const presented = (credential: Credential): boolean =>
     ? Redacted.value(credential) !== ""
     : credential.username !== "" || Redacted.value(credential.password) !== "";
 
+/** What `protectedResource` is given: the resource, an Effect building it, or none. */
+type Resource =
+  | ProtectedResource
+  | Effect.Effect<ProtectedResource | undefined, unknown, unknown>
+  | undefined;
+
 /**
  * The provider of `authentication`: `verify`, or an Effect building it once per layer graph, run on
  * each remote request a protected action receives, with the credential the descriptor's
  * scheme decodes. A Bearer scheme answers each 401 with its challenge, and may publish the
- * OAuth protected resource `protectedResource`.
+ * OAuth protected resource `protectedResource`, on the `HttpRouter` it then requires.
  */
 export function layer<
   const Name extends string,
@@ -447,19 +453,18 @@ export function layer<
   R,
   EX = never,
   RX = never,
-  EP = never,
-  RP = never,
+  P extends Resource = undefined,
 >(
   authentication: Descriptor<I, A, S, Name, E>,
   verify:
     | Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>
     | Effect.Effect<Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>, EX, RX>,
-  options?: LayerOptions<EP, RP> & ResourceOf<S>,
+  options?: { readonly protectedResource?: P } & ResourceOf<S>,
 ): Layer.Layer<
   Provider<I, Name>,
-  EX | EP,
-  | HttpRouter.HttpRouter
-  | Exclude<RX | RP, Scope.Scope>
+  EX | Effect.Error<P>,
+  | ([P] extends [undefined] ? never : HttpRouter.HttpRouter)
+  | Exclude<RX | Effect.Services<P>, Scope.Scope>
   | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
 >;
 export function layer(
@@ -490,10 +495,12 @@ export function layer(
   return Layer.effect(
     authentication["~provider"],
     Effect.gen(function* () {
-      const router = yield* HttpRouter.HttpRouter;
       const { metadataUrl, invalid, anonymous, published } = yield* resource;
 
-      if (published !== undefined) yield* router.addGlobalMiddleware(published);
+      if (published !== undefined) {
+        const router = yield* HttpRouter.HttpRouter;
+        yield* router.addGlobalMiddleware(published);
+      }
 
       const verifier = Effect.isEffect(verify) ? yield* verify : verify;
 
@@ -555,6 +562,7 @@ export function layer(
 
       return {
         descriptor: authentication,
+        authenticate,
         // HTTP: the native security middleware decodes the credential, and the route gets
         // the identity itself.
         middleware: {

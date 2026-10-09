@@ -1482,7 +1482,8 @@ export const authenticationLayerTypes = () => {
   );
 
   // What the build yields is the layer's, built at startup, its scope the layer's own. What the
-  // verifier yields is each request's, but the router's request.
+  // verifier yields is each request's, but the router's request. Publishing no protected
+  // resource, it needs no router itself.
   const verified = Authentication.layer(
     IdentityLogin,
     Effect.gen(function* () {
@@ -1500,7 +1501,7 @@ export const authenticationLayerTypes = () => {
   );
 
   expectTypeOf<Layer.Services<typeof verified>>().toEqualTypeOf<
-    HttpRouter.HttpRouter | Verifier | HttpRouter.Request<"Requires", Tenant>
+    Verifier | HttpRouter.Request<"Requires", Tenant>
   >();
   expectTypeOf<Layer.Error<typeof verified>>().toBeNever();
 
@@ -1523,13 +1524,14 @@ export const authenticationLayerTypes = () => {
   );
 
   expectTypeOf<Layer.Services<typeof unbuilt>>().toEqualTypeOf<
-    HttpRouter.HttpRouter | HttpRouter.Request<"Requires", Verifier>
+    HttpRouter.Request<"Requires", Verifier>
   >();
 
   const bearer = (token: Redacted.Redacted<string>) =>
     Effect.succeed({ id: Redacted.value(token) });
 
-  // A plain protected resource adds nothing to the layer.
+  // A plain protected resource adds the router it is published on, and nothing else; so do
+  // options typed apart, which may hold one.
   const plain = Authentication.layer(IdentityLogin, bearer, {
     protectedResource: {
       resource: "https://api.example.com",
@@ -1539,6 +1541,11 @@ export const authenticationLayerTypes = () => {
 
   expectTypeOf<Layer.Error<typeof plain>>().toBeNever();
   expectTypeOf<Layer.Services<typeof plain>>().toEqualTypeOf<HttpRouter.HttpRouter>();
+
+  const typedApart: Authentication.LayerOptions = {};
+  const apart = Authentication.layer(IdentityLogin, bearer, typedApart);
+
+  expectTypeOf<Layer.Services<typeof apart>>().toEqualTypeOf<HttpRouter.HttpRouter>();
 
   class Unconfigured extends Schema.TaggedError<Unconfigured>()("Unconfigured", {}) {}
 

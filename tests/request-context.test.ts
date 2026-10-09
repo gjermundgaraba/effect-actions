@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
-  Cause,
   Context,
   Effect,
   ErrorReporter,
@@ -12,7 +11,8 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { HttpRouter, HttpServerRequest } from "effect/http";
+import { HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import { layer as host } from "../examples/app.js";
 import { actors, CurrentActor } from "../examples/authorization.js";
 import { Http } from "../examples/binding.js";
@@ -24,10 +24,13 @@ import { Users } from "../examples/users.js";
 import * as Action from "../src/Action.js";
 import * as ActionHttp from "../src/ActionHttp.js";
 import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionRpc from "../src/ActionRpc.js";
 import * as ActionToolkit from "../src/ActionToolkit.js";
+import type { Served } from "../src/internal/memory.js";
 import * as Testing from "../src/Testing.js";
 import { httpProtocol } from "../src/internal/mcp.js";
-import { as, mcpRequest, post, rawToolCall, valueOf } from "./requests.js";
+import { as, mcpRequest, post, rawToolCall, send, valueOf } from "./requests.js";
+import { recorder } from "./reporter.js";
 import { serve, serveWithContext } from "./serve.js";
 import { converse } from "./stdio-host.js";
 
@@ -401,40 +404,88 @@ describe("what the routes were built with", () => {
       }),
   );
 
-  it.each(["HTTP", "MCP"] as const)(
-    "reports a handler's defect to their error reporters, once, over %s",
-    async (transport) => {
-      const reported: Array<string> = [];
+  const boom = Action.implement(Boom, () => Effect.die(new Error("boom")));
 
-      // Written out, it records every report: one `ErrorReporter.make` builds skips a cause
-      // or a defect it has seen, so a second report would go unnoticed.
-      const reporter: ErrorReporter.ErrorReporter = {
-        [ErrorReporter.TypeId]: ErrorReporter.TypeId,
-        report: ({ cause }) => void reported.push(Cause.pretty(cause)),
-      };
-
-      const boom = Action.implement(Boom, () => Effect.die(new Error("boom")));
-
-      const routes =
-        transport === "HTTP"
-          ? ActionHttp.layer(ActionHttp.make([Boom]), boom)
-          : ActionMcp.layerHttp(boom, { name: "test", version: "0" });
-
-      const web = serve(routes.pipe(Layer.provide(ErrorReporter.layer([reporter]))));
-
-      await web.handler(transport === "HTTP" ? post("/api/boom") : rawToolCall("boom"));
-
-      expect(reported).toEqual([expect.stringContaining("Error: boom")]);
+  /** The routes serving `boom` over each transport, and a call of it through `Testing.layer`. */
+  const boomOver: Record<
+    "HTTP" | "MCP" | "RPC",
+    {
+      readonly routes: Layer.Layer<never, unknown, Served>;
+      readonly call: Effect.Effect<unknown, unknown, HttpClient.HttpClient>;
+    }
+  > = {
+    HTTP: {
+      routes: ActionHttp.layer(ActionHttp.make([Boom]), boom),
+      call: Effect.suspend(() => send(post("/api/boom"))),
     },
+    MCP: {
+      routes: ActionMcp.layerHttp(boom, { name: "test", version: "0" }),
+      call: Effect.suspend(() => send(rawToolCall("boom"))),
+    },
+    RPC: {
+      routes: ActionRpc.layer(ActionRpc.make([Boom]), boom).pipe(
+        Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+        Layer.provide(RpcSerialization.layerJson),
+      ),
+      call: Effect.flatMap(ActionRpc.client(ActionRpc.make([Boom])), (client) =>
+        Effect.exit(client.boom()),
+      ).pipe(
+        Effect.scoped,
+        Effect.provide(
+          RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+            Layer.provide(RpcSerialization.layerJson),
+          ),
+        ),
+      ),
+    },
+  };
+
+  it.effect.each(["HTTP", "MCP", "RPC"] as const)(
+    "reports a handler's defect to their error reporters, once, over %s",
+    (transport) =>
+      Effect.gen(function* () {
+        const reported: Array<string> = [];
+        const { routes, call } = boomOver[transport];
+
+        yield* call.pipe(
+          Effect.provide(
+            Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(reported)])))),
+          ),
+        );
+
+        expect(reported).toEqual([expect.stringContaining("Error: boom")]);
+      }),
+  );
+
+  it.effect.each(["HTTP", "MCP", "RPC"] as const)(
+    "reports a defect to the server's error reporters over the layer's, over %s",
+    (transport) =>
+      Effect.gen(function* () {
+        const layer: Array<string> = [];
+        const server: Array<string> = [];
+        const { routes, call } = boomOver[transport];
+
+        yield* call.pipe(
+          Effect.provide(
+            Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(layer)])))).pipe(
+              // Made by `ErrorReporter.make`, as the server's own report of a 500 repeats the
+              // route's over HTTP.
+              Layer.provide(
+                ErrorReporter.layer([
+                  ErrorReporter.make(({ error }) => void server.push(String(error))),
+                ]),
+              ),
+            ),
+          ),
+        );
+
+        expect(layer).toEqual([]);
+        expect(server).toEqual(["Error: boom"]);
+      }),
   );
 
   it("answers a success that does not encode with an empty 500, reported once, over HTTP", async () => {
     const reported: Array<string> = [];
-
-    const reporter: ErrorReporter.ErrorReporter = {
-      [ErrorReporter.TypeId]: ErrorReporter.TypeId,
-      report: ({ cause }) => void reported.push(Cause.pretty(cause)),
-    };
 
     const Count = Action.make("count", {
       description: "Count.",
@@ -447,7 +498,7 @@ describe("what the routes were built with", () => {
 
     const web = serve(
       ActionHttp.layer(ActionHttp.make([Count]), count).pipe(
-        Layer.provide(ErrorReporter.layer([reporter])),
+        Layer.provide(ErrorReporter.layer([recorder(reported)])),
       ),
     );
 

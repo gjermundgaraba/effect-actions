@@ -115,6 +115,9 @@ which is public.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 - [cli-admin.ts](cli-admin.ts): a trusted operator's command beside remote callers, not served by the app: one implementation and one `authorize`, an identity typed in two parts, so no verified token names the operator the host supplies.
 - [promise-client.ts](promise-client.ts): `ActionHttp.fetchClient`, the client built once outside an Effect, each call a promise.
+- [rpc-binding.ts](rpc-binding.ts): the `Rpc` binding, the same actions as Effect RPC, one native rpc per action, its protected ones authenticated by `Login`. Plain data, shared by the server and every client.
+- [rpc.ts](rpc.ts): `ActionRpc.layer` on Effect's `RpcServer`, not served by the app: a WebSocket at `/rpc` speaking JSON, each protected rpc authenticated per message by `authenticate`, `status` public.
+- [rpc-client.ts](rpc-client.ts): `ActionRpc.client` over a WebSocket, against a host serving [rpc.ts](rpc.ts), not the app, in a browser's shape: the token sent on each message with `RpcClient.withHeaders`, since a browser sets no header on the upgrade.
 
 ## Follow a request
 
@@ -193,6 +196,9 @@ Run [testing.ts](testing.ts), `node --import tsx examples/testing.ts`, for in-me
 MCP calls with cleanup.
 [testing-caller.ts](testing-caller.ts) tests `userActions` over HTTP behind their real
 authentication, a client per caller's token, sharing the in-memory `Users` with the program.
+Run [testing-rpc.ts](testing-rpc.ts), `node --import tsx examples/testing-rpc.ts`, for the same
+rpcs in memory over Effect's HTTP protocol, behind their real authentication, each call carrying
+its caller's token.
 [in-process.ts](in-process.ts) calls `userActions`, `listChanges` included, which no binding
 holds, in process with `Action.client`, as two callers, each given around its own calls: what
 the implementation does, with no transport.

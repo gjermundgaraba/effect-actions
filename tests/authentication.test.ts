@@ -1231,9 +1231,7 @@ describe("authentication around a surface", () => {
 
       // What its build yields is a startup requirement of the layers it covers, not of each
       // request; the request is the router's.
-      expectTypeOf<Layer.Services<typeof prefixed>>().toEqualTypeOf<
-        HttpRouter.HttpRouter | Tokens
-      >();
+      expectTypeOf<Layer.Services<typeof prefixed>>().toEqualTypeOf<Tokens>();
 
       const routes = Layer.mergeAll(
         ActionHttp.layer(Http, guarded),

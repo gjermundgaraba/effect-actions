@@ -1,7 +1,7 @@
 # Testing
 
 In-memory calls against served layers, through Effect's own `HttpClient`. Needs no extra
-dependency and opens no port. It tests what the wire does: routes and tools, authentication,
+dependency and opens no port. It tests what the wire does: routes, tools and rpcs, authentication,
 statuses and codecs as sent. What an implementation does, its authorization and its handlers, is tested in process with `Action.client` ([Implementations](#implementations)).
 
 ## API
@@ -137,6 +137,58 @@ A verifier needing infrastructure in production is replaced, for a test, by anot
 same descriptor: `Authentication.layer(Login, (token) => ...)`.
 Any provider of that descriptor satisfies the routes; nothing else does.
 
+### RPC
+
+An `ActionRpc` layer is tested on the wire as routes are: served over Effect's HTTP protocol
+under `layer`, behind its authentication, and called with `ActionRpc.client` over
+`RpcClient.layerProtocolHttp`, on `layer`'s `HttpClient`. Each call carries its caller's
+credential.
+
+```ts example=testing-rpc.ts
+import { Effect, Layer } from "effect";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { authenticate } from "./authentication.js";
+import { status, userActions } from "./handlers.js";
+import { Rpc } from "./rpc-binding.js";
+import { Users } from "./users.js";
+
+// The rpcs over Effect's HTTP protocol, behind their real authentication.
+const server = ActionRpc.layer(Rpc, [status, userActions]).pipe(
+  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(authenticate),
+);
+
+// The client's protocol posts through `Testing.layer`'s HttpClient, answered in memory.
+const protocol = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(Testing.layer(server)),
+  Layer.provideMerge(Users.layerMemory),
+);
+
+// Each call carries its caller's token, so one client serves several.
+const as = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
+
+const program = Effect.gen(function* () {
+  const client = yield* ActionRpc.client(Rpc);
+  const rename = client.renameUser({ id: "1", name: "Bea" });
+
+  const refused = yield* Effect.flip(rename.pipe(as("reader"))); // Forbidden
+  const signedOut = yield* Effect.flip(client.whoAmI()); // Unauthenticated
+  const users = yield* Users;
+
+  return { refused, signedOut, unchanged: yield* users.get("acme", "1") };
+});
+
+console.log(await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(protocol))));
+```
+
+`RpcTest.makeClient` does not fit: it calls the server without serialization and without the
+authentication of protected rpcs. What the implementation does, without the wire, is
+`Action.client`'s ([Implementations](#implementations)).
+
 ## Rules
 
 - `layer(routes)` builds the routes with request logging off, and releases them with the layer's scope. What the routes still require is the layer's, as under `HttpRouter.serve`: their builders' services, and any per-request service no middleware of theirs provides, including one a global middleware reads. Provide them around it, with `Layer.provideMerge` where the program reads them too, so the handlers and the program share one instance. A per-request service provided there, such as a tenant, reaches every request. A protected action's identity is not such a service: its routes require their authentication provider, which nothing provided around `layer` replaces ([Signed-in callers](#signed-in-callers)). Each `layer` builds the routes anew, builders included, unless `Action.layer` built them above it. Requests run in the context the layer is built in, as under `HttpRouter.serve`: a `TestClock` or a reference provided around the program reaches middleware and handlers.
@@ -156,7 +208,7 @@ Any provider of that descriptor satisfies the routes; nothing else does.
 - A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
 - Add `Authorization` through `transformClient`, the same options for `mcpClient` and `ActionHttp.client`: one client per caller, `const alice = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")) }`. `mcpRequest` takes `headers`.
 - A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
-- Test what an implementation does in process, with `Action.client`: its authorizer, its handlers, and the checks every surface makes on input, success and failure, with several callers, an action no binding holds included. Test what a surface adds under `layer`: authentication, statuses, headers, bodies as sent and MCP results. The two call the same methods. Cover each surface the application exposes.
+- Test what an implementation does in process, with `Action.client`: its authorizer, its handlers, and the checks every surface makes on input, success and failure, with several callers, an action no binding holds included. Test what a surface adds under `layer`: authentication, statuses, headers, bodies as sent, MCP results and rpc failures. The two call the same methods. Cover each surface the application exposes.
 
 ## Failure modes
 

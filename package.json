@@ -22,6 +22,7 @@
     "./ActionCli": "./dist/ActionCli.mjs",
     "./ActionHttp": "./dist/ActionHttp.mjs",
     "./ActionMcp": "./dist/ActionMcp.mjs",
+    "./ActionRpc": "./dist/ActionRpc.mjs",
     "./ActionToolkit": "./dist/ActionToolkit.mjs",
     "./Authentication": "./dist/Authentication.mjs",
     "./Testing": "./dist/Testing.mjs",

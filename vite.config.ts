@@ -14,6 +14,7 @@ export default defineConfig({
       Action: "src/Action.ts",
       ActionHttp: "src/ActionHttp.ts",
       ActionMcp: "src/ActionMcp.ts",
+      ActionRpc: "src/ActionRpc.ts",
       ActionToolkit: "src/ActionToolkit.ts",
       ActionCli: "src/ActionCli.ts",
       Authentication: "src/Authentication.ts",

@@ -13,6 +13,38 @@
   refused as `InvalidInput`. The field has no flag, and help says it is
   read from stdin. `make`'s and `remote`'s `commands` take it too
   ([ActionCli.md](docs/ActionCli.md)).
+- `ActionRpc`, a new module, serves actions as Effect RPC on Effect's own `RpcServer`. A
+  browser-safe binding, `ActionRpc.make(actions, { authentication, error })`, holds a native
+  `RpcGroup`, `Rpc.group`, one rpc per action; `ActionRpc.layer(Rpc, implementations, { middleware })`
+  serves it over the protocol speaking JSON the host provides; and
+  `ActionRpc.client(Rpc)` has the methods of `ActionHttp.client` and `Action.client`. A protected
+  rpc authenticates each message with the descriptor's provider, so one WebSocket carries several
+  callers, then runs the layer's native `RpcMiddleware`, decodes its input, a typed `InvalidInput`
+  when it does not, and runs the authorizer. Refusals are the typed `Unauthenticated` and
+  `Forbidden`, with no challenge or step-up. A defect, a middleware that throws included, is
+  logged and answered as that request's `Internal server error` alone, reported once with its
+  cause to the call's `ErrorReporter`s; a declared failure is never reported, as over HTTP. Request services come from the layer's `middleware` or
+  router middleware, never startup. Public and protected actions are served over any protocol,
+  a socket server and stdio included; `layer` refuses to build under a protocol
+  that does not speak JSON, such as schema-binary's. This
+  changes the package's stated scope, which said HTTP "is not Effect RPC"
+  ([ActionRpc.md](docs/ActionRpc.md)).
+
+  ```ts
+  export const Rpc = ActionRpc.make([Status, GetUser], { authentication: Login });
+
+  const rpc = ActionRpc.layer(Rpc, [status, userActions]).pipe(
+    Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
+    Layer.provide(RpcSerialization.layerJson),
+    Layer.provide(authenticate),
+  );
+  ```
+
+### Other changes
+
+- `Authentication.layer` requires the `HttpRouter` only when it publishes a
+  `protectedResource`, so the provider serves an RPC server over a socket or stdio too
+  ([Authentication.md](docs/Authentication.md)).
 
 ## 0.11.0
 

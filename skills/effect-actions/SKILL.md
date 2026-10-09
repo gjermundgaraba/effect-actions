@@ -31,16 +31,18 @@ Package facts that apply everywhere:
 | [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, use built-in errors, call or test implementations in process (`Action.client`) |
 | [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                 |
 | [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                             |
+| [ActionRpc.md](ActionRpc.md)           | serve actions as Effect RPC over HTTP or a WebSocket, call them with one Effect method per action                                                         |
 | [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                              |
 | [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                          |
-| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP and MCP surfaces, refuse with 401/403, publish RFC 9728 discovery                      |
-| [Testing.md](Testing.md)               | call routes and tools in memory through `HttpClient`, or test an implementation in process                                                                |
+| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP, MCP and RPC surfaces, refuse with 401/403, publish RFC 9728 discovery                 |
+| [Testing.md](Testing.md)               | call routes, tools and rpcs in memory through `HttpClient`, or test an implementation in process                                                          |
 | [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                                             |
 | [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                              |
 
 ## Choose a surface
 
 - Callers speak JSON over HTTP: `ActionHttp`. Clients use `ActionHttp.client(Http)`.
+- Callers are Effect programs speaking Effect RPC, such as a page over one WebSocket: `ActionRpc`. Clients use `ActionRpc.client(Rpc)`.
 - Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess.
 - Callers are an Effect AI program in the same process: `ActionToolkit`.
 - Callers are humans or scripts in a terminal: `ActionCli`, `make` and `command` from implementations to run handlers locally, or `remote` and `remoteCommand` from the HTTP binding to call a server.

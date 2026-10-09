@@ -1,10 +1,10 @@
-import { Effect, Schema } from "effect";
+import { Effect, type Schema } from "effect";
 import type { HttpClient, HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../Action.js";
 import type { Any as Authentication, VerifierError } from "./authentication.js";
-import { type Call, inputOf } from "./call.js";
-import { type BuiltIns, InvalidInput } from "./errors.js";
+import { type Call, checked, type ErasedMethod } from "./call.js";
+import type { BuiltIns } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 
 /**
@@ -62,11 +62,6 @@ export type Client<H extends AnyHttp> = {
   >;
 };
 
-/** A client method, erased: the binding's actions restore its exact type. */
-export type ErasedMethod = (
-  ...input: ReadonlyArray<ErasedValue>
-) => Effect.Effect<ErasedValue, unknown>;
-
 /** A native client method, erased. */
 type NativeMethod = (request: {
   readonly payload: ErasedValue;
@@ -104,19 +99,7 @@ export const methods = (
 
         if (method === undefined) throw new Error(`No client method for ${action.name}`);
 
-        // Input is checked as every surface checks it, each issue reported, before the native
-        // client encodes it, so it fails as `InvalidInput` rather than the `SchemaError` of an
-        // answer that does not decode.
-        const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), {
-          errors: "all",
-        });
-
-        return (...args) =>
-          inputOf(action, args).pipe(
-            Effect.tap(encode),
-            Effect.mapError(InvalidInput.fromSchemaError),
-            Effect.flatMap((payload) => method({ payload })),
-          );
+        return checked(action, (payload) => method({ payload }));
       };
     },
   );

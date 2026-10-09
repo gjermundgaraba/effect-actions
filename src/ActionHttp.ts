@@ -23,8 +23,11 @@ import type * as Action from "./Action.js";
 import {
   assertAuthentication,
   type Any as Authentication,
+  type DescriptorOf,
   type Identity,
   type Matching,
+  providerOf,
+  type PublicOnly,
   type ServedProvider,
   type RemoteRequest,
   type Required as RequiredAuthentication,
@@ -38,11 +41,11 @@ import {
   errorList,
   projectedErrors,
 } from "./internal/actions.js";
-import { declared, type ErrorsOf } from "./internal/declared.js";
+import { type Certain, declared, type ErrorsOf } from "./internal/declared.js";
+import type { ErasedMethod } from "./internal/call.js";
 import {
   type AnyHttp,
   type Client,
-  type ErasedMethod,
   methods,
   type Options as ClientOptions,
 } from "./internal/client.js";
@@ -51,19 +54,18 @@ import { SchemaErrors, schemaErrors } from "./internal/schema-errors.js";
 import {
   type Protected,
   acquire,
-  type AnyImplementation,
   type BuildServices,
   type BuildError,
   type ErasedValue,
   type Known,
   type Member,
+  type MiddlewareOf,
   provideHandlers,
   type Served,
+  servedBy,
   type Serving,
-  select,
   type Selected,
   type Holding,
-  assertHeld,
   toList,
 } from "./internal/implementation.js";
 
@@ -117,18 +119,6 @@ type Through<M extends Middleware, R> = number extends M["length"]
     : R;
 
 /**
- * The middleware options `O` install: its `middleware` when always given, an array of unknown
- * length when it may be absent, which installs none or all of them, and none otherwise.
- */
-type MiddlewareOf<O> = O extends { readonly middleware: infer M extends Middleware }
-  ? M
-  : O extends { readonly middleware?: infer M extends Middleware | undefined }
-    ? "middleware" extends keyof O
-      ? ReadonlyArray<NonNullable<M>[number]>
-      : []
-    : [];
-
-/**
  * The layer's middleware, refused when one fails with an error neither the binding, `E`, nor
  * every endpoint declares, or needs a client counterpart: neither reaches the binding's
  * clients, which decode only what the binding and the built-ins declare. A failure an
@@ -146,21 +136,6 @@ type ServerOnly<M extends Middleware, E extends Action.Errors> = [
   : {
       readonly "Layer middleware fails only with the binding's errors and needs no client": never;
     };
-
-/** `T` where it is one type, not a union: what a list's slot of type `T` surely holds. */
-type Single<T> = true extends Types.IsUnion<T> ? never : T;
-
-/**
- * The errors a binding of errors `E` surely declares: each slot of one error in a list of
- * fixed length, never one of an array of unknown length, which may be empty, nor of a list
- * `E` may be one of several.
- */
-type Certain<E extends Action.Errors> =
-  true extends Types.IsUnion<E>
-    ? never
-    : number extends E["length"]
-      ? never
-      : { readonly [K in keyof E]: Single<E[K]> }[number];
 
 /**
  * The layer serving the actions `A` of `Apps` through the binding `H`, behind the middleware
@@ -210,18 +185,6 @@ type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
       ? Identity<Protected<Serving<App, A>>>
       : never)
 >;
-
-/** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
-type PublicOnly<Actions extends ReadonlyArray<Action.Any>> = [
-  Exclude<Actions[number], { readonly caller: typeof Anyone }>,
-] extends [never]
-  ? unknown
-  : { readonly "Protected actions take options naming their authentication": never };
-
-/** The descriptor options `O` name, where they always name one. */
-type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D extends Authentication }]
-  ? D
-  : undefined;
 
 /** Contract-level configuration shared by servers and clients. */
 export interface Options<E extends Action.Errors = Action.Errors> {
@@ -302,42 +265,6 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
   return HttpApi.make("actions")
     .annotate(HttpApi.ParseOptions, { errors: "all" })
     .add(first === undefined ? empty : empty.add(first, ...rest));
-};
-
-/**
- * `apps` narrowed to the actions the layer serves, matched by identity: those `listed`, which
- * the binding must hold, or every one of the binding's they hold, each once. An
- * implementation holding none of them is left out, and not built. Implementations holding
- * none of the binding's actions are refused, as the wrong implementations or the wrong
- * binding; a name the binding holds is marked as another contract's, as a second copy of the
- * contracts module makes one.
- */
-const servedBy = (
-  binding: AnyHttp,
-  apps: ReadonlyArray<AnyImplementation>,
-  listed: ReadonlyArray<Action.Any> | undefined,
-): ReadonlyArray<AnyImplementation> => {
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, binding.actions);
-
-  const held = apps.flatMap((app) => app.actions);
-  const served = select(apps, listed ?? binding.actions.filter((action) => held.includes(action)));
-  const actions = served.flatMap((app) => app.actions);
-
-  if (actions.length === 0 && listed === undefined && apps.length > 0) {
-    const bound = new Set(binding.actions.map(({ name }) => name));
-
-    throw new Error(
-      `No action of these implementations is in this HTTP binding: ${
-        held
-          .map(({ name }) => (bound.has(name) ? `${name} (another contract)` : name))
-          .join(", ") || "none"
-      }`,
-    );
-  }
-
-  assertOnce("served action", actions);
-
-  return served;
 };
 
 /**
@@ -504,15 +431,15 @@ export function layer<
   binding: H,
   implementations: Apps,
   options: O &
-    ServerOnly<MiddlewareOf<O>, H["error"]> &
+    ServerOnly<MiddlewareOf<O, Middleware>, H["error"]> &
     NoInfer<Known<O, LayerOptions<Middleware>>>,
-): HttpLayer<H, Apps, MiddlewareOf<O>, Selected<O, H["actions"][number]>>;
+): HttpLayer<H, Apps, MiddlewareOf<O, Middleware>, Selected<O, H["actions"][number]>>;
 export function layer(
   binding: AnyHttp,
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const apps = servedBy(binding, toList(served), options.actions);
+  const apps = servedBy("HTTP binding", binding.actions, toList(served), options.actions);
   const actions = apps.flatMap((app) => app.actions);
   assertAuthentication(actions, binding.authentication);
   // Native endpoints keep a middleware's first occurrence only, which the types cannot follow.
@@ -552,21 +479,13 @@ export function layer(
       const authentication =
         auth === undefined
           ? Layer.empty
-          : yield* Effect.flatMap(auth["~provider"], (provider) =>
-              // The routes decode and declare with the binding's descriptor, MCP and `protect`
-              // with the provider's: one of the same name built apart may differ in either.
-              provider.descriptor === auth
-                ? Effect.succeed(
-                    Layer.mergeAll(
-                      Layer.succeed(auth["~middleware"], provider.middleware),
-                      Layer.succeed(StepUp, provider.stepUp),
-                    ),
-                  )
-                : Effect.die(
-                    new Error(
-                      `Authentication "${auth.name}": the binding's descriptor is not its provider's; build both from one descriptor`,
-                    ),
-                  ),
+          : // The routes decode and declare with the binding's descriptor, MCP and `protect`
+            // with the provider's, which `providerOf` refuses to be another's.
+            yield* Effect.map(providerOf(auth), (provider) =>
+              Layer.mergeAll(
+                Layer.succeed(auth["~middleware"], provider.middleware),
+                Layer.succeed(StepUp, provider.stepUp),
+              ),
             );
 
       // The group is built alone, so the layer's middleware is read here, as the host

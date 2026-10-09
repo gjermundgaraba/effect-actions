@@ -1,7 +1,7 @@
 import { Array as Arr, Context, Effect, Layer, Option } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "../Action.js";
-import { Anyone } from "./actions.js";
+import { Anyone, assertOnce } from "./actions.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 /**
@@ -202,6 +202,21 @@ export type Selected<O, All extends Action.Any> = O extends {
   ? A
   : All;
 
+/**
+ * The middleware options `O` install, each a member of `L`: its `middleware` when always given,
+ * an array of unknown length when it may be absent, which installs none or all of them, and
+ * none otherwise.
+ */
+export type MiddlewareOf<O, L extends ReadonlyArray<unknown>> = O extends {
+  readonly middleware: infer M extends L;
+}
+  ? M
+  : O extends { readonly middleware?: infer M extends L | undefined }
+    ? "middleware" extends keyof O
+      ? ReadonlyArray<NonNullable<M>[number]>
+      : []
+    : [];
+
 /** The actions options `O` select of the implementations `Apps` stand for. */
 export type SelectedOf<O, Apps extends Served> = Selected<O, ActionOf<Member<Apps>>>;
 
@@ -338,6 +353,43 @@ export const select = (
 
     return own.length === app.actions.length ? [app] : [Implementation.share(own, app)];
   });
+};
+
+/**
+ * `apps` narrowed to the actions a binding's layer serves, matched by identity: those
+ * `listed`, which the binding, holding `bound`, must hold, or every one of the binding's they
+ * hold, each once. An implementation holding none of them is left out, and not built.
+ * Implementations holding none of the binding's actions are refused, as the wrong
+ * implementations or the wrong binding, `what`; a name the binding holds is marked as another
+ * contract's, as a second copy of the contracts module makes one.
+ */
+export const servedBy = (
+  what: string,
+  bound: ReadonlyArray<Action.Any>,
+  apps: ReadonlyArray<AnyImplementation>,
+  listed: ReadonlyArray<Action.Any> | undefined,
+): ReadonlyArray<AnyImplementation> => {
+  if (listed !== undefined) assertHeld("the binding does not hold it", listed, bound);
+
+  const held = apps.flatMap((app) => app.actions);
+  const served = select(apps, listed ?? bound.filter((action) => held.includes(action)));
+  const actions = served.flatMap((app) => app.actions);
+
+  if (actions.length === 0 && listed === undefined && apps.length > 0) {
+    const names = new Set(bound.map(({ name }) => name));
+
+    throw new Error(
+      `No action of these implementations is in this ${what}: ${
+        held
+          .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
+          .join(", ") || "none"
+      }`,
+    );
+  }
+
+  assertOnce("served action", actions);
+
+  return served;
 };
 
 /** The protected members of a contract union. */
