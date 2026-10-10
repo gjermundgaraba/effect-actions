@@ -1,4 +1,4 @@
-import * as ActionRpc from "../src/ActionRpc.js";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Login } from "./binding.js";
 import { GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 

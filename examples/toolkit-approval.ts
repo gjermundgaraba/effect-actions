@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
 import { LanguageModel } from "effect/ai";
-import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { type Actor, CurrentActor } from "./authorization.js";
 import { double, userActions } from "./handlers.js";
 

@@ -7,26 +7,20 @@ import { routes } from "../examples/quickstart-server.js";
 import { routes as browserRoutes } from "../examples/mcp-browser.js";
 import { greeting } from "../examples/quickstart-client.js";
 import manifest from "../package.json" with { type: "json" };
-import { published } from "../scripts/published.mjs";
 import { docsDirectory } from "../scripts/skill.ts";
-import { mcpRequest } from "./requests.js";
-import { serve } from "./serve.js";
+import { mcpRequest } from "./support/requests.js";
+import { serve } from "./support/serve.js";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-/** README.md and every page of docs/, which the skill copies. */
-const pages = [
+const readmeAndDocsPages = [
   "README.md",
   ...readdirSync(docsDirectory)
     .filter((name) => name.endsWith(".md"))
     .map((name) => `docs/${name}`),
 ];
 
-/** An example as a page shows it, importing the published package. */
-const documented = (file: string) => published(read(`examples/${file}`).trim());
-
-// A snippet fenced as `ts example=<file>` stays byte-identical to that type-checked example.
-const snippets = pages.flatMap((page) =>
+const snippets = readmeAndDocsPages.flatMap((page) =>
   Array.from(
     read(page).matchAll(/\x60{3}ts example=(\S+)\n([\s\S]*?)\n\x60{3}/g),
     ([, file = "", code]) => [page, file, code] as const,
@@ -36,15 +30,12 @@ const snippets = pages.flatMap((page) =>
 it.each(snippets)(
   "keeps %s's snippet of %s aligned with its type-checked source",
   (_, file, code) => {
-    expect(code).toBe(documented(file));
+    expect(code).toBe(read(`examples/${file}`).trim());
   },
 );
 
-// Code copied from a page's canonical example must compile: the first snippet of every
-// Canonical section is an example. A snippet without the mark, such as a fragment, is not
-// checked.
-it("marks every canonical snippet as a type-checked example", () => {
-  const unmarked = pages.filter((page) => {
+it("marks the first snippet of every Canonical section as a type-checked example", () => {
+  const unmarked = readmeAndDocsPages.filter((page) => {
     const [, section] = read(page).split("\n## Canonical\n");
 
     return (
@@ -56,8 +47,7 @@ it("marks every canonical snippet as a type-checked example", () => {
   expect(unmarked).toEqual([]);
 });
 
-// The install commands name the peer range, the one place a page states it.
-it("installs Effect at the package's peer range", () => {
+it("installs Effect at the package's peer range, which no other page states", () => {
   const range = manifest.peerDependencies.effect;
 
   for (const page of ["README.md", "docs/setup.md"]) {
@@ -66,7 +56,6 @@ it("installs Effect at the package's peer range", () => {
   }
 });
 
-// The entry points a consumer imports are the modules the package exports, each once.
 it("lists every module the package exports under docs/setup.md's entry points", () => {
   const section = read("docs/setup.md").split("\n## Entry points\n")[1] ?? "";
 
@@ -84,14 +73,12 @@ it("lists every module the package exports under docs/setup.md's entry points", 
   );
 });
 
-// Docs describe behavior, and ship as the skill: no page names this repository's sources.
-it("names no source path in docs/", () => {
+it("names no source path in docs/, which ships as the skill", () => {
   for (const page of readdirSync(docsDirectory)) {
     expect(read(`docs/${page}`), page).not.toMatch(/\bsrc\//);
   }
 });
 
-// The examples README is their one index.
 it("lists every example in examples/README.md", () => {
   const index = read("examples/README.md");
 
@@ -102,7 +89,6 @@ it("lists every example in examples/README.md", () => {
   for (const example of examples) expect(index, example).toContain(`](${example})`);
 });
 
-// Notes are cited by title, so CONTRIBUTING.md's index names each note in design/ by its own.
 it("indexes every design note in CONTRIBUTING.md by its title", () => {
   const indexed = Array.from(
     read("CONTRIBUTING.md").matchAll(/^- \[(.+)\]\(design\/(.+)\)$/gm),
@@ -116,8 +102,7 @@ it("indexes every design note in CONTRIBUTING.md by its title", () => {
   expect(indexed.toSorted()).toEqual(notes.toSorted());
 });
 
-// The skill is a copy of docs/, so every relative link must resolve inside docs/.
-it("keeps relative links in docs/ inside docs/", () => {
+it("keeps relative links in docs/ inside docs/, which the skill copies", () => {
   const pages = readdirSync(docsDirectory).filter((name) => name.endsWith(".md"));
 
   for (const page of pages) {

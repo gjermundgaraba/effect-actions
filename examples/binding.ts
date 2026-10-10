@@ -1,5 +1,5 @@
-import * as ActionHttp from "../src/ActionHttp.js";
-import * as Authentication from "../src/Authentication.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { CurrentActor } from "./authorization.js";
 import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
 

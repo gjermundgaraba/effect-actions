@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import * as Action from "../src/Action.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { authorize, CurrentActor } from "./authorization.js";
 import { Double, GetUser, ListChanges, RenameUser, Status, WhoAmI } from "./contracts.js";
 import { Users } from "./users.js";

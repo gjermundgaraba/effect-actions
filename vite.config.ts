@@ -1,4 +1,24 @@
+import { globSync } from "node:fs";
+import { basename } from "node:path";
 import { defaultExclude, defineConfig } from "vite-plus";
+
+const publicModules = Object.fromEntries(
+  globSync("src/*/*.ts")
+    .map((path): [string, string] => [basename(path, ".ts"), path])
+    .filter(([module]) => /^[A-Z]/u.test(module)),
+);
+
+const sourceOrLintProbe = (glob: string) => [
+  `src/${glob}`,
+  `tools/oxlint/tests/probe-*/*/src/${glob}`,
+];
+
+const packageNameImport = {
+  regex: "^@gjermundgaraba/effect-actions",
+  message: "Source imports source by relative path.",
+};
+
+const anyRelativeImport = ["./**", "../**"];
 
 export default defineConfig({
   staged: {
@@ -6,28 +26,16 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
-    // Lint-configuration probes are fixtures another run writes and deletes mid-run.
     exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
   },
   pack: {
-    entry: {
-      Action: "src/Action.ts",
-      ActionHttp: "src/ActionHttp.ts",
-      ActionMcp: "src/ActionMcp.ts",
-      ActionRpc: "src/ActionRpc.ts",
-      ActionToolkit: "src/ActionToolkit.ts",
-      ActionCli: "src/ActionCli.ts",
-      Authentication: "src/Authentication.ts",
-      Testing: "src/Testing.ts",
-    },
-    // Preserve module boundaries for JS and declarations. Bundled declarations
-    // currently emit a dangling __exportAll export with this toolchain.
+    entry: publicModules,
     unbundle: true,
     deps: { resolveDepSubpath: true },
     dts: {
       generator: "tsgo",
     },
-    exports: true,
+    exports: { devExports: true },
   },
   fmt: {
     ignorePatterns: [
@@ -43,13 +51,10 @@ export default defineConfig({
       ".roo/**",
       ".windsurf/**",
       "tools/oxlint/anti-slop/**",
-      // Transient lint-configuration probes; see tools/oxlint/tests/configuration.test.ts.
       "tools/oxlint/tests/probe-*/**",
     ],
   },
   lint: {
-    // Lint policy: CONTRIBUTING.md. Only build output, agent caches and the
-    // vendored plugin are excluded; every owned source, test and script is checked.
     ignorePatterns: [
       "dist/**",
       ".agent/**",
@@ -64,8 +69,6 @@ export default defineConfig({
       ".roo/**",
       ".windsurf/**",
       "tools/oxlint/anti-slop/**",
-      // Transient lint-configuration probes hold findings on purpose. Only their own run,
-      // which sets LINT_PROBE, lints them (tools/oxlint/tests/configuration.test.ts).
       ...(process.env["LINT_PROBE"] === undefined ? ["tools/oxlint/tests/probe-*/**"] : []),
     ],
     jsPlugins: [
@@ -74,44 +77,34 @@ export default defineConfig({
         name: "anti-slop-effect",
         specifier: "./tools/oxlint/anti-slop/effect/index.ts",
       },
+      { name: "no-comments", specifier: "./tools/oxlint/no-comments/index.ts" },
     ],
     options: {
       typeAware: true,
       typeCheck: true,
       denyWarnings: true,
-      // An exception that no longer suppresses anything is a defect, not a leftover.
       reportUnusedDisableDirectives: "deny",
     },
     rules: {
       "oxc/no-accumulating-spread": "error",
-      // Off: both forms are linear; rewrites change callback order and sparse-array
-      // semantics without establishing a performance gain.
       "anti-slop/no-array-filter-map": "off",
       "anti-slop/no-reduce-accumulator-copy": "error",
       "anti-slop/no-chained-type-assertions": "error",
-      // Off: conditional spread preserves omission semantics without mutable builders.
       "anti-slop/no-conditional-empty-object-spread": "off",
       "anti-slop/no-known-value-widening": "error",
       "anti-slop/no-module-mocking": "error",
       "anti-slop/no-object-parameters": "error",
       "anti-slop/no-reflect-apply": "error",
       "anti-slop/no-reflect-get": "error",
-      // Genuine type predicates decode a value; discrimination of an already typed union
-      // takes a narrow explained exception instead.
       "anti-slop/no-runtime-typeof": ["error", { allowInTypeGuards: true }],
-      // Off: a substring cannot establish domain ownership; naming is reviewed by people.
       "anti-slop/no-shape-in-symbol-names": "off",
       "anti-slop/no-unknown-parameters": "error",
       "anti-slop/no-unknown-returns": "error",
       "anti-slop/no-unknown-type-aliases": "error",
       "anti-slop/no-unsafe-dictionary-type": "error",
-      // Off: the widening is no-known-value-widening's and the narrowing assertion is
-      // typescript/no-unsafe-type-assertion's, which reads types where this rule reads syntax.
       "anti-slop/no-widen-then-assert": "off",
       "anti-slop/require-readable-spacing": "error",
-      "anti-slop/require-safety-comment-for-type-assertion": "error",
-      // `any` escape routes the syntactic rules cannot see: untyped JSON, SDK generics,
-      // callback registries. Independent of safety comments.
+      "anti-slop/require-safety-comment-for-type-assertion": "off",
       "typescript/no-unsafe-argument": "error",
       "typescript/no-unsafe-assignment": "error",
       "typescript/no-unsafe-call": "error",
@@ -121,10 +114,59 @@ export default defineConfig({
       "anti-slop-effect/no-manual-effect-error-tag": "error",
       "anti-slop-effect/no-manual-tag-comparison": "error",
       "anti-slop-effect/no-manual-tagged-construction": "error",
-      // Off: a `make[A-Z]` name cannot establish that an import is a service constructor, and
-      // a namespace import bypasses it.
       "anti-slop-effect/no-service-constructor-imports": "off",
       "anti-slop-effect/prefer-effect-match": "error",
+      "no-comments/no-prose-comments": "error",
     },
+    overrides: [
+      {
+        files: sourceOrLintProbe("**"),
+        rules: {
+          "no-comments/no-prose-comments": ["error", { allowJsDoc: true }],
+          "typescript/consistent-type-imports": "error",
+          "typescript/no-import-type-side-effects": "error",
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                packageNameImport,
+                {
+                  group: [
+                    ...anyRelativeImport,
+                    "!./*.js",
+                    "!../[a-z]*/[a-z]*.js",
+                    "!../contract/*.js",
+                  ],
+                  caseSensitive: true,
+                  message:
+                    "A relative import is ./<file>.js, another domain's private ../<domain>/<file>.js, or the contract's.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: sourceOrLintProbe("contract/**"),
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                packageNameImport,
+                {
+                  group: [...anyRelativeImport, "!./*.js"],
+                  message: "src/contract imports nothing outside itself: ./<file>.js alone.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["examples/**"],
+        rules: { "no-comments/no-prose-comments": "off" },
+      },
+    ],
   },
 });

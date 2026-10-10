@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import * as Action from "../src/Action.js";
-import * as Authentication from "../src/Authentication.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { CurrentActor } from "./authorization.js";
 import { Login } from "./binding.js";
 

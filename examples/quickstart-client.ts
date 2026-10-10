@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
-import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./quickstart.js";
 
 export const greeting = Effect.gen(function* () {

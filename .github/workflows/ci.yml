@@ -27,3 +27,5 @@ jobs:
       - run: vp check
       - run: vp test
       - run: vp run test:package
+      - name: Check that package.json's exports are the build's
+        run: git diff --exit-code -- package.json

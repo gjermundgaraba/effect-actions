@@ -1,15 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { afterAll, beforeAll, expect, it } from "@effect/vitest";
 
-// Probes of the effective configuration in vite.config.ts, through one `vp lint` run itself.
-// Each case pairs an accepted fixture with one the toolchain must still reject, so a
-// passing run proves a rule is registered and active, not merely named.
-
-// Rule findings carry a `code`; toolchain diagnostics such as an unused directive carry only a message.
 const Report = Schema.Struct({
   diagnostics: Schema.Array(
     Schema.Struct({
@@ -24,11 +19,8 @@ const decodeReport = Schema.decodeUnknownSync(Schema.fromJsonString(Report));
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
-// Inside the repository so the root vite.config.ts applies. Every other lint and type check
-// ignores the directory, so a check running beside this test never sees its findings.
 const probe = join(root, "tools/oxlint/tests", `probe-${process.pid}-${Date.now()}`);
 
-/** Each case's fixtures, and the findings `vp lint` reports in them, as `file: code`. */
 const cases = [
   {
     name: "enforces unknown parameters regardless of their name",
@@ -101,29 +93,73 @@ const cases = [
     findings: ["unused.ts: Unused oxlint-disable directive (no problems were reported)."],
   },
   {
-    name: "checks maintained JavaScript with the same rules",
+    name: "bans prose comments while keeping reasoned directives",
     files: {
-      "typed.mjs": "/** @param {string} value */\nexport const label = (value) => value.trim();\n",
-      "probe.mjs":
-        "/** @param {string | number} value */\nexport const isText = (value) => typeof value === 'string';\n",
+      "named.ts": [
+        "// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Probe of a justified directive.",
+        "export const describe = (error: unknown): string => String(error);",
+        "",
+      ].join("\n"),
+      "prose.ts":
+        "// Describes an error.\nexport const describe = (error: Error): string => error.message;\n",
     },
-    findings: ["probe.mjs: anti-slop(no-runtime-typeof)"],
+    findings: ["prose.ts: no-comments(no-prose-comments)"],
+  },
+  {
+    name: "allows JSDoc in source alone, and there reports every relative import but the allowed forms",
+    files: {
+      "documented.ts": "/** A constant. */\nexport const documented = 1;\n",
+      "src/contract/Action.ts": "/** A contract. */\nexport const action = 1;\n",
+      "src/contract/named.ts": 'export * as Action from "@gjermundgaraba/effect-actions/Action";\n',
+      "src/contract/outside.ts": 'export { protocol } from "../mcp/protocol.js";\n',
+      "src/contract/spelled.ts": 'export { action } from "././Action.js";\n',
+      "src/mcp/ActionMcp.ts": "export const mcp = 1;\n",
+      "src/mcp/protocol.ts": "export const protocol = 1;\n",
+      "src/http/allowed.ts": [
+        'export { action } from "../contract/Action.js";',
+        "",
+        'export { protocol } from "../mcp/protocol.js";',
+        "",
+      ].join("\n"),
+      "src/http/inline.ts": [
+        'import { type protocol } from "../mcp/protocol.js";',
+        "",
+        "export type Inline = typeof protocol;",
+        "",
+      ].join("\n"),
+      "src/http/named.ts": 'export * as Action from "@gjermundgaraba/effect-actions/Action";\n',
+      "src/http/outside.ts": 'export { documented } from "../../documented.js";\n',
+      "src/http/public.ts": 'export { mcp } from "../mcp/ActionMcp.js";\n',
+      "src/http/slashed.ts": 'export { protocol } from "../mcp//protocol.js";\n',
+      "src/http/spelled.ts": 'export { protocol } from "./../mcp/protocol.js";\n',
+      "src/http/typed.ts": 'export type Protocol = typeof import("../mcp/protocol.js");\n',
+    },
+    findings: [
+      "documented.ts: no-comments(no-prose-comments)",
+      "src/contract/named.ts: eslint(no-restricted-imports)",
+      "src/contract/outside.ts: eslint(no-restricted-imports)",
+      "src/contract/spelled.ts: eslint(no-restricted-imports)",
+      "src/http/inline.ts: typescript(no-import-type-side-effects)",
+      "src/http/named.ts: eslint(no-restricted-imports)",
+      "src/http/outside.ts: eslint(no-restricted-imports)",
+      "src/http/public.ts: eslint(no-restricted-imports)",
+      "src/http/slashed.ts: eslint(no-restricted-imports)",
+      "src/http/spelled.ts: eslint(no-restricted-imports)",
+      "src/http/typed.ts: typescript(consistent-type-imports)",
+    ],
   },
 ] as const;
 
-/** Every finding of the one run, as `file: code` within its case's directory. */
 let reported: ReadonlyArray<{ readonly directory: string; readonly finding: string }> = [];
 
 beforeAll(() => {
   cases.forEach(({ files }, index) => {
-    mkdirSync(join(probe, `${index}`), { recursive: true });
-
     for (const [name, source] of Object.entries(files)) {
+      mkdirSync(dirname(join(probe, `${index}`, name)), { recursive: true });
       writeFileSync(join(probe, `${index}`, name), source);
     }
   });
 
-  // A finding is a non-zero exit; the report is on stdout either way.
   const { stdout } = spawnSync("vp", ["lint", "--format", "json", probe], {
     cwd: root,
     env: { ...process.env, LINT_PROBE: "1" },
@@ -132,12 +168,11 @@ beforeAll(() => {
   });
 
   reported = decodeReport(stdout.slice(stdout.indexOf("{"))).diagnostics.map((diagnostic) => {
-    const file = relative(probe, resolve(root, diagnostic.filename));
+    const [directory = "", ...file] = relative(probe, resolve(root, diagnostic.filename)).split(
+      sep,
+    );
 
-    return {
-      directory: dirname(file),
-      finding: `${basename(file)}: ${diagnostic.code ?? diagnostic.message}`,
-    };
+    return { directory, finding: `${file.join("/")}: ${diagnostic.code ?? diagnostic.message}` };
   });
 });
 
@@ -147,7 +182,9 @@ it.each(cases.map(({ name, findings }, index) => ({ name, findings, index })))(
   "$name",
   ({ findings, index }) => {
     expect(
-      reported.flatMap(({ directory, finding }) => (directory === `${index}` ? [finding] : [])),
+      reported
+        .flatMap(({ directory, finding }) => (directory === `${index}` ? [finding] : []))
+        .toSorted(),
     ).toEqual(findings);
   },
 );

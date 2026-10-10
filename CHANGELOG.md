@@ -45,6 +45,9 @@
 - `Authentication.layer` requires the `HttpRouter` only when it publishes a
   `protectedResource`, so the provider serves an RPC server over a socket or stdio too
   ([Authentication.md](docs/Authentication.md)).
+- A timer of the stderr console that `runStdio` and a CLI command give their program, started
+  again while it runs, keeps its first start, as Node's does; it restarted
+  ([ActionMcp.md](docs/ActionMcp.md)).
 - The agent skill also installs as a Claude Code plugin and a Codex plugin, from this
   repository's marketplace, `effect-actions@effect-actions-marketplace`; it follows the main
   branch, as `npx skills add` does ([README.md](README.md#for-agents)).

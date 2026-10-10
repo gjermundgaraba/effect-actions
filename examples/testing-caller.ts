@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import * as ActionHttp from "../src/ActionHttp.js";
-import * as Testing from "../src/Testing.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { authenticate } from "./authentication.js";
 import { Http } from "./binding.js";
 import { userActions } from "./handlers.js";

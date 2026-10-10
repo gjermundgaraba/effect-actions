@@ -1,6 +1,6 @@
 import { Effect, Redacted } from "effect";
-import * as Action from "../src/Action.js";
-import * as Authentication from "../src/Authentication.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { type Actor, actors } from "./authorization.js";
 import { Login } from "./binding.js";
 
