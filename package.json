@@ -2,6 +2,18 @@
   "name": "@gjermundgaraba/effect-actions",
   "version": "0.11.0",
   "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, and CLIs.",
+  "keywords": [
+    "ai-agents",
+    "cli",
+    "effect",
+    "effect-ts",
+    "http-api",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "rpc",
+    "typescript"
+  ],
   "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
   "bugs": {
     "url": "https://github.com/gjermundgaraba/effect-actions/issues"
