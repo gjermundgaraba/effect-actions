@@ -1,0 +1,8 @@
+# Keeps the SHA-pinned actions in .github/workflows current. npm dependencies are left out on
+# purpose: Effect releases are adopted by hand, as CONTRIBUTING.md#release describes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
