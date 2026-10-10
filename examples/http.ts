@@ -1,7 +1,7 @@
 import { Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { HttpApiSwagger, OpenApi } from "effect/http-api";
-import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { authenticate } from "./authentication.js";
 import { Http } from "./binding.js";
 import { double, status, userActions } from "./handlers.js";

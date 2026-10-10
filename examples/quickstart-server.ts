@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
-import * as Action from "../src/Action.js";
-import * as ActionHttp from "../src/ActionHttp.js";
-import * as ActionMcp from "../src/ActionMcp.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { Greet, Http } from "./quickstart.js";
 
 // The contract states who may call it, here anyone, so its implementation takes no `authorize`.

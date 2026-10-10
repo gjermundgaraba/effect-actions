@@ -5,9 +5,6 @@ import { noModuleMockingRule } from "../anti-slop/rules/no-module-mocking.ts";
 import { noUnknownParametersRule } from "../anti-slop/rules/no-unknown-parameters.ts";
 import { noUnsafeDictionaryTypeRule } from "../anti-slop/rules/no-unsafe-dictionary-type.ts";
 
-// Regression tests for the local corrections recorded in ../anti-slop/UPSTREAM.md.
-// Each probe pairs an accepted case with a case the rule must still reject.
-
 RuleTester.describe = describe;
 
 RuleTester.it = it;

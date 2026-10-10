@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./binding.js";
 
 // Built once, outside any Effect: its methods need nothing more.

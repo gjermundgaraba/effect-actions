@@ -1,6 +1,3 @@
-// A package that emits declarations exports what it builds, each nameable from the
-// published modules: a descriptor, the binding naming it, its provider, an implementation,
-// the layers serving it on every surface, and a client's methods.
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -29,8 +26,6 @@ export const provider = Authentication.layer(Login, (token: Redacted.Redacted<st
   Effect.succeed(Redacted.value(token)),
 );
 
-// A descriptor declaring what its verifier fails with besides a refusal, the binding naming it,
-// its provider, and a client method decoding it.
 export class Unavailable extends Schema.TaggedError<Unavailable>()(
   "Unavailable",
   {},
@@ -55,9 +50,6 @@ export const app = Action.implement(Whoami, () => Effect.service(Principal), {
   authorize: Action.allowAll,
 });
 
-// An implementation built from a service a generic names, stated in the package's own interface
-// with its parameters written out: the actions, each one's per-request services by name, then
-// what its builder fails with and reads.
 export interface Tenant<Name extends string> {
   readonly name: Name;
 }
@@ -108,7 +100,6 @@ export const Lookup = Action.make("lookup", {
 
 export const LookupHttp = ActionHttp.make([Lookup], { authentication: Login });
 
-// A builder yielding two startup services: what each surface owes at startup.
 export const lookup = Action.implement(
   Lookup,
   Effect.gen(function* () {
@@ -142,19 +133,16 @@ export const lookupCommand = ActionCli.command(lookup, Lookup);
 
 export const lookupClient = Action.client(lookup);
 
-// A remote client's method, and a call's result.
 export const remoteLookup = ActionHttp.fetchClient(LookupHttp).lookup;
 
 export const lookUp = (id: string) => ActionHttp.fetchClient(LookupHttp).lookup({ id });
 
-// A remote command, aggregates and a test client over the same contracts.
 export const remoteCommand = ActionCli.remoteCommand(LookupHttp, Lookup);
 
 export const remoteCli = ActionCli.remote(LookupHttp, { name: "lookup" });
 
 export const localCli = ActionCli.make(lookup, { name: "lookup" });
 
-// What its builders read and fail with at startup, named from `Action`.
 export const lookupLayer: Layer.Layer<
   never,
   Action.BuildError<typeof lookup>,
@@ -165,7 +153,6 @@ export const testing = Testing.layer(lookupHttp);
 
 export const mcpLookup = Testing.mcpClient([Lookup]);
 
-// A route of the host's own under the descriptor's provider, and the middleware itself.
 export const protectedRoute = Authentication.protect(Login);
 
 export const exportRoute = HttpRouter.add(
@@ -174,14 +161,12 @@ export const exportRoute = HttpRouter.add(
   Effect.map(Effect.service(Principal), (principal) => HttpServerResponse.text(principal)),
 ).pipe(Layer.provide(protectedRoute.layer));
 
-// A generic helper states its return type as the surface's own, which TypeScript can name.
 export const localClient = <
   const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>,
 >(
   apps: Apps,
 ): ReturnType<typeof Action.client<Apps>> => Action.client(apps);
 
-// A package wrapping `protect` names its middleware, and a descriptor's error list, by type.
 export const guard = <const Name extends string, E extends Action.Errors>(
   authentication: Authentication.Descriptor<
     Principal,
@@ -194,7 +179,6 @@ export const guard = <const Name extends string, E extends Action.Errors>(
 
 export const checkedGuard = guard(Checked);
 
-// The built-in failures as schemas, and the issues of input that did not decode.
 export const isRefusal = Schema.is(Action.Refusal);
 
 export const isBuiltIn = Schema.is(Action.BuiltIn);

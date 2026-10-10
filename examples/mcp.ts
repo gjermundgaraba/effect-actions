@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import * as ActionMcp from "../src/ActionMcp.js";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { authenticate } from "./authentication.js";
 import { Login } from "./binding.js";
 import { double, status, userActions } from "./handlers.js";

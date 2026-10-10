@@ -1,9 +1,9 @@
 import { Context, Effect, Layer, Redacted } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiMiddleware } from "effect/http-api";
-import * as Action from "../src/Action.js";
-import * as ActionHttp from "../src/ActionHttp.js";
-import * as Authentication from "../src/Authentication.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { type Actor, actors, CurrentActor } from "./authorization.js";
 import { Http, Login } from "./binding.js";
 import { userActions } from "./handlers.js";

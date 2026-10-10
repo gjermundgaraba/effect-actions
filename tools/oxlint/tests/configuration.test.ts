@@ -5,11 +5,6 @@ import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { afterAll, beforeAll, expect, it } from "@effect/vitest";
 
-// Probes of the effective configuration in vite.config.ts, through one `vp lint` run itself.
-// Each case pairs an accepted fixture with one the toolchain must still reject, so a
-// passing run proves a rule is registered and active, not merely named.
-
-// Rule findings carry a `code`; toolchain diagnostics such as an unused directive carry only a message.
 const Report = Schema.Struct({
   diagnostics: Schema.Array(
     Schema.Struct({
@@ -24,11 +19,8 @@ const decodeReport = Schema.decodeUnknownSync(Schema.fromJsonString(Report));
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
-// Inside the repository so the root vite.config.ts applies. Every other lint and type check
-// ignores the directory, so a check running beside this test never sees its findings.
 const probe = join(root, "tools/oxlint/tests", `probe-${process.pid}-${Date.now()}`);
 
-/** Each case's fixtures, and the findings `vp lint` reports in them, as `file: code`. */
 const cases = [
   {
     name: "enforces unknown parameters regardless of their name",
@@ -101,17 +93,20 @@ const cases = [
     findings: ["unused.ts: Unused oxlint-disable directive (no problems were reported)."],
   },
   {
-    name: "checks maintained JavaScript with the same rules",
+    name: "bans prose comments while keeping reasoned directives",
     files: {
-      "typed.mjs": "/** @param {string} value */\nexport const label = (value) => value.trim();\n",
-      "probe.mjs":
-        "/** @param {string | number} value */\nexport const isText = (value) => typeof value === 'string';\n",
+      "named.ts": [
+        "// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Probe of a justified directive.",
+        "export const describe = (error: unknown): string => String(error);",
+        "",
+      ].join("\n"),
+      "prose.ts":
+        "// Describes an error.\nexport const describe = (error: Error): string => error.message;\n",
     },
-    findings: ["probe.mjs: anti-slop(no-runtime-typeof)"],
+    findings: ["prose.ts: no-comments(no-prose-comments)"],
   },
 ] as const;
 
-/** Every finding of the one run, as `file: code` within its case's directory. */
 let reported: ReadonlyArray<{ readonly directory: string; readonly finding: string }> = [];
 
 beforeAll(() => {
@@ -123,7 +118,6 @@ beforeAll(() => {
     }
   });
 
-  // A finding is a non-zero exit; the report is on stdout either way.
   const { stdout } = spawnSync("vp", ["lint", "--format", "json", probe], {
     cwd: root,
     env: { ...process.env, LINT_PROBE: "1" },

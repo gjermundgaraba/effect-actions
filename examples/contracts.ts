@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import * as Action from "../src/Action.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentActor } from "./authorization.js";
 
 export const User = Schema.Struct({

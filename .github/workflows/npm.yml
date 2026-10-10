@@ -27,6 +27,8 @@ jobs:
       - run: vp check
       - run: vp test
       - run: vp run test:package
+      - name: Check that package.json's exports are the build's
+        run: git diff --exit-code -- package.json
       # The package lists this repository and workflow as its npm trusted publisher, so
       # publishing authenticates with the job's OIDC token and attaches provenance.
       # A tag checkout is a detached HEAD, which the branch check would refuse.

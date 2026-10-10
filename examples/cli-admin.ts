@@ -1,9 +1,9 @@
 import { Context, Effect, Layer, Redacted } from "effect";
 import { Command } from "effect/cli";
-import * as Action from "../src/Action.js";
-import * as ActionCli from "../src/ActionCli.js";
-import * as ActionHttp from "../src/ActionHttp.js";
-import * as Authentication from "../src/Authentication.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 
 /** What a verified token can name. */
 export interface RemoteOperator {

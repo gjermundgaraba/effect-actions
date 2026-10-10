@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { HttpServerResponse } from "effect/http";
-import * as Action from "../src/Action.js";
-import * as Authentication from "../src/Authentication.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { protectedResource, verify } from "./authentication.js";
 import type { Actor } from "./authorization.js";
 

@@ -30,17 +30,28 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    "./Action": "./dist/Action.mjs",
-    "./ActionCli": "./dist/ActionCli.mjs",
-    "./ActionHttp": "./dist/ActionHttp.mjs",
-    "./ActionMcp": "./dist/ActionMcp.mjs",
-    "./ActionRpc": "./dist/ActionRpc.mjs",
-    "./ActionToolkit": "./dist/ActionToolkit.mjs",
-    "./Authentication": "./dist/Authentication.mjs",
-    "./Testing": "./dist/Testing.mjs",
+    "./Action": "./src/contract/Action.ts",
+    "./ActionCli": "./src/cli/ActionCli.ts",
+    "./ActionHttp": "./src/http/ActionHttp.ts",
+    "./ActionMcp": "./src/mcp/ActionMcp.ts",
+    "./ActionRpc": "./src/rpc/ActionRpc.ts",
+    "./ActionToolkit": "./src/toolkit/ActionToolkit.ts",
+    "./Authentication": "./src/authentication/Authentication.ts",
+    "./Testing": "./src/testing/Testing.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      "./Action": "./dist/Action.mjs",
+      "./ActionCli": "./dist/ActionCli.mjs",
+      "./ActionHttp": "./dist/ActionHttp.mjs",
+      "./ActionMcp": "./dist/ActionMcp.mjs",
+      "./ActionRpc": "./dist/ActionRpc.mjs",
+      "./ActionToolkit": "./dist/ActionToolkit.mjs",
+      "./Authentication": "./dist/Authentication.mjs",
+      "./Testing": "./dist/Testing.mjs",
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {
@@ -51,7 +62,7 @@
     "prepublishOnly": "vp run build",
     "prepare": "vp config",
     "example": "node --import tsx examples/server.ts",
-    "test:package": "vp run build && node scripts/test-package.mjs",
+    "test:package": "vp run build && node --import tsx scripts/test-package.ts",
     "docs:sync": "node --import tsx scripts/sync-skill.ts"
   },
   "devDependencies": {

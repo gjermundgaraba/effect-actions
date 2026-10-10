@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import * as ActionRpc from "../src/ActionRpc.js";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Rpc } from "./rpc-binding.js";
 
 // A browser WebSocket sets no header on its upgrade, so the token travels on each message.
