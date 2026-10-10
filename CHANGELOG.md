@@ -45,6 +45,9 @@
 - `Authentication.layer` requires the `HttpRouter` only when it publishes a
   `protectedResource`, so the provider serves an RPC server over a socket or stdio too
   ([Authentication.md](docs/Authentication.md)).
+- The agent skill also installs as a Claude Code plugin and a Codex plugin, from this
+  repository's marketplace, `effect-actions@effect-actions-marketplace`; it follows the main
+  branch, as `npx skills add` does ([README.md](README.md#for-agents)).
 
 ## 0.11.0
 

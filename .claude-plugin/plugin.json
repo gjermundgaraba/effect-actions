@@ -1,0 +1,10 @@
+{
+  "name": "effect-actions",
+  "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, and CLIs.",
+  "author": {
+    "name": "Gjermund Garaba"
+  },
+  "homepage": "https://github.com/gjermundgaraba/effect-actions#readme",
+  "repository": "https://github.com/gjermundgaraba/effect-actions",
+  "license": "MIT"
+}

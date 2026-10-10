@@ -1,0 +1,16 @@
+{
+  "name": "effect-actions-marketplace",
+  "interface": {
+    "displayName": "Effect Actions"
+  },
+  "plugins": [
+    {
+      "name": "effect-actions",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

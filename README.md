@@ -98,8 +98,25 @@ with the API, a canonical snippet, the rules, and the failure modes.
 
 ## For agents
 
+The `effect-actions` skill puts the reference in front of a coding agent. With the
+[skills CLI](https://github.com/vercel-labs/skills), for any agent it supports:
+
 ```sh
 npx skills add gjermundgaraba/effect-actions --skill effect-actions
+```
+
+As a Claude Code plugin:
+
+```text
+/plugin marketplace add gjermundgaraba/effect-actions
+/plugin install effect-actions@effect-actions-marketplace
+```
+
+As a Codex plugin:
+
+```sh
+codex plugin marketplace add gjermundgaraba/effect-actions
+codex plugin add effect-actions@effect-actions-marketplace
 ```
 
 The skill is generated from `docs/` on the main branch, which can be ahead of the latest

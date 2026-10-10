@@ -1,0 +1,6 @@
+{
+  "name": "effect-actions-marketplace",
+  "description": "The effect-actions agent skill: a reference for coding agents using @gjermundgaraba/effect-actions.",
+  "owner": { "name": "Gjermund Garaba" },
+  "plugins": [{ "name": "effect-actions", "source": "./" }]
+}
