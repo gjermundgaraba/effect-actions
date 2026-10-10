@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, References, Schema, Stream, Struct } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema, Stream, Struct } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -337,8 +337,6 @@ const expectedCall = (call: ResolvedCall) => {
 const agrees = (observed: string, modelled: string) =>
   expect(observed, `observed ${observed}\nmodelled ${modelled}`).toBe(modelled);
 
-const quiet = Layer.succeed(References.MinimumLogLevel, "None");
-
 const runScenario = (scenario: Scenario) =>
   Effect.gen(function* () {
     const resolved = resolve(scenario);
@@ -522,7 +520,7 @@ const runScenario = (scenario: Scenario) =>
     ) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const context = yield* Layer.build(graph.pipe(Layer.provide(quiet)));
+          const context = yield* Layer.build(graph);
           const expectedPerCall = { handler: 0, authorizer: 0 };
 
           agrees(observedBuilders(), modelledBuilders("open"));
@@ -574,7 +572,7 @@ const runScenario = (scenario: Scenario) =>
     }
 
     agrees(observedBuilders(), modelledBuilders("closed"));
-  }).pipe(Effect.provide(quiet));
+  });
 
 it.effect.prop(
   "builds each implementation once per graph for the surfaces selecting it, and releases every call's and every build's resources",

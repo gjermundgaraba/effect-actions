@@ -26,8 +26,8 @@ export const everyConsoleMethod = (pause: (millis: number) => Effect.Effect<void
       console.countReset("missing");
 
       console.time(formatSpecifierLabel);
-      console.time(formatSpecifierLabel);
       yield* pause(250);
+      console.time(formatSpecifierLabel);
       console.timeLog(formatSpecifierLabel, "logged");
       yield* pause(1250);
       console.timeEnd(formatSpecifierLabel);

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Arbitrary, Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { Arbitrary, Context, Effect, Layer, Redacted, Schema, Stream, Struct } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
@@ -11,6 +10,7 @@ import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { exec, logged } from "../support/cli-services.js";
+import { as } from "../support/requests.js";
 
 const jsonTextOf = <T, E>(schema: Schema.Codec<T, E>) =>
   Schema.fromJsonString(Schema.toCodecJson(schema));
@@ -63,12 +63,6 @@ const Failure = Schema.Union([
 
 const FailureInput = Schema.Struct({ failure: Failure });
 
-const failuresAsTheirJson = Arbitrary.schema(Failure).pipe(
-  Arbitrary.map(Schema.encodeSync(Schema.toCodecJson(Failure))),
-);
-
-const decodeFailureJson = Schema.decodeEffect(Schema.toCodecJson(Failure));
-
 class Caller extends Context.Service<Caller, string>()("surfaces-agree/Caller") {}
 
 const SignedIn = Authentication.make("surfaces-agree.SignedIn", Caller);
@@ -78,8 +72,6 @@ const signIn = Authentication.layer(SignedIn, (token) => Effect.succeed(Redacted
 const token = "caller";
 
 const asCaller = Effect.provideService(Caller, token);
-
-const withBearer = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) };
 
 const Echo = Action.make("echo", {
   description: "Return the input as the success.",
@@ -119,7 +111,7 @@ const routes = Layer.mergeAll(
 
 const tools = ActionToolkit.make(app);
 
-const everySurface = Layer.mergeAll(
+const comparedSurfaces = Layer.mergeAll(
   RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
     Layer.provide(RpcSerialization.layerJson),
     Layer.provideMerge(Testing.layer(routes)),
@@ -131,7 +123,7 @@ const echoArguments = modelArgumentsOf(Payload);
 
 const failArguments = modelArgumentsOf(FailureInput);
 
-const everySurfaceSucceeds = (input: typeof Payload.Type) =>
+const successOnEachSurface = (input: typeof Payload.Type) =>
   Effect.gen(function* () {
     const http = yield* ActionHttp.client(Http);
     const rpc = yield* ActionRpc.client(Rpc);
@@ -151,13 +143,13 @@ const everySurfaceSucceeds = (input: typeof Payload.Type) =>
       toolkit: toolResult?.isFailure === false ? toolResult.result : toolResult,
       inProcess: yield* inProcess.echo(input),
     };
-  }).pipe(Effect.provide(everySurface));
+  }).pipe(Effect.provide(comparedSurfaces));
 
-const everySurfaceFails = (failure: typeof Failure.Type) =>
+const failureOnEachSurface = (failure: typeof Failure.Type) =>
   Effect.gen(function* () {
-    const http = yield* ActionHttp.client(Http, withBearer);
+    const http = yield* ActionHttp.client(Http, as(token));
     const rpc = yield* ActionRpc.client(Rpc);
-    const mcp = yield* Testing.mcpClient([Echo, Fail], withBearer);
+    const mcp = yield* Testing.mcpClient([Echo, Fail], as(token));
     const inProcess = yield* Action.client(app);
     const toolkit = yield* tools.toolkit;
 
@@ -175,14 +167,9 @@ const everySurfaceFails = (failure: typeof Failure.Type) =>
       toolkit: toolResult?.isFailure === true ? toolResult.result : toolResult,
       inProcess: yield* Effect.flip(inProcess.fail({ failure }).pipe(asCaller)),
     };
-  }).pipe(Effect.provide(everySurface));
+  }).pipe(Effect.provide(comparedSurfaces));
 
-const Flat = Schema.Struct({
-  text: Schema.String,
-  amount: Schema.Finite,
-  count: Schema.Int,
-  enabled: Schema.Boolean,
-});
+const Flat = Schema.Struct(Struct.pick(Payload.fields, ["text", "amount", "count", "enabled"]));
 
 const FlatEcho = Action.make("flatEcho", {
   description: "Return the flat input as the success.",
@@ -221,12 +208,12 @@ const flatInputsWithFlagLikeText = Arbitrary.all([
 
 const printedFlat = Schema.decodeUnknownEffect(Schema.fromJsonString(Flat));
 
-describe("every surface answers one call alike", () => {
+describe("surfaces answer one call alike", () => {
   it.effect.prop(
-    "succeeds on every surface with the generated input it echoes, as JSON text carries it",
+    "succeeds over HTTP, RPC, MCP, the Toolkit and in process with the generated input it echoes, as JSON text carries it",
     [Arbitrary.schema(Payload)],
     ([input]) =>
-      Effect.map(everySurfaceSucceeds(input), (answers) => {
+      Effect.map(successOnEachSurface(input), (answers) => {
         const sent = sentAsJsonText(Payload)(input);
 
         for (const [surface, answer] of Object.entries(answers)) {
@@ -237,12 +224,10 @@ describe("every surface answers one call alike", () => {
   );
 
   it.effect.prop(
-    "fails on every surface with the generated declared error, as JSON text carries it",
-    [failuresAsTheirJson],
-    ([json]) =>
-      Effect.gen(function* () {
-        const failure = yield* decodeFailureJson(json);
-        const answers = yield* everySurfaceFails(failure);
+    "fails over HTTP, RPC, MCP, the Toolkit and in process with the generated declared error, as JSON text carries it",
+    [Arbitrary.schema(Failure)],
+    ([failure]) =>
+      Effect.map(failureOnEachSurface(failure), (answers) => {
         const sent = sentAsJsonText(Failure)(failure);
 
         for (const [surface, answer] of Object.entries(answers)) {

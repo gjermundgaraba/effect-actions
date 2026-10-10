@@ -8,6 +8,18 @@ const publicModules = Object.fromEntries(
     .filter(([module]) => /^[A-Z]/u.test(module)),
 );
 
+const sourceOrLintProbe = (glob: string) => [
+  `src/${glob}`,
+  `tools/oxlint/tests/probe-*/*/src/${glob}`,
+];
+
+const packageNameImport = {
+  regex: "^@gjermundgaraba/effect-actions",
+  message: "Source imports source by relative path.",
+};
+
+const anyRelativeImport = ["./**", "../**"];
+
 export default defineConfig({
   staged: {
     "*": "vp check --fix",
@@ -108,20 +120,26 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ["src/**"],
+        files: sourceOrLintProbe("**"),
         rules: {
           "no-comments/no-prose-comments": ["error", { allowJsDoc: true }],
+          "typescript/consistent-type-imports": "error",
+          "typescript/no-import-type-side-effects": "error",
           "no-restricted-imports": [
             "error",
             {
               patterns: [
+                packageNameImport,
                 {
-                  regex: "^@gjermundgaraba/effect-actions",
-                  message: "Source imports source by relative path.",
-                },
-                {
-                  regex: "^\\.\\./(http|mcp|rpc|toolkit|cli)/[A-Z]",
-                  message: "No domain imports another surface's public module.",
+                  group: [
+                    ...anyRelativeImport,
+                    "!./*.js",
+                    "!../[a-z]*/[a-z]*.js",
+                    "!../contract/*.js",
+                  ],
+                  caseSensitive: true,
+                  message:
+                    "A relative import is ./<file>.js, another domain's private ../<domain>/<file>.js, or the contract's.",
                 },
               ],
             },
@@ -129,15 +147,16 @@ export default defineConfig({
         },
       },
       {
-        files: ["src/contract/**"],
+        files: sourceOrLintProbe("contract/**"),
         rules: {
           "no-restricted-imports": [
             "error",
             {
               patterns: [
+                packageNameImport,
                 {
-                  regex: "^(\\.\\./|@gjermundgaraba/effect-actions)",
-                  message: "src/contract imports nothing outside itself.",
+                  group: [...anyRelativeImport, "!./*.js"],
+                  message: "src/contract imports nothing outside itself: ./<file>.js alone.",
                 },
               ],
             },

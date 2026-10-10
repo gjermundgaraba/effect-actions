@@ -17,7 +17,7 @@ import {
   RpcClient,
   type RpcClientError,
   RpcGroup,
-  RpcMiddleware,
+  type RpcMiddleware,
   RpcSerialization,
   RpcServer,
 } from "effect/rpc";

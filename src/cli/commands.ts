@@ -28,7 +28,7 @@ import { InvalidInput } from "../contract/errors.js";
  * The fields of `A`'s input that may be positional: the named top-level fields of a struct
  * or class input, as encoded. None for any other input, a record or a union included.
  */
-export type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
+type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? true extends Types.IsUnion<E>
     ? never
     : E extends ReadonlyArray<unknown>

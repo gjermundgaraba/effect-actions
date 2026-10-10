@@ -4,7 +4,7 @@ import {
   type FileSystem,
   Layer,
   type Path,
-  Schema,
+  type Schema,
   Scope,
   type Types,
 } from "effect";

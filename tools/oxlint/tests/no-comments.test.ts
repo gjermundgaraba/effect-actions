@@ -91,6 +91,12 @@ tester.run("no-prose-comments", noProseCommentsRule, {
       errors: prose,
     },
     {
+      name: "a JSDoc comment holding a TypeScript directive, with allowJsDoc",
+      options: jsDoc,
+      code: "/** @ts-expect-error */\nload();\n/**\n * Loads.\n * @ts-ignore */\nload();\n",
+      errors: [{ messageId: "prose" }, { messageId: "prose" }],
+    },
+    {
       name: "an oxlint disable and enable pair",
       code: [
         "// oxlint-disable anti-slop/no-reflect-get -- Getter semantics.",

@@ -9,8 +9,12 @@ const directivePattern = /^(?<directive>oxlint-disable-next-line|@ts-expect-erro
 
 const directiveReasonPattern = /\s--\s+\S/u;
 
-const isJsDoc = (comment: Comment): boolean =>
-  comment.type === "Block" && comment.value.startsWith("*");
+const typeScriptPragmaPattern = /@ts-(?:expect-error|ignore)\b/u;
+
+const isJsDocWithoutPragma = (comment: Comment): boolean =>
+  comment.type === "Block" &&
+  comment.value.startsWith("*") &&
+  !typeScriptPragmaPattern.test(comment.value);
 
 const directiveOf = (comment: Comment): string | undefined =>
   comment.type === "Line"
@@ -62,7 +66,7 @@ export const noProseCommentsRule = defineRule({
             continue;
           }
 
-          if (allowJsDoc && isJsDoc(comment)) continue;
+          if (allowJsDoc && isJsDocWithoutPragma(comment)) continue;
 
           context.report({ loc: comment.loc, messageId: "prose" });
         }

@@ -11,15 +11,15 @@ import {
 } from "effect";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
-import {
-  type Any,
-  type Credential,
-  type Descriptor,
-  type Provider,
-  type Runtime,
-  type Security,
-  type SecurityMiddleware,
-  type VerifierFailure,
+import type {
+  Any,
+  Credential,
+  Descriptor,
+  Provider,
+  Runtime,
+  Security,
+  SecurityMiddleware,
+  VerifierFailure,
 } from "./provider.js";
 import type { Errors } from "../contract/Action.js";
 import { assertOwnTags, errorList, type ErrorsOf } from "../contract/rules.js";

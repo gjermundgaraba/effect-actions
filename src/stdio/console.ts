@@ -54,7 +54,7 @@ const stderrConsole = (console: Console.Console, clock: Clock.Clock): Console.Co
     log: write,
     table: (data) => write(data),
     time: (label = "default") => {
-      timers.set(label, clock.monotonicTimeNanosUnsafe());
+      if (!timers.has(label)) timers.set(label, clock.monotonicTimeNanosUnsafe());
     },
     timeEnd: (label = "default") => {
       elapsed(label, []);

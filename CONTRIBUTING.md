@@ -39,7 +39,7 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in names, docs, an
 
 ## Design notes
 
-One file per decision in [`design/`](design/). Each note is titled, and cited by its title. It states the decision, why, what it costs, and the alternative it rejected; a reversal names the decision it reverses, by commit where one recorded it, in a sentence. History beyond that belongs in commit messages. A note holds a decision: a fact about one declaration in `src/` is its JSDoc, and a fact about a test is its title or a rule under [Tests](#tests).
+One file per decision in [`design/`](design/). Each note is titled, and cited by its title. It states the decision, why, what it costs, and the alternative it rejected; a reversal names the decision it reverses, by commit where one recorded it, in a sentence. History beyond that belongs in commit messages. A note holds a decision and what follows from it. A fact that belongs to no decision goes elsewhere: about a declaration in `src/`, in its JSDoc; about a test, in its title or a rule under [Tests](#tests).
 
 - [Strict HTTP input](design/strict-http-input.md)
 - [Schema failures](design/schema-failures.md)
@@ -202,9 +202,17 @@ code exactly as unsafe.
   reason after `--`, `// oxlint-disable-next-line <rule> -- <reason>` or
   `// @ts-expect-error -- <reason>`; and JSDoc in `src/**`, which `vite.config.ts` gives the rule's
   `allowJsDoc`. The rule has no autofix, which would delete the reason with the comment.
-- **Domain imports** (`no-restricted-imports` on `src/**`): no domain imports another surface's
-  public module, `src/contract/` imports nothing outside itself, and source imports source by
-  relative path, since the package's own name resolves to source too and would pass the other two
+- **Domain imports** (`no-restricted-imports`, `typescript/consistent-type-imports` and
+  `typescript/no-import-type-side-effects` on `src/**`): a relative import is `./<file>.js`,
+  another domain's private `../<domain>/<file>.js`, or the contract's; in `src/contract/`,
+  `./<file>.js` alone. The patterns allow those forms and report every other relative specifier,
+  since a pattern reads a specifier as written and a list of forbidden spellings is never complete.
+  The package's own name, which resolves to source too, and an `import()` type, which no import
+  pattern reads, are reported as well. The rule reporting that type, `consistent-type-imports`, has
+  no option for it alone: in `src/` it reports every `import()` type, and an import used only as a
+  type that lacks `type`. An import whose names all carry `type` inline satisfies it and still
+  leaves `import "./<file>.js"` in the built module, which the bundler keeps in one build and drops
+  in the next: `no-import-type-side-effects` reports it, and `import type { … }` is the form
   ([Domain folders](design/domain-folders.md)).
 - **Compile-failure fixtures** (`tests/guarantees/types.spec.ts`): an expression under `@ts-expect-error`
   yields an error type, which the `no-unsafe-*` rules see as `any`. Those lines carry a directive
@@ -238,8 +246,10 @@ Off:
   repository, so the probes go through the registered plugin and the effective configuration:
   unknown parameters named `cause`, module mocking via `@effect/vitest`, `typeof` inside and
   outside predicates, literal evidence in destructured bindings, a justified
-  `no-unknown-parameters` directive and its unused counterpart, and a prose comment reported
-  beside a directive that gives its reason.
+  `no-unknown-parameters` directive and its unused counterpart, a prose comment reported
+  beside a directive that gives its reason, and, in a fixture's own `src/`, which the
+  configuration gives the overrides of the repository's, JSDoc kept and each kind of import across
+  domains reported.
   Every other lint, format, type check and test run ignores the fixtures, which hold findings on purpose:
   the run sets `LINT_PROBE`, which lifts their lint ignore pattern in `vite.config.ts`, so a
   `vp check` beside `vp test` never reports them.

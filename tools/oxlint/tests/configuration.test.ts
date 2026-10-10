@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { afterAll, beforeAll, expect, it } from "@effect/vitest";
@@ -105,15 +105,57 @@ const cases = [
     },
     findings: ["prose.ts: no-comments(no-prose-comments)"],
   },
+  {
+    name: "allows JSDoc in source alone, and there reports every relative import but the allowed forms",
+    files: {
+      "documented.ts": "/** A constant. */\nexport const documented = 1;\n",
+      "src/contract/Action.ts": "/** A contract. */\nexport const action = 1;\n",
+      "src/contract/named.ts": 'export * as Action from "@gjermundgaraba/effect-actions/Action";\n',
+      "src/contract/outside.ts": 'export { protocol } from "../mcp/protocol.js";\n',
+      "src/contract/spelled.ts": 'export { action } from "././Action.js";\n',
+      "src/mcp/ActionMcp.ts": "export const mcp = 1;\n",
+      "src/mcp/protocol.ts": "export const protocol = 1;\n",
+      "src/http/allowed.ts": [
+        'export { action } from "../contract/Action.js";',
+        "",
+        'export { protocol } from "../mcp/protocol.js";',
+        "",
+      ].join("\n"),
+      "src/http/inline.ts": [
+        'import { type protocol } from "../mcp/protocol.js";',
+        "",
+        "export type Inline = typeof protocol;",
+        "",
+      ].join("\n"),
+      "src/http/named.ts": 'export * as Action from "@gjermundgaraba/effect-actions/Action";\n',
+      "src/http/outside.ts": 'export { documented } from "../../documented.js";\n',
+      "src/http/public.ts": 'export { mcp } from "../mcp/ActionMcp.js";\n',
+      "src/http/slashed.ts": 'export { protocol } from "../mcp//protocol.js";\n',
+      "src/http/spelled.ts": 'export { protocol } from "./../mcp/protocol.js";\n',
+      "src/http/typed.ts": 'export type Protocol = typeof import("../mcp/protocol.js");\n',
+    },
+    findings: [
+      "documented.ts: no-comments(no-prose-comments)",
+      "src/contract/named.ts: eslint(no-restricted-imports)",
+      "src/contract/outside.ts: eslint(no-restricted-imports)",
+      "src/contract/spelled.ts: eslint(no-restricted-imports)",
+      "src/http/inline.ts: typescript(no-import-type-side-effects)",
+      "src/http/named.ts: eslint(no-restricted-imports)",
+      "src/http/outside.ts: eslint(no-restricted-imports)",
+      "src/http/public.ts: eslint(no-restricted-imports)",
+      "src/http/slashed.ts: eslint(no-restricted-imports)",
+      "src/http/spelled.ts: eslint(no-restricted-imports)",
+      "src/http/typed.ts: typescript(consistent-type-imports)",
+    ],
+  },
 ] as const;
 
 let reported: ReadonlyArray<{ readonly directory: string; readonly finding: string }> = [];
 
 beforeAll(() => {
   cases.forEach(({ files }, index) => {
-    mkdirSync(join(probe, `${index}`), { recursive: true });
-
     for (const [name, source] of Object.entries(files)) {
+      mkdirSync(dirname(join(probe, `${index}`, name)), { recursive: true });
       writeFileSync(join(probe, `${index}`, name), source);
     }
   });
@@ -126,12 +168,11 @@ beforeAll(() => {
   });
 
   reported = decodeReport(stdout.slice(stdout.indexOf("{"))).diagnostics.map((diagnostic) => {
-    const file = relative(probe, resolve(root, diagnostic.filename));
+    const [directory = "", ...file] = relative(probe, resolve(root, diagnostic.filename)).split(
+      sep,
+    );
 
-    return {
-      directory: dirname(file),
-      finding: `${basename(file)}: ${diagnostic.code ?? diagnostic.message}`,
-    };
+    return { directory, finding: `${file.join("/")}: ${diagnostic.code ?? diagnostic.message}` };
   });
 });
 
@@ -141,7 +182,9 @@ it.each(cases.map(({ name, findings }, index) => ({ name, findings, index })))(
   "$name",
   ({ findings, index }) => {
     expect(
-      reported.flatMap(({ directory, finding }) => (directory === `${index}` ? [finding] : [])),
+      reported
+        .flatMap(({ directory, finding }) => (directory === `${index}` ? [finding] : []))
+        .toSorted(),
     ).toEqual(findings);
   },
 );

@@ -55,7 +55,7 @@ const Login = Authentication.make("test.Login", Identity);
 
 class Unavailable extends Schema.TaggedError<Unavailable>()(
   "Unavailable",
-  { operation: Schema.String },
+  { operation: Schema.String, retryAfter: Schema.FiniteFromString },
   { httpApiStatus: 503 },
 ) {}
 
@@ -699,9 +699,11 @@ describe("an error a descriptor declares", () => {
     Action.implement(Open, () => Effect.succeed("open")),
   ];
 
+  const unavailable = new Unavailable({ operation: " verify ", retryAfter: 30 });
+
   const unavailableForDown = (token: Redacted.Redacted<string>) =>
     Redacted.value(token) === "down"
-      ? Effect.fail(new Unavailable({ operation: "verify" }))
+      ? Effect.fail(unavailable)
       : Effect.succeed({ id: Redacted.value(token) });
 
   const provider = Authentication.layer(Checked, unavailableForDown);
@@ -731,9 +733,7 @@ describe("an error a descriptor declares", () => {
     Effect.gen(function* () {
       const client = yield* ActionHttp.client(Http, as("down"));
 
-      expect(yield* Effect.flip(client.identify())).toEqual(
-        new Unavailable({ operation: "verify" }),
-      );
+      expect(yield* Effect.flip(client.identify())).toEqual(unavailable);
       expect(yield* client.open()).toBe("open");
 
       expectTypeOf<Unavailable>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
@@ -747,10 +747,9 @@ describe("an error a descriptor declares", () => {
       expect(Object.keys(document.paths["/api/open"]?.post?.responses ?? {})).not.toContain("503");
     }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise));
 
-  it("is sent as its status and JSON, no-store and unchallenged, on every remote surface alike", async () => {
+  it("is sent as its status and the JSON its schema encodes, its text as it is, no-store and unchallenged, on every remote surface alike", async () => {
     const web = serve(routes);
 
-    const unavailable = new Unavailable({ operation: "verify" });
     const action = await answerOf(await web.handler(withBearer(request(), "down")));
 
     const mcp = await answerOf(
@@ -808,7 +807,7 @@ describe("an error a descriptor declares", () => {
   it("is the only failure besides a refusal refusalResponse renders", () => {
     expect(() =>
       // @ts-expect-error -- Without the descriptor declaring it, it is no answer authentication gives.
-      Authentication.refusalResponse(new Unavailable({ operation: "verify" })),
+      Authentication.refusalResponse(unavailable),
     ).toThrow("Not a refusal, nor an error the authentication declares");
   });
 });
