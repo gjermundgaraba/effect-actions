@@ -50,7 +50,10 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   and services ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
 - A derived command's `--help` says what a flag's name and kind do not, after the field's own
   description: `Repeat for each value.` on a repeated flag, `--no-<flag> sends false.` on an
-  optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one.
+  optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one, an
+  array of objects with its fields, `A JSON array of {id, approved?}.`
+- A flag's help shows the field's description wherever it is annotated. One annotated before a
+  check, where an MCP tool's listing reads it, was missing from `--help`.
 - The compiler names an undeclared error where a handler fails with one: the message ends
   `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
   where it ended `Property '"~builtIn"' is missing`.

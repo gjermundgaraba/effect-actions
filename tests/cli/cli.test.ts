@@ -1316,6 +1316,47 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
 );
 
 it.effect(
+  "shows a field's description in help wherever it is annotated: before a check, after one, or with none",
+  () =>
+    Effect.gen(function* () {
+      const even = Schema.makeFilter((value: number) => value % 2 === 0);
+
+      const Save = Action.make("save", {
+        description: "Saves a link",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: {
+          url: Schema.String.annotate({ description: "Where it is" }).check(
+            Schema.isPattern(/^https?:/u),
+          ),
+          title: Schema.String.check(Schema.isMinLength(1)).annotate({ description: "Its name" }),
+          count: Schema.Finite.annotate({ description: "How many" }).check(even),
+          revised: Schema.String.annotate({ description: "An earlier wording" })
+            .check(Schema.isMinLength(1))
+            .annotate({ description: "The later wording" })
+            .check(Schema.isMaxLength(9)),
+          note: Schema.optional(Schema.String.annotate({ description: "A remark" })),
+          bare: Schema.String.check(Schema.isMinLength(1)),
+        },
+      });
+
+      const command = ActionCli.command(
+        Action.implement(Save, () => Effect.void),
+        Save,
+      );
+
+      const help = (yield* lines(command, ["--help"])).join("\n");
+
+      expect(help).toMatch(/--url string\s+Where it is\n/);
+      expect(help).toMatch(/--title string\s+Its name\n/);
+      expect(help).toMatch(/--count value\s+How many\n/);
+      expect(help).toMatch(/--revised string\s+The later wording\n/);
+      expect(help).toMatch(/--note string\s+A remark\n/);
+      expect(help).toMatch(/--bare string\s*\n/);
+    }),
+);
+
+it.effect(
   "says in a flag's help that it repeats, how an optional switch sends false, and that a value is JSON",
   () =>
     Effect.gen(function* () {
@@ -1329,7 +1370,10 @@ it.effect(
           also: Schema.optional(Schema.Array(Schema.String)),
           pinned: Schema.Boolean,
           read: Schema.optional(Schema.Boolean).annotate({ description: "Only read ones?" }),
-          answers: Schema.Array(Schema.Struct({ id: Schema.String })),
+          answers: Schema.Array(
+            Schema.Struct({ id: Schema.String, approved: Schema.optional(Schema.Boolean) }),
+          ),
+          grid: Schema.Array(Schema.Array(Schema.Finite)),
           filter: Schema.optional(Schema.Struct({ id: Schema.String })),
           limit: Schema.optional(Schema.Finite),
         },
@@ -1353,7 +1397,8 @@ it.effect(
       expect(help).toMatch(/--also string\s+Repeat for each value\.\n/);
       expect(help).toMatch(/--pinned\s*\n/);
       expect(help).toMatch(/--read\s+Only read ones\? --no-read sends false\.\n/);
-      expect(help).toMatch(/--answers value\s+A JSON array\.\n/);
+      expect(help).toMatch(/--answers value\s+A JSON array of \{id, approved\?\}\.\n/);
+      expect(help).toMatch(/--grid value\s+A JSON array\.\n/);
       expect(help).toMatch(/--filter value\s+A JSON object\.\n/);
       expect(help).toMatch(/--limit value\s*\n/);
 
@@ -1369,6 +1414,7 @@ it.effect(
         "--tags=b",
         "--no-read",
         '--answers=[{"id":"1"}]',
+        "--grid=[[1]]",
         '--filter={"id":"2"}',
       ]);
 
@@ -1379,6 +1425,7 @@ it.effect(
           pinned: false,
           read: false,
           answers: [{ id: "1" }],
+          grid: [[1]],
           filter: { id: "2" },
         },
       ]);

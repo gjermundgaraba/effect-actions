@@ -204,11 +204,34 @@ const noElementOccurrence = "[]";
 // a flag repeats, nor that `--no-<flag>` is a switch's `false`, nor that a value is JSON. A switch
 // of a required field is `false` when left out, so only an optional one is told how to say it.
 const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
-  const kinds = new Set(acceptedJsonKindsOf(unsuspended(encoded)));
+  const value = unsuspended(encoded);
+  const kinds = new Set(acceptedJsonKindsOf(value));
 
   if (kinds.size !== 1) return undefined;
 
-  return kinds.has("array") ? "A JSON array." : kinds.has("object") ? "A JSON object." : undefined;
+  if (kinds.has("object")) return "A JSON object.";
+
+  if (!kinds.has("array")) return undefined;
+
+  const fields = elementFieldsOf(value);
+
+  return fields === undefined ? "A JSON array." : `A JSON array of {${fields.join(", ")}}.`;
+};
+
+const elementFieldsOf = (array: SchemaAST.AST): ReadonlyArray<string> | undefined => {
+  if (!SchemaAST.isArrays(array) || array.elements.length > 0) return undefined;
+
+  const [element, ...after] = array.rest;
+
+  if (element === undefined || after.length > 0) return undefined;
+
+  const fields = namedFieldsOf(unsuspended(element));
+
+  return fields.size === 0
+    ? undefined
+    : Array.from(fields, ([name, field]) =>
+        SchemaAST.isOptional(field) ? `${String(name)}?` : String(name),
+      );
 };
 
 const withHint = (description: string | undefined, hint: string | undefined) => {
@@ -302,9 +325,18 @@ const namedFieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.A
 const isTransformedAsWhole = (ast: SchemaAST.AST): boolean =>
   (SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast)?.encoding !== undefined;
 
+// Why: Effect resolves a description from the last check alone, once a schema has checks. One
+// annotated before a check is on the schema or on an earlier check, where a tool's listing reads
+// it for a model: a flag's help reads it there too, so one description serves both.
 const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
   SchemaAST.resolveDescription(ast) ??
+  describedBeforeLastCheck(ast) ??
   (SchemaAST.isSuspend(ast) ? ownOrSuspendedDescriptionOf(ast.thunk()) : undefined);
+
+const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
+  [ast.annotations, ...(ast.checks ?? []).map((check) => check.annotations)]
+    .map((annotations) => annotations?.["description"])
+    .findLast(Predicate.isString);
 
 const fieldParams = (
   encoded: SchemaAST.Objects,

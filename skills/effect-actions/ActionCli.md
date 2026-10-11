@@ -102,7 +102,8 @@ every command option.
 ### Flags from the input
 
 A struct or class input gets one flag per top-level field, named after the field in kebab case,
-with the field's description as its help. The field's encoded JSON value decides the kind of flag:
+with the field's description as its help, annotated before or after its checks. The field's
+encoded JSON value decides the kind of flag:
 
 | Encoded field                            | Flag, for a field `tags`, `read`, …                             |
 | ---------------------------------------- | --------------------------------------------------------------- |
@@ -115,7 +116,7 @@ with the field's description as its help. The field's encoded JSON value decides
 - A switch left out is `false` for a required field, and leaves an optional one out.
 - `--help` adds, after the field's description, `Repeat for each value.` on a repeated flag,
   `--no-read sends false.` on an optional switch, and `A JSON array.` or `A JSON object.` on a
-  value that is one.
+  value that is one, an array of objects with its fields: `A JSON array of {id, approved?}.`
 - A flag takes the encoded value, which the action's schema then decodes: `"21"` for
   `Schema.FiniteFromString`.
 - A value flag reads its text as JSON when the field accepts that kind of JSON value
