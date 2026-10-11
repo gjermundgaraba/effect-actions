@@ -122,7 +122,10 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its
   pattern. `notes-service`'s `export` takes a file argument; `mcp-tools` answers CORS for the
   origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
-  client, `connect(url)`.
+  client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
+  request: each member's conversation kept between requests, an approval answered in a later
+  one, by the member who was asked alone, and a conversation ended where its model fails
+  ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)).
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a

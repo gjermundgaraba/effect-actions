@@ -8,6 +8,7 @@ import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { MemberActions, Tools } from "./Actions.js";
 import { authenticateOperator } from "./admin/authenticate.js";
+import { assistant } from "./assistant/handlers.js";
 import { admin } from "./admin/handlers.js";
 import { AdminHttp, Http } from "./Api.js";
 import { download } from "./attachments/download.js";
@@ -17,6 +18,7 @@ import { authenticateBearer, authenticateSession } from "./identity/authenticate
 import { identity } from "./identity/handlers.js";
 import { Login } from "./identity/Identity.js";
 import { HttpQuota, quota, RpcQuota } from "./identity/quota.js";
+import { layer as assistantTools } from "./issues/assistant.js";
 import { features } from "./issues/guide.js";
 import { issues } from "./issues/handlers.js";
 import { cors, requestPolicy } from "./request-policy.js";
@@ -27,7 +29,7 @@ import { GetStatus } from "./workspaces/Workspaces.js";
 
 // Every domain's implementation of the public port's actions, once. Each surface below takes
 // this one list and serves the actions its binding or its `actions` names.
-const implementations = [status, identity, issues, attachments];
+const implementations = [status, identity, issues, attachments, assistant];
 
 // JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`.
 // The quota requires the caller, and a public route has none, so `getStatus` is served by a
@@ -62,7 +64,7 @@ const mcp = Layer.unwrap(
 // quota as native RPC middleware. It still requires its protocol: the server gives it a
 // WebSocket, and a test Effect's HTTP protocol, which answers in memory.
 export const rpc = ActionRpc.layer(Rpc, implementations, { middleware: [RpcQuota] }).pipe(
-  Layer.provide([authenticateSession, quota]),
+  Layer.provide([authenticateSession, quota, assistantTools]),
 );
 
 const socket = rpc.pipe(
@@ -94,7 +96,12 @@ const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 //   before CORS, and before the OAuth discovery the Bearer provider registers when it is
 //   built. Merged beside the routes instead, it would register after that provider, and a
 //   foreign Host could read the discovery document.
+//
+// The assistant's builder yields its tools, so their handlers are provided to the layers
+// serving it, here and on `rpc`: one Layer, built once in the routes' layer graph, where the
+// tools run the issue implementation the routes serve, with no second build of it.
 export const publicRoutes = Layer.mergeAll(api, mcp, socket, download, documentation, health).pipe(
+  Layer.provide(assistantTools),
   Layer.provide([authenticateBearer, authenticateSession, quota]),
   Layer.provide(resolveTenant.layer),
   Layer.provide(cors),
@@ -112,5 +119,6 @@ export const adminRoutes = Layer.mergeAll(
 // Every builder as one layer. The two ports are two layer graphs, and each would run the
 // builder of an implementation it serves: `status`, which both serve, twice, each port then
 // reporting an `instance` of its own. Provided above both, with the services, each builder
-// runs once for every surface of both ports.
-export const builders = Action.layer([...implementations, admin]);
+// runs once for every surface of both ports. The assistant's is left out: the public port
+// alone serves it, and builds it once for its routes and its rpcs.
+export const builders = Action.layer([status, identity, issues, attachments, admin]);

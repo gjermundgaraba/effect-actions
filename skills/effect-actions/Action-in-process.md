@@ -55,7 +55,7 @@ elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](node_modules/@
 ## Share one build across servers
 
 Inside one `HttpRouter.serve` or one `Testing.layer`, a builder runs once, however many surfaces
-serve it. Each builds its routes in a layer graph of its own, which reuses what is provided from
+serve it, a toolkit's `layer` provided to the routes included. Each builds its routes in a layer graph of its own, which reuses what is provided from
 outside it and shares nothing it builds itself: a builder's run, a built authorizer, or a
 service of yours such as an in-memory store.
 
