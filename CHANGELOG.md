@@ -48,6 +48,11 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   be listed again as a `remoteCommand` beside one command written by hand. A name a derived
   command has throws `Duplicate command`; the aggregate's type gains its own commands' failures
   and services ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
+- `ActionCli.toUserError(actions)` makes a command of your own fail as a derived command does:
+  piped onto its whole Effect, an action's error is printed as its JSON and a transport failure
+  named with its causes, where a hand-written `CliError.UserError` printed prose and a call left
+  unmapped crashed with a stack trace. An Effect CLI error passes through as it is
+  ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
 - A derived command's `--help` says what a flag's name and kind do not, after the field's own
   description: `Repeat for each value.` on a repeated flag, `--no-<flag> sends false.` on an
   optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one, an

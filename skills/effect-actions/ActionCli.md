@@ -21,6 +21,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `command(implementations, action, options?)` | One action, selected by its contract, as a native Effect `Command`.      |
 | `remote(binding, options)`                   | Every action of an HTTP binding as a subcommand, called over HTTP.       |
 | `remoteCommand(binding, action, options?)`   | One action of an HTTP binding, called over HTTP.                         |
+| `toUserError(actions)`                       | Piped onto a command of your own: it fails as a derived command does.    |
 | `logToStderr`                                | Applied last before `runMain`: stdout carries only results.              |
 
 | Option                                   | Meaning                                                                         |
@@ -154,10 +155,12 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   needs no scope and uses the `HttpClient` provided on the aggregate, or `Action.client`, acquired
   inside `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
   `authorize` still runs. The `client` option reaches the derived commands alone.
-- **The output and failure rules below do not apply to it.** Print with `Console.log`, and map a
-  failure to Effect CLI's `new CliError.UserError({ cause, userMessage })` for `Command.run` to
-  print `userMessage` on stderr. Map once, around the command's whole Effect: any other failure,
-  one unmapped call's included, is reported as a crash, `ERROR (#n)` with a stack trace.
+- **Its output is what it prints**, with `Console.log`: the output rules below are a derived
+  command's. **Pipe its whole Effect through `ActionCli.toUserError(Http.actions)`** to fail as a
+  derived command does: an action's error as its JSON on stderr, a transport failure named with
+  its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
+  passes through. A failure left unmapped, one call's included, is reported as a crash,
+  `ERROR (#n)` with a stack trace.
 - **Write the list in the call.** The aggregate's type then carries its commands' failures and
   services. A list held in options annotated `ActionCli.Options` adds none to the type.
 

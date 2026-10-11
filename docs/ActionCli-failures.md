@@ -97,5 +97,5 @@ The tasks are in [ActionCli.md](ActionCli.md).
   `ActionCli.logToStderr` to keep such reports off stdout.
 - `ERROR (#n)` with a stack for a declared error, such as `UserNotFound`, from a command built
   with `Command.make`: a command of your own that calls `Action.client` or `ActionHttp.client`
-  fails with the action's own error. Map it to `CliError.UserError`, or derive the command with
-  `ActionCli.command`.
+  fails with the action's own error. Pipe the command's whole Effect through
+  `ActionCli.toUserError(actions)`, or derive the command with `ActionCli.command`.

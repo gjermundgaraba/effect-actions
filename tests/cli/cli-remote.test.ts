@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Console, Effect, flow, Schema } from "effect";
-import { Command } from "effect/cli";
+import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
@@ -152,6 +152,82 @@ it.effect("runs a command of its own beside the derived ones, on the same client
     expect((yield* runLines(["double-each"]))[1]).toEqual([[2, 4]]);
     expect(decoded).toEqual([3, 1, 2]);
   }),
+);
+
+it.effect(
+  "fails a command of its own as a derived one fails, through toUserError, and leaves its own message alone",
+  () =>
+    Effect.gen(function* () {
+      class TooLarge extends Schema.TaggedError<TooLarge>()(
+        "TooLarge",
+        { limit: Schema.Finite },
+        { httpApiStatus: 413 },
+      ) {}
+
+      const Bounded = Action.make("bounded", {
+        description: "Refuses a value over its limit",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: { value: Schema.Finite },
+        error: [TooLarge],
+      });
+
+      const BoundedHttp = ActionHttp.make([Bounded]);
+
+      const web = serve(
+        ActionHttp.layer(
+          BoundedHttp,
+          Action.implement(Bounded, () => Effect.fail(new TooLarge({ limit: 10 }))),
+        ),
+      );
+
+      const twice = Command.make("twice", {}, () =>
+        Effect.gen(function* () {
+          const client = yield* ActionHttp.client(BoundedHttp);
+
+          yield* client.bounded({ value: 11 });
+          yield* client.bounded({ value: 12 });
+        }).pipe(ActionCli.toUserError(BoundedHttp.actions)),
+      );
+
+      const worded = Command.make("worded", {}, () =>
+        Effect.fail(
+          new CliError.UserError({ cause: "no file", userMessage: "No such file." }),
+        ).pipe(ActionCli.toUserError(BoundedHttp.actions)),
+      );
+
+      const command = ActionCli.remote(BoundedHttp, { name: "cli", subcommands: [twice, worded] });
+
+      const stderrOf = (
+        args: ReadonlyArray<string>,
+        answer: (request: Request) => Promise<Response> = web.handler,
+      ) => exec(command, args).pipe(printed, Effect.provide(Testing.layer(answer)));
+
+      const [derived, , derivedErr] = yield* stderrOf(["bounded", "--value", "11"]);
+      const [own, , ownErr] = yield* stderrOf(["twice"]);
+
+      expect(causeOf(own)).toEqual(new TooLarge({ limit: 10 }));
+      expect(causeOf(own)).toEqual(causeOf(derived));
+      expect(ownErr).toEqual(derivedErr);
+      expect(ownErr).toEqual([expect.stringContaining('{"_tag":"TooLarge","limit":10}')]);
+
+      const [, , wordedErr] = yield* stderrOf(["worded"]);
+
+      expect(wordedErr).toEqual([expect.stringContaining("No such file.")]);
+      expect(wordedErr).toEqual([expect.not.stringContaining("UserError")]);
+
+      const offline = async () => {
+        throw new Error("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:1") });
+      };
+
+      const [refused, , refusedErr] = yield* stderrOf(["twice"], offline);
+
+      expect(HttpClientError.isHttpClientError(causeOf(refused))).toBe(true);
+      expect(refusedErr).toEqual((yield* stderrOf(["bounded", "--value", "11"], offline))[2]);
+      expect(refusedErr).toEqual([
+        expect.stringMatching(/HttpClientError: .*: Error: fetch failed/),
+      ]);
+    }),
 );
 
 it.effect("refuses input that does not decode locally, sending no request", () =>

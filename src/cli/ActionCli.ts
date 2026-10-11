@@ -39,6 +39,8 @@ export type { Options as CommandOptions } from "./commands.js";
 
 export type { UserError } from "./commands.js";
 
+export { toUserError } from "./commands.js";
+
 /**
  * An aggregate command of the actions `A`: its name, the actions that are its subcommands,
  * and their options.

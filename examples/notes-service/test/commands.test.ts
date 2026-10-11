@@ -63,7 +63,10 @@ describe("the commands", () => {
       const refused = yield* Effect.flip(run("mallory", ["export"]));
 
       expect(refused).toBeInstanceOf(CliError.UserError);
-      expect(refused).toHaveProperty("userMessage", "Unauthenticated: Unknown demo token.");
+      expect(refused).toHaveProperty(
+        "userMessage",
+        '{"_tag":"Unauthenticated","message":"Unknown demo token."}',
+      );
 
       const missing = yield* Effect.flip(run("ada", ["get-note", "9"]));
 

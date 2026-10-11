@@ -1,6 +1,6 @@
 import { Context, Effect, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
-import { Command } from "effect/cli";
+import { type CliError, Command } from "effect/cli";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
@@ -368,6 +368,12 @@ const boundPlain = ActionCli.remoteCommand(Bound, Plain);
 const boundErring = ActionCli.remoteCommand(Bound, Erring);
 
 const boundAll = ActionCli.remote(Bound, { name: "remote" });
+
+declare const ownCommand: Effect.Effect<void, Gone | Transport | CliError.UserError, Build>;
+
+expectTypeOf(ownCommand.pipe(ActionCli.toUserError(Bound.actions))).toEqualTypeOf<
+  Effect.Effect<void, ActionCli.UserError<Gone | Transport> | CliError.UserError, Build>
+>();
 
 expectTypeOf<Command.Error<typeof boundPlain>>().toEqualTypeOf<
   ActionCli.UserError<Action.BuiltIn | Transport>

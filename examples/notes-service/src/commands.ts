@@ -1,12 +1,12 @@
 import { Console, Effect } from "effect";
-import { CliError, Command } from "effect/cli";
+import { Command } from "effect/cli";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./Api.js";
 
 // A command of your own, for what no single action does: this one calls two. It is a native
-// Effect CLI command, so its syntax, its output and its failure are what you write. It calls the
-// server through the binding's typed client, on the `HttpClient` the derived commands use.
+// Effect CLI command, so its syntax and its output are what you write. It calls the server
+// through the binding's typed client, on the `HttpClient` the derived commands use.
 const exportNotes = Command.make("export", {}, () =>
   Effect.gen(function* () {
     const client = yield* ActionHttp.client(Http);
@@ -15,11 +15,10 @@ const exportNotes = Command.make("export", {}, () =>
 
     yield* Console.log(whole.map((note) => `# ${note.title}\n\n${note.body}`).join("\n\n"));
   }).pipe(
-    // A `UserError` is what `Command.run` prints on stderr, its `userMessage` the text. Any
-    // other failure is reported as a crash, with an `ERROR (#n)` line.
-    Effect.mapError(
-      (cause) => new CliError.UserError({ cause, userMessage: `${cause._tag}: ${cause.message}` }),
-    ),
+    // Once, around the whole command: it then fails as a derived command does, an action's
+    // error printed as its JSON on stderr. A failure left as it is would be reported as a
+    // crash, with an `ERROR (#n)` line and a stack trace.
+    ActionCli.toUserError(Http.actions),
   ),
 ).pipe(Command.withDescription("Print every note, as Markdown."));
 

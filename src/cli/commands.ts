@@ -440,8 +440,7 @@ const printedOutput = <A extends Action.Any>(
  * prints on stderr and marks reported, so `runMain` does not print it again. The process exits with
  * the cause's `Runtime.errorExitCode`, 1 by default. A type only: after `Command.run`, match the
  * reason by its tag, `Effect.catchReason("UserError", "UserNotFound", f)`. A command of your own
- * fails with Effect CLI's `new CliError.UserError({ cause, userMessage })` to be printed so; any
- * other failure is reported as a crash, `ERROR (#n)`.
+ * fails with one through `toUserError`; any other failure is reported as a crash, `ERROR (#n)`.
  */
 export class UserError<out E = unknown> extends CliError.UserError {
   declare readonly cause: E;
@@ -481,15 +480,34 @@ const describedWithoutFields = <E>(error: E, seen: Set<unknown> = new Set()): st
     : named;
 };
 
-const userErrorOf = <E>(action: Action.Any, errors: Action.Errors) => {
+const userErrorOf = (errors: Action.Errors) => {
   const encode = Schema.encodeUnknownEffect(
-    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(projectedErrors(action, errors)))),
+    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))),
   );
 
-  return (error: E) =>
+  return <E>(error: E) =>
     encode(error).pipe(
       Effect.orElseSucceed(() => describedWithoutFields(error)),
       Effect.flatMap((userMessage) => Effect.fail(new UserError<E>({ cause: error, userMessage }))),
+    );
+};
+
+/**
+ * Make a command of your own fail as a derived command does. Give it the actions the command
+ * calls, such as a binding's `actions`, and pipe the command's whole Effect through it: a
+ * failure that is one of their declared errors or a built-in one becomes a `UserError` whose
+ * message is its JSON, and any other, a transport failure for one, a `UserError` naming it and
+ * the causes beneath it. An Effect CLI error, your own `new CliError.UserError({ cause,
+ * userMessage })` included, passes through as it is.
+ */
+export const toUserError = (actions: ReadonlyArray<Action.Any>) => {
+  const failure = userErrorOf([...new Set(actions.flatMap((action) => projectedErrors(action)))]);
+
+  return <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.catchIf(
+      self,
+      (error): error is Exclude<E, CliError.CliError> => !CliError.isCliError(error),
+      failure,
     );
 };
 
@@ -636,7 +654,7 @@ export const command = <A extends Action.Any, E, R>(
     options?.stdin,
   );
 
-  const failure = userErrorOf<E | InvalidInput>(action, errors);
+  const failure = userErrorOf(projectedErrors(action, errors));
 
   assertDistinct(
     "flag",
