@@ -5,11 +5,24 @@ import type { ErasedValue } from "../contract/implementation.js";
 import { isMarked, type Kind, kindOf, Media } from "../contract/media.js";
 import { unsuspended } from "../contract/rules.js";
 
-// Why: Only the stateless revision. A stateful one keeps a session per `initialize`, which
-// Effect's HTTP runtime never expires and any holder of its id may use. And a mixed endpoint's gate
-// decides from the routing headers, which the runtime checks against the body of a stateless
-// request alone.
+// Why: The stateless revision is the one a request written without a handshake speaks, as
+// `mcpRequest` below writes it, and the one whose routing headers the runtime checks against the
+// body, which a mixed endpoint's gate relies on.
 export const httpProtocol = McpProtocol.v2026_07_28;
+
+// Why: Hosts such as Claude Code and Codex open stdio with `initialize`, and Codex opens HTTP with
+// it too, which only the two stateful revisions answer. HTTP served the stateless one alone, as a
+// session lasts until its client ends it and Effect's runtime expires none; that left such a host
+// no way to a hosted endpoint, so it is reversed. A session holds its client's `initialize`
+// payload and no identity: every request authenticates as before, and where an endpoint serves a
+// protected tool, only a signed-in caller opens one. The revisions before these stay out: Effect's
+// adapters for them list an input's `type`, `properties` and `required` alone, so a `$ref` to its
+// definitions resolves nowhere.
+export const protocols = [
+  McpProtocol.v2026_07_28,
+  McpProtocol.v2025_11_25,
+  McpProtocol.v2025_06_18,
+] as const;
 
 export const defaultPath = "/mcp";
 

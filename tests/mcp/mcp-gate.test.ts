@@ -7,7 +7,15 @@ import { authenticate } from "../support/app/authentication.js";
 import { authorize, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { Double, RenameUser, Status } from "../support/app/contracts.js";
-import { mcpRequest, rawToolCall, valueOf, withBearer } from "../support/requests.js";
+import {
+  endSession,
+  initializeParams,
+  mcpRequest,
+  rawToolCall,
+  sessionRequest,
+  valueOf,
+  withBearer,
+} from "../support/requests.js";
 import { serve } from "../support/serve.js";
 
 const makeExampleAppRecordingCalls = () => {
@@ -226,12 +234,20 @@ describe("a mixed MCP endpoint", () => {
     const rename = { name: "renameUser", arguments: { id: "1", name: "Eve" } };
 
     const bodiesNativeHeaderValidationSkips = [
-      [{ jsonrpc: "2.0", method: "tools/call", params: rename }, { "mcp-name": "status" }],
-      [{ jsonrpc: "2.0", method: "tools/call", params: rename }, { "mcp-method": "tools/list" }],
-      [[{ jsonrpc: "2.0", id: 1, method: "tools/call", params: rename }], { "mcp-name": "status" }],
+      [{ jsonrpc: "2.0", method: "tools/call", params: rename }, { "mcp-name": "status" }, 400],
+      [
+        { jsonrpc: "2.0", method: "tools/call", params: rename },
+        { "mcp-method": "tools/list" },
+        401,
+      ],
+      [
+        [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: rename }],
+        { "mcp-name": "status" },
+        400,
+      ],
     ] as const;
 
-    for (const [body, headers] of bodiesNativeHeaderValidationSkips) {
+    for (const [body, headers, statelessStatus] of bodiesNativeHeaderValidationSkips) {
       for (const withProtocolVersion of [true, false]) {
         const base = rawToolCall("status");
         const sent = new Headers(base.headers);
@@ -244,7 +260,7 @@ describe("a mixed MCP endpoint", () => {
           new Request(base.url, { method: "POST", headers: sent, body: JSON.stringify(body) }),
         );
 
-        expect(response.status).toBe(400);
+        expect(response.status).toBe(withProtocolVersion ? statelessStatus : 401);
       }
     }
 
@@ -257,12 +273,155 @@ describe("a mixed MCP endpoint", () => {
 
         const response = await web.handler(validatedRequest);
 
-        expect([method, response.status]).toEqual([method, 400]);
-        expect(await response.json()).toMatchObject({ error: { code: -32020 } });
+        expect([method, response.status]).toEqual([method, 401]);
       }
     }
 
     expect(calls).toEqual([]);
+  });
+});
+
+describe("a session on a mixed MCP endpoint", () => {
+  const publicCallHeaders = {
+    "mcp-protocol-version": "2026-07-28",
+    "mcp-method": "tools/call",
+    "mcp-name": "status",
+  };
+
+  const open = async (web: ReturnType<typeof mixedEndpoint>["web"], token: string) => {
+    const initialized = await web.handler(
+      withBearer(sessionRequest({ method: "initialize", params: initializeParams }), token),
+    );
+
+    expect(initialized.status).toBe(200);
+
+    const session = initialized.headers.get("mcp-session-id") ?? "";
+
+    const ready = await web.handler(
+      withBearer(sessionRequest({ method: "notifications/initialized", session }), token),
+    );
+
+    expect(ready.status).toBe(202);
+
+    return session;
+  };
+
+  it("is opened by a signed-in caller alone, whatever a request's headers name", async () => {
+    const { web } = mixedEndpoint();
+
+    const signedOut = await web.handler(
+      sessionRequest({ method: "initialize", params: initializeParams }),
+    );
+
+    expect(signedOut.status).toBe(401);
+    expect(signedOut.headers.get("www-authenticate")).toContain("resource_metadata");
+    expect(signedOut.headers.get("mcp-session-id")).toBeNull();
+
+    for (const headers of [
+      { "mcp-protocol-version": "2026-07-28", "mcp-method": "tools/list" },
+      { "mcp-protocol-version": "2026-07-28", "mcp-method": "server/discover" },
+      { "mcp-protocol-version": "2026-07-28", "mcp-method": "initialize" },
+      publicCallHeaders,
+      { "mcp-method": "tools/list" },
+    ]) {
+      const named = await web.handler(
+        sessionRequest({ method: "initialize", params: initializeParams, headers }),
+      );
+
+      expect([headers, named.status]).toEqual([headers, 401]);
+      expect(named.headers.get("mcp-session-id")).toBeNull();
+    }
+  });
+
+  it("authenticates its every request, a public tool's call included", async () => {
+    const { web, calls } = mixedEndpoint();
+    const session = await open(web, "reader");
+    const double = { name: "double", arguments: { value: "21" } };
+
+    const signedIn = await web.handler(
+      withBearer(sessionRequest({ method: "tools/call", params: double, session }), "reader"),
+    );
+
+    expect(await signedIn.json()).toMatchObject({
+      result: { content: [{ type: "text", text: "42" }], isError: false },
+    });
+
+    for (const method of ["tools/list", "tools/call", "notifications/initialized"]) {
+      const params = method === "tools/call" ? { name: "status", arguments: {} } : {};
+      const signedOut = await web.handler(sessionRequest({ method, params, session }));
+
+      expect([method, signedOut.status]).toEqual([method, 401]);
+    }
+
+    const namingAPublicCall = await web.handler(
+      sessionRequest({ method: "tools/call", params: double, session, headers: publicCallHeaders }),
+    );
+
+    expect(namingAPublicCall.status).toBe(400);
+
+    const namingItInTheSessionsRevision = await web.handler(
+      sessionRequest({
+        method: "tools/call",
+        params: double,
+        session,
+        headers: { ...publicCallHeaders, "mcp-protocol-version": "2025-11-25" },
+      }),
+    );
+
+    expect(namingItInTheSessionsRevision.status).toBe(401);
+    expect(calls).toEqual(["double"]);
+  });
+
+  it("holds no identity: each request runs as the caller it authenticates", async () => {
+    const { web, calls } = mixedEndpoint();
+    const session = await open(web, "alice");
+    const rename = { name: "renameUser", arguments: { id: "1", name: "Eve" } };
+
+    const asItsOpener = await web.handler(
+      withBearer(sessionRequest({ method: "tools/call", params: rename, session }), "alice"),
+    );
+
+    const asAnother = await web.handler(
+      withBearer(sessionRequest({ method: "tools/call", params: rename, session }), "bob"),
+    );
+
+    const asAReader = await web.handler(
+      withBearer(sessionRequest({ method: "tools/call", params: rename, session }), "reader"),
+    );
+
+    expect(asItsOpener.status).toBe(200);
+    expect(asAnother.status).toBe(200);
+    expect(asAReader.status).toBe(403);
+    expect(asAReader.headers.get("www-authenticate")).toContain('scope="users:write"');
+    expect(calls).toEqual(["alice renamed 1", "bob renamed 1"]);
+  });
+
+  it("is ended by a signed-in caller alone", async () => {
+    const { web } = mixedEndpoint();
+    const session = await open(web, "reader");
+
+    expect((await web.handler(endSession(session))).status).toBe(401);
+
+    const namingAPublicCall = endSession(session);
+
+    for (const [key, value] of Object.entries(publicCallHeaders)) {
+      namingAPublicCall.headers.set(key, value);
+    }
+
+    expect((await web.handler(namingAPublicCall)).status).toBe(401);
+
+    const stillOpen = await web.handler(
+      withBearer(sessionRequest({ method: "tools/list", session }), "reader"),
+    );
+
+    expect(stillOpen.status).toBe(200);
+    expect((await web.handler(withBearer(endSession(session), "reader"))).status).toBe(204);
+
+    const ended = await web.handler(
+      withBearer(sessionRequest({ method: "tools/list", session }), "reader"),
+    );
+
+    expect(ended.status).toBe(404);
   });
 });
 

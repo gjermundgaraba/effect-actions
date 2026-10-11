@@ -22,6 +22,15 @@ node --import tsx examples/notes-service/src/cli.ts list-notes
 vp test examples/notes-service
 ```
 
+An agent host connects to the running server, and so to the notes the API holds:
+
+```sh
+claude mcp add --transport http notes http://127.0.0.1:3000/mcp --header "Authorization: Bearer ada"
+codex mcp add notes --url http://127.0.0.1:3000/mcp --bearer-token-env-var NOTES_TOKEN
+```
+
+`src/stdio.ts` is the other way in: a subprocess the host starts, with a store of its own.
+
 The server reads `PORT` (default 3000) and `PUBLIC_URL`, the address it tells OAuth clients it
 is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
 

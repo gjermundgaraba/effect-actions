@@ -33,7 +33,7 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
 All but `actions`, `features` and `authentication` are Effect's own `McpServer` options, passed
 through. Its `protocols` and `allowSessionTermination` are not options: the revisions are fixed,
-and HTTP keeps no session.
+and a client may always end its session.
 
 ## Serve tools over HTTP
 
@@ -53,8 +53,15 @@ implementations in one set of routes run each builder once, so a note written ov
 as a tool: [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts). For two
 servers, see [Action.md](Action.md#share-one-build-across-servers).
 
-- The endpoint is stateless and speaks MCP 2026-07-28 only. A client that opens with `initialize`,
-  as the 2025 revisions do, cannot connect: pin it to that revision, or serve it over stdio.
+- The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
+  Claude Code 2.1 and Codex CLI 0.162 both connect, as tested in October 2026:
+  [notes-service](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/README.md#run-it) has the commands.
+- **A client of a 2025 revision opens a session** with `initialize`; a 2026-07-28 request stands
+  alone. A session holds what its client sent there and no identity: each request authenticates,
+  as its own caller. It lasts until its client ends it with a `DELETE` or the process stops, as
+  Effect expires none, so limit request bodies, which bounds what one holds. Where an endpoint
+  serves a protected tool, only a signed-in caller opens one, and that client signs in for every
+  request, a public tool's call included. An endpoint of public tools alone lets anyone open them.
 - An endpoint without `authentication` answers whoever reaches its port. Bind it to loopback or to
   a network only trusted clients are on, and limit request bodies
   ([ActionHttp.md](ActionHttp.md#serve-the-routes)):
@@ -97,6 +104,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus"
   `Console` output to stderr. Layers provided around it run outside that program: apply
   `ActionCli.logToStderr` last, before `runMain`, which moves their default logger and reports a
   startup failure there too. Nothing moves the global `console.log`: keep it off stdout.
+- **A subprocess has its own services.** It runs the handlers itself, with the layers it is
+  given, so it shares a server's data only through a store both reach, never one in memory. A
+  host that should see what the server holds connects to its HTTP endpoint.
 - **No token arrives, so the host names the caller.** stdio takes no `authentication`: provide the
   protected tools' identity around `runStdio`. Each implementation's `authorize` still runs. A
   subprocess has one caller, whoever started it. An HTTP server has many: never provide an
@@ -231,7 +241,7 @@ A handler yields `McpServer.McpServer` and sends through it:
 implementation also served on another surface, where nothing provides them, reads them with
 `Effect.serviceOption`.
 
-- On 2026-07-28, which HTTP always speaks, a progress notification is sent only with the token
+- On 2026-07-28, a progress notification is sent only with the token
   its request carried, `requestMetadata?.progressToken`. With another token, or when the client
   sent none, it is dropped silently.
 - A notification starts the response, so a refusal after it is a tool result, not a 401 or 403:
@@ -279,8 +289,10 @@ implementation also served on another surface, where nothing provides them, read
 - A public tool's call answers 401: it presented a credential that does not verify. Send a valid one, or none.
 - A protected tool's call answers 401 to a signed-in client after a while: its token expired. The client refreshes it, or signs in again, on the challenge's `invalid_token`.
 - An MCP client gets an `isError` refusal, not the 401 or 403 it re-authorizes on: the handler sent a notification before refusing. Refuse in `authorize`.
-- An MCP client cannot connect over HTTP, a request answering 400 with JSON-RPC error `-32020`: it opens with `initialize`, and HTTP serves only 2026-07-28. Pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
-- A stdio host asking for 2025-03-26 or 2024-11-05 is offered 2025-11-25, and disconnects if it cannot speak it: stdio serves 2026-07-28, 2025-11-25 and 2025-06-18. Update the host.
+- A client that opens with `initialize` gets 401 where it lists the tools or calls a public one, on an endpoint that also serves protected tools: a session's every request authenticates. Sign the client in, or serve the public tools on an endpoint of their own.
+- A request over HTTP answers 400, `MCP-Session-Id header is required; send initialize to start a session`: it is of a 2025 revision and follows no `initialize`. One answering 404 names a session that ended, or one of a process since restarted: the client opens another.
+- A request written by hand over HTTP answers 400 with JSON-RPC error `-32602`, `Required request metadata is missing`: it names 2026-07-28 in `MCP-Protocol-Version` and lacks that revision's `_meta` or routing headers. Build it with `Testing.mcpRequest`.
+- A client asking for 2025-03-26 or 2024-11-05 is offered 2025-11-25, and disconnects if it cannot speak it: HTTP and stdio serve 2026-07-28, 2025-11-25 and 2025-06-18. Update the client.
 - A request written by hand to a stdio server answers JSON-RPC error `-32602`, `Invalid request metadata`: it is neither preceded by `initialize` nor carries the 2026-07-28 metadata. Open with `initialize` and `notifications/initialized`, or give the request's `_meta` its `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` ([stdio](#serve-tools-over-stdio)).
 - A client reports a broken transport from a stdio subprocess: something wrote to stdout. The global `console.log` did, or a layer provided around `runStdio` did, through the default logger, or through `Console` or a logger such as `Logger.consoleJson`, which `logToStderr` does not move. Remove the write, apply `ActionCli.logToStderr` last, or log JSON with `Logger.withConsoleError(Logger.formatJson)`.
 - A request carrying an `Origin` gets an empty 403: the origin is not in `allowedOrigins`. Add the exact origin, only if the deployment trusts it.
