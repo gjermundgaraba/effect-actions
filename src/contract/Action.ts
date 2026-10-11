@@ -294,11 +294,13 @@ export function byName(actions: ReadonlyArray<Any>): { readonly [name: string]: 
 
 type Target = Any | ReadonlyArray<Any>;
 
-// Why: Named for what a protected target lacks, not for the public-only target it is: the error
-// TypeScript reports for a call without `authorize` names this type.
-type ProtectedActionsTakeAuthorize = PublicAction | ReadonlyArray<PublicAction>;
-
-type PublicAction = Any & { readonly caller: typeof Anyone };
+// Why: A sentence in the parameter's type, where the error TypeScript reports for a call without
+// `authorize` ends. Rejected: a constraint named `ProtectedActionsTakeAuthorize`, the earlier
+// decision. The error named it for one action alone, a list's named its member type, and both
+// ended in `'typeof CurrentUser' is not assignable to type 'unique symbol'`.
+type TakesNoAuthorize<T extends Target> = [Protected<ActionsOf<T>>] extends [never]
+  ? unknown
+  : "A protected action takes { authorize }: your rule, or Action.allowAll";
 
 type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Extract<T, Any>;
 
@@ -429,7 +431,7 @@ export function implement<
   },
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
-  const T extends ProtectedActionsTakeAuthorize,
+  const T extends Target,
   RequestServices extends (T extends ReadonlyArray<Any>
     ? { readonly [K in NamesOf<T>]: unknown }
     : never),
@@ -440,7 +442,7 @@ export function implement<
   EAX = never,
   RAX = never,
 >(
-  actions: T,
+  actions: T & TakesNoAuthorize<T>,
   handlers:
     | HandlersOf<T, R, RequestServices>
     | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,

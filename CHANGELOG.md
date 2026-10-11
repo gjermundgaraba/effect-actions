@@ -54,6 +54,11 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   array of objects with its fields, `A JSON array of {id, approved?}.`
 - A flag's help shows the field's description wherever it is annotated. One annotated before a
   check, where an MCP tool's listing reads it, was missing from `--help`.
+- The compiler says what is missing where a protected action is implemented without
+  `authorize`: the message ends `is not assignable to type '"A protected action takes
+  { authorize }: your rule, or Action.allowAll"'`, where it ended `'typeof CurrentUser' is not
+  assignable to type 'unique symbol'`. The constraint named `ProtectedActionsTakeAuthorize`,
+  which the error showed for one action and not for a list, is gone.
 - The compiler names an undeclared error where a handler fails with one: the message ends
   `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
   where it ended `Property '"~builtIn"' is missing`.

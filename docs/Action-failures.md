@@ -14,7 +14,7 @@ The tasks are in [Action.md](Action.md).
 
 ## At `implement`
 
-- `... is not assignable to parameter of type 'ProtectedActionsTakeAuthorize'`, ending `Type 'typeof CurrentUser' is not assignable to type 'unique symbol'`, or `Protected actions require authorize, or Action.allowAll` thrown: an implementation holding a protected action states `authorize`. Pass `{ authorize }`, or `{ authorize: Action.allowAll }`.
+- `... is not assignable to type '"A protected action takes { authorize }: your rule, or Action.allowAll"'`, or `Protected actions require authorize, or Action.allowAll` thrown: an implementation holding a protected action states `authorize`. Pass `{ authorize }`, or `{ authorize: Action.allowAll }`.
 - `Missing authorize: pass an authorization function, or Action.allowAll` thrown, or a layer build dying with it: `authorize` is neither a function nor an Effect building one, or that Effect built something else.
 - `No overload matches this call`, ending `Type 'undefined' is not assignable to type 'Authorizer<...>'`: `authorize` is never `undefined`. Write `enabled ? authorize : Action.allowAll`.
 - `Parameter 'action' implicitly has an 'any' type`, or an `Effect.fn` authorizer whose `action` is `any`: an authorizer defined apart from `implement` annotates its parameter, `(action: Action.Any)`.
