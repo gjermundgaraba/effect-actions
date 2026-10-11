@@ -56,7 +56,31 @@ export interface Options<A extends Action.Any = Action.Any> {
    * `{ readFile: { positional: ["path"], render } }`.
    */
   readonly commands?: { readonly [K in A as K["name"]]?: CommandOptions<K> };
+  /**
+   * Commands of your own beside the derived ones, as `Command.withSubcommands` takes them:
+   * `[importLinks]`, each made with Effect CLI's `Command.make`. One fails as you make it fail:
+   * with a `CliError.UserError` for `Command.run` to print its `userMessage` on stderr. Written
+   * in the call, the list adds its commands' failures and services to the aggregate's type;
+   * held in options annotated with this type, it adds none.
+   */
+  readonly subcommands?: Subcommands | undefined;
 }
+
+type Subcommands = ReadonlyArray<Command.Command.SubcommandEntry>;
+
+// Why: A type parameter of their own. The options are inferred as the selection they hold, which is
+// all the actions' types read, so a list read from them would be lost whenever none is selected.
+// A list typed as any commands names none, as options annotated `Options` hold it with or without
+// a list: it adds nothing, where `unknown` would fail every program passing such options.
+type OwnCommand<Own extends Subcommands> = Subcommands extends Own
+  ? never
+  : Own[number] extends infer Entry
+    ? Entry extends Command.Command<infer _N, infer _I, infer _C, infer _E, infer _R>
+      ? Entry
+      : Entry extends Command.Command.SubcommandGroup<infer Commands>
+        ? Commands[number]
+        : never
+    : never;
 
 type CommandsOf<O> = O extends unknown
   ? "commands" extends keyof O
@@ -157,13 +181,14 @@ const aggregateCommand = (
   name: string,
   actions: ReadonlyArray<Action.Any>,
   commands: NonNullable<Options["commands"]>,
+  own: Subcommands,
   project: (
     action: Action.Any,
     options: CommandOptions<Action.Any> | undefined,
   ) => Command.Command<string, never, {}, unknown, unknown>,
 ) => {
-  const subcommands = actions.map((action) => ({
-    action,
+  const derived = actions.map((action) => ({
+    claimant: `action ${action.name}`,
     command: project(
       action,
       Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
@@ -172,13 +197,19 @@ const aggregateCommand = (
 
   assertDistinct(
     "command",
-    subcommands,
-    ({ command }) => command.name,
-    ({ action }) => `action ${action.name}`,
+    [
+      ...derived.map(({ claimant, command }) => ({ claimant, name: command.name })),
+      ...own
+        .flatMap((entry) => (Command.isCommand(entry) ? [entry] : entry.commands))
+        .map((command) => ({ claimant: "subcommands", name: command.name })),
+    ],
+    ({ name: claimed }) => claimed,
+    ({ claimant }) => claimant,
   );
 
+  // Why: One `withSubcommands`, as a second one replaces the first's commands.
   return Command.make(name).pipe(
-    Command.withSubcommands(subcommands.map(({ command }) => command)),
+    Command.withSubcommands([...derived.map(({ command }) => command), ...own]),
   );
 };
 
@@ -272,22 +303,29 @@ type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
 /**
  * Project every implemented action as a subcommand of one aggregate command, each named after
  * its action in kebab case and run in process. `commands` gives a subcommand the options
- * `command` takes, by action name. `remote` calls a server instead.
+ * `command` takes, by action name; `subcommands` adds commands of your own, which
+ * `Command.withSubcommands` on the result would put in the derived ones' place. `remote` calls a
+ * server instead.
  */
 export function make<
   const Apps extends Served,
   const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const Own extends Subcommands = [],
 >(
   implementations: Apps,
   options: O &
     NoInfer<Options<ActionOf<Member<Apps>>>> &
-    NoInfer<KnownOptions<O, Options, ActionOf<Member<Apps>>>>,
+    NoInfer<KnownOptions<O, Options, ActionOf<Member<Apps>>>> & {
+      readonly subcommands?: Own | undefined;
+    },
 ): Command.Command<
   string,
   {},
   {},
-  UserError<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>,
-  Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
+  | UserError<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>
+  | Command.Error<OwnCommand<Own>>,
+  | Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
+  | Command.Services<OwnCommand<Own>>
 > {
   const apps = toList(implementations);
 
@@ -302,6 +340,7 @@ export function make<
     options.name,
     served.flatMap((app) => app.actions),
     commands,
+    options.subcommands ?? [],
     (action, syntax) => inProcess(served, action, syntax),
   );
 
@@ -311,23 +350,27 @@ export function make<
 
 /**
  * Project every action of an HTTP binding as a subcommand of one aggregate command, derived as
- * `make` derives it, each calling its action over HTTP. `client` configures every
- * subcommand's client; `commands` gives a subcommand the options `command` takes.
+ * `make` derives it, each calling its action over HTTP. `client` configures every derived
+ * subcommand's client; `commands` gives one the options `command` takes; `subcommands` adds
+ * commands of your own.
  */
 export function remote<
   const H extends AnyHttp,
   const O extends Selection<H["actions"][number]> = {},
+  const Own extends Subcommands = [],
 >(
   binding: H,
   options: O &
     NoInfer<RemoteOptions<H["actions"][number]>> &
-    NoInfer<KnownOptions<O, RemoteOptions<Action.Any>, H["actions"][number]>>,
+    NoInfer<KnownOptions<O, RemoteOptions<Action.Any>, H["actions"][number]>> & {
+      readonly subcommands?: Own | undefined;
+    },
 ): Command.Command<
   string,
   {},
   {},
-  HttpUserError<H, Selected<O, H["actions"][number]>>,
-  HttpClient.HttpClient
+  HttpUserError<H, Selected<O, H["actions"][number]>> | Command.Error<OwnCommand<Own>>,
+  HttpClient.HttpClient | Command.Services<OwnCommand<Own>>
 > {
   const listed = options.actions;
 
@@ -339,6 +382,7 @@ export function remote<
     options.name,
     binding.actions.filter((action) => listed?.includes(action) ?? true),
     commands,
+    options.subcommands ?? [],
     (action, syntax) => overHttp(binding, action, syntax, options.client),
   );
 

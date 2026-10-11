@@ -1315,6 +1315,136 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
   }),
 );
 
+it.effect(
+  "says in a flag's help that it repeats, how an optional switch sends false, and that a value is JSON",
+  () =>
+    Effect.gen(function* () {
+      const File = Action.make("file", {
+        description: "Files a link",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: {
+          url: Schema.String,
+          tags: Schema.Array(Schema.String).annotate({ description: "Labels to file it under" }),
+          also: Schema.optional(Schema.Array(Schema.String)),
+          pinned: Schema.Boolean,
+          read: Schema.optional(Schema.Boolean).annotate({ description: "Only read ones?" }),
+          answers: Schema.Array(Schema.Struct({ id: Schema.String })),
+          filter: Schema.optional(Schema.Struct({ id: Schema.String })),
+          limit: Schema.optional(Schema.Finite),
+        },
+        success: Schema.String,
+      });
+
+      const sent: unknown[] = [];
+
+      const app = Action.implement(File, (input) =>
+        Effect.as(
+          Effect.sync(() => sent.push(input)),
+          "filed",
+        ),
+      );
+
+      const command = ActionCli.command(app, File);
+      const help = (yield* lines(command, ["--help"])).join("\n");
+
+      expect(help).toMatch(/--url string\s*\n/);
+      expect(help).toMatch(/--tags string\s+Labels to file it under\. Repeat for each value\.\n/);
+      expect(help).toMatch(/--also string\s+Repeat for each value\.\n/);
+      expect(help).toMatch(/--pinned\s*\n/);
+      expect(help).toMatch(/--read\s+Only read ones\? --no-read sends false\.\n/);
+      expect(help).toMatch(/--answers value\s+A JSON array\.\n/);
+      expect(help).toMatch(/--filter value\s+A JSON object\.\n/);
+      expect(help).toMatch(/--limit value\s*\n/);
+
+      const listed = ActionCli.command(app, File, { positional: ["tags"] });
+
+      expect((yield* lines(listed, ["--help"])).join("\n")).toMatch(
+        /tags\.\.\. string\s+Labels to file it under \(optional\)\n/,
+      );
+
+      yield* exec(command, [
+        "--url=u",
+        "--tags=a",
+        "--tags=b",
+        "--no-read",
+        '--answers=[{"id":"1"}]',
+        '--filter={"id":"2"}',
+      ]);
+
+      expect(sent).toEqual([
+        {
+          url: "u",
+          tags: ["a", "b"],
+          pinned: false,
+          read: false,
+          answers: [{ id: "1" }],
+          filter: { id: "2" },
+        },
+      ]);
+    }),
+);
+
+it.effect(
+  "runs commands of its own beside the derived ones, and refuses one named as a derived one",
+  () =>
+    Effect.gen(function* () {
+      const Greet = Action.make("greet", {
+        description: "Greets",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: { name: Schema.String },
+        success: Schema.String,
+      });
+
+      const app = Action.implement(Greet, ({ name }) => Effect.succeed(`hello ${name}`));
+
+      const greetEveryone = Command.make("greet-everyone", {}, () =>
+        Effect.gen(function* () {
+          const client = yield* Action.client(app);
+
+          yield* Console.log(yield* client.greet({ name: "everyone" }));
+        }).pipe(Effect.scoped),
+      );
+
+      const refused = Command.make("refused", {}, () =>
+        Effect.fail(new CliError.UserError({ cause: "no", userMessage: "Not today" })),
+      );
+
+      const cli = ActionCli.make(app, {
+        name: "greeter",
+        subcommands: [greetEveryone, { group: "Others", commands: [refused] }],
+      });
+
+      expect(yield* lines(cli, ["greet", "--name", "ada"])).toEqual(['"hello ada"']);
+      expect(yield* lines(cli, ["greet-everyone"])).toEqual(["hello everyone"]);
+
+      const [exit, , errors] = yield* printed(exec(cli, ["refused"]));
+
+      expect(failure(exit)).toBeInstanceOf(CliError.UserError);
+      expect(errors.join("\n")).toMatch(/Not today/);
+
+      const help = (yield* lines(cli, ["--help"])).join("\n");
+
+      expect(help).toMatch(/greet\s+Greets/);
+      expect(help).toMatch(/greet-everyone/);
+      expect(help).toMatch(/refused/);
+
+      const named = (name: string) => Command.make(name, {}, () => Effect.void);
+
+      expect(() => ActionCli.make(app, { name: "greeter", subcommands: [named("greet")] })).toThrow(
+        "Duplicate command: greet, claimed by action greet and subcommands",
+      );
+
+      expect(() =>
+        ActionCli.make(app, {
+          name: "greeter",
+          subcommands: [named("one"), { group: "Others", commands: [named("one")] }],
+        }),
+      ).toThrow("Duplicate command: one");
+    }),
+);
+
 it.effect("acquires only the builder of the selected command's implementation", () =>
   Effect.gen(function* () {
     const builds: string[] = [];

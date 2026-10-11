@@ -200,12 +200,31 @@ const repeatedElementOf = (
 // `Param.variadic` repeats one parameter and `Param.orElse` makes two.
 const noElementOccurrence = "[]";
 
+// Why: The help of Effect CLI shows a flag's name and the kind of its value, which say neither that
+// a flag repeats, nor that `--no-<flag>` is a switch's `false`, nor that a value is JSON. A switch
+// of a required field is `false` when left out, so only an optional one is told how to say it.
+const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
+  const kinds = new Set(acceptedJsonKindsOf(unsuspended(encoded)));
+
+  if (kinds.size !== 1) return undefined;
+
+  return kinds.has("array") ? "A JSON array." : kinds.has("object") ? "A JSON object." : undefined;
+};
+
+const withHint = (description: string | undefined, hint: string | undefined) => {
+  if (hint === undefined || description === undefined) return description ?? hint;
+
+  const stated = description.trimEnd();
+
+  return /[.!?:]$/.test(stated) ? `${stated} ${hint}` : `${stated}. ${hint}`;
+};
+
 const fieldParam = (
   kind: Kind,
   name: string,
   encoded: SchemaAST.AST,
   plain: SchemaAST.AST | undefined,
-): Pick<FieldParam, "param" | "repeats"> => {
+): Pick<FieldParam, "param" | "repeats" | "hint"> => {
   const optional = SchemaAST.isOptional(encoded);
 
   const value =
@@ -233,17 +252,29 @@ const fieldParam = (
           )
         : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(listed)),
       repeats: true,
+      hint: kind === Param.flagKind ? "Repeat for each value." : undefined,
     };
   }
 
-  if (optional) return { param: Param.optional(valueParam(kind, name, value)), repeats: false };
+  if (optional) {
+    return {
+      param: Param.optional(valueParam(kind, name, value)),
+      repeats: false,
+      hint:
+        kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(value))
+          ? `--no-${name} sends false.`
+          : jsonHintOf(value),
+    };
+  }
+
+  const isSwitch = kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded));
 
   return {
-    param:
-      kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded))
-        ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
-        : valueParam(kind, name, encoded).pipe(Param.map(Option.some)),
+    param: isSwitch
+      ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
+      : valueParam(kind, name, encoded).pipe(Param.map(Option.some)),
     repeats: false,
+    hint: jsonHintOf(encoded),
   };
 };
 
@@ -252,6 +283,7 @@ interface FieldParam {
   readonly param: Param.Param<Kind, Option.Option<unknown>>;
   readonly optional: boolean;
   readonly repeats: boolean;
+  readonly hint: string | undefined;
   readonly description: string | undefined;
 }
 
@@ -291,7 +323,7 @@ const fieldParams = (
     const declaredField = declaredFieldsUnlessRenamed.get(property.name);
     const kind = positional.includes(field) ? Param.argumentKind : Param.flagKind;
 
-    const { param, repeats } = fieldParam(
+    const { param, repeats, hint } = fieldParam(
       kind,
       kebab(field),
       property.type,
@@ -306,11 +338,14 @@ const fieldParams = (
       ownOrSuspendedDescriptionOf(documented) ??
       ownOrSuspendedDescriptionOf(withoutOptionalAbsence(documented));
 
+    const help = withHint(description, hint);
+
     return {
       field,
-      param: description === undefined ? aliased : Param.withDescription(aliased, description),
+      param: help === undefined ? aliased : Param.withDescription(aliased, help),
       optional: SchemaAST.isOptional(property.type),
       repeats,
+      hint,
       description,
     };
   });
@@ -372,7 +407,9 @@ const printedOutput = <A extends Action.Any>(
  * action's failure as its `cause` and `reason`, and whose message is its JSON, which `Command.run`
  * prints on stderr and marks reported, so `runMain` does not print it again. The process exits with
  * the cause's `Runtime.errorExitCode`, 1 by default. A type only: after `Command.run`, match the
- * reason by its tag, `Effect.catchReason("UserError", "UserNotFound", f)`.
+ * reason by its tag, `Effect.catchReason("UserError", "UserNotFound", f)`. A command of your own
+ * fails with Effect CLI's `new CliError.UserError({ cause, userMessage })` to be printed so; any
+ * other failure is reported as a crash, `ERROR (#n)`.
  */
 export class UserError<out E = unknown> extends CliError.UserError {
   declare readonly cause: E;

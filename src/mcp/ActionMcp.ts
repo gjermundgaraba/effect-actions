@@ -27,6 +27,7 @@ import {
   type Matching,
   type RemoteRequest,
   type Required as RequiredAuthentication,
+  type ServerBuildServices,
 } from "../authentication/provider.js";
 import { Anyone } from "../contract/rules.js";
 import {
@@ -512,7 +513,7 @@ export function layerHttp<
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | ServerBuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",

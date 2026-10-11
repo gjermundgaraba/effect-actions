@@ -43,6 +43,7 @@ import {
   type PublicOnly,
   type RemoteRequest,
   type Required as RequiredAuthentication,
+  type ServerBuildServices,
   type ServedProvider,
   type VerifierError,
 } from "../authentication/provider.js";
@@ -51,7 +52,6 @@ import { type BuiltIn, type BuiltIns, InvalidInput } from "../contract/errors.js
 import {
   acquire,
   type BuildError,
-  type BuildServices,
   type ErasedHandler,
   type ErasedValue,
   type Holding,
@@ -223,7 +223,7 @@ type RpcLayer<
 > = Layer.Layer<
   never,
   BuildError<Holding<Member<Apps>, A>, A>,
-  | BuildServices<Holding<Member<Apps>, A>, A>
+  | ServerBuildServices<Holding<Member<Apps>, A>, A>
   | RpcServer.Protocol
   | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, M>>
   | ServedProvider<Member<Apps>, A, B extends { readonly authentication: infer D } ? D : never>
