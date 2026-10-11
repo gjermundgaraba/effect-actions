@@ -218,9 +218,9 @@ A browser MCP client sends its page's `Origin`, and needs two things.
   list, it answers `Access-Control-Allow-Origin: *`. Allow the methods `POST` and
   `DELETE`, the endpoint's only ones, and the headers `Content-Type`, `Authorization`,
   `MCP-Protocol-Version`, `MCP-Method`, `MCP-Name` and `Mcp-Session-Id`; expose
-  `WWW-Authenticate`, `MCP-Protocol-Version` and `Mcp-Session-Id`:
-  [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts), provided
-  in [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts).
+  `WWW-Authenticate`, `MCP-Protocol-Version` and `Mcp-Session-Id`: the same `routes.ts`, and
+  [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts) with
+  authentication.
 
 The endpoint's authentication runs before its Origin check, so `allowedOrigins` keeps no request
 from the verifier. A `Host` allowlist, for a request that sends no `Origin`, or an Origin check

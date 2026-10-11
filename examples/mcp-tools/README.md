@@ -28,7 +28,7 @@ vp test examples/mcp-tools
 
 The farm is a fake, answered in memory, so any URL, user and password work: replace it with a
 real HTTP client before deploying anything. `ALLOWED_ORIGINS` lists the browser origins the HTTP
-endpoint accepts, comma-separated; `HOST` is the interface it listens on.
+endpoint accepts and answers with CORS headers, comma-separated; `HOST` is the interface it listens on.
 
 ## Layout
 

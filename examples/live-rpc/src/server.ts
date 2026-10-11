@@ -23,7 +23,16 @@ const server = Layer.unwrap(
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     return HttpRouter.serve(socket).pipe(
-      Layer.provide(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port })),
+      Layer.provide(
+        NodeHttpServer.layer(createServer, {
+          host: "127.0.0.1",
+          port,
+          // A message on a WebSocket is no request body, so `HttpServerRequest.MaxBodySize`
+          // does not bound it: Node's WebSocket server reads one of up to 100 MiB whole unless
+          // told otherwise. A chat message is short, and a larger one closes the socket (1009).
+          websocket: { maxPayload: 64 * 1024 },
+        }),
+      ),
       Layer.provide(MessageStore.layerMemory),
     );
   }),

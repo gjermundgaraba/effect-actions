@@ -78,6 +78,9 @@ const socket = rpc.pipe(
   WebSocket, so a test gives that layer the HTTP protocol ([Testing.md](Testing.md#test-rpcs)).
 - Provide a JSON serialization, the same one on the client: `RpcSerialization.layerJson`,
   `layerNdjson`, `layerJsonRpc()` or `layerNdJsonRpc()`.
+- Bound a WebSocket message on the server: `HttpServerRequest.MaxBodySize` does not, and Node's
+  reads up to 100 MiB whole. `server.ts` passes `websocket: { maxPayload }` to
+  `NodeHttpServer.layer`; a larger message closes the socket.
 - Authentication runs for every message of a protected rpc, not once per connection.
 - A limit in `middleware` may key on the caller and counts input that does not decode, as the
   quota of [kitchen-sink/src/identity/quota.ts](../examples/kitchen-sink/src/identity/quota.ts)
@@ -121,7 +124,8 @@ It leaves the WebSocket constructor to its host: a page provides
 
 - The socket belongs to the Layer providing the protocol, not to the scope around the client:
   provide the connection once, around the page's whole program, never around one call. A page
-  that is not one Effect program keeps it in a `ManagedRuntime`.
+  that is not one Effect program keeps it in a `ManagedRuntime` and calls with promises:
+  `connect(url)` in `browser.ts`, whose socket opens on the first call.
 - A declared error or a refusal is its call's typed failure: only that call fails, and the
   socket stays open. RPC answers no 401 or 403 challenge, and a token may expire under an open
   socket, so the page handles `Unauthenticated` itself

@@ -120,7 +120,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 - `package.json` names `docs` and `examples` under `directories`.
 - Examples: `live-rpc`'s declared errors carry an HTTP status; `kitchen-sink`'s CORS allows an
   MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its
-  pattern.
+  pattern. `notes-service`'s `export` takes a file argument; `mcp-tools` answers CORS for the
+  origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
+  client, `connect(url)`.
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a

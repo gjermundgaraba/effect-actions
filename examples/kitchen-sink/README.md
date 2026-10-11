@@ -285,7 +285,8 @@ Left out because this application has no honest place for them:
   here has a builder. `implementation.actions`. `mcp._meta`.
 - `ActionCli.command` and `remoteCommand`, one action as one command; `make`'s and `remote`'s
   `actions`; `remote`'s static `client` option. Both CLIs here are aggregates of every action,
-  and the remote one reads its client from `Config`.
+  and the remote one reads its client from `Config`. `subcommands` and `toUserError`, a command
+  written by hand: [notes-service](../notes-service/) has one.
 - `ActionRpc.layer`'s `actions`, `Rpc.group`, and `ActionRpc.client`'s options.
 - A binding's other fields, `Http.actions`, `Http.error` and `Http.authentication`.
 - `ActionMcp`'s `path`, `description`, `websiteUrl`, `icons` and `extensions`; `fetchClient`'s

@@ -142,7 +142,7 @@ In an aggregate, a command's options go under `commands`, keyed by the action's 
 
 For a syntax the options cannot express, such as a flag named apart from its field, or a command
 calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and
-pass it in `subcommands`
+pass it in `subcommands`: `notes export <file>` takes `Argument.String("file")`
 ([notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts)):
 
 ```ts

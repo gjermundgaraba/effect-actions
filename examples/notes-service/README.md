@@ -19,7 +19,7 @@ export NOTES_TOKEN=ada                                          # a demo token: 
 node --import tsx examples/notes-service/src/cli.ts --help
 echo "First draft" | node --import tsx examples/notes-service/src/cli.ts create-note --title Plan
 node --import tsx examples/notes-service/src/cli.ts list-notes
-node --import tsx examples/notes-service/src/cli.ts export       # a command written by hand
+node --import tsx examples/notes-service/src/cli.ts export notes.md   # a command written by hand
 
 vp test examples/notes-service
 ```
