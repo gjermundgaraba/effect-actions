@@ -8,7 +8,8 @@ service you already serve. `make` and `remote` derive a command for every action
 implementations or the binding, so a new action is a new command: list `actions` to leave some
 out.
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [ActionCli-failures.md](ActionCli-failures.md). Reading order: [README.md](README.md).
 
 ## API
 
@@ -67,7 +68,8 @@ Run it with Effect's own `Command.run`:
 - **Test commands without a process** with `Command.runWith`, `TestConsole` and
   `Stdio.layerTest`. Provide the services around the test so its commands share one store:
   [assistant/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/commands.test.ts).
-  `TestConsole.logLines` holds every line of the test, not of one run: take each run's own, as
+  `TestConsole.logLines` holds every line of the test, each `unknown`, not of one run: take each
+  run's own and compare or decode them, as
   [notes-service/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/commands.test.ts) does.
 
 ## Call a server from commands
@@ -153,7 +155,8 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   `authorize` still runs. The `client` option reaches the derived commands alone.
 - **The output and failure rules below do not apply to it.** Print with `Console.log`, and map a
   failure to Effect CLI's `new CliError.UserError({ cause, userMessage })` for `Command.run` to
-  print `userMessage` on stderr. Any other failure is reported as a crash, `ERROR (#n)`.
+  print `userMessage` on stderr. Map once, around the command's whole Effect: any other failure,
+  one unmapped call's included, is reported as a crash, `ERROR (#n)` with a stack trace.
 - **Write the list in the call.** The aggregate's type then carries its commands' failures and
   services. A list held in options annotated `ActionCli.Options` adds none to the type.
 

@@ -4,7 +4,8 @@ Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rp
 Reach for it when a client keeps a connection open and calls often, such as a page on a
 WebSocket, or when the application already speaks Effect RPC.
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [ActionRpc-failures.md](ActionRpc-failures.md). Reading order: [README.md](README.md).
 
 ## API
 
@@ -90,8 +91,9 @@ const socket = rpc.pipe(
   `layerProtocolStdio`, serves protected actions too, but has no HTTP request, which limits its
   provider and its verifier: [ActionRpc-failures.md](ActionRpc-failures.md).
 - **The same actions as JSON too.** Merge `ActionHttp.layer(Http, implementations)` beside the
-  rpc layer and provide the authentication once, around both
-  ([kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts)). The routes need what
+  rpc layer, each given its descriptor's provider
+  ([kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts)): one provider given to
+  both is built once. The routes need what
   the rpcs did not: an `httpApiStatus` on each declared error, which answers 422 without one
   ([live-rpc/src/chat/Chat.ts](../examples/live-rpc/src/chat/Chat.ts)); a request body limit;
   and router middleware for a service an `RpcMiddleware` provides

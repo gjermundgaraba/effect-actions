@@ -83,7 +83,8 @@ The tasks are in [ActionCli.md](ActionCli.md).
   command, exit 1, on stdout, or on stderr under `logToStderr`: the client provided on the
   command requires a token, and a failure of what a command is provided is `runMain`'s report,
   not the command's JSON. Read the token with `Config.option` and add the header only when it is
-  there.
+  there. Where every command needs it, keep it required and map the failure, in the Effect that
+  provides the client, to `new CliError.UserError({ cause, userMessage })`.
 - `HttpClientError` whose `reason._tag` is `InvalidUrlError`, from a remote command: its client
   has no `baseUrl` and prepends no URL.
 - 401 `Unauthenticated` from a remote command: a remote command adds no headers of its own. Add

@@ -3,7 +3,9 @@
 A verifier reading the request, an API key or a cookie, a route of your own, a policy before
 authentication, and a refusal outside the router.
 
-New here? Start at [README.md](README.md), then [Authentication.md](Authentication.md).
+Read [Authentication.md](Authentication.md) first, and this page alone, in one tool call. When
+something fails, search [Authentication-failures.md](Authentication-failures.md). Reading order:
+[README.md](README.md).
 
 ## API
 

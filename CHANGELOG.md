@@ -97,6 +97,12 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
   what an answering turn does ([ActionToolkit.md](docs/ActionToolkit.md#ask-for-approval)), the
   shape of a refusal over MCP, and CORS for a browser MCP client.
+- Each module page opens with how to read it (alone, in one tool call) and links its failures
+  page, which the user test's second round showed nothing else led a reader to.
+- Corrected in the docs after that round: another method on an MCP endpoint answers
+  `Allow: POST, DELETE`; an action without input answers 415 to a body with no `Content-Type`;
+  the headers and methods a browser MCP client's CORS allows; what invalid tool arguments
+  answer; two failure entries that named one cause of two.
 - `package.json` names `docs` and `examples` under `directories`.
 - Examples: `live-rpc`'s declared errors carry an HTTP status; `kitchen-sink`'s CORS allows an
   MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its

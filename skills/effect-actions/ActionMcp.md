@@ -5,7 +5,8 @@ after it. `layerHttp` mounts a Streamable HTTP endpoint, for clients that connec
 `runStdio` is the whole program of a subprocess a local agent starts. For a model your own code
 calls in process, use [ActionToolkit.md](ActionToolkit.md).
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [ActionMcp-failures.md](ActionMcp-failures.md). Reading order: [README.md](README.md).
 
 ## API
 
@@ -108,6 +109,11 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus"
   behind a token over HTTP keep their one protected contract here: never a public copy. An HTTP
   server has many callers: never provide an identity at its startup, where it would stand for
   every request.
+- **Test the tools without a process**: the implementations in process over a fake upstream
+  ([mcp-tools/test/printers/printers.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/printers/printers.test.ts)),
+  an endpoint in memory
+  ([mcp-tools/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/routes.test.ts)). A subprocess
+  test adds only that stdout carries the protocol alone.
 
 ## Describe tools to a model
 
@@ -122,7 +128,8 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
 - A tool's input is one object with keys. Omit `input` for a tool without arguments, and wrap a
   union, an array or a scalar in a field.
 - An argument the schema refuses, an undeclared one included, is answered by the native server
-  before the handler runs, with its own message, not `InvalidInput`. So constrain in the schema
+  before the handler runs, as an `isError` result whose text is `Invalid parameters for tool
+  '<name>': …`, not `InvalidInput`. So constrain in the schema
   what a model may send: an id written into an upstream URL is not made safe by
   `encodeURIComponent`, which leaves `..` alone.
 - A `Schema.makeFilter` check adds nothing to the tool's listed input schema, and
@@ -208,8 +215,10 @@ A browser MCP client sends its page's `Origin`, and needs two things.
   [mcp-tools/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/routes.ts).
 - **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
   `HttpRouter.cors`, global to the router, only where an origin is configured: given an empty
-  list, it answers `Access-Control-Allow-Origin: *`. Give it what an MCP client sends and reads,
-  a session's `Mcp-Session-Id` and `DELETE` included:
+  list, it answers `Access-Control-Allow-Origin: *`. Allow the methods `POST` and
+  `DELETE`, the endpoint's only ones, and the headers `Content-Type`, `Authorization`,
+  `MCP-Protocol-Version`, `MCP-Method`, `MCP-Name` and `Mcp-Session-Id`; expose
+  `WWW-Authenticate`, `MCP-Protocol-Version` and `Mcp-Session-Id`:
   [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts), provided
   in [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts).
 

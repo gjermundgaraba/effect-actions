@@ -3,7 +3,8 @@
 `Action.make` defines an action, and `Action.implement` binds handlers and an authorizer to
 contracts: every surface takes the implementation it returns, or a list of them.
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [Action-failures.md](Action-failures.md). Reading order: [README.md](README.md).
 
 ## API
 

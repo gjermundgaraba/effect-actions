@@ -3,7 +3,8 @@
 Call actions from your own code, such as a job or a test, and share one build of the
 implementations between servers and jobs.
 
-New here? Start at [README.md](README.md), then [Action.md](Action.md).
+Read [Action.md](Action.md) first, and this page alone, in one tool call. When something fails,
+search [Action-failures.md](Action-failures.md). Reading order: [README.md](README.md).
 
 ## API
 

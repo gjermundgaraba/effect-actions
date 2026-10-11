@@ -6,7 +6,8 @@ calls your actions. Nothing authenticates: the host names the caller. Code of yo
 the same implementations typed, with `Action.client`
 ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [ActionToolkit-failures.md](ActionToolkit-failures.md). Reading order: [README.md](README.md).
 
 ## API
 

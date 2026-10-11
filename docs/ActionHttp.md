@@ -4,7 +4,8 @@ JSON `POST` routes on Effect's `HttpApi`, one per action. `ActionHttp.make` bind
 mount path; the server mounts that one binding, every client calls it and the OpenAPI document is
 generated from it.
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [ActionHttp-failures.md](ActionHttp-failures.md). Reading order: [README.md](README.md).
 
 ## API
 
@@ -39,7 +40,8 @@ Exported types: `Binding`; `Any`, any binding; `Client<typeof Http>`, a client's
 
 Each action is served at `POST <prefix>/<action>`, a `readOnly` one too. One without `success`
 answers an empty 200, with no body and no content type, so a hand-written client must not parse
-it. Statuses and bodies: [guarantees.md](guarantees.md#wire-behavior).
+it. One without `input` still takes the body `{}`, typed as JSON. Statuses and bodies:
+[guarantees.md](guarantees.md#wire-behavior).
 
 ## Bind actions to routes
 

@@ -7,7 +7,8 @@ challenges and tool results as sent. The examples put a domain's tests in `test/
 tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which supplies the
 `Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`.
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [Testing-failures.md](Testing-failures.md). Reading order: [README.md](README.md).
 
 ## API
 

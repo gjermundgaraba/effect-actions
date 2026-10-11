@@ -3,7 +3,8 @@
 Install the package, import its modules, write the smallest program, lay out an application and
 bundle a browser client.
 
-New here? Start at [README.md](README.md).
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [setup-failures.md](setup-failures.md). Reading order: [README.md](README.md).
 
 ## Install
 

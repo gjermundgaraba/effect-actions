@@ -18,8 +18,9 @@ same schemas, handler and authorization.
 
 ## How to read these pages
 
-1. **Open one page per read, with your file-reading tool.** A page fits one read. Several in one
-   shell command are cut by its output limit, and what is cut goes unnoticed.
+1. **Open one page per tool call, with your file-reading tool.** A page fits one read. Several
+   in one call, however many commands it runs, are cut by its output limit, and what is cut goes
+   unnoticed.
 2. **Start from the example closest to what you are building** ([Examples](#examples)). Its
    README has a layout tree and a "Where to look" table naming the file for each thing. Copy its
    layout and idioms: the examples are the reference for how code is written.
