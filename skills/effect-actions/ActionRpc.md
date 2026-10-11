@@ -69,9 +69,7 @@ const socket = rpc.pipe(
 ```
 
 [live-rpc/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/routes.ts) and
-[live-rpc/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/server.ts) are the two halves;
-[kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) merges the socket beside
-HTTP routes and an MCP endpoint.
+[live-rpc/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/server.ts) are the two halves.
 
 - Provide the protocol to the rpc layer, inside what `HttpRouter.serve` serves:
   `RpcServer.layerProtocolWebsocket` and `layerProtocolHttp` add their route to that router.
@@ -91,6 +89,14 @@ HTTP routes and an MCP endpoint.
 - A protocol with no router, such as `RpcServer.layerProtocolSocketServer` or
   `layerProtocolStdio`, serves protected actions too, but has no HTTP request, which limits its
   provider and its verifier: [ActionRpc-failures.md](ActionRpc-failures.md).
+- **The same actions as JSON too.** Merge `ActionHttp.layer(Http, implementations)` beside the
+  rpc layer and provide the authentication once, around both
+  ([kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts)). The routes need what
+  the rpcs did not: an `httpApiStatus` on each declared error, which answers 422 without one
+  ([live-rpc/src/chat/Chat.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/chat/Chat.ts)); a request body limit;
+  and router middleware for a service an `RpcMiddleware` provides
+  ([ActionHttp.md](ActionHttp.md#serve-the-routes)). Write the header's decoding once, in a
+  function both middleware call.
 
 ## Call the rpcs
 

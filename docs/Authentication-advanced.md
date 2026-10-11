@@ -102,6 +102,9 @@ See [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-po
 `publicRoutes` in [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) and
 [kitchen-sink/test/request-policy.test.ts](../examples/kitchen-sink/test/request-policy.test.ts).
 
+- **An MCP endpoint's `allowedOrigins` checks no `Host`.** It refuses only an unlisted `Origin`:
+  a request sending none passes, whatever its `Host`. The example's policy refuses a `Host` that
+  is neither loopback nor the public URL's, the check against DNS rebinding.
 - **The order decides whether the policy covers discovery.** Global middleware runs in the
   order it registers, a provider publishing a protected resource registers its discovery when
   it is built, and the layer provided last is built first. A policy merged beside the routes,

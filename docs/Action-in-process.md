@@ -53,9 +53,10 @@ elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](../examples/ki
 
 ## Share one build across servers
 
-`HttpRouter.serve` and `Testing.layer` each build their routes in a layer graph of their own.
-That graph reuses what is provided from outside it and shares nothing it builds itself: a
-builder's run, a built authorizer, or a service of yours such as an in-memory store.
+Inside one `HttpRouter.serve` or one `Testing.layer`, a builder runs once, however many surfaces
+serve it. Each builds its routes in a layer graph of its own, which reuses what is provided from
+outside it and shares nothing it builds itself: a builder's run, a built authorizer, or a
+service of yours such as an in-memory store.
 
 - **With one server, put everything the process runs inside the layer it serves**, a job or an
   agent beside the routes included.
@@ -78,8 +79,10 @@ That is [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) and
 [kitchen-sink/test/routes.test.ts](../examples/kitchen-sink/test/routes.test.ts) does it with two
 `Testing.layer`s, asserting one run of a builder both ports serve.
 
-- **A sibling given neither may build again, with state of its own.** The order
-  `Layer.mergeAll` lists its layers in does not decide it: it builds them concurrently.
+- **A job merged beside `HttpRouter.serve`, with no `Action.layer` above both, shares the
+  server's build only when its own side builds first.** Built after the routes, it builds
+  again, with state of its own. Which builds first depends on timing: it can pass in a test and
+  build twice once the job starts later.
 - **`Action.layer` builds every implementation it is given**, those no surface serves included,
   so it owes their startup services.
 - **Inside one layer graph, a builder runs with the services of whichever surface builds it

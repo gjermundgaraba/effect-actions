@@ -43,7 +43,8 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
   builds: build the binding and its provider from one descriptor.
 - `Type 'X' is not assignable to type 'never'` where the server is launched, or
   `Request<"Requires", X>` in the layer's type: a handler, an authorizer or a layer middleware
-  reads a request service `X` that nothing around the layer provides
+  reads a request service `X` that nothing around the layer provides, or router middleware
+  provides `X` and is not declared `HttpRouter.middleware<{ provides: X }>()`
   ([Serve the routes](ActionHttp.md#serve-the-routes)). Where `X` is the identity, a public
   handler reads it, or a layer whose middleware requires it serves public actions: make the
   action protected, or serve the protected actions from a layer of their own.

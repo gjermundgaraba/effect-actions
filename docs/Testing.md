@@ -57,6 +57,8 @@ See [notes-service/test/notes/notes.test.ts](../examples/notes-service/test/note
   [mcp-tools/test/printers/printers.test.ts](../examples/mcp-tools/test/printers/printers.test.ts)
   runs the real upstream service over a fake `HttpClient` Layer.
 - `it.effect` runs on a test clock: fork a call that waits, `TestClock.adjust`, then join it.
+- A stdio server runs the same implementations: test them here. A subprocess test adds only what
+  the process adds, stdout carrying nothing but the protocol.
 - A Toolkit and a CLI need no `Testing` export: call `toolkit.handle` or script a
   `LanguageModel` ([assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts)),
   and run commands with `Command.runWith`
@@ -86,9 +88,8 @@ test is
   [Action-in-process.md](Action-in-process.md#share-one-build-across-servers)).
 - The client is `layer`'s own. A fake upstream is another `HttpClient`: provide it to the service
   that calls out ([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)).
-- Every request on `layer`'s client reaches the routes, whatever its host, and carries that host
-  as its `Host` header, `localhost` for a relative URL: a client given a `baseUrl` and a remote
-  `ActionCli` command run in memory unchanged.
+- Every request on `layer`'s client reaches the routes, whatever its host: a client given a
+  `baseUrl`, a remote `ActionCli` command's included, runs in memory unchanged.
 - Requests run in the test's context: a `ConfigProvider` or the test clock around the test
   reaches middleware and handlers.
 - To send raw web `Request`s too, build one `HttpRouter.toWebHandler` and dispose it yourself;
@@ -120,7 +121,8 @@ Both clients take it: `ActionHttp.client(Http, as("reader"))` and
 A typed client decodes a refusal to its error. To assert on the answer as sent, build the request
 (`HttpClientRequest.post`, `bearerToken`, `bodyJsonUnsafe`) and send it with `HttpClient.execute`,
 which succeeds whatever the status. Read `response.status` and
-`response.headers["www-authenticate"]`, the challenge, as that file does.
+`response.headers["www-authenticate"]`, the challenge, as that file does. The status and body of
+each case are the table in [guarantees.md](guarantees.md#wire-behavior).
 
 ## Test MCP tools
 
@@ -134,12 +136,21 @@ answer other than 200 decodes as a refusal alone, so an error a verifier declare
 `ActionHttp.client`, is an `McpCallError` here
 ([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
 
-For what the client's types will not send or its decoding hides (`tools/list`, an `Origin` header,
-a refusal's challenge, a malformed call), send `Testing.mcpRequest`. It is a native
-`HttpClientRequest`: `HttpClient.execute(Testing.mcpRequest("tools/list"))` succeeds with the
-response whatever its status
-([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)). For a web handler or
-`fetch`, convert it with `HttpClientRequest.toWebResult` and pass an absolute `url`.
+A method decodes a refusal alike whether the endpoint answered a 401 or a 403 or returned a tool
+result in a 200 ([guarantees.md](guarantees.md#wire-behavior)): to assert which, send the call
+yourself and read its status.
+
+For that, and for what the client's types will not send or its decoding hides (`tools/list`, an
+`Origin` header, a refusal's challenge, a malformed call), build the request with
+`Testing.mcpRequest`. It returns a native `HttpClientRequest`:
+`yield* HttpClient.execute(Testing.mcpRequest("tools/call", { name: "whoAmI", arguments: {} }))`
+succeeds with the response whatever its status, to read `response.status`, `response.headers`
+and `yield* response.json`
+([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)
+asserts a 401 so, and
+[mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts) reads `tools/list`).
+For a web handler or `fetch`, pass an absolute `url`: `HttpClientRequest.toWebResult(request)` is
+then a `Result` holding the web `Request`, taken with `Result.getOrThrow`.
 
 ## Test rpcs
 
@@ -171,7 +182,8 @@ binding's group, which `ActionRpc.layer` does not provide (`Handler<"…">` stay
 
 ## Assert on errors
 
-Take the failure with `Effect.flip(call)`, then assert its class and its `message` separately:
+Take the failure with `Effect.flip(call)`, which alone asserts only that the call failed, then
+assert its class and its `message` separately:
 
 ```ts
 expect(refusal).toBeInstanceOf(Action.Forbidden);

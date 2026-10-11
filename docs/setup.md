@@ -11,14 +11,21 @@ New here? Start at [README.md](README.md).
 pnpm add @gjermundgaraba/effect-actions effect@~4.0.2
 ```
 
-| Need                                | Add                            |
-| ----------------------------------- | ------------------------------ |
-| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.2` |
+| Need                                | Add                                                              |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.2`                                   |
+| Tests                               | `vitest@^5.0.3` and `@effect/vitest@~4.0.2`, as dev dependencies |
+| Type checking                       | `typescript@^7.0.2`, as a dev dependency                         |
 
 The `effect` peer admits only the patches of the Effect release the package is tested against:
 a minor release may change the unstable Effect modules the surfaces build on.
 
-Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer. ESM only.
+Keep the tilde in `package.json`: `^4.0.2`, which npm writes for `effect@4.0.2`, admits a minor
+release outside the peer range. `npm install effect@~4.0.2` keeps it.
+
+Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer. ESM only. `tsconfig.json` sets
+`"module": "nodenext"`, since the package's modules resolve only through its `exports`, and
+`"strict": true`, which Effect requires.
 
 ## Entry points
 

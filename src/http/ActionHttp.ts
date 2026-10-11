@@ -362,7 +362,8 @@ const jsonContentType = () =>
  * need, until its `middleware` or middleware provided around it provides them, the identity
  * of a protected action excepted, which its authentication provides; the router provides
  * its own, such as the request, to every route. Its routes take only requests typed as JSON,
- * and what middleware provides per request wins over what the layer was built with.
+ * and what middleware provides per request wins over what the layer was built with. A request
+ * body is read whole unless the host provides `HttpServerRequest.MaxBodySize`.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,
@@ -471,8 +472,9 @@ const erasedClient = (
  * Effect's native `HttpApiClient` for a binding, one method per action taking the
  * action's input directly: `client.greet({ name })`. The argument may be omitted when `{}`
  * is a valid input. Requires the native `HttpClient`, as `HttpApiClient.make` does.
- * The options are the native ones, `baseUrl` and `transformClient`. The native client
- * itself stays available: `HttpApiClient.make(Http.api)`.
+ * The options are the native ones, `baseUrl` and `transformClient`, a bearer token being
+ * `transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. The native
+ * client itself stays available: `HttpApiClient.make(Http.api)`.
  *
  * A call fails with a declared error value (the action's own, or a built-in
  * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` when the

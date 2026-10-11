@@ -10,7 +10,8 @@ signed-in user, start from [notes-service](../notes-service/).
 
 ## Run it
 
-From the repository root, after `vp install`:
+From the repository root, after `vp install` (from an installed package, see
+[Run one](../README.md#run-one)):
 
 ```sh
 export FARM_URL=https://farm.example.test FARM_USER=demo FARM_PASSWORD=demo

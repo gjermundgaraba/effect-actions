@@ -4,7 +4,9 @@ Native Effect CLI commands for actions, with flags derived from each action's in
 `command` take implementations and run the handler in the command's own process, behind the same
 `authorize`: for a local tool, or an operator console that has the services itself. `remote` and
 `remoteCommand` take an HTTP binding and call a server, running nothing locally: for users of a
-service you already serve.
+service you already serve. `make` and `remote` derive a command for every action of the
+implementations or the binding, so a new action is a new command: list `actions` to leave some
+out.
 
 New here? Start at [README.md](README.md).
 
@@ -65,6 +67,8 @@ Run it with Effect's own `Command.run`:
 - **Test commands without a process** with `Command.runWith`, `TestConsole` and
   `Stdio.layerTest`. Provide the services around the test so its commands share one store:
   [assistant/test/commands.test.ts](../examples/assistant/test/commands.test.ts).
+  `TestConsole.logLines` holds every line of the test, not of one run: take each run's own, as
+  [notes-service/test/commands.test.ts](../examples/notes-service/test/commands.test.ts) does.
 
 ## Call a server from commands
 
@@ -115,8 +119,8 @@ with the field's description as its help. The field's encoded JSON value decides
 - A value flag reads its text as JSON when the field accepts that kind of JSON value
   (`--count 2`, `--owner '{"id":"x"}'`, `--points '[{"x":1}]'`), and keeps it as text otherwise
   (`--limit auto`).
-- A repeated flag given no occurrence leaves an optional field out. `--tags '[]'` alone sends an
-  empty list.
+- A repeated flag given no occurrence sends `[]` for a required `Schema.Array` field, and leaves
+  an optional field out, where `--tags '[]'` alone sends an empty list.
 - An input that is not a struct of named fields (a union, a record, a scalar) gets one
   `--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`.
 

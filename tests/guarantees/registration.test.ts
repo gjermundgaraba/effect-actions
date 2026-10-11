@@ -886,6 +886,21 @@ describe("projection boundaries", () => {
     }
   });
 
+  it("answers an action without success with an empty 200 over HTTP: no body, no content type", async () => {
+    const Touch = Action.make("touch", {
+      description: "Returns nothing",
+      readOnly: false,
+      caller: Action.Anyone,
+    });
+
+    const web = makeTestHttp(Action.implement(Touch, () => Effect.void));
+    const response = await web.handler(post("/api/touch"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(await response.text()).toBe("");
+  });
+
   it("lowers declaration schemas to JSON identically on both transports", async () => {
     const Stamp = Action.make("stamp", {
       description: "Date round trip",

@@ -92,6 +92,17 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- `docs/` is shorter and split by what a reader does: each module's failure modes are a page of
+  their own, `<Module>-failures.md`, read when something fails; `Action.md`'s in-process client
+  and shared build are `Action-in-process.md`; `Authentication.md`'s sections past a bearer token
+  are `Authentication-advanced.md`. No page is over 16 KB, which a coding agent's tool reads
+  whole. The pages state what sixteen user-test sessions lacked, among it the model loop and
+  what an answering turn does ([ActionToolkit.md](docs/ActionToolkit.md#ask-for-approval)), the
+  shape of a refusal over MCP, and CORS for a browser MCP client.
+- `package.json` names `docs` and `examples` under `directories`.
+- Examples: `live-rpc`'s declared errors carry an HTTP status; `kitchen-sink`'s CORS allows an
+  MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its
+  pattern.
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a

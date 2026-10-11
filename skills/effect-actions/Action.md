@@ -1,7 +1,7 @@
 # Action
 
-The contract module. `Action.make` defines an action, and `Action.implement` binds handlers and
-an authorizer to contracts: every surface takes the implementation it returns, or a list of them.
+`Action.make` defines an action, and `Action.implement` binds handlers and an authorizer to
+contracts: every surface takes the implementation it returns, or a list of them.
 
 New here? Start at [README.md](README.md).
 
@@ -68,10 +68,14 @@ uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `ch
   MCP endpoint, Toolkit, CLI and client holding it.
 - **For no arguments, omit `input`.** A `Schema.Struct({})` accepts any value but `null`, and MCP
   refuses it as a tool's input ([ActionMcp.md](ActionMcp.md#describe-tools-to-a-model)).
+- **A field callers may omit is `Schema.optional`.** One with a decoding default (`limit` in
+  `Issues.ts`) is still stated by a typed client given an argument
+  ([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)).
+- **An action's `name`, `input`, `success`, `error` and `readOnly` are public**: reuse them, as
+  in `Schema.Array(SaveLink.input)`.
 - **Annotate each declared error with `httpApiStatus`**, or HTTP answers it as a 422.
 - **Give each declared error its own `_tag`**: a client tells errors sharing one, or having
   none, apart by their other fields alone, the first that decodes winning.
-- **Derive authorization from `readOnly`**, never from an `mcp` hint.
 - **A contract does not say where it is served**: each surface takes a list of actions. Keep
   those lists in one file beside the contracts
   ([kitchen-sink/src/Actions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/Actions.ts)): an action added
@@ -89,8 +93,8 @@ uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `ch
 a protected one: every surface requires that identity, whether or not the handler reads it. A
 remote surface gets it by authenticating the request
 ([Authentication.md](Authentication.md#declare-how-callers-sign-in)); on a local surface the
-host provides it around each call
-([ActionToolkit.md](ActionToolkit.md#name-the-caller), [ActionCli.md](ActionCli.md#name-the-caller)).
+host provides it ([ActionToolkit.md](ActionToolkit.md#name-the-caller),
+[ActionCli.md](ActionCli.md#name-the-caller), [ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
 
 `CurrentUser` is in [notes-service/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/Identity.ts),
 and a public action in [notes-service/src/status/Status.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/status/Status.ts).
@@ -107,6 +111,9 @@ and a public action in [notes-service/src/status/Status.ts](https://github.com/g
   [kitchen-sink/src/admin/Admin.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/admin/Admin.ts)).
 - **No surface provides a public action an identity.** An action whose answer depends on the
   caller is protected.
+- **One protected contract serves callers with a token over HTTP and a local host without
+  one**, never a public copy of it: the host provides the caller around `runStdio`
+  ([notes-service/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/stdio.ts)).
 
 ## Implement actions
 
@@ -171,14 +178,19 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
 ```
 
 That is [notes-service/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/authorize.ts).
+Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an action's
+`readOnly` then changes who may call it.
 
 - **A call runs authentication, then over HTTP and RPC the layer's `middleware`, input
   decoding, the authorizer, then the handler**, each refusing before the next. So a caller the
   authorizer would refuse can still receive an `InvalidInput` describing the input's schema. To
   refuse or limit before decoding, use that `middleware`
   ([ActionHttp.md](ActionHttp.md#serve-the-routes), [ActionRpc.md](ActionRpc.md#serve-the-rpcs)).
-- **A `Forbidden` naming `scopes` is what an OAuth client re-authorizes on**
-  ([Authentication.md](Authentication.md#publish-oauth-discovery)).
+- **Name `scopes` in a `Forbidden` only where re-authorizing can grant them.** An OAuth
+  challenge answers them, which a client follows only where the server publishes discovery
+  ([Authentication.md](Authentication.md#publish-oauth-discovery)); with fixed tokens, such as
+  API keys, name none. Without scopes it is a 403 over HTTP and, over MCP, an `isError` tool
+  result in a 200 ([guarantees.md](guarantees.md#wire-behavior)).
 - **What a plain authorizer yields is a request-time requirement of every surface.** To read a
   store, make `authorize` an Effect that yields the store once and returns the function, as a
   builder does
@@ -186,12 +198,14 @@ That is [notes-service/src/identity/authorize.ts](https://github.com/gjermundgar
   is built once for each implementation stating it: keep state they share in a service it
   yields.
 - **A limit, such as a rate limit, is the handler's, not the authorizer's.** It fails with an
-  error the action declares, and its limiter is a startup service the builder yields, so every
-  surface counts against one
-  ([kitchen-sink/src/issues/write-limit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/write-limit.ts)).
-- **A check on one record belongs in the handler's data access**, which has the input and the
-  data ([notes-service/src/notes/store.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/notes/store.ts)). So
-  does a rule across callers, such as uniqueness, failing with an error the action declares.
+  error the action declares, and its limiter is a service the builder yields
+  ([kitchen-sink/src/issues/write-limit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/write-limit.ts)):
+  a service is shared wherever it is provided
+  ([kitchen-sink/src/memory.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/memory.ts)), state kept in a
+  builder only within one layer graph.
+- **A check on one record belongs in the handler's data access**
+  ([notes-service/src/notes/store.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/notes/store.ts)). So does a
+  rule across callers, such as uniqueness.
 
 ## Fail with declared and built-in errors
 
@@ -208,3 +222,6 @@ failure compiles. What each surface answers is in [guarantees.md](guarantees.md#
   built-in errors, such as `ActionHttp.client`, hands a handler that service's `Unauthenticated`
   or `Forbidden`. Passed on, it is this server's own refusal: a caller whose token is valid is
   told to sign in again. Map it to an error the action declares, or to a defect.
+- **Map that client's `HttpClientError` and `SchemaError` to one declared error a caller can
+  act on** ([mcp-tools/src/printers/farm.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/farm.ts)). As
+  defects, a model reads only a generic text.

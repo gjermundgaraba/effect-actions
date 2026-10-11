@@ -10,7 +10,8 @@ building a local command-line tool. For a service others call over the network, 
 
 ## Run it
 
-From the repository root, after `vp install`:
+From the repository root, after `vp install` (from an installed package, see
+[Run one](../README.md#run-one)):
 
 ```sh
 node --import tsx examples/assistant/src/agent.ts               # a scripted model: no API key

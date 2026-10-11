@@ -51,7 +51,9 @@ the parts of it that it needs:
 - **Folders are domains, not mechanisms.** Everything about notes is in `notes/`; there is no
   `contracts/`, `handlers/` or `tools/` folder.
 - **The PascalCase file in a domain is its contract.** It imports no server code, so a browser
-  or a CLI can import it. Lowercase files beside it run on the server.
+  or a CLI can import it. Lowercase files beside it run on the server, each named for its role
+  (`handlers.ts`, `store.ts`), never for the domain: `notes.ts` beside `Notes.ts` is one file on
+  a disk that ignores case.
 - **An entrypoint is where implementations are chosen**: which store, which platform, and on a
   local surface which caller. Nothing below it knows what it got, so a test chooses its own.
 - **Tests mirror the source.** A domain's tests sit in `test/<domain>/`, most calling its

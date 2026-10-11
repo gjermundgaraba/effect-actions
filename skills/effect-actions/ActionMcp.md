@@ -104,8 +104,10 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus"
   host that should see what the server holds connects to its HTTP endpoint.
 - **No token arrives, so the host names the caller.** stdio takes no `authentication`: provide the
   protected tools' identity around `runStdio`, whose one caller is whoever started it. Each
-  implementation's `authorize` still runs. An HTTP server has many callers: never provide an
-  identity at its startup, where it would stand for every request.
+  implementation's `authorize` still runs, so give that caller what it checks. Tools served
+  behind a token over HTTP keep their one protected contract here: never a public copy. An HTTP
+  server has many callers: never provide an identity at its startup, where it would stand for
+  every request.
 
 ## Describe tools to a model
 
@@ -123,6 +125,9 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
   before the handler runs, with its own message, not `InvalidInput`. So constrain in the schema
   what a model may send: an id written into an upstream URL is not made safe by
   `encodeURIComponent`, which leaves `..` alone.
+- A `Schema.makeFilter` check adds nothing to the tool's listed input schema, and
+  `Schema.isPattern` its `pattern` only for a RegExp with the `u` flag. Say such a rule in the
+  field's `description`, annotated before the check: after a custom one it is lost too.
 - A declared error reaches the model as an `isError` result whose text is the error's JSON. Write
   its `message` for the model, which acts on it:
   [mcp-tools/src/printers/farm.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/farm.ts). Every other case:
@@ -175,32 +180,42 @@ See [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actio
 sign in. What a signed-in caller may do is each implementation's
 [`authorize`](Action.md#authorize-calls), which runs on every call of a protected tool.
 
-- **One endpoint or two.** On a mixed endpoint, serving public and protected tools, anyone lists
-  every tool, protected ones included, and calls the public ones; a protected tool's call answers
-  the 401 a client signs in on. To keep protected tools unlisted to signed-out callers, serve the
-  public tools on an endpoint of their own: a second `layerHttp` on another `path`. An endpoint of
-  protected tools alone authenticates every request, the listing included.
+- **One endpoint or two.** On a mixed endpoint, serving public and protected tools, a 2026-07-28
+  request lists every tool, protected ones included, and calls a public one signed out, and a
+  session's every request signs in ([Serve tools over HTTP](#serve-tools-over-http)). A
+  protected tool's call answers the 401 a client signs in on. To keep protected tools unlisted
+  to signed-out callers, or public ones open to a session's client, serve the public tools on an
+  endpoint of their own: a second `layerHttp` on another `path`. An endpoint of protected tools
+  alone authenticates every request, the listing included.
 - No listing is filtered by caller: `authorize` refuses the call, not the sight of the tool.
 - On a Bearer endpoint, a protected tool's `Unauthenticated`, or `Forbidden` naming `scopes`,
   answers the request with 401 or 403 and a challenge the client acts on, in place of a tool
-  result ([Authentication.md](Authentication.md#publish-oauth-discovery)). Once a handler has sent
-  a notification the response has started, and its refusal is a tool result: refuse in
-  `authorize`.
+  result ([Authentication.md](Authentication.md#step-up-for-a-scope)). A `Forbidden` naming none
+  is an `isError` tool result, in a 200. Once a handler has sent a notification the response has
+  started, and its refusal is a tool result: refuse in `authorize`.
+- Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)):
+  [notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts).
+  `Testing.mcpClient` decodes a refusal alike from a 401, a 403 or a tool result: to assert the
+  status, send `Testing.mcpRequest`.
 
 ## Allow browser clients
 
 A browser MCP client sends its page's `Origin`, and needs two things.
 
 - **`allowedOrigins`.** A request carrying an `Origin` is refused with 403 unless that exact
-  origin is listed; one without, as other clients send, passes. Read the list from configuration:
+  origin is listed, so a page a user happens to visit cannot call the tools; one without, as
+  other clients send, passes. Read the list from configuration:
   [mcp-tools/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/routes.ts).
 - **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
-  `HttpRouter.cors`, global to the router, with the headers an MCP client sends and reads:
+  `HttpRouter.cors`, global to the router, only where an origin is configured: given an empty
+  list, it answers `Access-Control-Allow-Origin: *`. Give it what an MCP client sends and reads,
+  a session's `Mcp-Session-Id` and `DELETE` included:
   [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts), provided
   in [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts).
 
 The endpoint's authentication runs before its Origin check, so `allowedOrigins` keeps no request
-from the verifier. A Host or Origin check that must run first is a request policy:
+from the verifier. A `Host` allowlist, for a request that sends no `Origin`, or an Origin check
+that must run first is a request policy:
 [Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
 
 ## Add native prompts and resources

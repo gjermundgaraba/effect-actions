@@ -68,7 +68,9 @@ does an RPC binding ([live-rpc/src/Rpc.ts](https://github.com/gjermundgaraba/eff
   `ActionRpc.layer` refuse, when they build, a binding whose descriptor is another object than
   the one its provider was given, equal name and options or not.
 - A local surface has no remote caller and takes no descriptor: the host provides the identity
-  itself ([ActionCli.md](ActionCli.md#name-the-caller), [ActionToolkit.md](ActionToolkit.md#name-the-caller)).
+  itself, for a CLI ([ActionCli.md](ActionCli.md#name-the-caller)), a Toolkit
+  ([ActionToolkit.md](ActionToolkit.md#name-the-caller)) and an MCP server over stdio
+  ([ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
 
 ## Verify credentials
 
@@ -111,7 +113,8 @@ What each surface answers a missing or refused credential with:
 
 Give a Bearer descriptor's `layer` a `protectedResource`. The provider then publishes OAuth
 protected-resource discovery (RFC 9728) and names it in every challenge, so an MCP client that
-gets a 401 finds the authorization server. See
+gets a 401 finds the authorization server. Without it the challenge names nowhere to sign in,
+so an MCP endpoint whose users sign in through OAuth publishes it. See
 [notes-service/src/identity/verifier.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/verifier.ts)
 and [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts).
 
@@ -140,8 +143,10 @@ added. The authorizer, a handler or the verifier may fail with one:
 - On a public action or under another scheme, an authorizer's or a handler's refusal is
   answered like a declared error, and RPC never steps up: a refusal is the call's typed failure
   ([guarantees.md](guarantees.md#wire-behavior)).
-- Name scopes only when re-authorizing can grant them. Otherwise fail with a `Forbidden` naming
-  none, a plain 403, rather than a login prompt that cannot help
+- Name scopes only when re-authorizing can grant them: a server with fixed tokens, such as API
+  keys, names none. A `Forbidden` naming none prompts no login. Over HTTP it is a 403 without a
+  challenge. Over MCP it is an `isError` tool result, in a 200, from the authorizer or a
+  handler, and the endpoint's 403 only from the verifier
   ([kitchen-sink/src/identity/authenticate.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/authenticate.ts)).
 - Map another service's refusals before failing with them
   ([Action.md](Action.md#fail-with-declared-and-built-in-errors)): passed on, a `Forbidden`

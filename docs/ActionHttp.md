@@ -37,8 +37,9 @@ Exported types: `Binding`; `Any`, any binding; `Client<typeof Http>`, a client's
 | `client`: `transformClient` | Wraps the native `HttpClient`: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.     |
 | `fetchClient`: `fetch`      | Its `fetch`, beside `client`'s options. Omitted: the global `fetch`, looked up on every call.     |
 
-Each action is served at `POST <prefix>/<action>`, a `readOnly` one too. Statuses and bodies:
-[guarantees.md](guarantees.md#wire-behavior).
+Each action is served at `POST <prefix>/<action>`, a `readOnly` one too. One without `success`
+answers an empty 200, with no body and no content type, so a hand-written client must not parse
+it. Statuses and bodies: [guarantees.md](guarantees.md#wire-behavior).
 
 ## Bind actions to routes
 
@@ -89,8 +90,16 @@ Files: [quickstart/src/routes.ts](../examples/quickstart/src/routes.ts) and
   among them.
 - A service a handler or an authorizer reads per request stays owed by the layer until router
   middleware around it, `HttpRouter.provideRequest` or the layer's own `middleware` provides it.
-  Never provide an identity or a tenant at startup
+  Router middleware is the one that reads the request, such as a header:
+  `HttpRouter.middleware<{ provides: Tenant }>()((route) => …)`, given as
+  `Layer.provide(resolveTenant.layer)`
+  ([kitchen-sink/src/workspaces/tenant.ts](../examples/kitchen-sink/src/workspaces/tenant.ts)).
+  Without the type argument it runs and the layer still owes the service.
+  `HttpRouter.provideRequest(layer)` builds its layer once, at startup, and gives every request
+  that one value: never an identity or a tenant
   ([Action.md](Action.md#say-who-may-call-an-action)).
+- Give the server a `host`: `NodeHttpServer.layer(createServer, { port })` without one listens on
+  every interface. The examples bind `127.0.0.1`.
 - Two listeners are two `HttpRouter.serve` calls, each building its routes on its own. What they
   share is provided outside both
   ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers),
@@ -136,6 +145,10 @@ Give `Http.api`, a plain `HttpApi`, to `OpenApi.fromApi`, `HttpApiSwagger.layer`
 [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) (`documentation`).
 
 - The document's route is public unless you put middleware around it.
+- A header that middleware reads is not in the document: its operations list no `parameters`.
+  Add it by rewriting the document,
+  `OpenApi.fromApi(Http.api.annotate(OpenApi.Transform, (document) => …))`, or make the value an
+  input.
 - The document and the clients list every action of the binding, served or not. An action no
   layer serves answers 404.
 - An OAuth protected resource is documented as a bearer scheme: Effect has no OAuth scheme
