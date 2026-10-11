@@ -156,10 +156,10 @@ codex plugin add effect-actions@effect-actions-marketplace
 ```
 
 The skill is generated from `docs/` on the main branch, which can be ahead of the latest
-release, and links to the examples on GitHub. In a project that installs the package, point
-the agent at `node_modules/@gjermundgaraba/effect-actions/docs` and
-`node_modules/@gjermundgaraba/effect-actions/examples`: the pages and the applications of the
-installed version.
+release. Its links to the examples are paths into the installed package,
+`node_modules/@gjermundgaraba/effect-actions/examples`, which an agent reads without a network;
+the pages of the installed version are beside them, in
+`node_modules/@gjermundgaraba/effect-actions/docs`.
 
 ## Status
 

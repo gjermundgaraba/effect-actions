@@ -52,10 +52,10 @@ export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
 });
 ```
 
-See [notes-service/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/Identity.ts)
-and [notes-service/src/Api.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/Api.ts). An MCP endpoint names it
-the same way ([notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts)), and so
-does an RPC binding ([live-rpc/src/Rpc.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/Rpc.ts)).
+See [notes-service/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/Identity.ts)
+and [notes-service/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/Api.ts). An MCP endpoint names it
+the same way ([notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts)), and so
+does an RPC binding ([live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/Rpc.ts)).
 
 - Every client of the binding imports the descriptor: keep it in the contract file. Keep
   `layer`, and what its verifier imports, in server-only modules.
@@ -64,7 +64,7 @@ does an RPC binding ([live-rpc/src/Rpc.ts](https://github.com/gjermundgaraba/eff
 - A descriptor names one scheme, and a binding or an endpoint names one descriptor. There is no
   fallback between schemes: a host accepting two credentials for one identity declares two
   descriptors and serves them on two bindings or endpoints
-  ([kitchen-sink/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/Identity.ts)).
+  ([kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts)).
 - Build a server's binding and its provider from one descriptor value. `ActionHttp.layer` and
   `ActionRpc.layer` refuse, when they build, a binding whose descriptor is another object than
   the one its provider was given, equal name and options or not.
@@ -79,8 +79,8 @@ Write the verifier in a server-only module, give it to `Authentication.layer`, a
 layer to every layer serving a protected action: `routes.pipe(Layer.provide(authenticate))`. The
 verifier takes the credential and succeeds with the identity, or fails with
 `Action.Unauthenticated`, `Action.Forbidden` or an error the descriptor declares. See
-[notes-service/src/identity/verifier.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/verifier.ts) and
-[notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts).
+[notes-service/src/identity/verifier.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/verifier.ts) and
+[notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts).
 
 - **The library reads no token.** Everything that makes a credential valid is the verifier's to
   check, with your authorization server's library: its signature, its expiry, and its audience.
@@ -94,21 +94,21 @@ verifier takes the credential and succeeds with the identity, or fails with
 - A verifier that needs startup services, such as a user directory, is passed as an Effect that
   yields them and returns the verifier: a builder ([Action.md](Action.md#implement-actions)),
   run once per layer graph
-  ([kitchen-sink/src/identity/authenticate.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/authenticate.ts)).
+  ([kitchen-sink/src/identity/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/authenticate.ts)).
 - Call `Authentication.layer` once per descriptor and provide that one value wherever a
   provider is required.
 - A failure that is not the caller's, such as an issuer the verifier cannot reach, is an error
   the descriptor declares, with `{ httpApiStatus: 503 }`: an `Unauthenticated` would have the
   caller sign in again
-  ([kitchen-sink/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/Identity.ts),
-  [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts)).
+  ([kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts),
+  [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)).
 - Over RPC the verifier runs for each message of a protected rpc, not once per connection
-  ([live-rpc/src/identity/verifier.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/identity/verifier.ts),
-  [kitchen-sink/test/identity/session.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/session.test.ts)).
+  ([live-rpc/src/identity/verifier.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/identity/verifier.ts),
+  [kitchen-sink/test/identity/session.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/session.test.ts)).
 
 What each surface answers a missing or refused credential with:
 [guarantees.md](guarantees.md#wire-behavior), as
-[notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts) asserts.
+[notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts) asserts.
 
 ## Publish OAuth discovery
 
@@ -116,8 +116,8 @@ Give a Bearer descriptor's `layer` a `protectedResource`. The provider then publ
 protected-resource discovery (RFC 9728) and names it in every challenge, so an MCP client that
 gets a 401 finds the authorization server. Without it the challenge names nowhere to sign in,
 so an MCP endpoint whose users sign in through OAuth publishes it. See
-[notes-service/src/identity/verifier.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/verifier.ts)
-and [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts).
+[notes-service/src/identity/verifier.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/verifier.ts)
+and [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts).
 
 - `resource` is the exact public URL of the endpoint clients connect to: discovery is served at
   `/.well-known/oauth-protected-resource` followed by its path. Only the deployment knows that
@@ -136,7 +136,7 @@ and [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgar
 A step-up refusal is one an OAuth client acts on: `Action.Unauthenticated`, which it signs in
 on, or an `Action.Forbidden` naming `scopes`, which it re-authorizes on with those scopes
 added. The authorizer, a handler or the verifier may fail with one:
-[notes-service/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/authorize.ts).
+[notes-service/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/authorize.ts).
 
 - Step-up is a Bearer descriptor's, for protected actions and routes under `protect`: the
   refusal answers the request with 401 or 403 and its challenge, over MCP in place of the tool
@@ -148,7 +148,7 @@ added. The authorizer, a handler or the verifier may fail with one:
   keys, names none. A `Forbidden` naming none prompts no login. Over HTTP it is a 403 without a
   challenge. Over MCP it is an `isError` tool result, in a 200, from the authorizer or a
   handler, and the endpoint's 403 only from the verifier
-  ([kitchen-sink/src/identity/authenticate.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/authenticate.ts)).
+  ([kitchen-sink/src/identity/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/authenticate.ts)).
 - Map another service's refusals before failing with them
   ([Action.md](Action.md#fail-with-declared-and-built-in-errors)): passed on, a `Forbidden`
   naming that service's scopes sends this server's caller to re-authorize for them.

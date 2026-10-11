@@ -4,9 +4,9 @@ description: >
   Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
   which defines Effect action contracts once for HTTP, MCP, Effect RPC, native Toolkits, and CLIs.
   These pages follow the repository's main branch, which can be ahead of the latest
-  release; where the package is installed, read the same pages in
-  node_modules/@gjermundgaraba/effect-actions/docs/ and the example applications in
-  node_modules/@gjermundgaraba/effect-actions/examples/, which describe the installed version.
+  release. Their links to the example applications are paths from the root of a project that
+  installs the package, node_modules/@gjermundgaraba/effect-actions/examples/; the same pages at
+  the installed version are in node_modules/@gjermundgaraba/effect-actions/docs/.
 ---
 
 # effect-actions
@@ -30,7 +30,7 @@ same schemas, handler and authorization.
 5. **When something fails, search the `*-failures.md` pages** for a fragment of the message. Each
    module page has one beside it, such as [Action-failures.md](Action-failures.md).
 
-A service others call is [notes-service](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/notes-service/) plus
+A service others call is [notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/) plus
 [Action.md](Action.md), [ActionHttp.md](ActionHttp.md), [ActionMcp.md](ActionMcp.md),
 [Authentication.md](Authentication.md) and [Testing.md](Testing.md).
 
@@ -63,15 +63,15 @@ there is no package root.
 
 | Example                                     | What it is                                                                                                       | Start from it when                                                      |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [quickstart](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/quickstart/)       | One action, served as a JSON route and an MCP tool, called with its typed client.                                | You want the smallest thing that runs.                                  |
-| [notes-service](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/notes-service/) | A service with bearer authentication: a JSON API and MCP tools from one implementation, a CLI, a browser client. | You are building a service others call. Most applications are this.     |
-| [mcp-tools](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/mcp-tools/)         | An MCP server whose tools wrap an upstream HTTP API, over stdio and over HTTP, with an image result.             | You are putting an existing API in front of a model.                    |
-| [assistant](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/assistant/)         | No server: the same implementations as a model's tools, with approval of writes, and as local commands.          | A model calls your code in process, or you are building a local CLI.    |
-| [live-rpc](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/live-rpc/)           | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token.                   | A client keeps a connection open, or the application speaks Effect RPC. |
-| [kitchen-sink](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/kitchen-sink/)   | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index.           | You need a working use of one specific feature.                         |
+| [quickstart](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/)       | One action, served as a JSON route and an MCP tool, called with its typed client.                                | You want the smallest thing that runs.                                  |
+| [notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/) | A service with bearer authentication: a JSON API and MCP tools from one implementation, a CLI, a browser client. | You are building a service others call. Most applications are this.     |
+| [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/)         | An MCP server whose tools wrap an upstream HTTP API, over stdio and over HTTP, with an image result.             | You are putting an existing API in front of a model.                    |
+| [assistant](node_modules/@gjermundgaraba/effect-actions/examples/assistant/)         | No server: the same implementations as a model's tools, with approval of writes, and as local commands.          | A model calls your code in process, or you are building a local CLI.    |
+| [live-rpc](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/)           | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token.                   | A client keeps a connection open, or the application speaks Effect RPC. |
+| [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/)   | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index.           | You need a working use of one specific feature.                         |
 
 Each example's README says where to look for what. The index in
-[kitchen-sink](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/README.md#index) maps every export and option it uses to
+[kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/README.md#index) maps every export and option it uses to
 a file. Every token, user and store in the examples is a demo, marked `DEMO ONLY` where it must
 change before a deployment.
 

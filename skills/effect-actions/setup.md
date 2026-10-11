@@ -51,7 +51,7 @@ Effect's own modules are subpaths of `effect` too: `effect/http` (`HttpRouter`, 
 ## Minimal program
 
 One action, served as a JSON route and as an MCP tool: four declarations, each in a file of
-[quickstart/src/](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/quickstart/src/).
+[quickstart/src/](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/).
 
 ```ts
 // greeting/Greeting.ts: the contract. It imports no server code.
@@ -77,14 +77,14 @@ export const routes = Layer.mergeAll(
 ```
 
 Serve `routes` with `HttpRouter.serve` and a platform server layer
-([quickstart/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/server.ts)) and you have `POST /api/greet`
+([quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts)) and you have `POST /api/greet`
 and an MCP tool `greet` at `/mcp`. Call the route with the binding's typed client
-([quickstart/src/client.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/client.ts)), and test both in memory
-([quickstart/test/greeting/greeting.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/test/greeting/greeting.test.ts)).
+([quickstart/src/client.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/client.ts)), and test both in memory
+([quickstart/test/greeting/greeting.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/test/greeting/greeting.test.ts)).
 
 A request body has no size limit unless the host sets one
 ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
-[notes-service](https://github.com/gjermundgaraba/effect-actions/tree/main/examples/notes-service/) is this program grown into a service, in the same
+[notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/) is this program grown into a service, in the same
 layout.
 
 ## Lay out an application
@@ -93,13 +93,13 @@ Folders are domains; the PascalCase file in each is its contract file, which imp
 code; `routes.ts` holds the surfaces; each entrypoint chooses the services. An entrypoint of a
 remote surface never provides an identity: authentication supplies it per request
 ([Action.md](Action.md#say-who-may-call-an-action)). The tree:
-[examples/README.md](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/README.md#how-they-are-laid-out).
+[examples/README.md](node_modules/@gjermundgaraba/effect-actions/examples/README.md#how-they-are-laid-out).
 
 ## Bundle for a browser
 
 Import into the page only the contract files, the binding and a client module of your own:
-[notes-service/src/browser.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/browser.ts) over HTTP, with
-promises, [live-rpc/src/browser.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/src/browser.ts) over a WebSocket.
+[notes-service/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/browser.ts) over HTTP, with
+promises, [live-rpc/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/browser.ts) over a WebSocket.
 
 - `Action`, `ActionHttp`, `ActionRpc` and `Authentication` are the browser-safe modules: they
   use nothing of Node or a server platform.
@@ -110,4 +110,4 @@ promises, [live-rpc/src/browser.ts](https://github.com/gjermundgaraba/effect-act
   those, and `effect/socket` for a WebSocket client.
 - A page on another origin needs CORS on the host, answered before authentication:
   `HttpRouter.cors`, as in
-  [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts).
+  [kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts).

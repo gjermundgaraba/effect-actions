@@ -32,7 +32,7 @@ use these words with these meanings. Module names and Effect's own terms (`HttpA
 
 ### Layout of an application
 
-The parts of the layout every example uses: [examples/README.md](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/README.md#how-they-are-laid-out).
+The parts of the layout every example uses: [examples/README.md](node_modules/@gjermundgaraba/effect-actions/examples/README.md#how-they-are-laid-out).
 
 - **Domain**: one subject of the application, such as notes or identity, and the folder holding everything about it: its contract file, its services, its handlers. A folder is never a mechanism, such as `contracts/` or `handlers/`.
 - **Contract file**: the PascalCase file of a domain, such as `notes/Notes.ts`: its schemas, errors and actions, and the identity and authentication descriptor it declares. It imports no server code, so a browser or a CLI can import it. The lowercase files beside it run on the server.

@@ -136,7 +136,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   the wire behavior of every surface in one table, and the library's scope; its lifetime and
   authorization rules moved to [Action.md](docs/Action.md) and
   [Authentication.md](docs/Authentication.md). Section anchors changed
-  ([docs/README.md](docs/README.md)).
+  ([docs/README.md](docs/README.md)). In the skill, a link to an example is its path in a
+  project that installs the package, `node_modules/@gjermundgaraba/effect-actions/examples/…`,
+  which an agent reads without a network.
 - A command reading a field from stdin is listed by its action's description alone in its
   parent's `--help`; the "Reads <field> from stdin" line, which broke the list of subcommands,
   stays in the command's own help ([ActionCli.md](docs/ActionCli.md)).

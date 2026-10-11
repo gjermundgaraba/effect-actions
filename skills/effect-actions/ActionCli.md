@@ -52,9 +52,9 @@ const assistant = ActionCli.make([tasks, identity], { name: "assistant" }).pipe(
 ```
 
 Run it with Effect's own `Command.run`:
-[assistant/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/commands.ts) and
-[assistant/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/cli.ts) are the whole program, and
-[kitchen-sink/src/ops.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/ops.ts) an operator console.
+[assistant/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/commands.ts) and
+[assistant/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/cli.ts) are the whole program, and
+[kitchen-sink/src/ops.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/ops.ts) an operator console.
 
 - **Provide services on the command, not around the run.** `Command.provide(layer)` builds the
   layer when an action runs. Provided around `Command.run`, it is built before parsing, so
@@ -68,10 +68,10 @@ Run it with Effect's own `Command.run`:
   [Add a command of your own](#add-a-command-of-your-own).
 - **Test commands without a process** with `Command.runWith`, `TestConsole` and
   `Stdio.layerTest`. Provide the services around the test so its commands share one store:
-  [assistant/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/commands.test.ts).
+  [assistant/test/commands.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/commands.test.ts).
   `TestConsole.logLines` holds every line of the test, each `unknown`, not of one run: take each
   run's own and compare or decode them, as
-  [notes-service/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/commands.test.ts) does.
+  [notes-service/test/commands.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/commands.test.ts) does.
 
 ## Call a server from commands
 
@@ -79,9 +79,9 @@ Pass the HTTP binding to `remote`. The program imports the binding alone, never 
 command calls its action through the binding's `ActionHttp.client` method
 ([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)) and fails as that method does. The host
 provides `HttpClient` (`NodeHttpClient.layerUndici`) and says where the server is:
-[notes-service/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/commands.ts) and
-[notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts).
-[kitchen-sink/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/cli.ts) adds a tenant header and uses
+[notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts) and
+[notes-service/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/cli.ts).
+[kitchen-sink/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/cli.ts) adds a tenant header and uses
 every command option.
 
 - **Choose where the connection comes from.** A fixed URL or token goes in the `client` option:
@@ -96,7 +96,7 @@ every command option.
 - **Test a remote command the same way** as a local one, with `Testing.layer(routes)` provided
   as its `HttpClient` ([Testing.md](Testing.md#test-routes-in-memory)). Export the command from
   a module apart from the entrypoint that runs it
-  ([notes-service/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/commands.test.ts)).
+  ([notes-service/test/commands.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/commands.test.ts)).
 
 ## Shape flags, input and output
 
@@ -132,7 +132,7 @@ encoded JSON value decides the kind of flag:
 
 In an aggregate, a command's options go under `commands`, keyed by the action's name
 (`completeTask`), not the command's:
-[assistant/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/commands.ts).
+[assistant/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/commands.ts).
 
 - `positional`: list every required field before any optional one, and an array field last.
 - `stdin` suits a secret or a document. The value is all of stdin until it closes, without the
@@ -143,7 +143,7 @@ In an aggregate, a command's options go under `commands`, keyed by the action's 
 For a syntax the options cannot express, such as a flag named apart from its field, or a command
 calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and
 pass it in `subcommands`
-([notes-service/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/commands.ts)):
+([notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts)):
 
 ```ts
 const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes] });
@@ -198,14 +198,14 @@ A local command of a protected action requires the identity service its contract
 ([Action.md](Action.md#say-who-may-call-an-action)), whether or not a handler reads it. No
 credential arrives at a terminal, so the host names the caller, on the command:
 `Command.provideSync(CurrentCaller, operator)`, or `Command.provideEffect(CurrentCaller, load)`
-to read it when an action runs. See [assistant/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/cli.ts).
+to read it when an action runs. See [assistant/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/cli.ts).
 
 - **A local command is no bypass.** The implementation's `authorize` runs as on every surface
   ([Action.md](Action.md#authorize-calls)).
 - **A trusted operator is a type, not a flag.** Give the identity a variant only a host builds,
   kept out of every verifier's return type, and admit it in the shared `authorize`:
-  [assistant/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/identity/Identity.ts) with
-  [assistant/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/identity/authorize.ts), or
-  [kitchen-sink/src/admin/Admin.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/admin/Admin.ts) with
-  [kitchen-sink/src/ops.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/ops.ts).
+  [assistant/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/identity/Identity.ts) with
+  [assistant/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/identity/authorize.ts), or
+  [kitchen-sink/src/admin/Admin.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/admin/Admin.ts) with
+  [kitchen-sink/src/ops.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/ops.ts).
 - **A remote command names no caller.** The server verifies the credentials its client sends.

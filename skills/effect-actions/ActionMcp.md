@@ -48,15 +48,15 @@ export const routes = Layer.mergeAll(
 );
 ```
 
-See [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/routes.ts) and
-[quickstart/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/server.ts). Surfaces given the same
+See [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts) and
+[quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts). Surfaces given the same
 implementations in one set of routes run each builder once, so a note written over HTTP is read
-as a tool: [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts). For two
+as a tool: [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts). For two
 servers, see [Action-in-process.md](Action-in-process.md#share-one-build-across-servers).
 
 - The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
   Claude Code 2.1 and Codex CLI 0.162 both connect, as tested in October 2026:
-  [notes-service](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/README.md#run-it) has the commands.
+  [notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/README.md#run-it) has the commands.
 - **A client of a 2025 revision opens a session** with `initialize`; a 2026-07-28 request stands
   alone. A session holds what its client sent there and no identity: each request authenticates,
   as its own caller. It lasts until its client ends it with a `DELETE` or the process stops, as
@@ -66,9 +66,9 @@ servers, see [Action-in-process.md](Action-in-process.md#share-one-build-across-
 - An endpoint without `authentication` answers whoever reaches its port. Bind it to loopback or to
   a network only trusted clients are on, and limit request bodies
   ([ActionHttp.md](ActionHttp.md#serve-the-routes)):
-  [mcp-tools/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/server.ts).
+  [mcp-tools/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/server.ts).
 - The endpoint takes no layer middleware. A limit that must hold for tools goes in the handlers:
-  [kitchen-sink/src/issues/write-limit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/write-limit.ts).
+  [kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts).
 
 ## Serve tools over stdio
 
@@ -85,8 +85,8 @@ ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: 
 );
 ```
 
-See [notes-service/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/stdio.ts), and
-[mcp-tools/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/stdio.ts) for public tools.
+See [notes-service/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/stdio.ts), and
+[mcp-tools/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/stdio.ts) for public tools.
 
 To try a server by hand, pipe it one request. Without an `initialize` handshake before it, a
 request carries the 2026-07-28 metadata in its `_meta`, as `Testing.mcpRequest` builds it:
@@ -110,9 +110,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus"
   server has many callers: never provide an identity at its startup, where it would stand for
   every request.
 - **Test the tools without a process**: the implementations in process over a fake upstream
-  ([mcp-tools/test/printers/printers.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/printers/printers.test.ts)),
+  ([mcp-tools/test/printers/printers.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/printers/printers.test.ts)),
   an endpoint in memory
-  ([mcp-tools/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/routes.test.ts)). A subprocess
+  ([mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts)). A subprocess
   test adds only that stdout carries the protocol alone.
 
 ## Describe tools to a model
@@ -121,8 +121,8 @@ A tool is its contract ([Action.md](Action.md#define-a-contract)): a model knows
 name, its `description`, and its input schema with each field's `description`. `readOnly` is the
 tool's read-only hint, and the contract's `mcp` option holds its `title`, its other hints and its
 `_meta`. The server's `instructions` say what the tools are for together. See
-[mcp-tools/src/printers/Printers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/Printers.ts) and
-[mcp-tools/src/instructions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/instructions.ts).
+[mcp-tools/src/printers/Printers.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/Printers.ts) and
+[mcp-tools/src/instructions.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/instructions.ts).
 
 - MCP takes a write as destructive unless it states `destructiveHint: false`.
 - A tool's input is one object with keys. Omit `input` for a tool without arguments, and wrap a
@@ -137,10 +137,10 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
   field's `description`, annotated before the check: after a custom one it is lost too.
 - A declared error reaches the model as an `isError` result whose text is the error's JSON. Write
   its `message` for the model, which acts on it:
-  [mcp-tools/src/printers/farm.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/farm.ts). Every other case:
+  [mcp-tools/src/printers/farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/farm.ts). Every other case:
   [guarantees.md](guarantees.md#wire-behavior).
 - `actions` lists the tools, and only listed actions must suit MCP:
-  [kitchen-sink/src/Actions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/Actions.ts). Leave out an action a
+  [kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts). Leave out an action a
   model should not call, or one that takes a secret ([Action.md](Action.md#define-a-contract)).
 
 ## Return images and other media
@@ -154,14 +154,14 @@ success: { printer: Printer, image: Action.Image },
 
 The tool sends the field as an image block, after the JSON of the rest. Every other surface sends
 it as JSON, the bytes in base64. See
-[mcp-tools/src/printers/Printers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/Printers.ts), and
+[mcp-tools/src/printers/Printers.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/Printers.ts), and
 [Testing.md](Testing.md#test-mcp-tools) for the client that decodes it back.
 
 - An image is a top-level field of a struct success, bare, optional or a required array, or the
   whole success or an array of it. Anywhere else in a served action, as in a `Schema.NullOr`, a
   `Schema.Class` success or an input, `layerHttp` and `runStdio` throw. So an action taking an
   image as input is no tool: leave it out of `actions`
-  ([kitchen-sink/src/attachments/Attachments.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/attachments/Attachments.ts)).
+  ([kitchen-sink/src/attachments/Attachments.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/Attachments.ts)).
 - A media field's own `description` reaches no model. Describe the image in the action's
   `description`.
 
@@ -180,7 +180,7 @@ const mcp = ActionMcp.layerHttp(implementations, {
 export const routes = Layer.mergeAll(api, mcp, health, openApi).pipe(Layer.provide(authenticate));
 ```
 
-See [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts). Write the
+See [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts). Write the
 [descriptor](Authentication.md#declare-how-callers-sign-in) and its
 [provider](Authentication.md#verify-credentials) once for every surface, and
 [publish discovery](Authentication.md#publish-oauth-discovery) so an MCP client finds where to
@@ -201,7 +201,7 @@ sign in. What a signed-in caller may do is each implementation's
   is an `isError` tool result, in a 200. Once a handler has sent a notification the response has
   started, and its refusal is a tool result: refuse in `authorize`.
 - Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)):
-  [notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts).
+  [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts).
   `Testing.mcpClient` decodes a refusal alike from a 401, a 403 or a tool result: to assert the
   status, send `Testing.mcpRequest`.
 
@@ -212,15 +212,15 @@ A browser MCP client sends its page's `Origin`, and needs two things.
 - **`allowedOrigins`.** A request carrying an `Origin` is refused with 403 unless that exact
   origin is listed, so a page a user happens to visit cannot call the tools; one without, as
   other clients send, passes. Read the list from configuration:
-  [mcp-tools/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/routes.ts).
+  [mcp-tools/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/routes.ts).
 - **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
   `HttpRouter.cors`, global to the router, only where an origin is configured: given an empty
   list, it answers `Access-Control-Allow-Origin: *`. Allow the methods `POST` and
   `DELETE`, the endpoint's only ones, and the headers `Content-Type`, `Authorization`,
   `MCP-Protocol-Version`, `MCP-Method`, `MCP-Name` and `Mcp-Session-Id`; expose
   `WWW-Authenticate`, `MCP-Protocol-Version` and `Mcp-Session-Id`:
-  [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts), provided
-  in [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts).
+  [kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts), provided
+  in [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts).
 
 The endpoint's authentication runs before its Origin check, so `allowedOrigins` keeps no request
 from the verifier. A `Host` allowlist, for a request that sends no `Origin`, or an Origin check
@@ -231,9 +231,9 @@ that must run first is a request policy:
 
 Merge Effect's own `McpServer.resource`, `McpServer.prompt` and `McpServer.toolkit` layers into
 one and pass it as `features`:
-[kitchen-sink/src/issues/guide.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/guide.ts), given in
-[kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) and
-[kitchen-sink/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/stdio.ts). Provide a service they need
+[kitchen-sink/src/issues/guide.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/guide.ts), given in
+[kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) and
+[kitchen-sink/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/stdio.ts). Provide a service they need
 around the endpoint, never to the `features` layer itself: there it is built again for the
 features alone, so a resource reads another store than the tools write.
 
