@@ -4,9 +4,9 @@ import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
-import { authenticate } from "../../examples/authentication.js";
-import { actors, authorize, CurrentActor } from "../../examples/authorization.js";
-import { Http, Login } from "../../examples/binding.js";
+import { authenticate } from "../support/app/authentication.js";
+import { actors, authorize, CurrentActor } from "../support/app/authorization.js";
+import { Http, Login } from "../support/app/binding.js";
 import {
   Double,
   GetUser,
@@ -15,7 +15,7 @@ import {
   Status,
   UserNotFound,
   WhoAmI,
-} from "../../examples/contracts.js";
+} from "../support/app/contracts.js";
 import { post, rawToolCall, valueOf, withBearer } from "../support/requests.js";
 import { serve } from "../support/serve.js";
 

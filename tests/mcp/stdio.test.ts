@@ -26,7 +26,7 @@ import { everyConsoleMethod } from "../support/console-methods.js";
 import { rawToolCall, send } from "../support/requests.js";
 import { converse, negotiate } from "../support/stdio-host.js";
 
-const connectSubprocess = async (revision: string, script = "examples/mcp-stdio.ts") => {
+const connectSubprocess = async (revision: string, script = "tests/support/app/mcp-stdio.ts") => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["--import", "tsx", script],

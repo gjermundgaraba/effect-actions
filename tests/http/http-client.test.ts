@@ -5,9 +5,9 @@ import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { authenticate } from "../../examples/authentication.js";
-import { CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
+import { authenticate } from "../support/app/authentication.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
 import { as } from "../support/requests.js";
 import { type Handler, httpClient, serve } from "../support/serve.js";
 

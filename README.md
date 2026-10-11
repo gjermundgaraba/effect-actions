@@ -6,13 +6,14 @@ underneath.
 
 ## Looks like this
 
-```ts example=quickstart.ts
+A contract says what an action takes and answers, and who may call it:
+
+```ts example=quickstart/src/greeting/Greeting.ts
 import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 
-// The contract and its HTTP binding import no server code, so any client can import them,
-// a browser page included.
+// A contract: what the action takes and answers, whether it changes anything, and who may
+// call it. It imports no server code, so any client can import it, a browser page included.
 export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
@@ -20,39 +21,56 @@ export const Greet = Action.make("greet", {
   readOnly: true,
   caller: Action.Anyone,
 });
+```
 
+An implementation binds it to its handler:
+
+```ts example=quickstart/src/greeting/handlers.ts
+import { Effect } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Greet } from "./Greeting.js";
+
+// The implementation: the contract bound to its handler. Every surface takes this one value.
+export const greeting = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+```
+
+A binding gives it a route, for the server to serve and a client to call:
+
+```ts example=quickstart/src/Api.ts
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import { Greet } from "./greeting/Greeting.js";
+
+// The HTTP binding: `POST /api/greet`. The server serves it and the client calls it.
 export const Http = ActionHttp.make([Greet]);
 ```
 
-and a server that implements it, in a module of its own:
+And the same implementation is served on every surface the host wants:
 
-```ts example=quickstart-server.ts
-import { Effect, Layer } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
+```ts example=quickstart/src/routes.ts
+import { Layer } from "effect";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { Greet, Http } from "./quickstart.js";
+import { Http } from "./Api.js";
+import { greeting } from "./greeting/handlers.js";
 
-// The contract states who may call it, here anyone, so its implementation takes no `authorize`.
-const greet = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
-
+// One implementation, two surfaces: a JSON route and an MCP tool at `/mcp`.
 export const routes = Layer.mergeAll(
-  ActionHttp.layer(Http, greet),
-  ActionMcp.layerHttp(greet, { name: "greetings", version: "1.0.0" }),
+  ActionHttp.layer(Http, greeting),
+  ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" }),
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter.serve` and a platform server, with a request body
-limit, as [examples/server.ts](examples/server.ts) serves the example application, and you
-have `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greet`
+Serve `routes` with Effect's `HttpRouter.serve` and a platform server, as
+[examples/quickstart/src/server.ts](examples/quickstart/src/server.ts) does, and you have
+`POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greeting`
 implementation is also:
 
 ```ts
-const { toolkit, layer } = ActionToolkit.make(greet); // native Effect AI Toolkit and its handler layer
-const cli = ActionCli.make(greet, { name: "greetings" }); // greetings greet --name Ada
+const { toolkit, layer } = ActionToolkit.make(greeting); // native Effect AI Toolkit and its handler layer
+const cli = ActionCli.make(greeting, { name: "greetings" }); // greetings greet --name Ada
 const remote = ActionCli.remoteCommand(Http, Greet, { client: { baseUrl } }); // greet --name Ada, over HTTP
-const local = Action.client(greet); // the HTTP client's methods, in process
-const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greet); // Effect RPC, on the protocol the host provides
+const local = Action.client(greeting); // the HTTP client's methods, in process
+const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greeting); // Effect RPC, on the protocol the host provides
 ```
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
@@ -72,7 +90,7 @@ const greeting = Effect.gen(function* () {
 - Every contract states who may call it: `caller: Action.Anyone`, or the identity service a caller must have. A surface serving a protected action authenticates it before decoding its input, through the authentication descriptor its binding names, and the provider the application builds from its own token verifier.
 - Action-level authorization is written once, on the implementation: `Action.implement(actions, handlers, { authorize })`, required for protected actions. Every surface that serves it runs the rule before each handler, so no surface can leave it out and no handler repeats the access policy; `Action.allowAll` admits every authenticated caller. Operational limits, such as a rate limit, and record-level checks stay in the handler, failing with errors the contract lists.
 - Every action states whether it is read-only (`readOnly`), so that rule reads the contract instead of a hand-maintained list of mutation names.
-- A protected action's handler and rule read the identity its contract names, which only authentication of that request supplies; a startup identity never opens a protected route. Public and protected routes share one binding, one mount path, one OpenAPI document, which states the credentials each needs, and one client, and a handler's startup services are built once per [layer graph](docs/guarantees.md#dependency-lifetimes), however many surfaces serve it.
+- A protected action's handler and rule read the identity its contract names, which only authentication of that request supplies; a startup identity never opens a protected route. Public and protected routes share one binding, one mount path, one OpenAPI document, which states the credentials each needs, and one client, and a handler's startup services are built once per [layer graph](docs/Action.md#implement-actions), however many surfaces serve it.
 - The pieces are Effect's own. `Http.api` is a native `HttpApi`, so OpenAPI, Swagger, Scalar and `HttpApiClient` work on it unchanged. MCP is Effect's native `McpServer`, with no SDK runtime dependency. RPC is Effect's native `RpcServer` and `RpcClient`, over HTTP, a WebSocket, a socket or stdio.
 - Tests run in memory. `Action.client` calls an implementation in process, with the typed client's methods, behind its `authorize`, as several callers in one test. Provide `Testing.layer(routes)`, then call the routes with the same typed client and the tools with `Testing.mcpClient`, without opening a port.
 
@@ -86,19 +104,37 @@ Add `@effect/platform-node@~4.0.2` to serve or run a CLI from Node. Every module
 subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
 contracts-only bundle never loads a server.
 
+## Examples
+
+[examples/](examples/README.md) holds complete applications, each a directory you can run, with
+its own tests, laid out the way we recommend for an application: a folder per domain, the
+contract in one file a browser can import, one entrypoint per way of running it. They are
+type-checked and tested with the library and ship in the package.
+
+- [quickstart](examples/quickstart/): the program above.
+- [notes-service](examples/notes-service/): a service with bearer authentication, a JSON API
+  and MCP tools from one implementation, a CLI and a browser client. Most applications are this.
+- [mcp-tools](examples/mcp-tools/): an MCP server whose tools wrap an upstream HTTP API.
+- [assistant](examples/assistant/): no server, the same implementations as a model's tools
+  and as local commands.
+- [live-rpc](examples/live-rpc/): Effect RPC over a WebSocket.
+- [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one
+  application, with an index from each to the file that shows it.
+
 ## Docs
 
-The reference in [docs/](docs/README.md) is written for coding agents: one card per module
-with the API, a canonical snippet, the rules, and the failure modes.
+[docs/](docs/README.md) is written for coding agents: one short page per module, organized by
+task, each linking to the example files that show the task working.
 
-- [docs/README.md](docs/README.md): start here, includes which module to use for which caller.
-- [docs/guarantees.md](docs/guarantees.md): cross-cutting rules for lifetimes, wire formats, and scope.
+- [docs/README.md](docs/README.md): start here: which page answers which task, and which
+  surface to use for which caller.
+- [docs/guarantees.md](docs/guarantees.md): what each case looks like on the wire, on every
+  surface, and what the library leaves to the application.
 - [docs/CONTEXT.md](docs/CONTEXT.md): the vocabulary the docs and the code use.
-- [examples/](examples/README.md): a runnable authenticated application with public and authenticated actions, an MCP endpoint, OpenAPI, and every other surface.
 
 ## For agents
 
-The `effect-actions` skill puts the reference in front of a coding agent. With the
+The `effect-actions` skill puts the docs in front of a coding agent. With the
 [skills CLI](https://github.com/vercel-labs/skills), for any agent it supports:
 
 ```sh
@@ -120,8 +156,10 @@ codex plugin add effect-actions@effect-actions-marketplace
 ```
 
 The skill is generated from `docs/` on the main branch, which can be ahead of the latest
-release; in a project that installs the package, point the agent at
-`node_modules/@gjermundgaraba/effect-actions/docs`, the pages of the installed version.
+release, and links to the examples on GitHub. In a project that installs the package, point
+the agent at `node_modules/@gjermundgaraba/effect-actions/docs` and
+`node_modules/@gjermundgaraba/effect-actions/examples`: the pages and the applications of the
+installed version.
 
 ## Status
 

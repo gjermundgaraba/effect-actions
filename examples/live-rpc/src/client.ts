@@ -1,0 +1,37 @@
+import { NodeRuntime, NodeSocket } from "@effect/platform-node";
+import { Config, Console, Effect, Layer } from "effect";
+import { connection, openChat } from "./browser.js";
+
+// Entrypoint: `node --import tsx examples/live-rpc/src/client.ts`, with the server running.
+// The page's client, run from Node: the same `openChat`, given Node's WebSocket.
+const visit = Effect.gen(function* () {
+  const chat = yield* openChat;
+
+  // Two members on the one socket: each call is whoever its token says.
+  const ada = chat.room("lobby", "ada");
+  const grace = chat.room("lobby", "grace");
+
+  yield* Console.log("rooms, before signing in:", yield* chat.rooms);
+
+  const posted = yield* ada.post("Deploying at noon.");
+
+  yield* Console.log("ada posts:", posted);
+  yield* Console.log("grace reads:", yield* grace.read(posted.id - 1));
+  yield* Console.log("grace removes it:", yield* grace.remove(posted.id));
+  yield* Console.log("ada removes it:", yield* ada.remove(posted.id));
+  yield* Console.log("grace reads ops:", yield* chat.room("ops", "grace").read(0));
+  yield* Console.log("an expired token reads:", yield* chat.room("lobby", "expired").read(0));
+});
+
+const main = Effect.gen(function* () {
+  const url = yield* Config.String("CHAT_URL").pipe(Config.withDefault("ws://127.0.0.1:3000/rpc"));
+
+  // The socket belongs to `connection(url)`: provided once around the whole visit, it opens
+  // for it and closes when this `Effect.provide` ends. `Effect.scoped` holds the client alone.
+  yield* visit.pipe(
+    Effect.scoped,
+    Effect.provide(connection(url).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor))),
+  );
+});
+
+NodeRuntime.runMain(main);

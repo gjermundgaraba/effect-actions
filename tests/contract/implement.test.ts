@@ -11,11 +11,11 @@ import { exec } from "../support/cli-services.js";
 import { defectOf } from "../support/defect.js";
 import { serve } from "../support/serve.js";
 import { as, post, send, withBearer } from "../support/requests.js";
-import { authenticate } from "../../examples/authentication.js";
-import { CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
-import { Permissions, whoAmI as storedWhoAmI } from "../../examples/authorization-built.js";
-import { WhoAmI as WhoAmIContract } from "../../examples/contracts.js";
+import { authenticate } from "../support/app/authentication.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
+import { Permissions, whoAmI as storedWhoAmI } from "../support/app/authorization-built.js";
+import { WhoAmI as WhoAmIContract } from "../support/app/contracts.js";
 
 class Tenant extends Context.Service<Tenant, string>()("implement-test/Tenant") {}
 

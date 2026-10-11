@@ -25,10 +25,10 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import { layer as host } from "../../examples/app.js";
-import { authenticate } from "../../examples/authentication.js";
-import { CurrentActor } from "../../examples/authorization.js";
-import { Http, Login } from "../../examples/binding.js";
+import { layer as host } from "../support/app/app.js";
+import { authenticate } from "../support/app/authentication.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { Http, Login } from "../support/app/binding.js";
 import {
   Double,
   GetUser,
@@ -36,7 +36,7 @@ import {
   Status,
   UserNotFound,
   WhoAmI,
-} from "../../examples/contracts.js";
+} from "../support/app/contracts.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";

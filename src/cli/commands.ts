@@ -614,9 +614,10 @@ export const command = <A extends Action.Any, E, R>(
             run(parsedFields(input, values), json ? undefined : render),
         );
 
-  return command.pipe(
-    Command.withDescription(
-      stdinHelp === undefined ? action.description : `${action.description}\n\n${stdinHelp}`,
-    ),
-  );
+  return stdinHelp === undefined
+    ? Command.withDescription(command, action.description)
+    : command.pipe(
+        Command.withDescription(`${action.description}\n\n${stdinHelp}`),
+        Command.withShortDescription(action.description),
+      );
 };

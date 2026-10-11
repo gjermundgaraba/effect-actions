@@ -15,9 +15,9 @@ import {
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import { RpcClient, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import { SocketServer } from "effect/socket";
-import { authenticate, verify } from "../../examples/authentication.js";
-import { CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
+import { authenticate, verify } from "../support/app/authentication.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
 import {
   Double,
   GetUser,
@@ -25,9 +25,9 @@ import {
   Status,
   UserNotFound,
   WhoAmI,
-} from "../../examples/contracts.js";
-import { double, status, userActions } from "../../examples/handlers.js";
-import { Users } from "../../examples/users.js";
+} from "../support/app/contracts.js";
+import { double, status, userActions } from "../support/app/handlers.js";
+import { Users } from "../support/app/users.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Authentication from "../../src/authentication/Authentication.js";

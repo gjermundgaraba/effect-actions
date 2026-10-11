@@ -13,9 +13,9 @@ import {
 } from "effect";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
-import { actors, CurrentActor } from "../../examples/authorization.js";
-import { userActions } from "../../examples/handlers.js";
-import { Users } from "../../examples/users.js";
+import { actors, CurrentActor } from "../support/app/authorization.js";
+import { userActions } from "../support/app/handlers.js";
+import { Users } from "../support/app/users.js";
 import { defectOf } from "../support/defect.js";
 
 const asAlice = Effect.provideService(CurrentActor, actors.alice);

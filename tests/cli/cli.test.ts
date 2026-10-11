@@ -24,9 +24,9 @@ import * as ActionCli from "../../src/cli/ActionCli.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { authenticate } from "../../examples/authentication.js";
-import { actors, authorize, CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
+import { authenticate } from "../support/app/authentication.js";
+import { actors, authorize, CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
 import { causeOf, exec, logged, printed } from "../support/cli-services.js";
 import { post, send, withBearer } from "../support/requests.js";
 
@@ -1744,6 +1744,14 @@ it.effect("reads the field its options name from stdin, without the line endings
     expect(help).toContain("Reads api-token from stdin: The token to store");
     expect(help).not.toContain("--api-token");
 
+    const listing = yield* lines(
+      ActionCli.make(app, { name: "vault", commands: { store: { stdin: "apiToken" } } }),
+      ["--help"],
+    );
+
+    expect(listing.join("\n")).toContain("Store a secret");
+    expect(listing.join("\n")).not.toContain("from stdin");
+
     const refusal = "apiToken is read from stdin, which is a terminal: pipe it in";
 
     const [terminal, , refusals] = yield* printed(
@@ -2329,7 +2337,7 @@ it(
   "runs under Effect's own runner: the result on stdout, a failure's JSON once on stderr, and its exit code",
   () => {
     const users = (...args: ReadonlyArray<string>) =>
-      spawnSync(process.execPath, ["--import", "tsx", "examples/cli.ts", ...args], {
+      spawnSync(process.execPath, ["--import", "tsx", "tests/support/app/cli.ts", ...args], {
         cwd: process.cwd(),
         encoding: "utf8",
       });

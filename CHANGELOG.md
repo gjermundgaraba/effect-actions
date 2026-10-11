@@ -54,6 +54,24 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- The package ships `examples/`: six complete applications, each a directory with its own
+  tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
+  with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a
+  browser client; `mcp-tools` wraps an upstream API as MCP tools; `assistant` gives the same
+  implementations to a model and to local commands; `live-rpc` is Effect RPC over a WebSocket;
+  `kitchen-sink` uses every module and indexes each export and option to a file. They replace
+  the single-file examples, which were fragments of one demo application
+  ([examples/README.md](examples/README.md)).
+- The docs are organized by task and link to example files instead of embedding them. Each
+  module page keeps its API table and failure modes; rules that restated the code are gone, and
+  what stays is how to do a task, a choice, a trap or a boundary. `docs/guarantees.md` is now
+  the wire behavior of every surface in one table, and the library's scope; its lifetime and
+  authorization rules moved to [Action.md](docs/Action.md) and
+  [Authentication.md](docs/Authentication.md). Section anchors changed
+  ([docs/README.md](docs/README.md)).
+- A command reading a field from stdin is listed by its action's description alone in its
+  parent's `--help`; the "Reads <field> from stdin" line, which broke the list of subcommands,
+  stays in the command's own help ([ActionCli.md](docs/ActionCli.md)).
 - `Authentication.layer` requires the `HttpRouter` only when it publishes a
   `protectedResource`, so the provider serves an RPC server over a socket or stdio too
   ([Authentication.md](docs/Authentication.md)).

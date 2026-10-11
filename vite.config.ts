@@ -25,7 +25,7 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   test: {
-    include: ["tests/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "examples/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
     exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
   },
   pack: {
@@ -50,6 +50,7 @@ export default defineConfig({
       ".pi/**",
       ".roo/**",
       ".windsurf/**",
+      "skills/effect-actions/**",
       "tools/oxlint/anti-slop/**",
       "tools/oxlint/tests/probe-*/**",
     ],

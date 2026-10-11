@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
-import { actors } from "../../examples/authorization.js";
-import { chat, layer as approvalHandlers } from "../../examples/toolkit-approval.js";
-import { Users } from "../../examples/users.js";
+import { actors } from "../support/app/authorization.js";
+import { chat, layer as approvalHandlers } from "../support/app/toolkit-approval.js";
+import { Users } from "../support/app/users.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 

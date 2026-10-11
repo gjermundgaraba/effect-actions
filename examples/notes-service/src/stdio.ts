@@ -1,0 +1,23 @@
+import { NodeRuntime, NodeStdio } from "@effect/platform-node";
+import { Effect } from "effect";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { identity } from "./identity/handlers.js";
+import { CurrentUser } from "./identity/Identity.js";
+import { users } from "./identity/users.js";
+import { notes } from "./notes/handlers.js";
+import { NoteStore } from "./notes/store.js";
+import { status } from "./status/handlers.js";
+
+// Entrypoint: an MCP server a local agent starts as a subprocess, such as
+// `claude mcp add notes -- node --import tsx examples/notes-service/src/stdio.ts`.
+// The same implementations as the HTTP server, and the same `authorize`. No token arrives
+// over stdio, so this host names the caller itself.
+ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: "1.0.0" }).pipe(
+  // DEMO ONLY: a real host reads who started it, from its own login or configuration.
+  Effect.provideService(CurrentUser, users.ada),
+  Effect.provide([NodeStdio.layer, NoteStore.layerMemory]),
+  // stdout carries the protocol alone, so logs and failures go to stderr.
+  ActionCli.logToStderr,
+  NodeRuntime.runMain,
+);

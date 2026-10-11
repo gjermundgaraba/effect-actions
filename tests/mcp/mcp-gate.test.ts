@@ -3,10 +3,10 @@ import { Effect, Layer, Schema } from "effect";
 import { McpServer } from "effect/ai";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import { authenticate } from "../../examples/authentication.js";
-import { authorize, CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
-import { Double, RenameUser, Status } from "../../examples/contracts.js";
+import { authenticate } from "../support/app/authentication.js";
+import { authorize, CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
+import { Double, RenameUser, Status } from "../support/app/contracts.js";
 import { mcpRequest, rawToolCall, valueOf, withBearer } from "../support/requests.js";
 import { serve } from "../support/serve.js";
 

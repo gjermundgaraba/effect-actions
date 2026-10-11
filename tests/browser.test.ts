@@ -61,10 +61,12 @@ it.each(["Action", "ActionHttp", "ActionRpc", "Authentication"] as const)(
 );
 
 it.each([
-  "examples/contracts.ts",
-  "examples/authorization.ts",
-  "examples/binding.ts",
-  "examples/rpc-binding.ts",
+  "examples/quickstart/src/Api.ts",
+  "examples/notes-service/src/browser.ts",
+  "examples/kitchen-sink/src/Api.ts",
+  "examples/kitchen-sink/src/sdk.ts",
+  "examples/live-rpc/src/Rpc.ts",
+  "examples/kitchen-sink/src/Rpc.ts",
 ])(
   "%s, an application module a browser client imports, imports nothing a browser lacks",
   (entry) => {
@@ -81,20 +83,23 @@ it.each([
   },
 );
 
-it("examples/rpc-client.ts imports nothing a browser lacks but effect/socket, which the import map serves beside the library's", () => {
-  const outside = [...modulesOf("examples/rpc-client.ts")].flatMap(([file, specifiers]) =>
-    specifiers
-      .filter(
-        (specifier) =>
-          !isWalked(specifier) &&
-          ![...importMapEffectSpecifiers, "effect/socket"].includes(specifier),
-      )
-      .map((specifier) => `${file}: ${specifier}`),
-  );
+it.each(["examples/live-rpc/src/browser.ts", "examples/kitchen-sink/src/browser.ts"])(
+  "%s, an rpc client, imports nothing a browser lacks but effect/socket, which the import map serves beside the library's",
+  (entry) => {
+    const outside = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
+      specifiers
+        .filter(
+          (specifier) =>
+            !isWalked(specifier) &&
+            ![...importMapEffectSpecifiers, "effect/socket"].includes(specifier),
+        )
+        .map((specifier) => `${file}: ${specifier}`),
+    );
 
-  expect(outside).toEqual([]);
-  expect([...modulesOf("examples/rpc-client.ts").keys()]).toContain("src/rpc/ActionRpc.ts");
-});
+    expect(outside).toEqual([]);
+    expect([...modulesOf(entry).keys()]).toContain("src/rpc/ActionRpc.ts");
+  },
+);
 
 it("Action imports no transport, the in-process client included: no HTTP, RPC, MCP, AI toolkit or CLI module", () => {
   const transports = [...modulesOf(manifest.exports["./Action"].slice(2))].flatMap(
