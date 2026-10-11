@@ -492,16 +492,10 @@ const userErrorOf = (errors: Action.Errors) => {
     );
 };
 
-/**
- * Make a command of your own fail as a derived command does. Give it the actions the command
- * calls, such as a binding's `actions`, and pipe the command's whole Effect through it: a
- * failure that is one of their declared errors or a built-in one becomes a `UserError` whose
- * message is its JSON, and any other, a transport failure for one, a `UserError` naming it and
- * the causes beneath it. An Effect CLI error, your own `new CliError.UserError({ cause,
- * userMessage })` included, passes through as it is.
- */
-export const toUserError = (actions: ReadonlyArray<Action.Any>) => {
-  const failure = userErrorOf([...new Set(actions.flatMap((action) => projectedErrors(action)))]);
+export const failingAsDerived = (actions: ReadonlyArray<Action.Any>, errors: Action.Errors) => {
+  const failure = userErrorOf([
+    ...new Set(actions.flatMap((action) => projectedErrors(action, errors))),
+  ]);
 
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.catchIf(

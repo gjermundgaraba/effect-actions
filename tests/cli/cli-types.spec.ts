@@ -371,7 +371,11 @@ const boundAll = ActionCli.remote(Bound, { name: "remote" });
 
 declare const ownCommand: Effect.Effect<void, Gone | Transport | CliError.UserError, Build>;
 
-expectTypeOf(ownCommand.pipe(ActionCli.toUserError(Bound.actions))).toEqualTypeOf<
+expectTypeOf(ownCommand.pipe(ActionCli.toUserError([Plain, Erring]))).toEqualTypeOf<
+  Effect.Effect<void, ActionCli.UserError<Gone | Transport> | CliError.UserError, Build>
+>();
+
+expectTypeOf(ownCommand.pipe(ActionCli.toUserError(Bound))).toEqualTypeOf<
   Effect.Effect<void, ActionCli.UserError<Gone | Transport> | CliError.UserError, Build>
 >();
 

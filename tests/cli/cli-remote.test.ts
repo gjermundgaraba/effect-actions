@@ -172,7 +172,13 @@ it.effect(
         error: [TooLarge],
       });
 
-      const BoundedHttp = ActionHttp.make([Bounded]);
+      class Throttled extends Schema.TaggedError<Throttled>()(
+        "Throttled",
+        { retryAfter: Schema.Finite },
+        { httpApiStatus: 429 },
+      ) {}
+
+      const BoundedHttp = ActionHttp.make([Bounded], { error: [Throttled] });
 
       const web = serve(
         ActionHttp.layer(
@@ -187,13 +193,13 @@ it.effect(
 
           yield* client.bounded({ value: 11 });
           yield* client.bounded({ value: 12 });
-        }).pipe(ActionCli.toUserError(BoundedHttp.actions)),
+        }).pipe(ActionCli.toUserError(BoundedHttp)),
       );
 
       const worded = Command.make("worded", {}, () =>
         Effect.fail(
           new CliError.UserError({ cause: "no file", userMessage: "No such file." }),
-        ).pipe(ActionCli.toUserError(BoundedHttp.actions)),
+        ).pipe(ActionCli.toUserError(BoundedHttp)),
       );
 
       const command = ActionCli.remote(BoundedHttp, { name: "cli", subcommands: [twice, worded] });
@@ -215,6 +221,18 @@ it.effect(
 
       expect(wordedErr).toEqual([expect.stringContaining("No such file.")]);
       expect(wordedErr).toEqual([expect.not.stringContaining("UserError")]);
+
+      const throttling = async () =>
+        Response.json(Schema.encodeSync(Throttled)(new Throttled({ retryAfter: 5 })), {
+          status: 429,
+        });
+
+      const [, , throttledErr] = yield* stderrOf(["twice"], throttling);
+
+      expect(throttledErr).toEqual([
+        expect.stringContaining('{"_tag":"Throttled","retryAfter":5}'),
+      ]);
+      expect(throttledErr).toEqual((yield* stderrOf(["bounded", "--value", "11"], throttling))[2]);
 
       const offline = async () => {
         throw new Error("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:1") });

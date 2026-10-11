@@ -98,4 +98,4 @@ The tasks are in [ActionCli.md](ActionCli.md).
 - `ERROR (#n)` with a stack for a declared error, such as `UserNotFound`, from a command built
   with `Command.make`: a command of your own that calls `Action.client` or `ActionHttp.client`
   fails with the action's own error. Pipe the command's whole Effect through
-  `ActionCli.toUserError(actions)`, or derive the command with `ActionCli.command`.
+  `ActionCli.toUserError`, given the binding or the actions it calls, or derive the command with `ActionCli.command`.

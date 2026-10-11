@@ -48,8 +48,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   be listed again as a `remoteCommand` beside one command written by hand. A name a derived
   command has throws `Duplicate command`; the aggregate's type gains its own commands' failures
   and services ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
-- `ActionCli.toUserError(actions)` makes a command of your own fail as a derived command does:
-  piped onto its whole Effect, an action's error is printed as its JSON and a transport failure
+- `ActionCli.toUserError` makes a command of your own fail as a derived command does. Given the
+  HTTP binding or the actions the command calls and piped onto its whole Effect, a declared
+  error, the binding's included, is printed as its JSON and a transport failure
   named with its causes, where a hand-written `CliError.UserError` printed prose and a call left
   unmapped crashed with a stack trace. An Effect CLI error passes through as it is
   ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).

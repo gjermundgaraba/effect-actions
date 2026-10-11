@@ -21,7 +21,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `command(implementations, action, options?)` | One action, selected by its contract, as a native Effect `Command`.      |
 | `remote(binding, options)`                   | Every action of an HTTP binding as a subcommand, called over HTTP.       |
 | `remoteCommand(binding, action, options?)`   | One action of an HTTP binding, called over HTTP.                         |
-| `toUserError(actions)`                       | Piped onto a command of your own: it fails as a derived command does.    |
+| `toUserError(binding)`                       | Piped onto a command of your own: it fails as a derived command does.    |
 | `logToStderr`                                | Applied last before `runMain`: stdout carries only results.              |
 
 | Option                                   | Meaning                                                                         |
@@ -156,9 +156,9 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   inside `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
   `authorize` still runs. The `client` option reaches the derived commands alone.
 - **Its output is what it prints**, with `Console.log`: the output rules below are a derived
-  command's. **Pipe its whole Effect through `ActionCli.toUserError(Http.actions)`** to fail as a
-  derived command does: an action's error as its JSON on stderr, a transport failure named with
-  its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
+  command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, or
+  `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared
+  error as its JSON on stderr, a transport failure named with its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
   passes through. A failure left unmapped, one call's included, is reported as a crash,
   `ERROR (#n)` with a stack trace.
 - **Write the list in the call.** The aggregate's type then carries its commands' failures and

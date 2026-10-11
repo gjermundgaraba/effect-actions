@@ -18,7 +18,7 @@ const exportNotes = Command.make("export", {}, () =>
     // Once, around the whole command: it then fails as a derived command does, an action's
     // error printed as its JSON on stderr. A failure left as it is would be reported as a
     // crash, with an `ERROR (#n)` line and a stack trace.
-    ActionCli.toUserError(Http.actions),
+    ActionCli.toUserError(Http),
   ),
 ).pipe(Command.withDescription("Print every note, as Markdown."));
 
