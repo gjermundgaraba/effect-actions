@@ -26,9 +26,9 @@ public tool's call included. On such an endpoint a signed-out 2026-07-28 request
 **A builder that yields the caller no longer type-checks where a server serves it, even with the
 identity provided at startup.** Among the startup requirements of `ActionHttp.layer`,
 `ActionRpc.layer` and `ActionMcp.layerHttp`, the identity a builder or an Effect building the
-authorizer yields is replaced by the sentence
+authorizer yields is replaced by a type whose one property is named by the sentence
 `"A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"`,
-which is what the compiler now prints where the server is launched, in place of
+which is what the compiler now prints last wherever the routes are launched or run, in place of
 `Type 'CurrentUser' is not assignable to type 'never'`. `runStdio`, `ActionToolkit`, `ActionCli`
 and `Action.client`, whose host names one caller, are unchanged.
 

@@ -8,8 +8,9 @@ import { type Actor, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { WhoAmI } from "../support/app/contracts.js";
 
-type CallerAtStartup =
-  "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer";
+interface CallerAtStartup {
+  readonly "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer": never;
+}
 
 class SameShapeAsTheCaller extends Context.Service<SameShapeAsTheCaller, Actor>()(
   "caller-at-startup/SameShapeAsTheCaller",
@@ -51,7 +52,7 @@ const overStdio = ActionMcp.runStdio(builderYieldsCaller, { name: "t", version: 
 
 expectTypeOf<CurrentActor>().toExtend<Effect.Services<typeof overStdio>>();
 
-expectTypeOf<Extract<Effect.Services<typeof overStdio>, string>>().toBeNever();
+expectTypeOf<Extract<Effect.Services<typeof overStdio>, CallerAtStartup>>().toBeNever();
 
 const authorizerBuiltWithCaller = Action.implement(
   WhoAmI,
