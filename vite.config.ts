@@ -122,7 +122,7 @@ export default defineConfig({
       {
         files: sourceOrLintProbe("**"),
         rules: {
-          "no-comments/no-prose-comments": ["error", { allowJsDoc: true }],
+          "no-comments/no-prose-comments": ["error", { allowJsDoc: true, allowWhy: true }],
           "typescript/consistent-type-imports": "error",
           "typescript/no-import-type-side-effects": "error",
           "no-restricted-imports": [

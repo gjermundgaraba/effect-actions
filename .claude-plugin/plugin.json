@@ -1,6 +1,6 @@
 {
   "name": "effect-actions",
-  "description": "Define Effect action contracts once and project them onto HTTP, MCP, native Toolkits, and CLIs.",
+  "description": "Define Effect action contracts once and project them onto HTTP, MCP, Effect RPC, native Toolkits, and CLIs.",
   "author": {
     "name": "Gjermund Garaba"
   },

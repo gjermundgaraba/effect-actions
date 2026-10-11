@@ -4,25 +4,14 @@ import type * as Action from "../contract/Action.js";
 import { assertOnce, projectedErrors } from "../contract/rules.js";
 import { acquire, type AnyImplementation, type ErasedHandler } from "../contract/implementation.js";
 
-/** Native tools and their acquired action handlers, with dynamic names erased. */
 interface BoundTools {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>;
-  /**
-   * The tool handlers; they need the implementations' handlers, which `provideHandlers` provides.
-   */
   readonly layer: Layer.Layer<Tool.HandlersFor<Record<string, Tool.Any>>, unknown, unknown>;
 }
 
-/**
- * How a surface projects an action as a tool: what it adds to the tool and what a call of it
- * runs. Selection, codecs, dispatch, hints and binding are shared.
- */
 export interface Projection {
-  /** What a tool is called in `Duplicate <label>: <name>`. */
   readonly label: string;
-  /** The surface's own form of `tool`, the tool of `action`, one of `app`'s. */
   readonly tool: (tool: Tool.Any, action: Action.Any, app: AnyImplementation) => Tool.Any;
-  /** What a call of the tool runs, given the action's handler behind its authorizer: it by default. */
   readonly handler?: (run: ErasedHandler<unknown>, action: Action.Any) => ErasedHandler<unknown>;
 }
 
@@ -59,9 +48,6 @@ const jsonToolOf = (action: Action.Any) =>
     failureMode: "return",
   });
 
-/**
- * Project actions as tools named after them, sharing each implementation's built handlers.
- */
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
   projection: Projection,

@@ -5,16 +5,12 @@ import type { ErasedValue } from "../contract/implementation.js";
 import { isMarked, type Kind, kindOf, Media } from "../contract/media.js";
 import { unsuspended } from "../contract/rules.js";
 
-/**
- * The one protocol revision served over HTTP. 2026-07-28 is stateless: every request
- * stands alone. The stateful revisions keep a session per `initialize`, which the native
- * HTTP runtime never expires and which no identity owns. A mixed endpoint's gate relies on it
- * too: it decides from the routing headers, which the native runtime checks against the body
- * of a stateless request alone, so serving a stateful revision over HTTP would open the gate.
- */
+// Why: Only the stateless revision. A stateful one keeps a session per `initialize`, which
+// Effect's HTTP runtime never expires and any holder of its id may use. And a mixed endpoint's gate
+// decides from the routing headers, which the runtime checks against the body of a stateless
+// request alone.
 export const httpProtocol = McpProtocol.v2026_07_28;
 
-/** Where `ActionMcp.layerHttp` serves, and `Testing.mcpClient` calls, by default. */
 export const defaultPath = "/mcp";
 
 /**
@@ -63,30 +59,20 @@ export const statelessRequest = (method: string, params: Params) => {
   };
 };
 
-/** Any service-free schema, as a contract holds its success. */
 type Codec = Action.Any["success"];
 
-/** The `_meta` key of a lifted block naming its field. */
 export const fieldKey = "effect-actions/field";
 
 const isMedia = Schema.is(Media);
 
 const isMediaArray = Schema.is(Schema.Array(Media));
 
-/**
- * Media an MCP tool lifts: a top-level field of a struct success, by name, or the whole
- * success, none; one value, or an array.
- */
 export interface Field {
   readonly name: string | undefined;
   readonly kind: Kind;
   readonly many: boolean;
 }
 
-/**
- * How an MCP tool sends a success: the media it lifts, in field order, and the rest, sent as
- * any success is, none when nothing else is left. A success without media is all rest.
- */
 export interface Lift {
   readonly fields: ReadonlyArray<Field>;
   readonly rest: Codec | undefined;
@@ -129,11 +115,6 @@ const mediaFieldOf = (field: SchemaAST.AST) => {
   return whole === undefined || (optional && whole.many) ? undefined : whole;
 };
 
-/**
- * How an MCP tool sends `success`: it lifts the success itself, one value or an array, or the
- * top-level media fields of a struct without an encoding of its own, keyed by strings, and
- * sends the rest of the struct, if any is left.
- */
 export const liftOf = (success: Codec): Lift => {
   const ast = unsuspended(success.ast);
   const whole = wholeSuccessMediaOf(ast);
@@ -192,28 +173,18 @@ const holdsMediaAnywhere = (ast: SchemaAST.AST): boolean => {
   return false;
 };
 
-/**
- * Whether `action`, whose success an MCP tool lifts as `lift` says, holds media where no tool
- * lifts it: in its input, in a declared error, or in the rest of its success, such as nested in
- * a field or in a union.
- */
 export const isMisplaced = (action: Action.Any, { rest }: Lift): boolean => {
   return [action.input, ...action.error, ...(rest === undefined ? [] : [rest])].some(({ ast }) =>
     holdsMediaAnywhere(ast),
   );
 };
 
-/** A media value lifted out of a success: its kind, and its field, none for the whole success. */
 export interface Lifted {
   readonly kind: Kind;
   readonly field: string | undefined;
   readonly value: typeof Media.Type;
 }
 
-/**
- * The media `lift` finds in `success`, a decoded value its schema has validated: the whole
- * success's, or each field's, in field order, an array's in its order, none for an absent field.
- */
 export const liftedFrom = (lift: Lift, success: ErasedValue): ReadonlyArray<Lifted> =>
   lift.fields.flatMap(({ name, kind, many }) => {
     const value =

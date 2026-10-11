@@ -67,18 +67,12 @@ import {
   toList,
 } from "../contract/implementation.js";
 
-/** An error schema the binding declares on every rpc. */
 type BindingError = Action.Errors[number];
 
-/**
- * The errors the rpc of an action `A` declares, beside the binding's errors `E`: its own, the
- * built-in ones, and, for a protected action, what the descriptor `D`'s verifier fails with.
- */
 type ErrorOf<A extends Action.Any, E extends Action.Errors, D> = Schema.Union<
   ReadonlyArray<A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns>
 >;
 
-/** The native rpc of each action of `A`, as a binding's clients see it. */
 type RpcOf<A extends Action.Any, E extends Action.Errors, D> = A extends Action.Any
   ? Rpc.Rpc<A["name"], A["input"], A["success"], ErrorOf<A, E, D>>
   : never;
@@ -135,6 +129,7 @@ const declaredErrorsOf = (
       : [...errors, ...authentication.error],
   );
 
+// Why: The same three overloads as `ActionHttp.make`, for the reasons stated there.
 /**
  * Bind actions once, for servers and clients alike, each as an rpc named after it, taking
  * its action's input and answering its success. Every rpc declares its action's errors, the
@@ -177,18 +172,10 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   return { actions, error: errors, group, authentication: options.authentication };
 }
 
-/** Native rpc middleware, as `RpcMiddleware.Service` declares it. */
 type Middleware = ReadonlyArray<RpcMiddleware.AnyService>;
 
-/** The identifier a middleware's service key declares. */
 type IdOf<K> = K extends Context.Key<infer I extends RpcMiddleware.AnyId, unknown> ? I : never;
 
-/**
- * What the request owes past the middleware `M`, the first innermost, around what `R` owes:
- * each removes what it provides and adds what it requires, as native rpcs apply them. An
- * array of unknown length, which may hold none of them, provides nothing and owes what any of
- * them requires; so does a slot that may hold one of several, as only one runs.
- */
 type Through<M extends Middleware, R> = number extends M["length"]
   ? R | RpcMiddleware.Requires<IdOf<M[number]>>
   : M extends readonly [infer K, ...infer Rest extends Middleware]
@@ -200,20 +187,12 @@ type Through<M extends Middleware, R> = number extends M["length"]
       >
     : R;
 
-/** The middleware of `K` that may need a client counterpart. */
 type ForClient<K> = K extends { readonly requiredForClient: infer F }
   ? true extends F
     ? K
     : never
   : never;
 
-/**
- * The layer's middleware, refused when one fails with an error neither the binding, `E`, nor
- * every rpc declares, or needs a client counterpart: neither reaches the binding's clients,
- * whose group carries no middleware and decodes only what the binding and the built-ins
- * declare. A failure an action's callers see after decoding is its handler's, declared on the
- * contract and decoded by every client.
- */
 type ServerOnly<M extends Middleware, E extends Action.Errors> = [
   | Exclude<
       RpcMiddleware.Error<IdOf<M[number]>>,
@@ -226,13 +205,9 @@ type ServerOnly<M extends Middleware, E extends Action.Errors> = [
       readonly "Layer middleware fails only with the binding's errors and needs no client": never;
     };
 
-/**
- * What the layer serving `A` of `App` behind middleware `M` owes per request, as router
- * request markers: the request context of a router-mounted protocol's route provides them,
- * and so does `M`, never a startup service. Unlike HTTP's, they keep `HttpRouter.Provided`:
- * `HttpRouter.serve` provides the request itself, and stdio, a socket or a worker has none.
- * Where every action served is protected, authentication, outermost, provides the identity.
- */
+// Why: Unlike `ActionHttp`'s, this does not exclude `HttpRouter.Provided`. An rpc has an HTTP
+// request only over a router-mounted protocol, where `HttpRouter.serve` provides it; stdio, a
+// socket or a worker has none, so a handler reading one must leave it owed there.
 type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
   Through<M, RemoteRequest<App, A>>,
   [Extract<Serving<App, A>, { readonly caller: typeof Anyone }>] extends [never]
@@ -240,10 +215,6 @@ type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
     : never
 >;
 
-/**
- * The layer serving the actions `A` of `Apps` through the binding `B`, behind the middleware
- * `M`: an implementation holding none of them is not built.
- */
 type RpcLayer<
   B extends Any,
   Apps extends Served,
@@ -288,10 +259,8 @@ const credentialFromRpcHeaders = (
     Effect.provideService(HttpServerRequest.ParsedSearchParams, {}),
   );
 
-/** What a native rpc middleware is handed with the call it wraps. */
 type CallOptions = Parameters<RpcMiddleware.RpcMiddleware<never, never, never>>[1];
 
-/** A step of a served call around the steps it wraps: its authentication, or a middleware. */
 type Step = (
   effect: Effect.Effect<unknown, unknown, unknown>,
   options: CallOptions,
@@ -371,6 +340,9 @@ const handlerOf = (
       Effect.flatMap(encode),
     );
 
+    // Why: The steps run here, each suspended, and none as native rpc middleware. Effect applies
+    // native middleware as it sets a call up, outside any Effect, so one that throws fails the
+    // whole connection; suspended, a throw is its own call's defect.
     const wrapped = steps.reduce<Effect.Effect<unknown, unknown, unknown>>(
       (inner, step) => Effect.suspend(() => step(inner, { ...options, payload })),
       call,
@@ -496,7 +468,6 @@ export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | BuiltIns["Type"]
   | RpcClientError.RpcClientError;
 
-/** One action as an Effect of its decoded success, failing with `MethodError`. */
 type Method<A extends Action.Any, E extends BindingError> = Call<
   A,
   Effect.Effect<A["success"]["Type"], MethodError<A, E>>
@@ -520,13 +491,10 @@ export type Client<B extends Any> = {
  */
 export type ClientOptions = Omit<NonNullable<Parameters<typeof RpcClient.make>[1]>, "flatten">;
 
-/** The rpc of an action as a client sends it, erased: its schemas read no service. */
 type ClientRpc = Rpc.Rpc<string, Action.Any["input"], Action.Any["success"], BindingError>;
 
-/** A native client method, erased. */
 type NativeMethod = (payload: ErasedValue) => Effect.Effect<ErasedValue, unknown>;
 
-/** A native client, erased: one method per rpc of the group. */
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
 /**

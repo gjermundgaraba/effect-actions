@@ -26,7 +26,7 @@ import { McpSchema } from "effect/ai";
 import { Base64, Sse } from "effect/encoding";
 import type * as Action from "../contract/Action.js";
 import { assertOnce, projectedErrors } from "../contract/rules.js";
-import { type Call, inputOf } from "../contract/call.js";
+import { type Call, checked } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
 import {
   defaultPath,
@@ -50,6 +50,8 @@ import { clientOf, type Served } from "./memory.js";
 export function layer(
   handler: (request: Request) => Promise<Response>,
 ): Layer.Layer<HttpClient.HttpClient>;
+// Why: The routes overload stays last, since TypeScript reports an argument of neither form against
+// the last overload alone.
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
@@ -141,12 +143,6 @@ export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallErr
   message: Schema.String,
 }) {}
 
-/**
- * What one call of `A` fails with: a declared error value (the action's own or a built-in one
- * from the tool, or a refusal from the endpoint's authentication), a `SchemaError` when the
- * input does not encode or the success does not decode, an `HttpClientError` when the
- * endpoint could not be reached, or an `McpCallError` for any other answer.
- */
 type CallError<A extends Action.Any> =
   | A["error"][number]["Type"]
   | BuiltIn
@@ -162,7 +158,6 @@ export type McpClient<Actions extends ReadonlyArray<Action.Any>> = {
   >;
 };
 
-/** One block of a tool result's content. */
 type Block = McpSchema.CallToolResult["content"][number];
 
 const textOf = (block: Block | undefined): string | undefined =>
@@ -318,10 +313,7 @@ export function mcpClient(
 
         return [
           action.name,
-          (...args: ReadonlyArray<Action.Any["input"]["Type"]>) =>
-            Effect.flatMap(inputOf(action, args), (input) =>
-              callTool(client, url, action, lift, input),
-            ),
+          checked(action, (input) => callTool(client, url, action, lift, input)),
         ];
       }),
     );

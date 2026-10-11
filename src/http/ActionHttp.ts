@@ -83,18 +83,10 @@ export interface FetchClientOptions extends ClientOptions {
   readonly fetch?: typeof globalThis.fetch | undefined;
 }
 
-/** Native endpoint middleware, as `HttpApiMiddleware.Service` declares it. */
 type Middleware = ReadonlyArray<Context.Key<HttpApiMiddleware.AnyId, unknown>>;
 
-/** The identifier a middleware's service key declares. */
 type IdOf<K> = K extends Context.Key<infer I extends HttpApiMiddleware.AnyId, unknown> ? I : never;
 
-/**
- * What the request owes past the middleware `M`, the first innermost, around what `R` owes:
- * each removes what it provides and adds what it requires, as native endpoints apply them.
- * An array of unknown length, which may hold none of them, provides nothing and owes what
- * any of them requires; so does a slot that may hold one of several, as only one runs.
- */
 type Through<M extends Middleware, R> = number extends M["length"]
   ? R | HttpApiMiddleware.Requires<IdOf<M[number]>>
   : M extends readonly [infer K, ...infer Rest extends Middleware]
@@ -106,13 +98,6 @@ type Through<M extends Middleware, R> = number extends M["length"]
       >
     : R;
 
-/**
- * The layer's middleware, refused when one fails with an error neither the binding, `E`, nor
- * every endpoint declares, or needs a client counterpart: neither reaches the binding's
- * clients, which decode only what the binding and the built-ins declare. A failure an
- * action's callers see after decoding is its handler's, declared on the contract and decoded
- * by every client.
- */
 type ServerOnly<M extends Middleware, E extends Action.Errors> = [
   | Exclude<
       HttpApiMiddleware.Error<IdOf<M[number]>>,
@@ -125,10 +110,6 @@ type ServerOnly<M extends Middleware, E extends Action.Errors> = [
       readonly "Layer middleware fails only with the binding's errors and needs no client": never;
     };
 
-/**
- * The layer serving the actions `A` of `Apps` through the binding `H`, behind the middleware
- * `M`: an implementation holding none of them is not built.
- */
 type HttpLayer<
   H extends AnyHttp,
   Apps extends Served,
@@ -164,11 +145,6 @@ export interface LayerOptions<M extends Middleware = [], A extends Action.Any = 
   readonly middleware?: M;
 }
 
-/**
- * What the layer serving `A` of `App` behind middleware `M` owes per request, less what the
- * router provides and, where every action served is protected, the identity authentication
- * provides, outermost.
- */
 type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
   Through<M, RemoteRequest<App, A>>,
   | HttpRouter.Provided
@@ -200,11 +176,6 @@ type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Acti
     >
   : never;
 
-/**
- * The native `HttpApi` of `Actions`: one top-level group, so native client methods are
- * not nested, named after the binding's mount path, `/` at the root, so bindings composed
- * into one host API keep their own groups.
- */
 type Api<Actions extends ReadonlyArray<Action.Any>, E extends Action.Errors, D> = HttpApi.HttpApi<
   "actions",
   HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E, D>, true>
@@ -230,7 +201,6 @@ export interface Binding<
   readonly api: Api<Actions, E, D>;
 }
 
-/** A native request, as `HttpApiBuilder.handleAll` passes it to a handler. */
 interface Request {
   readonly payload: ErasedValue;
 }
@@ -251,6 +221,10 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
     .add(first === undefined ? empty : empty.add(first, ...rest));
 };
 
+// Why: Every route is a POST, a `readOnly` action's included. A GET carries its input in the query
+// string, where `HttpApi` takes only fields that encode to strings or arrays of strings, so a
+// nested input or a number has no faithful form; and the caching a GET would buy only a public
+// `readOnly` action gives up, as a protected route's answers are `no-store`.
 const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Errors) =>
   HttpApiEndpoint.post(action.name, path, {
     payload: action.input.pipe(HttpApiSchema.asJson()),
@@ -261,9 +235,13 @@ const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Error
 const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
   middleware.reduce((inner, key) => inner.middleware(key), endpoint);
 
+// Why: Two forms, actions alone or with options, not one whose options are a conditional rest
+// parameter, as `OptionalUnless` gives: through one, TypeScript infers no `const` tuple of `error`,
+// which `Certain` needs. The first takes public actions by its constraint, which a helper generic
+// in them meets.
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
- * Every endpoint declares its action's errors, the binding's `errors`, and the built-in
+ * Every endpoint declares its action's errors, the binding's `error`, and the built-in
  * `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a typed
  * failure. A union's own `httpApiStatus` applies to every member; otherwise, each member
  * uses its own status, or 422 without one. Protected contracts receive native endpoint
@@ -279,6 +257,9 @@ export function make<const Actions extends ReadonlyArray<Action.Any>, const O ex
     Matching<Actions[number], NoInfer<DescriptorOf<O>>> &
     NoInfer<Known<O, Options>>,
 ): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>>;
+// Why: Reached only when the forms above fail. TypeScript reports a call matching no overload by
+// the last one's error, so this one tells protected actions without options to name their
+// authentication, where the first form's constraint would tell them to be public.
 export function make<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions & PublicOnly<Actions>,
 ): Binding<Actions, [], undefined>;
@@ -294,6 +275,9 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   const mount = mountSegments(options.prefix);
   const security = options.authentication?.["~middleware"];
 
+  // Why: The binding adds a verifier's errors to its protected endpoints itself, as it adds its
+  // own, so they take the status rule, the projected order and the client types of every other
+  // error. Rejected: the security middleware's native `error`, which `HttpApiEndpoint` merges in.
   const protectedEndpointVerifierErrors = options.authentication?.error ?? [];
 
   const endpoints = actions.map((action) => {
@@ -319,11 +303,18 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   };
 }
 
+// Why: `HttpApiBuilder.group` lays the context it is built in over each request's, so a startup
+// value would win over a request's own under one tag. Built in an empty context it lays nothing.
+// That relies on `group` reading nothing else there: a service it starts to read fails the build,
+// but a reference silently takes its default.
 const buildInEmptyContext = <A, E>(group: Layer.Layer<A, E>): Layer.Layer<A, E> =>
   Layer.fromBuild((memoMap, scope) =>
     Effect.setContext(Layer.buildWithMemoMap(group, memoMap, scope), Context.empty()),
   );
 
+// Why: Puts the startup context `buildInEmptyContext` withholds beneath each request's, not over
+// it. It wraps the whole route rather than the handler, so `HttpApi`'s own error reporting runs
+// once, in the merged context.
 const startupBeneathRequest = () =>
   HttpRouter.middleware(
     Effect.map(Effect.context<unknown>(), (built) => {
@@ -336,6 +327,10 @@ const startupBeneathRequest = () =>
     }),
   ).layer;
 
+// Why: A middleware of its own, just inside authentication, answers a step-up refusal. Effect's
+// security middleware sees a route's failure only wrapped in a private type, and a refusal recorded
+// in the handler, as MCP records it, would override a layer middleware that recovers from it or
+// replaces it.
 class StepUp extends HttpApiMiddleware.Service<StepUp>()("effect-actions/ActionHttp/StepUp") {}
 
 class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
@@ -482,8 +477,8 @@ const erasedClient = (
  * A call fails with a declared error value (the action's own, or a built-in
  * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` when the
  * server could not be reached or answered with a status or body the contract does not
- * declare, or a `SchemaError` when the input does not encode or the success does not
- * decode.
+ * declare, or a `SchemaError` when the success does not decode. An input that does not encode
+ * fails with `InvalidInput`, and nothing is sent.
  */
 export function client<const H extends AnyHttp>(
   binding: H,

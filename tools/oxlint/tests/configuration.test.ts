@@ -106,9 +106,10 @@ const cases = [
     findings: ["prose.ts: no-comments(no-prose-comments)"],
   },
   {
-    name: "allows JSDoc in source alone, and there reports every relative import but the allowed forms",
+    name: "allows JSDoc, an unexported declaration's included, and a Why: comment in source alone, and there reports every relative import but the allowed forms",
     files: {
       "documented.ts": "/** A constant. */\nexport const documented = 1;\n",
+      "reasoned.ts": "// Why: A reason.\nexport const reasoned = 1;\n",
       "src/contract/Action.ts": "/** A contract. */\nexport const action = 1;\n",
       "src/contract/named.ts": 'export * as Action from "@gjermundgaraba/effect-actions/Action";\n',
       "src/contract/outside.ts": 'export { protocol } from "../mcp/protocol.js";\n',
@@ -116,6 +117,7 @@ const cases = [
       "src/mcp/ActionMcp.ts": "export const mcp = 1;\n",
       "src/mcp/protocol.ts": "export const protocol = 1;\n",
       "src/http/allowed.ts": [
+        "// Why: A reason.",
         'export { action } from "../contract/Action.js";',
         "",
         'export { protocol } from "../mcp/protocol.js";',
@@ -129,6 +131,7 @@ const cases = [
       ].join("\n"),
       "src/http/named.ts": 'export * as Action from "@gjermundgaraba/effect-actions/Action";\n',
       "src/http/outside.ts": 'export { documented } from "../../documented.js";\n',
+      "src/http/private.ts": "/** Private. */\nconst hidden = 1;\n\nexport const shown = hidden;\n",
       "src/http/public.ts": 'export { mcp } from "../mcp/ActionMcp.js";\n',
       "src/http/slashed.ts": 'export { protocol } from "../mcp//protocol.js";\n',
       "src/http/spelled.ts": 'export { protocol } from "./../mcp/protocol.js";\n',
@@ -136,6 +139,7 @@ const cases = [
     },
     findings: [
       "documented.ts: no-comments(no-prose-comments)",
+      "reasoned.ts: no-comments(no-prose-comments)",
       "src/contract/named.ts: eslint(no-restricted-imports)",
       "src/contract/outside.ts: eslint(no-restricted-imports)",
       "src/contract/spelled.ts: eslint(no-restricted-imports)",

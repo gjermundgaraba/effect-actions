@@ -49,15 +49,12 @@ export type { Authorize } from "./implementation.js";
 
 export type { AnyImplementation } from "./implementation.js";
 
-/** Any service-free schema. Only handlers may require services. */
 type Codec = Schema.Codec<unknown, unknown, never, never>;
 
-/** Struct fields, accepted wherever a struct schema is: `{ name: Schema.String }`. */
 type Fields = { readonly [key: string]: Codec };
 
 const NoInput = Schema.Record(Schema.String, Schema.Never);
 
-/** The schema a `Codec | Fields` option stands for: a schema itself, `NoInput` for no fields. */
 type CodecOf<S extends Codec | Fields> = S extends Codec
   ? S
   : S extends Schema.Struct.Fields
@@ -126,25 +123,14 @@ export interface Options {
   readonly mcp?: Mcp;
 }
 
-/**
- * The keys beyond `Mcp` in the `mcp` of any member of `O`, given or optional, so a misspelled
- * one in a conditional spread or in one branch of a ternary is refused too.
- */
 type UnknownMcp<O> = O extends { readonly mcp?: infer H }
   ? Exclude<H extends unknown ? keyof H : never, keyof Mcp>
   : never;
 
-/** No key beyond `Mcp`, whichever member of `O` gives it. */
 type KnownMcp<O> = { readonly mcp?: { readonly [K in UnknownMcp<O>]: never } };
 
-/** The schemas an `error` option of type `G` declares: one, or each of a list. */
 type ErrorMembers<G> = G extends ReadonlyArray<infer E> ? E : G;
 
-/**
- * The built-in errors, refused in `error`: every surface declares them already. The types
- * refuse only the built-ins themselves; `make` refuses, when called, an error of your own
- * that encodes with a built-in `_tag`.
- */
 type OwnErrors<O> = O extends { readonly error: infer G }
   ? [Extract<ErrorMembers<G>, BuiltIns>] extends [never]
     ? unknown
@@ -155,36 +141,21 @@ type OwnErrors<O> = O extends { readonly error: infer G }
       }
   : unknown;
 
-/**
- * No option beyond `Options` in any member of `O`, so a misspelled one is an unknown
- * property, not ignored: `keyof` a union holds only the keys every member has.
- */
 type OnlyOptions<O> = {
   readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Options>]: never;
 };
 
-/**
- * `caller` is a `Context.Service`: a `Context.Reference` is never missing, so its default
- * would stand in for every caller who supplies none.
- */
 type ServiceCaller<O> = O extends { readonly caller: { readonly defaultValue: unknown } }
   ? { readonly caller: "An identity is a Context.Service, not a Context.Reference" }
   : unknown;
 
-/**
- * The rules `make` checks beyond `Options`: every option and `mcp` key known, and no built-in
- * error listed. Options that fail `Options` itself infer as `Options`, whose error the
- * compiler already reports, so they are not checked again. Checked after inference: `make`'s
- * options are `O & NoInfer<Rules<O>>`.
- */
+// Why: Options that fail `Options` itself infer as `Options`, whose error the compiler already
+// reports. Checked against the rules too, a missing option is reported as the whole argument not
+// being assignable, in place of "Property 'description' is missing".
 type Rules<O> = Options extends O
   ? unknown
   : OnlyOptions<O> & ServiceCaller<O> & OwnErrors<O> & KnownMcp<O>;
 
-/**
- * Option `K` of `O` as given, or also `Default` wherever it may be omitted or undefined, as
- * at run time, for each member of a union of options.
- */
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
   ? K extends keyof O
     ?
@@ -193,12 +164,10 @@ type OptionOf<O, K extends keyof Options, Default> = O extends unknown
     : Default
   : never;
 
-/** The schema option `K` of `O`, or `Default` when it is omitted. */
 type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf<
   Extract<OptionOf<O, K, Default>, Codec | Fields>
 >;
 
-/** The declared errors of `O`, none when omitted. */
 type ErrorSchemasOf<O> = ReadonlyArray<
   ErrorMembers<Extract<OptionOf<O, "error", []>, Codec | ReadonlyArray<Codec>>>
 >;
@@ -302,6 +271,10 @@ export function make(name: string, options: Options): Any {
   return action;
 }
 
+// Why: No signature refuses a list narrowed at run time, which is typed as holding members it may
+// not. Rejected: keying a list of unknown length by `string`, which holds only under
+// `noUncheckedIndexedAccess`, and requiring a tuple of single-named actions, which a variadic tuple
+// or a union of tuples still passes.
 /**
  * `actions` keyed by name, each its exact contract: `byName(actions).getUser`, its schemas
  * where a test or a mock reads them, and its types where a helper takes a name,
@@ -318,90 +291,56 @@ export function byName(actions: ReadonlyArray<Any>): { readonly [name: string]: 
   return Object.fromEntries(actions.map((action) => [action.name, action]));
 }
 
-/** What `implement` binds: one action, or several that share one builder. */
 type Target = Any | ReadonlyArray<Any>;
 
-/**
- * A target of public actions only, which takes no `authorize`. Named for what a protected
- * target lacks there, as the error a call without `authorize` reports names this type.
- */
+// Why: Named for what a protected target lacks, not for the public-only target it is: the error
+// TypeScript reports for a call without `authorize` names this type.
 type ProtectedActionsTakeAuthorize = PublicAction | ReadonlyArray<PublicAction>;
 
-/** An action anyone may call. */
 type PublicAction = Any & { readonly caller: typeof Anyone };
 
-/**
- * The actions `T` stands for. One action is extracted rather than taken as it is, so where `T`
- * is deferred, such as a list of a helper's type parameter, the actions are still actions to
- * TypeScript, and a selection of them reaches a surface.
- */
 type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Extract<T, Any>;
 
-/** The names of the actions `T` stands for. */
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
-/**
- * What a list takes instead of one handler: nothing. A named alias carrying `R`, and it must
- * stay one: while a builder's inner call, such as `Effect.gen`, is inferred, TypeScript keeps
- * an alias's arguments marked as not yet inferred, where `never` or this type written inline
- * becomes a candidate, and the builder's record loses its handlers' parameter types.
- */
+// Why: This must stay a named alias carrying `R`. While a builder's inner call, such as
+// `Effect.gen`, is inferred, TypeScript keeps an alias's arguments marked as not yet inferred,
+// where `never` or this type written inline becomes a candidate, and the builder's record loses its
+// handlers' parameter types.
 type NoHandler<R> = { readonly "~list": R };
 
-/**
- * One action's handler, owing `R` per request; a list takes none. It is `Handler` written out, as
- * `Authorizer`'s are. While `implement` infers, an alias whose argument `R` is not yet
- * inferred is marked, as a whole, as not inferrable (the mark `NoHandler` relies on), so an
- * `Effect.fn(...)` a builder returns would infer nothing from it and take an `any` input.
- */
+// Why: `Handler` written out, not the alias, for the reason on `NoHandler`: an alias whose argument
+// `R` is not yet inferred gives an `Effect.fn(...)` a builder returns nothing to infer from, and it
+// takes an `any` input.
 type Single<T extends Target, R> = T extends Any
   ? (
       input: T["input"]["Type"],
     ) => Effect.Effect<T["success"]["Type"], T["error"][number]["Type"] | BuiltIn, R>
   : NoHandler<R>;
 
-/**
- * A record of handlers, one per key of `RequestServices`, each typed from its own action and
- * owing its entry of `RequestServices` per request. TypeScript infers `RequestServices` from the
- * record, key by key, so each handler, `Effect.fn` included, is typed from its contract; a key
- * no action names takes nothing.
- */
+// Why: Mapped over `RequestServices`, not over the actions' names: TypeScript infers it from the
+// record key by key, so each handler, an `Effect.fn` included, is typed from its contract.
 type Several<T extends Target, RequestServices> = {
   readonly [K in keyof RequestServices]: K extends NamesOf<T>
     ? Handler<Extract<ActionsOf<T>, { readonly name: K }>, RequestServices[K]>
     : never;
 };
 
-/** What `implement` binds to `T`: one action's handler, or a list's record. */
 type HandlersOf<T extends Target, R, RequestServices> = Single<T, R> | Several<T, RequestServices>;
 
-/**
- * `T`, never inferred from where it stands: an index TypeScript cannot read until `T` is
- * known, as `NoInfer` would be, but read as `T` itself once it is. So an implementation
- * written inside a surface's arguments takes nothing from what that surface accepts, and a
- * union of services is one union, which `Layer.provide` discharges a member at a time.
- */
+// Why: An index TypeScript cannot read until `T` is known, so an implementation written inside a
+// surface's arguments infers nothing from what that surface accepts. Rejected: `NoInfer<T>`, which
+// stays in a layer's requirements, where providing a union's members in two `Layer.provide` calls
+// leaves it owed; this reads as `T` itself once inferred.
 type Deferred<T> = [T][T extends unknown ? 0 : never];
 
-/**
- * An authorizer, or an Effect that builds it, as a builder builds handlers: `EAX` and `RAX` are
- * startup failures and services, `RA` what the authorizer reads per request. Each authorizer is
- * `Authorize` written out. TypeScript would infer `RA` from only one branch of a conditional
- * authorizer whose other branch is typed `Authorize`, such as
- * `enabled ? authorize : Action.allowAll`. While `implement` infers, an alias whose argument `RA`
- * is not yet inferred is marked, as a whole, as not inferrable, so an `Effect.fn(...)` the
- * Effect returns would infer nothing from it and take an `any` action.
- */
+// Why: `Authorize` written out, not the alias, for the reason on `NoHandler`, and since TypeScript
+// would infer `RA` from only one branch of a conditional authorizer whose other branch is typed
+// `Authorize`, such as `enabled ? authorize : Action.allowAll`.
 type Authorizer<A extends Any, RA, EAX, RAX> =
   | ((action: A) => Effect.Effect<void, Refusal, RA>)
   | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RA>, EAX, RAX>;
 
-/**
- * What `implement` returns for `T`: its handlers' per-request requirements keyed by action
- * name, the authorizer's, and the startup failures and services of the builder and the
- * authorizer. Only the startup channels are deferred. No channel holds `Scope`: each call has a
- * scope of its own.
- */
 type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = Implementation<
   ActionsOf<T>,
   {
@@ -417,10 +356,8 @@ type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = I
   Deferred<Exclude<RAX, Scope.Scope>>
 >;
 
-/** What `implement` receives as authorization, erased. */
 type ErasedAuthorizer = ErasedAuthorize | Effect.Effect<ErasedAuthorize, unknown, unknown>;
 
-/** What `implement` receives, erased: one handler, or a record of them. */
 type Built = ErasedHandlers<unknown> | ErasedHandler<unknown>;
 
 /**
@@ -508,6 +445,9 @@ export function implement<
     | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
   options?: { readonly authorize?: never },
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
+// Why: This repeats the first overload, since TypeScript reports a call matching none against the
+// last overload alone: a misspelled `authorize` as an unknown key, and one given to public actions
+// by this message. The first stays first, so an authorizer is typed from it.
 export function implement<
   const T extends Target,
   RequestServices extends (T extends ReadonlyArray<Any>
@@ -573,6 +513,8 @@ export function implement(
   return new Implementation(listed, memoized(recorded), authorizer);
 }
 
+// Why: Rejected: a warning for two live builds of one implementation, which parallel tests, a
+// `Layer.fresh` surface and a CLI beside a server set off legitimately.
 /**
  * The builders of `implementations`, as one layer providing nothing. Surfaces build them
  * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
@@ -586,10 +528,6 @@ export function layer(implementations: Served): Layer.Layer<never, unknown, unkn
   return builders(toList(implementations));
 }
 
-/**
- * One call of `A` in process: its decoded success, or its declared errors and the built-in
- * ones, owing `R` per call, what its handler and its implementation's `authorize` read.
- */
 type Method<A extends Any, R> = Call<
   A,
   Effect.Effect<A["success"]["Type"], A["error"][number]["Type"] | BuiltIn, R>
@@ -606,7 +544,6 @@ export type Client<
   readonly [A in Serving<Member<Apps>, Listed> as A["name"]]: Method<A, RequestOf<Member<Apps>, A>>;
 };
 
-/** A client method, erased: the implementations' actions restore its exact type. */
 type ErasedMethod = (
   ...input: ReadonlyArray<ErasedValue>
 ) => Effect.Effect<ErasedValue, unknown, unknown>;

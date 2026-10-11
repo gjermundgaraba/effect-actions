@@ -46,7 +46,7 @@ curl -s http://127.0.0.1:3000/api/status \
   -H 'Content-Type: application/json' -d '{}'
 # {"service":"effect-actions","users":2}
 
-# A generated HTTP RPC endpoint over the getUser action
+# A protected HTTP route; the token names the caller
 curl -s http://127.0.0.1:3000/api/getUser \
   -H 'Authorization: Bearer alice' \
   -H 'Content-Type: application/json' \
@@ -85,7 +85,7 @@ curl -s http://127.0.0.1:3000/mcp \
 curl -s http://127.0.0.1:3000/api/openapi.json
 ```
 
-Every caller, signed in or not, sees the same tool list. A tool call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope. The implementation carries that `authorize`, so HTTP runs the same check before the handler.
+A call the application's authorization rejects answers 403 with the `insufficient_scope` challenge naming the missing scope, over HTTP as over MCP.
 
 Without a token, a protected route or tool call answers 401, before its input is decoded,
 `{"_tag":"Unauthenticated","message":"A bearer token is required."}` with
@@ -98,7 +98,7 @@ which is public.
 
 - [quickstart.ts](quickstart.ts), [quickstart-server.ts](quickstart-server.ts), [quickstart-client.ts](quickstart-client.ts): the minimal program's contract and binding, its server, and its typed client.
 - [contracts.ts](contracts.ts): schemas, errors and actions, each with its `readOnly` and `caller`.
-- [binding.ts](binding.ts): the `Login` authentication descriptor and the `Http` binding. Plain data, shared by the server and every client. `listChanges` is left out of the binding, so HTTP does not serve it. Its protected routes require the bearer scheme, enforced and documented; `status` is public.
+- [binding.ts](binding.ts): the `Login` authentication descriptor and the `Http` binding. Plain data, shared by the server and every client. Its protected routes require the bearer scheme, enforced and documented; `status` is public.
 - [authorization.ts](authorization.ts): demo actors, the identity `CurrentActor` the protected contracts declare, permissions, and the `authorize` rule the protected implementations state.
 - [authorization-built.ts](authorization-built.ts): the same rule built like handlers, not served by the app: a permission store yielded once at startup, the actor on every call.
 - [users.ts](users.ts): an in-memory, tenant-scoped repository with a change log.
@@ -115,7 +115,7 @@ which is public.
 - [client.ts](client.ts): runnable typed HTTP calls using the demo `alice` token.
 - [cli-admin.ts](cli-admin.ts): a trusted operator's command beside remote callers, not served by the app: one implementation and one `authorize`, an identity typed in two parts, so no verified token names the operator the host supplies.
 - [promise-client.ts](promise-client.ts): `ActionHttp.fetchClient`, the client built once outside an Effect, each call a promise.
-- [rpc-binding.ts](rpc-binding.ts): the `Rpc` binding, the same actions as Effect RPC, one native rpc per action, its protected ones authenticated by `Login`. Plain data, shared by the server and every client.
+- [rpc-binding.ts](rpc-binding.ts): the `Rpc` binding, `status` and the user actions as Effect RPC, one native rpc per action, its protected ones authenticated by `Login`. Plain data, shared by the server and every client.
 - [rpc.ts](rpc.ts): `ActionRpc.layer` on Effect's `RpcServer`, not served by the app: a WebSocket at `/rpc` speaking JSON, each protected rpc authenticated per message by `authenticate`, `status` public.
 - [rpc-client.ts](rpc-client.ts): `ActionRpc.client` over a WebSocket, against a host serving [rpc.ts](rpc.ts), not the app, in a browser's shape: the token sent on each message with `RpcClient.withHeaders`, since a browser sets no header on the upgrade.
 
@@ -138,25 +138,22 @@ HTTP /api/getUser / MCP tool getUser
 authentication and `authorize` produce them rather than a handler. That is what
 lets [client.ts](client.ts) decode a refusal as a typed failure. Responses through the
 authentication carry `cache-control: no-store`; other routes use the host's cache policy. MCP over HTTP answers
-a refusal with the same status and body as HTTP. Tool discovery is not filtered by actor.
+a refusal with the same status and body as HTTP.
 
 A write through `renameUser` is visible through both transports, and through the
-`listChanges` tool, which HTTP does not serve. `double`
-demonstrates string-to-number input decoding. `whoAmI` reads the authenticated
-identity from request context, not action arguments.
+`listChanges` tool. `whoAmI` reads the authenticated identity from request context, not action
+arguments.
 
 See [dependency lifetimes](../docs/guarantees.md#dependency-lifetimes) for how the
 handlers share `Users` while resolving `CurrentActor` on each request.
 
-Startup capabilities (`Users`) and request identity (`CurrentActor`) use distinct tags.
-Authentication establishes `CurrentActor` on each protected request, and nothing provided at
-startup satisfies a protected route: its layer owes `Login`'s verifier. In memory,
+In memory,
 [testing-caller.ts](testing-caller.ts) serves the routes behind `authenticate`, each client
 sending its caller's token.
 
 ## Other surfaces
 
-These examples use the same action contracts without changing their handlers:
+Other surfaces, most over the application's implementations:
 
 ```sh
 # Local execution; a subcommand per action, a flag per input field

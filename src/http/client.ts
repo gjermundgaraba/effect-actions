@@ -17,7 +17,6 @@ export type Options = Omit<
   "transformResponse"
 >;
 
-/** An error schema the binding declares on every endpoint. */
 type BindingError = Action.Errors[number];
 
 /**
@@ -33,7 +32,6 @@ export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
-/** One action as an Effect of its decoded success, failing with `MethodError`. */
 type Method<A extends Action.Any, E extends BindingError> = Call<
   A,
   Effect.Effect<A["success"]["Type"], MethodError<A, E>>
@@ -63,26 +61,18 @@ export type Client<H extends AnyHttp> = {
   >;
 };
 
-/** A native client method, erased. */
 type NativeMethod = (request: {
   readonly payload: ErasedValue;
 }) => Effect.Effect<ErasedValue, unknown>;
 
-/** A native client, erased: one method per endpoint of the top-level group. */
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
-/** Refuse an action a binding of `actions` does not hold, matched by identity. */
 export const assertInBinding = (actions: ReadonlyArray<Action.Any>, action: Action.Any): void => {
   if (!actions.includes(action)) {
     throw new Error(`Action "${action.name}" is not in this HTTP binding`);
   }
 };
 
-/**
- * Build the native client of a binding once and look up each action's method, taking the
- * action's input directly. Every binding API is a native `HttpApi` of one top-level
- * group built from `http.actions`, so each action has a native method of its name.
- */
 export const methods = (
   http: AnyHttp,
   options: Options = {},

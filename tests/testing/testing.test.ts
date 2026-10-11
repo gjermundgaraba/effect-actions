@@ -94,6 +94,22 @@ describe("mcpClient", () => {
     }),
   );
 
+  it.effect("fails with InvalidInput for input that does not encode, sending nothing", () =>
+    Effect.gen(function* () {
+      const mcp = yield* Testing.mcpClient([RenameUser]);
+
+      const error = yield* Effect.flip(mcp.renameUser({ id: "1", name: "" }));
+
+      expect(error).toBeInstanceOf(Action.InvalidInput);
+      expect(error).toMatchObject({ issues: [{ path: ["name"] }] });
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("sent")),
+      ),
+    ),
+  );
+
   it.effect("decodes a built-in error a tool returns as its class", () =>
     Effect.gen(function* () {
       const Refuse = Action.make("refuse", {

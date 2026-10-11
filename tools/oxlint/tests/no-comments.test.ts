@@ -8,6 +8,8 @@ RuleTester.it = it;
 
 const jsDoc = [{ allowJsDoc: true }];
 
+const why = [{ allowWhy: true }];
+
 const prose = [{ messageId: "prose" }];
 
 const reasonless = (directive: string) => [
@@ -44,6 +46,21 @@ tester.run("no-prose-comments", noProseCommentsRule, {
         "  return answer;",
         "}",
         "export const run = load;",
+      ].join("\n"),
+    },
+    {
+      name: "a line comment starting with Why:, with allowWhy",
+      options: why,
+      code: "// Why: Effect does not export the marker.\nconst marker = 1;\n",
+    },
+    {
+      name: "the lines directly below a Why: line, and a reasoned directive below them, with allowWhy",
+      options: why,
+      code: [
+        "// Why: Effect does not export the marker,",
+        "// so it is written by hand.",
+        "// oxlint-disable-next-line anti-slop/no-reflect-get -- Getter semantics.",
+        "load();",
       ].join("\n"),
     },
     {
@@ -95,6 +112,32 @@ tester.run("no-prose-comments", noProseCommentsRule, {
       options: jsDoc,
       code: "/** @ts-expect-error */\nload();\n/**\n * Loads.\n * @ts-ignore */\nload();\n",
       errors: [{ messageId: "prose" }, { messageId: "prose" }],
+    },
+    {
+      name: "a line comment starting with Why:, without allowWhy",
+      code: "// Why: Effect does not export the marker.\nconst marker = 1;\n",
+      errors: prose,
+    },
+    {
+      name: "prose above a Why: line, a blank line below its run, a trailing comment below it, and in a block starting with Why:, with allowWhy",
+      options: why,
+      code: [
+        "// Builds the marker.",
+        "// Why: Effect does not export the marker.",
+        "",
+        "// Builds another.",
+        "const marker = 1;",
+        "// Why: Effect does not export it.",
+        "const another = 1; // Builds another.",
+        "/* Why: Effect does not export it. */",
+        "const other = 2;",
+      ].join("\n"),
+      errors: [
+        { messageId: "prose" },
+        { messageId: "prose" },
+        { messageId: "prose" },
+        { messageId: "prose" },
+      ],
     },
     {
       name: "an oxlint disable and enable pair",

@@ -13,13 +13,6 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Encoded"]
   ? (...input: [] | [input: A["input"]["Type"]]) => R
   : (input: A["input"]["Type"]) => R;
 
-/**
- * The input a method of `action` sends for the arguments it was called with: a given
- * argument as given, and none as the input `{}` decodes to, as a server decodes the `{}` it
- * receives. `Call` allows none only when `{}` is a valid encoded input, which is what this
- * decodes; decoding makes it one of the input's own values, such as an instance of an input
- * class, or fills its defaults.
- */
 export const inputOf = (
   action: Action.Any,
   args: ReadonlyArray<ErasedValue>,
@@ -28,17 +21,10 @@ export const inputOf = (
     ? Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))({})
     : Effect.succeed(args[0]);
 
-/** A remote client's method, erased: the binding's actions restore its exact type. */
 export type ErasedMethod = (
   ...input: ReadonlyArray<ErasedValue>
 ) => Effect.Effect<ErasedValue, unknown>;
 
-/**
- * A remote client's method of `action`, sending its input with `send`, the native client's
- * own. The input is checked as every surface checks it, each issue reported, before the native
- * client encodes it, so it fails as `InvalidInput` rather than as the native client's encoding
- * failure, and nothing is sent.
- */
 export const checked = (
   action: Action.Any,
   send: (payload: ErasedValue) => Effect.Effect<ErasedValue, unknown>,

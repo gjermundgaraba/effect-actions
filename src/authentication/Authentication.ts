@@ -76,7 +76,6 @@ const metadataUrlOf = (options: ProtectedResource): URL => {
   return url;
 };
 
-/** What a resource's challenges name: its scopes checked, and its metadata URL. */
 interface Named {
   readonly scope: string | undefined;
   readonly metadataUrl: string | undefined;
@@ -148,7 +147,6 @@ export interface RefusalResponseOptions<D extends Any = Any> {
   readonly authorization?: string | null | undefined;
 }
 
-/** What the descriptor `D` declares its verifier fails with besides a refusal. */
 type DeclaredOf<D> = D extends { readonly error: infer E extends Errors }
   ? E[number]["Type"]
   : never;
@@ -195,6 +193,9 @@ export const refusalResponse = <D extends Any = never>(
   );
 };
 
+// Why: A prefilter sparing most requests a URL parse, which must admit every URL the parser may
+// resolve to a discovery path. The parser copies `.well-known` as it is and removes only a tab or a
+// newline, which Node refuses in a request target but another platform may pass through.
 const mayResolveToDiscoveryPath = /\.well-known|[\t\n\r]/;
 
 const discoveryMiddleware = (options: ProtectedResource) => {
@@ -278,7 +279,6 @@ export interface Options {
   readonly error?: Errors | Errors[number];
 }
 
-/** The scheme options `O` give: Bearer too wherever they may leave it out, as at run time. */
 type SecurityOf<O> = O extends { readonly security: infer S extends Security }
   ? S
   : "security" extends keyof O
@@ -300,6 +300,9 @@ export const make = <const Name extends string, I, A, const O extends Options = 
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
   const error = errorList(options[0]?.error);
 
+  // Why: The name keys its scheme in the OpenAPI document as it is, so one that is no key throws.
+  // Rejected: replacing other characters with `_`, which gives `app/Login` and `app:Login` one key,
+  // which `OpenApi.fromApi` merges silently where their schemes are equal.
   if (!openApiComponentKey.test(name)) {
     throw new Error(`Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key`);
   }
@@ -349,10 +352,8 @@ export interface LayerOptions<EP = never, RP = never> {
     | Effect.Effect<ProtectedResource | undefined, EP, RP>;
 }
 
-/**
- * Only a Bearer scheme publishes an OAuth protected resource. The types tell only an `Http`
- * scheme from the others, as its scheme is a `string`: `layer` refuses another `Http` one.
- */
+// Why: Effect types an `Http` scheme's name as `string`, so the types cannot tell Bearer from
+// another `Http` scheme; `assertPublishableResource` refuses the others when `layer` is called.
 type ResourceOf<S> = [S] extends [HttpApiSecurity.Http]
   ? unknown
   : { readonly protectedResource?: undefined };
@@ -362,12 +363,14 @@ const presented = (credential: Credential): boolean =>
     ? Redacted.value(credential) !== ""
     : credential.username !== "" || Redacted.value(credential.password) !== "";
 
-/** What `protectedResource` is given: the resource, an Effect building it, or none. */
 type Resource =
   | ProtectedResource
   | Effect.Effect<ProtectedResource | undefined, unknown, unknown>
   | undefined;
 
+// Why: The verifier's per-request services stay this layer's to owe. Rejected: carrying them on
+// `Provider` for the routes to owe, which the routes, typed from the browser-safe descriptor alone,
+// could do only if the descriptor declared them: a new concept to save one wiring order.
 /**
  * The provider of `authentication`: `verify`, or an Effect building it once per layer graph, run on
  * each remote request a protected action receives, with the credential the descriptor's
@@ -522,7 +525,6 @@ export function layer(
   );
 }
 
-/** The identity `I`, or none where it is erased to `unknown`. */
 type Provides<I> = unknown extends I ? never : I;
 
 /**

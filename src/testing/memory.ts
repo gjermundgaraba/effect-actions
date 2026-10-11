@@ -32,12 +32,6 @@ const withWebStreamBodyInCurrentContext = (request: HttpClientRequest.HttpClient
   );
 };
 
-/**
- * The native `HttpClient`, sending every request to `handler` instead of the network. A
- * relative URL resolves against `http://localhost/`, as a page there would resolve it, and a
- * request carries the `Host` header of its URL, as one over the network does. The client is
- * its own: the program's other clients keep their `fetch`, and get none of its requests.
- */
 export const clientOf = (
   handler: (request: Request) => Promise<Response>,
 ): Layer.Layer<HttpClient.HttpClient> => {

@@ -220,13 +220,18 @@ describe("a step-up refusal answering its request", () => {
     }),
   );
 
-  it.effect("keeps a defect after the refusal as the request's own", () =>
+  it.effect("keeps a defect or an interruption after the refusal as the request's own", () =>
     Effect.gen(function* () {
       const broken = yield* Effect.exit(
         answerStepUp(Effect.ensuring(stepUp, Effect.die("finalizer")), undefined),
       );
 
+      const interrupted = yield* Effect.exit(
+        answerStepUp(Effect.ensuring(stepUp, Effect.interrupt), undefined),
+      );
+
       expect(Exit.isFailure(broken) && Cause.hasDies(broken.cause)).toBe(true);
+      expect(Exit.isFailure(interrupted) && Cause.hasInterrupts(interrupted.cause)).toBe(true);
     }),
   );
 });

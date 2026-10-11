@@ -3,7 +3,6 @@ import { Effect, Predicate, Schema, SchemaIssue } from "effect";
 const defaultedMessage = (fallback: string) =>
   Schema.String.pipe(Schema.withConstructorDefault(Effect.succeed(fallback)));
 
-/** Each built-in error's HTTP status, by tag: its annotation, and what a refusal answers. */
 export const statuses = { InvalidInput: 400, Unauthenticated: 401, Forbidden: 403 } as const;
 
 const Issue = Schema.Struct({
@@ -67,7 +66,6 @@ export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   declare private readonly "~builtIn": unknown;
 }
 
-/** An OAuth scope token (RFC 6749 §3.3): printable ASCII but space, `"` and `\`. */
 export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 
 const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));

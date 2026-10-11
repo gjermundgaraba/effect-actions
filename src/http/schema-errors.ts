@@ -7,17 +7,14 @@ const responseEncodingKinds: ReadonlySet<HttpApiError.HttpApiSchemaError["kind"]
   "ResponseHeaders",
 ]);
 
-/**
- * The native middleware answering schema failures: a request that does not decode with
- * `InvalidInput`, the schema's own message and issues. A result that does not encode stays the
- * native failure, which Effect answers with an empty 500 and reports.
- */
 export class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
   "effect-actions/http/SchemaErrors",
   { error: [InvalidInput] },
 ) {}
 
-/** `SchemaErrors`' server side, built by `ActionHttp.layer` alone, so a client's bundle leaves it out. */
+// Why: A result that does not encode stays the native failure, an empty 500, under no policy
+// mapping it to a declared error: the handler has run, so any write it made has happened, which a
+// declared error would misreport.
 export const schemaErrors = () =>
   HttpApiMiddleware.layerSchemaErrorTransform(SchemaErrors, (failure) =>
     Effect.fail(

@@ -76,10 +76,6 @@ export interface Runtime {
   >;
 }
 
-/**
- * What an erased verifier fails with, a refusal or an error its descriptor declares: a value
- * of a declared schema either way, as the built-in refusals are schemas too.
- */
 export type VerifierFailure = Action.Errors[number]["Type"];
 
 /**
@@ -120,10 +116,6 @@ export type Identity<A extends Action.Any> = [A] extends [never]
     ? I
     : never;
 
-/**
- * The identity a descriptor for `A` must authenticate: `unknown` for an erased action, whose
- * key is known only at run time, where `assertAuthentication` checks it.
- */
 type Covered<A extends Action.Any> =
   Exclude<A["caller"], typeof Anyone> extends Context.Key<infer I, unknown> ? I : never;
 
@@ -206,11 +198,9 @@ export const assertAuthentication = (
   }
 };
 
-/**
- * The provider of `auth`, as a surface serving a binding that names it reads it: a provider of
- * another descriptor of the same name, built apart, may differ in what its verifier fails
- * with, so it is refused.
- */
+// Why: Identity, not equality. Two descriptors of one name share the provider's service, so nothing
+// else tells them apart. Rejected: comparing the schemes, which takes per-kind rules following
+// Effect's decoders and still lets the errors differ.
 export const providerOf = (auth: Any): Effect.Effect<Runtime, never, Provider<unknown>> =>
   Effect.flatMap(Effect.service(auth["~provider"]), (provider) =>
     provider.descriptor === auth
@@ -222,7 +212,6 @@ export const providerOf = (auth: Any): Effect.Effect<Runtime, never, Provider<un
         ),
   );
 
-/** Remote promotion happens at tool entry, before shared dispatch, never in local calls. */
 export const promote = <A, E, R>(
   auth: Any,
   run: Effect.Effect<A, E, R>,

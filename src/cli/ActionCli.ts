@@ -58,23 +58,16 @@ export interface Options<A extends Action.Any = Action.Any> {
   readonly commands?: { readonly [K in A as K["name"]]?: CommandOptions<K> };
 }
 
-/** The `commands` any member of `O` may give. */
 type CommandsOf<O> = O extends unknown
   ? "commands" extends keyof O
     ? NonNullable<O["commands" & keyof O]>
     : never
   : never;
 
-/** The keys of any member of `C`. */
 type KeysOf<C> = C extends unknown ? keyof C : never;
 
-/** The options any member of `C` gives command `K`. */
 type CommandOf<C, K> = C extends unknown ? (K extends keyof C ? C[K] : never) : never;
 
-/**
- * No option, no command beyond the actions `A` of the target, and no command's option, beyond
- * `Keys`'s, in any member of `O`.
- */
 type KnownOptions<O, Keys, A extends Action.Any> = Known<O, Keys> &
   ([CommandsOf<O>] extends [never]
     ? unknown
@@ -90,18 +83,12 @@ type KnownOptions<O, Keys, A extends Action.Any> = Known<O, Keys> &
         };
       });
 
-/** The implementation of `A` among `App`. */
 type Owning<App, A extends Action.Any> = App extends unknown
   ? A extends ActionOf<App>
     ? App
     : never
   : never;
 
-/**
- * What one local command of `A` runs: its implementation's builder and authorization, then
- * its handler. Authorization may refuse and any handler fail with a built-in error, so
- * every one fails with `Action.BuiltIn` too.
- */
 type Local<App, A extends Action.Any> = Effect.Effect<
   A["success"]["Type"],
   A["error"][number]["Type"] | BuildError<App, A> | Action.BuiltIn,
@@ -273,7 +260,6 @@ export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
   readonly client?: ClientOptions;
 };
 
-/** What an aggregate command over binding `H` fails with, running its actions `A`. */
 type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
   | A["error"][number]["Type"]
   | H["error"][number]["Type"]
@@ -360,6 +346,9 @@ export function remote<
   return group as never;
 }
 
+// Why: Applied around the whole program, since `runMain`'s report of a defect or of a failed host
+// layer runs outside every command and every layer the host provides. It moves the logger alone: a
+// stderr `Console` around the program would move `--help` off stdout.
 /**
  * A program whose stdout carries only its results, such as a CLI feeding scripts or an MCP
  * subprocess, applied last, before `NodeRuntime.runMain`: the default logger of every layer

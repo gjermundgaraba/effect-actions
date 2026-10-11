@@ -11,6 +11,8 @@ const directiveReasonPattern = /\s--\s+\S/u;
 
 const typeScriptPragmaPattern = /@ts-(?:expect-error|ignore)\b/u;
 
+const whyPattern = /^\s*Why:\s+\S/u;
+
 const isJsDocWithoutPragma = (comment: Comment): boolean =>
   comment.type === "Block" &&
   comment.value.startsWith("*") &&
@@ -26,30 +28,41 @@ export const noProseCommentsRule = defineRule({
     type: "suggestion",
     docs: {
       description:
-        "Ban prose comments. Reasoned tool directives remain, and with `allowJsDoc`, JSDoc.",
+        "Ban prose comments. Reasoned tool directives remain; with `allowJsDoc`, JSDoc; with `allowWhy`, a run of line comments, the first starting with `Why:`, the rest at its column.",
     },
     messages: {
       prose:
-        "Comments are banned. What it is goes in a name or a type; why goes in a test title, a design note, or the commit message.",
+        "Comments are banned. What it is goes in a name or a type; why goes in a test title or the commit message, and in source in a `// Why:` comment.",
       reasonlessDirective:
         "A tool directive carries its reason after ` -- `: write `// {{directive}} -- <reason>`.",
     },
     schema: [
       {
         type: "object",
-        properties: { allowJsDoc: { type: "boolean" } },
+        properties: { allowJsDoc: { type: "boolean" }, allowWhy: { type: "boolean" } },
         additionalProperties: false,
       },
     ],
   },
   create(context) {
     const [options] = context.options;
+
     const allowJsDoc = Predicate.hasProperty(options, "allowJsDoc") && options.allowJsDoc === true;
+
+    const allowWhy = Predicate.hasProperty(options, "allowWhy") && options.allowWhy === true;
 
     return {
       Program() {
+        let whyRun: { readonly endsOnLine: number; readonly column: number } | undefined;
+
         for (const comment of context.sourceCode.getAllComments()) {
           if (comment.type === "Shebang") continue;
+
+          const continuesWhyRun =
+            comment.loc.start.line - 1 === whyRun?.endsOnLine &&
+            comment.loc.start.column === whyRun.column;
+
+          whyRun = undefined;
 
           const directive = directiveOf(comment);
 
@@ -63,6 +76,15 @@ export const noProseCommentsRule = defineRule({
               messageId: "reasonlessDirective",
               data: { directive: example },
             });
+            continue;
+          }
+
+          if (
+            allowWhy &&
+            comment.type === "Line" &&
+            (continuesWhyRun || whyPattern.test(comment.value))
+          ) {
+            whyRun = { endsOnLine: comment.loc.end.line, column: comment.loc.start.column };
             continue;
           }
 

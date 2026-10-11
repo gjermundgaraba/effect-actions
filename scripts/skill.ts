@@ -17,7 +17,7 @@ const frontmatter = `---
 name: effect-actions
 description: >
   Use when implementing, integrating, or testing @gjermundgaraba/effect-actions,
-  which defines Effect action contracts once for HTTP, MCP, native Toolkits, and CLIs.
+  which defines Effect action contracts once for HTTP, MCP, Effect RPC, native Toolkits, and CLIs.
   These pages follow the repository's main branch, which can be ahead of the latest
   release; where the package is installed, read the same pages in
   node_modules/@gjermundgaraba/effect-actions/docs/, which describe the installed version.

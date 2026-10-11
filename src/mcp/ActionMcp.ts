@@ -84,35 +84,36 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
 }
 
 /**
- * One Streamable HTTP MCP endpoint: `Options`, and every native `McpServer.layerHttp` option
- * except `protocols`, `allowedOrigins` among them, with `path` defaulting to `/mcp`.
+ * One Streamable HTTP MCP endpoint: `Options`, and every native `McpServer.layerHttp` option,
+ * `allowedOrigins` among them, except `protocols` and `allowSessionTermination`, as the endpoint
+ * keeps no session, with `path` defaulting to `/mcp`.
  */
 export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
-  extends Options<E, R, A>, Omit<Parameters<typeof McpServer.layerHttp>[0], "protocols" | "path"> {
+  extends
+    Options<E, R, A>,
+    Omit<
+      Parameters<typeof McpServer.layerHttp>[0],
+      "protocols" | "path" | "allowSessionTermination"
+    > {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
   readonly authentication?: Authentication;
 }
 
+// Why: Hosts such as Claude Code and Codex open stdio with `initialize`, which only the two
+// stateful revisions answer. The revisions before them stay out: Effect's adapters for them list
+// an input's `type`, `properties` and `required` alone, so a `$ref` to its definitions resolves
+// nowhere.
 const stdioProtocols = [
   McpProtocol.v2026_07_28,
   McpProtocol.v2025_11_25,
   McpProtocol.v2025_06_18,
 ] as const;
 
-/**
- * The native server supplies its own request context to every tool call, and the registry
- * it registers the tools on, the endpoint's own; over HTTP the router its own, such as the
- * request.
- */
 type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext | McpServer.McpServer>;
 
 type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provided>;
 
-/**
- * What the native features owe, `R`, beside the registry, which the endpoint provides them,
- * so one registering through `McpServer.registerResource` owes it no host.
- */
 type Features<R> = Exclude<R, McpServer.McpServer>;
 
 const strictToolProjection: Projection = {
@@ -195,6 +196,11 @@ const omitRequestServices = Context.omit(
   References.CurrentLogLevel,
 );
 
+// Why: Effect's `registerToolkit` sends every success as `structuredContent` and one JSON text
+// block and takes no option, so every tool, with media or without, is registered here, through the
+// registry's public `addTool`. This follows `registerToolkit` step by step, `omitRequestServices`
+// and `nativeToolJsonSchema` copying its private helpers; a test in tests/mcp/media.test.ts
+// compares the two for tools without media.
 const registerToolsLiftingMedia = Effect.fnUntraced(function* (
   toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>,
   lifts: ReadonlyMap<string, Lift>,
@@ -282,6 +288,10 @@ const registerToolsLiftingMedia = Effect.fnUntraced(function* (
 
       const resultWithLiftedMedia = ({ encodedResult, result }: Tool.HandlerResult<Tool.Any>) => {
         if (media === undefined) {
+          // Why: A success is sent as it encodes, a number, a string, an array or `null` included,
+          // never wrapped in an object and never left out. A Python SDK release before the fix
+          // of python-sdk#3345 reads a `null` `structuredContent` as missing, which is the SDK's
+          // bug.
           return new McpSchema.CallToolResult({
             isError: false,
             structuredContent: encodedResult,
@@ -407,11 +417,17 @@ const server = <Out, R>(
 
     const handlers = yield* Layer.build(binding.layer);
 
+    // Why: The registration lays the context it runs in over every call's, as `registerToolkit`
+    // does, so it runs with the handlers and the registry alone and a request's own value wins.
     yield* registerToolsLiftingMedia(binding.toolkit, lifts).pipe(
       Effect.setContext(Context.add(handlers, McpServer.McpServer, registry)),
     );
   });
 
+  // Why: Effect's registry is one layer, shared by a whole layer graph, so `Layer.fresh` gives each
+  // endpoint its own, and the features are provided inside it, as each native helper provides that
+  // layer itself. The handlers are provided outside it, so builders stay shared with the graph's
+  // other surfaces.
   return Layer.effectDiscard(register).pipe(
     Layer.provide(features),
     Layer.provide(transport),
@@ -442,12 +458,9 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
   };
 };
 
-/**
- * Where `D`, the descriptor given, is inferred, so the provider owed is that descriptor's.
- * Without one, tools `A` all public take none, even past a `D` given explicitly; protected
- * ones state theirs in `RequiredAuthentication` alone, as an absent `authentication` and the
- * one they require would intersect to `never`, reading as every option being wrong.
- */
+// Why: Protected tools without a descriptor get `unknown`, leaving `RequiredAuthentication` to
+// demand theirs. `{ authentication?: undefined }` would intersect with that demand to `never`, and
+// the error would read as every option being wrong.
 type Inferring<D, A extends Action.Any> = [D] extends [undefined]
   ? [Protected<A>] extends [never]
     ? { readonly authentication?: undefined }
@@ -566,6 +579,9 @@ export function runStdio(
     features,
   );
 
+  // Why: The native transport ends by interrupting the fiber that built it, once the host closes
+  // its side and the answers in flight are written. Built in a child, that end is a success, and an
+  // interruption of the program itself, such as a signal, stays an interruption.
   return Layer.launch(transport).pipe(
     withStderrConsole,
     Effect.forkChild,

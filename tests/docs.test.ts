@@ -89,19 +89,6 @@ it("lists every example in examples/README.md", () => {
   for (const example of examples) expect(index, example).toContain(`](${example})`);
 });
 
-it("indexes every design note in CONTRIBUTING.md by its title", () => {
-  const indexed = Array.from(
-    read("CONTRIBUTING.md").matchAll(/^- \[(.+)\]\(design\/(.+)\)$/gm),
-    ([, title, file]) => `${file}: ${title}`,
-  );
-
-  const notes = readdirSync(new URL("../design/", import.meta.url)).map(
-    (file) => `${file}: ${read(`design/${file}`).split("\n")[0]?.replace(/^# /, "")}`,
-  );
-
-  expect(indexed.toSorted()).toEqual(notes.toSorted());
-});
-
 it("keeps relative links in docs/ inside docs/, which the skill copies", () => {
   const pages = readdirSync(docsDirectory).filter((name) => name.endsWith(".md"));
 

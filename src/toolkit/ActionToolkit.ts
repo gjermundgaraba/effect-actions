@@ -22,7 +22,6 @@ import {
   toList,
 } from "../contract/implementation.js";
 
-/** A native tool named after its action, taking and giving JSON. */
 type NativeTool<A extends Action.Any, R> = Tool.Tool<
   A["name"],
   {
@@ -36,10 +35,6 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
   R
 >;
 
-/**
- * The tool of each action of `App` among `Listed`. A tool needs what its handler and its
- * implementation's authorization need.
- */
 type ToolFor<App, Listed extends Action.Any> = App extends unknown
   ? Serving<App, Listed> extends infer A extends Action.Any
     ? A extends Action.Any
@@ -95,10 +90,6 @@ export interface Options<A extends Action.Any> {
   ) => boolean | Effect.Effect<boolean>;
 }
 
-/**
- * `Options`, erased: a method, so `make`'s `needsApproval`, typed by the calls of the
- * implementations' actions, is compatible with it.
- */
 interface ErasedOptions {
   readonly actions?: ReadonlyArray<Action.Any> | undefined;
   needsApproval?(
@@ -108,7 +99,6 @@ interface ErasedOptions {
   ): boolean | Effect.Effect<boolean>;
 }
 
-/** `Tools`, erased: the public signature restores its tools and channels. */
 type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 
 /**
@@ -143,6 +133,10 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
 
   const { toolkit, layer } = bindTools(served, {
     label: "tool",
+    // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id
+    // carries its implementation's key. A key per `make` call separates nothing its implementation
+    // does not, and a toolkit and a layer from two calls then type-check, as `Tool.HandlersFor` is
+    // keyed by name, and die on the first call.
     tool: (tool, action, app) =>
       Object.assign(
         needsApproval === undefined

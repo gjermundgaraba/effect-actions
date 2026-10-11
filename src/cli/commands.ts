@@ -24,10 +24,6 @@ import {
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 
-/**
- * The fields of `A`'s input that may be positional: the named top-level fields of a struct
- * or class input, as encoded. None for any other input, a record or a union included.
- */
 type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? true extends Types.IsUnion<E>
     ? never
@@ -40,7 +36,8 @@ type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
         : never
   : never;
 
-/** The fields of `A`'s input that may be read from stdin: all but the optional ones. */
+// Why: Required fields only. An empty stdin for an optional field would have to mean either an
+// empty value or the field left out.
 type StdinField<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? Exclude<Field<A>, { [K in keyof E]-?: {} extends Pick<E, K> ? K : never }[keyof E]>
   : never;
@@ -68,11 +65,6 @@ export interface Options<A extends Action.Any> {
   readonly stdin?: StdinField<A>;
 }
 
-/**
- * `getUser` as a command or flag name: `get-user`; `getHTTPUser`: `get-http-user`; `_id`:
- * `id`, since a flag already starts with its dashes. A name of dashes and underscores alone,
- * which would be left empty, is kept as it is.
- */
 export const kebab = (name: string): string => {
   const kebabbed = name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
@@ -144,7 +136,6 @@ const stringChoicesOf = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined 
   return accepted.every(Predicate.isString) ? accepted : undefined;
 };
 
-/** A flag or a positional argument. */
 type Kind = Param.ParamKind;
 
 const takesTextAsIs = (encoded: SchemaAST.AST): boolean =>
@@ -204,6 +195,9 @@ const repeatedElementOf = (
   return { element, min: encoded.elements.length };
 };
 
+// Why: An occurrence of `[]` adding no element is how a repeated flag sends an empty list.
+// Rejected: an occurrence holding a whole JSON array, which a choice's flag cannot take, since
+// `Param.variadic` repeats one parameter and `Param.orElse` makes two.
 const noElementOccurrence = "[]";
 
 const fieldParam = (
@@ -253,19 +247,14 @@ const fieldParam = (
   };
 };
 
-/** One input field's flag or argument, parsed as its encoded value, `None` when omitted. */
 interface FieldParam {
   readonly field: string;
   readonly param: Param.Param<Kind, Option.Option<unknown>>;
-  /** Whether the field may be left out, and so its argument too. */
   readonly optional: boolean;
-  /** Whether it is repeated, an argument taking every value left, so read last. */
   readonly repeats: boolean;
-  /** The field's description, its flag's or argument's help text. */
   readonly description: string | undefined;
 }
 
-/** What the field parameters parse to, by field. */
 type Parsed = Readonly<Record<string, Option.Option<unknown>>>;
 
 const namedFieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> => {
@@ -448,6 +437,9 @@ const fieldValueFromText = (field: SchemaAST.AST): ((text: string) => Schema.Jso
 
 const stdinTextOf = (field: string) =>
   Effect.gen(function* () {
+    // Why: Read as an option, not required. `Stdio` is in the environment `Command.run` requires of
+    // its host, so every run has it, and requiring it here would add it to the type of every
+    // derived command, with `stdin` or without.
     const stdio = yield* Effect.serviceOption(Stdio.Stdio);
 
     if (Option.isNone(stdio)) return yield* Effect.die(new Error("Stdio is not provided"));
@@ -470,14 +462,10 @@ const stdinTextOf = (field: string) =>
     return text.replace(/[\r\n]+$/, "");
   });
 
-/** An action's input as native flags and positional arguments, and how to decode them. */
 interface InputConfig<A extends Action.Any> {
-  /** Flags by field; `input` for the whole input when it is not a struct. */
   readonly flags: Readonly<Record<string, Param.Param<Kind, Option.Option<unknown>>>>;
-  /** Positional fields, in the order they are read. */
   readonly positional: ReadonlyArray<FieldParam>;
   readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], InvalidInput>;
-  /** What help says of the field read from stdin, if there is one. */
   readonly stdinHelp: string | undefined;
 }
 
@@ -563,15 +551,6 @@ const inputConfig = <A extends Action.Any>(
   };
 };
 
-/**
- * One native command around an action-bound operation, its flags and positional
- * arguments derived from the action's input. A field's flag shadows a global flag of the
- * same name; two flags of the command itself with one name, an alias's included, are refused
- * when it is built, since Effect CLI checks its one namespace of names only when it parses.
- * Input that does not decode is `InvalidInput`, as over HTTP, and the operation writes its
- * logs and console output to stderr, since stdout carries the result. Every failure is a
- * `UserError`, encoded with the surface's `errors` too, such as a binding's.
- */
 export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,

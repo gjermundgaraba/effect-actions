@@ -4,10 +4,8 @@ import type * as Action from "./Action.js";
 import { Anyone, assertOnce } from "./rules.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
-/**
- * A random key segment, unique to its caller even across installed copies of this module,
- * where a counter of each copy would repeat another's.
- */
+// Why: Random, not a counter: two installed copies of this module would each count from zero and
+// repeat each other's keys.
 const uniqueKey = (): string => Math.random().toString(36).slice(2);
 
 /** Decoded values at the dispatch boundary every surface shares. */
@@ -22,7 +20,6 @@ export type ErasedHandler<R> = {
   handle(input: ErasedValue): Effect.Effect<ErasedValue, ErasedValue, R>;
 }["handle"];
 
-/** A surface's erased view of a record of handlers, keyed by action name. */
 export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
 
 /**
@@ -39,17 +36,11 @@ export type ErasedAuthorize = (action: Action.Any) => Effect.Effect<void, unknow
 /** Each action of an implementation with its handler, as its builder made them. */
 export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
 
-/**
- * What a layer builds once per layer graph, under a key private to it: an implementation's
- * handlers, or its authorizer. Effect memoizes a layer by reference within one layer graph, so
- * everything in the graph holding this one shares one run.
- */
 interface Memoized<S, E, R> {
   readonly key: Context.Key<S, S>;
   readonly layer: Layer.Layer<S, E, R>;
 }
 
-/** What `build` makes, as a layer of its own. */
 export const memoized = <S, E, R>(
   build: Effect.Effect<S, E, R>,
 ): Memoized<S, E, Exclude<R, Scope.Scope>> => {
@@ -235,7 +226,6 @@ export type Offered<O, All extends Action.Any> = [Listing<O>] extends [never]
   ? All
   : Extract<All, Listing<O> extends ReadonlyArray<infer A extends Action.Any> ? A : never>;
 
-/** The lists of actions the members of `O` may give; none where no member gives one. */
 type Listing<O> = O extends unknown ? NonNullable<O["actions" & keyof O]> : never;
 
 /**
@@ -254,13 +244,11 @@ export type Known<O, Keys> = {
  */
 export type OptionalUnless<O, Given> = {} extends O ? [options?: Given] : [options: Given];
 
-/** A surface's implementations as a list. */
 export const toList = (served: Served): ReadonlyArray<AnyImplementation> => Arr.ensure(served);
 
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
 
-/** Whether `A` may be one of `Listed`: either is assignable to the other. */
 type Matches<A extends Action.Any, Listed extends Action.Any> = Listed extends Action.Any
   ? [A] extends [Listed]
     ? true
@@ -269,6 +257,9 @@ type Matches<A extends Action.Any, Listed extends Action.Any> = Listed extends A
       : never
   : never;
 
+// Why: The tests before `Matches` only spare instantiations: an action is tested against the whole
+// list first, and one whose name the list lacks is never compared pairwise; `infer A` binds the
+// actions once.
 /**
  * The actions of `App` a surface given the actions `Listed` may serve, as `select` selects
  * them by identity: an action whose type either is assignable to, or is assigned by, one
@@ -306,10 +297,6 @@ export type Holding<App, Listed extends Action.Any> = App extends unknown
     : App
   : never;
 
-/**
- * Refuse an action of `listed` that `held` lacks, by identity, as a stale list, marking one
- * of a held name as another contract's.
- */
 export const assertHeld = (
   why: string,
   listed: ReadonlyArray<Action.Any>,
@@ -328,12 +315,6 @@ export const assertHeld = (
   }
 };
 
-/**
- * Each of `apps` narrowed to the actions `listed` holds, matched by identity, behind its own
- * authorization and sharing its builder; one holding none of them is
- * left out, and not built. All of `apps` as they are when nothing is listed. A listed action
- * none of them holds is refused, as a stale list or another contract of its name.
- */
 export const select = (
   apps: ReadonlyArray<AnyImplementation>,
   listed: ReadonlyArray<Action.Any> | undefined,
@@ -355,14 +336,6 @@ export const select = (
   });
 };
 
-/**
- * `apps` narrowed to the actions a binding's layer serves, matched by identity: those
- * `listed`, which the binding, holding `bound`, must hold, or every one of the binding's they
- * hold, each once. An implementation holding none of them is left out, and not built.
- * Implementations holding none of the binding's actions are refused, as the wrong
- * implementations or the wrong binding, `what`; a name the binding holds is marked as another
- * contract's, as a second copy of the contracts module makes one.
- */
 export const servedBy = (
   what: string,
   bound: ReadonlyArray<Action.Any>,
@@ -375,6 +348,9 @@ export const servedBy = (
   const served = select(apps, listed ?? bound.filter((action) => held.includes(action)));
   const actions = served.flatMap((app) => app.actions);
 
+  // Why: Refused here, when the surface is called, not by the types: a type check leaves its key
+  // deferred in a helper generic in its implementations or its binding, such as one serving
+  // `[app, double]`, which then fails to compile.
   if (actions.length === 0 && listed === undefined && apps.length > 0) {
     const names = new Set(bound.map(({ name }) => name));
 
@@ -401,11 +377,8 @@ export type Protected<A extends Action.Any> = A extends unknown
 
 type ServiceOf<K> = K extends Context.Key<infer I, unknown> ? I : never;
 
-/**
- * The identity required by the contract, even when its handler never reads it. A `caller`
- * narrowed to `Anyone`, such as `Action.Any & { caller: typeof Anyone }`'s, which TypeScript
- * keeps as `typeof Anyone | (Key & typeof Anyone)`, requires none.
- */
+// Why: A `caller` narrowed to `Anyone`, such as `Action.Any & { caller: typeof Anyone }`'s, is kept
+// by TypeScript as `typeof Anyone | (Key & typeof Anyone)`, and must require no identity.
 type AuthenticationOf<A extends Action.Any> = A["caller"] extends typeof Anyone
   ? never
   : ServiceOf<A["caller"]>;
@@ -454,10 +427,6 @@ export type BuildServices<App, Listed extends Action.Any = OwnActions<App>> = Ap
   ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RAX)
   : never;
 
-/**
- * Provide `layer` the handlers of `apps`. Each implementation's layer is memoized, so its
- * builder runs once per layer graph however many surfaces serve it.
- */
 export const provideHandlers =
   (apps: ReadonlyArray<AnyImplementation>) =>
   <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, unknown, unknown> => {
@@ -466,18 +435,10 @@ export const provideHandlers =
     return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
 
-/**
- * The builders of `apps` as one layer providing nothing: built above the surfaces, it runs
- * each builder once for all of them, since every surface builds the same memoized layers.
- */
 export const builders = (
   apps: ReadonlyArray<AnyImplementation>,
 ): Layer.Layer<never, unknown, unknown> => Layer.empty.pipe(provideHandlers(apps));
 
-/**
- * Every action `apps` serve with its handler, behind its authorizer, as `provideHandlers` built
- * them.
- */
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
 ): Effect.Effect<Bound, never, unknown> =>
@@ -486,15 +447,6 @@ export const acquire = (
     (bound) => bound.flat(),
   );
 
-/**
- * Every action `apps` serve with its handler, behind its authorizer, their builders built as layers
- * of the graph being built around the caller, into its memo map, as `HttpRouter` builds a
- * middleware's dependencies: a builder acquiring them shares each builder's one run with the
- * surfaces of its graph, whichever builds first. Outside any graph, a program under
- * `Effect.provide` shares that layer's, and one under none builds into a map of its own. The
- * caller's scope holds them; a surface serving them too keeps them until it is released. A value
- * that is not an implementation is refused when `built` is called, before its Effect runs.
- */
 export const built = (
   apps: ReadonlyArray<AnyImplementation>,
 ): Effect.Effect<Bound, unknown, unknown> => {
@@ -504,6 +456,9 @@ export const built = (
   return Effect.gen(function* () {
     if (first === undefined) return [];
 
+    // Why: `Layer.build` forks the memo map of the layer graph around the caller, and what a fork
+    // builds first the surfaces of that graph build again. Built into the map itself, as
+    // `HttpRouter` builds a middleware's dependencies, each builder runs once.
     const current = yield* Effect.serviceOption(Layer.CurrentMemoMap);
     const memoMap = Option.getOrElse(current, Layer.makeMemoMapUnsafe);
     const scope = yield* Effect.scope;

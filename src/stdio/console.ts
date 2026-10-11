@@ -1,5 +1,9 @@
 import { Clock, Console, Effect, Function, Predicate } from "effect";
 
+// Why: Next to Node's console, `table` printing as `log` does, a timer's milliseconds past a
+// second, a group without indentation and no warning for an unknown label are deliberate. Node's
+// layouts are not rebuilt, as no stdio server or CLI needs them: it promises only that every method
+// writes through `error`, counters and timers keeping their counts and start times.
 const stderrConsole = (console: Console.Console, clock: Clock.Clock): Console.Console => {
   const counts = new Map<string, number>();
   const timers = new Map<string, bigint>();
@@ -74,11 +78,6 @@ const stderrConsole = (console: Console.Console, clock: Clock.Clock): Console.Co
   };
 };
 
-/**
- * `effect` writing its console output and Effect logs to stderr alone, through the console
- * it runs with: for what a surface runs where stdout carries data, a stdio server's program
- * or a CLI command's builder, authorizer and handler.
- */
 export const withStderrConsole = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>

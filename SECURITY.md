@@ -11,4 +11,4 @@ Report it privately through GitHub:
 [Report a vulnerability](https://github.com/gjermundgaraba/effect-actions/security/advisories/new).
 Do not open a public issue.
 
-Include the affected version, the surface involved (HTTP, MCP, Toolkit, CLI), and a reproduction.
+Include the affected version, the surface involved (HTTP, MCP, RPC, Toolkit, CLI), and a reproduction.
