@@ -10,6 +10,7 @@ The tasks are in [Action.md](Action.md).
 - `'<key>' does not exist in type 'Options'`, or `in type 'Mcp'`, or `Type '...' is not assignable to type 'never'` on the key: `make` takes no such option or hint. The key may be misspelled, such as `destructive` for `destructiveHint`.
 - `Type 'H' is not assignable to type 'H & ...'`, or `… is not assignable to type 'ServiceCaller<…>'`, or `… is not assignable to type '[Extract<ErrorMembers<E>, …>] extends …'`, at `make` in a helper whose type parameter stands for `mcp`, `caller` or `error`, as in `<const H extends Action.Mcp>(mcp: H)`: `make` refuses options a type parameter stands for. Type the parameter concretely, `Action.Mcp` or `typeof CurrentUser`, or spread a constant object into the options.
 - A type error on `error`, `... is not assignable to type 'readonly never[]'` or naming the remaining errors, or `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface` thrown: an action's `error` lists a built-in error, or one of your own that encodes with the `_tag` `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop the built-in error, which a handler may fail with anyway; rename your own.
+- `ReferenceError` thrown where a contract is defined: `make` reads every declared error's `_tag` when it is called, so an entry of `error` that is a `Schema.suspend` whose thunk reads a `const` declared further down fails at once. Declare the error before the action.
 
 ## At `implement`
 

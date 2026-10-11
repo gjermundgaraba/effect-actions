@@ -92,11 +92,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
-- `docs/` is shorter and split by what a reader does: each module's failure modes are a page of
-  their own, `<Module>-failures.md`, read when something fails; `Action.md`'s in-process client
-  and shared build are `Action-in-process.md`; `Authentication.md`'s sections past a bearer token
-  are `Authentication-advanced.md`. No page is over 16 KB, which a coding agent's tool reads
-  whole. The pages state what sixteen user-test sessions lacked, among it the model loop and
+- No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
+  in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
+  sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
   what an answering turn does ([ActionToolkit.md](docs/ActionToolkit.md#ask-for-approval)), the
   shape of a refusal over MCP, and CORS for a browser MCP client.
 - `package.json` names `docs` and `examples` under `directories`.
@@ -112,7 +110,8 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   the single-file examples, which were fragments of one demo application
   ([examples/README.md](examples/README.md)).
 - The docs are organized by task and link to example files instead of embedding them. Each
-  module page keeps its API table and failure modes; rules that restated the code are gone, and
+  module page keeps its API table, with its failure modes on a page beside it,
+  `<Module>-failures.md`, read when something fails; rules that restated the code are gone, and
   what stays is how to do a task, a choice, a trap or a boundary. `docs/guarantees.md` is now
   the wire behavior of every surface in one table, and the library's scope; its lifetime and
   authorization rules moved to [Action.md](docs/Action.md) and
