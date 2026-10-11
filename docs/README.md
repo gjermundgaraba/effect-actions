@@ -23,7 +23,8 @@ How to read them:
 2. Read [Action.md](Action.md) completely. Every surface builds on it.
 3. On the other pages, read the section for the task at hand, and open the example files it
    links.
-4. When something fails, look the message up in that page's "Failure modes".
+4. When something fails, search the `*-failures.md` pages for a fragment of the message: each
+   module page has one beside it, such as [Action-failures.md](Action-failures.md).
 
 A service others call is [notes-service](../examples/notes-service/) plus
 [Action.md](Action.md), [ActionHttp.md](ActionHttp.md), [Authentication.md](Authentication.md)
@@ -35,19 +36,21 @@ The exported TypeScript declarations and their JSDoc are the reference for signa
 
 ## Pages
 
-| Read                                   | When you need to                                                                                                                                                                                                  |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                   | install, import the modules, write the minimal program, lay out an application, bundle a browser client                                                                                                           |
-| [Action.md](Action.md)                 | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors, call actions in process, share one build across servers                                             |
-| [ActionHttp.md](ActionHttp.md)         | bind actions to JSON routes, serve them, publish OpenAPI, call them from Effect or from a browser                                                                                                                 |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add native prompts and resources, send notifications from a handler                             |
-| [ActionRpc.md](ActionRpc.md)           | bind actions to Effect rpcs, serve them on a protocol, call them, send request context with a call                                                                                                                |
-| [ActionToolkit.md](ActionToolkit.md)   | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval                                                                                                                           |
-| [ActionCli.md](ActionCli.md)           | run actions as local commands, or call a server from commands; shape flags, input and output; name the caller                                                                                                     |
-| [Authentication.md](Authentication.md) | declare how callers sign in, verify credentials, publish OAuth discovery, use an API key or a cookie, read request context in a verifier, protect a route of your own, run a request policy before authentication |
-| [Testing.md](Testing.md)               | test an implementation in process, routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                                                                      |
-| [guarantees.md](guarantees.md)         | see what one case, such as bad input, a declared error or a refusal, looks like on the wire of each surface, and what the library leaves to you                                                                   |
-| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                                                                                      |
+| Read                                                     | When you need to                                                                                                                                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [setup.md](setup.md)                                     | install, import the modules, write the minimal program, lay out an application, bundle a browser client                                                                               |
+| [Action.md](Action.md)                                   | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors                                                                          |
+| [Action-in-process.md](Action-in-process.md)             | call actions from your own code, such as a job; share one build of the implementations across servers and jobs                                                                        |
+| [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, publish OpenAPI, call them from Effect or from a browser                                                                                     |
+| [ActionMcp.md](ActionMcp.md)                             | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add native prompts and resources, send notifications from a handler |
+| [ActionRpc.md](ActionRpc.md)                             | bind actions to Effect rpcs, serve them on a protocol, call them, send request context with a call                                                                                    |
+| [ActionToolkit.md](ActionToolkit.md)                     | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval                                                                                               |
+| [ActionCli.md](ActionCli.md)                             | run actions as local commands, or call a server from commands; shape flags, input and output; name the caller                                                                         |
+| [Authentication.md](Authentication.md)                   | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope                                                                                         |
+| [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read request context in a verifier, protect a route of your own, run a request policy before authentication, refuse outside the router                    |
+| [Testing.md](Testing.md)                                 | test an implementation in process, routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                                          |
+| [guarantees.md](guarantees.md)                           | see what one case, such as bad input, a declared error or a refusal, looks like on the wire of each surface, and what the library leaves to you                                       |
+| [CONTEXT.md](CONTEXT.md)                                 | look up a term the pages use                                                                                                                                                          |
 
 ## Examples
 

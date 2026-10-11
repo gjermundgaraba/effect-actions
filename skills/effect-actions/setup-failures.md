@@ -1,0 +1,12 @@
+# Setup failure modes
+
+What you see when something is wrong, and the fix. Search for a fragment of the message.
+The tasks are in [setup.md](setup.md).
+
+- `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath from [Entry points](setup.md#entry-points), never the root or a `dist/` path.
+- A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a file that also holds server code, such as a contract beside its `Action.implement`, or an authentication descriptor beside its `Authentication.layer`. Move contracts, identities, descriptors and bindings to files that import no server code.
+- A page that loads Effect from an import map still bundles a second copy of Effect, or of some of its modules: a module of the page imports an Effect specifier the map does not serve, such as `effect/Schema`. Serve the specifiers [Bundle for a browser](setup.md#bundle-for-a-browser) lists, and import Effect through them in the page's own modules too. With a bundler that externalizes subpaths too, such as esbuild's `--external:effect`, the page instead fails to resolve `effect/Schema` in the browser.
+- A page loading Effect from an import map fails before its modules run, with `Failed to resolve module specifier "effect/Cause"` in Chromium: the map points at Effect's published files and lacks a specifier Effect imports itself. Map `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` to the same files, or serve Effect from a build that resolves its own imports.
+- A page fails at load with `does not provide an export named …`: it serves only the names it uses of an Effect specifier, from a vendored module or a trimmed bundle, and the package imports another, as a release may. Serve each specifier whole.
+- Type errors inside `effect/*` modules after install, or an unmet peer warning for `effect`, such as `found 4.1.0`: more than one Effect release is installed, or one outside the peer range. Install the `effect` range [Install](setup.md#install) names, with every `@effect/*` package on the same release.
+- `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): these modules moved to `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`. Import the new paths.

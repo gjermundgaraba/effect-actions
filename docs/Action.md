@@ -162,7 +162,7 @@ and the whole builder above [notes-service/src/notes/handlers.ts](../examples/no
   call.** An identity yielded in
   the builder becomes a startup requirement, which [nothing may provide](#say-who-may-call-an-action).
 - **A builder runs once per layer graph**, however many surfaces serve its implementation
-  ([Share one build across servers](#share-one-build-across-servers)). A local CLI command
+  ([Share one build across servers](Action-in-process.md#share-one-build-across-servers)). A local CLI command
   builds it on each invocation
   ([ActionCli.md](ActionCli.md#run-actions-as-local-commands)). Two `implement` calls are two
   builders, even of one builder Effect.
@@ -174,7 +174,7 @@ and the whole builder above [notes-service/src/notes/handlers.ts](../examples/no
 - **Leave a handler's `Effect.fn` unnamed.** Each handler already runs in a span named after
   its action, and its log lines carry `action.name` and `action.read_only`.
 - **Calling the function you passed to `implement` skips authorization.** Call the
-  implementation through [`Action.client`](#call-actions-in-process).
+  implementation through [`Action.client`](Action-in-process.md#call-actions-in-process).
 
 ## Authorize calls
 
@@ -243,80 +243,6 @@ over HTTP ([guarantees.md](guarantees.md#wire-behavior)).
   is this server's own refusal: a caller whose token is valid is told to sign in again. Map it
   to an error the action declares, or to a defect.
 
-## Call actions in process
-
-`Action.client(implementations)` gives the methods `ActionHttp.client` gives. A call runs what
-a remote call runs, without a transport:
-the input and the result pass through their JSON codecs, and the authorizer runs before the
-handler. Use it to test an implementation, and in a job or a command of your own.
-
-```ts
-const as = (user: keyof typeof users) => Effect.provideService(CurrentUser, users[user]);
-
-const program = Effect.gen(function* () {
-  const client = yield* Action.client(notes);
-
-  return yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
-}).pipe(Effect.scoped, Effect.provide(NoteStore.layerMemory));
-```
-
-Acquiring a client needs a `Scope`: under `it.effect` the test supplies it, as in
-[notes-service/test/notes/notes.test.ts](../examples/notes-service/test/notes/notes.test.ts);
-elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](../examples/kitchen-sink/src/agent.ts).
-
-- **Provide the caller around each call, and startup services around the acquisition.** A call
-  reads its own context, never the one the client was acquired in, so one client serves every
-  caller ([assistant/test/identity/identity.test.ts](../examples/assistant/test/identity/identity.test.ts)).
-- **Acquiring a client runs the builders**, and builds a built authorizer: it owes their
-  startup services. Acquire it once, where builders live: in a builder, in a
-  layer, or in a scoped program such as a test. Never in a handler, which builds on every
-  request.
-- **Two acquisitions share a build only inside one layer graph**, such as under a layer
-  provided around the program. With none around them, each builds its own.
-- **Every implemented action has a method**, whether or not a surface serves it. `actions`
-  lists the ones to call, and an implementation holding none of them is left unbuilt
-  ([kitchen-sink/test/issues/issues.test.ts](../examples/kitchen-sink/test/issues/issues.test.ts)).
-- **Test what an implementation does here**, and what a surface adds, its authentication,
-  statuses and codecs, in memory ([Testing.md](Testing.md#test-routes-in-memory)). Assert on a
-  failure as [Testing.md](Testing.md#assert-on-errors) says.
-
-## Share one build across servers
-
-`HttpRouter.serve` and `Testing.layer` each build their routes in a layer graph of their own.
-That graph reuses what is provided from outside it and shares nothing it builds itself: a
-builder's run, a built authorizer, or a service of yours such as an in-memory store. One rule
-places all of them:
-
-- **With one server, put everything the process runs inside the layer it serves**, a job or an
-  agent beside the routes included.
-- **Otherwise, provide `Action.layer(implementations)` and the services they share above the
-  server and its siblings**: a second server, a program beside it, several `Testing.layer`s.
-
-```ts
-// kitchen-sink/src/routes.ts
-export const builders = Action.layer([...implementations, admin]);
-
-// kitchen-sink/src/server.ts
-Layer.mergeAll(
-  HttpRouter.serve(publicRoutes).pipe(Layer.provide(listen(publicPort))),
-  HttpRouter.serve(adminRoutes).pipe(Layer.provide(listen(adminPort))),
-).pipe(Layer.provide(builders), Layer.provide(memory));
-```
-
-[kitchen-sink/src/server.ts](../examples/kitchen-sink/src/server.ts) runs two ports this way, and
-[kitchen-sink/test/routes.test.ts](../examples/kitchen-sink/test/routes.test.ts) two
-`Testing.layer`s, asserting one run of a builder both ports serve.
-
-- **A sibling given neither may build again, with state of its own.** The order
-  `Layer.mergeAll` lists its layers in does not decide it: it builds them concurrently.
-- **`Action.layer` builds every implementation it is given**, those no surface serves
-  included, so it owes their startup services.
-- **Inside one layer graph, a builder runs with the services of whichever surface builds it
-  first**, and services provided around one surface reach the others. Provide startup services
-  once, for every surface.
-- **Do not wrap a server in `Layer.fresh`**: two servers already share no build. It is only
-  for two surfaces in one graph that must each have a build and startup services of their own.
-
 ## Examples
 
 | File                                                                                             | Shows                                                              |
@@ -345,55 +271,3 @@ Layer.mergeAll(
 
 The index in [kitchen-sink/README.md](../examples/kitchen-sink/README.md#index) maps every export
 and option to a file.
-
-## Failure modes
-
-### At `make`
-
-- `Invalid action name: <name>` thrown: the name is empty, longer than 128 characters, `then`, or has another character.
-- `Property 'readOnly' is missing`, or `Invalid readOnly: <value>` thrown for a caller the compiler never sees: every action declares whether it is read-only. There is no default.
-- `Property 'caller' is missing`, or `Missing caller: declare Action.Anyone or an identity service key` thrown: the contract does not state who may call it. Give `caller: Action.Anyone` or an identity service.
-- `Type ... is not assignable to type '"An identity is a Context.Service, not a Context.Reference"'`, or `Invalid caller: an identity is a Context.Service, not a Context.Reference` thrown: `caller` is a `Context.Reference`. Declare the identity with `Context.Service`.
-- `'readOnlyHint' does not exist in type 'Mcp'`, or `Type 'true' is not assignable to type 'never'` on `readOnlyHint` beside another hint: a tool's read-only hint is its action's `readOnly`. Set `readOnly` instead.
-- `'<key>' does not exist in type 'Options'`, or `in type 'Mcp'`, or `Type '...' is not assignable to type 'never'` on the key: an option or hint `make` does not take, or a misspelled one, such as `destructive` for `destructiveHint`.
-- `Type 'H' is not assignable to type 'H & ...'`, where `H` is a helper's type parameter, as in `<const H extends Action.Mcp>(mcp: H)`: `make` refuses options a type parameter stands for. Type the parameter `Action.Mcp`; an action's type carries no `mcp` types. A constant object spread into the options is read as written.
-- A type error on `error`, `... is not assignable to type 'readonly never[]'` or naming the remaining errors: it lists a built-in error. Drop it; a handler may fail with it anyway.
-- `Action "<name>": error _tag "Forbidden" is built in, and declared on every surface` thrown: an entry of `error`, or a member of a union there, encodes with the `_tag` `InvalidInput`, `Unauthenticated` or `Forbidden`. Drop a built-in error; rename an error of your own.
-- `ReferenceError` thrown: an entry of `error` is a `Schema.suspend` whose thunk reads a `const` declared further down. `make` reads every error's `_tag` when it is called; declare the error first.
-
-### At `implement`
-
-- `... is not assignable to parameter of type 'ProtectedActionsTakeAuthorize'`, ending `Type 'typeof CurrentUser' is not assignable to type 'unique symbol'`: the target holds a protected action and states no `authorize`. Pass `{ authorize }`, or `{ authorize: Action.allowAll }`. Plain JavaScript throws `Protected actions require authorize, or Action.allowAll`.
-- `No overload matches this call`, ending `... is not assignable to type '"A public-only target takes no authorize"'`, or that message thrown from plain JavaScript: an implementation of public actions alone states `authorize`, which nothing would run. Drop it, or make the contract protected.
-- `Missing authorize: pass an authorization function, or Action.allowAll` thrown, or the layer build dies with it: `authorize` is neither a function nor an Effect building one, or that Effect built something else.
-- `No overload matches this call`, ending `Type 'undefined' is not assignable to type 'Authorizer<...>'`: an authorizer that may be `undefined`. Write `enabled ? authorize : Action.allowAll`.
-- `Parameter 'action' implicitly has an 'any' type`, or an `Effect.fn` authorizer whose `action` is `any`, where it is defined apart from `implement`: annotate it, `(action: Action.Any)`.
-- `Type 'X' is not assignable to type 'Forbidden | Unauthenticated'`, ending `Property '"~declared in the action's error, or built in"' is missing in type 'X'`: the authorizer fails with `X`, which is not a refusal. A limit or another failure callers should see is the handler's: declare `X` in the action's `error` and fail with it there.
-- `No overload matches this call`, ending `Property '"~declared in the action's error, or built in"' is missing in type 'X'`, under `Type 'X' is not assignable to type 'Forbidden | InvalidInput | Unauthenticated'` or a longer union: the handler fails with an undeclared error `X`. Add it to the action's `error`, or handle it.
-- `Property 'x' is missing in type`, or `Missing handlers: <names>` thrown, also when a builder's layer builds: the record has no own-property function for those actions. Add them to the record itself, not to a prototype.
-- `Unknown handlers: <keys>` thrown, also when a builder's layer builds, or a type error naming a key: the record has a handler for an action not in this `implement` call. Remove it, or add its action to the list.
-- `Duplicate action: <name>` thrown, by `byName` too: the list names one action twice.
-- `'<name>' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer` (TS7022), or, with the types bypassed, an acquisition that never completes: a builder acquires a client of its own implementation, directly or through another builder. Call the services both use instead.
-- A handler receives a string where a number was expected: the schema is `Schema.String`, not a transforming codec such as `Schema.FiniteFromString`.
-
-### Where an implementation is served
-
-- `Type 'CurrentUser' is not assignable to type 'never'`, or `Request<"Requires", CurrentUser>` still owed, for a layer serving only public actions: a public action's handler reads the identity, which no surface provides to a public action. Make the action protected.
-- `Type '"A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"' is not assignable to type 'never'` where a server is launched, or that sentence among a test's requirements at `it.effect`: a builder, or the Effect building the authorizer, yields the caller's identity, which `ActionHttp.layer`, `ActionRpc.layer` and `ActionMcp.layerHttp` have per request alone. Move the `yield*` into the handler or the authorizer.
-- A service is resolved once and shared across requests when it should be per request: it was yielded in the builder, or in the Effect building the authorizer. Move the `yield*` into the handler or the authorizer.
-- `HttpRouter.Request<"Requires", X>` still owed, or `Type 'X' is not assignable to type 'never'` at `runMain`, although `X`, a store the authorizer reads, is provided at startup: the authorizer yields it on every call. Yield it in an Effect that builds the authorizer ([Authorize calls](#authorize-calls)).
-- `unknown` among a surface's requirements, and a type error where it is served or run, such as `Argument of type 'Layer<never, unknown, unknown>' is not assignable` at `HttpRouter.toWebHandler` or `Type 'unknown' is not assignable to type 'never'`: the implementations are typed `Action.AnyImplementation`, as a helper's parameter or a list's annotation. Make the helper generic over them, `<const Apps extends Action.AnyImplementation | ReadonlyArray<Action.AnyImplementation>>(apps: Apps)`, or drop the annotation.
-- `Request<"Requires", unknown>` where an implementation is served, or `unknown` among the services a call or a run still requires: TypeScript inferred no requirements for a handler of a record. A data-first call whose type takes a parameter from no argument does it, `Effect.catchTag(effect, tag, f)` for one. Write that handler's Effect `effect.pipe(Effect.catchTag(tag, f))`, or as a generator.
-- A builder runs twice, or a job, an agent or a second server reads other state than the routes, such as an empty in-memory store: it is merged beside `HttpRouter.serve`, whose layer graph builds on its own. Put it inside the layer the server serves, or provide `Action.layer` and the services they share above both ([Share one build across servers](#share-one-build-across-servers)).
-- Two surfaces in one layer graph, each given startup services of its own, both answer with one surface's: a builder runs once per layer graph, with the services of its first build. Provide the services once; where the surfaces must differ, wrap each in `Layer.fresh`, providing what they share, authentication included, outside it, or give each an implementation of its own.
-- `Not an implementation made by this Action.implement: is effect-actions installed twice?` thrown by a surface, `client` or `layer`, or by a local CLI command when it runs: another installed copy of the package made the implementation, or the value is a copy of one, such as a spread. Install one copy of the package, since contracts and bindings cross copies but implementations do not, and pass the value `implement` returned.
-
-### At `client` and its calls
-
-- `Listed in actions, but no implementation holds it: <names>` thrown: a listed action is none of the implementations'. Pass the implementation holding it, or check that the contract values are the ones it implemented.
-- `Duplicate action: <name>` thrown: two of the implementations implement an action of that name. Two contracts sharing a name are told apart by `actions`, listing one; two implementations of one contract are not: pass one.
-- `Type 'CurrentUser' is not assignable to type 'never'` where a program calling a client runs: a protected action's call owes the caller, and nothing provides one around it. Provide it around the call; provided around the acquisition, it reaches no call.
-- A type error that a program still requires `Scope`: acquiring a client builds, as a layer does. Acquire it in a builder or a layer, or run the program in `Effect.scoped`.
-- A builder runs on every request, or a route owes `HttpRouter.Request<"Requires", X>` for `X`, a service its builder yields: a handler acquires a client per request. Acquire it in the builder, and call it in the handler.
-- A call dies with a `SchemaError`: the handler's success, or what it fails with, does not pass through its codec. A failure follows the `SchemaError` in the cause, as `Cause.pretty` shows. Return what the success schema accepts, and fail with an error the action declares.
-- `InvalidInput` with `Expected <Class>` from a call given a plain object: the input is a class, which encodes only its instances. Pass `new Class({ ... })`.

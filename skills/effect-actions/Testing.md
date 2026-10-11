@@ -30,7 +30,7 @@ Exported types: `McpClient<Actions>`, `McpClientOptions`, `McpRequestOptions`, a
 ## Test an implementation in process
 
 Acquire `Action.client(implementation)` and call its methods
-([Action.md](Action.md#call-actions-in-process)). A call runs the decoding, the `authorize` and
+([Action.md](Action-in-process.md#call-actions-in-process)). A call runs the decoding, the `authorize` and
 the handler a server runs, but no authentication and no middleware. Provide the startup services
 around the test, as an entrypoint does, and what a request would carry, its caller first, around
 each call:
@@ -68,7 +68,7 @@ host's own routes. Each test builds the routes anew, so each starts from an empt
 [notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts).
 
 - A service the test reads too goes around `layer` with `Layer.provideMerge`, so handlers and test share one instance ([kitchen-sink/test/identity/session.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/session.test.ts)).
-- Two `layer`s are two servers. Each builds its routes in a layer graph of its own, so a second one runs every builder again and shares only what is provided around both: for two ports, `Action.layer(implementations)` and the services ([kitchen-sink/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/routes.test.ts), [Action.md](Action.md#share-one-build-across-servers)).
+- Two `layer`s are two servers. Each builds its routes in a layer graph of its own, so a second one runs every builder again and shares only what is provided around both: for two ports, `Action.layer(implementations)` and the services ([kitchen-sink/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/routes.test.ts), [Action.md](Action-in-process.md#share-one-build-across-servers)).
 - The client is `layer`'s own. A fake upstream is another `HttpClient`: provide it to the service that calls out ([mcp-tools/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/routes.test.ts)).
 - Every request on `layer`'s client reaches the routes, whatever its host, and carries that host as its `Host` header, `localhost` for a relative URL: a client given a `baseUrl` and a remote `ActionCli` command run in memory unchanged.
 - Requests run in the test's context: a `ConfigProvider` or the test clock around the test reaches middleware and handlers.
@@ -193,20 +193,3 @@ assert `isFailure` and `result.message`
 | [kitchen-sink/test/identity/session.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/session.test.ts)   | A cookie per rpc call, one quota spent across HTTP and RPC.       |
 
 [kitchen-sink/README.md](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/README.md#index) maps every export and option to a file.
-
-## Failure modes
-
-- Fails with `Action.Unauthenticated`: the client sent no valid credential. Give it a `transformClient` ([Test as a signed-in caller](#test-as-a-signed-in-caller)).
-- A protected route answers 401 where the test expects a 415 or a 400: authentication runs before the body is read. Send a valid credential.
-- `Type 'Provider<CurrentUser, "notes-service.Login">' is missing the following properties from type 'Scope'` at `it.effect`, or `… is not assignable to type 'never'` at `Effect.runPromise`: the routes serve a protected action without a provider of its descriptor. Provide the real one or a test verifier to the routes. A caller provided around `layer` does not satisfy it.
-- `Type 'CurrentUser' is missing the following properties from type 'Scope'` at `it.effect`, or `… is not assignable to type 'never'` at `Effect.runPromise`: a public action's handler reads the identity, which no route provides it. Make the action protected.
-- A test passes whatever message an error carries: see [Assert on errors](#assert-on-errors).
-- The test reads a service the handlers never changed: it was provided inside the routes and again to the test, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
-- 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` of its binding in the served routes, or `baseUrl` adds a path the routes do not have.
-- `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
-- `MCP tools/call "<name>" returned an error: Invalid parameters for tool ...`: the endpoint serves another contract under that name. Pass the served contract value.
-- `Duplicate action: <name>` thrown by `mcpClient`: two of the actions passed share a name.
-- A builder or handler fails with `NotFound: FileSystem.<method> (<path>)` for a file that exists, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it.
-- `Argument of type 'Layer<…, FileSystem | Generator | HttpPlatform | HttpRouter | Path>' is not assignable` at `HttpRouter.toWebHandler(routes)`, then `No overload matches this call` at `layer(web.handler)`: a web handler's routes need the platform services `layer(routes)` supplies itself. Provide `HttpServer.layerServices` to them.
-- `HttpClientRequest.toWebResult` or `toWeb` of an `mcpRequest` fails with `UrlError`: its `url` is the relative default. Pass an absolute one.
-- An `HttpClientError` whose reason is `InvalidUrlError`, from a client method or a sent `mcpRequest`: the `HttpClient` is not `layer`'s and prepends no base URL, so a relative `url` does not resolve. Pass an absolute one.

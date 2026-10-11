@@ -51,7 +51,7 @@ See [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/
 [quickstart/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/server.ts). Surfaces given the same
 implementations in one set of routes run each builder once, so a note written over HTTP is read
 as a tool: [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts). For two
-servers, see [Action.md](Action.md#share-one-build-across-servers).
+servers, see [Action.md](Action-in-process.md#share-one-build-across-servers).
 
 - The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
   Claude Code 2.1 and Codex CLI 0.162 both connect, as tested in October 2026:
@@ -211,7 +211,7 @@ A browser MCP client sends its page's `Origin`, and needs two things.
 
 The endpoint's authentication runs before its Origin check, so `allowedOrigins` keeps no request
 from the verifier. A Host or Origin check that must run first is a request policy:
-[Authentication.md](Authentication.md#run-a-request-policy-before-authentication).
+[Authentication.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
 
 ## Add native prompts and resources
 
@@ -270,32 +270,3 @@ implementation also served on another surface, where nothing provides them, read
 | [kitchen-sink/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/stdio.ts)                                     | A stdio server with `actions` and `features`.                                  |
 | [kitchen-sink/src/attachments/Attachments.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/attachments/Attachments.ts) | An image in a success, a tool, and in an input, no tool.                       |
 | [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts) | Discovery, a 401's challenge, and a verifier's declared error over MCP.        |
-
-## Failure modes
-
-- `MCP tool input must be one object with keys, such as a struct: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions' input is a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Wrap it in a field, `input: { notification: Schema.Union([Email, Sms]) }`, omit `input` for no arguments, or leave the action out of `actions`.
-- `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions hold an `Action.Image` no tool can send as a block ([media](#return-images-and-other-media)). Make it a top-level field of a `Schema.Struct` success, give an optional array as a required one, empty when absent, or leave the action out of `actions`.
-- `Duplicate MCP tool: <name>` thrown by `layerHttp` or `runStdio`: two implementations serve actions of one name. Split the endpoint or rename one. `actions` tells apart only separate contracts sharing a name; of two implementations of one contract, pass one.
-- `Duplicate MCP tool: <name>, claimed by an action and a native feature`, a defect when the endpoint builds: a native tool among `features` has an action's name. Rename it, or leave the action out of `actions`.
-- `Listed in actions, but no implementation holds it: <names>` thrown by `layerHttp` or `runStdio`: those actions are not among the implementations', by identity. `(another contract)` marks one whose name an implementation holds, as a second copy of the contracts module makes. Pass the implementation holding it, or list the contract it implements.
-- `Property 'authentication' is missing` on `layerHttp`'s options: the endpoint serves a protected action and names no descriptor. `Type 'Other' is not assignable to type 'CurrentUser'` on `authentication`: the descriptor is another identity's. `Protected action '<name>' requires its matching authentication descriptor` thrown by `layerHttp`: either, from plain JavaScript. Give the protected actions' descriptor.
-- `Provider<CurrentUser, "notes-service.Login">` among the endpoint's requirements, or `Type 'Provider<...>' is not assignable to type 'never'` where the server is launched: the descriptor's provider is not provided. `Layer.provide(authenticate)` on the routes ([Authentication.md](Authentication.md#failure-modes)).
-- `Type 'X' is not assignable to type 'never'` where the server is launched, or `Request<"Requires", X>` in the endpoint's type: a handler or an authorizer yields a request service no middleware around the endpoint provides. Provide it with router middleware; never an identity at startup. `X` the identity, on an endpoint serving public tools: a public handler reads it, which no public tool gets, signed in or not. Make that action protected.
-- `Type 'CurrentUser' is not assignable to type 'never'` where the server is launched, with `CurrentUser` among the endpoint's startup requirements, not its `Request<"Requires", ...>`: a feature reads a request service, which it never receives ([features](#add-native-prompts-and-resources)). Serve that content as an action.
-- `Type 'CurrentUser' is not assignable to type 'never'` at a stdio program's `runMain`: it serves a protected tool, whose caller the host supplies. Provide it around `runStdio`.
-- `Object literal may only specify known properties, and 'protocols'`: the revisions are fixed. Delete the option.
-- A native resource, prompt or toolkit layer is never served: `resources/list` is empty, `prompts/list` is not found, `tools/list` lists only the actions. It is merged beside the endpoint. Pass it as `features`.
-- A prompt or resource demands credentials: its endpoint names a descriptor. Serve it on an endpoint without protected tools.
-- A public tool's call answers 401: it presented a credential that does not verify. Send a valid one, or none.
-- A protected tool's call answers 401 to a signed-in client after a while: its token expired. The client refreshes it, or signs in again, on the challenge's `invalid_token`.
-- An MCP client gets an `isError` refusal, not the 401 or 403 it re-authorizes on: the handler sent a notification before refusing. Refuse in `authorize`.
-- A client that opens with `initialize` gets 401 where it lists the tools or calls a public one, on an endpoint that also serves protected tools: a session's every request authenticates. Sign the client in, or serve the public tools on an endpoint of their own.
-- A request over HTTP answers 400, `MCP-Session-Id header is required; send initialize to start a session`: it is of a 2025 revision and follows no `initialize`. One answering 404 names a session that ended, or one of a process since restarted: the client opens another.
-- A request written by hand over HTTP answers 400 with JSON-RPC error `-32602`, `Required request metadata is missing`: it names 2026-07-28 in `MCP-Protocol-Version` and lacks that revision's `_meta` or routing headers. Build it with `Testing.mcpRequest`.
-- A client asking for 2025-03-26 or 2024-11-05 is offered 2025-11-25, and disconnects if it cannot speak it: HTTP and stdio serve 2026-07-28, 2025-11-25 and 2025-06-18. Update the client.
-- A request written by hand to a stdio server answers JSON-RPC error `-32602`, `Invalid request metadata`: it is neither preceded by `initialize` nor carries the 2026-07-28 metadata. Open with `initialize` and `notifications/initialized`, or give the request's `_meta` its `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` ([stdio](#serve-tools-over-stdio)).
-- A client reports a broken transport from a stdio subprocess: something wrote to stdout. The global `console.log` did, or a layer provided around `runStdio` did, through the default logger, or through `Console` or a logger such as `Logger.consoleJson`, which `logToStderr` does not move. Remove the write, apply `ActionCli.logToStderr` last, or log JSON with `Logger.withConsoleError(Logger.formatJson)`.
-- A request carrying an `Origin` gets an empty 403: the origin is not in `allowedOrigins`. Add the exact origin, only if the deployment trusts it.
-- A disallowed `Origin` gets 401, not 403: the endpoint's authentication refused it before the Origin check ([browser clients](#allow-browser-clients)).
-- Browser calls fail despite an allowed origin, the preflight answering 405: there is no CORS. Add `HttpRouter.cors` ([browser clients](#allow-browser-clients)).
-- `Tool <name> has an output schema but did not return structured content` raised by a Python MCP client for an action that returns nothing: its success is sent as `null`, which a Python SDK release before the fix of python-sdk#3345 reads as missing. Update the SDK.
