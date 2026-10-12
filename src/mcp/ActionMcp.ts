@@ -16,7 +16,7 @@ import {
   type Stdio,
   Stream,
 } from "effect";
-import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import {
@@ -38,6 +38,7 @@ import {
   type Lifted,
   liftedFrom,
   liftOf,
+  protocols,
 } from "./protocol.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
@@ -84,9 +85,11 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
 }
 
 /**
- * One Streamable HTTP MCP endpoint: `Options`, and every native `McpServer.layerHttp` option,
- * `allowedOrigins` among them, except `protocols` and `allowSessionTermination`, as the endpoint
- * keeps no session, with `path` defaulting to `/mcp`.
+ * One Streamable HTTP MCP endpoint, speaking MCP 2026-07-28, 2025-11-25 or 2025-06-18, as the
+ * client negotiates: `Options`, and every native `McpServer.layerHttp` option, `allowedOrigins`
+ * among them, except `protocols` and `allowSessionTermination`, which are fixed, with `path`
+ * defaulting to `/mcp`. A client of a 2025 revision opens a session with `initialize`, which
+ * lasts until that client ends it with a DELETE or the process stops.
  */
 export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
   extends
@@ -99,16 +102,6 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
   readonly path?: HttpRouter.PathInput;
   readonly authentication?: Authentication;
 }
-
-// Why: Hosts such as Claude Code and Codex open stdio with `initialize`, which only the two
-// stateful revisions answer. The revisions before them stay out: Effect's adapters for them list
-// an input's `type`, `properties` and `required` alone, so a `$ref` to its definitions resolves
-// nowhere.
-const stdioProtocols = [
-  McpProtocol.v2026_07_28,
-  McpProtocol.v2025_11_25,
-  McpProtocol.v2025_06_18,
-] as const;
 
 type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext | McpServer.McpServer>;
 
@@ -444,6 +437,10 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
   return (headers: Headers.Headers): boolean => {
     if (open.size === 0) return true;
 
+    // Why: The runtime checks the routing headers against the body of a stateless request alone.
+    // A request of a session carries none it checks, so it authenticates whatever it names.
+    if (headers["mcp-protocol-version"] !== httpProtocol.protocolVersion) return true;
+
     const method = headers["mcp-method"];
 
     if (method === undefined) return true;
@@ -458,6 +455,16 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
   };
 };
 
+// Why: The runtime takes an `initialize` as the opening of a session whatever its headers say, the
+// one request whose routing headers it does not check. So a request admitted signed out names its
+// header's method in its body too. One that does not parse is the runtime's to refuse.
+const namesItsMethod = (request: HttpServerRequest.HttpServerRequest) =>
+  Effect.match(request.json, {
+    onFailure: () => true,
+    onSuccess: (body) =>
+      !Predicate.hasProperty(body, "method") || body.method === request.headers["mcp-method"],
+  });
+
 // Why: Protected tools without a descriptor get `unknown`, leaving `RequiredAuthentication` to
 // demand theirs. `{ authentication?: undefined }` would intersect with that demand to `never`, and
 // the error would read as every option being wrong.
@@ -468,13 +475,17 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
   : { readonly authentication?: D };
 
 /**
- * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28 only.
+ * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28, 2025-11-25 or
+ * 2025-06-18, as the client negotiates. A 2026-07-28 request stands alone; a client of a 2025
+ * revision opens a session with `initialize`, which holds what it sent there and no identity,
+ * and lasts until that client ends it with a DELETE or the process stops.
  *
  * Protected tools need the `authentication` descriptor their contracts name, and the
  * provider `Authentication.layer` builds from it. On an endpoint of protected tools only,
  * every request authenticates before it is decoded. On a mixed endpoint, anyone may discover
- * the server, list its tools, cancel, and call a public tool; everything else authenticates
- * first, so a protected tool's description is listed to anyone but run only for its caller.
+ * the server, list its tools, cancel, and call a public tool in a 2026-07-28 request;
+ * everything else authenticates first, a session's every request included, so a protected
+ * tool's description is listed to anyone but run only for its caller.
  * A call refused with `Unauthenticated`, or with `Forbidden` naming scopes, is answered with
  * its HTTP status and challenge, 401 or 403, as MCP authorization requires; any other
  * failure is a tool result. In a tool call, what middleware provides per request wins over
@@ -520,7 +531,12 @@ export function layerHttp(
 
   const transport = server(
     selected,
-    McpServer.layerHttp({ ...options, path: path ?? defaultPath, protocols: [httpProtocol] }),
+    McpServer.layerHttp({
+      ...options,
+      path: path ?? defaultPath,
+      protocols,
+      allowSessionTermination: true,
+    }),
     features,
     authentication,
   );
@@ -533,7 +549,9 @@ export function layerHttp(
       authentication["~provider"],
       (runtime) => (route) =>
         Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-          runtime.http(route, !required(request.headers)),
+          request.method !== "POST" || required(request.headers)
+            ? runtime.http(route, false)
+            : Effect.flatMap(namesItsMethod(request), (named) => runtime.http(route, named)),
         ),
     ),
   );
@@ -575,7 +593,7 @@ export function runStdio(
 ) {
   const transport = server(
     select(toList(apps), actions),
-    McpServer.layerStdio({ ...options, protocols: stdioProtocols }),
+    McpServer.layerStdio({ ...options, protocols }),
     features,
   );
 

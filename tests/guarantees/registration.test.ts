@@ -10,10 +10,18 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { makeTestHttp, makeTestMcp } from "../support/server.js";
-import { mcpRequest, post, rawToolCall, send } from "../support/requests.js";
+import {
+  endSession,
+  initializeParams,
+  mcpRequest,
+  post,
+  rawToolCall,
+  send,
+  sessionRequest,
+} from "../support/requests.js";
 import { type Handler, serve } from "../support/serve.js";
 
-it("serves MCP 2026-07-28 only over HTTP and passes the native server options through", async () => {
+it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the native server options through", async () => {
   const web = serve(
     ActionMcp.layerHttp([], {
       name: "configured",
@@ -40,34 +48,111 @@ it("serves MCP 2026-07-28 only over HTTP and passes the native server options th
           icons: [{ src: "https://example.com/icon.png" }],
         },
       },
-      supportedVersions: ["2026-07-28"],
+      supportedVersions: ["2026-07-28", "2025-11-25", "2025-06-18"],
       capabilities: { extensions: { "io.example/extension": {} } },
     },
   });
 
-  const initialize2025 = await web.handler(
-    new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-11-25",
-          capabilities: {},
-          clientInfo: { name: "legacy", version: "0" },
-        },
-      }),
+  for (const protocolVersion of ["2025-11-25", "2025-06-18"]) {
+    const initialized = await web.handler(
+      sessionRequest({ method: "initialize", params: { ...initializeParams, protocolVersion } }),
+    );
+
+    expect(initialized.status).toBe(200);
+    expect(initialized.headers.get("mcp-session-id")).toEqual(expect.any(String));
+    expect(await initialized.json()).toMatchObject({
+      result: { protocolVersion, serverInfo: { name: "configured", version: "0" } },
+    });
+  }
+
+  const tooOld = await web.handler(
+    sessionRequest({
+      method: "initialize",
+      params: { ...initializeParams, protocolVersion: "2024-11-05" },
     }),
   );
 
-  expect(initialize2025.status).toBe(400);
-  expect(await initialize2025.json()).toMatchObject({ error: { code: -32020 } });
+  expect(await tooOld.json()).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
 });
+
+it("keeps a session of a 2025 revision until its client ends it", async () => {
+  const web = serve(ActionMcp.layerHttp([], { name: "sessions", version: "0" }));
+
+  const initialized = await web.handler(
+    sessionRequest({ method: "initialize", params: initializeParams }),
+  );
+
+  const session = initialized.headers.get("mcp-session-id") ?? "";
+
+  const listed = await web.handler(sessionRequest({ method: "tools/list", session }));
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toMatchObject({ result: { tools: [] } });
+
+  expect((await web.handler(sessionRequest({ method: "tools/list" }))).status).toBe(400);
+
+  expect((await web.handler(endSession(session))).status).toBe(204);
+  expect((await web.handler(sessionRequest({ method: "tools/list", session }))).status).toBe(404);
+  expect((await web.handler(endSession(session))).status).toBe(404);
+});
+
+it.each([
+  ["2025-11-25", "result"],
+  ["2025-06-18", "error"],
+] as const)(
+  "answers a session of %s over HTTP in that revision's shapes, as stdio does",
+  async (protocolVersion, refusal) => {
+    const read = { readOnly: true, caller: Action.Anyone } as const;
+
+    const Ready = Action.make("ready", {
+      ...read,
+      description: "Ready",
+      success: { ready: Schema.Boolean },
+    });
+
+    const Count = Action.make("count", {
+      ...read,
+      description: "Count",
+      input: { from: Schema.Finite },
+      success: Schema.Finite,
+    });
+
+    const web = serve(
+      ActionMcp.layerHttp(
+        Action.implement([Ready, Count], {
+          ready: () => Effect.succeed({ ready: true }),
+          count: ({ from }) => Effect.succeed(from + 1),
+        }),
+        { name: "shapes", version: "0" },
+      ),
+    );
+
+    const initialized = await web.handler(
+      sessionRequest({ method: "initialize", params: { ...initializeParams, protocolVersion } }),
+    );
+
+    const session = initialized.headers.get("mcp-session-id") ?? "";
+
+    const call = async (name: string, args: Schema.JsonObject) => {
+      const response = await web.handler(
+        sessionRequest({ method: "tools/call", params: { name, arguments: args }, session }),
+      );
+
+      return Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(
+        await response.json(),
+      );
+    };
+
+    expect(await call("ready", {})).toMatchObject({
+      result: { structuredContent: { ready: true }, isError: false },
+    });
+
+    const scalar = await call("count", { from: 41 });
+
+    expect(scalar).toMatchObject({ result: { content: [{ type: "text", text: "42" }] } });
+    expect(scalar.result).not.toHaveProperty("structuredContent");
+    expect(Object.keys(await call("count", { from: "x" }))).toContain(refusal);
+  },
+);
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
   const response = await handler(mcpRequest({ method: "tools/list" }));

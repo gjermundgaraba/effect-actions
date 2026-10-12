@@ -4,10 +4,24 @@
 
 ### Breaking changes
 
-**`ActionMcp.layerHttp` no longer takes Effect's `allowSessionTermination`.** It ends a session,
-and the endpoint serves only the stateless 2026-07-28, so it did nothing.
+**`ActionMcp.layerHttp` no longer takes Effect's `allowSessionTermination`.** It is always on: a
+client may end the session it opened.
 
 - Migrate: remove the option.
+
+**An MCP endpoint over HTTP also speaks MCP 2025-11-25 and 2025-06-18, as stdio does.** A client
+that opens with `initialize`, such as Codex, now connects, where it was refused with JSON-RPC
+error `-32020`. This reverses "HTTP serves 2026-07-28 only", decided because Effect's HTTP runtime
+expires no session: a hosted endpoint was out of such a host's reach, and a session holds no
+identity. Each request still authenticates as its own caller; a session lasts until its client
+ends it with a `DELETE` or the process stops; and on an endpoint serving a protected tool only a
+signed-in caller opens one, so a client of a 2025 revision signs in for every request there, a
+public tool's call included. On such an endpoint a signed-out 2026-07-28 request whose
+`Mcp-Method` header names another method than its body is answered 401, where it was 400
+([ActionMcp.md](docs/ActionMcp.md#serve-tools-over-http)).
+
+- Migrate: nothing. Limit request bodies, which bounds what a session holds
+  ([ActionHttp.md](docs/ActionHttp.md#serve-the-routes)).
 
 **`Testing.mcpClient` fails an input that does not encode with `InvalidInput`, as every other
 client does, instead of `SchemaError`.** Nothing is sent, as before.

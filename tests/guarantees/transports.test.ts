@@ -370,6 +370,30 @@ describe("public and protected actions of one host", () => {
     }),
   );
 
+  it("answers an MCP client that opens with initialize as one that speaks 2026-07-28", async () => {
+    for (const negotiation of ["legacy", "auto"] as const) {
+      const answered = await withMcpClient(
+        { fetch: authenticatedFetch("alice"), negotiation },
+        async (client) => ({
+          revision: client.getNegotiatedProtocolVersion(),
+          tools: (await client.listTools()).tools.map((item) => item.name),
+          caller: await client.callTool({ name: "whoAmI", arguments: {} }),
+        }),
+      );
+
+      expect([negotiation, answered.revision]).toEqual([
+        negotiation,
+        negotiation === "legacy" ? "2025-11-25" : "2026-07-28",
+      ]);
+      expect(answered.tools).toContain("whoAmI");
+      expect(answered.caller.structuredContent).toMatchObject({ id: "alice", tenantId: "acme" });
+    }
+
+    await expect(
+      withMcpClient({ fetch: app.handler, negotiation: "legacy" }, (client) => client.listTools()),
+    ).rejects.toThrow();
+  });
+
   it("serves one MCP endpoint whose public tools answer anyone, its protected ones only the signed in", async () => {
     const tools = await withMcpClient({ fetch: app.handler }, (client) => client.listTools());
 
