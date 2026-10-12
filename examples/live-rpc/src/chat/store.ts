@@ -45,7 +45,7 @@ export class MessageStore extends Context.Service<
 
         if (message === undefined) return yield* new MessageNotFound({ id });
 
-        if (message.author !== author) return yield* new NotAuthor({ id, author: message.author });
+        if (message.author !== author) return yield* new NotAuthor({ id });
 
         rooms.set(name, { last, messages: messages.filter((kept) => kept !== message) });
       }),

@@ -5,8 +5,9 @@ after it. `layerHttp` mounts a Streamable HTTP endpoint, for clients that connec
 `runStdio` is the whole program of a subprocess a local agent starts. For a model your own code
 calls in process, use [ActionToolkit.md](ActionToolkit.md).
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionMcp-failures.md](ActionMcp-failures.md). Reading order: [README.md](README.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [ActionMcp-failures.md](ActionMcp-failures.md). Reading order:
+[README.md](README.md).
 
 ## API
 
@@ -55,9 +56,9 @@ as a tool: [notes-service/src/routes.ts](../examples/notes-service/src/routes.ts
 servers, see [Action-in-process.md](Action-in-process.md#share-one-build-across-servers).
 
 - The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
-  Claude Code 2.1 and Codex CLI 0.162 both connect, as tested in October 2026:
-  [notes-service](../examples/notes-service/README.md#run-it) has the commands,
-  [mcp-tools](../examples/mcp-tools/README.md#connect-a-client) those for stdio and Claude Desktop.
+  Claude Code 2.1 and Codex CLI 0.162 connect (October 2026):
+  `claude mcp add --transport http <name> <url>/mcp --header "Authorization: Bearer <token>"`;
+  [mcp-tools](../examples/mcp-tools/README.md#connect-a-client) has stdio and Claude Desktop.
 - **A client of a 2025 revision opens a session** with `initialize`; a 2026-07-28 request stands
   alone. A session holds what its client sent there and no identity: each request authenticates,
   as its own caller. It lasts until its client ends it with a `DELETE`, answered 204, or the process stops, as
@@ -126,7 +127,7 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
 [mcp-tools/src/printers/Printers.ts](../examples/mcp-tools/src/printers/Printers.ts) and
 [mcp-tools/src/instructions.ts](../examples/mcp-tools/src/instructions.ts).
 
-- MCP takes a write as destructive unless it states `destructiveHint: false`.
+- MCP takes a write as destructive unless it states `destructiveHint: false`: one that only adds.
 - A tool's input is one object with keys. Omit `input` for a tool without arguments, and wrap a
   union, an array or a scalar in a field.
 - An argument the schema refuses, an undeclared one included, is answered by the native server

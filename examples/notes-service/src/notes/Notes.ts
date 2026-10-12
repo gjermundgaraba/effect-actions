@@ -32,7 +32,11 @@ const Id = Schema.String.annotate({
   description: "The note's id, as the list of your notes shows it.",
 });
 
-const Title = Schema.String.check(Schema.isMinLength(1)).annotate({
+// A check's `message` is what a caller reads when the value fails it, in place of the
+// generic "Expected a value with a length of at least 1". A model and a CLI user read it too.
+const Title = Schema.String.check(
+  Schema.isMinLength(1, { message: "A note needs a title." }),
+).annotate({
   description: "A short name for the note, at least one character.",
 });
 
@@ -77,7 +81,8 @@ export const UpdateNote = Action.make("updateNote", {
   error: [NoteNotFound, NoteChanged],
   readOnly: false,
   caller: CurrentUser,
-  mcp: { destructiveHint: false },
+  // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
+  // a write. Only `createNote`, which adds, says `false`.
 });
 
 export const DeleteNote = Action.make("deleteNote", {
@@ -88,4 +93,23 @@ export const DeleteNote = Action.make("deleteNote", {
   caller: CurrentUser,
 });
 
-export const Notes = [ListNotes, GetNote, CreateNote, UpdateNote, DeleteNote] as const;
+// Work every surface should offer is an action, a bulk import included: the HTTP API, the MCP
+// tools and the CLI then all have it, and the whole list is decoded, so checked, before the
+// handler writes any of it. A command of your own only reads the file and calls this once
+// (commands.ts). `importNotes` adds and removes nothing, so `destructiveHint` is `false`.
+export const ImportNotes = Action.make("importNotes", {
+  description:
+    "Create several notes at once, such as those `notes export` wrote. Every note is checked " +
+    "before any is written: an import holding one that is not valid writes none.",
+  input: {
+    notes: Schema.Array(Schema.Struct({ title: Title, body: Body }))
+      .check(Schema.isMinLength(1), Schema.isMaxLength(100))
+      .annotate({ description: "The notes to create, in order: from 1 to 100." }),
+  },
+  success: { notes: Schema.Array(Note) },
+  readOnly: false,
+  caller: CurrentUser,
+  mcp: { destructiveHint: false },
+});
+
+export const Notes = [ListNotes, GetNote, CreateNote, UpdateNote, DeleteNote, ImportNotes] as const;

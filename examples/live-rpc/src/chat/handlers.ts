@@ -16,8 +16,8 @@ export const rooms = Action.implement(
   }),
 );
 
-// The builder runs once, at startup: it is where a handler gets its services. The caller and
-// the room are read per call, inside each handler, because every message has its own.
+// The builder runs once, at startup: it is where a handler gets its startup services. The
+// caller and the room are read per call, inside each handler, because every message has its own.
 export const messages = Action.implement(
   Messages,
   Effect.gen(function* () {

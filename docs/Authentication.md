@@ -4,8 +4,9 @@ How a remote caller proves the identity a protected action declares. `Authentica
 declares it, as a browser-safe descriptor; `Authentication.layer` is that descriptor's provider,
 running the verifier you write. Verifying a token, login and consent stay in the application.
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [Authentication-failures.md](Authentication-failures.md). Reading order: [README.md](README.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [Authentication-failures.md](Authentication-failures.md). Reading
+order: [README.md](README.md).
 
 ## API
 

@@ -8,8 +8,9 @@ tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which s
 `Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`
 (both imported from `effect/testing`).
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [Testing-failures.md](Testing-failures.md). Reading order: [SKILL.md](SKILL.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [Testing-failures.md](Testing-failures.md). Reading order:
+[SKILL.md](SKILL.md).
 
 ## API
 
@@ -30,7 +31,8 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 | `mcpRequest`: `headers`        | Request headers.                                                                |
 
 Exported types: `McpClient<Actions>`, `McpClientOptions`, `McpRequestOptions`, and `McpParams`,
-the `params` of `mcpRequest`.
+the `params` of `mcpRequest`: JSON values, so a helper passing arguments on types them
+`McpParams`, not `unknown`.
 
 ## Test an implementation in process
 
@@ -203,6 +205,11 @@ expect(refusal.message).toBe("Requires notes:write.");
 and so does `toStrictEqual`. Other fields are compared, so `toEqual(new NoteNotFound({ id }))`
 asserts the `id`, and `toEqual(new Action.Forbidden({ scopes: ["issues:write"] }))` still needs the
 message asserted beside it. The message is all a model reads of a tool's failure.
+
+`toBeInstanceOf` narrows nothing: the flipped failure stays the union of the action's declared
+and built-in errors, so reading a field only one of them has, such as `retryAfterSeconds`, does
+not compile. Compare with `toEqual(new RateLimited({ retryAfterSeconds: 10 }))`, or narrow with
+`instanceof` first.
 
 A Toolkit raises neither a refusal nor a declared error: each is a result the model reads, so
 assert `isFailure` and `result.message`

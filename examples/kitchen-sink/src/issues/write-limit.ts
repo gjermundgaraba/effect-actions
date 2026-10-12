@@ -10,7 +10,8 @@ import { RateLimited } from "./Issues.js";
 // as any declared error. The limiter is a service, so its counts are shared wherever it is
 // provided: memory.ts provides Effect's own, `RateLimiter.layer` over a store. `consume` counts
 // in a fixed window unless given `algorithm: "token-bucket"`: ten writes in each minute, so
-// twenty may pass across the boundary between two.
+// twenty may pass across the boundary between two. A strict limit, ten in any sixty seconds,
+// is a service of your own of the same shape, yielded here, never part of the issue store.
 export const writeLimit = Effect.gen(function* () {
   const limiter = yield* RateLimiter.RateLimiter;
 

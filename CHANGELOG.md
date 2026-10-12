@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Additions
+
+- **`ActionToolkit.openApprovals(history)`** lists the approval requests a conversation's history
+  still holds open, each with the call it asks for (`approvalId`, `toolCallId`, `name`,
+  `params`), by the rule Effect applies when an answer arrives. It replaces the function the
+  kitchen-sink assistant defined, which applications copied.
+
+### Other changes
+
+- **`Testing.layer` logs the cause of a failed request on the process console, under `it.effect`
+  too.** `it.effect` provides a `TestConsole`, which kept the log out of the test's output, so a
+  test saw only `Decode error (500 …)`. A `Logger` provided around the layer still receives it.
+- `destructiveHint`'s JSDoc and [ActionMcp.md](docs/ActionMcp.md#describe-tools-to-a-model)
+  use MCP's words: a non-destructive tool performs only additive updates. The examples' hints
+  follow it.
+- The docs say how to read a page whose output was cut, show the `claude mcp add` line for a
+  protected endpoint, and gain failure entries for an optional `userMessage`, a module name that
+  differs only in case (TS1149) and an error `toBeInstanceOf` does not narrow.
+- `notes-service` adds `importNotes`, a bulk import as one action, and a `notes import` command
+  that reads a file with `Argument.FileText` and calls it. The example servers read `HOST`;
+  `live-rpc`'s `NotAuthor` no longer names the message's author; `mcp-tools` links
+  [ActionMcp.md](docs/ActionMcp.md) for tools that need a token.
+
 ## 0.12.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.2`, on TypeScript 7.

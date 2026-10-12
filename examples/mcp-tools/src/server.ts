@@ -8,8 +8,9 @@ import { routes } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/mcp-tools/src/server.ts`, with FARM_URL, FARM_USER
 // and FARM_PASSWORD set. MCP over HTTP, for clients that connect to a URL.
-// Nothing here authenticates a caller, so where it listens is its access control: the loopback
-// interface by default, or a network only trusted clients are on.
+// These tools are public: no route asks for a token, so where the server listens is its access
+// control, the loopback interface by default or a network only trusted clients are on. Tools
+// that need a caller take a verifier, as docs/ActionMcp.md's "Protect tools" shows.
 const server = Layer.unwrap(
   Effect.gen(function* () {
     const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));

@@ -40,6 +40,38 @@ const exportNotes = Command.make(
     ),
 ).pipe(Command.withDescription("Write every note to a file, as Markdown."));
 
+// The other half of `export`: it reads such a file and creates its notes with one call of the
+// bulk action, so the server checks every note before it writes any. The command reads the file
+// and nothing more. `Argument.FileText` reads it, and a missing file is a usage error naming it,
+// where `Argument.String` and `FileSystem` would print the platform's error. A body holding a
+// line that starts with `# ` after a blank line is read as two notes: this is a demo format.
+// The derived `import-notes` stays beside it, taking the notes as a JSON array in `--notes`.
+const importNotes = Command.make(
+  "import",
+  {
+    text: Argument.FileText("file").pipe(
+      Argument.withDescription("A Markdown file as `notes export` writes it."),
+    ),
+  },
+  ({ text }) =>
+    Effect.gen(function* () {
+      const client = yield* ActionHttp.client(Http);
+
+      const notes = text
+        .split(/\n\n(?=# )/u)
+        .filter((note) => note.startsWith("# "))
+        .map((note) => {
+          const [title = "", ...body] = note.slice(2).split("\n\n");
+
+          return { title, body: body.join("\n\n") };
+        });
+
+      const { notes: created } = yield* client.importNotes({ notes });
+
+      yield* Console.log(`Created ${created.length} notes`);
+    }).pipe(ActionCli.toUserError(Http)),
+).pipe(Command.withDescription("Create the notes of a file `export` wrote, all or none."));
+
 // A command per action of the binding, a flag per input field, each calling the server over
 // HTTP. It imports the binding alone, never a handler. It is apart from cli.ts so a test runs
 // it: test/commands.test.ts.
@@ -54,7 +86,7 @@ export const commands = ActionCli.remote(Http, {
   },
   // `Command.withSubcommands` on the result would replace the derived commands, so your own
   // go here.
-  subcommands: [exportNotes],
+  subcommands: [exportNotes, importNotes],
 });
 
 // Where the server is and who is calling, read from config: the `HttpClient` every command

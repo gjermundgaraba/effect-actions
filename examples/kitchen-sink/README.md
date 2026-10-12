@@ -36,10 +36,11 @@ node --import tsx examples/kitchen-sink/src/agent.ts                 # the assis
 vp test examples/kitchen-sink
 ```
 
-`PORT`, `ADMIN_PORT`, `PUBLIC_URL` and `MCP_ORIGIN` configure the server; `TRACKER_URL` points the
-CLI and the seed at it. `stdio.ts` is an MCP server for a local agent to start as a subprocess.
-`sdk.ts` and `browser.ts` are imported by client code, not run. The OpenAPI document is at
-`/api/v1/openapi.json`, Swagger UI at `/docs`, the MCP endpoint at `/mcp`, the socket at `/rpc`.
+`HOST`, `PORT`, `ADMIN_PORT`, `PUBLIC_URL` and `MCP_ORIGIN` configure the server; `TRACKER_URL`
+points the CLI and the seed at it. `stdio.ts` is an MCP server for a local agent to start as a
+subprocess. `sdk.ts` and `browser.ts` are imported by client code, not run. The OpenAPI
+document is at `/api/v1/openapi.json`, Swagger UI at `/docs`, the MCP endpoint at `/mcp`, the
+socket at `/rpc`.
 
 Everything is a demo: stores are memory, and the credentials are fixed strings. Replace both
 before deploying anything.

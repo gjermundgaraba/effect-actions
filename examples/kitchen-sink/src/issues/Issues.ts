@@ -43,8 +43,9 @@ const change = {
   caller: CurrentMember,
   error: IssueWriteErrors,
   // MCP hints, in MCP's names. They tell a model what a tool does and enforce nothing; the
-  // read-only hint is `readOnly` itself.
-  mcp: { destructiveHint: false, openWorldHint: false },
+  // read-only hint is `readOnly` itself. A write is destructive unless it only adds, as a
+  // comment does: closing is not stated `false`.
+  mcp: { openWorldHint: false },
 } as const;
 
 const Text = Schema.String.check(Schema.isMinLength(1));
@@ -95,6 +96,7 @@ export const CommentOnIssue = Action.make("commentOnIssue", {
   input: { id: Schema.String, text: Text },
   success: Issue,
   readOnly: false,
+  mcp: { ...change.mcp, destructiveHint: false },
 });
 
 export const CloseIssue = Action.make("closeIssue", {

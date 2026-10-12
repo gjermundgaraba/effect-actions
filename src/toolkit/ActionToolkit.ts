@@ -1,5 +1,5 @@
 import type { Effect, Layer, Schema } from "effect";
-import type { Tool, Toolkit } from "effect/ai";
+import type { Prompt, Tool, Toolkit } from "effect/ai";
 import type * as Action from "../contract/Action.js";
 import type { BuiltIns } from "../contract/errors.js";
 import { bindTools } from "./tools.js";
@@ -152,3 +152,53 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
 
   return { toolkit, layer: layer.pipe(provideHandlers(served)) };
 }
+
+/** A tool call a model asked to have approved, which no answer has resolved yet. */
+export interface Approval {
+  /** What a `tool-approval-response` names to answer it. */
+  readonly approvalId: string;
+  readonly toolCallId: string;
+  /** The tool's name, the action's. */
+  readonly name: string;
+  /** The call's arguments as the model sent them: show them as JSON. */
+  readonly params: unknown;
+}
+
+/**
+ * The approval requests still open in a conversation's history, such as a `Chat`'s, in the
+ * order they were asked: those no tool result has answered, an approved or denied call's
+ * included. A turn's response lists only the requests that turn made, and the answering turn's
+ * none, so read every open one here. Each names the call it asks for, the last of the history
+ * with its tool-call id, as Effect resolves an answer.
+ * Guide: `docs/ActionToolkit.md` in this package; in an application:
+ * `examples/kitchen-sink/src/assistant/handlers.ts`.
+ */
+export const openApprovals = ({ content: messages }: Prompt.Prompt): ReadonlyArray<Approval> => {
+  const answered = new Set(
+    messages.flatMap((message) =>
+      message.role === "tool"
+        ? message.content.flatMap((part) => (part.type === "tool-result" ? [part.id] : []))
+        : [],
+    ),
+  );
+
+  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
+  const calls = said.filter((part) => part.type === "tool-call");
+
+  return said.flatMap((request) => {
+    if (request.type !== "tool-approval-request" || answered.has(request.toolCallId)) return [];
+
+    const call = calls.findLast(({ id }) => id === request.toolCallId);
+
+    return call === undefined
+      ? []
+      : [
+          {
+            approvalId: request.approvalId,
+            toolCallId: request.toolCallId,
+            name: call.name,
+            params: call.params,
+          },
+        ];
+  });
+};

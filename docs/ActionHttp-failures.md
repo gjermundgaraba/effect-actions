@@ -68,8 +68,8 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
 
 ## Client methods
 
-- `HttpClientError` whose `reason._tag` is `DecodeError`, for a status such as 429: no schema
-  declares that status. Declare the error on the binding when middleware answers with it, or on
+- `HttpClientError` whose `reason._tag` is `DecodeError`, printed `Decode error (<status> …)`,
+  for a status such as 429: no schema declares that status. For a 500, see the empty 500 above. Declare the error on the binding when middleware answers with it, or on
   the action when its handler does.
 - `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: relative routes
   have no page to resolve against. Set `baseUrl`.

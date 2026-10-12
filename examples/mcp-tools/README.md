@@ -5,8 +5,10 @@ authentication of its own. It signs in to the farm once, with its own account, a
 reach it may call every tool, so it runs as a local subprocess of an agent or on a network only
 trusted clients are on.
 
-Start here if you are putting an existing API in front of a model. For tools that belong to the
-signed-in user, start from [notes-service](../notes-service/).
+Start here if you are putting an existing API in front of a model, then read
+[ActionMcp.md](../../docs/ActionMcp.md). For tools that need a token, its "Protect tools" shows
+the verifier, and [notes-service](../notes-service/) is a server whose tools belong to the
+signed-in user.
 
 ## Run it
 
@@ -28,7 +30,8 @@ vp test examples/mcp-tools
 
 The farm is a fake, answered in memory, so any URL, user and password work: replace it with a
 real HTTP client before deploying anything. `ALLOWED_ORIGINS` lists the browser origins the HTTP
-endpoint accepts and answers with CORS headers, comma-separated; `HOST` is the interface it listens on.
+endpoint accepts and answers with CORS headers, comma-separated; `HOST` is the interface it
+listens on.
 
 ## Connect a client
 
@@ -102,7 +105,9 @@ test/
 
 - **The upstream is a service, built once.** `PrintFarm.layer` reads its URL and credentials
   from `Config`, takes whichever `HttpClient` the entrypoint provides, and signs in while it is
-  built. The handlers get it already signed in and only delegate.
+  built. The handlers get it already signed in and only delegate: `handlers.ts` maps each tool
+  onto a method of `farm.ts`, which knows nothing of tools, so a second caller of the farm, a
+  job or another surface, takes the service alone.
 - **One declared error, mapped in one place.** A refusal, an unreachable farm, an answer of
   another shape and one that never comes each leave `farm.ts` as a `PrintFarmError` with a
   message a model can act on. No handler catches anything.

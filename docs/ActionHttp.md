@@ -4,8 +4,9 @@ JSON `POST` routes on Effect's `HttpApi`, one per action. `ActionHttp.make` bind
 mount path; the server mounts that one binding, every client calls it and the OpenAPI document is
 generated from it.
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionHttp-failures.md](ActionHttp-failures.md). Reading order: [README.md](README.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [ActionHttp-failures.md](ActionHttp-failures.md). Reading order:
+[README.md](README.md).
 
 ## API
 
@@ -89,7 +90,9 @@ Files: [quickstart/src/routes.ts](../examples/quickstart/src/routes.ts) and
 [notes-service/src/server.ts](../examples/notes-service/src/server.ts).
 
 - Pass every surface the same list of implementations: the layer serves the binding's actions
-  among them.
+  among them. Beside rpcs, one provider and one header decoding serve both
+  ([ActionRpc.md](ActionRpc.md#serve-the-rpcs), "The same actions as JSON too";
+  [kitchen-sink/src/server.ts](../examples/kitchen-sink/src/server.ts)).
 - A service a handler or an authorizer reads per request stays owed by the layer until router
   middleware around it, `HttpRouter.provideRequest` or the layer's own `middleware` provides it.
   Router middleware is the one that reads the request, such as a header:

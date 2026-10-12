@@ -82,6 +82,46 @@ describe("the commands", () => {
     }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("import a file `export` wrote with one call, all its notes or none", () =>
+    Effect.gen(function* () {
+      const files = yield* FileSystem.FileSystem;
+      const directory = yield* files.makeTempDirectoryScoped();
+      const file = `${directory}/notes.md`;
+
+      yield* files.writeFileString(file, "# Plan\n\nFirst draft\n\n# Budget\n\nToo small");
+
+      expect(yield* run("ada", ["import", file])).toEqual(["Created 2 notes"]);
+      expect(yield* run("grace", ["import", file])).toEqual(["Created 2 notes"]);
+
+      yield* files.writeFileString(`${directory}/untitled.md`, "# Plan\n\nKept?\n\n# \n\nNo title");
+
+      const refused = yield* Effect.flip(run("ada", ["import", `${directory}/untitled.md`]));
+
+      expect(refused).toHaveProperty(
+        "userMessage",
+        expect.stringContaining("A note needs a title."),
+      );
+      const [listed = ""] = yield* run("ada", ["list-notes"]);
+
+      const { notes } = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({ notes: Schema.Array(Schema.Struct({ title: Schema.String })) }),
+        ),
+      )(listed);
+
+      expect(notes.map(({ title }) => title)).toEqual(["Plan", "Budget"]);
+
+      // A missing file is a usage error: the command's help, and the file named on stderr.
+      yield* Effect.flip(run("ada", ["import", `${directory}/nowhere.md`]));
+
+      expect(yield* TestConsole.errorLines).toContainEqual(
+        expect.stringMatching(
+          /Invalid value for argument <file>: .*nowhere\.md.*File does not exist/su,
+        ),
+      );
+    }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("fail as the server refuses, a command of their own included", () =>
     Effect.gen(function* () {
       const refused = yield* Effect.flip(run("mallory", ["export", "notes.md"]));
