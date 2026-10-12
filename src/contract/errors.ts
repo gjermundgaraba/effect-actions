@@ -33,7 +33,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   },
   { httpApiStatus: statuses.InvalidInput },
 ) {
-  declare private readonly "~builtIn": unknown;
+  declare private readonly "~declared in the action's error, or built in": unknown;
 
   /**
    * The `InvalidInput` for input that did not decode, as every surface answers it: the
@@ -63,7 +63,7 @@ export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   { message: defaultedMessage("Authentication is required.") },
   { httpApiStatus: statuses.Unauthenticated },
 ) {
-  declare private readonly "~builtIn": unknown;
+  declare private readonly "~declared in the action's error, or built in": unknown;
 }
 
 export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
@@ -83,7 +83,7 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
   },
   { httpApiStatus: statuses.Forbidden },
 ) {
-  declare private readonly "~builtIn": unknown;
+  declare private readonly "~declared in the action's error, or built in": unknown;
 }
 
 const refusals = [Unauthenticated, Forbidden] as const;

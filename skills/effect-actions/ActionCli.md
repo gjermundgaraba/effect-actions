@@ -29,6 +29,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `make`, `remote`: `name`                 | The aggregate's name, required.                                                                              |
 | `make`, `remote`: `actions`              | The actions that are subcommands, among the implementations' or the binding's; defaults to every one.        |
 | `make`, `remote`: `commands`             | Each subcommand's `command` options, keyed by action name: `{ readFile: { positional: ["path"], render } }`. |
+| `make`, `remote`: `subcommands`          | Commands of your own beside the derived ones, as `Command.withSubcommands` takes them: `[exportNotes]`.      |
 | `remoteCommand`, `remote`: `client`      | The `ActionHttp.client` options, `baseUrl` and `transformClient`, for this command's or aggregate's client.  |
 
 Exported types: `Options<A>` of `make`, `RemoteOptions<A>` of `remote`, `CommandOptions<A>` of
@@ -66,7 +67,8 @@ The whole program is [assistant/src/commands.ts](https://github.com/gjermundgara
   where the host already built them. Implementations passed alongside are not built.
 - **For one action, or a tree of your own**, use `command(implementations, action, options?)`
   and compose with native combinators:
-  `Command.make("acme").pipe(Command.withSubcommands([...]))`.
+  `Command.make("acme").pipe(Command.withSubcommands([...]))`. For a command of your own
+  beside every derived one, see [Add a command of your own](#add-a-command-of-your-own).
 - **Test commands without a process** with `Command.runWith`, `TestConsole` and
   `Stdio.layerTest`. Provide the services around the test so its commands share one store:
   [assistant/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/commands.test.ts).
@@ -99,7 +101,8 @@ const notes = ActionCli.remote(Http, { name: "notes" }).pipe(
 );
 ```
 
-The whole program is [notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts);
+The whole program is [notes-service/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/commands.ts)
+and [notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts);
 [kitchen-sink/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/cli.ts) adds a tenant header.
 
 - **Choose where the connection comes from.** A fixed URL or token goes in the `client` option:
@@ -115,22 +118,29 @@ The whole program is [notes-service/src/cli.ts](https://github.com/gjermundgarab
 - Input is decoded by the action's schema first: input that does not decode is `InvalidInput`,
   and sends nothing.
 - **Test a remote command the same way** as a local one, with `Testing.layer(routes)` provided
-  as its `HttpClient` ([Testing.md](Testing.md#test-routes-in-memory)).
+  as its `HttpClient` ([Testing.md](Testing.md#test-routes-in-memory)). Export the command from
+  a module apart from the entrypoint that runs it
+  ([notes-service/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/commands.test.ts)).
 
 ## Shape flags, input and output
 
 ### Flags from the input
 
-A struct or class input gets one flag per top-level field, with the field's description as its
-help. The field's encoded JSON value decides the kind of flag:
+A struct or class input gets one flag per top-level field, named after the field in kebab case,
+with the field's description as its help. The field's encoded JSON value decides the kind of flag:
 
-| Encoded field                            | Flag                                                        |
-| ---------------------------------------- | ----------------------------------------------------------- |
-| string or template literal               | `--name <string>`                                           |
-| boolean                                  | `--on`, a switch; omitted is `false` for a required field   |
-| union of string literals, or string enum | `--kind <choice>`, one of the values                        |
-| array of strings, numbers or choices     | `--tag <value>`, repeated: one element per occurrence       |
-| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or else the text |
+| Encoded field                            | Flag, for a field `tags`, `read`, …                             |
+| ---------------------------------------- | --------------------------------------------------------------- |
+| string or template literal               | `--name <string>`                                               |
+| boolean                                  | `--read`, a switch: `--no-read` or `--read=false` sends `false` |
+| union of string literals, or string enum | `--kind <choice>`, one of the values                            |
+| array of strings, numbers or choices     | `--tags <value>`, repeated: one element per occurrence          |
+| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or else the text     |
+
+- A switch left out is `false` for a required field, and leaves an optional one out.
+- `--help` says what the name and the kind do not: `Repeat for each value.` on a repeated flag,
+  `--no-read sends false.` on an optional switch, and `A JSON array.` or `A JSON object.` on a
+  value that is one, each after the field's own description.
 
 - A flag takes the encoded value, which the action's schema then decodes: `"21"` for
   `Schema.FiniteFromString`.
@@ -154,14 +164,30 @@ In an aggregate, a command's options go under `commands`, keyed by the action's 
   line endings that end it. A terminal is never read: pipe the value in.
 - The options combine on one command: `updateNote: { positional: ["id"], stdin: "body" }` reads
   `notes update-note <id> --revision 1 < draft.md`
-  ([notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts)).
+  ([notes-service/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/commands.ts)).
+
+### Add a command of your own
 
 For a syntax the options cannot express, such as a flag named apart from its field, or a command
 calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and
-call the actions through `Action.client`, acquired in the handler inside `Effect.scoped`
-([Action.md](Action.md#call-actions-in-process)), or through `ActionHttp.client`. `authorize`
-still runs, but the output and failure rules below do not apply: map a failure to Effect CLI's
-`new CliError.UserError({ cause, userMessage })` for `Command.run` to print it on stderr.
+pass it in `subcommands`
+([notes-service/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/commands.ts)):
+
+```ts
+const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes] });
+```
+
+- **Never pipe `Command.withSubcommands` onto `make` or `remote`.** It replaces the derived
+  commands, which then answer with the usage text.
+- **Call the actions through a client**, in the command's own handler: `ActionHttp.client`, which
+  needs no scope and uses the `HttpClient` provided on the aggregate, or `Action.client`, acquired
+  inside `Effect.scoped` ([Action.md](Action.md#call-actions-in-process)). `authorize` still
+  runs. The `client` option reaches the derived commands alone.
+- **The output and failure rules below do not apply to it.** Print with `Console.log`, and map a
+  failure to Effect CLI's `new CliError.UserError({ cause, userMessage })` for `Command.run` to
+  print `userMessage` on stderr. Any other failure is reported as a crash, `ERROR (#n)`.
+- **Write the list in the call.** The aggregate's type then carries its commands' failures and
+  services. A list held in options annotated `ActionCli.Options` adds none to the type.
 
 ### Output and exit code
 
@@ -218,15 +244,17 @@ never a startup service: here the host supplies it per run. See
 
 ## Examples
 
-| File                                                                                   | Shows                                                                           |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| [notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts)                       | `remote`: URL and optional token from `Config`, `stdin`, `positional`, `render` |
-| [assistant/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/commands.ts)                     | `make`, with `aliases`, `render`, `positional` and `stdin`                      |
-| [assistant/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/cli.ts)                               | Services on the command, the host naming the caller, `logToStderr`              |
-| [assistant/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/identity/authorize.ts) | One `authorize` for a model's tool call and a command, admitting the operator   |
-| [assistant/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/commands.test.ts)         | Testing syntax and output with `Command.runWith`, stdin included                |
-| [kitchen-sink/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/cli.ts)                         | `remote` with every command option, `name` included; an image rendered as text  |
-| [kitchen-sink/src/ops.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/ops.ts)                         | `make` as an operator console, run as a trusted identity no verifier returns    |
+| File                                                                                   | Shows                                                                          |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [notes-service/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/commands.ts)             | `remote`: `stdin`, `positional`, `render`, and a command of its own            |
+| [notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts)                       | The entrypoint: URL and optional token from `Config`                           |
+| [notes-service/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/commands.test.ts) | Testing remote commands over `Testing.layer(routes)`, each run's own lines     |
+| [assistant/src/commands.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/commands.ts)                     | `make`, with `aliases`, `render`, `positional` and `stdin`                     |
+| [assistant/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/cli.ts)                               | Services on the command, the host naming the caller, `logToStderr`             |
+| [assistant/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/identity/authorize.ts) | One `authorize` for a model's tool call and a command, admitting the operator  |
+| [assistant/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/commands.test.ts)         | Testing syntax and output with `Command.runWith`, stdin included               |
+| [kitchen-sink/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/cli.ts)                         | `remote` with every command option, `name` included; an image rendered as text |
+| [kitchen-sink/src/ops.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/ops.ts)                         | `make` as an operator console, run as a trusted identity no verifier returns   |
 
 ## Failure modes
 
@@ -276,6 +304,8 @@ The types refuse several of these first.
   clash: its flag shadows the global one on that command.
 - `Duplicate command: <name>, claimed by action ... and action ...`: two actions of an aggregate
   have the same kebab-case name. Give one a `name` in `commands`, or use separate aggregates.
+  `claimed by action ... and subcommands`: a command of your own has a derived one's name. Rename
+  either.
 - `Unknown commands: <keys>`: a `commands` key names no action. Use the action's own name, not
   its kebab-case command name.
 - `Listed in actions, but no implementation holds it: <names>`, or

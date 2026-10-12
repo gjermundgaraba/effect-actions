@@ -231,13 +231,63 @@ expectTypeOf<Command.Services<typeof connected>>().toEqualTypeOf<HttpClient.Http
 
 expectTypeOf<Command.Services<typeof connectedGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
 
+class OwnFailure extends Schema.TaggedError<OwnFailure>()("OwnFailure", {}) {}
+
+const own = Command.make("own", {}, () =>
+  Effect.andThen(OneRequest, () => Effect.fail(new OwnFailure())),
+);
+
+const grouped = Command.make("grouped", {}, () => Effect.asVoid(TwoRequest));
+
+const remoteWithOwn = ActionCli.remote(http, {
+  name: "remote",
+  subcommands: [own, { group: "Others", commands: [grouped] }],
+});
+
+expectTypeOf<Command.Services<typeof remoteWithOwn>>().toEqualTypeOf<
+  HttpClient.HttpClient | OneRequest | TwoRequest
+>();
+
+expectTypeOf<
+  Extract<Command.Error<typeof remoteWithOwn>, OwnFailure>
+>().toEqualTypeOf<OwnFailure>();
+
+expectTypeOf<Extract<Command.Error<typeof remoteGroup>, OwnFailure>>().toEqualTypeOf<never>();
+
+const localWithOwn = ActionCli.make(local, {
+  name: "local",
+  actions: [One],
+  subcommands: [grouped],
+});
+
+expectTypeOf<Command.Services<typeof localWithOwn>>().toEqualTypeOf<
+  Build | OneRequest | TwoRequest
+>();
+
+const erased: ActionCli.RemoteOptions<typeof RemoteAction> = { name: "remote", subcommands: [own] };
+
+const erasedGroup = ActionCli.remote(http, erased);
+
+expectTypeOf<Command.Services<typeof erasedGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+const localFailing = ActionCli.make(local, { name: "local", subcommands: [own] });
+
+expectTypeOf<Extract<Command.Error<typeof localFailing>, OwnFailure>>().toEqualTypeOf<OwnFailure>();
+
+// @ts-expect-error -- A subcommand of your own is an Effect CLI command.
+ActionCli.remote(http, { name: "remote", subcommands: [One] });
+
 const remoteOptions: ActionCli.RemoteOptions<typeof RemoteAction | typeof Count> = {
   name: "remote",
   client: connection,
   commands: { remote: { render: String } },
 };
 
-ActionCli.remote(http, remoteOptions);
+const fromAnnotatedOptions = ActionCli.remote(http, remoteOptions);
+
+expectTypeOf<
+  Command.Services<typeof fromAnnotatedOptions>
+>().toEqualTypeOf<HttpClient.HttpClient>();
 
 const remoteCommandOptions: ActionCli.RemoteCommandOptions<typeof RemoteAction> = {
   client: connection,

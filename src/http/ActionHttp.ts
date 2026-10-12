@@ -31,6 +31,7 @@ import {
   type ServedProvider,
   type RemoteRequest,
   type Required as RequiredAuthentication,
+  type ServerBuildServices,
   type VerifierError,
 } from "../authentication/provider.js";
 import {
@@ -51,7 +52,6 @@ import { SchemaErrors, schemaErrors } from "./schema-errors.js";
 import {
   type Protected,
   acquire,
-  type BuildServices,
   type BuildError,
   type ErasedValue,
   type Known,
@@ -118,7 +118,7 @@ type HttpLayer<
 > = Layer.Layer<
   never,
   BuildError<Holding<Member<Apps>, A>, A>,
-  | BuildServices<Holding<Member<Apps>, A>, A>
+  | ServerBuildServices<Holding<Member<Apps>, A>, A>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, M>>
   | ServedProvider<Member<Apps>, A, H extends { readonly authentication: infer D } ? D : never>

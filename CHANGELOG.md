@@ -23,6 +23,17 @@ public tool's call included. On such an endpoint a signed-out 2026-07-28 request
 - Migrate: nothing. Limit request bodies, which bounds what a session holds
   ([ActionHttp.md](docs/ActionHttp.md#serve-the-routes)).
 
+**A builder that yields the caller no longer type-checks where a server serves it, even with the
+identity provided at startup.** Among the startup requirements of `ActionHttp.layer`,
+`ActionRpc.layer` and `ActionMcp.layerHttp`, the identity a builder or an Effect building the
+authorizer yields is replaced by the sentence
+`"A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"`,
+which is what the compiler now prints where the server is launched, in place of
+`Type 'CurrentUser' is not assignable to type 'never'`. `runStdio`, `ActionToolkit`, `ActionCli`
+and `Action.client`, whose host names one caller, are unchanged.
+
+- Migrate: move the `yield*` of the identity into the handler or the authorizer.
+
 **`Testing.mcpClient` fails an input that does not encode with `InvalidInput`, as every other
 client does, instead of `SchemaError`.** Nothing is sent, as before.
 
@@ -30,6 +41,19 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Additions
 
+- `ActionCli.make` and `remote` take `subcommands`, commands of your own beside the derived ones,
+  as Effect's `Command.withSubcommands` takes them:
+  `ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes] })`. Piping
+  `Command.withSubcommands` onto the result replaces the derived commands, so every action had to
+  be listed again as a `remoteCommand` beside one command written by hand. A name a derived
+  command has throws `Duplicate command`; the aggregate's type gains its own commands' failures
+  and services ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
+- A derived command's `--help` says what a flag's name and kind do not, after the field's own
+  description: `Repeat for each value.` on a repeated flag, `--no-<flag> sends false.` on an
+  optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one.
+- The compiler names an undeclared error where a handler fails with one: the message ends
+  `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
+  where it ended `Property '"~builtIn"' is missing`.
 - `ActionCli.command` and `remoteCommand` take `stdin`, a required field of the input read from
   standard input instead of a flag, such as a secret a flag would leave in the process list and
   the shell's history: `ActionCli.remoteCommand(Http, PutSecret, { stdin: "value" })` reads

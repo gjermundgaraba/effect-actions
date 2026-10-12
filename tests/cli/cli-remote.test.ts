@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Config, ConfigProvider, Effect, flow, Schema } from "effect";
+import { Config, ConfigProvider, Console, Effect, flow, Schema } from "effect";
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
@@ -127,6 +127,30 @@ it.effect("projects a binding as one kebab-case subcommand per action", () =>
     expect(echoed).toEqual(['"hi"']);
     expect(doubled).toEqual(['"4"']);
     expect(urls).toEqual(["http://localhost/api/echoText", "http://localhost/api/remote"]);
+  }),
+);
+
+it.effect("runs a command of its own beside the derived ones, on the same client", () =>
+  Effect.gen(function* () {
+    const { app, decoded } = freshRecordingImplementation();
+    const web = serve(ActionHttp.layer(Http, app));
+
+    const doubleEach = Command.make("double-each", {}, () =>
+      Effect.gen(function* () {
+        const client = yield* ActionHttp.client(Http);
+
+        yield* Console.log(yield* Effect.forEach([1, 2], (value) => client.remote({ value })));
+      }),
+    );
+
+    const command = ActionCli.remote(Http, { name: "cli", subcommands: [doubleEach] });
+
+    const runLines = (args: ReadonlyArray<string>) =>
+      logged(exec(command, args)).pipe(Effect.provide(Testing.layer(web.handler)));
+
+    expect((yield* runLines(["remote", "--value", "3"]))[1]).toEqual(['"6"']);
+    expect((yield* runLines(["double-each"]))[1]).toEqual([[2, 4]]);
+    expect(decoded).toEqual([3, 1, 2]);
   }),
 );
 

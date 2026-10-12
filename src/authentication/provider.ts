@@ -3,7 +3,12 @@ import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
 import { Anyone } from "../contract/rules.js";
-import type { Protected, ServedRequest, Serving } from "../contract/implementation.js";
+import type {
+  BuildServices,
+  Protected,
+  ServedRequest,
+  Serving,
+} from "../contract/implementation.js";
 import { type Refusal, Unauthenticated } from "../contract/errors.js";
 
 /** One native security scheme: Bearer unless a descriptor names another. */
@@ -165,6 +170,22 @@ export type Matching<A extends Action.Any, D> =
 export type RemoteRequest<App, A extends Action.Any> =
   | ServedRequest<App, Extract<A, { readonly caller: typeof Anyone }>>
   | Exclude<ServedRequest<App, Protected<A>>, Identity<Protected<A>>>;
+
+// Why: The caller named among a server's startup requirements reads `Type 'CurrentUser' is not
+// assignable to type 'never'` where the server is launched, which says nothing of the builder that
+// yields it. Refusing the implementation where the surface takes it was tried, and it refused every
+// helper generic in its implementations, whose builders' services are not yet known.
+/**
+ * What a server of the actions `A` of the implementations `App` reads at startup, as
+ * `BuildServices` states it, with the caller a builder yields named as the mistake it is: a server
+ * has its caller per request.
+ */
+export type ServerBuildServices<App, A extends Action.Any> =
+  BuildServices<App, A> extends infer R
+    ? R extends Identity<Protected<A>>
+      ? "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"
+      : R
+    : never;
 
 /**
  * What a call of `A` under the descriptor `D` may fail with from its verifier: the errors `D`
