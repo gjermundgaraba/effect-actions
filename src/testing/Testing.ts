@@ -1,6 +1,8 @@
 import {
+  Cause,
   Context,
   Effect,
+  ErrorReporter,
   FileSystem,
   identity,
   Layer,
@@ -56,7 +58,9 @@ export function layer(
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
- * released with its scope, without request logs. What they still require is this layer's, as
+ * released with its scope, without request logs: only the cause of a request that fails, a
+ * defect or a result that does not encode, is logged, as an error, where a server's request
+ * logger would show it. What they still require is this layer's, as
  * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
  * theirs provides, including one a global middleware reads. The routes keep their real
  * authentication: a client sends its caller's credential. Provided around it, the test
@@ -105,11 +109,26 @@ export function layer(
       return clientOf(
         HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
           context,
-        )(app),
+        )(
+          Effect.tapCause(app, (cause) =>
+            isReported(cause) ? Effect.logError(cause) : Effect.void,
+          ),
+        ),
       );
     }),
   );
 }
+
+// Why: A server's request logger shows the cause of an empty 500, and a test runs none: the
+// cause is logged here, or a test sees a status and nothing else. Only what an `ErrorReporter`
+// is given, so a 404 or a refusal stays silent, as every request that succeeds does. Rejected:
+// Effect's request logger, a line for every request of every test.
+const isReported = (cause: Cause.Cause<unknown>): boolean =>
+  cause.reasons.some(
+    (reason) =>
+      (Cause.isFailReason(reason) && !ErrorReporter.isIgnored(reason.error)) ||
+      (Cause.isDieReason(reason) && !ErrorReporter.isIgnored(reason.defect)),
+  );
 
 export type { Params as McpParams } from "../mcp/protocol.js";
 
@@ -327,7 +346,8 @@ export function mcpClient(
 
 /**
  * One stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves it,
- * as the native request value: the JSON-RPC envelope, the 2026-07-28 headers, `mcp-name` from
+ * as the native request value: the JSON-RPC envelope, the 2026-07-28 headers (`Accept`,
+ * `MCP-Protocol-Version`, `MCP-Method`), `mcp-name` from
  * `params.uri` for `resources/read` and `params.name` otherwise, and the client metadata in
  * `_meta` are filled in, under any `_meta` given, such as a `progressToken`; the protocol
  * version is always the request's own. The test sends it: `HttpClient.execute` answers the

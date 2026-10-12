@@ -3,6 +3,7 @@
 What you see when something is wrong, and the fix. Search for a fragment of the message.
 The tasks are in [Testing.md](Testing.md).
 
+- A route answers an empty 500: a defect, or a result that does not encode. `Testing.layer` logs the cause as an error, and nothing for a request that succeeds or is refused: read the test's output, or collect it with a `Logger` or an `ErrorReporter` provided around the layer.
 - A client method fails with `Action.Unauthenticated`: routes under `Testing.layer` keep their real authentication. Give the client a credential in `transformClient` ([Test as a signed-in caller](Testing.md#test-as-a-signed-in-caller)).
 - A protected route answers 401 where the test expects 415 or 400: authentication runs before the body is read. Send a valid credential.
 - `Type 'Provider<CurrentUser, "notes-service.Login">' is missing the following properties from type 'Scope'` at `it.effect`, or `… is not assignable to type 'never'` at `Effect.runPromise`: the routes serve a protected action without a provider of its descriptor. Provide the real one or a test verifier to the routes; a caller provided around `Testing.layer` does not satisfy them.

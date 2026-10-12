@@ -3,10 +3,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
 import {
+  Cause,
   Context,
   Effect,
   FileSystem,
   Layer,
+  Logger,
   Path,
   Result,
   Schema,
@@ -921,6 +923,65 @@ describe("layer", () => {
 
       expect(authorizeFailure).toEqual(new Unavailable());
     }),
+  );
+
+  it.effect(
+    "logs the cause of a request that fails, a defect or a result that does not encode, and of no other",
+    () =>
+      Effect.gen(function* () {
+        class Missing extends Schema.TaggedError<Missing>()("Missing", {}) {}
+
+        const options = { description: "Probe", readOnly: true, caller: Action.Anyone } as const;
+        const Crash = Action.make("crash", options);
+        const Count = Action.make("count", { ...options, success: Schema.Finite });
+        const Find = Action.make("find", { ...options, error: Missing });
+        const Fine = Action.make("fine", options);
+        const Secret = Action.make("secret", { ...options, caller: CurrentActor });
+
+        const Probes = ActionHttp.make([Crash, Count, Find, Fine, Secret], {
+          authentication: Login,
+        });
+
+        const routes = ActionHttp.layer(Probes, [
+          Action.implement([Crash, Count, Find, Fine], {
+            crash: () => Effect.die(new Error("db password hunter2")),
+            count: () => Effect.succeed(Infinity),
+            find: () => Effect.fail(new Missing()),
+            fine: () => Effect.void,
+          }),
+          Action.implement(Secret, () => Effect.void, { authorize: Action.allowAll }),
+        ]).pipe(Layer.provide(authenticate));
+
+        const logged: Array<string> = [];
+
+        yield* Effect.gen(function* () {
+          const client = yield* ActionHttp.client(Probes);
+
+          yield* Effect.exit(client.find());
+          yield* client.fine();
+          yield* Effect.exit(client.secret());
+          yield* HttpClient.get("/nowhere");
+
+          expect(logged).toEqual([]);
+
+          yield* Effect.exit(client.crash());
+          yield* Effect.exit(client.count());
+        }).pipe(
+          Effect.provide(Testing.layer(routes)),
+          Effect.provide(
+            Logger.layer([
+              Logger.make(
+                ({ cause, logLevel }) => void logged.push(`${logLevel} ${Cause.pretty(cause)}`),
+              ),
+            ]),
+          ),
+        );
+
+        expect(logged).toEqual([
+          expect.stringMatching(/^Error Error: db password hunter2/),
+          expect.stringMatching(/^Error HttpApiSchemaError[^]*Expected a finite number/),
+        ]);
+      }),
   );
 
   it.effect("leaves the routes' startup services to the program, which shares them", () =>

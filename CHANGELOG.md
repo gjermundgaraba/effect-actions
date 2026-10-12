@@ -108,6 +108,10 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- `Testing.layer` logs the cause of a request that fails, a defect or a result that does not
+  encode, as an error, and nothing for any other request. An empty 500 in a test showed its
+  cause nowhere unless the test provided an `ErrorReporter`: a server's request logger writes
+  it, and a test runs none ([Testing-failures.md](docs/Testing-failures.md)).
 - A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the
   binding's authentication declares as its JSON, as it prints every other declared error. It
   printed it as prose, the error's name alone.
