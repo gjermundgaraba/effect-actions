@@ -24,9 +24,11 @@ The tasks are in [setup.md](setup.md).
 - A page fails at load with `does not provide an export named …`: it serves only the names it
   uses of an Effect specifier, from a vendored module or a trimmed bundle, and the package
   imports another. Serve each specifier whole.
-- Type errors inside `effect/*` modules after install, or an unmet peer warning for `effect`,
-  such as `found 4.1.0`: more than one Effect release is installed, or one outside the peer
+- Type errors inside `effect/*` modules after install, an unmet peer warning for `effect`,
+  such as `found 4.1.0`, or a start failing with `Cannot find module '…/effect/dist/…'` under an
+  `@effect/*` package: more than one Effect release is installed, or one outside the peer
   range. Install the `effect` range [Install](setup.md#install) names, with every `@effect/*`
-  package on the same release.
+  package at the version `effect` resolved to, such as `@effect/platform-node@4.0.2` beside
+  `effect@4.0.2`.
 - `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): these modules
   are now `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`.

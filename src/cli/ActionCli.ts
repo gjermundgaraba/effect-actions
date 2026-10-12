@@ -262,7 +262,7 @@ const checkedCommandsOf = (
  * process, behind its implementation's authorization. It is named after the action in kebab
  * case with one flag per field of its input (`--user-id`), or `--input` taking the whole input
  * as JSON when it is not a struct. The flag of an array of strings or numbers is repeated for each value, a boolean
- * field is a switch, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
+ * field is a switch, `--no-<name>` sending `false` as a required one left out does, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
  * `UserError`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
  */
@@ -320,6 +320,9 @@ export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
    * token read from `Config` goes instead into the `HttpClient` provided on the command, with
    * `Command.provideEffect(HttpClient.HttpClient, …)`: it is read when a command runs, so
    * `--help` needs neither, and a command of your own in `subcommands` calls through it too.
+   * A required one that is not set fails that Effect with a `ConfigError`, which is no
+   * command's failure and prints as a crash line: map the read,
+   * `Effect.mapError((cause) => new CliError.UserError({ cause, userMessage: "TOKEN is not set" }))`.
    */
   readonly client?: ClientOptions;
 };
@@ -340,6 +343,7 @@ type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
  * `Command.withSubcommands` on the result would put in the derived ones' place. `remote` calls a
  * server instead. A test runs it in memory, with no process:
  * `Command.runWith(command, { version })(args)`.
+ * Guide: `docs/ActionCli.md` in this package; in an application: `examples/notes-service/src/commands.ts`.
  */
 export function make<
   const Apps extends Served,

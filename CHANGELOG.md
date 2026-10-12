@@ -61,8 +61,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
 - A derived command's `--help` says what a flag's name and kind do not, after the field's own
   description: `Repeat for each value.` on a repeated flag, `--no-<flag> sends false.` on an
-  optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one, an
-  array of objects with its fields, `A JSON array of {id, approved?}.`
+  optional boolean's switch, `Left out, it sends false.` on a required one, and `A JSON array.`
+  or `A JSON object.` on a value that is one, an array of objects with its fields,
+  `A JSON array of {id, approved?}.`
 - A flag's help shows the field's description wherever it is annotated. One annotated before a
   check, or on the field's key with `annotateKey`, where an MCP tool's listing reads it, was
   missing from `--help`. A repeated flag with no
@@ -188,6 +189,14 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 - A timer of the stderr console that `runStdio` and a CLI command give their program, started
   again while it runs, keeps its first start, as Node's does; it restarted
   ([ActionMcp.md](docs/ActionMcp.md)).
+- Each module's main export names its page and an example in its JSDoc, for a reader who opens
+  a declaration before the README. The `ActionHttp.layer` JSDoc gives the line that limits
+  request bodies, and `RemoteOptions.client` how a required token that is not set is reported.
+- New failure entries: a service a builder starts yielding, owed by every test; calls to
+  different actions in one array; a wrapped builder whose handlers lose their types;
+  `Schema.Struct(X.input)` ([Testing-failures.md](docs/Testing-failures.md),
+  [Action-failures.md](docs/Action-failures.md)). [setup.md](docs/setup.md#install) has a
+  `tsconfig.json` to copy.
 - The agent skill also installs as a Claude Code plugin and a Codex plugin, from this
   repository's marketplace, `effect-actions@effect-actions-marketplace`; it follows the main
   branch, as `npx skills add` does ([README.md](README.md#for-agents)).

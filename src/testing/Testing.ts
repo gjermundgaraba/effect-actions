@@ -70,6 +70,7 @@ export function layer(
  * the rest, whose `FileSystem` is a no-op. A relative URL resolves against `http://localhost`.
  * The client is the layer's own: the program's other HTTP clients get none of its requests,
  * and it none of theirs.
+ * Guide: `docs/Testing.md` in this package; in an application: `examples/notes-service/test/`.
  */
 export function layer<A, E, R>(
   routes: Layer.Layer<A, E, R>,

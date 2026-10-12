@@ -7,6 +7,7 @@ import { CurrentUser, scopes } from "./Identity.js";
 // before the handler. Naming the missing scope lets an OAuth client ask for it and retry: it is
 // answered a challenge, which only a server publishing discovery (verifier.ts) can follow up.
 // Where tokens are fixed, such as API keys, name no scope: the refusal is then a plain one.
+// So `scopes` below goes when `protectedResource` in verifier.ts does: copy both or neither.
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const scope = action.readOnly ? scopes.read : scopes.write;
   const user = yield* CurrentUser;

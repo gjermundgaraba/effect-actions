@@ -202,7 +202,8 @@ const noElementOccurrence = "[]";
 
 // Why: The help of Effect CLI shows a flag's name and the kind of its value, which say neither that
 // a flag repeats, nor that `--no-<flag>` is a switch's `false`, nor that a value is JSON. A switch
-// of a required field is `false` when left out, so only an optional one is told how to say it.
+// of a required field is `false` when left out, which its help says; an optional one is left
+// out when left out, so its help says how to send `false`.
 const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
   const value = unsuspended(encoded);
   const kinds = new Set(acceptedJsonKindsOf(value));
@@ -297,7 +298,7 @@ const fieldParam = (
       ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
       : valueParam(kind, name, encoded).pipe(Param.map(Option.some)),
     repeats: false,
-    hint: jsonHintOf(encoded),
+    hint: isSwitch ? "Left out, it sends false." : jsonHintOf(encoded),
   };
 };
 

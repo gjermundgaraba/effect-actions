@@ -188,13 +188,13 @@ See [notes-service/src/routes.ts](../examples/notes-service/src/routes.ts). Writ
 sign in. What a signed-in caller may do is each implementation's
 [`authorize`](Action.md#authorize-calls), which runs on every call of a protected tool.
 
-- **One endpoint or two.** On a mixed endpoint, serving public and protected tools, a 2026-07-28
+- **One endpoint or two.** An endpoint of protected tools alone authenticates every request,
+  the listing included. On a mixed endpoint, serving public and protected tools, a 2026-07-28
   request lists every tool, protected ones included, and calls a public one signed out, and a
   session's every request signs in ([Serve tools over HTTP](#serve-tools-over-http)). A
   protected tool's call answers the 401 a client signs in on. To keep protected tools unlisted
   to signed-out callers, or public ones open to a session's client, serve the public tools on an
-  endpoint of their own: a second `layerHttp` on another `path`. An endpoint of protected tools
-  alone authenticates every request, the listing included.
+  endpoint of their own: a second `layerHttp` on another `path`.
 - No listing is filtered by caller: `authorize` refuses the call, not the sight of the tool.
 - On a Bearer endpoint, a protected tool's `Unauthenticated`, or `Forbidden` naming `scopes`,
   answers the request with 401 or 403 and a challenge the client acts on, in place of a tool

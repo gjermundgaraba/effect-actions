@@ -247,6 +247,7 @@ const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middle
  * failure. A union's own `httpApiStatus` applies to every member; otherwise, each member
  * uses its own status, or 422 without one. Protected contracts receive native endpoint
  * security middleware: the same descriptor documents their credentials and enforces them.
+ * Guide: `docs/ActionHttp.md` in this package; in an application: `examples/notes-service/src/routes.ts`.
  */
 export function make<
   const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
@@ -359,7 +360,8 @@ const jsonContentType = () =>
  * of a protected action excepted, which its authentication provides; the router provides
  * its own, such as the request, to every route. Its routes take only requests typed as JSON,
  * and what middleware provides per request wins over what the layer was built with. A request
- * body is read whole unless the host provides `HttpServerRequest.MaxBodySize`.
+ * body is read whole, however large, unless the host limits it where the routes are served:
+ * `Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1)))`.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,

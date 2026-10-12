@@ -133,6 +133,7 @@ const declaredErrorsOf = (
  * binding's `error`, and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so
  * clients decode each as a typed failure; a protected one also declares what its descriptor's
  * verifier fails with. Browser-safe, as an HTTP binding is.
+ * Guide: `docs/ActionRpc.md` in this package; in an application: `examples/live-rpc/`.
  */
 export function make<
   const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,

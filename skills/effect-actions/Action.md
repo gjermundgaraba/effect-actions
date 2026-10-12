@@ -69,7 +69,9 @@ uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `ch
   MCP endpoint, Toolkit, CLI and client holding it.
 - **For no arguments, omit `input`.** A `Schema.Struct({})` accepts any value but `null`, and MCP
   refuses it as a tool's input ([ActionMcp.md](ActionMcp.md#describe-tools-to-a-model)).
-- **A field callers may omit is `Schema.optional`.** One with a decoding default (`limit` in
+- **A field callers may omit is `Schema.optional`.** On the wire it also takes `null`, read as
+  left out, as a tool's schema lists; a typed client refuses `null`. `Schema.optionalKey` takes
+  omission alone, and `Schema.NullOr` keeps `null` as a value. One with a decoding default (`limit` in
   `Issues.ts`) is still stated by a typed client given an argument
   ([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)).
 - **An action's `name`, `input`, `success`, `error` and `readOnly` are public**: reuse them, as
@@ -173,12 +175,13 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const user = yield* CurrentUser;
 
   if (!user.scopes.includes(scope)) {
-    return yield* new Action.Forbidden({ message: `Requires ${scope}.`, scopes: [scope] });
+    return yield* new Action.Forbidden({ message: `Requires ${scope}.` });
   }
 });
 ```
 
-That is [notes-service/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/authorize.ts).
+[notes-service/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/authorize.ts)
+is that rule with `scopes: [scope]` added, the OAuth variant: it publishes discovery.
 Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an action's
 `readOnly` then changes who may call it.
 
