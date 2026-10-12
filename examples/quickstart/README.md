@@ -7,7 +7,8 @@ layout.
 
 ## Run it
 
-From the repository root, after `vp install`:
+From the repository root, after `vp install` (from an installed package, see
+[Run one](../README.md#run-one)):
 
 ```sh
 node --import tsx examples/quickstart/src/server.ts     # 127.0.0.1:3000

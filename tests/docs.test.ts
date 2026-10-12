@@ -93,6 +93,10 @@ it.each(docsPages)("%s names no source path of the library, which does not ship"
   expect(read(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
 });
 
+it.each(docsPages)("%s fits one read of an agent's tool, which cuts a longer output", (page) => {
+  expect(Buffer.byteLength(read(page))).toBeLessThan(16_000);
+});
+
 it("lists every example in examples/README.md and gives each a README", () => {
   const index = read("examples/README.md");
 

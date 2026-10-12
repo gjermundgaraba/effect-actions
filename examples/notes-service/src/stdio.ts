@@ -12,7 +12,9 @@ import { status } from "./status/handlers.js";
 // Entrypoint: an MCP server a local agent starts as a subprocess, such as
 // `claude mcp add notes -- node --import tsx examples/notes-service/src/stdio.ts`.
 // The same implementations as the HTTP server, and the same `authorize`. No token arrives
-// over stdio, so this host names the caller itself.
+// over stdio, so this host names the caller itself. It is a process of its own with services
+// of its own: this in-memory store holds its notes, not the running server's. To share them,
+// both provide a store they both reach, such as a database.
 ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: "1.0.0" }).pipe(
   // DEMO ONLY: a real host reads who started it, from its own login or configuration.
   Effect.provideService(CurrentUser, users.ada),

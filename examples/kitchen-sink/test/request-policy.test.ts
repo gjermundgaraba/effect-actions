@@ -83,6 +83,24 @@ describe("the request policy", () => {
     expect(allowed.headers.get("access-control-allow-origin")).toBe("http://localhost:6274");
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("access-control-allow-headers")).toContain("MCP-Protocol-Version");
+    expect(allowed.headers.get("access-control-expose-headers")).toContain("Mcp-Session-Id");
+  });
+
+  it("lets a browser client of an MCP revision with sessions end its session", async () => {
+    const preflight = await web.handler(
+      new Request("http://localhost/mcp", {
+        method: "OPTIONS",
+        headers: {
+          origin: "http://localhost:6274",
+          "access-control-request-method": "DELETE",
+          "access-control-request-headers": "authorization, mcp-session-id",
+        },
+      }),
+    );
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("DELETE");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("Mcp-Session-Id");
   });
 
   it("covers the admin port too, whatever key a request carries", async () => {

@@ -18,7 +18,9 @@ const implementations = [status, notes, identity];
 const api = ActionHttp.layer(Http, implementations);
 
 // The same actions as MCP tools at `/mcp`. Listing the tools and calling `getStatus` need no
-// token; any other call answers 401 with where to sign in.
+// token, because `getStatus` is public: an endpoint of protected tools alone asks a token for
+// the listing too. Any other call answers 401 with where to sign in, and so does a client of
+// an MCP revision with sessions when it opens one, since a session may call any tool.
 const mcp = ActionMcp.layerHttp(implementations, {
   name: "notes-service",
   version: "1.0.0",

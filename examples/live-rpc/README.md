@@ -11,7 +11,8 @@ Actions are unary, so nothing streams: the page reads again, passing the last id
 
 ## Run it
 
-From the repository root, after `vp install`:
+From the repository root, after `vp install` (from an installed package, see
+[Run one](../README.md#run-one)):
 
 ```sh
 node --import tsx examples/live-rpc/src/server.ts     # 127.0.0.1:3000, PORT to change
@@ -23,6 +24,18 @@ vp test examples/live-rpc
 `client.ts` runs the browser's client from Node: two members on one socket, then each failure
 a page handles. `browser.ts` is imported by a page, not run. The tokens are fixed names (`ada`,
 `grace`) and the store is memory: replace both before deploying anything.
+
+## When you copy this
+
+Three choices here show a feature. Decide each for your application before keeping it:
+
+- **`listRooms` is public** to show a public rpc beside protected ones. It tells a signed-out
+  caller every room's name.
+- **A message naming no room is about `lobby`**, to show a default in request context. Yours may
+  refuse instead.
+- **The room is a header, not an input**, because `authorize` sees the action and not its input:
+  the membership rule reads the room from request context. A room in the input moves that check
+  into the store.
 
 ## Layout
 

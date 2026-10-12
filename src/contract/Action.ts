@@ -109,8 +109,9 @@ export interface Options {
   readonly success?: Codec | Fields | undefined;
   /**
    * The declared failures: one schema, or a list of them, as `HttpApiEndpoint` takes them;
-   * each keeps its own HTTP status annotation. Defaults to none. None with a built-in
-   * error's `_tag`.
+   * each keeps its own HTTP status annotation, the third argument of
+   * `Schema.TaggedError<NoteNotFound>()("NoteNotFound", { id: Schema.String }, { httpApiStatus: 404 })`,
+   * and answers 422 without one. Defaults to none. None with a built-in error's `_tag`.
    */
   readonly error?: Codec | ReadonlyArray<Codec> | undefined;
   /**

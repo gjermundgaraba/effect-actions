@@ -9,7 +9,8 @@ Start here if you are building a service. The other examples follow the same lay
 
 ## Run it
 
-From the repository root, after `vp install`:
+From the repository root, after `vp install` (from an installed package, see
+[Run one](../README.md#run-one)):
 
 ```sh
 node --import tsx examples/notes-service/src/server.ts          # 127.0.0.1:3000

@@ -40,8 +40,9 @@ import {
 import { clientOf, type Served } from "./memory.js";
 
 /**
- * The native `HttpClient`, answered by `handler` instead of the network: a web handler the
- * test serves, which other tests may share, such as
+ * For a web handler the test already owns; most tests want `layer(routes)`, below, with
+ * `ActionHttp.client` and `mcpClient`. The native `HttpClient`, answered by `handler` instead of
+ * the network: a web handler the test serves, which other tests may share, such as
  * `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices))).handler`,
  * the routes' platform services provided, as `layer(routes)` provides them itself. It is the
  * client `layer(routes)` gives, without building anything: the test owns the handler, and
@@ -119,7 +120,10 @@ export interface McpClientOptions {
    * the default `ActionMcp.layerHttp` path.
    */
   readonly url?: string;
-  /** Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token, say. */
+  /**
+   * Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token is
+   * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
+   */
   readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
 }
 
@@ -285,8 +289,9 @@ const callTool = (
  * media field from the blocks whose `_meta` names it, and a success that is media, or whose
  * every field is, from its blocks alone. A declared error the tool returns, the action's own
  * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication
- * answers with. The argument may be omitted when `{}` is a valid input. Requires the native
- * `HttpClient`, such as the one `layer` provides.
+ * answers with: a test telling a 401 or 403 from a tool result asserts the status of a request
+ * `mcpRequest` builds. The argument may be omitted when `{}` is a valid input. Requires the
+ * native `HttpClient`, such as the one `layer` provides.
  */
 export function mcpClient<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions,

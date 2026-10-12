@@ -73,7 +73,7 @@ describe("the service, over HTTP and MCP", () => {
     }).pipe(Effect.provide(served)),
   );
 
-  it.effect("lists every tool to a signed-out MCP client", () =>
+  it.effect("lists every tool to a signed-out MCP client, as one of them is public", () =>
     Effect.gen(function* () {
       const response = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
 

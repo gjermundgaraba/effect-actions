@@ -3,21 +3,30 @@
 Install the package, import its modules, write the smallest program, lay out an application and
 bundle a browser client.
 
+Read this page alone, in one tool call: pages read together are cut. When something fails,
+search [setup-failures.md](setup-failures.md). Reading order: [README.md](README.md).
+
 ## Install
 
 ```sh
 pnpm add @gjermundgaraba/effect-actions effect@~4.0.2
 ```
 
-| Need                                | Add                            |
-| ----------------------------------- | ------------------------------ |
-| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.2` |
+| Need                                | Add                                                              |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.2`                                   |
+| Tests                               | `vitest@^5.0.3` and `@effect/vitest@~4.0.2`, as dev dependencies |
+| Type checking                       | `typescript@^7.0.2`, as a dev dependency                         |
 
 The `effect` peer admits only the patches of the Effect release the package is tested against:
-Effect marks the HTTP, HTTP API, RPC, AI and CLI modules the surfaces build on unstable, so a
-minor release may change them.
+a minor release may change the unstable Effect modules the surfaces build on.
 
-Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer. ESM only.
+Keep the tilde in `package.json`: `^4.0.2`, which npm writes for `effect@4.0.2`, admits a minor
+release outside the peer range. `npm install effect@~4.0.2` keeps it.
+
+Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer. ESM only. `tsconfig.json` sets
+`"module": "nodenext"`, since the package's modules resolve only through its `exports`, and
+`"strict": true`, which Effect requires.
 
 ## Entry points
 
@@ -34,9 +43,6 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 ```
 
-Every module imports from the `effect` package only. Importing `Action` or `ActionHttp` never
-pulls in an MCP server or the AI toolkit.
-
 Effect's own modules are subpaths of `effect` too: `effect/http` (`HttpRouter`, `HttpClient`,
 `FetchHttpClient`), `effect/http-api` (`OpenApi`, `HttpApiMiddleware`), `effect/rpc`
 (`RpcServer`, `RpcClient`), `effect/ai` (`LanguageModel`, `Chat`), `effect/cli` (`Command`) and
@@ -44,8 +50,8 @@ Effect's own modules are subpaths of `effect` too: `effect/http` (`HttpRouter`, 
 
 ## Minimal program
 
-One action, served as a JSON route and as an MCP tool. Its four declarations, each in a file of
-its own:
+One action, served as a JSON route and as an MCP tool: four declarations, each in a file of
+[quickstart/src/](../examples/quickstart/src/).
 
 ```ts
 // greeting/Greeting.ts: the contract. It imports no server code.
@@ -75,7 +81,6 @@ Serve `routes` with `HttpRouter.serve` and a platform server layer
 and an MCP tool `greet` at `/mcp`. Call the route with the binding's typed client
 ([quickstart/src/client.ts](../examples/quickstart/src/client.ts)), and test both in memory
 ([quickstart/test/greeting/greeting.test.ts](../examples/quickstart/test/greeting/greeting.test.ts)).
-Each declaration is a file of [quickstart/src/](../examples/quickstart/src/).
 
 A request body has no size limit unless the host sets one
 ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
@@ -87,19 +92,17 @@ layout.
 Folders are domains; the PascalCase file in each is its contract file, which imports no server
 code; `routes.ts` holds the surfaces; each entrypoint chooses the services. An entrypoint of a
 remote surface never provides an identity: authentication supplies it per request
-([Action.md](Action.md#say-who-may-call-an-action)). The tree and the reasons:
+([Action.md](Action.md#say-who-may-call-an-action)). The tree:
 [examples/README.md](../examples/README.md#how-they-are-laid-out).
 
 ## Bundle for a browser
 
-A page calls the server with `ActionHttp.client`, with `ActionHttp.fetchClient` outside an
-Effect, or with `ActionRpc.client`. Import into the page only the contract files, the binding
-and a client module of your own:
+Import into the page only the contract files, the binding and a client module of your own:
 [notes-service/src/browser.ts](../examples/notes-service/src/browser.ts) over HTTP, with
 promises, [live-rpc/src/browser.ts](../examples/live-rpc/src/browser.ts) over a WebSocket.
 
 - `Action`, `ActionHttp`, `ActionRpc` and `Authentication` are the browser-safe modules: they
-  and what they import use nothing of Node or a server platform.
+  use nothing of Node or a server platform.
 - Keep `Action.implement` and `Authentication.layer` out of every file the page imports: a
   bundler keeps such a call, and what its handlers or verifier import, even unused.
 - Those four modules import Effect through `effect`, `effect/http` and `effect/http-api` alone,
@@ -108,13 +111,3 @@ promises, [live-rpc/src/browser.ts](../examples/live-rpc/src/browser.ts) over a 
 - A page on another origin needs CORS on the host, answered before authentication:
   `HttpRouter.cors`, as in
   [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts).
-
-## Failure modes
-
-- `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath from [Entry points](#entry-points), never the root or a `dist/` path.
-- A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a file that also holds server code, such as a contract beside its `Action.implement`, or an authentication descriptor beside its `Authentication.layer`. Move contracts, identities, descriptors and bindings to files that import no server code.
-- A page that loads Effect from an import map still bundles a second copy of Effect, or of some of its modules: a module of the page imports an Effect specifier the map does not serve, such as `effect/Schema`. Serve the specifiers [Bundle for a browser](#bundle-for-a-browser) lists, and import Effect through them in the page's own modules too. With a bundler that externalizes subpaths too, such as esbuild's `--external:effect`, the page instead fails to resolve `effect/Schema` in the browser.
-- A page loading Effect from an import map fails before its modules run, with `Failed to resolve module specifier "effect/Cause"` in Chromium: the map points at Effect's published files and lacks a specifier Effect imports itself. Map `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` to the same files, or serve Effect from a build that resolves its own imports.
-- A page fails at load with `does not provide an export named …`: it serves only the names it uses of an Effect specifier, from a vendored module or a trimmed bundle, and the package imports another, as a release may. Serve each specifier whole.
-- Type errors inside `effect/*` modules after install, or an unmet peer warning for `effect`, such as `found 4.1.0`: more than one Effect release is installed, or one outside the peer range. Install the `effect` range [Install](#install) names, with every `@effect/*` package on the same release.
-- `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): these modules moved to `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`. Import the new paths.

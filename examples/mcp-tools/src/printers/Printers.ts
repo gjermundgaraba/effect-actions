@@ -25,8 +25,9 @@ export class PrintFarmError extends Schema.TaggedError<PrintFarmError>()("PrintF
 // A field's description is part of the tool's input schema, which is all a model knows of it.
 // The pattern is there for safety: an id becomes a segment of the farm's URL, and it comes
 // from a model. An id that does not match is refused as invalid input, on every surface,
-// before a handler runs, so `..` or `a/b` never reaches the farm.
-const PrinterId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/)).annotate({
+// before a handler runs, so `..` or `a/b` never reaches the farm. The `u` flag is what puts the
+// pattern in the tool's schema, where the model reads it.
+const PrinterId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/u)).annotate({
   description: "A printer's id, as list_printers gives it, such as mk4-1.",
 });
 

@@ -70,6 +70,8 @@ export class PrintFarm extends Context.Service<
 >()("mcp-tools/PrintFarm") {
   // Built once, when the process starts. It requires an `HttpClient` and reads its settings
   // from `Config`: the entrypoint decides which client, and the environment says which farm.
+  // Not `fetch`: as a service, a test replaces the network alone and opens no port
+  // (test/printers/printers.test.ts).
   static readonly layer = Layer.effect(
     PrintFarm,
     Effect.gen(function* () {

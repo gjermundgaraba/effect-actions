@@ -92,6 +92,21 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
+  in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
+  sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
+  what an answering turn does ([ActionToolkit.md](docs/ActionToolkit.md#ask-for-approval)), the
+  shape of a refusal over MCP, and CORS for a browser MCP client.
+- Each module page opens with how to read it (alone, in one tool call) and links its failures
+  page, which the user test's second round showed nothing else led a reader to.
+- Corrected in the docs after that round: another method on an MCP endpoint answers
+  `Allow: POST, DELETE`; an action without input answers 415 to a body with no `Content-Type`;
+  the headers and methods a browser MCP client's CORS allows; what invalid tool arguments
+  answer; two failure entries that named one cause of two.
+- `package.json` names `docs` and `examples` under `directories`.
+- Examples: `live-rpc`'s declared errors carry an HTTP status; `kitchen-sink`'s CORS allows an
+  MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its
+  pattern.
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a
@@ -101,7 +116,8 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   the single-file examples, which were fragments of one demo application
   ([examples/README.md](examples/README.md)).
 - The docs are organized by task and link to example files instead of embedding them. Each
-  module page keeps its API table and failure modes; rules that restated the code are gone, and
+  module page keeps its API table, with its failure modes on a page beside it,
+  `<Module>-failures.md`, read when something fails; rules that restated the code are gone, and
   what stays is how to do a task, a choice, a trap or a boundary. `docs/guarantees.md` is now
   the wire behavior of every surface in one table, and the library's scope; its lifetime and
   authorization rules moved to [Action.md](docs/Action.md) and

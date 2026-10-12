@@ -12,15 +12,20 @@ export const Message = Schema.Struct({
 
 export type Message = typeof Message.Type;
 
-// A declared error is part of the contract: every client decodes it as this class.
-export class MessageNotFound extends Schema.TaggedError<MessageNotFound>()("MessageNotFound", {
-  id: Schema.Int,
-}) {}
+// A declared error is part of the contract: every client decodes it as this class. Its status
+// is for a JSON binding, should these actions be served as one too: an rpc carries no status,
+// and an error without one answers 422 over HTTP.
+export class MessageNotFound extends Schema.TaggedError<MessageNotFound>()(
+  "MessageNotFound",
+  { id: Schema.Int },
+  { httpApiStatus: 404 },
+) {}
 
-export class NotAuthor extends Schema.TaggedError<NotAuthor>()("NotAuthor", {
-  id: Schema.Int,
-  author: Schema.String,
-}) {}
+export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
+  "NotAuthor",
+  { id: Schema.Int, author: Schema.String },
+  { httpApiStatus: 403 },
+) {}
 
 // Which room a call is about is not an input of any action: it travels beside the call, in
 // this header, as the token does. The client sets it; on the server, room.ts reads it. A call

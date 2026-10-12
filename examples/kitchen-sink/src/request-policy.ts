@@ -40,12 +40,14 @@ export const requestPolicy = HttpRouter.middleware(
 // CORS for the one cross-origin caller, a browser MCP client. `HttpRouter.cors` is global to
 // the router too: it answers the preflight before any route's authentication, and adds its
 // headers to refusals as well. An MCP endpoint's `allowedOrigins` is no CORS: it only refuses
-// origins. The headers are those an MCP client sends and must be able to read.
+// origins. The headers are those an MCP client sends and must be able to read. A client of an
+// MCP revision with sessions sends its session's id on each request, reads it from the answer
+// that opened the session, and ends the session with a `DELETE`.
 export const cors = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
     HttpRouter.cors({
       allowedOrigins: origins,
-      allowedMethods: ["POST"],
+      allowedMethods: ["POST", "DELETE"],
       allowedHeaders: [
         "Content-Type",
         "Authorization",
@@ -53,8 +55,9 @@ export const cors = Layer.unwrap(
         "MCP-Protocol-Version",
         "MCP-Method",
         "MCP-Name",
+        "Mcp-Session-Id",
       ],
-      exposedHeaders: ["WWW-Authenticate", "MCP-Protocol-Version"],
+      exposedHeaders: ["WWW-Authenticate", "MCP-Protocol-Version", "Mcp-Session-Id"],
     }),
   ),
 );
