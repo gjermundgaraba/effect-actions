@@ -569,7 +569,7 @@ describe("ActionRpc internal errors", () => {
 });
 
 it.effect(
-  "answers a declared failure the handler froze as the JSON it is, and reports only the one whose own key says so",
+  "answers a declared failure as the JSON it is, whatever it is made of, and reports none",
   () => {
     const Refuse = Action.make("refuse", {
       description: "Refuses with the JSON it is given",
@@ -595,6 +595,9 @@ it.effect(
       '{"__proto__":{"detail":"kept"},"why":"declared"}',
       '["declared",{"why":"declared"}]',
       '{"~effect/ErrorReporter/ignore":false,"why":"its own key"}',
+      '"declined"',
+      "429",
+      "null",
     ];
 
     const reported: Array<string> = [];
@@ -607,7 +610,7 @@ it.effect(
       );
 
       expect(answered).toEqual(failures);
-      expect(reported).toEqual([expect.stringContaining("its own key")]);
+      expect(reported).toEqual([]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

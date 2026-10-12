@@ -99,7 +99,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   when it does not, and runs the authorizer. Refusals are the typed `Unauthenticated` and
   `Forbidden`, with no challenge or step-up. A defect, a middleware that throws included, is
   logged and answered as that request's `Internal server error` alone, reported once with its
-  cause to the call's `ErrorReporter`s; a declared failure is not reported, unless it encodes to a primitive (`error: Schema.String`), which Effect's reporter cannot be told to skip and reports as `Info`, or holds the reporter's own key, `~effect/ErrorReporter/ignore`, whose value then decides. Request services come from the layer's `middleware` or
+  cause to the call's `ErrorReporter`s; a declared failure is not reported. Request services come from the layer's `middleware` or
   router middleware, never startup. Public and protected actions are served over any protocol,
   a socket server and stdio included; `layer` refuses to build under a protocol
   that does not speak JSON, such as schema-binary's. This
@@ -130,10 +130,11 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 - A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the
   binding's authentication declares as its JSON, as it prints every other declared error. It
   printed it as prose, the error's name alone.
-- `ActionRpc.layer` answers a declared failure its handler froze. Marking it unreported threw,
-  and the call died with a `TypeError` instead. One that encodes to an array is no longer
-  reported, and one holding a key named `~effect/ErrorReporter/ignore` keeps its value, which
-  the mark overwrote with `true`.
+- `ActionRpc.layer` answers every declared failure as the JSON it encodes to, and reports none.
+  One its handler froze died with a `TypeError`, since marking it unreported threw; one that
+  encodes to an array or to a primitive was reported; and one holding a key named
+  `~effect/ErrorReporter/ignore` had its value overwritten. The mark is now on a wrapper the
+  server encodes to that JSON, never on the failure or a copy of it.
 - No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
   in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
   sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
