@@ -1,5 +1,6 @@
 import {
   Cause,
+  Console,
   Context,
   Effect,
   ErrorReporter,
@@ -60,7 +61,8 @@ export function layer(
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
  * released with its scope, without request logs: only the cause of a defect, of a result that
  * does not encode or of a failure a route of your own leaves unhandled is logged, as an error,
- * where a server's request logger would show it. What they still require is this layer's, as
+ * where a server's request logger would show it, on the process console even under `it.effect`
+ * and its `TestConsole`. What they still require is this layer's, as
  * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
  * theirs provides, including one a global middleware reads. The routes keep their real
  * authentication: a client sends its caller's credential. Provided around it, the test
@@ -71,6 +73,7 @@ export function layer(
  * The client is the layer's own: the program's other HTTP clients get none of its requests,
  * and it none of theirs.
  * Guide: `docs/Testing.md` in this package; in an application: `examples/notes-service/test/`.
+ * A type error at `it.effect`, such as one naming `Scope`: `docs/Testing-failures.md`.
  */
 export function layer<A, E, R>(
   routes: Layer.Layer<A, E, R>,
@@ -112,7 +115,11 @@ export function layer(
           context,
         )(
           Effect.tapCause(app, (cause) =>
-            isReported(cause) ? Effect.logError(cause) : Effect.void,
+            isReported(cause)
+              ? Effect.logError(cause).pipe(
+                  Effect.provideService(Console.Console, globalThis.console),
+                )
+              : Effect.void,
           ),
         ),
       );
@@ -123,7 +130,9 @@ export function layer(
 // Why: A server's request logger shows the cause of an empty 500, and a test runs none: the
 // cause is logged here, or a test sees a status and nothing else. Only a failure that reaches
 // the router unhandled, so a 404 or a refusal stays silent, as every request that succeeds
-// does. Rejected: Effect's request logger, a line for every request of every test.
+// does. Rejected: Effect's request logger, a line for every request of every test. The log is
+// given the process console: `it.effect` provides a `TestConsole`, which would keep it from
+// the test's output.
 const isReported = (cause: Cause.Cause<unknown>): boolean =>
   cause.reasons.some(
     (reason) =>

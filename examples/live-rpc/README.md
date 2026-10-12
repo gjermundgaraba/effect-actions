@@ -15,7 +15,7 @@ From the repository root, after `vp install` (from an installed package, see
 [Run one](../README.md#run-one)):
 
 ```sh
-node --import tsx examples/live-rpc/src/server.ts     # 127.0.0.1:3000, PORT to change
+node --import tsx examples/live-rpc/src/server.ts     # 127.0.0.1:3000, HOST and PORT to change
 node --import tsx examples/live-rpc/src/client.ts     # CHAT_URL to change, ws://127.0.0.1:3000/rpc
 
 vp test examples/live-rpc

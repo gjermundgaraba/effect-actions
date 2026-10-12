@@ -11,6 +11,11 @@ export class NoteStore extends Context.Service<
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<Note>>;
     readonly get: (owner: string, id: string) => Effect.Effect<Note, NoteNotFound>;
     readonly create: (owner: string, title: string, body: string) => Effect.Effect<Note>;
+    /** Every note or none: a database does this in one transaction. */
+    readonly createAll: (
+      owner: string,
+      notes: ReadonlyArray<{ readonly title: string; readonly body: string }>,
+    ) => Effect.Effect<ReadonlyArray<Note>>;
     readonly update: (
       owner: string,
       id: string,
@@ -48,6 +53,12 @@ export class NoteStore extends Context.Service<
       get,
       create: (owner, title, body) =>
         Effect.sync(() => save(owner, { id: crypto.randomUUID(), title, body, revision: 1 })),
+      createAll: (owner, all) =>
+        Effect.sync(() =>
+          all.map(({ title, body }) =>
+            save(owner, { id: crypto.randomUUID(), title, body, revision: 1 }),
+          ),
+        ),
       // No `yield*` between the read and the write: a fiber may be set aside at one, and two
       // updates that each read revision 1 before either wrote would both succeed. A database
       // does this with a conditional update or a transaction.

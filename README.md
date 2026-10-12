@@ -5,8 +5,8 @@ native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own 
 underneath.
 
 **If you are a coding agent**, start at [docs/README.md](docs/README.md), not here, and read
-one page per tool call: pages read together are cut. It routes every task, protecting an
-action and limiting request bodies included, to its page and its example.
+one page per tool call, again alone if its output says it was truncated. It routes every task,
+protecting an action and limiting request bodies included, to its page and its example.
 
 ## Looks like this
 

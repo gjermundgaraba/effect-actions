@@ -23,6 +23,7 @@ node --import tsx examples/notes-service/src/cli.ts --help
 echo "First draft" | node --import tsx examples/notes-service/src/cli.ts create-note --title Plan
 node --import tsx examples/notes-service/src/cli.ts list-notes
 node --import tsx examples/notes-service/src/cli.ts export notes.md   # a command written by hand
+node --import tsx examples/notes-service/src/cli.ts import notes.md   # one importNotes call
 
 vp test examples/notes-service
 ```
@@ -36,8 +37,8 @@ codex mcp add notes --url http://127.0.0.1:3000/mcp --bearer-token-env-var NOTES
 
 `src/stdio.ts` is the other way in: a subprocess the host starts, with a store of its own.
 
-The server reads `PORT` (default 3000) and `PUBLIC_URL`, the address it tells OAuth clients it
-is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
+The server reads `HOST` (default `127.0.0.1`), `PORT` (default 3000) and `PUBLIC_URL`, the
+address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
 Every command asks for `NOTES_TOKEN`, the public `get-status` included: without it a command
 prints one message on stderr saying to set it, and exits 1. `--help` needs none.
 
@@ -77,7 +78,8 @@ test/
   `contracts/` or `handlers/` folder.
 - **The PascalCase file is the contract.** `Notes.ts`, `Identity.ts`, `Status.ts` and `Api.ts`
   import no server code, so a browser or a CLI imports them. The lowercase files beside them run
-  on the server.
+  on the server, each named for its role, never the domain: `notes.ts` beside `Notes.ts` is one
+  file on a disk that ignores case (TS1149).
 - **One entrypoint per way of running it.** Each chooses its own implementations: `server.ts`
   picks the store and the HTTP server, `stdio.ts` names the local user, a test provides its own
   store. Nothing below an entrypoint knows which it got.
@@ -99,6 +101,7 @@ test/
 | The same actions over stdio, the host naming the caller       | `src/stdio.ts`                   |
 | A CLI derived from the binding: an argument, a field on stdin | `src/commands.ts`                |
 | A command written by hand beside the derived ones             | `src/commands.ts`                |
+| A bulk import as one action, its command reading a file       | `src/notes/`, `src/commands.ts`  |
 | The CLI's connection, read from config when a command runs    | `src/commands.ts`, `src/cli.ts`  |
 | A missing token as one message, not a `ConfigError` report    | `src/commands.ts`                |
 | A promise client handling each declared error by its tag      | `src/browser.ts`                 |

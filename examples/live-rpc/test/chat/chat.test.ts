@@ -42,7 +42,7 @@ describe("messages, in process", () => {
       const { id } = yield* client.postMessage({ text: "Oops." }).pipe(as("ada", "lobby"));
 
       expect(yield* Effect.flip(client.deleteMessage({ id }).pipe(as("grace", "lobby")))).toEqual(
-        new NotAuthor({ id, author: "ada" }),
+        new NotAuthor({ id }),
       );
 
       yield* client.deleteMessage({ id }).pipe(as("ada", "lobby"));

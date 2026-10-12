@@ -20,14 +20,14 @@ const socket = rpc.pipe(
 
 const server = Layer.unwrap(
   Effect.gen(function* () {
+    // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
+    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     return HttpRouter.serve(socket).pipe(
       Layer.provide(
         NodeHttpServer.layer(createServer, {
-          // This machine alone. A server others reach reads its host from config:
-          // `Config.String("HOST").pipe(Config.withDefault("127.0.0.1"))`.
-          host: "127.0.0.1",
+          host,
           port,
           // A message on a WebSocket is no request body, so `HttpServerRequest.MaxBodySize`
           // does not bound it: Node's WebSocket server reads one of up to 100 MiB whole unless

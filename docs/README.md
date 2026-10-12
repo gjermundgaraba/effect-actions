@@ -11,15 +11,19 @@ same schemas, handler and authorization.
 first (step 5), before the examples and the pages.
 
 1. **Open one page per tool call, with your file-reading tool.** A page fits one read. Several
-   in one call, however many commands it runs, are cut by its output limit, and what is cut goes
-   unnoticed.
+   in one call, however many commands it runs, can be cut by its output limit, with no mark or
+   with one that understates what is lost. If an output says it was truncated, read that page
+   again alone.
 2. **Start from the example closest to what you are building** ([Examples](#examples)). Its
    README has a layout tree and a "Where to look" table naming the file for each thing. Copy its
-   layout and idioms: the examples are the reference for how code is written.
+   layout and idioms: the examples are the reference for how code is written. An example shows
+   one way, not the rules, the alternatives or the traps: read steps 3 and 4 even when it fits.
 3. **Read [Action.md](Action.md) completely.** Every surface builds on it.
 4. **Read the page of each surface you serve** ([Pages](#pages)), and the example files its task
    sections link.
-5. **When something fails, search the `*-failures.md` pages** for a fragment of the message. Each
+5. **When something fails, search the `*-failures.md` pages** for a fragment of the message,
+   your own code's first compile error included, before reasoning it out:
+   `grep -rn '<fragment>' node_modules/@gjermundgaraba/effect-actions/docs/*-failures.md`. Each
    module page has one beside it, such as [Action-failures.md](Action-failures.md).
 
 A service others call is [notes-service](../examples/notes-service/) plus
@@ -37,7 +41,7 @@ there is no package root.
 
 | Read                                                     | When you need to                                                                                                                            |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                                     | install, import the modules, write the minimal program, lay out an application, bundle a browser client                                     |
+| [setup.md](setup.md)                                     | install, write `tsconfig.json`, import the modules, write the minimal program, lay out an application, bundle a browser client              |
 | [Action.md](Action.md)                                   | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors                                |
 | [Action-in-process.md](Action-in-process.md)             | call actions from your own code, such as a job; share one build of the implementations across servers and jobs                              |
 | [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, limit request bodies, publish OpenAPI, call them from Effect or a browser                          |

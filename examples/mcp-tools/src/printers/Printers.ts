@@ -95,7 +95,9 @@ export const SetPaused = Action.make("set_paused", {
   },
   success: Printer,
   readOnly: false,
-  mcp: { title: "Pause or resume a print", destructiveHint: false, idempotentHint: true },
+  // Destructive, MCP's default for a write: a pause interrupts a running print. Only a write
+  // that adds says `destructiveHint: false`.
+  mcp: { title: "Pause or resume a print", idempotentHint: true },
 });
 
 // Destructive, which is MCP's default for a write, so no `destructiveHint` is stated.

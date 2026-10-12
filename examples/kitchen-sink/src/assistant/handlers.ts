@@ -1,6 +1,7 @@
 import { Effect, Ref, Schema } from "effect";
 import { type Chat, LanguageModel, type Prompt } from "effect/ai";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { CurrentMember } from "../identity/Identity.js";
 import { toolkit } from "../issues/assistant.js";
 import { AssistantFailed, Assistant } from "./Assistant.js";
@@ -15,7 +16,9 @@ const approvalsOf = (response: Response) =>
   response.content.filter((part) => part.type === "tool-approval-request");
 
 // What Effect gives the model as the result of a call that did not run: one its member denied,
-// or one in a reply the provider cut short.
+// or one in a reply the provider cut short. Never part of a route's answer: a denial's `reason`
+// is `undefined` unless the member gave one, which is not JSON, and the route would answer an
+// empty 500.
 const didNotRun = Schema.is(
   Schema.Struct({ type: Schema.Literals(["execution-denied", "execution-interrupted"]) }),
 );
@@ -23,45 +26,12 @@ const didNotRun = Schema.is(
 const callsToRead = (response: Response) =>
   response.toolCalls.length > 0 && approvalsOf(response).length === 0;
 
-// Every request of a conversation that an answer would still act on, with the call it would
-// run: read from the `Chat`'s history, by the rule Effect applies when an answer arrives. A
-// request is open until its call has a result, a denial's included, and its call is the last
-// in the history with that id. So a request an earlier answer left open is listed in every
-// turn until it is answered, and what is listed is what an approval runs.
-const openRequestsOf = ({ content: messages }: Prompt.Prompt) => {
-  const resolved = new Set(
-    messages.flatMap((message) =>
-      message.role === "tool"
-        ? message.content.flatMap((part) => (part.type === "tool-result" ? [part.id] : []))
-        : [],
-    ),
-  );
-
-  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
-  const calls = said.filter((part) => part.type === "tool-call");
-
-  return said.flatMap((request) => {
-    if (request.type !== "tool-approval-request" || resolved.has(request.toolCallId)) return [];
-
-    const call = calls.findLast(({ id }) => id === request.toolCallId);
-
-    return call === undefined
-      ? []
-      : [
-          {
-            approvalId: request.approvalId,
-            tool: call.name,
-            arguments: JSON.stringify(call.params),
-          },
-        ];
-  });
-};
-
 // The model loop behind a route. The builder runs once, at startup, and yields what a turn is
 // built from: the tools with their handlers, the model, and where conversations are kept. A
 // handler yielding them would owe them per request, which no route provides. `CurrentMember`
 // is the one per-request service: each tool call of a turn runs as the request's caller,
-// through that tool's own `authorize`.
+// through that tool's own `authorize`. A conversation keeps its owner's id, never the member
+// itself, whose scopes would go stale between requests.
 export const assistant = Action.implement(
   Assistant,
   Effect.gen(function* () {
@@ -92,7 +62,17 @@ export const assistant = Action.implement(
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),
-          waiting: openRequestsOf(yield* Ref.get(chat.history)),
+          // Every request of the conversation an answer would still act on, with the call it
+          // would run, read from the `Chat`'s history by the rule Effect applies when an answer
+          // arrives: one an earlier answer left open is listed in every turn until answered.
+          // The arguments are shown as JSON, as the member approves them.
+          waiting: ActionToolkit.openApprovals(yield* Ref.get(chat.history)).map(
+            ({ approvalId, name, params }) => ({
+              approvalId,
+              tool: name,
+              arguments: JSON.stringify(params),
+            }),
+          ),
         };
       }).pipe(
         // The model is a startup service, given to each turn here.

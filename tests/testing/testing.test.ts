@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
 import {
   Cause,
@@ -995,6 +995,31 @@ describe("layer", () => {
           expect.stringMatching(/^Error HttpApiSchemaError[^]*Expected a finite number/),
           expect.stringMatching(/^Error Error: a route of its own/),
         ]);
+      }),
+  );
+
+  it.effect(
+    "logs that cause on the process console, which it.effect's TestConsole would keep",
+    () =>
+      Effect.gen(function* () {
+        const printed: Array<string> = [];
+
+        const print = (...args: ReadonlyArray<unknown>) =>
+          void printed.push(args.map(String).join(" "));
+
+        const spies = [vi.spyOn(console, "log"), vi.spyOn(console, "error")];
+
+        for (const spy of spies) spy.mockImplementation(print);
+
+        const status = yield* Effect.map(HttpClient.get("/crash"), ({ status }) => status).pipe(
+          Effect.provide(
+            Testing.layer(HttpRouter.add("GET", "/crash", Effect.die(new Error("printed defect")))),
+          ),
+          Effect.ensuring(Effect.sync(() => spies.forEach((spy) => spy.mockRestore()))),
+        );
+
+        expect(status).toBe(500);
+        expect(printed).toEqual([expect.stringContaining("printed defect")]);
       }),
   );
 

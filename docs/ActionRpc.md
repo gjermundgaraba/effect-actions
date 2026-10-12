@@ -4,8 +4,9 @@ Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rp
 Reach for it when a client keeps a connection open and calls often, such as a page on a
 WebSocket, or when the application already speaks Effect RPC.
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionRpc-failures.md](ActionRpc-failures.md). Reading order: [README.md](README.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [ActionRpc-failures.md](ActionRpc-failures.md). Reading order:
+[README.md](README.md).
 
 ## API
 

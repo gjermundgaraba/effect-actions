@@ -21,9 +21,11 @@ export class MessageNotFound extends Schema.TaggedError<MessageNotFound>()(
   { httpApiStatus: 404 },
 ) {}
 
+// A refusal carries what the caller sent and no more: who wrote the message is for the actions
+// that read it, under their own rule.
 export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
   "NotAuthor",
-  { id: Schema.Int, author: Schema.String },
+  { id: Schema.Int },
   { httpApiStatus: 403 },
 ) {}
 

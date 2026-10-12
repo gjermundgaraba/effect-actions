@@ -83,7 +83,7 @@ describe("the tools, over MCP", () => {
         },
         {
           name: "set_paused",
-          annotations: { title: "Pause or resume a print", ...hints(false, false, true) },
+          annotations: { title: "Pause or resume a print", ...hints(false, true, true) },
         },
         {
           name: "cancel_print",

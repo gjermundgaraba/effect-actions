@@ -3,8 +3,9 @@
 `Action.make` defines an action, and `Action.implement` binds handlers and an authorizer to
 contracts: every surface takes the implementation it returns, or a list of them.
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [Action-failures.md](Action-failures.md). Reading order: [README.md](README.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [Action-failures.md](Action-failures.md). Reading order:
+[README.md](README.md).
 
 ## API
 
@@ -121,8 +122,9 @@ and a public action in [notes-service/src/status/Status.ts](../examples/notes-se
 ## Implement actions
 
 `Action.implement` binds a handler to one action, or a record of handlers keyed by name to a
-list. Either may instead be a builder: an Effect that returns the handler or the record, which
-is how a handler gets a service.
+list. Either may instead be a builder: an Effect, run once at startup, that returns the handler
+or the record. It is how a handler gets a startup service; what differs per call, the caller
+first, the handler reads itself.
 
 ```ts
 export const notes = Action.implement(
@@ -183,7 +185,9 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
 [notes-service/src/identity/authorize.ts](../examples/notes-service/src/identity/authorize.ts)
 is that rule with `scopes: [scope]` added, the OAuth variant: it publishes discovery.
 Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an action's
-`readOnly` then changes who may call it.
+`readOnly` then changes who may call it. Actions under another rule go in another
+`Action.implement` with its own `authorize`, or `Action.allowAll`, not a branch on
+`action.name`.
 
 - **A call runs authentication, then over HTTP and RPC the layer's `middleware`, input
   decoding, the authorizer, then the handler**, each refusing before the next. So a caller the
@@ -202,7 +206,8 @@ Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an ac
   is built once for each implementation stating it: keep state they share in a service it
   yields.
 - **A limit, such as a rate limit, is the handler's, not the authorizer's.** It fails with an
-  error the action declares, and its limiter is a service the builder yields
+  error the action declares, and its limiter is a service the builder yields, apart from the
+  store
   ([kitchen-sink/src/issues/write-limit.ts](../examples/kitchen-sink/src/issues/write-limit.ts)):
   a service is shared wherever it is provided
   ([kitchen-sink/src/memory.ts](../examples/kitchen-sink/src/memory.ts)), state kept in a

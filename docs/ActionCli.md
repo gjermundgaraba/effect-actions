@@ -8,8 +8,9 @@ service you already serve. `make` and `remote` derive a command for every action
 implementations or the binding, so a new action is a new command: list `actions` to leave some
 out.
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionCli-failures.md](ActionCli-failures.md). Reading order: [README.md](README.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [ActionCli-failures.md](ActionCli-failures.md). Reading order:
+[README.md](README.md).
 
 ## API
 
@@ -147,9 +148,10 @@ In an aggregate, a command's options go under `commands`, keyed by the action's 
 ### Add a command of your own
 
 Work every surface should offer, a bulk import for one, is an action first: a command of your
-own then only reads the file and calls it. For a syntax the options cannot express, such as a
-flag named apart from its field, build the command with native `Command.make`, `Flag` and `Argument`, and
-pass it in `subcommands`: `notes export <file>` takes `Argument.String("file")`
+own then only reads the file and calls it, as `notes import <file>` reads `Argument.FileText`
+and calls `importNotes`. For a syntax the options cannot express, such as a flag named apart
+from its field, build the command with native `Command.make`, `Flag` and `Argument`, and pass it
+in `subcommands`: `notes export <file>` takes `Argument.String("file")`
 ([notes-service/src/commands.ts](../examples/notes-service/src/commands.ts)):
 
 ```ts

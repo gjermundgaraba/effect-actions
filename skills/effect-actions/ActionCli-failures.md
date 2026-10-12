@@ -100,3 +100,5 @@ The tasks are in [ActionCli.md](ActionCli.md).
   with `Command.make`: a command of your own that calls `Action.client` or `ActionHttp.client`
   fails with the action's own error. Pipe the command's whole Effect through
   `ActionCli.toUserError`, given the binding or the actions it calls, or derive the command with `ActionCli.command`.
+- `Argument of type 'string | undefined' is not assignable` at a `UserError`'s `userMessage`: it
+  is optional on the type. Read it with `?? ""`, or assert it with `toHaveProperty`.

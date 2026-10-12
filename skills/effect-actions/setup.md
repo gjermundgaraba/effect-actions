@@ -3,8 +3,9 @@
 Install the package, import its modules, write the smallest program, lay out an application and
 bundle a browser client.
 
-Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [setup-failures.md](setup-failures.md). Reading order: [SKILL.md](SKILL.md).
+Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
+When something fails, search [setup-failures.md](setup-failures.md). Reading order:
+[SKILL.md](SKILL.md).
 
 ## Install
 
@@ -17,6 +18,7 @@ pnpm add @gjermundgaraba/effect-actions effect@~4.0.2
 | Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.2`                                   |
 | Tests                               | `vitest@^5.0.3` and `@effect/vitest@~4.0.2`, as dev dependencies |
 | Type checking                       | `typescript@^7.0.2`, as a dev dependency                         |
+| Running a TypeScript entrypoint     | `tsx`, as a dev dependency: `node --import tsx <entrypoint>.ts`  |
 
 The `effect` peer admits only the patches of the Effect release the package is tested against:
 a minor release may change the unstable Effect modules the surfaces build on.

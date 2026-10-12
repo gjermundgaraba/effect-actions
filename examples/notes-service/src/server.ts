@@ -10,12 +10,12 @@ import { routes } from "./routes.js";
 // and starts Node's HTTP server; nothing below it knows which of those it got.
 const server = Layer.unwrap(
   Effect.gen(function* () {
+    // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
+    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     return HttpRouter.serve(routes).pipe(
-      // `127.0.0.1` serves this machine alone. A server others reach reads its host from
-      // config: `Config.String("HOST").pipe(Config.withDefault("127.0.0.1"))`.
-      Layer.provide(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port })),
+      Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
       // Request bodies have no size limit unless the host sets one. This covers every route.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
       Layer.provide(NoteStore.layerMemory),
