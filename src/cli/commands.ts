@@ -204,11 +204,34 @@ const noElementOccurrence = "[]";
 // a flag repeats, nor that `--no-<flag>` is a switch's `false`, nor that a value is JSON. A switch
 // of a required field is `false` when left out, so only an optional one is told how to say it.
 const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
-  const kinds = new Set(acceptedJsonKindsOf(unsuspended(encoded)));
+  const value = unsuspended(encoded);
+  const kinds = new Set(acceptedJsonKindsOf(value));
 
   if (kinds.size !== 1) return undefined;
 
-  return kinds.has("array") ? "A JSON array." : kinds.has("object") ? "A JSON object." : undefined;
+  if (kinds.has("object")) return "A JSON object.";
+
+  if (!kinds.has("array")) return undefined;
+
+  const fields = elementFieldsOf(value);
+
+  return fields === undefined ? "A JSON array." : `A JSON array of {${fields.join(", ")}}.`;
+};
+
+const elementFieldsOf = (array: SchemaAST.AST): ReadonlyArray<string> | undefined => {
+  if (!SchemaAST.isArrays(array) || array.elements.length > 0) return undefined;
+
+  const [element, ...after] = array.rest;
+
+  if (element === undefined || after.length > 0) return undefined;
+
+  const fields = namedFieldsOf(unsuspended(element));
+
+  return fields.size === 0
+    ? undefined
+    : Array.from(fields, ([name, field]) =>
+        SchemaAST.isOptional(field) ? `${String(name)}?` : String(name),
+      );
 };
 
 const withHint = (description: string | undefined, hint: string | undefined) => {
@@ -302,9 +325,18 @@ const namedFieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.A
 const isTransformedAsWhole = (ast: SchemaAST.AST): boolean =>
   (SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast)?.encoding !== undefined;
 
+// Why: Effect resolves a description from the last check alone, once a schema has checks. One
+// annotated before a check is on the schema or on an earlier check, where a tool's listing reads
+// it for a model: a flag's help reads it there too, so one description serves both.
 const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
   SchemaAST.resolveDescription(ast) ??
+  describedBeforeLastCheck(ast) ??
   (SchemaAST.isSuspend(ast) ? ownOrSuspendedDescriptionOf(ast.thunk()) : undefined);
+
+const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
+  [ast.annotations, ...(ast.checks ?? []).map((check) => check.annotations)]
+    .map((annotations) => annotations?.["description"])
+    .findLast(Predicate.isString);
 
 const fieldParams = (
   encoded: SchemaAST.Objects,
@@ -408,8 +440,7 @@ const printedOutput = <A extends Action.Any>(
  * prints on stderr and marks reported, so `runMain` does not print it again. The process exits with
  * the cause's `Runtime.errorExitCode`, 1 by default. A type only: after `Command.run`, match the
  * reason by its tag, `Effect.catchReason("UserError", "UserNotFound", f)`. A command of your own
- * fails with Effect CLI's `new CliError.UserError({ cause, userMessage })` to be printed so; any
- * other failure is reported as a crash, `ERROR (#n)`.
+ * fails with one through `toUserError`; any other failure is reported as a crash, `ERROR (#n)`.
  */
 export class UserError<out E = unknown> extends CliError.UserError {
   declare readonly cause: E;
@@ -449,15 +480,28 @@ const describedWithoutFields = <E>(error: E, seen: Set<unknown> = new Set()): st
     : named;
 };
 
-const userErrorOf = <E>(action: Action.Any, errors: Action.Errors) => {
+const userErrorOf = (errors: Action.Errors) => {
   const encode = Schema.encodeUnknownEffect(
-    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(projectedErrors(action, errors)))),
+    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))),
   );
 
-  return (error: E) =>
+  return <E>(error: E) =>
     encode(error).pipe(
       Effect.orElseSucceed(() => describedWithoutFields(error)),
       Effect.flatMap((userMessage) => Effect.fail(new UserError<E>({ cause: error, userMessage }))),
+    );
+};
+
+export const failingAsDerived = (actions: ReadonlyArray<Action.Any>, errors: Action.Errors) => {
+  const failure = userErrorOf([
+    ...new Set(actions.flatMap((action) => projectedErrors(action, errors))),
+  ]);
+
+  return <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.catchIf(
+      self,
+      (error): error is Exclude<E, CliError.CliError> => !CliError.isCliError(error),
+      failure,
     );
 };
 
@@ -604,7 +648,7 @@ export const command = <A extends Action.Any, E, R>(
     options?.stdin,
   );
 
-  const failure = userErrorOf<E | InvalidInput>(action, errors);
+  const failure = userErrorOf(projectedErrors(action, errors));
 
   assertDistinct(
     "flag",

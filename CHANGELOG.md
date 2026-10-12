@@ -26,9 +26,9 @@ public tool's call included. On such an endpoint a signed-out 2026-07-28 request
 **A builder that yields the caller no longer type-checks where a server serves it, even with the
 identity provided at startup.** Among the startup requirements of `ActionHttp.layer`,
 `ActionRpc.layer` and `ActionMcp.layerHttp`, the identity a builder or an Effect building the
-authorizer yields is replaced by the sentence
+authorizer yields is replaced by a type whose one property is named by the sentence
 `"A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"`,
-which is what the compiler now prints where the server is launched, in place of
+which is what the compiler now prints last wherever the routes are launched or run, in place of
 `Type 'CurrentUser' is not assignable to type 'never'`. `runStdio`, `ActionToolkit`, `ActionCli`
 and `Action.client`, whose host names one caller, are unchanged.
 
@@ -48,9 +48,23 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   be listed again as a `remoteCommand` beside one command written by hand. A name a derived
   command has throws `Duplicate command`; the aggregate's type gains its own commands' failures
   and services ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
+- `ActionCli.toUserError` makes a command of your own fail as a derived command does. Given the
+  HTTP binding or the actions the command calls and piped onto its whole Effect, a declared
+  error, the binding's included, is printed as its JSON and a transport failure
+  named with its causes, where a hand-written `CliError.UserError` printed prose and a call left
+  unmapped crashed with a stack trace. An Effect CLI error passes through as it is
+  ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
 - A derived command's `--help` says what a flag's name and kind do not, after the field's own
   description: `Repeat for each value.` on a repeated flag, `--no-<flag> sends false.` on an
-  optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one.
+  optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one, an
+  array of objects with its fields, `A JSON array of {id, approved?}.`
+- A flag's help shows the field's description wherever it is annotated. One annotated before a
+  check, where an MCP tool's listing reads it, was missing from `--help`.
+- The compiler says what is missing where a protected action is implemented without
+  `authorize`: the message ends `is not assignable to type '"A protected action takes
+  { authorize }: your rule, or Action.allowAll"'`, where it ended `'typeof CurrentUser' is not
+  assignable to type 'unique symbol'`. The constraint named `ProtectedActionsTakeAuthorize`,
+  which the error showed for one action and not for a list, is gone.
 - The compiler names an undeclared error where a handler fails with one: the message ends
   `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
   where it ended `Property '"~builtIn"' is missing`.

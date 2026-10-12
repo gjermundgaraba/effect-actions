@@ -3,6 +3,8 @@ import { expectTypeOf } from "@effect/vitest";
 import { HttpApiError } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
 
+type TakesAuthorize = "A protected action takes { authorize }: your rule, or Action.allowAll";
+
 class Actor extends Context.Service<Actor, { readonly id: string }>()("pin/Actor") {}
 
 class Scopes extends Context.Service<Scopes, ReadonlySet<string>>()("pin/Scopes") {}
@@ -15,6 +17,10 @@ const Get = Action.make("get", {
   caller: Actor,
   success: Schema.String,
 });
+
+declare const getWithTheSentence: typeof Get & TakesAuthorize;
+
+declare const getWithAnother: typeof Get & "Another sentence";
 
 const Put = Action.make("put", {
   description: "d",
@@ -82,6 +88,9 @@ export const authorizeTypes = () => {
   Action.implement([Open], { open: handlers.open }, { authorize: Action.allowAll });
   // @ts-expect-error -- Protected actions need authorize.
   Action.implement([Get], { get: handlers.get });
+  Action.implement(getWithTheSentence, handlers.get);
+  // @ts-expect-error -- The error of a call without `authorize` ends in that sentence, and in no other.
+  Action.implement(getWithAnother, handlers.get);
   Action.implement([Get], { get: handlers.get }, { authorize: Action.allowAll });
   Action.implement(
     [Get],

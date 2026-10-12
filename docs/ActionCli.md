@@ -21,6 +21,7 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `command(implementations, action, options?)` | One action, selected by its contract, as a native Effect `Command`.      |
 | `remote(binding, options)`                   | Every action of an HTTP binding as a subcommand, called over HTTP.       |
 | `remoteCommand(binding, action, options?)`   | One action of an HTTP binding, called over HTTP.                         |
+| `toUserError(binding)`                       | Piped onto a command of your own: it fails as a derived command does.    |
 | `logToStderr`                                | Applied last before `runMain`: stdout carries only results.              |
 
 | Option                                   | Meaning                                                                         |
@@ -102,7 +103,8 @@ every command option.
 ### Flags from the input
 
 A struct or class input gets one flag per top-level field, named after the field in kebab case,
-with the field's description as its help. The field's encoded JSON value decides the kind of flag:
+with the field's description as its help, annotated before or after its checks. The field's
+encoded JSON value decides the kind of flag:
 
 | Encoded field                            | Flag, for a field `tags`, `read`, …                             |
 | ---------------------------------------- | --------------------------------------------------------------- |
@@ -115,7 +117,7 @@ with the field's description as its help. The field's encoded JSON value decides
 - A switch left out is `false` for a required field, and leaves an optional one out.
 - `--help` adds, after the field's description, `Repeat for each value.` on a repeated flag,
   `--no-read sends false.` on an optional switch, and `A JSON array.` or `A JSON object.` on a
-  value that is one.
+  value that is one, an array of objects with its fields: `A JSON array of {id, approved?}.`
 - A flag takes the encoded value, which the action's schema then decodes: `"21"` for
   `Schema.FiniteFromString`.
 - A value flag reads its text as JSON when the field accepts that kind of JSON value
@@ -153,10 +155,12 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   needs no scope and uses the `HttpClient` provided on the aggregate, or `Action.client`, acquired
   inside `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
   `authorize` still runs. The `client` option reaches the derived commands alone.
-- **The output and failure rules below do not apply to it.** Print with `Console.log`, and map a
-  failure to Effect CLI's `new CliError.UserError({ cause, userMessage })` for `Command.run` to
-  print `userMessage` on stderr. Map once, around the command's whole Effect: any other failure,
-  one unmapped call's included, is reported as a crash, `ERROR (#n)` with a stack trace.
+- **Its output is what it prints**, with `Console.log`: the output rules below are a derived
+  command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, or
+  `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared
+  error as its JSON on stderr, a transport failure named with its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
+  passes through. A failure left unmapped, one call's included, is reported as a crash,
+  `ERROR (#n)` with a stack trace.
 - **Write the list in the call.** The aggregate's type then carries its commands' failures and
   services. A list held in options annotated `ActionCli.Options` adds none to the type.
 
