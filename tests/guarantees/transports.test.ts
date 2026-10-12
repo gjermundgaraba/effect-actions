@@ -479,6 +479,7 @@ it("refuses a browser Origin on an MCP endpoint unless the endpoint lists it", a
   );
 
   expect(preflight.status).toBe(405);
+  expect(preflight.headers.get("allow")).toBe("POST, DELETE");
   expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
 });
 

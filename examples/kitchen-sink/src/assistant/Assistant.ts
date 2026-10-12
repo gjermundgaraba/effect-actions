@@ -6,7 +6,13 @@ import { CurrentMember } from "../identity/Identity.js";
 // issues/assistant.ts, one request per turn of a conversation. A request starts a turn and its
 // answer is the turn's end: the model's text, or the calls that wait for the member's approval.
 
-/** What a turn ended with. A call in `waiting` has not run: `answerAssistant` decides it. */
+/**
+ * What a turn ended with. A call in `ran` ran in this turn, `failed` where it was refused or
+ * failed with a declared error; one the member denied, or one in a reply the provider cut
+ * short, did not run and is not listed. A call in `waiting` has not run: `answerAssistant`
+ * decides it. `waiting` holds what this turn asked: a call left unanswered by an earlier
+ * answer stays open, and is not listed again.
+ */
 export const Turn = Schema.Struct({
   conversation: Schema.String,
   text: Schema.String,
@@ -55,7 +61,17 @@ export const AnswerAssistant = Action.make("answerAssistant", {
   description: "Approve or deny the calls a turn of your conversation waits for.",
   input: {
     conversation: Schema.String,
-    answers: Schema.Array(Schema.Struct({ approvalId: Schema.String, approved: Schema.Boolean })),
+    // Each request once. Effect acts on every answer it is given: an `approvalId` approved
+    // twice in one request would run its call twice.
+    answers: Schema.Array(
+      Schema.Struct({ approvalId: Schema.String, approved: Schema.Boolean }),
+    ).check(
+      Schema.makeFilter(
+        (answers) =>
+          new Set(answers.map(({ approvalId }) => approvalId)).size === answers.length ||
+          "Answer each approvalId once",
+      ),
+    ),
   },
   success: Turn,
   error: [ConversationNotFound, AssistantFailed],

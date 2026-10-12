@@ -1316,7 +1316,7 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
 );
 
 it.effect(
-  "shows a field's description in help wherever it is annotated: before a check, after one, or with none",
+  "shows a field's description in help wherever it is annotated: before a check, after one, with none, or on either side of a transformation",
   () =>
     Effect.gen(function* () {
       const even = Schema.makeFilter((value: number) => value % 2 === 0);
@@ -1336,6 +1336,13 @@ it.effect(
             .annotate({ description: "The later wording" })
             .check(Schema.isMaxLength(9)),
           note: Schema.optional(Schema.String.annotate({ description: "A remark" })),
+          weight: Schema.String.annotate({ description: "In grams, as digits" }).pipe(
+            Schema.decodeTo(Schema.Finite, SchemaTransformation.numberFromString),
+          ),
+          height: Schema.FiniteFromString.annotate({ description: "In metres" }),
+          keyed: Schema.String.annotate({ description: "Any text" })
+            .check(Schema.isMinLength(1))
+            .annotateKey({ description: "What this field holds" }),
           bare: Schema.String.check(Schema.isMinLength(1)),
         },
       });
@@ -1352,6 +1359,9 @@ it.effect(
       expect(help).toMatch(/--count value\s+How many\n/);
       expect(help).toMatch(/--revised string\s+The later wording\n/);
       expect(help).toMatch(/--note string\s+A remark\n/);
+      expect(help).toMatch(/--keyed string\s+What this field holds\n/);
+      expect(help).toMatch(/--weight \w+\s+In grams, as digits\n/);
+      expect(help).toMatch(/--height \w+\s+In metres\n/);
       expect(help).toMatch(/--bare string\s*\n/);
     }),
 );
@@ -1373,6 +1383,11 @@ it.effect(
           answers: Schema.Array(
             Schema.Struct({ id: Schema.String, approved: Schema.optional(Schema.Boolean) }),
           ),
+          moves: Schema.NonEmptyArray(Schema.Struct({ from: Schema.String, to: Schema.String })),
+          pair: Schema.Tuple([
+            Schema.Struct({ id: Schema.String }),
+            Schema.Struct({ at: Schema.Finite }),
+          ]),
           grid: Schema.Array(Schema.Array(Schema.Finite)),
           filter: Schema.optional(Schema.Struct({ id: Schema.String })),
           limit: Schema.optional(Schema.Finite),
@@ -1398,6 +1413,8 @@ it.effect(
       expect(help).toMatch(/--pinned\s*\n/);
       expect(help).toMatch(/--read\s+Only read ones\? --no-read sends false\.\n/);
       expect(help).toMatch(/--answers value\s+A JSON array of \{id, approved\?\}\.\n/);
+      expect(help).toMatch(/--moves value\s+A JSON array of \{from, to\}\.\n/);
+      expect(help).toMatch(/--pair value\s+A JSON array\.\n/);
       expect(help).toMatch(/--grid value\s+A JSON array\.\n/);
       expect(help).toMatch(/--filter value\s+A JSON object\.\n/);
       expect(help).toMatch(/--limit value\s*\n/);
@@ -1414,6 +1431,8 @@ it.effect(
         "--tags=b",
         "--no-read",
         '--answers=[{"id":"1"}]',
+        '--moves=[{"from":"a","to":"b"}]',
+        '--pair=[{"id":"1"},{"at":2}]',
         "--grid=[[1]]",
         '--filter={"id":"2"}',
       ]);
@@ -1425,10 +1444,49 @@ it.effect(
           pinned: false,
           read: false,
           answers: [{ id: "1" }],
+          moves: [{ from: "a", to: "b" }],
+          pair: [{ id: "1" }, { at: 2 }],
           grid: [[1]],
           filter: { id: "2" },
         },
       ]);
+    }),
+);
+
+it.effect(
+  "prints through toUserError every field of a failure another action's error also accepts",
+  () =>
+    Effect.gen(function* () {
+      const options = { description: "Refuses", readOnly: true, caller: Action.Anyone } as const;
+
+      const Brief = Action.make("brief", {
+        ...options,
+        error: Schema.Struct({ reason: Schema.String }),
+      });
+
+      const Detailed = Action.make("detailed", {
+        ...options,
+        error: Schema.Struct({ reason: Schema.String, detail: Schema.String }),
+      });
+
+      const app = Action.implement([Brief, Detailed], {
+        brief: () => Effect.fail({ reason: "refused" }),
+        detailed: () => Effect.fail({ reason: "refused", detail: "keep this" }),
+      });
+
+      const own = Command.make("own", {}, () =>
+        Effect.flatMap(Action.client(app), (client) => client.detailed()).pipe(
+          Effect.scoped,
+          ActionCli.toUserError([Brief, Detailed]),
+        ),
+      );
+
+      const cli = ActionCli.make(app, { name: "refuser", subcommands: [own] });
+
+      const derived = (yield* printed(exec(cli, ["detailed"])))[2];
+
+      expect(derived).toEqual([expect.stringContaining('"detail":"keep this"')]);
+      expect((yield* printed(exec(cli, ["own"])))[2]).toEqual(derived);
     }),
 );
 

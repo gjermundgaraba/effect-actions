@@ -219,11 +219,11 @@ const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
 };
 
 const elementFieldsOf = (array: SchemaAST.AST): ReadonlyArray<string> | undefined => {
-  if (!SchemaAST.isArrays(array) || array.elements.length > 0) return undefined;
+  if (!SchemaAST.isArrays(array)) return undefined;
 
-  const [element, ...after] = array.rest;
+  const [element, ...others] = [...array.elements, ...array.rest];
 
-  if (element === undefined || after.length > 0) return undefined;
+  if (element === undefined || others.some((other) => other !== element)) return undefined;
 
   const fields = namedFieldsOf(unsuspended(element));
 
@@ -327,8 +327,12 @@ const isTransformedAsWhole = (ast: SchemaAST.AST): boolean =>
 
 // Why: Effect resolves a description from the last check alone, once a schema has checks. One
 // annotated before a check is on the schema or on an earlier check, where a tool's listing reads
-// it for a model: a flag's help reads it there too, so one description serves both.
+// it for a model: a flag's help reads it there too, so one description serves both. A field
+// decoded from another type is read on its decoded side, then on the encoded one, which is the
+// side a tool lists. Where both a schema and a later check are described, help shows the later;
+// a description of the field's key, written with `annotateKey`, comes before both.
 const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
+  ast.context?.annotations?.description ??
   SchemaAST.resolveDescription(ast) ??
   describedBeforeLastCheck(ast) ??
   (SchemaAST.isSuspend(ast) ? ownOrSuspendedDescriptionOf(ast.thunk()) : undefined);
@@ -337,6 +341,9 @@ const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
   [ast.annotations, ...(ast.checks ?? []).map((check) => check.annotations)]
     .map((annotations) => annotations?.["description"])
     .findLast(Predicate.isString);
+
+const describedThroughAbsence = (ast: SchemaAST.AST): string | undefined =>
+  ownOrSuspendedDescriptionOf(ast) ?? ownOrSuspendedDescriptionOf(withoutOptionalAbsence(ast));
 
 const fieldParams = (
   encoded: SchemaAST.Objects,
@@ -367,8 +374,7 @@ const fieldParams = (
     const documented = declaredField ?? property.type;
 
     const description =
-      ownOrSuspendedDescriptionOf(documented) ??
-      ownOrSuspendedDescriptionOf(withoutOptionalAbsence(documented));
+      describedThroughAbsence(documented) ?? describedThroughAbsence(property.type);
 
     const help = withHint(description, hint);
 
@@ -485,16 +491,23 @@ const userErrorOf = (errors: Action.Errors) => {
     Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))),
   );
 
+  // Why: The schema that holds every field of the failure, before the first that accepts it. A
+  // command of your own prints the failure of any action it calls, and one action's error may
+  // accept another's while dropping the fields it does not declare.
   return <E>(error: E) =>
-    encode(error).pipe(
+    encode(error, { onExcessProperty: "error" }).pipe(
+      Effect.catch(() => encode(error)),
       Effect.orElseSucceed(() => describedWithoutFields(error)),
       Effect.flatMap((userMessage) => Effect.fail(new UserError<E>({ cause: error, userMessage }))),
     );
 };
 
-export const failingAsDerived = (actions: ReadonlyArray<Action.Any>, errors: Action.Errors) => {
+export const failingAsDerived = (
+  actions: ReadonlyArray<Action.Any>,
+  surfaceErrorsOf: (action: Action.Any) => Action.Errors,
+) => {
   const failure = userErrorOf([
-    ...new Set(actions.flatMap((action) => projectedErrors(action, errors))),
+    ...new Set(actions.flatMap((action) => projectedErrors(action, surfaceErrorsOf(action)))),
   ]);
 
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>

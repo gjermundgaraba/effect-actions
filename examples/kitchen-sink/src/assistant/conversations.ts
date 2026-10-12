@@ -3,26 +3,33 @@ import { Chat } from "effect/ai";
 import type { Member } from "../identity/Identity.js";
 import { ConversationNotFound } from "./Assistant.js";
 
-/** One member's conversation with the assistant. */
-export interface Conversation {
-  readonly id: string;
+interface Conversation {
   /** Effect's `Chat`: the history a model reads, in which an approval's answer finds its request. */
   readonly chat: Chat.Chat;
-  /** One turn at a time: a second request waits, then reads the history the first one wrote. */
-  readonly turn: Semaphore.Semaphore;
+  readonly lock: Semaphore.Semaphore;
 }
 
 /**
- * Where conversations are kept between requests, each with the member it belongs to. Every
- * method but `open` takes the member, so only its owner reaches a conversation: an approval is
- * acted on as the turn's caller, and must come from the member who was asked.
+ * Where conversations are kept between requests, each with the member it belongs to. A turn
+ * names the member, so only its owner reaches a conversation: an approval is acted on as the
+ * turn's caller, and must come from the member who was asked.
  */
 export class Conversations extends Context.Service<
   Conversations,
   {
-    readonly open: (owner: Member) => Effect.Effect<Conversation>;
-    readonly find: (owner: Member, id: string) => Effect.Effect<Conversation, ConversationNotFound>;
-    readonly end: (owner: Member, id: string) => Effect.Effect<void>;
+    /** Start a conversation of `owner`'s, and return its id. */
+    readonly open: (owner: Member) => Effect.Effect<string>;
+    /**
+     * Run one turn on a conversation's `Chat`. One turn runs at a time, and a turn that fails or
+     * is interrupted ends its conversation: the `Chat` records a turn only when it succeeds, so
+     * after any other end its history no longer says which calls ran, and an approval answered
+     * in that turn would run again.
+     */
+    readonly turn: <A, E, R>(
+      owner: Member,
+      id: string,
+      run: (chat: Chat.Chat) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ConversationNotFound, R>;
   }
 >()("tracker/Conversations") {
   // DEMO ONLY: memory, lost when the process stops and never trimmed. A real store keeps each
@@ -30,26 +37,35 @@ export class Conversations extends Context.Service<
   static readonly layerMemory = Layer.sync(Conversations, () => {
     const kept = new Map<string, Conversation>();
 
-    // A member is a person in a workspace, and an id is unguessable: both are in the key.
-    const key = (owner: Member, id: string) => `${owner.workspace}/${owner.id}/${id}`;
+    // A member is a person in a workspace, and an id is unguessable: both are in the key, as
+    // JSON, which keeps its three parts apart whatever they hold.
+    const keyOf = (owner: Member, id: string) => JSON.stringify([owner.workspace, owner.id, id]);
+
+    // Read when it runs, not when it is written: the second lookup of a turn runs under the lock.
+    const find = (key: string, id: string) =>
+      Effect.suspend(() => Effect.fromNullishOr(kept.get(key))).pipe(
+        Effect.mapError(() => new ConversationNotFound({ conversation: id })),
+      );
 
     return Conversations.of({
       open: Effect.fn("Conversations.open")(function* (owner) {
-        const conversation = {
-          id: crypto.randomUUID(),
-          chat: yield* Chat.empty,
-          turn: yield* Semaphore.make(1),
-        };
+        const id = crypto.randomUUID();
 
-        kept.set(key(owner, conversation.id), conversation);
+        kept.set(keyOf(owner, id), { chat: yield* Chat.empty, lock: yield* Semaphore.make(1) });
 
-        return conversation;
+        return id;
       }),
-      find: (owner, id) =>
-        Effect.fromNullishOr(kept.get(key(owner, id))).pipe(
-          Effect.mapError(() => new ConversationNotFound({ conversation: id })),
-        ),
-      end: (owner, id) => Effect.sync(() => kept.delete(key(owner, id))),
+      turn: (owner, id, run) => {
+        const key = keyOf(owner, id);
+
+        return Effect.flatMap(find(key, id), ({ lock }) =>
+          // Looked up again once the lock is held: a turn that waited for one that failed
+          // must find its conversation gone, not run on the history that turn left behind.
+          Effect.flatMap(find(key, id), ({ chat }) =>
+            Effect.onError(run(chat), () => Effect.sync(() => kept.delete(key))),
+          ).pipe(lock.withPermits(1)),
+        );
+      },
     });
   });
 }

@@ -1,14 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, flow, Layer } from "effect";
+import { Deferred, Effect, Fiber, flow, Layer } from "effect";
 import type { LanguageModel } from "effect/ai";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { AssistantFailed, ConversationNotFound } from "../../src/assistant/Assistant.js";
 import { memory } from "../../src/memory.js";
 import { publicRoutes } from "../../src/routes.js";
-import { scripted } from "../support/scripted.js";
+import { down, scripted } from "../support/scripted.js";
 
 // The assistant as its callers reach it: over HTTP, a request per turn, on the real routes in
 // memory. Each test gives the routes the model it is about, in place of the demo one: the
@@ -155,7 +156,180 @@ describe("the assistant, behind a route", () => {
       );
       expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
     }).pipe(
-      served(scripted([call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." })], "fails")),
+      served(scripted([call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." })], down)),
     ),
+  );
+
+  it.effect("runs nothing for a denied call, and lists none as run", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+      const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+      const asked = yield* ada.askAssistant({ prompt: "Close it." });
+
+      const denied = yield* ada.answerAssistant({
+        conversation: asked.conversation,
+        answers: asked.waiting.map(({ approvalId }) => ({ approvalId, approved: false })),
+      });
+
+      expect(denied).toMatchObject({ text: "Left open.", ran: [], waiting: [] });
+      expect(yield* ada.getIssue({ id })).toMatchObject({ status: "open" });
+    }).pipe(served(scripted([call("1", "closeIssue", { id: "ACME-1" })], says("Left open.")))),
+  );
+
+  it.effect("lists no call of a reply the provider cut short: none of them ran", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+
+      yield* ada.createIssue({ title: "Crash", body: "On save." });
+
+      expect(yield* ada.askAssistant({ prompt: "What is open?" })).toMatchObject({
+        text: "I was cut off.",
+        ran: [],
+        waiting: [],
+      });
+    }).pipe(
+      served(
+        scripted(
+          [
+            call("1", "listIssues", { status: "open" }),
+            { type: "finish", reason: "length", usage: { inputTokens: {}, outputTokens: {} } },
+          ],
+          says("I was cut off."),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("runs the one call of two that is approved, and leaves the other open", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+      const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+      const asked = yield* ada.askAssistant({ prompt: "Say it is fixed, and close it." });
+      const [first, second] = approving(asked.waiting);
+
+      expect(asked.waiting.map(({ tool }) => tool)).toEqual(["commentOnIssue", "closeIssue"]);
+
+      const answered = yield* ada.answerAssistant({
+        conversation: asked.conversation,
+        answers: first === undefined ? [] : [first],
+      });
+
+      // The call left open is not listed again: its `approvalId` is the client's to keep.
+      expect(answered).toMatchObject({ ran: [{ tool: "commentOnIssue" }], waiting: [] });
+      expect(yield* ada.getIssue({ id })).toMatchObject({ status: "open" });
+
+      yield* ada.answerAssistant({
+        conversation: asked.conversation,
+        answers: second === undefined ? [] : [second],
+      });
+
+      expect(yield* ada.getIssue({ id })).toMatchObject({ status: "closed" });
+      expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
+    }).pipe(
+      served(
+        scripted(
+          [
+            call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." }),
+            call("2", "closeIssue", { id: "ACME-1" }),
+          ],
+          says("Said."),
+          says("Closed."),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("refuses a request answering one approval twice, and runs nothing of it", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+      const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+      const asked = yield* ada.askAssistant({ prompt: "Say it is fixed." });
+      const [answer] = approving(asked.waiting);
+
+      expect(
+        yield* Effect.flip(
+          ada.answerAssistant({
+            conversation: asked.conversation,
+            answers: answer === undefined ? [] : [answer, answer],
+          }),
+        ),
+      ).toBeInstanceOf(Action.InvalidInput);
+      expect((yield* ada.getIssue({ id })).comments).toHaveLength(0);
+
+      yield* ada.answerAssistant({
+        conversation: asked.conversation,
+        answers: approving(asked.waiting),
+      });
+
+      expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
+    }).pipe(
+      served(
+        scripted([call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." })], says("Said.")),
+      ),
+    ),
+  );
+
+  it.effect("runs an approved call once when its answer arrives twice at once", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+      const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+      const asked = yield* ada.askAssistant({ prompt: "Say it is fixed." });
+
+      const answer = Effect.flip(
+        ada.answerAssistant({
+          conversation: asked.conversation,
+          answers: approving(asked.waiting),
+        }),
+      );
+
+      // A double click, or a client's retry. One turn runs at a time, and the one that waited
+      // finds its conversation ended by the one that failed.
+      const refusals = yield* Effect.all([answer, answer], { concurrency: 2 });
+
+      expect(refusals.map(({ _tag }) => _tag).toSorted()).toEqual([
+        "AssistantFailed",
+        "ConversationNotFound",
+      ]);
+      expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
+    }).pipe(
+      served(scripted([call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." })], down, down)),
+    ),
+  );
+
+  it.effect(
+    "ends the conversation of a turn that is interrupted after its approved call ran",
+    () => {
+      // Completed when the model is asked what to say about the approved call's result.
+      const thinking = Deferred.makeUnsafe<void>();
+
+      return Effect.gen(function* () {
+        const ada = yield* asAda;
+        const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+        const asked = yield* ada.askAssistant({ prompt: "Say it is fixed." });
+
+        const answer = ada.answerAssistant({
+          conversation: asked.conversation,
+          answers: approving(asked.waiting),
+        });
+
+        // The client goes away while the model is thinking, after the approved call ran.
+        const leaving = yield* Effect.forkChild(answer);
+
+        yield* Deferred.await(thinking);
+        yield* Fiber.interrupt(leaving);
+
+        expect(yield* Effect.flip(answer)).toEqual(
+          new ConversationNotFound({ conversation: asked.conversation }),
+        );
+        expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
+      }).pipe(
+        served(
+          scripted(
+            [call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." })],
+            Effect.andThen(Deferred.succeed(thinking, undefined), Effect.never),
+          ),
+        ),
+      );
+    },
   );
 });

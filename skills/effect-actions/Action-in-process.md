@@ -4,7 +4,7 @@ Call actions from your own code, such as a job or a test, and share one build of
 implementations between servers and jobs.
 
 Read [Action.md](Action.md) first, and this page alone, in one tool call. When something fails,
-search [Action-failures.md](Action-failures.md). Reading order: [README.md](README.md).
+search [Action-failures.md](Action-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 
@@ -66,7 +66,7 @@ service of yours such as an in-memory store.
 
 ```ts
 // kitchen-sink/src/routes.ts
-export const builders = Action.layer([...implementations, admin]);
+export const builders = Action.layer([status, identity, issues, attachments, admin]);
 
 // kitchen-sink/src/server.ts
 Layer.mergeAll(

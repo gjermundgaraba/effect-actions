@@ -129,6 +129,11 @@ describe("attachments, over HTTP and MCP", () => {
       expect(Buffer.from(yield* mine.arrayBuffer).equals(screenshot)).toBe(true);
       // The route states its own caching; everything else authentication covers is `no-store`.
       expect(mine.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+      // An uploaded image opened by its URL is a document on this origin: it gets no scripts.
+      expect([
+        mine.headers["content-security-policy"],
+        mine.headers["x-content-type-options"],
+      ]).toEqual(["sandbox", "nosniff"]);
       expect(anotherWorkspace.status).toBe(404);
     }).pipe(Effect.provide(served)),
   );

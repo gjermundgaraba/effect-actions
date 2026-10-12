@@ -66,7 +66,7 @@ service of yours such as an in-memory store.
 
 ```ts
 // kitchen-sink/src/routes.ts
-export const builders = Action.layer([...implementations, admin]);
+export const builders = Action.layer([status, identity, issues, attachments, admin]);
 
 // kitchen-sink/src/server.ts
 Layer.mergeAll(

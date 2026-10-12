@@ -8,7 +8,7 @@ tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which s
 `Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [Testing-failures.md](Testing-failures.md). Reading order: [README.md](README.md).
+search [Testing-failures.md](Testing-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 

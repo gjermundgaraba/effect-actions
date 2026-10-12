@@ -568,6 +568,103 @@ describe("ActionRpc internal errors", () => {
   );
 });
 
+it.effect(
+  "answers a declared failure the handler froze as the JSON it is, and reports only the one whose own key says so",
+  () => {
+    const Refuse = Action.make("refuse", {
+      description: "Refuses with the JSON it is given",
+      readOnly: true,
+      caller: Action.Anyone,
+      input: { json: Schema.String },
+      error: Schema.Json,
+    });
+
+    const Refusing = ActionRpc.make([Refuse]);
+    const jsonOf = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
+
+    const refuse = Action.implement(Refuse, ({ json }) => Effect.fail(Object.freeze(jsonOf(json))));
+
+    const failures = [
+      '{"__proto__":{"detail":"kept"},"why":"declared"}',
+      '["declared",{"why":"declared"}]',
+      '{"~effect/ErrorReporter/ignore":false,"why":"its own key"}',
+    ];
+
+    const reported: Array<string> = [];
+
+    return Effect.gen(function* () {
+      const client = yield* ActionRpc.client(Refusing);
+
+      const answered = yield* Effect.forEach(failures, (json) =>
+        Effect.map(Effect.flip(client.refuse({ json })), (failure) => JSON.stringify(failure)),
+      );
+
+      expect(answered).toEqual(failures);
+      expect(reported).toEqual([expect.stringContaining("its own key")]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        inMemoryProtocolTo(
+          servedAtRpcOverHttp(ActionRpc.layer(Refusing, refuse)).pipe(
+            Layer.provide(ErrorReporter.layer([recorder(reported)])),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "answers a protected rpc with the error its verifier declares, and a public one without verifying",
+  () => {
+    class Caller extends Context.Service<Caller, { readonly id: string }>()("rpc-test/Caller") {}
+
+    class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {
+      retryAfter: Schema.Finite,
+    }) {}
+
+    const Checked = Authentication.make("rpc-test.Checked", Caller, { error: Unavailable });
+
+    const Secret = Action.make("secret", {
+      description: "Reads what only a caller may",
+      readOnly: true,
+      caller: Caller,
+      success: Schema.String,
+    });
+
+    const Open = Action.make("open", {
+      description: "Reads what anyone may",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.String,
+    });
+
+    const Guarded = ActionRpc.make([Secret, Open], { authentication: Checked });
+
+    const apps = [
+      Action.implement(Secret, () => Effect.map(Caller, ({ id }) => id), {
+        authorize: Action.allowAll,
+      }),
+      Action.implement(Open, () => Effect.succeed("open")),
+    ];
+
+    const server = servedAtRpcOverHttp(ActionRpc.layer(Guarded, apps)).pipe(
+      Layer.provide(
+        Authentication.layer(Checked, () => Effect.fail(new Unavailable({ retryAfter: 30 }))),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const client = yield* ActionRpc.client(Guarded);
+
+      expect(yield* Effect.flip(client.secret().pipe(signedInAs("down")))).toEqual(
+        new Unavailable({ retryAfter: 30 }),
+      );
+      expect(yield* client.open().pipe(signedInAs("down"))).toBe("open");
+    }).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(server)));
+  },
+);
+
 describe("ActionRpc selection", () => {
   it.effect("serves the listed actions only, owing no provider when none is protected", () =>
     Effect.gen(function* () {

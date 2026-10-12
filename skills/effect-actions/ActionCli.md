@@ -9,7 +9,7 @@ implementations or the binding, so a new action is a new command: list `actions`
 out.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionCli-failures.md](ActionCli-failures.md). Reading order: [README.md](README.md).
+search [ActionCli-failures.md](ActionCli-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 
@@ -161,8 +161,9 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   error as its JSON on stderr, a transport failure named with its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
   passes through. A failure left unmapped, one call's included, is reported as a crash,
   `ERROR (#n)` with a stack trace.
-- **Write the list in the call.** The aggregate's type then carries its commands' failures and
-  services. A list held in options annotated `ActionCli.Options` adds none to the type.
+- **Write the list in the call**, or hold the options with `satisfies ActionCli.Options<…>`. The
+  aggregate's type then carries its commands' failures and services. A list in options
+  annotated `: ActionCli.Options<…>` adds none: the program compiles, then a command's service is not found.
 
 ### Output and exit code
 

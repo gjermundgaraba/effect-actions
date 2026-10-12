@@ -61,6 +61,8 @@ const Failure = Schema.Union([
   Action.Forbidden,
 ]);
 
+const failureAsJson = Schema.encodeUnknownSync(Schema.toCodecJson(Failure));
+
 const FailureInput = Schema.Struct({ failure: Failure });
 
 class Caller extends Context.Service<Caller, string>()("surfaces-agree/Caller") {}
@@ -224,7 +226,7 @@ describe("surfaces answer one call alike", () => {
   );
 
   it.effect.prop(
-    "fails over HTTP, RPC, MCP, the Toolkit and in process with the generated declared error, as JSON text carries it",
+    "fails over HTTP, RPC, MCP, the Toolkit and in process with the generated declared error, as JSON text carries it, its message included",
     [Arbitrary.schema(Failure)],
     ([failure]) =>
       Effect.map(failureOnEachSurface(failure), (answers) => {
@@ -232,6 +234,7 @@ describe("surfaces answer one call alike", () => {
 
         for (const [surface, answer] of Object.entries(answers)) {
           expect(answer, surface).toEqual(sent);
+          expect(failureAsJson(answer), surface).toEqual(failureAsJson(sent));
         }
       }),
     { arbitrary: { runs: 200 } },

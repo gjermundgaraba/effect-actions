@@ -4,7 +4,7 @@
 contracts: every surface takes the implementation it returns, or a list of them.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [Action-failures.md](Action-failures.md). Reading order: [README.md](README.md).
+search [Action-failures.md](Action-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 

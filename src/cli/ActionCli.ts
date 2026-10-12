@@ -3,7 +3,7 @@ import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { assertDistinct, assertKnown } from "../contract/rules.js";
-import type { VerifierError } from "../authentication/provider.js";
+import { type VerifierError, withVerifierErrors } from "../authentication/provider.js";
 import {
   type UserError,
   command as makeCommand,
@@ -43,13 +43,18 @@ export type { UserError } from "./commands.js";
 /**
  * Make a command of your own fail as a derived command does. Give it what the command calls, the
  * HTTP binding of `ActionHttp.client` or the actions of `Action.client`, and pipe the command's
- * whole Effect through it: a failure that is a declared error, the binding's included, or a
- * built-in one becomes a `UserError` whose message is its JSON, and any other, a transport
+ * whole Effect through it: a failure that is a declared error, the binding's and its
+ * authentication's included, or a built-in one becomes a `UserError` whose message is its JSON, and any other, a transport
  * failure for one, a `UserError` naming it and the causes beneath it. An Effect CLI error, your
  * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is.
  */
 export const toUserError = (calls: AnyHttp | ReadonlyArray<Action.Any>) =>
-  "actions" in calls ? failingAsDerived(calls.actions, calls.error) : failingAsDerived(calls, []);
+  "actions" in calls
+    ? failingAsDerived(calls.actions, (action) => endpointErrorsOf(calls, action))
+    : failingAsDerived(calls, () => []);
+
+const endpointErrorsOf = (binding: AnyHttp, action: Action.Any) =>
+  withVerifierErrors(action, binding.error, binding.authentication?.error);
 
 /**
  * An aggregate command of the actions `A`: its name, the actions that are its subcommands,
@@ -72,8 +77,9 @@ export interface Options<A extends Action.Any = Action.Any> {
    * Commands of your own beside the derived ones, as `Command.withSubcommands` takes them:
    * `[importLinks]`, each made with Effect CLI's `Command.make`. One fails as you make it fail:
    * with a `CliError.UserError` for `Command.run` to print its `userMessage` on stderr. Written
-   * in the call, the list adds its commands' failures and services to the aggregate's type;
-   * held in options annotated with this type, it adds none.
+   * in the call, or in options held with `satisfies` this type, the list adds its commands'
+   * failures and services to the aggregate's type; in options annotated with this type, it adds
+   * none.
    */
   readonly subcommands?: Subcommands | undefined;
 }
@@ -185,7 +191,7 @@ const overHttp = <A extends Action.Any>(
     action,
     (input) => Effect.flatMap(methods(binding, client), (methodOf) => methodOf(action)(input)),
     options,
-    binding.error,
+    endpointErrorsOf(binding, action),
   );
 };
 

@@ -270,6 +270,20 @@ const erasedGroup = ActionCli.remote(http, erased);
 
 expectTypeOf<Command.Services<typeof erasedGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
 
+const satisfied = { name: "remote", subcommands: [own] } satisfies ActionCli.RemoteOptions<
+  typeof RemoteAction
+>;
+
+const satisfiedGroup = ActionCli.remote(http, satisfied);
+
+expectTypeOf<Command.Services<typeof satisfiedGroup>>().toEqualTypeOf<
+  HttpClient.HttpClient | OneRequest
+>();
+
+expectTypeOf<
+  Extract<Command.Error<typeof satisfiedGroup>, OwnFailure>
+>().toEqualTypeOf<OwnFailure>();
+
 const localFailing = ActionCli.make(local, { name: "local", subcommands: [own] });
 
 expectTypeOf<Extract<Command.Error<typeof localFailing>, OwnFailure>>().toEqualTypeOf<OwnFailure>();

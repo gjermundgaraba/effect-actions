@@ -46,11 +46,12 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   `ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes] })`. Piping
   `Command.withSubcommands` onto the result replaces the derived commands, so every action had to
   be listed again as a `remoteCommand` beside one command written by hand. A name a derived
-  command has throws `Duplicate command`; the aggregate's type gains its own commands' failures
-  and services ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
+  command has throws `Duplicate command`; written in the call, or in options held with
+  `satisfies`, the list adds its commands' failures and services to the aggregate's type, and
+  in annotated options it adds none ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
 - `ActionCli.toUserError` makes a command of your own fail as a derived command does. Given the
   HTTP binding or the actions the command calls and piped onto its whole Effect, a declared
-  error, the binding's included, is printed as its JSON and a transport failure
+  error, the binding's and its authentication's included, is printed as its JSON and a transport failure
   named with its causes, where a hand-written `CliError.UserError` printed prose and a call left
   unmapped crashed with a stack trace. An Effect CLI error passes through as it is
   ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
@@ -59,7 +60,8 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   optional boolean's switch, and `A JSON array.` or `A JSON object.` on a value that is one, an
   array of objects with its fields, `A JSON array of {id, approved?}.`
 - A flag's help shows the field's description wherever it is annotated. One annotated before a
-  check, where an MCP tool's listing reads it, was missing from `--help`.
+  check, or on the field's key with `annotateKey`, where an MCP tool's listing reads it, was
+  missing from `--help`.
 - The compiler says what is missing where a protected action is implemented without
   `authorize`: the message ends `is not assignable to type '"A protected action takes
   { authorize }: your rule, or Action.allowAll"'`, where it ended `'typeof CurrentUser' is not
@@ -87,7 +89,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   when it does not, and runs the authorizer. Refusals are the typed `Unauthenticated` and
   `Forbidden`, with no challenge or step-up. A defect, a middleware that throws included, is
   logged and answered as that request's `Internal server error` alone, reported once with its
-  cause to the call's `ErrorReporter`s; a declared failure is never reported, as over HTTP. Request services come from the layer's `middleware` or
+  cause to the call's `ErrorReporter`s; a declared failure is not reported, as over HTTP, unless it encodes to a primitive (`error: Schema.String`), which Effect's reporter cannot be told to skip and reports as `Info`. Request services come from the layer's `middleware` or
   router middleware, never startup. Public and protected actions are served over any protocol,
   a socket server and stdio included; `layer` refuses to build under a protocol
   that does not speak JSON, such as schema-binary's. This
@@ -106,6 +108,13 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the
+  binding's authentication declares as its JSON, as it prints every other declared error. It
+  printed it as prose, the error's name alone.
+- `ActionRpc.layer` answers a declared failure its handler froze. Marking it unreported threw,
+  and the call died with a `TypeError` instead. One that encodes to an array is no longer
+  reported, and one holding a key named `~effect/ErrorReporter/ignore` keeps its value, which
+  the mark overwrote with `true`.
 - No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
   in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
   sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
@@ -124,7 +133,8 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
   client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
   request: each member's conversation kept between requests, an approval answered in a later
-  one, by the member who was asked alone, and a conversation ended where its model fails
+  one, by the member who was asked alone, and a conversation ended where a turn fails or is
+  interrupted
   ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)).
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service

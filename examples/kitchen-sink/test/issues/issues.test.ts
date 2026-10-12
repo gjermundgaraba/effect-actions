@@ -39,9 +39,11 @@ describe("issues, in process", () => {
   it.effect("lists twenty by default, newest first, or the status and limit asked for", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(issues);
+      const store = yield* IssueStore;
 
-      yield* Effect.forEach(Array.range(1, 4), (n) =>
-        client.createIssue({ title: `Issue ${n}`, body: "" }).pipe(as("ada")),
+      // Written to the store, not through `createIssue`: twenty-one are over its write limit.
+      yield* Effect.forEach(Array.range(1, 21), (n) =>
+        store.create(members.ada.workspace, { title: `Issue ${n}`, body: "" }),
       );
       yield* client.closeIssue({ id: "ACME-2" }).pipe(as("ada"));
 
@@ -50,9 +52,13 @@ describe("issues, in process", () => {
       const closed = yield* client.listIssues({ status: "closed", limit: 20 }).pipe(as("ada"));
       const newest = yield* client.listIssues({ limit: 1 }).pipe(as("ada"));
 
-      expect(all.issues.map(({ id }) => id)).toEqual(["ACME-4", "ACME-3", "ACME-2", "ACME-1"]);
+      expect(all.issues.map(({ id }) => id)).toEqual(
+        Array.range(2, 21)
+          .map((n) => `ACME-${n}`)
+          .toReversed(),
+      );
       expect(closed.issues.map(({ id }) => id)).toEqual(["ACME-2"]);
-      expect(newest.issues.map(({ id }) => id)).toEqual(["ACME-4"]);
+      expect(newest.issues.map(({ id }) => id)).toEqual(["ACME-21"]);
     }).pipe(Effect.provide(services)),
   );
 

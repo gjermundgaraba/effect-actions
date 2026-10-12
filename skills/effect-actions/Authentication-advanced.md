@@ -5,7 +5,7 @@ authentication, and a refusal outside the router.
 
 Read [Authentication.md](Authentication.md) first, and this page alone, in one tool call. When
 something fails, search [Authentication-failures.md](Authentication-failures.md). Reading order:
-[README.md](README.md).
+[SKILL.md](SKILL.md).
 
 ## API
 

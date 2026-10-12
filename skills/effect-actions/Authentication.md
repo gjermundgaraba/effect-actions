@@ -5,7 +5,7 @@ declares it, as a browser-safe descriptor; `Authentication.layer` is that descri
 running the verifier you write. Verifying a token, login and consent stay in the application.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [Authentication-failures.md](Authentication-failures.md). Reading order: [README.md](README.md).
+search [Authentication-failures.md](Authentication-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 

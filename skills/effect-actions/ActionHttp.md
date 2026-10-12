@@ -5,7 +5,7 @@ mount path; the server mounts that one binding, every client calls it and the Op
 generated from it.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionHttp-failures.md](ActionHttp-failures.md). Reading order: [README.md](README.md).
+search [ActionHttp-failures.md](ActionHttp-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 

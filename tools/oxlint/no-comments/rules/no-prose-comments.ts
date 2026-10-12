@@ -13,6 +13,8 @@ const typeScriptPragmaPattern = /@ts-(?:expect-error|ignore)\b/u;
 
 const whyPattern = /^\s*Why:\s+\S/u;
 
+const toolDirectivePattern = /^[\s/]*(?:@ts-|eslint-|oxlint-)/u;
+
 const isJsDocWithoutPragma = (comment: Comment): boolean =>
   comment.type === "Block" &&
   comment.value.startsWith("*") &&
@@ -82,7 +84,8 @@ export const noProseCommentsRule = defineRule({
           if (
             allowWhy &&
             comment.type === "Line" &&
-            (continuesWhyRun || whyPattern.test(comment.value))
+            (continuesWhyRun || whyPattern.test(comment.value)) &&
+            !toolDirectivePattern.test(comment.value)
           ) {
             whyRun = { endsOnLine: comment.loc.end.line, column: comment.loc.start.column };
             continue;
