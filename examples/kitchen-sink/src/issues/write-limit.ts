@@ -20,7 +20,7 @@ export const writeLimit = Effect.gen(function* () {
 
       yield* limiter
         .consume({
-          key: `writes/${member.workspace}/${member.id}`,
+          key: JSON.stringify(["writes", member.workspace, member.id]),
           limit: 10,
           window: "1 minute",
           onExceeded: "fail",

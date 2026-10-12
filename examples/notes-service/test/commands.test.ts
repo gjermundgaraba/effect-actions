@@ -92,7 +92,7 @@ describe("the commands", () => {
         '{"_tag":"Unauthenticated","message":"Unknown demo token."}',
       );
       // The command's own context is a line of its own on stderr, the JSON left as it is.
-      expect(yield* TestConsole.errorLines).toContain("Nothing was written to notes.md.");
+      expect(yield* TestConsole.errorLines).toContain("The export to notes.md did not finish.");
 
       // Not an action's error: the file system's, named in the message.
       const unwritable = yield* Effect.flip(run("ada", ["export", "no-such-directory/notes.md"]));

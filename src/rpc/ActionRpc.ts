@@ -292,9 +292,12 @@ const marked = <Copy extends Schema.JsonObject | Array<Schema.Json>>(copy: Copy)
 // with, which the handler may have frozen: marking that one would throw. The copy is made of
 // entries, which define each key: assigning them would run the setter of a key `__proto__`.
 // The mark is a key of its own, a string: a failure that holds that key keeps its value, and
-// is reported or not as it says.
+// is reported or not as it says. An array is copied by its indices, which is what JSON is
+// written from: its iterator may yield something else.
 const markedUnreported = (encoded: Schema.Json): Schema.Json => {
-  if (isJsonArray(encoded)) return marked([...encoded]);
+  if (isJsonArray(encoded)) {
+    return marked(Array.from({ length: encoded.length }, (_, index) => encoded[index] ?? null));
+  }
 
   return isJsonObject(encoded) && !Object.hasOwn(encoded, ErrorReporter.ignore)
     ? marked(Object.fromEntries(Object.entries(encoded)))

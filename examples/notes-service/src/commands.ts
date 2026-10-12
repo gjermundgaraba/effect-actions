@@ -29,7 +29,7 @@ const exportNotes = Command.make(
     }).pipe(
       // Context of your own for a failure goes to stderr before it, on a line of its own. A
       // `UserError` wrapped around the failure instead would put its JSON mid-sentence.
-      Effect.tapError(() => Console.error(`Nothing was written to ${file}.`)),
+      Effect.tapError(() => Console.error(`The export to ${file} did not finish.`)),
       // Once, around the whole command: it then fails as a derived command does, an action's
       // error printed as its JSON on stderr and any other, a file that cannot be written for
       // one, named. A failure left as it is would be reported as a crash, with an `ERROR (#n)`

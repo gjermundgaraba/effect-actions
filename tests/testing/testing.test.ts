@@ -6,6 +6,7 @@ import {
   Cause,
   Context,
   Effect,
+  ErrorReporter,
   FileSystem,
   Layer,
   Logger,
@@ -926,7 +927,7 @@ describe("layer", () => {
   );
 
   it.effect(
-    "logs the cause of a request that fails, a defect or a result that does not encode, and of no other",
+    "logs the cause of a request a reporter would be given, a route's own failure included, and of no other",
     () =>
       Effect.gen(function* () {
         class Missing extends Schema.TaggedError<Missing>()("Missing", {}) {}
@@ -950,7 +951,17 @@ describe("layer", () => {
             fine: () => Effect.void,
           }),
           Action.implement(Secret, () => Effect.void, { authorize: Action.allowAll }),
-        ]).pipe(Layer.provide(authenticate));
+        ]).pipe(
+          Layer.provide(authenticate),
+          Layer.merge(HttpRouter.add("GET", "/own", Effect.fail(new Error("a route of its own")))),
+          Layer.merge(
+            HttpRouter.add(
+              "GET",
+              "/unreported",
+              Effect.die(Object.assign(new Error("marked"), { [ErrorReporter.ignore]: true })),
+            ),
+          ),
+        );
 
         const logged: Array<string> = [];
 
@@ -961,11 +972,13 @@ describe("layer", () => {
           yield* client.fine();
           yield* Effect.exit(client.secret());
           yield* HttpClient.get("/nowhere");
+          yield* HttpClient.get("/unreported");
 
           expect(logged).toEqual([]);
 
           yield* Effect.exit(client.crash());
           yield* Effect.exit(client.count());
+          yield* HttpClient.get("/own");
         }).pipe(
           Effect.provide(Testing.layer(routes)),
           Effect.provide(
@@ -980,6 +993,7 @@ describe("layer", () => {
         expect(logged).toEqual([
           expect.stringMatching(/^Error Error: db password hunter2/),
           expect.stringMatching(/^Error HttpApiSchemaError[^]*Expected a finite number/),
+          expect.stringMatching(/^Error Error: a route of its own/),
         ]);
       }),
   );

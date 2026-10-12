@@ -331,7 +331,8 @@ const isTransformedAsWhole = (ast: SchemaAST.AST): boolean =>
 // decoded from another type is read on its decoded side, then on the encoded one, which is the
 // side a tool lists. Where both a schema and a later check are described, help shows the later;
 // a description of the field's key, written with `annotateKey`, comes before both, and a
-// repeated flag with none of its own shows its element's, which each value given is.
+// repeated flag with none of its own shows its element's, which each value given is: read on
+// either side whatever the element decodes to, since the encoded side alone says it repeats.
 const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
   ast.context?.annotations?.description ??
   SchemaAST.resolveDescription(ast) ??
@@ -347,9 +348,10 @@ const describedThroughAbsence = (ast: SchemaAST.AST): string | undefined =>
   ownOrSuspendedDescriptionOf(ast) ?? ownOrSuspendedDescriptionOf(withoutOptionalAbsence(ast));
 
 const describedByElement = (ast: SchemaAST.AST): string | undefined => {
-  const repeated = repeatedElementOf(withoutOptionalAbsence(ast));
+  const array = unsuspended(withoutOptionalAbsence(ast));
+  const element = SchemaAST.isArrays(array) ? array.rest[0] : undefined;
 
-  return repeated === undefined ? undefined : describedThroughAbsence(repeated.element);
+  return element === undefined ? undefined : describedThroughAbsence(element);
 };
 
 const fieldParams = (

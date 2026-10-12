@@ -1341,6 +1341,14 @@ it.effect(
           ),
           height: Schema.FiniteFromString.annotate({ description: "In metres" }),
           labels: Schema.Array(Schema.String.annotate({ description: "A label" })),
+          days: Schema.optional(
+            Schema.Array(Schema.DateTimeUtcFromString.annotate({ description: "A day" })),
+          ),
+          sizes: Schema.Array(
+            Schema.String.annotate({ description: "A size, as digits" }).pipe(
+              Schema.decodeTo(Schema.Finite, SchemaTransformation.numberFromString),
+            ),
+          ),
           keyed: Schema.String.annotate({ description: "Any text" })
             .check(Schema.isMinLength(1))
             .annotateKey({ description: "What this field holds" }),
@@ -1362,6 +1370,8 @@ it.effect(
       expect(help).toMatch(/--note string\s+A remark\n/);
       expect(help).toMatch(/--keyed string\s+What this field holds\n/);
       expect(help).toMatch(/--labels string\s+A label\. Repeat for each value\.\n/);
+      expect(help).toMatch(/--days string\s+A day\. Repeat for each value\.\n/);
+      expect(help).toMatch(/--sizes string\s+A size, as digits\. Repeat for each value\.\n/);
       expect(help).toMatch(/--weight \w+\s+In grams, as digits\n/);
       expect(help).toMatch(/--height \w+\s+In metres\n/);
       expect(help).toMatch(/--bare string\s*\n/);

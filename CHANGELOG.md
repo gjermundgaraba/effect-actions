@@ -97,7 +97,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   when it does not, and runs the authorizer. Refusals are the typed `Unauthenticated` and
   `Forbidden`, with no challenge or step-up. A defect, a middleware that throws included, is
   logged and answered as that request's `Internal server error` alone, reported once with its
-  cause to the call's `ErrorReporter`s; a declared failure is not reported, as over HTTP, unless it encodes to a primitive (`error: Schema.String`), which Effect's reporter cannot be told to skip and reports as `Info`. Request services come from the layer's `middleware` or
+  cause to the call's `ErrorReporter`s; a declared failure is not reported, unless it encodes to a primitive (`error: Schema.String`), which Effect's reporter cannot be told to skip and reports as `Info`, or holds the reporter's own key, `~effect/ErrorReporter/ignore`, whose value then decides. Request services come from the layer's `middleware` or
   router middleware, never startup. Public and protected actions are served over any protocol,
   a socket server and stdio included; `layer` refuses to build under a protocol
   that does not speak JSON, such as schema-binary's. This
@@ -116,8 +116,10 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
-- `Testing.layer` logs the cause of a request that fails, a defect or a result that does not
-  encode, as an error, and nothing for any other request. An empty 500 in a test showed its
+- `Testing.layer` logs, as an error, the cause of a request that an `ErrorReporter` would be
+  given: a defect, a result that does not encode, or a failure a route of your own leaves
+  unhandled. It logs nothing for a request that succeeds, is refused, fails with a declared
+  error or finds no route. An empty 500 in a test showed its
   cause nowhere unless the test provided an `ErrorReporter`: a server's request logger writes
   it, and a test runs none ([Testing-failures.md](docs/Testing-failures.md)).
 - A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the

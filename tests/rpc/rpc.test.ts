@@ -582,7 +582,14 @@ it.effect(
     const Refusing = ActionRpc.make([Refuse]);
     const jsonOf = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
 
-    const refuse = Action.implement(Refuse, ({ json }) => Effect.fail(Object.freeze(jsonOf(json))));
+    const iteratingOtherwise = (json: Schema.Json): Schema.Json =>
+      Array.isArray(json)
+        ? Object.defineProperty(json, Symbol.iterator, { value: () => ["another"].values() })
+        : json;
+
+    const refuse = Action.implement(Refuse, ({ json }) =>
+      Effect.fail(Object.freeze(iteratingOtherwise(jsonOf(json)))),
+    );
 
     const failures = [
       '{"__proto__":{"detail":"kept"},"why":"declared"}',

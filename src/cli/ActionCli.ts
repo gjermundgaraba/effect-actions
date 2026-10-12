@@ -261,7 +261,7 @@ const checkedCommandsOf = (
  * Project one implemented action into a native Effect CLI command that runs its handler in
  * process, behind its implementation's authorization. It is named after the action in kebab
  * case with one flag per field of its input (`--user-id`), or `--input` taking the whole input
- * as JSON when it is not a struct. An array field's flag is repeated for each value, a boolean
+ * as JSON when it is not a struct. The flag of an array of strings or numbers is repeated for each value, a boolean
  * field is a switch, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
  * `UserError`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
