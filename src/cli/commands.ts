@@ -297,7 +297,7 @@ const fieldParam = (
       ? Flag.Boolean(name).pipe(Flag.withDefault(false), Flag.map(Option.some))
       : valueParam(kind, name, encoded).pipe(Param.map(Option.some)),
     repeats: false,
-    hint: jsonHintOf(encoded),
+    hint: isSwitch ? "Left out, it sends false." : jsonHintOf(encoded),
   };
 };
 

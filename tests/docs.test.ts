@@ -131,3 +131,21 @@ it("lists every module the package exports under docs/setup.md's entry points", 
     modules.map((module) => `import * as ${module} from "${manifest.name}/${module}";`).toSorted(),
   );
 });
+
+it("names, in the JSDoc that ships, only pages and example paths the package holds", () => {
+  const sources = readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" })
+    .filter((name) => name.endsWith(".ts"))
+    .map((name) => `src/${name}`);
+
+  const named = sources.flatMap((source) =>
+    Array.from(read(source).matchAll(/\x60((?:docs|examples)\/[\w./-]+)\x60/g), ([, path]) => ({
+      source,
+      path,
+    })),
+  );
+
+  expect(named.length).toBeGreaterThan(0);
+  expect(named.filter(({ path }) => path !== undefined && !existsSync(join(root, path)))).toEqual(
+    [],
+  );
+});

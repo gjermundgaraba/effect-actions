@@ -5,7 +5,10 @@ implementation, served as a JSON API and as MCP tools, with a CLI and a browser 
 same binding. Notes belong to the signed-in user; reading needs the `notes:read` scope and
 writing `notes:write`.
 
-Start here if you are building a service. The other examples follow the same layout.
+Start here if you are building a service. The other examples follow the same layout. Then read
+[Action.md](../../docs/Action.md) and the page of each surface you serve, which
+[docs/README.md](../../docs/README.md) routes, one page per tool call. An error's message is
+quoted in a `docs/*-failures.md`.
 
 ## Run it
 

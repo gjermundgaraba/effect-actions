@@ -494,6 +494,7 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * what the endpoint was built with; native `features` read only what they were built with,
  * never a request's. Never provide an identity at startup: a tool call takes its identity
  * only from the request it authenticated.
+ * Guide: `docs/ActionMcp.md` in this package; in an application: `examples/mcp-tools/`.
  */
 export function layerHttp<
   const Apps extends Served,

@@ -110,6 +110,8 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  * when the resulting toolkit handles a call, the identity an implementation's `authorize`
  * reads included: the caller provides it. `needsApproval` marks the calls a model must have
  * approved; it authorizes nothing, which stays `authorize`'s.
+ * Guide: `docs/ActionToolkit.md` in this package; a loop served behind a route, with approval:
+ * `examples/kitchen-sink/src/assistant/`.
  */
 export function make<
   const Apps extends Served,

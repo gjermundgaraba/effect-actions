@@ -291,6 +291,7 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
  * as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`. The literal name
  * identifies the provider, like a native Context.Key name, and the scheme's OpenAPI key, so it
  * holds only letters, digits, `_`, `.` and `-`; reuse one name only for one declaration.
+ * Guide: `docs/Authentication.md` in this package; in an application: `examples/notes-service/src/identity/`.
  */
 export const make = <const Name extends string, I, A, const O extends Options = {}>(
   name: Name,

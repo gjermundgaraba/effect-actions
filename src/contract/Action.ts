@@ -74,7 +74,10 @@ export { Anyone } from "./rules.js";
 export interface Mcp {
   /** The tool's display name, `annotations.title`, beside its name. */
   readonly title?: string | undefined;
-  /** `annotations.destructiveHint`, meaningful for a write only. */
+  /**
+   * `annotations.destructiveHint`, meaningful for a write only. Left out, a write is listed as
+   * destructive, MCP's default: state `false` for one that only adds or updates.
+   */
   readonly destructiveHint?: boolean | undefined;
   /** `annotations.idempotentHint`, meaningful for a write only. */
   readonly idempotentHint?: boolean | undefined;
@@ -188,6 +191,10 @@ export interface Action<
   readonly caller: Caller;
   readonly name: Name;
   readonly description: string;
+  /**
+   * The input as a schema, a `Schema.Struct` where fields were given: reuse it as it is, as in
+   * `Schema.Array(action.input)`.
+   */
   readonly input: Input;
   readonly success: Success;
   /** The declared failures, as a list: one given alone is a list of one. */
@@ -230,6 +237,7 @@ const codecOf = (schema: Codec | Fields): Codec =>
 /**
  * Define an action contract. Names are `[A-Za-z0-9_-]{1,128}`, other than `then`: the name
  * is also the route segment, the client method and the tool name.
+ * Guide: `docs/Action.md` in this package; in an application: `examples/notes-service/src/notes/`.
  */
 export function make<const Name extends string, const O extends Options>(
   name: Name,

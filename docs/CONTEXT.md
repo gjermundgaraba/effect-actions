@@ -4,6 +4,9 @@ Vocabulary for `@gjermundgaraba/effect-actions`. The docs, the examples, the cod
 use these words with these meanings. Module names and Effect's own terms (`HttpApi`, `Tool`,
 `Toolkit`, `McpServer`, `Rpc`, `RpcGroup`, `RpcServer`, `Command`) mean what their modules say.
 
+Read this page alone, in one tool call: pages read together are cut. Tasks are routed from
+[README.md](README.md), and each module's failures from its `-failures.md` page.
+
 ## Terms
 
 ### Contracts and calls

@@ -117,7 +117,7 @@ describe("the commands", () => {
       expect(refused).toBeInstanceOf(CliError.UserError);
       expect(refused).toHaveProperty(
         "userMessage",
-        "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=ada",
+        "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
       );
 
       // What a person sees: that message, once, on stderr, and no report of a `ConfigError`.

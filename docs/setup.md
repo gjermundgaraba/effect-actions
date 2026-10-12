@@ -24,9 +24,24 @@ a minor release may change the unstable Effect modules the surfaces build on.
 Keep the tilde in `package.json`: `^4.0.2`, which npm writes for `effect@4.0.2`, admits a minor
 release outside the peer range. `npm install effect@~4.0.2` keeps it.
 
-Node `^22.12.0 || ^24.0.0 || >=26.0.0`. TypeScript 7 or newer. ESM only. `tsconfig.json` sets
-`"module": "nodenext"`, since the package's modules resolve only through its `exports`, and
-`"strict": true`, which Effect requires.
+Node `^22.12.0 || ^24.0.0 || >=26.0.0`: the package's `engines`, where its `devEngines` is
+what developing the library itself takes. TypeScript 7 or newer. ESM only. No example ships a
+`tsconfig.json`; this one checks them. `"module": "nodenext"` is required, since the package's
+modules resolve only through its `exports`, and `"strict": true`, which Effect requires:
+
+```json
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test"]
+}
+```
 
 ## Entry points
 

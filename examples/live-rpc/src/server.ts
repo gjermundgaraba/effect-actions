@@ -25,8 +25,8 @@ const server = Layer.unwrap(
     return HttpRouter.serve(socket).pipe(
       Layer.provide(
         NodeHttpServer.layer(createServer, {
-          // This machine alone. A server others reach binds another host, read from config as
-          // examples/mcp-tools/src/server.ts reads it.
+          // This machine alone. A server others reach reads its host from config:
+          // `Config.String("HOST").pipe(Config.withDefault("127.0.0.1"))`.
           host: "127.0.0.1",
           port,
           // A message on a WebSocket is no request body, so `HttpServerRequest.MaxBodySize`

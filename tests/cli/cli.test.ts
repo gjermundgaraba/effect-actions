@@ -1379,7 +1379,7 @@ it.effect(
 );
 
 it.effect(
-  "says in a flag's help that it repeats, how an optional switch sends false, and that a value is JSON",
+  "says in a flag's help that it repeats, how a switch sends false, and that a value is JSON",
   () =>
     Effect.gen(function* () {
       const File = Action.make("file", {
@@ -1422,7 +1422,7 @@ it.effect(
       expect(help).toMatch(/--url string\s*\n/);
       expect(help).toMatch(/--tags string\s+Labels to file it under\. Repeat for each value\.\n/);
       expect(help).toMatch(/--also string\s+Repeat for each value\.\n/);
-      expect(help).toMatch(/--pinned\s*\n/);
+      expect(help).toMatch(/--pinned\s+Left out, it sends false\.\n/);
       expect(help).toMatch(/--read\s+Only read ones\? --no-read sends false\.\n/);
       expect(help).toMatch(/--answers value\s+A JSON array of \{id, approved\?\}\.\n/);
       expect(help).toMatch(/--moves value\s+A JSON array of \{from, to\}\.\n/);
@@ -1951,7 +1951,7 @@ it.effect("gives a flag the alias its options name, and shows a positional's val
     const help = (yield* lines(list, ["--help"])).join("\n");
     expect(help).toMatch(/^\s+scale value\s*$/m);
     expect(help).toMatch(/^\s+--limit, -n value\s*$/m);
-    expect(help).toMatch(/^\s+--all, -a\s*$/m);
+    expect(help).toMatch(/^\s+--all, -a\s+Left out, it sends false\.$/m);
 
     expect(() =>
       ActionCli.command(app, List, { positional: ["scale"], aliases: { scale: "s" } }),

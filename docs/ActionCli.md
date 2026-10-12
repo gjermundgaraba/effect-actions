@@ -121,7 +121,8 @@ encoded JSON value decides the kind of flag:
 
 - A switch left out is `false` for a required field, and leaves an optional one out.
 - `--help` adds, after the field's description, `Repeat for each value.` on a repeated flag,
-  `--no-read sends false.` on an optional switch, and `A JSON array.` or `A JSON object.` on a
+  `--no-read sends false.` on an optional switch, `Left out, it sends false.` on a required
+  one, and `A JSON array.` or `A JSON object.` on a
   value that is one, an array of objects with its fields: `A JSON array of {id, approved?}.`
 - A flag takes the encoded value, which the action's schema then decodes: `"21"` for
   `Schema.FiniteFromString`.
@@ -145,8 +146,9 @@ In an aggregate, a command's options go under `commands`, keyed by the action's 
 
 ### Add a command of your own
 
-For a syntax the options cannot express, such as a flag named apart from its field, or a command
-calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and
+Work every surface should offer, a bulk import for one, is an action first: a command of your
+own then only reads the file and calls it. For a syntax the options cannot express, such as a
+flag named apart from its field, build the command with native `Command.make`, `Flag` and `Argument`, and
 pass it in `subcommands`: `notes export <file>` takes `Argument.String("file")`
 ([notes-service/src/commands.ts](../examples/notes-service/src/commands.ts)):
 

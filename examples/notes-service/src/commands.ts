@@ -28,7 +28,9 @@ const exportNotes = Command.make(
       yield* Console.log(`Wrote ${whole.length} notes to ${file}`);
     }).pipe(
       // Context of your own for a failure goes to stderr before it, on a line of its own. A
-      // `UserError` wrapped around the failure instead would put its JSON mid-sentence.
+      // `UserError` wrapped around the failure instead would put its JSON mid-sentence. The
+      // line prints for every failure of the command, a file that cannot be written included,
+      // so it says only what is true of them all.
       Effect.tapError(() => Console.error(`The export to ${file} did not finish.`)),
       // Once, around the whole command: it then fails as a derived command does, an action's
       // error printed as its JSON on stderr and any other, a file that cannot be written for
@@ -65,15 +67,18 @@ export const connection = Effect.gen(function* () {
   // command is provided is no action's error: left as it is, a missing token is reported as a
   // crash, the log line `ERROR (#n): ConfigError: SchemaError(Expected string at
   // ["NOTES_TOKEN"])`. Mapped to a `UserError`, it is printed as any failure of a command is:
-  // the message under an `ERROR` heading on stderr, and exit 1. Only this read is mapped, so
-  // the message is true of every failure it covers. A CLI whose public commands must answer
-  // signed out reads the token with `Config.option` instead and adds the header when it is there.
+  // the message under an `ERROR` heading on stderr, and exit 1. `userMessage` is all that is
+  // printed, never `cause`: what the user needs from the cause goes into the message. Only this
+  // read is mapped, so the message is true of every failure it covers. A CLI whose public
+  // commands must answer signed out reads the token with `Config.option` instead and adds the
+  // header when it is there.
   const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
     Effect.mapError(
       (cause) =>
         new CliError.UserError({
           cause,
-          userMessage: "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=ada",
+          userMessage:
+            "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
         }),
     ),
   );
