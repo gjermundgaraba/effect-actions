@@ -95,8 +95,9 @@ const socket = rpc.pipe(
   provider and its verifier: [ActionRpc-failures.md](ActionRpc-failures.md).
 - **The same actions as JSON too.** Merge `ActionHttp.layer(Http, implementations)` beside the
   rpc layer, each given its descriptor's provider
-  ([kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts)): one provider given to
-  both is built once. The routes need what
+  ([kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) defines both, and
+  [server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts) merges them): one provider given to both
+  is built once. The routes need what
   the rpcs did not: an `httpApiStatus` on each declared error, which answers 422 without one
   ([live-rpc/src/chat/Chat.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/Chat.ts)); a request body limit;
   and router middleware for a service an `RpcMiddleware` provides

@@ -29,11 +29,9 @@ const socket = protocol.pipe(Layer.provide(Testing.layer(server)));
 // `provideMerge`: the test reads the registry the rpcs' verifier reads.
 const served = socket.pipe(Layer.provideMerge(memory));
 
-// The rpcs beside the public port's routes under one `Testing.layer`, as one server serves
-// them. `server` goes first: `publicRoutes` holds the same `rpc` layer under its WebSocket, and
-// a layer is built once, for the protocol that asks first. Built for the WebSocket, it would
-// leave every rpc of this test unanswered. `provideMerge`: the test calls the JSON routes with
-// the `HttpClient` the rpc client's protocol is given.
+// The rpcs beside the public port's routes under one `Testing.layer`, as server.ts serves them
+// under one router, there over a WebSocket. `provideMerge`: the test calls the JSON routes
+// with the `HttpClient` the rpc client's protocol is given.
 const servedWithHttp = protocol.pipe(
   Layer.provideMerge(Testing.layer(Layer.merge(server, publicRoutes))),
   Layer.provide(memory),
