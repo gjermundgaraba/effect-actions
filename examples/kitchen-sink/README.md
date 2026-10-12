@@ -105,7 +105,7 @@ src/
 ├── request-policy.ts      the Host and Origin policy, and CORS
 ├── routes.ts              every surface of both ports, and the builders they share
 ├── memory.ts              DEMO ONLY: the services in memory
-├── server.ts              entrypoint: both ports
+├── server.ts              entrypoint: both ports, the rpcs over a WebSocket
 ├── stdio.ts               entrypoint: MCP for a local agent
 ├── cli.ts                 entrypoint: the members' commands, calling the server
 ├── ops.ts                 entrypoint: the operators' console, in process
@@ -129,7 +129,8 @@ test/
   contract and imports no server code; the lowercase files run on the server.
 - **Top-level files are the host's.** `Actions.ts`, `Api.ts` and `Rpc.ts` say what is served
   where, and stay browser-safe. `routes.ts` builds the surfaces. Each entrypoint chooses the
-  services, here from `memory.ts`, and a local one lists the implementations it serves itself.
+  services, here from `memory.ts`. `server.ts` also chooses the rpcs' protocol, and a local
+  one lists the implementations it serves itself.
 - **Three callers' credentials, three descriptors.** API clients, the CLI and MCP clients send
   a bearer token (`Login`). The web app sends its session cookie (`Session`) for the same
   identity, on its own binding. Operators send a key (`OperatorKey`) for another identity, on
@@ -241,7 +242,7 @@ search for in the file.
 | --------------------------------- | ------------------------------------------------------------- |
 | `make`: `authentication`, `error` | `src/Rpc.ts`                                                  |
 | `layer`: `middleware`             | `src/routes.ts` (`rpc`), `src/identity/quota.ts` (`RpcQuota`) |
-| A WebSocket protocol              | `src/routes.ts` (`socket`)                                    |
+| A WebSocket protocol              | `src/server.ts` (`socket`)                                    |
 | `client`, over a WebSocket        | `src/browser.ts`                                              |
 | A credential per message          | `test/identity/session.test.ts` (`as`)                        |
 
