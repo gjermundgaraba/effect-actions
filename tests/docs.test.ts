@@ -138,14 +138,12 @@ it("names, in the JSDoc that ships, only pages and example paths the package hol
     .map((name) => `src/${name}`);
 
   const named = sources.flatMap((source) =>
-    Array.from(read(source).matchAll(/\x60((?:docs|examples)\/[\w./-]+)\x60/g), ([, path]) => ({
-      source,
-      path,
-    })),
+    Array.from(
+      read(source).matchAll(/\x60((?:docs|examples)\/[\w./-]+)\x60/g),
+      ([, path = ""]) => ({ source, path }),
+    ),
   );
 
   expect(named.length).toBeGreaterThan(0);
-  expect(named.filter(({ path }) => path !== undefined && !existsSync(join(root, path)))).toEqual(
-    [],
-  );
+  expect(named.filter(({ path }) => !existsSync(join(root, path)))).toEqual([]);
 });

@@ -68,10 +68,9 @@ export const connection = Effect.gen(function* () {
   // crash, the log line `ERROR (#n): ConfigError: SchemaError(Expected string at
   // ["NOTES_TOKEN"])`. Mapped to a `UserError`, it is printed as any failure of a command is:
   // the message under an `ERROR` heading on stderr, and exit 1. `userMessage` is all that is
-  // printed, never `cause`: what the user needs from the cause goes into the message. Only this
-  // read is mapped, so the message is true of every failure it covers. A CLI whose public
-  // commands must answer signed out reads the token with `Config.option` instead and adds the
-  // header when it is there.
+  // printed, never `cause`: what the user needs from the cause goes into the message. A CLI
+  // whose public commands must answer signed out reads the token with `Config.option` instead
+  // and adds the header when it is there.
   const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
     Effect.mapError(
       (cause) =>

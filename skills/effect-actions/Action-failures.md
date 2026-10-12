@@ -5,7 +5,7 @@ The tasks are in [Action.md](Action.md).
 
 ## At `make`
 
-- `Argument of type 'Struct<…>' is not assignable to parameter of type 'Fields'` at `Schema.Struct(X.input)`, or `Invalid value used as weak map key` thrown: an action's `input` is a schema already, a `Schema.Struct` where fields were given. Use it as it is: `Schema.Array(X.input)`.
+- `Argument of type 'Struct<…>' is not assignable to parameter of type 'Fields'` at `Schema.Struct(X.input)`, or `Objects property names must be strings` or `Invalid value used as weak map key` thrown: an action's `input` is a schema already, a `Schema.Struct` where fields were given. Use it as it is: `Schema.Array(X.input)`.
 - `Invalid action name: <name>` thrown: an action's name matches `[A-Za-z0-9_-]{1,128}` and is not `then`. Rename the action.
 - `'readOnlyHint' does not exist in type 'Mcp'`, or `Type 'true' is not assignable to type 'never'` on `readOnlyHint` beside another hint: a tool's read-only hint is its action's `readOnly`. Set `readOnly` instead.
 - `'<key>' does not exist in type 'Options'`, or `in type 'Mcp'`, or `Type '...' is not assignable to type 'never'` on the key: `make` takes no such option or hint. The key may be misspelled, such as `destructive` for `destructiveHint`.
