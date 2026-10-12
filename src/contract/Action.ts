@@ -103,7 +103,10 @@ export interface Options {
    */
   readonly caller: typeof Anyone | Context.Key<unknown, unknown>;
   readonly description: string;
-  /** A schema or struct fields. Omit, or give `{}`, for an action without arguments. */
+  /**
+   * A schema or struct fields. Omit, or give `{}`, for an action without arguments. A field's
+   * `description` annotation is what a model reads in a tool's listing and a flag's help in a CLI.
+   */
   readonly input?: Codec | Fields | undefined;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields | undefined;

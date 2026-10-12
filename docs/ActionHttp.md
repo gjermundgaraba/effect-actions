@@ -109,7 +109,7 @@ Files: [quickstart/src/routes.ts](../examples/quickstart/src/routes.ts) and
 
 Set a request body limit: a body has none unless the host provides one to `HttpRouter.serve`, as
 below. It covers every route of the server, MCP endpoints included, except a body a route reads
-as a stream. On Node (`NodeHttpServer`), a request over it gets no response: its connection is
+as a stream. On Node (`NodeHttpServer`), a request over it gets no response, not a 413: its connection is
 closed. `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
 
 ```ts
@@ -177,7 +177,7 @@ headers, errors by tag).
 
 - Outside a browser, set `baseUrl`. A token or any other header goes through `transformClient`.
   Where no client is built by hand, as under `ActionCli.remote`, transform the `HttpClient`
-  itself ([notes-service/src/cli.ts](../examples/notes-service/src/cli.ts)).
+  itself (`connection` in [notes-service/src/commands.ts](../examples/notes-service/src/commands.ts)).
 - Leave the argument out when `{}` is a valid input. A given argument is the decoded input, so
   it states a defaulted field.
 - A declared error is a typed failure, as its decoded value: the action's own, the binding's,

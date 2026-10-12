@@ -151,10 +151,37 @@ describe("the tools, over MCP", () => {
 
       expect(listed.headers["access-control-allow-origin"]).toBe("https://console.example.test");
       expect(listed.headers["access-control-expose-headers"]).toContain("Mcp-Session-Id");
+
+      // Two origins are configured, so each request's own is compared with the list.
       expect((yield* preflight("https://elsewhere.example.test")).headers).not.toHaveProperty(
         "access-control-allow-origin",
       );
     }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("names its one configured origin to every preflight, and still refuses any other", () =>
+    Effect.gen(function* () {
+      // With exactly one origin, Effect's CORS compares nothing: the header is that origin
+      // whoever asks. A page elsewhere is still refused, twice: its browser reads an origin
+      // that is not its own, and the endpoint answers its request 403.
+      const asked = yield* preflight("https://elsewhere.example.test");
+
+      expect(asked.status).toBe(204);
+      expect(asked.headers["access-control-allow-origin"]).toBe("https://console.example.test");
+
+      const called = yield* HttpClient.execute(
+        Testing.mcpRequest(
+          "tools/list",
+          {},
+          { headers: { origin: "https://elsewhere.example.test" } },
+        ),
+      );
+
+      expect(called.status).toBe(403);
+      expect(called.headers["access-control-allow-origin"]).toBe("https://console.example.test");
+    }).pipe(
+      Effect.provide(servedWith({ ...farm, ALLOWED_ORIGINS: "https://console.example.test" })),
+    ),
   );
 
   it.effect("allows no origin where none is configured", () =>

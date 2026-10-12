@@ -5,7 +5,8 @@ what its handlers and its `authorize` do. `Testing.layer` answers the real route
 through Effect's own `HttpClient`: what a surface adds, such as authentication, statuses,
 challenges and tool results as sent. The examples put a domain's tests in `test/<domain>/` and
 tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which supplies the
-`Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`.
+`Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`
+(both imported from `effect/testing`).
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
 search [Testing-failures.md](Testing-failures.md). Reading order: [README.md](README.md).

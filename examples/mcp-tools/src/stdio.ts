@@ -7,9 +7,9 @@ import { fakeFarm } from "./printers/fake.js";
 import { PrintFarm } from "./printers/farm.js";
 import { printers } from "./printers/handlers.js";
 
-// Entrypoint: an MCP server a local agent starts as a subprocess, such as
-// `claude mcp add print-farm -- node --import tsx examples/mcp-tools/src/stdio.ts`, with
-// FARM_URL, FARM_USER and FARM_PASSWORD in its environment.
+// Entrypoint: an MCP server a local agent starts as a subprocess, with FARM_URL, FARM_USER and
+// FARM_PASSWORD in its environment. The README has the line that adds it to Claude Code and
+// its entry in Claude Desktop's configuration.
 // The same implementation and the same server information as the HTTP server, and no port:
 // the agent's host starts the process, writes requests to its stdin, and closes it to stop it.
 ActionMcp.runStdio(printers, serverInfo).pipe(

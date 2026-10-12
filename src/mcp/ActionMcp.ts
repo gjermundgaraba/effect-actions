@@ -90,7 +90,7 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
  * client negotiates: `Options`, and every native `McpServer.layerHttp` option, `allowedOrigins`
  * among them, except `protocols` and `allowSessionTermination`, which are fixed, with `path`
  * defaulting to `/mcp`. A client of a 2025 revision opens a session with `initialize`, which
- * lasts until that client ends it with a DELETE or the process stops.
+ * lasts until that client ends it with a DELETE, answered 204, or the process stops.
  */
 export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
   extends
@@ -479,7 +479,7 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28, 2025-11-25 or
  * 2025-06-18, as the client negotiates. A 2026-07-28 request stands alone; a client of a 2025
  * revision opens a session with `initialize`, which holds what it sent there and no identity,
- * and lasts until that client ends it with a DELETE or the process stops.
+ * and lasts until that client ends it with a DELETE, answered 204, or the process stops.
  *
  * Protected tools need the `authentication` descriptor their contracts name, and the
  * provider `Authentication.layer` builds from it. On an endpoint of protected tools only,
@@ -489,7 +489,8 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * tool's description is listed to anyone but run only for its caller.
  * A call refused with `Unauthenticated`, or with `Forbidden` naming scopes, is answered with
  * its HTTP status and challenge, 401 or 403, as MCP authorization requires; any other
- * failure is a tool result. In a tool call, what middleware provides per request wins over
+ * failure is a tool result. Claude Code connects with
+ * `claude mcp add --transport http <name> <url>`. In a tool call, what middleware provides per request wins over
  * what the endpoint was built with; native `features` read only what they were built with,
  * never a request's. Never provide an identity at startup: a tool call takes its identity
  * only from the request it authenticated.

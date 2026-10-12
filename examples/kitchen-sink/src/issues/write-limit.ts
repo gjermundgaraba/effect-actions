@@ -8,7 +8,9 @@ import { RateLimited } from "./Issues.js";
 // the one limiter. A builder yields this once and wraps each limited handler in the function
 // it gets, which fails with an error those actions' contracts declare; every surface sends it
 // as any declared error. The limiter is a service, so its counts are shared wherever it is
-// provided: memory.ts provides Effect's own, `RateLimiter.layer` over a store.
+// provided: memory.ts provides Effect's own, `RateLimiter.layer` over a store. `consume` counts
+// in a fixed window unless given `algorithm: "token-bucket"`: ten writes in each minute, so
+// twenty may pass across the boundary between two.
 export const writeLimit = Effect.gen(function* () {
   const limiter = yield* RateLimiter.RateLimiter;
 

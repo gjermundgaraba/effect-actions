@@ -1,11 +1,11 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Schema, Stdio, Stream } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Schema, Stdio, Stream } from "effect";
 import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestConsole } from "effect/testing";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { commands } from "../src/commands.js";
+import { commands, connection } from "../src/commands.js";
 import { Note, NoteNotFound } from "../src/notes/Notes.js";
 import { NoteStore } from "../src/notes/store.js";
 import { routes } from "../src/routes.js";
@@ -32,6 +32,16 @@ const run = (token: string, args: ReadonlyArray<string>, stdin = "") =>
     return (yield* TestConsole.logLines).slice(before);
   });
 
+// The commands as cli.ts connects them, with what it reads from the environment given as a
+// Layer, so the test decides whether a token is configured, whatever the shell holds.
+const connected = (environment: Record<string, string>, args: ReadonlyArray<string>) =>
+  Command.runWith(commands.pipe(Command.provideEffect(HttpClient.HttpClient, connection)), {
+    version: "0",
+  })(args).pipe(
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
+    Effect.provide(NodeServices.layer),
+  );
+
 describe("the commands", () => {
   it.effect("take an argument, a flag and stdin, and print what `render` returns", () =>
     Effect.gen(function* () {
@@ -44,6 +54,15 @@ describe("the commands", () => {
       yield* run("ada", ["update-note", id, "--revision", "1"], "Second draft\n");
 
       expect(yield* run("ada", ["get-note", id])).toEqual(["# Plan\n\nSecond draft"]);
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("describe a flag in `--help` as the contract describes its field", () =>
+    Effect.gen(function* () {
+      // Help is one printed text. The description is the `revision` field's, from Notes.ts.
+      expect(yield* run("ada", ["update-note", "--help"])).toEqual([
+        expect.stringContaining("The revision you read: 1 for a new note"),
+      ]);
     }).pipe(Effect.provide(served)),
   );
 
@@ -82,6 +101,32 @@ describe("the commands", () => {
       const missing = yield* Effect.flip(run("ada", ["get-note", "9"]));
 
       expect(missing).toHaveProperty("cause", new NoteNotFound({ id: "9" }));
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("call as the configured token names, and ask for one where none is configured", () =>
+    Effect.gen(function* () {
+      yield* connected({ NOTES_TOKEN: "reader" }, ["who-am-i"]);
+
+      expect(yield* TestConsole.logLines).toEqual([expect.stringContaining('"id": "reader"')]);
+
+      const refused = yield* Effect.flip(connected({}, ["list-notes"]));
+
+      expect(refused).toBeInstanceOf(CliError.UserError);
+      expect(refused).toHaveProperty(
+        "userMessage",
+        "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=ada",
+      );
+
+      // What a person sees: that message, once, on stderr, and no report of a `ConfigError`.
+      expect(yield* TestConsole.errorLines).toEqual([
+        expect.stringContaining("NOTES_TOKEN is not set."),
+      ]);
+
+      // The token is read when a command runs, so its help needs none.
+      yield* connected({}, ["list-notes", "--help"]);
+
+      expect(yield* TestConsole.logLines).toHaveLength(2);
     }).pipe(Effect.provide(served)),
   );
 });

@@ -190,7 +190,7 @@ Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an ac
 - **Name `scopes` in a `Forbidden` only where re-authorizing can grant them.** An OAuth
   challenge answers them, which a client follows only where the server publishes discovery
   ([Authentication.md](Authentication.md#publish-oauth-discovery)); with fixed tokens, such as
-  API keys, name none. Without scopes it is a 403 over HTTP and, over MCP, an `isError` tool
+  API keys, leave `scopes` out (it holds at least one: `scopes: []` is a type error). Without scopes it is a 403 over HTTP and, over MCP, an `isError` tool
   result in a 200 ([guarantees.md](guarantees.md#wire-behavior)).
 - **What a plain authorizer yields is a request-time requirement of every surface.** To read a
   store, make `authorize` an Effect that yields the store once and returns the function, as a

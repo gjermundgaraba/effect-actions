@@ -30,6 +30,58 @@ The farm is a fake, answered in memory, so any URL, user and password work: repl
 real HTTP client before deploying anything. `ALLOWED_ORIGINS` lists the browser origins the HTTP
 endpoint accepts and answers with CORS headers, comma-separated; `HOST` is the interface it listens on.
 
+## Connect a client
+
+Claude Code, to the running HTTP server or starting the subprocess itself; add one of the two:
+
+```sh
+claude mcp add --transport http print-farm http://127.0.0.1:3000/mcp
+
+claude mcp add print-farm \
+  -e FARM_URL=https://farm.example.test -e FARM_USER=demo -e FARM_PASSWORD=demo \
+  -- "$PWD/node_modules/.bin/tsx" "$PWD/examples/mcp-tools/src/stdio.ts"
+```
+
+`node --import tsx` finds `tsx` from the directory the process starts in, which the host
+chooses. So the line names both files by their full path, which `$PWD` gives it when run from
+the repository root; `tsx` runs the `node` on the host's `PATH`. Claude Desktop takes the same
+command as an entry of `mcpServers` in its `claude_desktop_config.json`, the paths written out:
+
+```json
+{
+  "mcpServers": {
+    "print-farm": {
+      "command": "/path/to/effect-actions/node_modules/.bin/tsx",
+      "args": ["/path/to/effect-actions/examples/mcp-tools/src/stdio.ts"],
+      "env": {
+        "FARM_URL": "https://farm.example.test",
+        "FARM_USER": "demo",
+        "FARM_PASSWORD": "demo"
+      }
+    }
+  }
+}
+```
+
+By hand, a tool is called with one request, which states its protocol revision, its method
+and its tool's name twice: in the body and in the three `MCP-` headers.
+
+```sh
+curl http://127.0.0.1:3000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'MCP-Method: tools/call' \
+  -H 'MCP-Name: list_printers' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_printers","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},"io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
+
+It answers `{"jsonrpc":"2.0","id":1,"result":{…,"structuredContent":{"printers":[…]},"isError":false}}`.
+Every header is needed: without `Accept` naming both types the answer is an empty 406, without
+`Content-Type` a 415, and without an `MCP-` header, or with one that differs from the body, a
+400 saying which. `tools/list` takes the same request with that method, no `MCP-Name` header,
+and no `name` or `arguments`.
+
 ## Layout
 
 ```text
@@ -75,9 +127,10 @@ test/
 | An upstream's failures mapped to the declared error             | `src/printers/farm.ts`           |
 | A builder yielding a service, and handlers that only delegate   | `src/printers/handlers.ts`       |
 | Server `instructions`, shared by both transports                | `src/instructions.ts`            |
-| Allowed origins from `Config`, and `/healthz`                   | `src/routes.ts`                  |
+| Allowed origins from `Config`, their CORS, and `/healthz`       | `src/routes.ts`                  |
 | A request body limit, and where an unauthenticated server binds | `src/server.ts`                  |
 | A stdio server whose logs go to stderr                          | `src/stdio.ts`                   |
 | A fake upstream provided as a Layer, to a test or an entrypoint | `src/printers/fake.ts`           |
 | Testing tools and each upstream failure's message in process    | `test/printers/printers.test.ts` |
 | Testing listed hints, an image and the origin check in memory   | `test/routes.test.ts`            |
+| Testing CORS for one configured origin and for several          | `test/routes.test.ts`            |
