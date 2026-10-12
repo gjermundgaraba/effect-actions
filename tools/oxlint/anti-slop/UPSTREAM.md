@@ -19,7 +19,29 @@ corrections below are covered by `tools/oxlint/tests/rules.test.ts` (rule level,
 registered configuration). A bump of `Source commit` must preserve the corrections below
 and re-run both.
 
-Policy: [`CONTRIBUTING.md`](../../../CONTRIBUTING.md#lint-policy).
+Policy: [`AGENTS.md`](../../../AGENTS.md#lint).
+
+## Rules that are off, and why
+
+`vite.config.ts` holds each rule's severity. These are off on purpose: do not turn one on
+without answering its reason.
+
+- `anti-slop/require-safety-comment-for-type-assertion`: an assertion the type-aware
+  `typescript/no-unsafe-type-assertion` reports already carries a directive whose reason states the
+  invariant, and one it does not report the compiler accepts; a `SAFETY:` comment justified the
+  same assertion twice.
+- `anti-slop/no-array-filter-map`: both forms are linear; rewrites change callback order and
+  sparse-array semantics without establishing a performance gain.
+- `anti-slop/no-conditional-empty-object-spread`: conditional spread preserves omission semantics
+  without mutable builders.
+- `anti-slop/no-shape-in-symbol-names`: a substring cannot establish domain ownership; naming is
+  reviewed by people.
+- `anti-slop/no-widen-then-assert`: the widening is `no-known-value-widening`'s and the narrowing
+  assertion `typescript/no-unsafe-type-assertion`'s, which reads types; read from syntax, it took
+  a destructured field's evidence from the whole initializer, which its sibling rule corrects.
+- `anti-slop-effect/no-service-constructor-imports`: a `make[A-Z]` name cannot establish that an
+  import is a dependency-bearing service constructor, and a namespace import bypasses it, which
+  rewards the import change the policy calls laundering.
 
 ## Local rule corrections
 

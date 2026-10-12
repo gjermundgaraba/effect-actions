@@ -100,7 +100,8 @@ const greeting = Effect.gen(function* () {
 pnpm add @gjermundgaraba/effect-actions effect@~4.0.2
 ```
 
-Add `@effect/platform-node@~4.0.2` to serve or run a CLI from Node. Every module is a
+It needs TypeScript 7 or newer and is ESM only
+([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.2` to serve or run a CLI from Node. Every module is a
 subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
 contracts-only bundle never loads a server.
 
@@ -124,7 +125,8 @@ type-checked and tested with the library and ship in the package.
 ## Docs
 
 [docs/](docs/README.md) is written for coding agents: one short page per module, organized by
-task, each linking to the example files that show the task working.
+task, each linking to the example files that show the task working. An agent reads one page
+per tool call: pages read together are cut, and the rule on each page arrives too late.
 
 - [docs/README.md](docs/README.md): start here: which page answers which task, and which
   surface to use for which caller.
@@ -173,4 +175,5 @@ A few ideas (like the native Toolkit and CLI projections) are inspired by the ex
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
+The rules for changing the library are in
+[AGENTS.md](https://github.com/gjermundgaraba/effect-actions/blob/main/AGENTS.md). MIT licensed.
