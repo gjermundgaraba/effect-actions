@@ -972,25 +972,27 @@ describe("a scheme other than Bearer", () => {
   it.each([
     [
       "an MCP endpoint",
-      (declared: typeof MismatchedCookie) =>
-        ActionMcp.layerHttp(identify, { name: "test", version: "0", authentication: declared }),
+      ActionMcp.layerHttp(identify, {
+        name: "test",
+        version: "0",
+        authentication: MismatchedCookie,
+      }),
       () => rawToolCall("identify"),
     ],
     [
       "a route of the host's own",
-      (declared: typeof MismatchedCookie) =>
-        HttpRouter.add(
-          "GET",
-          "/own",
-          Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
-        ).pipe(Layer.provide(Authentication.protect(declared).layer)),
+      HttpRouter.add(
+        "GET",
+        "/own",
+        Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
+      ).pipe(Layer.provide(Authentication.protect(MismatchedCookie).layer)),
       () => new Request("http://localhost/own"),
     ],
   ] as const)(
     "refuses, when its layer builds, %s whose descriptor is not its provider's",
     async (_surface, served, request) => {
       const web = serve(
-        served(MismatchedCookie).pipe(
+        served.pipe(
           Layer.provide(
             Authentication.layer(
               Authentication.make("test.MismatchedCookie", Identity, {

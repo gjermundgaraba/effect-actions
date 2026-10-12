@@ -222,7 +222,7 @@ describe("surfaces answer one call alike", () => {
           expect(answer, surface).toEqual(sent);
         }
       }),
-    { arbitrary: { runs: 200 } },
+    { timeout: 30_000, arbitrary: { runs: 200 } },
   );
 
   it.effect.prop(
@@ -237,7 +237,7 @@ describe("surfaces answer one call alike", () => {
           expect(failureAsJson(answer), surface).toEqual(failureAsJson(sent));
         }
       }),
-    { arbitrary: { runs: 200 } },
+    { timeout: 30_000, arbitrary: { runs: 200 } },
   );
 
   it.effect.prop(

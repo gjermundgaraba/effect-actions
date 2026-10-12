@@ -17,7 +17,7 @@ Read this page alone, in one tool call: pages read together are cut. Tasks are r
 - **Identity**: the service a protected action names as its caller. A **trusted identity** is one only a host supplies, on a local surface, which no token names.
 - **Handler**: a function from an action's decoded input to an Effect of its decoded success. The services it yields per call, and an authorizer's, are **request-time requirements**.
 - **Implementation**: what `Action.implement` returns: actions bound to their handlers and, where any is protected, their authorizer. Every surface that runs handlers takes one, or a list.
-- **Builder**: an Effect given to `Action.implement` in place of handlers, which returns them. The services it yields are **build-time requirements**, or **startup services** ([Action.md](Action.md#implement-actions)).
+- **Builder**: an Effect given to `Action.implement` in place of handlers, which returns them, once per layer graph. The services it yields are **build-time requirements**, or **startup services** ([Action.md](Action.md#implement-actions)).
 - **Layer graph**: the layers Effect builds together, each built once ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers)).
 - **Host**: the application that serves the surfaces: it builds their layers, provides their services and runs the server, subprocess or CLI.
 - **Surface**: where callers reach actions. A **remote surface** authenticates its callers (`ActionHttp.layer`, `ActionMcp.layerHttp`, `ActionRpc.layer`). A **local surface** has no one to authenticate (`ActionToolkit`, a local `ActionCli` command, `ActionMcp.runStdio`, `Action.client`): the host provides the identity.

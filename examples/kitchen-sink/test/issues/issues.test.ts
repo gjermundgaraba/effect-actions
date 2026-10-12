@@ -75,7 +75,7 @@ describe("issues, in process", () => {
     }).pipe(Effect.provide(services)),
   );
 
-  it.effect("keeps both of two comments made at once, however they interleave", () =>
+  it.effect("keeps both of two comments made at once", () =>
     Effect.gen(function* () {
       const store = yield* IssueStore;
       const { workspace } = members.ada;

@@ -133,8 +133,9 @@ the result as `ActionHttp.client` decodes a route's, an image included. Pass the
 the endpoint serves, such as `implementation.actions`.
 
 A method fails with the action's declared errors and the built-in ones as decoded values, and with
-`McpCallError` for any other answer; a success that does not decode is a `SchemaError`, and a
-request that fails Effect's `HttpClientError`. Only a tool's result carries the action's own errors: an HTTP
+`McpCallError` for any other answer, a result without its structured content included;
+structured content that does not decode as the success is a `SchemaError`, and a request that
+fails Effect's `HttpClientError`. Only a tool's result carries the action's own errors: an HTTP
 answer other than 200 decodes as a refusal alone, so an error a verifier declares, typed over
 `ActionHttp.client`, is an `McpCallError` here
 ([kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)).

@@ -62,7 +62,7 @@ describe("notes, in process", () => {
     }).pipe(Effect.provide(NoteStore.layerMemory)),
   );
 
-  it.effect("lets one of two updates of the same revision through, however they interleave", () =>
+  it.effect("lets one of two concurrent updates of the same revision through", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(notes);
 
