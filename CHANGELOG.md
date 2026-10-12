@@ -50,7 +50,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   `satisfies`, the list adds its commands' failures and services to the aggregate's type, and
   in annotated options it adds none ([ActionCli.md](docs/ActionCli.md#add-a-command-of-your-own)).
 - `ActionCli.toUserError` makes a command of your own fail as a derived command does. Given the
-  HTTP binding or the actions the command calls and piped onto its whole Effect, a declared
+  binding, HTTP or RPC, or the actions the command calls and piped onto its whole Effect, a declared
   error, the binding's and its authentication's included, is printed as its JSON and a transport failure
   named with its causes, where a hand-written `CliError.UserError` printed prose and a call left
   unmapped crashed with a stack trace. An Effect CLI error passes through as it is

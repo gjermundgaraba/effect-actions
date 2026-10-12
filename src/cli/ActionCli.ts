@@ -40,20 +40,28 @@ export type { Options as CommandOptions } from "./commands.js";
 
 export type { UserError } from "./commands.js";
 
+// Why: The three fields `toUserError` reads, which the bindings of `ActionHttp.make` and
+// `ActionRpc.make` both have: a command of your own calls through either.
+interface AnyBinding {
+  readonly authentication?: { readonly error: Action.Errors } | undefined;
+  readonly actions: ReadonlyArray<Action.Any>;
+  readonly error: Action.Errors;
+}
+
 /**
  * Make a command of your own fail as a derived command does. Give it what the command calls, the
- * HTTP binding of `ActionHttp.client` or the actions of `Action.client`, and pipe the command's
+ * binding of `ActionHttp.client` or `ActionRpc.client`, or the actions of `Action.client`, and pipe the command's
  * whole Effect through it: a failure that is a declared error, the binding's and its
  * authentication's included, or a built-in one becomes a `UserError` whose message is its JSON, and any other, a transport
  * failure for one, a `UserError` naming it and the causes beneath it. An Effect CLI error, your
  * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is.
  */
-export const toUserError = (calls: AnyHttp | ReadonlyArray<Action.Any>) =>
+export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
   "actions" in calls
     ? failingAsDerived(calls.actions, (action) => endpointErrorsOf(calls, action))
     : failingAsDerived(calls, () => []);
 
-const endpointErrorsOf = (binding: AnyHttp, action: Action.Any) =>
+const endpointErrorsOf = (binding: AnyBinding, action: Action.Any) =>
   withVerifierErrors(action, binding.error, binding.authentication?.error);
 
 /**
