@@ -54,7 +54,10 @@ interface AnyBinding {
  * whole Effect through it: a failure that is a declared error, the binding's and its
  * authentication's included, or a built-in one becomes a `UserError` whose message is its JSON, and any other, a transport
  * failure for one, a `UserError` naming it and the causes beneath it. An Effect CLI error, your
- * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is.
+ * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is. To
+ * add context, such as how far a batch got, print it before this in the pipe, with
+ * `Effect.tapError(() => Console.error(…))`: a `UserError` wrapped around the result would
+ * replace its JSON.
  */
 export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
   "actions" in calls

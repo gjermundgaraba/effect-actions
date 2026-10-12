@@ -164,7 +164,9 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, the binding its
   client is made from, HTTP or RPC, or `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared
   error as its JSON on stderr, a transport failure named with its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
-  passes through. A failure left unmapped, one call's included, is reported as a crash,
+  passes through. To add context to a failure, such as how far a batch got, print it inside the
+  pipe, `Effect.tapError(() => Console.error(…))`: wrapping the `UserError` in another puts its
+  JSON mid-sentence and hides the action's failure from `catchReason`. A failure left unmapped, one call's included, is reported as a crash,
   `ERROR (#n)` with a stack trace.
 - **Write the list in the call**, or hold the options with `satisfies ActionCli.Options<…>`. The
   aggregate's type then carries its commands' failures and services. A list in options

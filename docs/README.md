@@ -7,6 +7,9 @@ same schemas, handler and authorization.
 
 ## How to read these pages
 
+**Arriving with an error?** Search the `*-failures.md` pages for a fragment of its message
+first (step 5), before the examples and the pages.
+
 1. **Open one page per tool call, with your file-reading tool.** A page fits one read. Several
    in one call, however many commands it runs, are cut by its output limit, and what is cut goes
    unnoticed.

@@ -61,7 +61,8 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   array of objects with its fields, `A JSON array of {id, approved?}.`
 - A flag's help shows the field's description wherever it is annotated. One annotated before a
   check, or on the field's key with `annotateKey`, where an MCP tool's listing reads it, was
-  missing from `--help`.
+  missing from `--help`. A repeated flag with no
+  description of its own shows its element's.
 - The compiler says what is missing where a protected action is implemented without
   `authorize`: the message ends `is not assignable to type '"A protected action takes
   { authorize }: your rule, or Action.allowAll"'`, where it ended `'typeof CurrentUser' is not
@@ -144,7 +145,8 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   `NOTES_TOKEN`, a missing one printed as a message, not a `ConfigError` log line: its public
   `get-status` and a bare `notes` need the token there too. `mcp-tools`' README says how to
   connect Claude Code and Claude Desktop and to call the endpoint with `curl`, and a test pins
-  what CORS answers for one configured origin. `live-rpc` has a test over a real WebSocket.
+  what CORS answers for one configured origin. `live-rpc` has a test over a real WebSocket. `notes-service`'s `export` prints context of its
+  own before a failure, on a line of stderr, leaving the failure's JSON as it is.
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a
