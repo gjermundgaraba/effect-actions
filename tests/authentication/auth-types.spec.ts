@@ -9,10 +9,10 @@ import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import type { SecurityMiddleware } from "../../src/authentication/provider.js";
-import { authenticate } from "../../examples/authentication.js";
-import { actors, CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
-import { Double, Status } from "../../examples/contracts.js";
+import { authenticate } from "../support/app/authentication.js";
+import { actors, CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
+import { Double, Status } from "../support/app/contracts.js";
 
 declare const erasedImplementation: Action.Implementation<Action.Any, never, never, never>;
 

@@ -2,12 +2,12 @@ import { Effect, Schema, type Scope } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
-import { actors, CurrentActor } from "../../examples/authorization.js";
-import { type Permissions, whoAmI as storedWhoAmI } from "../../examples/authorization-built.js";
-import { Http } from "../../examples/binding.js";
-import { GetUser, type User, type UserNotFound } from "../../examples/contracts.js";
-import { double, status, userActions } from "../../examples/handlers.js";
-import type { Users } from "../../examples/users.js";
+import { actors, CurrentActor } from "../support/app/authorization.js";
+import { type Permissions, whoAmI as storedWhoAmI } from "../support/app/authorization-built.js";
+import { Http } from "../support/app/binding.js";
+import { GetUser, type User, type UserNotFound } from "../support/app/contracts.js";
+import { double, status, userActions } from "../support/app/handlers.js";
+import type { Users } from "../support/app/users.js";
 
 const acquired = Action.client(userActions);
 

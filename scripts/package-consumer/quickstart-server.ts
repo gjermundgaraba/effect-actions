@@ -1,1 +1,1 @@
-export * from "../../examples/quickstart-server.js";
+export { routes } from "../../examples/quickstart/src/routes.js";

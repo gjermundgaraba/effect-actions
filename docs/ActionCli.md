@@ -1,22 +1,23 @@
 # ActionCli
 
-Native Effect CLI commands for actions, with flags derived from each action's input. `command`
-and `make` take implementations: a command runs the handler in process, with every service the
-host's; any implemented action runs locally, whether or not HTTP or MCP serves it.
-`remoteCommand` and `remote` take an HTTP binding: a command calls the action over HTTP through
-its `ActionHttp.client` method instead, and runs nothing locally.
+Native Effect CLI commands for actions, with flags derived from each action's input. `make` and
+`command` take implementations and run the handler in the command's own process, behind the same
+`authorize`, whether or not a server serves the action. `remote` and `remoteCommand` take an HTTP
+binding and call a server instead, running nothing locally. Use the first pair for a local tool
+or an operator console that has the services itself, the second for users of a service you
+already serve.
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/ActionCli`.
 
-| API                                          | Purpose                                                             |
-| -------------------------------------------- | ------------------------------------------------------------------- |
-| `command(implementations, action, options?)` | One action, selected by its contract, as a native Effect `Command`. |
-| `make(implementations, options)`             | Every implemented action as a subcommand of one aggregate command.  |
-| `remoteCommand(binding, action, options?)`   | One action of an HTTP binding, called over HTTP.                    |
-| `remote(binding, options)`                   | Every action of the binding as a subcommand, called over HTTP.      |
-| `logToStderr`                                | Applied last before `runMain`: stdout carries only results.         |
+| API                                          | Purpose                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| `make(implementations, options)`             | Every implemented action as a subcommand of one command, run in process. |
+| `command(implementations, action, options?)` | One action, selected by its contract, as a native Effect `Command`.      |
+| `remote(binding, options)`                   | Every action of an HTTP binding as a subcommand, called over HTTP.       |
+| `remoteCommand(binding, action, options?)`   | One action of an HTTP binding, called over HTTP.                         |
+| `logToStderr`                                | Applied last before `runMain`: stdout carries only results.              |
 
 | Option                                   | Meaning                                                                                                      |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -30,275 +31,311 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `make`, `remote`: `commands`             | Each subcommand's `command` options, keyed by action name: `{ readFile: { positional: ["path"], render } }`. |
 | `remoteCommand`, `remote`: `client`      | The `ActionHttp.client` options, `baseUrl` and `transformClient`, for this command's or aggregate's client.  |
 
-Exported types: `Options<A>` of `make` and `RemoteOptions<A>` of `remote`, `A` the union of its actions, such as `typeof GetUser | typeof RenameUser`; `CommandOptions<typeof Action>` of `command` and `RemoteCommandOptions<typeof Action>` of `remoteCommand`, the remote ones adding `client`, an `ActionHttp.ClientOptions`; and `UserError<E>`, a type only: what a command fails with when its action fails, Effect CLI's `CliError.UserError` whose `cause`, and `reason`, is the failure `E`.
+Exported types: `Options<A>` of `make`, `RemoteOptions<A>` of `remote`, `CommandOptions<A>` of
+`command`, `RemoteCommandOptions<A>` of `remoteCommand`, and `UserError<E>`, a type only: what a
+command fails with when its action fails with `E`.
 
-Flags come from the action's input. A struct or class input gets one flag per top-level
-field, named in kebab case (`tenantId` is `--tenant-id`, `getHTTPUser` is `get-http-user`, `_id` is `--id`; a name of dashes and underscores alone stays as it is), parsing the field's encoded JSON
-value:
+## Run actions as local commands
 
-| Encoded field                            | Flag                                                                  |
-| ---------------------------------------- | --------------------------------------------------------------------- |
-| string or template literal               | `--name <string>`; the action's schema checks a template              |
-| boolean                                  | `--on`, a switch; omitted is `false` for a required field             |
-| union of string literals, or string enum | `--kind <choice>`, one of the values                                  |
-| array of strings or numbers, or choices  | `--tag <value>`, repeated: one element per occurrence; `[]` adds none |
-| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or the text                |
+Pass implementations to `make`, provide the services and the caller on the command, and run it
+with Effect's own `Command.run`:
 
-A suspended input or field, as a recursive schema is written, counts as the schema it stands
-for, its description included.
-
-An input that is not a struct of named fields (a union, a record, a scalar) gets one
-`--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`, which the
-action's schema decodes when the command runs. A schema accepting `{}`, including a union
-with such a member, succeeds; otherwise the command fails with `InvalidInput`. An action without input gets no flags.
-A repeated flag reads each occurrence as one element, as the flag of that element would:
-`--provider exa --provider hn` for `Schema.Array(Schema.Literals(["exa", "hn"]))`. Given none, a
-required field is `[]` and an optional one is left out; a `Schema.NonEmptyArray` field's flag is
-required once. An occurrence of `[]` adds no element, and is one of a choice's values, so
-`--tags '[]'` alone sends `[]`, clearing an optional field the flag would otherwise leave out; an
-element whose text is `[]` cannot be sent. Any other array, such as one of objects, takes JSON,
-`--points '[{"x":1}]'`.
-A value flag parses its text as JSON when the field's encoding accepts that kind of value
-(`--count 2`, `--owner '{"id":"x"}'`), or else keeps the text (`--limit auto`, `--scale Infinity`
-for `Schema.Number`, `--mode true` for `"auto" | string`); the action's schema decodes either.
-Only the kind decides: JSON breaking a rule, such as `--width 0` where it must be positive, stays
-JSON, and the schema reports the rule and its path.
-Choices may be nested unions: `Schema.Union([Schema.Literals(["a", "b"]), Schema.Literal("c")])`
-is one choice of three.
-A field's description is its flag's help text, whatever its encoding, except in a struct that
-`Schema.encodeKeys` renames: its flags go by the encoded names and are described by the encoded
-fields, so a transformed field there has no help text, as JSON Schema drops it. An optional field's
-flag is optional and takes its value without the `null` that `Schema.optional` encodes
-(`--name x` for `Schema.optional(Schema.String)`); a required `Schema.NullOr` field takes a value (`--name x`, `--name null`).
-An optional field whose own schema encodes `null` takes it too: `--note null` is `Option.none()`
-for `Schema.optionalKey(Schema.OptionFromNullOr(Schema.String))`, renamed or not.
-
-A field listed in `positional` is an argument instead of a flag, parsed as its flag would
-be, a boolean taking `true` or `false`: `command(implementations, Inspect, { positional: ["path"] })`
-reads `inspect README.md --lines 10`. Arguments are read in the listed order, not the
-input's. An optional field's argument is optional. An array whose flag repeats is a repeated
-argument, one element per value, as its flag takes them, `[]` included: `remove a.txt b.txt` for
-`{ positional: ["paths"] }`. It takes every value left, so it is listed last. A JSON or text
-argument is shown in help as `value`, as its flag is.
-`stdin` reads one field from standard input instead of a flag, such as a secret. The field is
-required, of any kind; it has no flag, and help says it is read from stdin, with the field's
-description. Its text is all of
-stdin, read until stdin closes, without the line endings that end it, `\n` or `\r\n`, as a
-shell's command substitution drops them. A string's, a template literal's or a choice's text is
-its value as it is, JSON or not. Any other field's is JSON the field accepts, or else the text, as
-a value flag reads it: `["a","b"]` for an array and `true` for a boolean, though their flags
-repeat and switch rather than take JSON. The action's schema decodes it, so an empty value is the
-schema's to refuse.
-
-## Canonical
-
-```ts example=cli.ts
-import { Effect } from "effect";
-import { Command } from "effect/cli";
-import { NodeRuntime, NodeServices } from "@effect/platform-node";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import { actors, CurrentActor } from "./authorization.js";
-import { userActions } from "./handlers.js";
-import { Users } from "./users.js";
-
-// `users get-user --id 1`: a subcommand per action, a flag per input field. The
-// implementation's `authorize` runs here as on the servers; a local caller is not trusted more.
-const cli = ActionCli.make(userActions, { name: "users" }).pipe(
-  // Services go on the command: built when an action runs, never for `--help` or a
-  // mistyped flag.
-  Command.provide(Users.layerMemory),
-  // No remote caller to authenticate: the host supplies the identity the contracts declare.
-  Command.provideSync(CurrentActor, actors.alice),
+```ts
+const assistant = ActionCli.make([tasks, identity], { name: "assistant" }).pipe(
+  Command.provide(Layer.mergeAll(TaskStore.layerFile, Permissions.layerMemory)),
+  Command.provideSync(CurrentCaller, operator),
 );
 
-// Effect's own runner: the result goes to stdout, and a failure to stderr as the JSON HTTP
-// sends, such as `{"_tag":"UserNotFound","id":"9"}`, exiting 1. `logToStderr`, applied last,
-// sends every other report and log there too, so scripts read stdout alone.
-Command.run(cli, { version: "0.1.0" }).pipe(
+Command.run(assistant, { version: "1.0.0" }).pipe(
   Effect.provide(NodeServices.layer),
   ActionCli.logToStderr,
   NodeRuntime.runMain,
 );
 ```
 
-### Over HTTP
+The whole program is [assistant/src/commands.ts](../examples/assistant/src/commands.ts) and
+[assistant/src/cli.ts](../examples/assistant/src/cli.ts); an operator console is
+[kitchen-sink/src/ops.ts](../examples/kitchen-sink/src/ops.ts).
 
-```ts example=cli-remote.ts
-import { Command } from "effect/cli";
-import { Effect } from "effect";
-import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import { Http } from "./binding.js";
-import { Status } from "./contracts.js";
+- **Provide services on the command, not around the run.** `Command.provide(layer)` builds the
+  layer when an action runs. Provided around `Command.run`, it is built before parsing, so
+  `--help` and a mistyped flag open the database. The aggregate run with no subcommand is the
+  exception: it builds what it is provided before showing its help.
+- **Each run builds its implementation.** A command runs the builder of its action's
+  implementation, and an authorizer an Effect builds, then releases them after the call, even
+  where the host already built them. Implementations passed alongside are not built.
+- **For one action, or a tree of your own**, use `command(implementations, action, options?)`
+  and compose with native combinators:
+  `Command.make("acme").pipe(Command.withSubcommands([...]))`.
+- **Test commands without a process** with `Command.runWith`, `TestConsole` and
+  `Stdio.layerTest`. Provide the services around the test so its commands share one store:
+  [assistant/test/commands.test.ts](../examples/assistant/test/commands.test.ts).
 
-// From a binding rather than implementations, the command calls the server instead. Its
-// client options are the connection, as `ActionHttp.client` takes them: where it sends, and
-// any credentials, which reach no other request the program makes.
-const command = ActionCli.remoteCommand(Http, Status, {
-  client: { baseUrl: "http://127.0.0.1:3000" },
-});
+## Call a server from commands
 
-Command.run(command, { version: "0.1.0" }).pipe(
-  Effect.provide(NodeHttpClient.layerUndici),
-  Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain,
-);
-```
-
-A static token goes in the same options, `transformClient:
-HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. A URL or credentials read when a
-command runs, as from `Config`, configure the client the command is provided instead. An
-aggregate nests in the host's own tree like any native command, and what it is provided
-reaches its own commands alone:
+Pass the HTTP binding to `remote`. The program imports the binding alone, never a handler; each
+command calls its action through the binding's `ActionHttp.client` method
+([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)) and fails as that method does. The host
+provides `HttpClient` (`NodeHttpClient.layerUndici`) and says where the server is:
 
 ```ts
-const api = ActionCli.remote(Http, { name: "api" }).pipe(
+const notes = ActionCli.remote(Http, { name: "notes" }).pipe(
   Command.provideEffect(
     HttpClient.HttpClient,
     Effect.gen(function* () {
-      const url = yield* Config.String("ACME_URL");
-      const token = yield* Config.Redacted("ACME_TOKEN");
-
-      return HttpClient.mapRequest(
+      const url = yield* Config.String("NOTES_URL");
+      const token = yield* Config.option(Config.Redacted("NOTES_TOKEN"));
+      const client = HttpClient.mapRequest(
         yield* HttpClient.HttpClient,
-        flow(HttpClientRequest.prependUrl(url), HttpClientRequest.bearerToken(token)),
+        HttpClientRequest.prependUrl(url),
       );
+
+      return Option.match(token, {
+        onNone: () => client,
+        onSome: (value) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(value)),
+      });
     }),
   ),
 );
-
-// `acme api get-user --id 1` sends the token; the host's own `login` keeps its plain client.
-const cli = Command.make("acme").pipe(Command.withSubcommands([api, login]));
 ```
 
-### Trusted callers
+The whole program is [notes-service/src/cli.ts](../examples/notes-service/src/cli.ts);
+[kitchen-sink/src/cli.ts](../examples/kitchen-sink/src/cli.ts) adds a tenant header.
 
-```ts example=cli-admin.ts
-import { Context, Effect, Layer, Redacted } from "effect";
-import { Command } from "effect/cli";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+- **Choose where the connection comes from.** A fixed URL or token goes in the `client` option:
+  `client: { baseUrl, transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) }`.
+  One read from `Config` configures the `HttpClient` provided on the command, as above, so
+  `--help` needs neither.
+- **Configure the client on the command, never around the program.** Around the program it
+  rewrites every request the program makes, an absolute URL too, and sends each one the token.
+  On the command, or in `client`, it reaches these commands' requests alone.
+- **Read the token with `Config.option` when the binding has a public action.** A required
+  token makes the public command fail without one. A protected command without a token gets the
+  server's 401.
+- Input is decoded by the action's schema first: input that does not decode is `InvalidInput`,
+  and sends nothing.
+- **Test a remote command the same way** as a local one, with `Testing.layer(routes)` provided
+  as its `HttpClient` ([Testing.md](Testing.md#test-routes-in-memory)).
 
-/** What a verified token can name. */
-export interface RemoteOperator {
-  readonly id: string;
-  readonly role: "viewer" | "editor";
-}
+## Shape flags, input and output
 
-/** What only a host supplies: no verifier returns one. */
-export interface TrustedOperator {
-  readonly id: string;
-  readonly role: "trusted";
-}
+### Flags from the input
 
-export class Operator extends Context.Service<Operator, RemoteOperator | TrustedOperator>()(
-  "example/Operator",
-) {}
+A struct or class input gets one flag per top-level field, with the field's description as its
+help. The field's encoded JSON value decides the kind of flag:
 
-export const Purge = Action.make("purge", {
-  description: "Purge the cache.",
-  readOnly: false,
-  caller: Operator,
-});
+| Encoded field                            | Flag                                                        |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| string or template literal               | `--name <string>`                                           |
+| boolean                                  | `--on`, a switch; omitted is `false` for a required field   |
+| union of string literals, or string enum | `--kind <choice>`, one of the values                        |
+| array of strings, numbers or choices     | `--tag <value>`, repeated: one element per occurrence       |
+| anything else, numbers included          | `--owner <value>`: JSON the field accepts, or else the text |
 
-// One rule for every caller: a trusted operator passes, a remote one needs the editor role.
-export const cache = Action.implement(Purge, () => Effect.log("Purged."), {
-  authorize: (action) =>
-    Effect.gen(function* () {
-      const operator = yield* Operator;
+- A flag takes the encoded value, which the action's schema then decodes: `"21"` for
+  `Schema.FiniteFromString`.
+- A value flag reads its text as JSON when the field accepts that kind of JSON value
+  (`--count 2`, `--owner '{"id":"x"}'`, `--points '[{"x":1}]'`), and keeps it as text otherwise
+  (`--limit auto`).
+- A repeated flag given no occurrence leaves an optional field out. `--tags '[]'` alone sends an
+  empty list.
+- An input that is not a struct of named fields (a union, a record, a scalar) gets one
+  `--input <value>` flag carrying the whole encoded input. Left off, the input is `{}`.
 
-      if (operator.role === "trusted") return;
+### Arguments, short flags and stdin
 
-      if (!action.readOnly && operator.role !== "editor") {
-        return yield* new Action.Forbidden({ message: "Requires the editor role." });
-      }
-    }),
-});
+In an aggregate, a command's options go under `commands`, keyed by the action's name
+(`completeTask`), not the command's:
+[assistant/src/commands.ts](../examples/assistant/src/commands.ts).
 
-const OperatorLogin = Authentication.make("example.OperatorLogin", Operator);
+- `positional`: list every required field before any optional one, and an array field last,
+  since it takes every value left.
+- `stdin` suits a secret or a document. The value is all of stdin until it closes, without the
+  line endings that end it. A terminal is never read: pipe the value in.
+- The options combine on one command: `updateNote: { positional: ["id"], stdin: "body" }` reads
+  `notes update-note <id> --revision 1 < draft.md`
+  ([notes-service/src/cli.ts](../examples/notes-service/src/cli.ts)).
 
-export const Http = ActionHttp.make([Purge], { authentication: OperatorLogin });
+For a syntax the options cannot express, such as a flag named apart from its field, or a command
+calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and
+call the actions through `Action.client`, acquired in the handler inside `Effect.scoped`
+([Action.md](Action.md#call-actions-in-process)), or through `ActionHttp.client`. `authorize`
+still runs, but the output and failure rules below do not apply: map a failure to Effect CLI's
+`new CliError.UserError({ cause, userMessage })` for `Command.run` to print it on stderr.
 
-// DEMO ONLY: a token is a role. Typed as the remote subset, so no token, and no claim mapped
-// onto `role`, can name the trusted operator.
-const verify = (
-  token: Redacted.Redacted<string>,
-): Effect.Effect<RemoteOperator, Action.Unauthenticated> => {
-  const role = Redacted.value(token);
+### Output and exit code
 
-  return role === "viewer" || role === "editor"
-    ? Effect.succeed({ id: role, role })
-    : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
-};
+- **A command writes only its result to stdout**: the success as JSON, or the text `render`
+  returns. `render` receives the decoded success, an `Action.Image`'s `data` a `Uint8Array`, and
+  returns text, never bytes.
+- **Everything else a command runs writes to stderr**: the Effect logs and Effect `Console`
+  output of the builder, authorizer, handler, client and codecs. The global `console.log` and
+  other direct writes bypass Effect and still reach stdout.
+- **A failure of the action is printed once on stderr, under Effect CLI's `ERROR` heading, as
+  the JSON HTTP sends for it** ([guarantees.md](guarantees.md#wire-behavior)): the JSON is the
+  last line, such as `{"_tag":"TaskNotFound","id":"9"}`. The process exits 1, or with the
+  failure's `Runtime.errorExitCode`. A failure no schema
+  encodes, a builder's or the transport's, prints as its tag or name and its message, never its
+  other fields.
+- **Apply `logToStderr` last, before `runMain`, when scripts read stdout.** What happens outside
+  a command is `runMain`'s to report, on stdout: a defect, such as a handler's bug or a success
+  that does not encode, and a failure or a log of a layer the host provides. `logToStderr` moves
+  those reports and the default logger to stderr, and keeps the exit code. It does not move those
+  layers' `Console` output, or a logger writing through `Console.log` such as
+  `Logger.consoleJson`: log JSON with `Logger.withConsoleError(Logger.formatJson)`. An MCP
+  subprocess applies it the same way ([ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
 
-export const routes = ActionHttp.layer(Http, cache).pipe(
-  Layer.provide(Authentication.layer(OperatorLogin, verify)),
-);
+### Handle a failure after `Command.run`
 
-const operator: TrustedOperator = { id: "ops", role: "trusted" };
+A command fails with `UserError<E>`, Effect CLI's `UserError` whose `cause`, and `reason`, is the
+action's failure. Match it by its tag with Effect's own
+`Effect.catchReason("UserError", "TaskNotFound", (missing) => ...)`. `Command.run` has printed it by then, so a recovery decides what follows, such as the
+exit code, not the text. For text of your own, provide Effect's formatter,
+`CliOutput.layer(Object.assign({}, CliOutput.defaultFormatter(), { formatError }))`, or pass
+`renderErrors: false` to `Command.run` and print every failure yourself, the parser's too.
 
-// The host's own command, `ops purge`: the same implementation and rule, run as the trusted
-// operator the host supplies. Nothing remote can reach it.
-export const cli = ActionCli.make(cache, { name: "ops" }).pipe(
-  Command.provideSync(Operator, operator),
-);
-```
+## Name the caller
 
-## Rules
+A local command of a protected action requires the identity service its contract declares
+([Action.md](Action.md#say-who-may-call-an-action)), whether or not a handler reads it. No
+credential arrives at a terminal, so the host names the caller, on the command:
+`Command.provideSync(CurrentCaller, operator)`, or `Command.provideEffect(CurrentCaller, load)`
+to read it when an action runs. Request identity is supplied per call on every surface and is
+never a startup service: here the host supplies it per run. See
+[assistant/src/cli.ts](../examples/assistant/src/cli.ts).
 
-- `command(implementations, action)` selects the implementation of `action` among `implementations` (one implementation or a list) by contract identity, not by name ([guarantees.md](guarantees.md#names)).
-- `make(implementations, { name })` puts every implemented action under one command named `name`, or those `actions` lists, each keeping its implementation's authorizer, one subcommand per action, named after it in kebab case (`getUser` is `get-user`). `commands` gives one subcommand the options `command` takes, by its action's name, typed by that action ([guarantees.md](guarantees.md#names)).
-- A field that is required once encoded has a required flag. Omitted, the parser refuses the command with `Missing required flag: --<flag>` and shows its help, and the implementation is not built. A required boolean is the exception: omitted, its switch is `false`.
-- An optional field's flag is optional. Omitting it leaves the field out, including a field with a decoding default. The action's schema then decodes what the flags parsed, so transforms and cross-field rules still apply.
-- `positional` names fields of a struct or class input, each once, every required field before any optional one, and an array taken as a repeated argument last. `aliases` names only flagged fields of such an input, each alias once.
-- The flags follow the schema: renaming a field renames its flag. `name`, `positional`, `aliases`, `stdin` and `render` give a command its name, its arguments, its short flags, a field read from stdin and its output, and keep every rule of this page: prefer a derived command wherever they express the syntax. For a syntax they cannot, such as a flag named apart from its field, or a command calling several actions, build the command with native `Command.make`, `Flag` and `Argument`, and call the actions in it through `Action.client`, acquired in its handler, inside `Effect.scoped`, so each invocation builds and releases it ([Action.md](Action.md#clients)), or over HTTP through the binding's `ActionHttp.client`.
-- Such a command is the host's own: through `Action.client` the authorizer runs, but the output, failure and logging rules of this page do not apply. It prints what it prints, its logs go where the host's logger writes, and a failure it leaves as it is is the action's own, not a `UserError`, which `runMain` reports on stdout with a stack and without its fields. Map it to Effect CLI's `CliError.UserError`, `new CliError.UserError({ cause, userMessage })`, for `Command.run` to print `userMessage` on stderr.
-- Output is validated and encoded before printing, rendered or not: a success its schema does not encode is a defect, and nothing prints it. Default output is JSON. `render(decoded)` gives human output and adds a `--json` flag to that command, which selects JSON again. Nothing is declared tree-wide, so a host CLI may declare its own `--json`, global or not. An action whose `success` is `Schema.Void` prints nothing by default or with `--json`; a custom `render` can still print human output.
-- A media field, `Action.Image`, is printed as JSON ([guarantees.md](guarantees.md#wire-behavior)). A command's `render` receives the decoded success, the image's `data` a `Uint8Array`, and prints the text it returns instead, such as the image's size; it returns text, never bytes.
-- Each invocation builds the selected implementation's builder, and for a protected action its authorizer when an Effect builds it, in a scope of its own and releases them after the call. Only that implementation's builder runs: other implementations passed alongside it, on `command` or `make`, are not built. Domain services and authority come from layers the host provides on the command, `Command.provide(layer)`: built when the command runs, before its input is decoded, so input the action's schema refuses is refused after they are built; `--help` and the parser's errors, such as a missing or unknown flag, never build them. `make`'s aggregate run alone builds them before showing its help, since its own handler shows it, and fails instead if one fails. There is no HTTP fallback.
-- A CLI is not a trusted bypass: it runs the same authorizer as every surface, and takes no authorization of its own ([guarantees.md](guarantees.md#authorization)). The host provides the identity a protected action declares on the command, `Command.provideSync(CurrentActor, actor)`, or `Command.provideEffect(CurrentActor, load)` to read it when an action runs. A trusted operator is an identity the host supplies on its own command, typed apart from what a verifier returns, which the shared `authorize` admits ([Trusted callers](#trusted-callers)). A verifier typed to return the remote part cannot name it. The library cannot tell which identities are trusted: keep the trusted part out of every verifier's return type.
-- A command writes only its result to stdout: the builder, authorizer and handler, or the client, and the codecs of its input, success and failures, write their Effect logs and Effect `Console` output to stderr, whatever logger prints them, through the console `runStdio` gives its program ([ActionMcp.md](ActionMcp.md#rules)). The global `console.log` and other direct writes bypass Effect and still reach stdout: keep them off stdout.
-- When its action fails, a command fails with Effect CLI's `UserError`, typed `UserError<E>`, whose `cause` is that failure: a declared error, a binding's, a built-in one, or a builder's. Its message is the JSON HTTP sends for it ([guarantees.md](guarantees.md#wire-behavior)), such as `{"_tag":"UserNotFound","id":"9"}`. `Command.run` prints it on stderr through Effect's `CliOutput` formatter and marks it reported, so `NodeRuntime.runMain` prints it no more, and the process exits 1, or with the cause's `Runtime.errorExitCode`. A failure no schema encodes, a builder's or the transport's, prints as its tag, or an error's name, and its message, then each cause's, up to one already printed, and never its other fields, a plain object's `name` among them.
-- Every local command may fail with `Action.BuiltIn`, whatever its implementation's authorizer.
-- After `Command.run` the failure may be any `UserError`, the parser's too, so a host matches the action's by its tag with Effect's own `catchReason`, after `Command.run` has printed it: `Effect.catchReason("UserError", "UserNotFound", (missing) => ...)`, or `Effect.catchReasons("UserError", { UserNotFound, Forbidden })` for several, decides what follows, such as the exit code, not what was printed. A `UserError`'s `reason` is its `cause`; a `UserError` the parser fails with has none, so it passes through. For text of its own, the host provides Effect's formatter, `CliOutput.layer(Object.assign({}, CliOutput.defaultFormatter(), { formatError }))`; `Command.run(cli, { version, renderErrors: false })` has it print every failure itself, the parser's too.
-- `runMain` reports what is not a command's failure, outside the program, on stdout: a defect, such as a handler's bug or a success that does not encode, and a failure of a layer the host provides, on the command or around the run. Those layers log outside the command too, on stdout. A CLI whose stdout feeds scripts applies `logToStderr` last, before `runMain`, as the example does: the default logger of every layer within writes to stderr, and what `runMain` would report is reported on stderr instead, once, a command's failure `Command.run` printed never again. The process exits as `runMain` makes it: 0, the failure's `Runtime.errorExitCode` or 1, or 130 for an interruption. `logToStderr` does not move those layers' `Console` output or a logger writing through `Console.log`, such as `Logger.consoleJson`: log JSON with `Logger.withConsoleError(Logger.formatJson)`. It is the program's last step, so a custom `teardown` or an outer handler of defects sees a defect standing for the report, an `Error` carrying the exit code, whose `cause` is the original `Cause`. An MCP subprocess applies it after `runStdio` the same way ([ActionMcp.md](ActionMcp.md#rules)).
-- `remoteCommand(binding, action)` takes one of the binding's actions, matched by object identity at runtime, and calls its route, `<prefix>/<action>`, through the action's `ActionHttp.client` method. `remote(binding, { name })` projects every action of the binding, the same tree `make` builds locally, with the same options and `client`.
-- A command over HTTP runs no authorization of its own: the server owns authentication and authorization. The host provides `HttpClient`, and the remote command or aggregate configures its own client with `client`, the options `ActionHttp.client` takes; one aggregate has one connection, so its `commands` take no `client`. Configured around the whole program, the client would rewrite every request the program makes, an absolute URL too, and send each the credentials. Nothing is inferred from action arguments.
-- Over HTTP, input is decoded by the action schema before dispatch. A failure's cause is the client's: the action's and binding's declared errors, the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), `SchemaError` for an answer that does not decode, and `HttpClientError`. Input that does not decode is `InvalidInput`, and sends nothing.
-- For a custom tree, compose individual `command` results with native `Command` combinators (`Command.make(name).pipe(Command.withSubcommands([...]))`).
+- **A local command is no bypass.** The implementation's `authorize` runs as on every surface
+  ([Action.md](Action.md#authorize-calls)), and `ActionCli` takes no authorization of its own.
+- **A trusted operator is a type, not a flag.** Give the identity a variant only a host builds,
+  typed apart from what any verifier returns, and admit it in the shared `authorize`:
+  [assistant/src/identity/Identity.ts](../examples/assistant/src/identity/Identity.ts) with
+  [assistant/src/identity/authorize.ts](../examples/assistant/src/identity/authorize.ts), or
+  [kitchen-sink/src/admin/Admin.ts](../examples/kitchen-sink/src/admin/Admin.ts) with
+  [kitchen-sink/src/ops.ts](../examples/kitchen-sink/src/ops.ts). The library cannot tell which
+  identities are trusted: keep the trusted variant out of every verifier's return type.
+- **A remote command names no caller.** It sends the credentials its client carries, and the
+  server verifies them.
+
+## Examples
+
+| File                                                                                   | Shows                                                                           |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [notes-service/src/cli.ts](../examples/notes-service/src/cli.ts)                       | `remote`: URL and optional token from `Config`, `stdin`, `positional`, `render` |
+| [assistant/src/commands.ts](../examples/assistant/src/commands.ts)                     | `make`, with `aliases`, `render`, `positional` and `stdin`                      |
+| [assistant/src/cli.ts](../examples/assistant/src/cli.ts)                               | Services on the command, the host naming the caller, `logToStderr`              |
+| [assistant/src/identity/authorize.ts](../examples/assistant/src/identity/authorize.ts) | One `authorize` for a model's tool call and a command, admitting the operator   |
+| [assistant/test/commands.test.ts](../examples/assistant/test/commands.test.ts)         | Testing syntax and output with `Command.runWith`, stdin included                |
+| [kitchen-sink/src/cli.ts](../examples/kitchen-sink/src/cli.ts)                         | `remote` with every command option, `name` included; an image rendered as text  |
+| [kitchen-sink/src/ops.ts](../examples/kitchen-sink/src/ops.ts)                         | `make` as an operator console, run as a trusted identity no verifier returns    |
 
 ## Failure modes
 
-- `Missing required flag: --<flag>` on stderr, after the command's help on stdout, from a native `CliError.ShowHelp` containing `MissingOption`: a required field's flag was not given. Pass it.
-- `InvalidInput` naming an unexpected key: `--input` or a flag's JSON holds a field the schema does not declare, such as a misspelling. Undeclared fields are refused, never dropped.
-- `InvalidInput` from a command whose input is not a struct, run without `--input`: the schema rejects the default `{}`. Pass `--input` with a value the schema accepts.
-- `InvalidInput` for a value that looks right: the flag takes the encoded value, such as `"21"` for `FiniteFromString`. For `--input` or a value flag, the JSON or text may not be the field's encoding; malformed JSON is taken as text. Quote a string that reads as JSON: `--id '"123"'` for a `String | Number` field.
-- `Invalid value for flag --<flag>: "<value>". Expected: ...`, or `Missing value for flag --<flag>`, from a native `CliError.ShowHelp` containing `InvalidValue`: the parser rejected a flag's text before the command ran: a choice outside its values, or none. Effect's parser reads a value written apart from its flag as a flag itself when it starts with `-`, `-` alone and a number such as `-5` excepted: `--note -x` is a missing value and `Unrecognized flag: -x`, and `--note --help` prints help and exits 0. Write `--<flag>=<value>`, which carries any text; `--` does not help, since what follows it is positional.
-- `Missing required argument: <field>`, from a native `CliError.ShowHelp` containing `MissingArgument`: a required positional argument was not given. A positional field has no flag, so `--<field>` does not supply it.
-- Thrown by `command` when the command is built: `Duplicate positional argument: <field>` (listed twice), `Required positional argument after an optional one: <field>` (reorder the list, or make the earlier field required), or `Repeated positional argument before another one: <field>` (an array taken as an argument reads every value left: list it last).
-- Thrown by `command` when the command is built: `Not a flag's input field: <field>` (an alias names a field that is positional, read from stdin, or no field), or `Aliases need named input fields: <fields>` (the input is not a struct).
-- Thrown by `command` when the command is built, and refused by the types first: `Not a required input field: <field>` (`stdin` names an optional field, or no field), `Both positional and stdin: <field>`, or `Stdin needs named input fields: <field>` for an input that is not a struct.
-- `InvalidInput` whose issue names the `stdin` field, `<field> is read from stdin, which is a terminal: pipe it in`: nothing was piped in, and a terminal is never read, since what is typed there is shown. Pipe the value in. `stdin cannot be read: <reason>` names a failed read.
-- A command with a `stdin` field waits without output: stdin is open and nothing closes it, such as a parent process holding the pipe, or `ssh` run without `-n`. Pipe the value in, or redirect stdin from a file or `/dev/null`.
-- Also thrown by `command`, and refused by the types first: `Not an input field: <field>`, or `Positional arguments need named input fields` for an input that is not a struct.
-- `Duplicate flag: --<name>, claimed by ...` thrown by `command` or `make`: two flags of one command share a name. Examples are two input fields with the same kebab-case name (`userId`, `user_id`), a `json` field beside `render`'s `--json`, or an alias another flag's name or alias takes (`aliases: { limit: "all" }` beside an `all` field). Rename the field or the alias, or drop `render`.
-- A field named like a global flag (`help`, `version`, `log-level`) is not a clash: its flag shadows the global one on that command.
-- Type error at `command`, or `Action "x" has no implementation here` thrown: the action is not the contract of any implementation in `implementations`. Pass the implementation too, and select with the exact contract value it implements; an equal-looking action does not match.
-- Type error at `remoteCommand(binding, action)`, or `Action "x" is not in this HTTP binding` thrown: the action was not passed to this binding's `ActionHttp.make`. Select with the exact contract value the binding received.
-- Type error `Type 'HttpClient' is not assignable to type 'never'` in the pipe that runs a command over HTTP, such as through `NodeRuntime.runMain`: provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the command's client has no `baseUrl` and prepends no URL, and routes are relative outside `Testing.layer`. Connection refused: the URL is wrong. 401 `Unauthenticated`: add credentials to the command's client, in `client`'s `transformClient` or on the client it is provided; the command adds no headers of its own.
-- Another command's request goes to the API's URL, or carries its token: the client is configured around the whole program. Configure it with `remoteCommand`'s or `remote`'s `client`, or provide it on that command instead.
-- `Duplicate command: <name>, claimed by action ... and action ...` thrown by `make` or `remote`: two actions have the same kebab-case name. Give one a `name` in `commands`, or aggregate them under separate `make` commands.
-- `Unknown commands: <keys>` thrown by `make` or `remote`: a `commands` key names no action of the binding or the implementations. Use the action's own name, not its kebab-case command name.
-- `Object literal may only specify known properties, and 'status' does not exist in type …` at `make([...apps, status], { commands: { status: ... } })` in a helper generic over implementations, `<const Apps extends ReadonlyArray<Action.AnyImplementation>>`: through that constraint, `commands` is typed for any action too, and no entry for the helper's own action compiles, `render`, `positional` or `name`. Give that action a command of its own and put both in a tree: `Command.make("x").pipe(Command.withSubcommands([ActionCli.make(apps, { name: "apps" }), ActionCli.command(status, Status, { render })]))`. `Command.withSubcommands` on `make`'s aggregate would replace its subcommands.
-- Type error at `make` or `command`, an argument of type `Binding<…>` not assignable to its parameter, or at `remote` or `remoteCommand`, an implementation's: the local functions take implementations, the remote ones a binding. Call the function of the form you pass; `client` at `make` or `command`, from a literal or a variable, is refused the same way, as a command connecting nowhere. A binding or implementations chosen by a condition, `make(remotely ? Http : users, options)`, is neither: build a command from each and choose between them, `remotely ? ActionCli.remote(Http, options) : ActionCli.make(users, options)`.
-- `Action "x" is implemented twice here` thrown by `command` or `make`: more than one implementation passed implements the selected action. Pass one. Other actions' names are not checked.
-- Handler cannot find a service: provide its Layer on the command, `Command.provide(layer)`. The library supplies no service.
-- `--help` or a mistyped flag connects to a database, or fails reading config: services are provided around the run, which builds them before parsing. Provide them on the command.
-- A command requires a request-identity tag no handler yields: the action is protected, and its caller is owed whatever the handler reads. Provide the identity on the command, `Command.provideSync(CurrentActor, actor)`; do not make the contract public just to satisfy the requirement.
-- Type error at `Effect.catchTag("UserNotFound", ...)` after `Command.run`: the command fails with `UserError`, whose reason is the action's failure. Use `Effect.catchReason("UserError", "UserNotFound", ...)`. `Command.run` has printed it by then: a recovery that prints nothing, or text of its own, provides a `formatError` through `CliOutput.layer`, or runs with `renderErrors: false`.
-- A report with a stack on stdout, `ERROR (#1): ...`, instead of JSON on stderr: a defect, or a failure of a layer the host provides, which `runMain` reports. Fix the defect; to keep such reports and those layers' logs off stdout, apply `logToStderr` last, before `runMain`.
-- Type error at `Effect.catchReason("UserError", "<Tag>", ...)`, its tag typed `never`: a failure of the command has no `_tag`, such as a builder's plain `Error`. Fail with a tagged error, such as a `Schema.TaggedError` or `Data.TaggedError`.
-- `Listed in actions, but no implementation holds it: <names>`, thrown by `make`, or `but the binding does not hold it`, by `remote`: those actions are not among the implementations' or the binding's, by identity. `(another contract)` marks one whose name they hold, as a second copy of the contracts module makes. List the contract they implement or bind.
-- The same report for a declared error, such as `UserNotFound`, from a command built with `Command.make`: the command calls `Action.client` or `ActionHttp.client` itself, and its failure is the action's own. Map it to `CliError.UserError`, or derive the command with `command` where its options express the syntax.
+### Flags and input
+
+- `Missing required flag: --<flag>`, or `Missing required argument: <field>`, on stderr after
+  the command's help: pass it. A positional field has no flag: `--<field>` is
+  `Unrecognized flag: --<field> in command …`.
+- `Invalid value for flag --<flag>: "<value>". Expected: ...`, or
+  `Missing value for flag --<flag>`: the parser rejected a flag's text, a choice outside its
+  values, or none. Effect's parser reads a value written apart from its flag as a flag itself
+  when it starts with `-`, `-` alone and a number such as `-5` excepted: `--note -x` is a missing
+  value and `Unrecognized flag: -x`, and `--note --help` prints help. Write `--<flag>=<value>`;
+  `--` does not help, since what follows it is positional.
+- `InvalidInput` naming an unexpected key: `--input` or a flag's JSON holds a field the schema
+  does not declare, such as a misspelling.
+- `InvalidInput` from a command whose input is not a struct, run without `--input`: the schema
+  rejects the default `{}`. Pass `--input`.
+- `InvalidInput` for a value that looks right: the flag takes the encoded value, or its text read
+  as JSON of a kind the field also accepts. Quote a string that reads as JSON: `--id '"123"'` for
+  a `String | Number` field. Malformed JSON is taken as text.
+- `InvalidInput` whose issue says `<field> is read from stdin, which is a terminal: pipe it in`:
+  nothing was piped in. `stdin cannot be read: <reason>` names a failed read.
+- A command with a `stdin` field waits without output: nothing closes stdin, such as a parent
+  process holding the pipe, or `ssh` run without `-n`. Pipe the value in, or redirect stdin from
+  a file or `/dev/null`.
+
+### Thrown when a command is built
+
+The types refuse several of these first.
+
+- `Duplicate positional argument: <field>`,
+  `Required positional argument after an optional one: <field>` (reorder the list, or make the
+  earlier field required), or `Repeated positional argument before another one: <field>` (list
+  the array last).
+- `Not an input field: <field>`, or `Positional arguments need named input fields` for an input
+  that is not a struct.
+- `Not a flag's input field: <field>`: an alias names a field that is positional, read from
+  stdin, or no field. `Aliases need named input fields: <fields>`: the input is not a struct.
+- `Not a required input field: <field>`: `stdin` names an optional field, or no field.
+  `Both positional and stdin: <field>`. `Stdin needs named input fields: <field>`: the input is
+  not a struct.
+- `Duplicate flag: --<name>, claimed by ...`: two flags of one command share a name, such as two
+  fields with one kebab-case name (`userId`, `user_id`), a `json` field beside `render`'s
+  `--json`, or an alias another flag's name or alias takes. Rename the field or the alias, or
+  drop `render`. A field named like a global flag (`help`, `version`, `log-level`) is not a
+  clash: its flag shadows the global one on that command.
+- `Duplicate command: <name>, claimed by action ... and action ...`: two actions of an aggregate
+  have the same kebab-case name. Give one a `name` in `commands`, or use separate aggregates.
+- `Unknown commands: <keys>`: a `commands` key names no action. Use the action's own name, not
+  its kebab-case command name.
+- `Listed in actions, but no implementation holds it: <names>`, or
+  `but the binding does not hold it`: the listed actions are not the implementations' or the
+  binding's, by identity. `(another contract)` marks one whose name they hold, as a second copy
+  of the contracts module makes. List the contract they implement or bind.
+- `Action "x" has no implementation here`, or a type error at `command`: no implementation passed
+  has that contract. Pass the implementation, and select with the exact contract value it
+  implements; an equal-looking action does not match.
+- `Action "x" is implemented twice here`: more than one implementation passed implements the
+  selected action. Pass one.
+- `Action "x" is not in this HTTP binding`, or a type error at `remoteCommand`: the action was not
+  passed to this binding's `ActionHttp.make`. Select with the exact contract value it received.
+
+### Types
+
+- An argument of type `Binding<…>` not assignable at `make` or `command`, or an implementation's
+  at `remote` or `remoteCommand`: the local functions take implementations, the remote ones a
+  binding. `client` at `make` or `command` is refused the same way. For a form chosen by a
+  condition, build a command from each and choose between them:
+  `remotely ? ActionCli.remote(Http, options) : ActionCli.make(users, options)`.
+- `Object literal may only specify known properties, and 'status' does not exist in type …` at
+  `make([...apps, status], { commands: { status: ... } })` in a helper generic over
+  implementations, `<const Apps extends ReadonlyArray<Action.AnyImplementation>>`: through that
+  constraint `commands` is typed for any action, and no entry for the helper's own action
+  compiles. Give that action a command of its own and put both in a tree:
+  `Command.make("x").pipe(Command.withSubcommands([ActionCli.make(apps, { name: "apps" }), ActionCli.command(status, Status, { render })]))`.
+  `Command.withSubcommands` on `make`'s aggregate would replace its subcommands.
+- `Type 'HttpClient' is not assignable to type 'never'` in the pipe that runs a remote command:
+  provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`).
+- A command requires an identity service no handler yields: the action is protected. Provide the
+  identity on the command ([Name the caller](#name-the-caller)); do not make the contract public
+  to satisfy the requirement.
+- Type error at `Effect.catchTag("UserNotFound", ...)` after `Command.run`: the command fails
+  with `UserError`. Use `Effect.catchReason("UserError", "UserNotFound", ...)`.
+- Type error at `Effect.catchReason("UserError", "<Tag>", ...)`, its tag typed `never`: a failure
+  of the command has no `_tag`, such as a builder's plain `Error`. Fail with a tagged error, such
+  as a `Schema.TaggedError` or `Data.TaggedError`.
+
+### Running
+
+- Handler cannot find a service: provide its Layer on the command, `Command.provide(layer)`. The
+  library supplies no service.
+- `--help` or a mistyped flag connects to a database, or fails reading config: services are
+  provided around the run, which builds them before parsing. Provide them on the command.
+- `ERROR (#n): ConfigError: SchemaError(Expected string at ["NOTES_TOKEN"])` from a public
+  command, exit 1, on stdout, or on stderr under `logToStderr`: the client provided on the
+  command requires a token, and a failure of what a command is provided is `runMain`'s report,
+  not the command's JSON. Read the token with `Config.option` and add the header only when it is
+  there.
+- `HttpClientError` whose `reason._tag` is `InvalidUrlError`: the command's client has no
+  `baseUrl` and prepends no URL. Connection refused: the URL is wrong. 401 `Unauthenticated`: add
+  credentials in `client`'s `transformClient` or on the client the command is provided; the
+  command adds no headers of its own.
+- Another command's request goes to the API's URL, or carries its token: the client is configured
+  around the whole program. Configure it with `client`, or provide it on that command.
+- A report with a stack on stdout, `ERROR (#1): ...`, instead of JSON on stderr: a defect, or a
+  failure of a layer the host provides, which `runMain` reports. Fix the defect; apply
+  `logToStderr` to keep such reports off stdout.
+- The same report for a declared error, such as `UserNotFound`, from a command built with
+  `Command.make`: the command calls `Action.client` or `ActionHttp.client` itself, and its
+  failure is the action's own. Map it to `CliError.UserError`, or derive the command with
+  `command`.

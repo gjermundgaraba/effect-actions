@@ -1,119 +1,136 @@
 # ActionToolkit
 
-Implementations as Effect's native AI `Toolkit`, for programs that call tools in-process
-with `LanguageModel` or by hand. No server. A tool takes and gives JSON, as a model does; code
-of your own calls the implementations typed, with `Action.client` ([Action.md](Action.md#clients)).
+Implementations as Effect's native AI `Toolkit`: one tool per action, run in the process that
+calls the model, with no server. Reach for it when a `LanguageModel` or a `Chat` in your program
+calls your actions. It is a local surface: nothing authenticates, and the host names the caller.
+Code of your own calls the same implementations typed, with `Action.client`
+([Action.md](Action.md#call-actions-in-process)).
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/ActionToolkit`.
 
-| API                               | Purpose                                                                                                             |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                                                  |
-| `toolkit`                         | A native `Toolkit`: `toolkit.tools` holds the tool definitions by name, with typed schemas, MCP hints and approval. |
-| `layer`                           | The handler layer: builds handlers and built authorizers in its scope; requires build-time services.                |
+| API                               | Purpose                                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| `make(implementations, options?)` | Project an implementation or a list; returns `{ toolkit, layer }`.                  |
+| `toolkit`                         | A native `Toolkit`, one tool per action, named after it.                            |
+| `layer`                           | The tools' handlers, built once. Requires the startup services their builders read. |
 
-| Option          | Meaning                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `actions`       | The actions that are tools, among the implementations': `[GetUser, RenameUser]`. Defaults to every action of them.                         |
-| `needsApproval` | `(call) =>` a boolean, or an `Effect` of one: the calls `LanguageModel` asks approval for instead of running them ([Approval](#approval)). |
+| Option          | Meaning                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `actions`       | The actions that are tools, among the implementations': `[GetUser, RenameUser]`. Defaults to every action of them.                                     |
+| `needsApproval` | `(call, context) =>` a boolean, or an `Effect` of one: the calls a model must have approved ([Ask for approval](#ask-for-approval)). Defaults to none. |
 
-Exported types: `Tools`, what `make` returns; `Options`, what it takes; `ToolCall<A>`, the call `needsApproval` receives, `A` the union of its actions, for a rule written apart from `make`.
+Exported types: `Tools`, what `make` returns; `Options`, what it takes; `ToolCall<A>`, the call `needsApproval` receives, for a rule written apart from `make`.
 
-## Canonical
+## Give a model tools
 
-```ts example=toolkit-authorized.ts
-import { NodeRuntime } from "@effect/platform-node";
-import { Console, Effect, Layer, Stream } from "effect";
-import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import { actors, CurrentActor } from "./authorization.js";
-import { double, userActions } from "./handlers.js";
-import { Users } from "./users.js";
-
-// The implementations' `authorize` runs for the in-process caller as for the servers.
-const { toolkit, layer } = ActionToolkit.make([userActions, double]);
-
-const program = Effect.gen(function* () {
-  const tools = yield* toolkit;
-  const calls = yield* tools.handle("getUser", { id: "1" }); // encoded arguments
-  const results = yield* Stream.runCollect(calls);
-  yield* Console.log(results);
-}).pipe(
-  Effect.provideService(CurrentActor, actors.alice), // identity around the whole invocation
-  Effect.provide(layer.pipe(Layer.provide(Users.layerMemory))), // startup services only
-);
-
-program.pipe(NodeRuntime.runMain);
-```
-
-With a model: pass `toolkit` as `toolkit` to `LanguageModel.generateText` and provide `layer`.
-Beside tools of your own, or provider-defined ones such as a web search, merge the toolkits
-natively and provide every handler layer:
+Pass `toolkit` to `LanguageModel.generateText` or a `Chat`, and provide `layer`:
+[assistant/src/toolkit.ts](../examples/assistant/src/toolkit.ts) and
+[assistant/src/agent.ts](../examples/assistant/src/agent.ts).
 
 ```ts
-LanguageModel.generateText({ prompt, toolkit: Toolkit.merge(toolkit, WebKit) }).pipe(
-  Effect.provide(Layer.mergeAll(layer, WebKitHandlers)),
+export const { toolkit, layer } = ActionToolkit.make([tasks, identity]);
+
+// One turn, as a member.
+const turn = chat.generateText({ prompt, toolkit }).pipe(actingFor(member));
+
+conversations.pipe(
+  Effect.provide(model),
+  // Once, around the program. Startup services only, never a caller.
+  Effect.provide(layer.pipe(Layer.provide([TaskStore.layerFile, Permissions.layerMemory]))),
 );
 ```
 
-### Approval
+- Without `actions`, every action of the implementations is a tool, one added later included. Where a model must not get them all, list the tools ([Action.md](Action.md#define-a-contract)): [kitchen-sink/src/issues/assistant.ts](../examples/kitchen-sink/src/issues/assistant.ts).
+- A refusal or a declared error is not raised. It is a tool result with `isFailure: true`, which the model reads and may act on.
+- A turn's tool calls run concurrently unless `generateText` is given a `concurrency`. A service they share must tolerate it: [assistant/src/tasks/store.ts](../examples/assistant/src/tasks/store.ts) locks each change.
+- Arguments the input does not declare are dropped, where HTTP and a CLI refuse them ([guarantees.md](guarantees.md#wire-behavior)): a misspelled optional argument is ignored silently.
+- Beside other tools, merge natively and provide every handler layer: `Toolkit.merge(toolkit, others)` with `Layer.mergeAll(layer, othersHandlers)`.
+- A model loop in a route: yield `toolkit` in the implementation's builder, `Action.implement(Ask, Effect.map(toolkit, (tools) => (input) => ...))`, and provide `layer` to the route's layer, `ActionHttp.layer(Http, ask).pipe(Layer.provide(layer))`. `Effect.provide(layer)` in the handler runs the tools' builders on every call, unless the routes also serve those implementations.
 
-```ts example=toolkit-approval.ts
-import { Effect, Option } from "effect";
-import { LanguageModel } from "effect/ai";
-import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import { type Actor, CurrentActor } from "./authorization.js";
-import { double, userActions } from "./handlers.js";
+### Call a tool by hand
 
-// A model's writes wait for their caller's approval, except a rename of the caller itself:
-// `call.name` narrows `call.input` across both implementations. Without a caller, it asks.
-export const { toolkit, layer } = ActionToolkit.make([userActions, double], {
-  needsApproval: (call) =>
-    !call.action.readOnly &&
-    Effect.map(
-      Effect.serviceOption(CurrentActor),
-      Option.match({
-        onNone: () => true,
-        onSome: ({ id }) => call.name !== "renameUser" || call.input.id !== id,
-      }),
-    ),
-});
+`yield* toolkit` gives `tools.handle(name, arguments)`, which takes the JSON a model sends, an
+ISO string for a `Schema.Date`, and returns an Effect of a stream of results:
+[assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts). The handler starts
+when `handle` runs, so provide the caller around the whole
+`handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not around the stream alone. `handle`
+never asks for approval.
 
-// One turn: the caller is provided around it, for the approval, `authorize` and the handlers.
-export const chat = (actor: Actor, prompt: string) =>
-  LanguageModel.generateText({ prompt, toolkit }).pipe(Effect.provideService(CurrentActor, actor));
+## Name the caller
+
+Provide the identity around each turn, or each call made by hand, as `actingFor` does in
+[assistant/src/toolkit.ts](../examples/assistant/src/toolkit.ts): the approval rule, `authorize`
+and the handlers of every call in the turn read it. The innermost one provided wins.
+
+- Never provide an identity to `layer`, which is built once for every caller. It satisfies no protected tool's call, which still owes its own in its type, and it silently answers for any call that lacks one.
+- A protected action's tool owes its identity whether or not its handler reads it ([Action.md](Action.md#say-who-may-call-an-action)).
+
+## Ask for approval
+
+`needsApproval` is one rule over every call a model makes, asked before the call runs. Every
+write: `needsApproval: (call) => !call.action.readOnly`
+([kitchen-sink/src/issues/assistant.ts](../examples/kitchen-sink/src/issues/assistant.ts)). A
+rule reading the call's input and its caller:
+[assistant/src/toolkit.ts](../examples/assistant/src/toolkit.ts).
+
+- `call` is `{ name, action, input }`, the input decoded, over every action of the implementations, whatever `actions` lists. Check `call.name` to narrow the other two.
+- The rule's `Effect` requires nothing: read the caller with `Effect.serviceOption`, and decide what the absence of one means.
+- Its `Effect` cannot fail in its type, and one that fails anyway runs the call unapproved. To ask when a policy cannot be read, end it with `Effect.orElseSucceed(() => true)`.
+- Approval is not authorization, which stays `authorize`. Only a model's turn asks for it, and `ActionMcp` has no such option.
+
+A call that needs approval does not run: the turn ends with a `tool-approval-request` part in
+`response.content` in place of its result. Start the next turn with the person's answers
+([assistant/src/agent.ts](../examples/assistant/src/agent.ts)):
+
+```ts
+chat
+  .generateText({
+    toolkit,
+    prompt: [
+      {
+        role: "tool",
+        content: asked.content.flatMap((part) =>
+          part.type === "tool-approval-request"
+            ? [{ type: "tool-approval-response", approvalId: part.approvalId, approved: true }]
+            : [],
+        ),
+      },
+    ],
+  })
+  .pipe(actingFor(member));
 ```
 
-A call that needs approval ends the turn with a `tool-approval-request` part instead of a
-result; the host answers it with a native `tool-approval-response` prompt part in the next turn.
-Every write, whoever calls: `needsApproval: (call) => !call.action.readOnly`.
+- The answer needs the prompt history, where its request is found by `approvalId`. Sent alone through a bare `LanguageModel.generateText`, it runs nothing and raises nothing. Use a `Chat`, or send again the assistant message holding the call and its request, before the answer.
+- An approved call runs in the answering turn, before the model is asked again, as whoever that turn runs as: provide the caller who was asked. `authorize` runs for it too ([assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts)).
+- `approved: false` gives the model a failed result for the call, which does not run.
 
-## Rules
+## Examples
 
-- Every action of the implementations passed becomes a tool unless `actions` lists the tools ([guarantees.md](guarantees.md#names)). The types take only actions of the implementations, and type `toolkit` and `layer`'s build services by the listed actions alone.
-- A result's `result` is the action's decoded success or declared failure, and its `encodedResult` the JSON a model reads, such as `"42"` for a `BigInt`. Declared failures are returned as native tool results (`failureMode: "return"`), not raised.
-- `tools.handle(name, encodedInput)` takes JSON arguments, as a model sends them: an ISO string for a `Schema.Date`, `null` for an absent `Schema.optional` field. It returns an Effect producing a result stream. The handler starts while that stream is constructed, so request services must be provided around the entire `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not only around the stream.
-- Builders, calls and identity follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and authorization the [authorization rules](guarantees.md#authorization). The innermost caller provided wins: a call made under a narrower identity runs as that one.
-- A model loop in a route yields `toolkit` in its implementation's builder, `Action.implement(Chat, Effect.map(toolkit, (tools) => ({ prompt }) => ...), { authorize })`, and passes `tools` to `LanguageModel.generateText`; the route's layer takes the toolkit's `layer`, `ActionHttp.layer(ChatHttp, chat).pipe(Layer.provide(layer))`. That is one build, in the routes' layer graph, shared with every surface serving the same implementations. `Effect.provide(layer)` in the handler builds it for every call unless a surface of the graph serves the same implementations, and `HttpRouter.provideRequest(layer)` once, but in a layer graph of its own: a second build when another surface serves them and has not built them first.
-- Each tool carries only its own handler's request requirements, plus its authorizer's, not those of sibling actions, and a protected action's identity, whether or not anything reads it; build failures and services belong to the handler layer.
-- `needsApproval` is one function over every call a model makes, before the call runs: `(call, context) =>`, where `call` is `{ name, action, input }`, the input decoded, and `context` is Effect's native approval context. `call` is typed by every action of the implementations, whatever `actions` lists, and checking `call.name` narrows `call.action` and `call.input` to that action's, across implementations too: `(call) => call.name === "erase" && call.input.id !== "draft"`. It gives a boolean, or an `Effect` of one that requires nothing: it runs in the caller's context, so it reads the caller with `Effect.serviceOption`. Default: no tool needs approval.
-- A `needsApproval` Effect that fails means no approval is needed, as `LanguageModel` decides natively. Its `Effect` cannot fail in its type: decide in `needsApproval` what a failure means, `Effect.orElseSucceed(() => true)` to ask when a policy cannot be read.
-- Tools belong to what runs them, their implementation's handlers behind its authorizer: the `layer` of a `make` call serves the tools it selected in any `toolkit` of the same implementations, a toolkit of fewer `actions` included, so toolkits made per agent or per approval policy run with one handler layer, built once. Two implementations never run each other's handlers, even with tools of one name, such as two implementations of one action behind different authorizers, whatever order their layers are provided in.
-- `LanguageModel` enforces approval; `tools.handle` ignores it, like any caller that is not a model's turn. It is not authorization, which stays the implementation's `authorize`. MCP has no such field, so `ActionMcp` takes no such option.
-- Every tool declares the built-in errors ([guarantees.md](guarantees.md#wire-behavior)), so an authorizer's refusal, or a handler's built-in failure, is an ordinary returned tool failure.
+| File                                                                                                 | Shows                                                                      |
+| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [assistant/src/toolkit.ts](../examples/assistant/src/toolkit.ts)                                     | `make`; an approval rule reading the call and its caller; `actingFor`.     |
+| [assistant/src/agent.ts](../examples/assistant/src/agent.ts)                                         | Turns through a `Chat`, an approval answered, where a real model plugs in. |
+| [assistant/src/scripted.ts](../examples/assistant/src/scripted.ts)                                   | A scripted `LanguageModel`, standing where a provider's layer goes.        |
+| [assistant/src/tasks/store.ts](../examples/assistant/src/tasks/store.ts)                             | A service that tolerates concurrent tool calls.                            |
+| [assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts)                         | A call by hand, a refusal as a result, an approved call still authorized.  |
+| [kitchen-sink/src/issues/assistant.ts](../examples/kitchen-sink/src/issues/assistant.ts)             | `actions`; `needsApproval` as a boolean of the action.                     |
+| [kitchen-sink/src/agent.ts](../examples/kitchen-sink/src/agent.ts)                                   | `layer` with startup services; the caller around the turn.                 |
+| [kitchen-sink/test/issues/assistant.test.ts](../examples/kitchen-sink/test/issues/assistant.test.ts) | The listed actions alone as tools; `tools.handle` behind `authorize`.      |
 
 ## Failure modes
 
-- A model reads base64 text where an image was meant: a tool's success holds an `Action.Image`, which a Toolkit gives the model as JSON text. Leave the action out of `actions`, or serve it over MCP, which sends an image block.
-- `Listed in actions, but no implementation holds it: <names>` thrown at `make`: those actions are not among the implementations' actions, by identity. `(another contract)` marks one whose name an implementation holds, as a second copy of the contracts module makes. Pass the implementation holding it, or list the contract it implements.
-- A defect when a tool handles a call: no `layer` of its implementation is provided, only one of another implementation with tools of the same names, such as another implementation of the same actions, which the types accept. Provide a `layer` made from the implementations the `toolkit` was made from.
-- A job or an agent beside `HttpRouter.serve`, or a model loop in a route given `layer` with `HttpRouter.provideRequest`, reads other state than the routes, or its builder runs twice: its `layer` builds in another layer graph than the routes. Put it inside the layer the server serves, a route's toolkit in its builder ([Rules](#rules)), or provide `Action.layer` and the services they share above both ([dependency lifetimes](guarantees.md#dependency-lifetimes)).
-- Every toolkit of an implementation answering with one set of startup services: two layers of it, built apart with different services, were provided together, and one of them serves its tools. Use separate implementations for separate services.
-- Type error on `needsApproval`'s `Effect`, which requires a service such as the caller: `needsApproval` requires nothing. Read the caller with `Effect.serviceOption(CurrentActor)`, which gives `Option.none()` without one.
-- `Property '<field>' does not exist` on `call.input`: `call` is a union over every action of the implementations, whatever `actions` lists, and another action's input lacks the field. Check `call.name` first.
-- `Duplicate tool: <name>` thrown at `make`: two implementations serve actions of the same name. Rename one action. `actions` tells apart only separate contracts sharing a name, listing one; two implementations of the same contract stay both listed: pass one implementation.
-- `Type 'X' is not assignable to type 'never'` for a request service where a program calling a tool runs, or `Service not found` at call time from plain JavaScript: it was provided only to the stream. Provide it around the whole call effect. Providing a service to `layer` does not fail: that startup value fills in for every call that lacks its own ([guarantees.md](guarantees.md#dependency-lifetimes)), so never provide an identity there; a protected tool's call still owes it in its type.
-- `Type 'CurrentActor' is not assignable to type 'never'` where a program calling a tool runs: the tool's action is protected, and its call owes the caller, whatever the handler reads. Provide it around the call, or around the turn.
-- A returned failure whose `result` is an `AiError` with reason `ToolParameterValidationError` (`failureOrigin: "parameters"`), not a declared error: the arguments did not decode. Authorization and the handler did not run.
-- Type error on `layer` requirements: a build-time service is missing. Provide its Layer before `layer`.
+- An approved call never runs, and nothing is raised: the `tool-approval-response` was sent without the history holding its request ([Ask for approval](#ask-for-approval)).
+- `Type 'X' is not assignable to type 'never'` for a request service where a turn or a call by hand runs, or `Service not found` at call time from plain JavaScript: a protected tool owes its identity whatever its handler reads, or the service was provided to the stream alone. Provide it around the turn, or around the whole call effect.
+- Type error on `layer`'s requirements: a build-time service is missing. Provide its Layer to `layer`.
+- Type error on `needsApproval`'s `Effect`: it yields a service such as the caller. Read it with `Effect.serviceOption`.
+- `Property '<field>' does not exist` on `call.input`: another action's input lacks the field. Check `call.name` first.
+- A returned failure whose `result` is an `AiError` with reason `ToolParameterValidationError` (`failureOrigin: "parameters"`), not a declared error: the arguments did not decode. Neither `authorize` nor the handler ran.
+- A turn fails with an `AiError`, `Failed to encode result for tool '<name>'`: the handler failed with an error its action does not declare, which a cast or plain JavaScript lets through. Declare it.
+- A model reads base64 text where an image was meant: a tool's success holds an `Action.Image`, which a Toolkit gives the model as JSON text. Leave the action out of `actions`, or serve it over MCP, which sends an image block ([ActionMcp.md](ActionMcp.md#return-images-and-other-media)).
+- `Listed in actions, but no implementation holds it: <names>` thrown at `make`: those actions are not among the implementations', by identity. `(another contract)` marks one whose name an implementation holds, as a second copy of the contracts module makes. Pass the implementation holding it, or list the contract it implements.
+- `Duplicate tool: <name>` thrown at `make`: two implementations serve actions of one name. Rename one action; of two implementations of one contract, pass one.
+- A defect when a tool handles a call: the `layer` provided is another implementation's, with tools of the same names, which the types accept. Provide a `layer` made from the implementations the `toolkit` was made from.
+- Every toolkit of an implementation answers with one set of startup services: two layers of it, given different services, were provided together, and one serves them all. Use separate implementations for separate services.
+- A job or an agent beside `HttpRouter.serve` reads other state than the routes, or its builder runs twice: its `layer` builds in another layer graph than the routes. Put it inside the layer the server serves, or provide `Action.layer` and the services they share above both ([Action.md](Action.md#share-one-build-across-servers)).

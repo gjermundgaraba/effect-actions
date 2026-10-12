@@ -6,7 +6,11 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 
 export const docsDirectory = join(root, "docs");
 
+export const examplesDirectory = join(root, "examples");
+
 export const skillDirectory = join(root, "skills", "effect-actions");
+
+const repository = "https://github.com/gjermundgaraba/effect-actions";
 
 interface SkillFile {
   readonly path: string;
@@ -20,17 +24,25 @@ description: >
   which defines Effect action contracts once for HTTP, MCP, Effect RPC, native Toolkits, and CLIs.
   These pages follow the repository's main branch, which can be ahead of the latest
   release; where the package is installed, read the same pages in
-  node_modules/@gjermundgaraba/effect-actions/docs/, which describe the installed version.
+  node_modules/@gjermundgaraba/effect-actions/docs/ and the example applications in
+  node_modules/@gjermundgaraba/effect-actions/examples/, which describe the installed version.
 ---
 
 `;
+
+const linkExamplesOnGitHub = (page: string) =>
+  page.replaceAll(/\]\(\.\.\/examples\/([^)]*)\)/g, (_, path: string) =>
+    path === "" || path.endsWith("/")
+      ? `](${repository}/tree/main/examples/${path})`
+      : `](${repository}/blob/main/examples/${path})`,
+  );
 
 export const renderSkill = (): ReadonlyArray<SkillFile> =>
   readdirSync(docsDirectory)
     .filter((name) => name.endsWith(".md"))
     .sort((left, right) => left.localeCompare(right))
     .map((name) => {
-      const content = readFileSync(join(docsDirectory, name), "utf8");
+      const content = linkExamplesOnGitHub(readFileSync(join(docsDirectory, name), "utf8"));
 
       return name === "README.md"
         ? { path: "SKILL.md", content: `${frontmatter}${content}` }

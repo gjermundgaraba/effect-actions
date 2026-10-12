@@ -7,9 +7,9 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { authenticate } from "../../examples/authentication.js";
-import { actors, CurrentActor } from "../../examples/authorization.js";
-import { Login } from "../../examples/binding.js";
+import { authenticate } from "../support/app/authentication.js";
+import { actors, CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
 import { as } from "../support/requests.js";
 
 class Refused extends Schema.TaggedError<Refused>()(

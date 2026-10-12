@@ -1,44 +1,81 @@
-# effect-actions reference
+# effect-actions
 
-Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Each public-module
-card has the same sections: **API** (inventory and options), **Canonical** (the one right way to write
-it), **Rules** (must and never), **Failure modes** (what you see when it is wrong, and the fix).
-Read the card for a module before writing code that uses it. Exported TypeScript declarations are the exact signature reference. Vocabulary is defined in
-[CONTEXT.md](CONTEXT.md); the pages use those terms exactly.
+`@gjermundgaraba/effect-actions` defines an Effect action once, as a contract with one
+implementation, and serves it over HTTP, MCP and Effect RPC, gives it to a model as a native
+Toolkit, and runs it from a CLI. Every surface is Effect's own server or client, running the
+same schemas, handler and authorization.
 
-Package facts that apply everywhere:
+Where things are:
 
-- Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
-- The `effect` peer admits only the patches of one Effect release ([setup.md](setup.md#install)).
+- **Pages**: the files beside this one: one per module, organized by task, and setup, the wire
+  table and the vocabulary.
+- **Examples**: [examples/](../examples/README.md), complete applications, type-checked and
+  tested with the library.
+- In a project that installs the package, both are in
+  `node_modules/@gjermundgaraba/effect-actions/`, under `docs/` and `examples/`, at the installed
+  version.
+
+How to read them:
+
+1. Start from the example closest to what you are building ([Examples](#examples)) and read its
+   README: its layout tree and "Where to look" table name the file for each thing. Copy its
+   layout and idioms: the examples are the reference for how code is written.
+2. Read [Action.md](Action.md) completely. Every surface builds on it.
+3. On the other pages, read the section for the task at hand, and open the example files it
+   links.
+4. When something fails, look the message up in that page's "Failure modes".
+
+A service others call is [notes-service](../examples/notes-service/) plus
+[Action.md](Action.md), [ActionHttp.md](ActionHttp.md), [Authentication.md](Authentication.md)
+and [Testing.md](Testing.md).
+
+Every module is a subpath import, `@gjermundgaraba/effect-actions/Action`: there is no package
+root. The `effect` peer admits the patches of one Effect release ([setup.md](setup.md#install)).
+The exported TypeScript declarations and their JSDoc are the reference for signatures.
 
 ## Pages
 
-| Read                                   | When you need to                                                                                                                                          |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [setup.md](setup.md)                   | install, run the minimal program, pick entry points, bundle a browser client, check package boundaries                                                    |
-| [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, use built-in errors, call or test implementations in process (`Action.client`) |
-| [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                 |
-| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                             |
-| [ActionRpc.md](ActionRpc.md)           | serve actions as Effect RPC over any protocol speaking JSON, call them with one Effect method per action                                                  |
-| [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                              |
-| [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                          |
-| [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP, MCP and RPC surfaces, refuse with 401/403, publish RFC 9728 discovery                 |
-| [Testing.md](Testing.md)               | call routes, tools and rpcs in memory through `HttpClient`, or test an implementation in process                                                          |
-| [guarantees.md](guarantees.md)         | rules every surface shares: builder lifetimes, authorization, wire formats, names, spans, the package's scope                                             |
-| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                              |
+| Read                                   | When you need to                                                                                                                                                                                                  |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [setup.md](setup.md)                   | install, import the modules, write the minimal program, lay out an application, bundle a browser client                                                                                                           |
+| [Action.md](Action.md)                 | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors, call actions in process, share one build across servers                                             |
+| [ActionHttp.md](ActionHttp.md)         | bind actions to JSON routes, serve them, publish OpenAPI, call them from Effect or from a browser                                                                                                                 |
+| [ActionMcp.md](ActionMcp.md)           | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add native prompts and resources, send notifications from a handler                             |
+| [ActionRpc.md](ActionRpc.md)           | bind actions to Effect rpcs, serve them on a protocol, call them, send request context with a call                                                                                                                |
+| [ActionToolkit.md](ActionToolkit.md)   | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval                                                                                                                           |
+| [ActionCli.md](ActionCli.md)           | run actions as local commands, or call a server from commands; shape flags, input and output; name the caller                                                                                                     |
+| [Authentication.md](Authentication.md) | declare how callers sign in, verify credentials, publish OAuth discovery, use an API key or a cookie, read request context in a verifier, protect a route of your own, run a request policy before authentication |
+| [Testing.md](Testing.md)               | test an implementation in process, routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                                                                      |
+| [guarantees.md](guarantees.md)         | see what one case, such as bad input, a declared error or a refusal, looks like on the wire of each surface, and what the library leaves to you                                                                   |
+| [CONTEXT.md](CONTEXT.md)               | look up a term the pages use                                                                                                                                                                                      |
+
+## Examples
+
+| Example                                     | What it is                                                                                                       | Start from it when                                                      |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [quickstart](../examples/quickstart/)       | One action, served as a JSON route and an MCP tool, called with its typed client.                                | You want the smallest thing that runs.                                  |
+| [notes-service](../examples/notes-service/) | A service with bearer authentication: a JSON API and MCP tools from one implementation, a CLI, a browser client. | You are building a service others call. Most applications are this.     |
+| [mcp-tools](../examples/mcp-tools/)         | An MCP server whose tools wrap an upstream HTTP API, over stdio and over HTTP, with an image result.             | You are putting an existing API in front of a model.                    |
+| [assistant](../examples/assistant/)         | No server: the same implementations as a model's tools, with approval of writes, and as local commands.          | A model calls your code in process, or you are building a local CLI.    |
+| [live-rpc](../examples/live-rpc/)           | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token.                   | A client keeps a connection open, or the application speaks Effect RPC. |
+| [kitchen-sink](../examples/kitchen-sink/)   | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index.           | You need a working use of one specific feature.                         |
+
+Each example's README says where to look for what. The index in
+[kitchen-sink](../examples/kitchen-sink/README.md#index) maps every export and option it uses to
+a file. Every token, user and store in the examples is a demo, marked `DEMO ONLY` where it must
+change before a deployment.
 
 ## Choose a surface
 
-- Callers speak JSON over HTTP: `ActionHttp`. Clients use `ActionHttp.client(Http)`.
-- Callers are Effect programs speaking Effect RPC, such as a page over one WebSocket: `ActionRpc`. Clients use `ActionRpc.client(Rpc)`.
-- Callers are MCP clients: `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess.
-- Callers are an Effect AI program in the same process: `ActionToolkit`.
-- Callers are humans or scripts in a terminal: `ActionCli`, `make` and `command` from implementations to run handlers locally, or `remote` and `remoteCommand` from the HTTP binding to call a server.
-- Callers are your own code in the same process, such as a test, a job or a command of your own: `Action.client`, with the methods of `ActionHttp.client`.
+| Callers                                                        | Use                                                                                          |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Speak JSON over HTTP                                           | `ActionHttp`; clients use `ActionHttp.client`, or `ActionHttp.fetchClient` outside an Effect |
+| Are Effect programs, such as a page over one WebSocket         | `ActionRpc`; clients use `ActionRpc.client`                                                  |
+| Are MCP clients                                                | `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess           |
+| Are a model in the same process                                | `ActionToolkit`                                                                              |
+| Are people or scripts in a terminal                            | `ActionCli`: `make` runs handlers locally, `remote` calls a server through its HTTP binding  |
+| Are your own code in the same process, such as a job or a test | `Action.client`                                                                              |
 
-Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last, and enforces each contract's `caller` and its implementation's `authorize` ([guarantees.md](guarantees.md#authorization)).
-
-## Runnable examples
-
-Repository directory `examples/`: runnable programs, each listed in its
-[README](https://github.com/gjermundgaraba/effect-actions/tree/main/examples#readme).
+Surfaces combine: every one that runs handlers takes the same implementations, one or a list,
+and enforces each contract's `caller` and its implementation's `authorize`
+([Action.md](Action.md#authorize-calls)).

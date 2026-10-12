@@ -5,7 +5,7 @@ import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { makeTestHttp } from "../support/server.js";
 import { post } from "../support/requests.js";
-import { GetUser, RenameUser } from "../../examples/contracts.js";
+import { GetUser, RenameUser } from "../support/app/contracts.js";
 import { serve } from "../support/serve.js";
 
 describe("contracts", () => {

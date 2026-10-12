@@ -1,0 +1,60 @@
+import { Effect, Layer, Option } from "effect";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { allowedOrigins, publicUrl } from "./config.js";
+
+const loopback = ["localhost", "127.0.0.1"];
+
+// Which Host and Origin a request may carry: not the library's concern, but every request of
+// both ports passes it first. The web app signs in with a cookie, which a browser attaches to
+// any page's request, so a foreign Origin must be refused before authentication reads it.
+// That is why this is global router middleware (`global: true`): it runs before routing, so
+// before every route's authentication. As a layer's own `middleware` it would run inside the
+// authentication, too late. Whether it also runs before the discovery the Bearer provider
+// publishes, global middleware too, is decided where it is provided: last, in routes.ts.
+export const requestPolicy = HttpRouter.middleware(
+  Effect.gen(function* () {
+    const hosts = [...loopback, new URL(yield* publicUrl).hostname];
+    const origins = yield* allowedOrigins;
+
+    return (httpEffect) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = HttpServerRequest.toURL(request.modify({ url: request.originalUrl }));
+
+        if (Option.isNone(url) || !hosts.includes(url.value.hostname)) {
+          return HttpServerResponse.text("Host not allowed", { status: 403 });
+        }
+
+        const origin = request.headers.origin;
+
+        if (origin !== undefined && origin !== url.value.origin && !origins.includes(origin)) {
+          return HttpServerResponse.text("Origin not allowed", { status: 403 });
+        }
+
+        return yield* httpEffect;
+      });
+  }),
+  { global: true },
+);
+
+// CORS for the one cross-origin caller, a browser MCP client. `HttpRouter.cors` is global to
+// the router too: it answers the preflight before any route's authentication, and adds its
+// headers to refusals as well. An MCP endpoint's `allowedOrigins` is no CORS: it only refuses
+// origins. The headers are those an MCP client sends and must be able to read.
+export const cors = Layer.unwrap(
+  Effect.map(allowedOrigins, (origins) =>
+    HttpRouter.cors({
+      allowedOrigins: origins,
+      allowedMethods: ["POST"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Workspace",
+        "MCP-Protocol-Version",
+        "MCP-Method",
+        "MCP-Name",
+      ],
+      exposedHeaders: ["WWW-Authenticate", "MCP-Protocol-Version"],
+    }),
+  ),
+);

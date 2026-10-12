@@ -29,11 +29,11 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { layer as app } from "../../examples/app.js";
-import { routes as tenantRoutes } from "../../examples/authentication-tenant.js";
-import { Http as ExampleHttp } from "../../examples/binding.js";
-import { requestPolicy } from "../../examples/request-policy.js";
-import { Users } from "../../examples/users.js";
+import { layer as app } from "../support/app/app.js";
+import { routes as tenantRoutes } from "../support/app/authentication-tenant.js";
+import { Http as ExampleHttp } from "../support/app/binding.js";
+import { requestPolicy } from "../support/app/request-policy.js";
+import { Users } from "../support/app/users.js";
 import { serve } from "../support/serve.js";
 import {
   as,

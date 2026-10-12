@@ -2,7 +2,7 @@ import { Array as Arr } from "effect";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import type * as Action from "../../src/contract/Action.js";
-import { layer } from "../../examples/app.js";
+import { layer } from "./app/app.js";
 import { serve } from "./serve.js";
 
 export const makeTestApp = () => serve(layer);

@@ -1,8 +1,8 @@
 import { Context, Effect, type Layer, Schema } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
-import { CurrentActor } from "../../examples/authorization.js";
-import { GetUser, RenameUser, type User, WhoAmI } from "../../examples/contracts.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { GetUser, RenameUser, type User, WhoAmI } from "../support/app/contracts.js";
 
 const Actions = [GetUser, RenameUser, WhoAmI] as const;
 

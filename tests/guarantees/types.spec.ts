@@ -18,12 +18,12 @@ import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { makeTestHttp, makeTestMcp } from "../support/server.js";
-import { CurrentActor } from "../../examples/authorization.js";
-import { Double, GetUser, RenameUser, WhoAmI } from "../../examples/contracts.js";
-import { authenticate } from "../../examples/authentication.js";
-import { Login } from "../../examples/binding.js";
-import { userActions } from "../../examples/handlers.js";
-import { Users } from "../../examples/users.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { Double, GetUser, RenameUser, WhoAmI } from "../support/app/contracts.js";
+import { authenticate } from "../support/app/authentication.js";
+import { Login } from "../support/app/binding.js";
+import { userActions } from "../support/app/handlers.js";
+import { Users } from "../support/app/users.js";
 
 const Actions = [GetUser, RenameUser, Double, WhoAmI] as const;
 

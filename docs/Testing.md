@@ -1,8 +1,11 @@
 # Testing
 
-In-memory calls against served layers, through Effect's own `HttpClient`. Needs no extra
-dependency and opens no port. It tests what the wire does: routes, tools and rpcs, authentication,
-statuses and codecs as sent.
+Two ways to test, and neither opens a port. `Action.client` calls an implementation in process:
+what its handlers and its `authorize` do. `Testing.layer` answers the real routes in memory,
+through Effect's own `HttpClient`: what a surface adds, such as authentication, statuses,
+challenges and tool results as sent. The examples put a domain's tests in `test/<domain>/` and tests of
+the surfaces beside them. They use `it.effect` from `@effect/vitest`, which supplies the `Scope`
+that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`.
 
 ## API
 
@@ -16,165 +19,194 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 | `mcpRequest(method, params?, options?)` | One request an `ActionMcp` endpoint serves, as the native request the test sends.   |
 | `McpCallError`                          | What a client method fails with for an answer it cannot decode; `message` holds it. |
 
-| Option                         | Meaning                                                                                                                                               |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`                          | The endpoint, resolved by the `HttpClient` (relative under `layer`, or one prepending a base URL); default `/mcp`, the `ActionMcp.layerHttp` default. |
-| `mcpClient`: `transformClient` | Wraps the native `HttpClient`, as `ActionHttp.client` takes it: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.                        |
-| `mcpRequest`: `headers`        | Request headers.                                                                                                                                      |
+| Option                         | Meaning                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `url`                          | The endpoint; default `/mcp`, the `ActionMcp.layerHttp` default.                |
+| `mcpClient`: `transformClient` | Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token. |
+| `mcpRequest`: `headers`        | Request headers.                                                                |
 
-Exported types: `McpClient<Actions>`, a client's type; `McpClientOptions` of `mcpClient`; `McpRequestOptions` of `mcpRequest`, and `McpParams`, its `params`.
+Exported types: `McpClient<Actions>`, `McpClientOptions`, `McpRequestOptions`, and `McpParams`, the `params` of `mcpRequest`.
 
-`mcpClient(actions, options)` builds a client on the `HttpClient` in context. For every tool one
-implementation serves, pass its actions: `Testing.mcpClient(userActions.actions)`. A method fails
-with the action's declared errors and the built-in ones as decoded values, `SchemaError`,
-`HttpClientError`, or `McpCallError` for any other answer.
-Only a tool result carries the action's own errors; any other response decodes only as a
-refusal, as authentication and an authorizer send. The input may be left out when `{}` is a valid
-input, sending the input `{}` decodes to, and a given input is sent as given, as for a client's
-method.
+## Test an implementation in process
 
-## Canonical
+Acquire `Action.client(implementation)` and call its methods
+([Action.md](Action.md#call-actions-in-process)). A call runs the decoding, the `authorize` and
+the handler a server runs, but no authentication and no middleware. Provide the startup services
+around the test, as an entrypoint does, and what a request would carry, its caller first, around
+each call:
 
-```ts example=testing.ts
-import { Effect } from "effect";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { Greet, Http } from "./quickstart.js";
-import { routes } from "./quickstart-server.js";
+```ts
+const as = (user: keyof typeof users) => Effect.provideService(CurrentUser, users[user]);
 
-const program = Effect.gen(function* () {
-  const client = yield* ActionHttp.client(Http);
-  const greeting = yield* client.greet({ name: "Ada" });
+it.effect("keeps each user's notes their own", () =>
+  Effect.gen(function* () {
+    const client = yield* Action.client(notes);
+    const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
 
-  // The same action as a tool of `/mcp`, called like the client's method.
-  const mcp = yield* Testing.mcpClient([Greet]);
-  const called = yield* mcp.greet({ name: "Ada" });
-
-  return { greeting, called };
-});
-
-// The routes answer in memory for the program's scope, and are released after it.
-console.log(await Effect.runPromise(program.pipe(Effect.provide(Testing.layer(routes)))));
+    expect(yield* client.listNotes().pipe(as("grace"))).toEqual({ notes: [] });
+  }).pipe(Effect.provide(NoteStore.layerMemory)),
+);
 ```
 
-What an implementation does, with no transport between, is tested with `Action.client`
-([Action.md](Action.md#in-process-client)).
+See [notes-service/test/notes/notes.test.ts](../examples/notes-service/test/notes/notes.test.ts).
 
-### Signed-in callers
+- Replace the edge, not the service under test: [mcp-tools/test/printers/printers.test.ts](../examples/mcp-tools/test/printers/printers.test.ts) runs the real upstream service over a fake `HttpClient` Layer.
+- `it.effect` runs on a test clock: fork a call that waits, `TestClock.adjust`, then join it.
+- A Toolkit and a CLI need no `Testing` export: call `toolkit.handle` or script a `LanguageModel` ([assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts)), and run commands with `Command.runWith` ([assistant/test/commands.test.ts](../examples/assistant/test/commands.test.ts)).
 
-Protected routes on the wire: serve them behind their authentication, the real provider or a
-test verifier of the same descriptor, and give each client its caller's credential. One `layer`
-serves every caller; the test program shares what the routes read, such as `Users`.
+## Test routes in memory
 
-```ts example=testing-caller.ts
-import { Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { authenticate } from "./authentication.js";
-import { Http } from "./binding.js";
-import { userActions } from "./handlers.js";
-import { Users } from "./users.js";
+Export the routes still requiring what an entrypoint chooses, give the test its own, and provide
+the layer to each test:
 
-// The routes behind their real authentication; the caller is the token each client sends.
-const routes = Testing.layer(
-  ActionHttp.layer(Http, userActions).pipe(Layer.provide(authenticate)),
-).pipe(Layer.provideMerge(Users.layerMemory));
+```ts
+const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
+```
 
+Under it, `ActionHttp.client(Http)` needs no `baseUrl`, and `HttpClient.get("/healthz")` reaches the
+host's own routes. Each test builds the routes anew, so each starts from an empty store. See
+[notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts).
+
+- A service the test reads too goes around `layer` with `Layer.provideMerge`, so handlers and test share one instance ([kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)).
+- Two `layer`s are two servers. Each builds its routes in a layer graph of its own, so a second one runs every builder again and shares only what is provided around both: for two ports, `Action.layer(implementations)` and the services ([kitchen-sink/test/routes.test.ts](../examples/kitchen-sink/test/routes.test.ts), [Action.md](Action.md#share-one-build-across-servers)).
+- The client is `layer`'s own. A fake upstream is another `HttpClient`: provide it to the service that calls out ([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)).
+- Every request on `layer`'s client reaches the routes, whatever its host, and carries that host as its `Host` header, `localhost` for a relative URL: a client given a `baseUrl` and a remote `ActionCli` command run in memory unchanged.
+- Requests run in the test's context: a `ConfigProvider` or the test clock around the test reaches middleware and handlers.
+- To send raw web `Request`s too, build one `HttpRouter.toWebHandler` and dispose it yourself; `Testing.layer(web.handler)` gives the typed clients the same handler ([kitchen-sink/test/request-policy.test.ts](../examples/kitchen-sink/test/request-policy.test.ts)).
+
+## Test as a signed-in caller
+
+The routes keep their real authentication. Serve them behind their provider
+([Authentication.md](Authentication.md#verify-credentials)), and give each client its caller's
+credential:
+
+```ts
 const as = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
 });
-
-const program = Effect.gen(function* () {
-  const reader = yield* ActionHttp.client(Http, as("reader"));
-  const refused = yield* Effect.flip(reader.renameUser({ id: "1", name: "Bea" })); // Forbidden
-  const users = yield* Users;
-
-  return { refused, unchanged: yield* users.get("acme", "1") };
-});
-
-console.log(await Effect.runPromise(program.pipe(Effect.provide(routes))));
 ```
 
-A test verifier is another `layer` of the same descriptor: `Authentication.layer(Login, (token) => ...)`.
-Any provider of that descriptor satisfies the routes; nothing else does.
+Both clients take it: `ActionHttp.client(Http, as("reader"))` and
+`Testing.mcpClient([GetStatus, ...Notes], as("ada"))`.
 
-### RPC
+- Never provide the identity to `layer`, around it or to the routes. It is a type error: only a provider of their own descriptor satisfies them.
+- To change what a credential verifies as, replace the service the verifier reads (`servedWith` in [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)), or provide a test verifier: another `Authentication.layer` of the same descriptor.
 
-```ts example=testing-rpc.ts
-import { Effect, Layer } from "effect";
-import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { authenticate } from "./authentication.js";
-import { status, userActions } from "./handlers.js";
-import { Rpc } from "./rpc-binding.js";
-import { Users } from "./users.js";
+A typed client decodes a refusal to its error. To assert on the answer as sent, build the request
+and send it with `HttpClient.execute`, which succeeds whatever the status:
 
-// The rpcs over Effect's HTTP protocol, behind their real authentication.
-const server = ActionRpc.layer(Rpc, [status, userActions]).pipe(
+```ts
+const send = HttpClientRequest.post("/api/createNote").pipe(
+  HttpClientRequest.bearerToken("reader"),
+  HttpClientRequest.bodyJsonUnsafe({ title: "Plan", body: "" }),
+  HttpClient.execute,
+);
+```
+
+Yield it and read `response.status`, 403 here, and `response.headers["www-authenticate"]`, the
+challenge
+([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
+
+## Test MCP tools
+
+`Testing.mcpClient(actions, options?)` gives one method per action, calling its tool and decoding
+the result as `ActionHttp.client` decodes a route's, an image included. Pass the contract values
+the endpoint serves, such as `implementation.actions`.
+
+A method fails with the action's declared errors and the built-in ones as decoded values, and with
+`McpCallError` for any other answer. Only a tool's result carries the action's own errors: an HTTP
+answer other than 200 decodes as a refusal alone, so an error a verifier declares, typed over
+`ActionHttp.client`, is an `McpCallError` here
+([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
+
+For what the client's types will not send or its decoding hides (`tools/list`, an `Origin` header,
+a refusal's challenge, a malformed call), send `Testing.mcpRequest`. It is a native
+`HttpClientRequest`: `HttpClient.execute(Testing.mcpRequest("tools/list"))` succeeds with the
+response whatever its status
+([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)). For a web handler or
+`fetch`, convert it with `HttpClientRequest.toWebResult` and pass an absolute `url`.
+
+## Test rpcs
+
+`Testing.layer` answers HTTP requests and cannot upgrade a WebSocket. Export the rpc layer without
+its protocol ([ActionRpc.md](ActionRpc.md#serve-the-rpcs)), and give it Effect's HTTP protocol in
+the test, on both sides:
+
+```ts
+const server = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerJson),
-  Layer.provide(authenticate),
 );
 
-// The client's protocol posts through `Testing.layer`'s HttpClient, answered in memory.
-const protocol = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerJson),
   Layer.provide(Testing.layer(server)),
-  Layer.provideMerge(Users.layerMemory),
+  Layer.provide(MessageStore.layerMemory),
 );
 
-// Each call carries its caller's token, so one client serves several.
 const as = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
-
-const program = Effect.gen(function* () {
-  const client = yield* ActionRpc.client(Rpc);
-  const rename = client.renameUser({ id: "1", name: "Bea" });
-
-  const refused = yield* Effect.flip(rename.pipe(as("reader"))); // Forbidden
-  const signedOut = yield* Effect.flip(client.whoAmI()); // Unauthenticated
-  const users = yield* Users;
-
-  return { refused, signedOut, unchanged: yield* users.get("acme", "1") };
-});
-
-console.log(await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(protocol))));
 ```
 
-`RpcTest.makeClient` does not fit: it calls the server without serialization and without the
-authentication of protected rpcs.
+Authentication is per message, so each call carries its credential and one client serves every
+caller: `client.postMessage({ text }).pipe(as("ada"))`. See
+[live-rpc/test/routes.test.ts](../examples/live-rpc/test/routes.test.ts). Effect's
+`RpcTest.makeClient` is no substitute: it asks for handlers of the binding's group, which
+`ActionRpc.layer` does not provide (`Handler<"…">` stays required), so it reaches none of the
+library's authentication, decoding or `authorize`.
 
-## Rules
+## Assert on errors
 
-- `layer(routes)` builds the routes with request logging off, and releases them with the layer's scope. What the routes still require is the layer's, as under `HttpRouter.serve`: their builders' services, and any per-request service no middleware of theirs provides, including one a global middleware reads. Provide them around it, with `Layer.provideMerge` where the program reads them too, so the handlers and the program share one instance. A per-request service provided there, such as a tenant, reaches every request. A protected action's identity is not such a service: its routes require their authentication provider, which nothing provided around `layer` replaces ([Signed-in callers](#signed-in-callers)). What each `layer` builds anew follows the [dependency lifetimes](guarantees.md#dependency-lifetimes). Requests run in the context the layer is built in, as under `HttpRouter.serve`: a `TestClock` or a reference provided around the program reaches middleware and handlers.
-- `layer` never requires the platform services `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`, but they follow the same rule: at build and per request, the routes get the ones provided around `layer`, and `HttpServer.layerServices`' defaults for the rest, whose `FileSystem` is a no-op. The default `HttpPlatform` reads files through the `FileSystem` provided around `layer`.
-- A relative URL resolves against `http://localhost`, once any `baseUrl` a client adds is applied, so `ActionHttp.client(Http)` needs no `baseUrl` under `layer`, and one given is kept. Every request on this client is answered by the routes, whatever its host, so the native `HttpApiClient` and a remote `ActionCli` command work in memory too.
-- The client is `layer`'s own: the program's other HTTP clients get none of its requests, and it none of theirs, whether a `FetchHttpClient` is built before or after it or a `FetchHttpClient.Fetch` is provided around the program.
-- `layer(handler)` gives the same client, answered by a web handler the test serves, such as `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices))).handler` shared with tests that send it `Request`s: the routes are built once, by the handler, for every `layer` given it. The web handler needs the routes' platform services, which `HttpServer.layerServices` provides and `layer(routes)` supplies itself. The test owns the handler: `layer` neither builds nor disposes it, so the test calls `dispose` when it is done.
-- A client method sends one stateless `tools/call` for the action's tool, at the protocol version `ActionMcp.layerHttp` serves, 2026-07-28, in both the header and `_meta`. It encodes the input with the action's schema, and decodes the success from `structuredContent`, as `ActionHttp.client` does for a route. A media field it takes only from the blocks whose `_meta` names it, `{ "effect-actions/field": "image" }`, in order, never from the structured content, and a success that is media, or whose every field is, from its blocks alone ([ActionMcp.md](ActionMcp.md#media)): the method succeeds with the success as the handler returned it, the image's `data` a `Uint8Array`, an optional image returned as `undefined` absent, as no block tells the two apart. It reads a JSON or an event-stream response.
-- A declared error, the action's own or a built-in one, is a typed failure of its decoded value: an `isError` result from the tool, or a 401 or 403 from the endpoint's authentication or an authorizer, whose body is the same JSON. Match it with `Effect.catchTag`, exactly as on the HTTP client.
-- Any other answer fails with `McpCallError`, whose `message` holds it: another status, the native server's own text (invalid arguments, a defect), no reply, a result without the `structuredContent` its success is sent as, or a JSON-RPC error (an unknown tool). Match it with `Effect.catchTag("McpCallError", ...)`. A success that does not decode, such as one missing the blocks of its media fields, fails with `SchemaError`, as it does from `ActionHttp.client`. An input that does not encode fails with `InvalidInput`, as from every client, and nothing is sent.
-- The input is typed, so a malformed call cannot be sent through a client method. To assert on a malformed call, another MCP method or the response itself, such as a refusal's status and `WWW-Authenticate` challenge, send `mcpRequest(method, params, options)`. A tool call is `mcpRequest("tools/call", { name, arguments })`, its result read from the response's JSON: `result.structuredContent`, or `result.isError` and `result.content`.
-- `mcpRequest` is one stateless request as a client method sends it, a native `HttpClientRequest` the test sends itself: with `mcp-name` from `params.uri` for `resources/read` and from `params.name` otherwise, and the client metadata in `_meta`. A `_meta` in `params`, such as a `progressToken`, is merged over the client metadata, and the protocol version is always the request's own.
-- Under `layer`, send it with `HttpClient.execute(Testing.mcpRequest("tools/list"))`, which succeeds with the response whatever its status.
-- A Promise test sends it as a web `Request`, to a web handler or to `fetch`, for a web `Response` back: `handler(Result.getOrThrow(HttpClientRequest.toWebResult(Testing.mcpRequest(method, params, { url: "http://localhost/mcp" }))))`. The `url` is absolute, the handler's origin or a listening server's, since a web `Request` has no `HttpClient` to resolve a relative one.
-- To assert on a result's exact bytes, such as a size bound, parse the text of an `mcpRequest`'s JSON response: `JSON.stringify` of the parsed message reproduces what the server wrote, less its final newline, so `JSON.stringify(message.result)` is the result as encoded.
-- A request under `layer` carries the `Host` header of its URL, `localhost` for a relative one, unless it sets its own, so middleware checking the host answers as it would over the network.
-- A client names each tool by its action and holds no connection. Duplicate action names throw `Duplicate action: <name>`.
-- Test what an implementation does in process, with `Action.client`: its authorizer, its handlers, and the checks every surface makes on input, success and failure, with several callers, an action no binding holds included. Test what a surface adds under `layer`: authentication, statuses, headers, bodies as sent, MCP results and rpc failures. The two call the same methods. Cover each surface the application exposes.
+Take the failure with `Effect.flip(call)`, then assert its class and its `message` separately:
+
+```ts
+expect(refusal).toBeInstanceOf(Action.Forbidden);
+expect(refusal.message).toBe("Requires notes:write.");
+```
+
+`toEqual` never compares a tagged error's `message`, which is not an enumerable property:
+`expect(error).toEqual(new Action.Forbidden({ message: "anything" }))` passes for every message,
+and so does `toStrictEqual`. Other fields are compared, so `toEqual(new NoteNotFound({ id }))`
+asserts the `id`, and `toEqual(new Action.Forbidden({ scopes: ["issues:write"] }))` still needs the
+message asserted beside it. The message is all a model reads of a tool's failure.
+
+A Toolkit raises neither a refusal nor a declared error: each is a result the model reads, so
+assert `isFailure` and `result.message`
+([assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts)).
+
+## Examples
+
+| File                                                                                                   | Shows                                                             |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| [quickstart/test/greeting/greeting.test.ts](../examples/quickstart/test/greeting/greeting.test.ts)     | The smallest test: one action over HTTP and as a tool.            |
+| [notes-service/test/notes/notes.test.ts](../examples/notes-service/test/notes/notes.test.ts)           | An implementation in process, a caller per call.                  |
+| [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts)                     | Routes and tools behind their authentication, a token per client. |
+| [mcp-tools/test/printers/printers.test.ts](../examples/mcp-tools/test/printers/printers.test.ts)       | A fake upstream as a Layer, `TestClock` for a timeout.            |
+| [mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)                             | `tools/list` as sent, an image decoded, an `Origin` header.       |
+| [assistant/test/toolkit.test.ts](../examples/assistant/test/toolkit.test.ts)                           | A Toolkit's calls by hand and through a scripted model.           |
+| [assistant/test/commands.test.ts](../examples/assistant/test/commands.test.ts)                         | Commands run with arguments and stdin, their output read.         |
+| [assistant/test/tasks/store.test.ts](../examples/assistant/test/tasks/store.test.ts)                   | A file store on a temporary path, set through a `ConfigProvider`. |
+| [live-rpc/test/routes.test.ts](../examples/live-rpc/test/routes.test.ts)                               | Rpcs over the HTTP protocol, a token per call.                    |
+| [live-rpc/test/browser.test.ts](../examples/live-rpc/test/browser.test.ts)                             | A page's RPC client under the same protocol.                      |
+| [kitchen-sink/test/routes.test.ts](../examples/kitchen-sink/test/routes.test.ts)                       | Two ports as two `layer`s over shared builders and services.      |
+| [kitchen-sink/test/request-policy.test.ts](../examples/kitchen-sink/test/request-policy.test.ts)       | `layer(handler)`, raw `Request`s to a web handler.                |
+| [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts) | A replaced verifier service, a challenge as sent, `McpCallError`. |
+| [kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)   | A cookie per rpc call, one quota spent across HTTP and RPC.       |
+
+[kitchen-sink/README.md](../examples/kitchen-sink/README.md#index) maps every export and option to a file.
 
 ## Failure modes
 
-- Fails with `Action.Unauthenticated`: the call reached authentication without a valid credential. Give the client a `transformClient` adding it, such as `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
-- `MCP tools/call "<name>" returned an error: Invalid parameters for tool ...`: the endpoint serves a different contract under that name than the one passed. Call it with the served contract value.
-- 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` call of its binding in the served routes, or `baseUrl` adds a path the routes do not have. Include `ActionHttp.layer(Http, implementations)` in the routes.
-- The program reads a service the handlers never changed: it was provided inside the routes and again to the program, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
-- `Type 'Provider<CurrentActor, "example.Login">' is not assignable to type 'never'` where the test runs, such as at `Effect.runPromise`: the routes serve a protected action and no provider of its descriptor is provided to them. Provide it to the routes, `ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate))`, or a test verifier of the same descriptor. A caller provided around `layer` does not satisfy it ([Signed-in callers](#signed-in-callers)).
-- `Type 'CurrentActor' is not assignable to type 'never'` where the test runs: a public action's handler reads the identity, which no route provides it. Make the action protected.
-- A protected route answers 401 where the test expects a 415 or a 400: the request carries no credential that verifies, and authentication runs first. Send a token with requests about something else.
-- `Argument of type 'Layer<…, FileSystem | Generator | HttpPlatform | HttpRouter | Path>' is not assignable` at `HttpRouter.toWebHandler(routes)`, then `No overload matches this call` at `layer(web.handler)`, its last overload naming `Layer<unknown, unknown, unknown>`, or `Expected 2 arguments, but got 1` at `web.handler(request)`: the web handler's routes lack their platform services. Provide them: `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices)))`.
-- A builder or handler finds no file where one exists, failing with `NotFound: FileSystem.<method> (<path>)`, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it, with `Layer.provideMerge` where the program reads files too.
+- Fails with `Action.Unauthenticated`: the client sent no valid credential. Give it a `transformClient` ([Test as a signed-in caller](#test-as-a-signed-in-caller)).
+- A protected route answers 401 where the test expects a 415 or a 400: authentication runs before the body is read. Send a valid credential.
+- `Type 'Provider<CurrentUser, "notes-service.Login">' is missing the following properties from type 'Scope'` at `it.effect`, or `… is not assignable to type 'never'` at `Effect.runPromise`: the routes serve a protected action without a provider of its descriptor. Provide the real one or a test verifier to the routes. A caller provided around `layer` does not satisfy it.
+- `Type 'CurrentUser' is missing the following properties from type 'Scope'` at `it.effect`, or `… is not assignable to type 'never'` at `Effect.runPromise`: a public action's handler reads the identity, which no route provides it. Make the action protected.
+- A test passes whatever message an error carries: see [Assert on errors](#assert-on-errors).
+- The test reads a service the handlers never changed: it was provided inside the routes and again to the test, two instances. Provide it once, around `layer`, with `Layer.provideMerge`.
+- 404 from a client method: the action's implementation was not passed to any `ActionHttp.layer` of its binding in the served routes, or `baseUrl` adds a path the routes do not have.
 - `MCP tools/call "<name>" answered 404`: the endpoint is not at `/mcp`. Pass its `url`.
-- `HttpClientRequest.toWebResult` or `toWeb` of an `mcpRequest` fails with `UrlError`: its `url` is the relative default. Pass an absolute `url`.
-- An `HttpClientError` whose reason is `InvalidUrlError`, from a client method or a sent `mcpRequest` on an `HttpClient` that prepends no base URL: a relative `url` resolves under `layer`, and under a client that prepends one, such as `NodeHttpServer.layerTest`'s. Pass an absolute `url`.
+- `MCP tools/call "<name>" returned an error: Invalid parameters for tool ...`: the endpoint serves another contract under that name. Pass the served contract value.
+- `Duplicate action: <name>` thrown by `mcpClient`: two of the actions passed share a name.
+- A builder or handler fails with `NotFound: FileSystem.<method> (<path>)` for a file that exists, or a file route answers 500: nothing provided a `FileSystem` around `layer`, so the routes read a no-op one. Provide `NodeFileSystem.layer` or `NodeServices.layer` around it.
+- `Argument of type 'Layer<…, FileSystem | Generator | HttpPlatform | HttpRouter | Path>' is not assignable` at `HttpRouter.toWebHandler(routes)`, then `No overload matches this call` at `layer(web.handler)`: a web handler's routes need the platform services `layer(routes)` supplies itself. Provide `HttpServer.layerServices` to them.
+- `HttpClientRequest.toWebResult` or `toWeb` of an `mcpRequest` fails with `UrlError`: its `url` is the relative default. Pass an absolute one.
+- An `HttpClientError` whose reason is `InvalidUrlError`, from a client method or a sent `mcpRequest`: the `HttpClient` is not `layer`'s and prepends no base URL, so a relative `url` does not resolve. Pass an absolute one.

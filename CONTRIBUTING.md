@@ -12,17 +12,24 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in names, docs, an
 
 ## Documentation rules
 
+The source is the truth for behavior, and the examples are the reference for how code is
+written. `docs/` guides a reader between the two and restates neither.
+
 - `README.md` sells the library to humans: the pitch, the quickstart and what else its implementation becomes, why, install, links, status. No reference material.
-- `docs/` is for coding agents. Each public-module reference card has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. State what holds and what breaks, without tutorials or narrative. Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
-- `docs/README.md` is the routing table and doubles as the skill body. One line per page saying when to read it.
-- A change to public behavior changes the matching `docs/` page in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
+- `examples/` holds complete applications, one directory each, in the layout `examples/README.md` states: a folder per domain, the PascalCase file in it the contract, `routes.ts` the surfaces as one Layer, one entrypoint per way of running it, tests under `test/` mirroring `src/`. An example imports the package by name and no other example, runs as its README says, and marks each demo shortcut `DEMO ONLY`. It is what a consumer's agent copies: a subtle bad habit there is worse than a bug, and needless complexity is a defect.
+- An example's comments teach a developer new to the library what to notice and why; they do not narrate the code. Its tests show how to test: a domain's in `test/<domain>/`, in process with `Action.client`; what the surfaces add in `test/routes.test.ts`, in memory with `Testing.layer`.
+- `docs/` is for coding agents writing code against the library. A module page has a title and a few sentences, **API** (every export and option, one line each), sections named for tasks, **Examples** (example file to what it shows) and **Failure modes** (what you see when it is wrong, and the fix). Setup, vocabulary and the wire table use the structure their role needs.
+- A sentence stays on a page only if it says how to do a task, how to make a choice, a trap the types do not stop and an example cannot show by working, a boundary of the library, or a failure mode. Behavior the types, the JSDoc or an example already show is not restated: a restated rule drifts.
+- A page links to the example files that show a task, as `[notes-service/src/routes.ts](../examples/notes-service/src/routes.ts)`, and embeds a snippet only when a few lines orient faster than opening the file. `tests/docs.test.ts` checks that every relative link and anchor in `README.md`, `docs/` and the examples' READMEs exists.
+- `docs/README.md` is the routing table and doubles as the skill body: where the docs and examples are, which page answers which task, which example to start from.
+- A change to public behavior changes the example that shows it and the `docs/` page that guides it in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
-- A snippet fenced as ` ```ts example=<file> ` stays byte-identical to that file in `examples/`, which `tests/docs.test.ts` checks, so it stays type-checked; the first snippet of every Canonical section is one. Edit the example, then paste.
+- A snippet fenced as ` ```ts example=<path> ` stays byte-identical to that file in `examples/`, which `tests/docs.test.ts` checks. The root `README.md` uses it for the quickstart. Edit the example, then paste.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
-- A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
-- Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Where a reason goes: [Prose comments](#rule-families).
+- What each case looks like on the wire, on every surface, lives once, in the table of `docs/guarantees.md`. A module page links there.
+- No page names a `src/` path of the library, which does not ship, and `tests/docs.test.ts` checks it. Where a reason goes: [Prose comments](#rule-families).
 - Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior: the 415, CORS preflight, the generic MCP defect text.
-- Every file in `examples/` is listed in `examples/README.md`, which `tests/docs.test.ts` checks; `docs/README.md` links there rather than keeping a list of its own.
+- Every directory in `examples/` has a README and is listed in `examples/README.md`, which `tests/docs.test.ts` checks.
 
 ## Tests
 
@@ -30,9 +37,9 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in names, docs, an
 - A test running an Effect is `it.effect`, which provides a scope, a `TestClock` and a `TestConsole`: it serves its routes with `Testing.layer(routes)` in its scope, sending a raw request with `send`, and what it logs is captured. A command's lines are read from a console of its own run (`logged`, `printed`), so a test running several reads each one's. A codec that completes later awaits a resolved promise, `Effect.promise(() => Promise.resolve())`, which no `TestClock` holds, where `Effect.yieldNow` would still complete synchronously; a test whose handler waits on real time is `it.live`.
 - A test that runs no Effect stays `async`, such as one sending raw requests to a web handler, which `serve` releases when the test finishes. So does a test of an Effect run under no layer, of a context given per request (`serveWithContext`), of `Testing.layer(handler)` run from a Promise test, as a downstream harness runs it, and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead. An `it.effect` test takes `serve`'s handler only to wrap it, recording what a client sends, or to answer a program that provides its own client.
 - Each test provides the layers whose state or builds it reads, such as `Users.layerMemory`, rather than sharing one through `it.layer`.
-- A suite lives in the folder of the domain it tests, as `src/` is laid out: `tests/http/` for `ActionHttp`. A suite of a rule every surface keeps goes in `tests/guarantees/`, what is not a suite, a helper or a script a suite runs, in `tests/support/`, and a check of the whole repository (docs, skill, browser imports) at the root.
+- A suite lives in the folder of the domain it tests, as `src/` is laid out: `tests/http/` for `ActionHttp`. A suite of a rule every surface keeps goes in `tests/guarantees/`, what is not a suite, a helper or a script a suite runs, in `tests/support/`, with the demo application the suites share in `tests/support/app/`, and a check of the whole repository (docs, skill, browser imports) at the root.
 - A rule over many inputs is a property (`it.prop`, `it.effect.prop`) over inputs `Arbitrary.schema` derives; behavior that depends on earlier calls is a model checked after generated command sequences. The expected value comes from the generated input or the model, never from the code under test or another surface's answer, and a new property is proven by a planted violation, named in the commit message. An example test stays for one interface between components, and for a rule whose oracle would restate the code, as a name pattern's would; the example suites are not rewritten as properties, since docs cite their readable cases.
-- `vp run test:package` installs the packed tarball into a consumer that runs `examples/quickstart.ts` and `examples/quickstart-server.ts`, copied over the fixture's siblings in `scripts/package-consumer/`, which re-export them so `vp check` type-checks the fixture against them. The examples import the package by name, as the consumer does ([Release](#release)). The consumer is installed outside the repository, without its workspace overrides or source imports, and compiles the published declarations themselves (`skipLibCheck: false`) with the DOM library and no Node types, so the core stays browser-safe. It compiles with `declaration: true`, as a library built on this one does: every exported value must be nameable from the published modules, and what it emits names nothing internal, no `~` key binding its declarations to this package's private type-only fields.
+- `vp run test:package` installs the packed tarball into a consumer, checks that every page of `docs/` and every example is in it, and runs the quickstart example copied out of the installed package. The fixture's `quickstart.ts` and `quickstart-server.ts` in `scripts/package-consumer/` re-export the example so `vp check` type-checks the fixture against it. The examples import the package by name, as the consumer does ([Release](#release)). The consumer is installed outside the repository, without its workspace overrides or source imports, and compiles the published declarations themselves (`skipLibCheck: false`) with the DOM library and no Node types, so the core stays browser-safe. It compiles with `declaration: true`, as a library built on this one does: every exported value must be nameable from the published modules, and what it emits names nothing internal, no `~` key binding its declarations to this package's private type-only fields.
 - Type pins live in `*.spec.ts` and use `expectTypeOf`; a compile failure is an expression under `@ts-expect-error`, which a runtime test may also put on a call it makes as plain JavaScript would. A pin of what a layer owes checks each surface on its own, since over a union one surface's requirements hide the other's absence. Pins over large implementations live in their own file, `tests/guarantees/large-types.spec.ts`, checked beside the others; their fixtures write each identity out rather than passing it to their class as a type argument, which would double their instantiations, a cost no contract `make` returns has.
 - `ErrorReporter.make` drops a second report of one cause, so it shows which causes were reported, never how often. A test asserting a cause is reported once writes its reporter out (`recorder` in `tests/support/reporter.ts`), which records each report; one asserting which causes were reported may use `make`, as over HTTP, where the server's own report of a 500 repeats the route's.
 
@@ -62,8 +69,8 @@ consumer migrates, and any earlier decision it reverses, and why. To release: se
 matches `version`, repeats the CI checks, and publishes. It authenticates as the package's npm
 trusted publisher (this repository and that workflow file, set under the package's npm
 settings), so there is no registry token, and npm attaches provenance.
-`prepublishOnly` builds, keeping each source module its own file (`unbundle`), since bundled declarations emit a dangling `__exportAll` export with this toolchain; `files` ships `dist` and `docs`. Each PascalCase file in `src/<domain>/` is an entry, and the build writes `package.json`'s exports, the source in the repository and `dist` under `publishConfig.exports`, which pnpm's `pack` and `publish` swap in and npm's would not: publish with `vp pm publish`, and run `vp run build` after adding, renaming or removing a public module, then commit `package.json`: CI fails when the build changes it. The skill is not in the tarball:
-`npx skills add` reads it from GitHub, and agents reading node_modules get `docs/` directly.
+`prepublishOnly` builds, keeping each source module its own file (`unbundle`), since bundled declarations emit a dangling `__exportAll` export with this toolchain; `files` ships `dist`, `docs` and `examples`. Each PascalCase file in `src/<domain>/` is an entry, and the build writes `package.json`'s exports, the source in the repository and `dist` under `publishConfig.exports`, which pnpm's `pack` and `publish` swap in and npm's would not: publish with `vp pm publish`, and run `vp run build` after adding, renaming or removing a public module, then commit `package.json`: CI fails when the build changes it. The skill is not in the tarball:
+`npx skills add` reads it from GitHub, and agents reading node_modules get `docs/` and `examples/` directly.
 
 ## Lint policy
 
@@ -87,9 +94,11 @@ diagnostics.
 
 Excluded: build output (`dist`), agent caches (`.claude`, `.codex`, …), and the vendored plugin
 sources under `tools/oxlint/anti-slop`, which follow upstream's own style and are covered by the
-regression tests beside them. Nothing owned is excluded to hide findings. `examples/` is exempt
-from `no-prose-comments` alone: an example is a doc snippet, and its comments explain it where a
-consumer reads it.
+regression tests beside them. The generated skill, `skills/effect-actions`, is excluded from
+formatting alone: its links are rewritten after `docs/` is formatted, and `tests/skill.test.ts`
+holds it equal to what the generator writes. Nothing owned is excluded to hide findings. `examples/` is exempt
+from `no-prose-comments` alone: an example is what a consumer reads to learn the library, and
+its comments teach.
 
 Compiler flags required by policy and set in `tsconfig.json`: `strict`,
 `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. The assembled package consumer

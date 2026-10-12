@@ -53,22 +53,39 @@ try {
         types: [],
         lib: ["es2023", "esnext.disposable", "dom", "dom.iterable"],
       },
-      include: ["*.ts"],
+      include: ["*.ts", "quickstart/**/*.ts"],
     }),
   );
   cpSync(join(root, "scripts/package-consumer"), consumer, { recursive: true });
 
-  for (const file of ["quickstart.ts", "quickstart-server.ts"]) {
-    cpSync(join(root, "examples", file), join(consumer, file));
-  }
-
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
-  const installedDocs = join(consumer, "node_modules", manifest.name, "docs");
+  const installed = join(consumer, "node_modules", manifest.name);
 
   for (const page of readdirSync(join(root, "docs"))) {
-    if (!existsSync(join(installedDocs, page)))
+    if (!existsSync(join(installed, "docs", page)))
       throw new Error(`docs/${page} is not in the package`);
   }
+
+  for (const example of readdirSync(join(root, "examples"))) {
+    if (!existsSync(join(installed, "examples", example)))
+      throw new Error(`examples/${example} is not in the package`);
+  }
+
+  const quickstart = join(installed, "examples", "quickstart", "src");
+
+  for (const file of ["Api.ts", "routes.ts", "greeting/Greeting.ts", "greeting/handlers.ts"]) {
+    cpSync(join(quickstart, file), join(consumer, "quickstart", file));
+  }
+
+  writeFileSync(
+    join(consumer, "quickstart.ts"),
+    'export { Http } from "./quickstart/Api.js";\nexport { Greet } from "./quickstart/greeting/Greeting.js";\n',
+  );
+
+  writeFileSync(
+    join(consumer, "quickstart-server.ts"),
+    'export { routes } from "./quickstart/routes.js";\n',
+  );
 
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
 

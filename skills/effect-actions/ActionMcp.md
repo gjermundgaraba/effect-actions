@@ -1,288 +1,289 @@
 # ActionMcp
 
-MCP tools from implementations, on Effect's native `McpServer`. One `Tool` per served action,
-named after it. Two transports: a Streamable HTTP endpoint mounted on the router, or newline-delimited
-JSON-RPC on standard I/O for a subprocess.
+MCP tools from implementations, on Effect's native `McpServer`: one tool per served action, named
+after it. Reach for it to put actions in front of a model that connects from outside your process.
+`layerHttp` mounts a Streamable HTTP endpoint on the router, for clients that connect to a URL;
+`runStdio` is the whole program of a subprocess a local agent starts. For a model your own code
+calls in process, use [ActionToolkit.md](ActionToolkit.md).
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
-| API                                   | Purpose                                                                                            |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `layerHttp(implementations, options)` | Serve implementations at a Streamable HTTP endpoint.                                               |
-| `runStdio(implementations, options)`  | Serve implementations as a subprocess's program on standard I/O; succeeds when the host closes it. |
+| API                                   | Purpose                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `layerHttp(implementations, options)` | A Layer serving the implementations' actions as tools at one Streamable HTTP endpoint.            |
+| `runStdio(implementations, options)`  | An Effect serving them on standard I/O, a subprocess's whole program; succeeds when stdin closes. |
+| `Options`                             | Type of `runStdio`'s options.                                                                     |
+| `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and the three HTTP ones.                                 |
 
-The options, exported as `LayerHttpOptions` and `Options` (the server's, which `LayerHttpOptions` extends), are the native
-`McpServer.layerHttp` / `McpServer.layerStdio` options, except `protocols` and `layerHttp`'s `allowSessionTermination`, as HTTP serves no session, plus `actions` and `features`, and for `layerHttp`, `authentication`. The native ones pass through unchanged. Each implementation brings its
-authorization ([Action.md](Action.md#implementations)); an endpoint serving protected actions
-names their authentication descriptor and requires its provider
-([Authentication.md](Authentication.md)).
+`implementations` is one implementation or a list.
 
-| Option                               | Meaning                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------ |
-| `name`, `version`                    | Required native server information.                                            |
-| `description`, `websiteUrl`, `icons` | Optional native server information, sent to clients with `name` and `version`. |
-| `instructions`                       | Optional native server instructions.                                           |
-| `extensions`                         | Optional native server capability extensions.                                  |
-| `path`                               | HTTP endpoint path; HTTP only, defaults to `/mcp`.                             |
-| `allowedOrigins`                     | Optional exact Origin allowlist; HTTP only.                                    |
-| `authentication`                     | HTTP only: the protected tools' descriptor, required where one is served.      |
-| `actions`                            | Optional actions that are tools, among the implementations'; defaults to all.  |
-| `features`                           | Optional native resources, prompts and tools served beside the actions' tools. |
+| Option                               | Meaning                                                                                   |
+| ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `name`, `version`                    | Required server information.                                                              |
+| `description`, `websiteUrl`, `icons` | Optional server information, sent to clients with `name` and `version`.                   |
+| `instructions`                       | Optional text for the model about the server as a whole.                                  |
+| `extensions`                         | Optional native capability extensions.                                                    |
+| `actions`                            | The actions that are tools, among the implementations'; defaults to all.                  |
+| `features`                           | One Layer of native resources, prompts and tools served beside the actions' tools.        |
+| `path`                               | `layerHttp` only: the endpoint's path; defaults to `/mcp`.                                |
+| `allowedOrigins`                     | `layerHttp` only: the exact `Origin` values a request may carry; none by default.         |
+| `authentication`                     | `layerHttp` only: the protected tools' authentication descriptor; required to serve them. |
 
-`implementations` is one implementation or a list. Every tool declares its action's errors plus the
-built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. `layerHttp`'s layer and `runStdio`'s
-program retain the build failures and requirements of their builders, plus native
-`IllegalArgumentError`. HTTP needs the router, stdio `Stdio`, and request services follow the
-[dependency lifetimes](guarantees.md#dependency-lifetimes). The server also fails as its `features` do
-and needs what they need, except the registry, `McpServer.McpServer`, which the endpoint provides,
-such as to a feature registering with `McpServer.registerResource`.
+All but `actions`, `features` and `authentication` are Effect's own `McpServer` options, passed
+through. Its `protocols` and `allowSessionTermination` are not options: the revisions are fixed,
+and HTTP keeps no session.
 
-## Canonical
+## Serve tools over HTTP
 
-```ts example=mcp.ts
-import { Layer } from "effect";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { authenticate } from "./authentication.js";
-import { Login } from "./binding.js";
-import { double, status, userActions } from "./handlers.js";
-
-const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
-
-// One URL: discovery and `status` answer anyone; a protected tool's call authenticates
-// before its arguments are decoded, with the 401 an MCP client signs in on.
-export const layer = ActionMcp.layerHttp([status, userActions, double], {
-  name: "effect-actions",
-  version: "0.0.0",
-  allowedOrigins,
-  authentication: Login,
-}).pipe(Layer.provide(authenticate));
-```
-
-### Cross-origin browsers
-
-`HttpRouter.cors` is global to the router; choose its policy for every route it covers.
-
-```ts example=mcp-browser.ts
-import { Effect, Layer } from "effect";
-import { HttpRouter } from "effect/http";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { Greet } from "./quickstart.js";
-
-const allowedOrigins = ["https://ui.example.com"];
-
-const actions = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
-
-const mcp = ActionMcp.layerHttp(actions, { name: "greetings", version: "1.0.0", allowedOrigins });
-
-// Global router CORS handles preflight outside route-level authentication.
-// This example is public; an endpoint serving protected actions takes their `authentication`.
-export const routes = Layer.mergeAll(
-  mcp,
-  HttpRouter.cors({
-    allowedOrigins,
-    allowedMethods: ["POST"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "MCP-Protocol-Version",
-      "MCP-Method",
-      "MCP-Name",
-    ],
-    exposedHeaders: ["WWW-Authenticate", "MCP-Protocol-Version"],
-  }),
-);
-```
-
-### Subprocess
-
-```ts example=mcp-stdio.ts
-import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Effect, Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-
-const Status = Action.make("status", {
-  description: "Report whether the subprocess is ready.",
-  success: { ready: Schema.Boolean },
-  readOnly: true,
-  caller: Action.Anyone,
-});
-
-const status = Action.implement(Status, () =>
-  Effect.log("status called").pipe(Effect.as({ ready: true })),
-);
-
-// Serves until the host closes stdin, then exits 0. Protocol messages use stdout
-// exclusively: runStdio writes its program's Effect logs and `Console` output to stderr, and
-// `logToStderr`, applied last, does so for the layers provided around it, and reports a failure
-// there rather than as runMain would, on stdout.
-ActionMcp.runStdio(status, { name: "effect-actions-stdio", version: "0.1.0" }).pipe(
-  Effect.provide(NodeStdio.layer),
-  ActionCli.logToStderr,
-  NodeRuntime.runMain,
-);
-```
-
-### Media
-
-```ts example=mcp-image.ts
-import { Buffer } from "node:buffer";
-import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Effect, Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-
-const Screen = Schema.Struct({ id: Schema.Int, title: Schema.String });
-
-class TerminusError extends Schema.TaggedError<TerminusError>()("TerminusError", {
-  message: Schema.String,
-}) {}
-
-// The image is a field of the success. Over MCP it is lifted into an image block, after the
-// JSON text of `{ screen }`, which is also the structured content; elsewhere it is JSON, the
-// bytes in base64.
-const GetScreenImage = Action.make("get_screen_image", {
-  description: "Fetch the rendered image for a listed screen.",
-  input: { screen_id: Schema.Int },
-  success: { screen: Screen, image: Action.Image },
-  error: TerminusError,
-  readOnly: true,
-  caller: Action.Anyone,
-});
-
-// A one-pixel PNG stands in for a rendered screen.
-const pixel = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-  "base64",
-);
-
-const getScreenImage = Action.implement(GetScreenImage, ({ screen_id }) =>
-  screen_id === 1
-    ? Effect.succeed({
-        screen: { id: screen_id, title: "Home" },
-        image: { data: pixel, mimeType: "image/png" },
-      })
-    : Effect.fail(new TerminusError({ message: `No screen ${screen_id}.` })),
-);
-
-// A subprocess MCP server, as mcp-stdio.ts is: launch it from an MCP client.
-ActionMcp.runStdio(getScreenImage, { name: "terminus", version: "0.1.0" }).pipe(
-  Effect.provide(NodeStdio.layer),
-  ActionCli.logToStderr,
-  NodeRuntime.runMain,
-);
-```
-
-`get_screen_image` with `{ "screen_id": 1 }` answers, on every revision, beside the fields the
-native server adds to every result ([Rules](#rules)):
-
-```json
-{
-  "content": [
-    { "type": "text", "text": "{\"screen\":{\"id\":1,\"title\":\"Home\"}}" },
-    {
-      "type": "image",
-      "data": "iVBORw0KGgo...",
-      "mimeType": "image/png",
-      "_meta": { "effect-actions/field": "image" }
-    }
-  ],
-  "structuredContent": { "screen": { "id": 1, "title": "Home" } }
-}
-```
-
-The tool lists the `outputSchema` of `{ screen }`.
-
-### Native features
-
-Effect's own resources, prompts and tools join an endpoint's tools as its `features`, one layer
-merging them:
+Merge `layerHttp` into the routes, beside any other surface, and serve them with
+`HttpRouter.serve`:
 
 ```ts
-ActionMcp.layerHttp(app, {
-  name: "acme",
-  version: "1.0.0",
-  features: Layer.mergeAll(
-    McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("# Acme") }),
-    McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage the issue.") }),
-  ),
-});
+export const routes = Layer.mergeAll(
+  ActionHttp.layer(Http, greeting),
+  ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" }),
+);
 ```
 
-They are native: no implementation's authorization runs for them. The features register before
-the actions, and a native tool named as an action is refused when the endpoint builds. A service
-they need, provided around the endpoint, is shared with the rest of the graph; one provided to
-the `features` layer itself is built once per endpoint.
+See [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/routes.ts) and
+[quickstart/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/server.ts). Surfaces given the same
+implementations in one set of routes run each builder once, so a note written over HTTP is read
+as a tool: [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts). For two
+servers, see [Action.md](Action.md#share-one-build-across-servers).
 
-A feature runs with the services it was built with, never a request's: Effect's `resource` and
-`prompt` run their content in their build context alone, so a feature cannot read the caller.
-Content that depends on the caller is an action. Never provide an identity at startup to
-satisfy a feature.
+- The endpoint is stateless and speaks MCP 2026-07-28 only. A client that opens with `initialize`,
+  as the 2025 revisions do, cannot connect: pin it to that revision, or serve it over stdio.
+- An endpoint without `authentication` answers whoever reaches its port. Bind it to loopback or to
+  a network only trusted clients are on, and limit request bodies
+  ([ActionHttp.md](ActionHttp.md#serve-the-routes)):
+  [mcp-tools/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/server.ts).
+- The endpoint takes no layer middleware, which `ActionHttp.layer` and `ActionRpc.layer` do. A
+  limit that must hold for tools goes in the handlers, where it holds on every surface:
+  [kitchen-sink/src/issues/write-limit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/write-limit.ts).
 
-## Rules
+## Serve tools over stdio
 
-- HTTP serves MCP 2026-07-28 and no other revision: it is stateless, every request standing alone. Stdio serves 2026-07-28, 2025-11-25 and 2025-06-18, whichever the host negotiates.
-- `layerHttp` uses the single-endpoint Streamable HTTP transport, never the two-endpoint HTTP+SSE form.
-- Requests reaching the native MCP handler with an `Origin` header receive **403** unless that exact origin is listed in `allowedOrigins`. Requests without `Origin` pass this check. The endpoint's authentication runs first and may reject the request before native Origin validation; the allowlist does not protect authentication from untrusted-origin requests: a check that must run before it is global middleware ([Authentication.md](Authentication.md#rules)).
-- `allowedOrigins` is an Origin allowlist, not CORS configuration. Cross-origin browser clients also need outer CORS middleware or a proxy to handle preflight and add response headers. Without it, an allowed-origin `OPTIONS` request receives **405** and even a successful `POST` has no `Access-Control-Allow-Origin`. Keep preflight outside authentication and apply CORS headers to refusals too.
-- An endpoint serving only public actions names no descriptor, and authenticates nothing.
-- An endpoint whose every tool is protected authenticates every request before reading its body, so a host signs in when it connects.
-- A mixed endpoint, serving public and protected tools on one URL, decides from the request's MCP routing headers before the native server reads its body, as the native server refuses a request whose headers disagree with its body. Discovery, `server/discover` and `tools/list`, `notifications/cancelled`, and a call of a public tool pass without a credential; a credential presented there is verified, and refused with 401 if it does not verify, while one its scheme decodes as empty passes as none. Every other request authenticates: a protected tool's call, before its arguments are decoded, and every native feature's request, `prompts/get`, `resources/read`, their listings, `completion/complete` and `subscriptions/listen` included, as does a method a later revision adds. The `Mcp-Name` header is compared as it is: a `tools/call` naming no public tool by it, a Base64-encoded name (`=?base64?...?=`) included, authenticates, and so does a request whose headers name no method: it fails closed.
-- So signed-out callers of a mixed endpoint list every tool, protected ones included, and call the public ones; a protected tool's call answers the 401 an MCP client signs in on, then retries. To keep protected tools unlisted to signed-out callers, serve the public tools on an endpoint of their own, with separate `layerHttp` calls on different paths.
-- A public tool never gets the identity, signed in or not; an action whose answer depends on the caller is protected. Middleware provided around `layerHttp` covers every request to the endpoint, before its authentication; an endpoint takes no layer middleware of its own, so middleware that reads the identity is not available over MCP ([ActionHttp.md](ActionHttp.md#rules)).
-- Every action of the implementations passed becomes a tool, with the action's `mcp` hints, its `title` and `_meta` included, unless `actions` lists the tools ([guarantees.md](guarantees.md#names)). To keep an action off MCP, leave it out of `actions`: `ActionMcp.layerHttp([users, pages], { name, version, actions: Tools })` ([Action.md](Action.md#contracts)). Only a listed action's input must suit MCP, and only listed actions' names must be unique. The types take only actions of the implementations, and owe only what the listed actions' handlers and authorizers, and the builders holding them, need. Whether the endpoint authenticates follows the listed actions alone.
-- Builders and request services follow the [dependency lifetimes](guarantees.md#dependency-lifetimes), and authorization the [authorization rules](guarantees.md#authorization). Only the tool registry is fresh per endpoint.
-- A handler may yield `McpServer.McpServer`, its endpoint's registry, to send notifications such as progress: the endpoint provides it, and no host owes it. Served on another surface too, where nothing provides it, read it with `Effect.serviceOption`.
-- Every served action's input must be one object with keys, as a tool's arguments are: fields, a struct or a class, identified, recursive or suspended, a record, or a declared type whose JSON Schema is an object. `layerHttp` and `runStdio` read the JSON Schema the native server reads, and throw for any other when they are called, naming the actions: a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Omit `input`, or give `{}`, for a tool with no arguments.
-- A tool's `inputSchema` is its input's JSON Schema, on every revision, closed with `additionalProperties: false` where the input declares its fields; a record's lists its value schema there instead. Undeclared arguments are refused on every revision, as invalid arguments.
-- A success without a media field is sent as it is. On 2026-07-28, over HTTP and stdio, it is `structuredContent: <encoded success>`, of any JSON type (`null` for an action that returns nothing), and one text block holding the same JSON, and the tool's `outputSchema` describes the encoded success. Stdio's earlier revisions, 2025-11-25 and 2025-06-18, structure less: they carry only an object as `structuredContent`, and list only an object-rooted `outputSchema`. A success they do not structure is text alone: its JSON, or a string success the string itself.
-- A media field is lifted out of the result ([Media](#media)): each becomes a content block of its own, after the one text block, in field order: for an `Action.Image`, an `image` block of its `data` in base64 and its `mimeType`. The rest of the success is sent as any success is: `structuredContent` is the encoded success without its media fields, the tool's `outputSchema` describes that, and the text block is its JSON, exactly. The rest is an object, so stdio's 2025 revisions structure it too.
-- An absent optional media field sends no block. An array field sends one block per element, in order.
-- A success that is media, `success: Action.Image`, or whose every field is, sends its blocks alone: no `structuredContent`, no text block, and the tool lists no `outputSchema`. A success that is an array of media, `success: Schema.Array(Action.Image)`, sends one block per element, alone too. Blocks of a success that is media carry no `_meta`, as no field names them.
-- Each block lifted from a field names it in its `_meta`, `{ "effect-actions/field": "image" }`, on every revision, so a client reassembles the success from the structured content and the blocks, as `Testing.mcpClient` does ([Testing.md](Testing.md#rules)). A client that does not know the key ignores it, as MCP's `_meta` is open.
-- Media is lifted only from a top-level field of a struct success (`Schema.Struct` or fields, `Schema.suspend`ed or not), the field bare, `Schema.optional` or `Schema.optionalKey`, or an array, `Schema.Array` or `Schema.NonEmptyArray`, or from a success that is media or such an array. An `Action.Image` anywhere else in an action the endpoint serves is refused when `layerHttp` or `runStdio` is called, naming the actions, as an input that is not one object is: nested in a field, in a union or a record, in an optional array field, whose blocks cannot tell absent from empty, in a `Schema.Class` success or a struct with an encoding of its own, such as `Schema.encodeKeys`, or given an encoding of its own itself, which would send it as something else, in the input or in an error. Only the listed `actions` are checked.
-- A media field's own annotations, such as its `description`, and those of a success that is media, reach no model: the `outputSchema` leaves the field out, a success that is media lists none, and an image block carries no description. Describe the image in the action's `description`.
-- A declared error is unchanged by media ([guarantees.md](guarantees.md#wire-behavior)).
-- On 2026-07-28, over HTTP and over stdio, the native server adds `_meta["io.modelcontextprotocol/serverInfo"]` and `resultType: "complete"` to every result, beside a tool result's own fields (`isError: false` on a success); the earlier revisions stdio speaks add neither. `serverInfo` is the options' `name`, `version`, `description`, `websiteUrl` and `icons`, as given, so a 2026-07-28 result's encoded size is the size of its own fields plus a fixed overhead per endpoint or subprocess.
-- Invalid arguments are answered by the native `McpServer`: from 2025-11-25 on, an `isError` result with a message for the model, such as `Invalid parameters for tool 'greet': Expected string\n  at ["name"]`; on earlier stdio revisions, a JSON-RPC error. HTTP's `InvalidInput` does not apply.
-- Every caller sees every tool of the endpoint ([guarantees.md](guarantees.md#scope)); authorization happens in each implementation's `authorize`.
-- Cancellation is Effect's native RPC interruption. Over HTTP there is no session, so `notifications/cancelled` interrupts nothing. A tool call ends with its HTTP request, whose lifetime (for example, whether a client disconnect interrupts it) is the host's.
-- Handlers may yield `McpSchema.McpRequestContext` for the client's declared information; the native server supplies it to every tool call, so it is never a router or host requirement.
-- `runStdio` is the subprocess's whole program: it serves until the host closes stdin, then succeeds, so the process exits 0. Closing stdin ends the input, not the calls in flight: each runs to completion and is answered, and `runStdio` succeeds once every answer is written. A script piping requests may close stdin as soon as it has written them. A call that never completes keeps the process running: MCP hosts close stdin to shut a server down, and the MCP specification expects them to send `SIGTERM` when it does not exit in time. A signal interrupts it, as any program. Provide `Stdio` and its services to it and run it, `NodeRuntime.runMain`.
-- stdio is a local surface and takes no `authentication`: the host supplies `Stdio` (`NodeStdio.layer`) and any request-time services explicitly around `runStdio`, the identity of every protected tool included, `Effect.provideService(CurrentActor, actor)`. Each implementation's `authorize` runs for its protected tools. Tool arguments never establish identity.
-- `runStdio` gives its program a `Console` that writes every method through the `error` of the console it runs with, to stderr, since stdout carries the protocol: every console logger, the default one included, `Console.log`, and the counters, timers and group labels Node's console prints on stdout. A counter or a timer prints its label and its count or the milliseconds since it started, a group prints its label without indenting what follows, `table` prints its value as `log` does, `dir` takes no options, an unknown or repeated label prints no warning, and `clear` does nothing. A timer started again while it runs keeps its first start. Layers provided around `runStdio` run outside its program: apply `ActionCli.logToStderr` last, before `runMain`, as the example does ([ActionCli.md](ActionCli.md#rules)). Keep the global `console.log` and other direct writes off stdout.
-- A built-in error, an authorizer's refusal, a defect and an encoding failure are answered as [wire behavior](guarantees.md#wire-behavior) says.
-- On an endpoint naming a Bearer descriptor, a protected tool's step-up refusal is an HTTP 401 or 403 instead of a tool result ([guarantees.md](guarantees.md#authorization)).
-- That holds only while nothing of the response has been sent. Once a handler's notification, such as progress, has started a 200 event stream, a later refusal is the tool's `isError` result in it. An authorizer runs before its handler, so its refusal is always the status.
-- Authentication refuses before the MCP handler too: an HTTP 401 or 403. An MCP client reads the 401's `WWW-Authenticate` challenge and finds its authorization server through the discovery `Authentication.layer` publishes for a protected resource ([Authentication.md](Authentication.md)).
+`runStdio` is the program of an MCP subprocess. Provide `Stdio` and the startup services, then run
+it:
+
+```ts
+ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: "1.0.0" }).pipe(
+  // DEMO ONLY: a real host reads who started it, from its own login or configuration.
+  Effect.provideService(CurrentUser, users.ada),
+  Effect.provide([NodeStdio.layer, NoteStore.layerMemory]),
+  // stdout carries the protocol alone, so logs and failures go to stderr.
+  ActionCli.logToStderr,
+  NodeRuntime.runMain,
+);
+```
+
+See [notes-service/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/stdio.ts), and
+[mcp-tools/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/stdio.ts) for public tools. It serves until the
+host closes stdin and every call in flight is answered, then succeeds. `actions` and `features`
+work as over HTTP.
+
+To try a server by hand, pipe it one request. Without an `initialize` handshake before it, a
+request carries the 2026-07-28 metadata in its `_meta`, as the body `Testing.mcpRequest` builds
+does:
+
+```sh
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus","arguments":{},"_meta":{"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' |
+  node --import tsx examples/notes-service/src/stdio.ts
+```
+
+- **stdout carries the protocol alone.** `runStdio` sends its own program's Effect logs and
+  `Console` output to stderr. Layers provided around it run outside that program: apply
+  `ActionCli.logToStderr` last, before `runMain`, which moves their default logger and reports a
+  startup failure there too. Nothing moves the global `console.log`: keep it off stdout.
+- **No token arrives, so the host names the caller.** stdio takes no `authentication`: provide the
+  protected tools' identity around `runStdio`. Each implementation's `authorize` still runs. A
+  subprocess has one caller, whoever started it. An HTTP server has many: never provide an
+  identity at its startup, where it would stand for every request.
+
+## Describe tools to a model
+
+A tool is its contract ([Action.md](Action.md#define-a-contract)): the action's name, its
+`description`, and its input schema with each field's `description` are all a model knows of it.
+`readOnly` is the tool's read-only hint, and the contract's `mcp` option holds its `title`, its
+other hints and its `_meta`. The server's `instructions` say what the tools are for together. See
+[mcp-tools/src/printers/Printers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/Printers.ts) and
+[mcp-tools/src/instructions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/instructions.ts).
+
+- MCP takes a write as destructive unless it states `destructiveHint: false`.
+- A tool's input is one object with keys. Omit `input` for a tool without arguments, and wrap a
+  union, an array or a scalar in a field.
+- An argument the schema refuses, an undeclared one included, is answered by the native server
+  before the handler runs, with its own message, not `InvalidInput`. So constrain in the schema
+  what a model may send: an id written into an upstream URL is not made safe by
+  `encodeURIComponent`, which leaves `..` alone.
+- A declared error reaches the model as an `isError` result whose text is the error's JSON. Write
+  its `message` for the model, which acts on it:
+  [mcp-tools/src/printers/farm.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/farm.ts). A defect answers a
+  generic text, its cause logged and not sent. Every case:
+  [guarantees.md](guarantees.md#wire-behavior).
+- `actions` lists the tools, and only listed actions must suit MCP:
+  [kitchen-sink/src/Actions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/Actions.ts). Leave out an action a
+  model should not call, or one that takes a secret ([Action.md](Action.md#define-a-contract)).
+
+## Return images and other media
+
+Give the success an `Action.Image` field, the one media kind, and return its bytes and MIME type
+from the handler:
+
+```ts
+success: { printer: Printer, image: Action.Image },
+```
+
+The tool sends the field as an image block, which the model sees as an image, after the JSON of
+the rest. Every other surface sends it as JSON, the bytes in base64. See
+[mcp-tools/src/printers/Printers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/Printers.ts), and
+[Testing.md](Testing.md#test-mcp-tools) for the client that decodes it back.
+
+- An image is a top-level field of a struct success, bare, optional or a required array, or the
+  whole success or an array of it. Anywhere else in a served action, `layerHttp` and `runStdio`
+  throw: nested, in a union such as `Schema.NullOr`, in a `Schema.Class` success, in an error, or
+  in the input.
+- So an action taking an image as input is no tool: leave it out of `actions`
+  ([kitchen-sink/src/attachments/Attachments.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/attachments/Attachments.ts)).
+- A media field's own `description` reaches no model. Describe the image in the action's
+  `description`.
+
+## Protect tools
+
+Name the protected actions' authentication descriptor and provide its provider to the routes:
+
+```ts
+const mcp = ActionMcp.layerHttp(implementations, {
+  name: "notes-service",
+  version: "1.0.0",
+  instructions: "Notes belong to the signed-in user. Read a note before updating it.",
+  authentication: Login,
+});
+
+export const routes = Layer.mergeAll(api, mcp, health, openApi).pipe(Layer.provide(authenticate));
+```
+
+See [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts). Write the
+[descriptor](Authentication.md#declare-how-callers-sign-in) and its
+[provider](Authentication.md#verify-credentials) once for every surface, and
+[publish discovery](Authentication.md#publish-oauth-discovery) so an MCP client finds where to
+sign in. What a signed-in caller may do is each implementation's
+[`authorize`](Action.md#authorize-calls), which runs on every call of a protected tool.
+
+- **One endpoint or two.** On a mixed endpoint, serving public and protected tools, anyone lists
+  every tool, protected ones included, and calls the public ones; a protected tool's call answers
+  the 401 a client signs in on. To keep protected tools unlisted to signed-out callers, serve the
+  public tools on an endpoint of their own: a second `layerHttp` on another `path`. An endpoint of
+  protected tools alone authenticates every request, the listing included.
+- The listing is never filtered by caller: `authorize` refuses the call, not the sight of the
+  tool.
+- On a Bearer endpoint, a protected tool's `Unauthenticated`, or `Forbidden` naming `scopes`,
+  answers the request with 401 or 403 and a challenge the client acts on, in place of a tool
+  result ([Authentication.md](Authentication.md#publish-oauth-discovery)). Once a handler has sent a notification the
+  response has started, and its refusal is a tool result: refuse in `authorize`.
+
+## Allow browser clients
+
+A browser MCP client sends its page's `Origin`, and needs two things.
+
+- **`allowedOrigins`.** A request carrying an `Origin` is refused with 403 unless that exact
+  origin is listed, and none is by default. A request without one, as other clients send, passes.
+  Read the list from configuration:
+  [mcp-tools/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/routes.ts).
+- **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
+  `HttpRouter.cors`, global to the router, so it answers the preflight before authentication and
+  adds its headers to refusals, with the headers an MCP client sends and reads:
+  [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts), provided
+  in [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts). Its policy covers every
+  route of the router.
+
+The endpoint's authentication runs before its Origin check, so `allowedOrigins` keeps no request
+from the verifier. A Host or Origin check that must run first is a request policy:
+[Authentication.md](Authentication.md#run-a-request-policy-before-authentication).
+
+## Add native prompts and resources
+
+Merge Effect's own `McpServer.resource`, `McpServer.prompt` and `McpServer.toolkit` layers into
+one and pass it as `features`, to `layerHttp` or `runStdio`:
+[kitchen-sink/src/issues/guide.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/guide.ts), given in
+[kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) and
+[kitchen-sink/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/stdio.ts). Provide a service they need
+around the endpoint, never to the `features` layer itself: there it is built again for the
+features alone, so a resource reads another store than the tools write.
+
+- Merged beside the endpoint, not given as `features`, they build without error and are never
+  served.
+- They are native, not actions: no `authorize` runs for them, and they run with the services they
+  were built with, never a request's, so they cannot read the caller. Content that depends on the
+  caller is an action.
+- On an endpoint naming `authentication`, every prompt and resource request needs a credential,
+  listings included. To offer them to signed-out callers, serve them on an endpoint without
+  protected tools.
+
+## Send notifications from a handler
+
+A handler yields `McpServer.McpServer` and sends through it:
+`server.notifications["notifications/progress"]({ progressToken, progress })`.
+`McpSchema.McpRequestContext` holds what the client sent: its `clientInfo`, and the request's
+`_meta` as `requestMetadata`. The endpoint and `runStdio` provide both, so no host owes them. An
+implementation also served on another surface, where nothing provides them, reads them with
+`Effect.serviceOption`.
+
+- On 2026-07-28, which HTTP always speaks, a progress notification is sent only with the token
+  its request carried, `requestMetadata?.progressToken`. With another token, or when the client
+  sent none, it is dropped silently.
+- A notification starts the response, so a refusal after it is a tool result, not a 401 or 403:
+  refuse in `authorize` ([Protect tools](#protect-tools)).
+
+## Examples
+
+| File                                                                                                   | Shows                                                                          |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/routes.ts)                                       | One public tool beside a JSON route.                                           |
+| [notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts)                                 | Public and protected tools on one endpoint, beside a JSON API.                 |
+| [notes-service/src/identity/verifier.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/verifier.ts)           | The provider, and the discovery an MCP client signs in through.                |
+| [notes-service/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/stdio.ts)                                   | A stdio server whose host names the caller.                                    |
+| [notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts)                     | Tools called in memory as a signed-in caller; the listing to a signed-out one. |
+| [mcp-tools/src/printers/Printers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/Printers.ts)                   | Descriptions, hints and titles; an id constrained by its schema; an image.     |
+| [mcp-tools/src/printers/farm.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/farm.ts)                           | An upstream's failures as one declared error a model can act on.               |
+| [mcp-tools/src/instructions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/instructions.ts)                             | Server information and `instructions`, shared by both transports.              |
+| [mcp-tools/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/routes.ts)                                         | `allowedOrigins` from configuration.                                           |
+| [mcp-tools/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/server.ts)                                         | A body limit, and where an unauthenticated server binds.                       |
+| [mcp-tools/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/stdio.ts)                                           | A stdio server of public tools, its logs on stderr.                            |
+| [mcp-tools/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/routes.test.ts)                             | Listed hints, an image, a declared error and the origin check, in memory.      |
+| [kitchen-sink/src/Actions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/Actions.ts)                                 | `actions`: one action left off the tools.                                      |
+| [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts)                                   | A mixed endpoint with `actions`, `features` and `allowedOrigins`, and CORS.    |
+| [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts)                   | CORS for a browser MCP client.                                                 |
+| [kitchen-sink/src/issues/guide.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/guide.ts)                       | A native resource and prompt as `features`.                                    |
+| [kitchen-sink/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/stdio.ts)                                     | A stdio server with `actions` and `features`.                                  |
+| [kitchen-sink/src/attachments/Attachments.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/attachments/Attachments.ts) | An image in a success, a tool, and in an input, no tool.                       |
+| [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts) | Discovery, a 401's challenge, and a verifier's declared error over MCP.        |
 
 ## Failure modes
 
-- `MCP tool input must be one object with keys, such as a struct: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions' input is a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Wrap a union in a field, `input: { notification: Schema.Union([Email, Sms]) }`, omit `input` (or give `{}`) for no arguments, or leave the action out of `actions`.
-- `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions hold an `Action.Image` a tool cannot lift, nested in a field, in a union or a record, in an optional array field, in a class or an encoded struct, with an encoding of its own, in the input or in an error. Make it a top-level field of a `Schema.Struct` success, the whole success or an array of it, give an optional array field as a required one, empty when absent, or leave the action out of `actions`; the other surfaces send it as JSON.
-- `Type 'CurrentActor' is not assignable to type 'never'` where the server is launched, with `CurrentActor` among the endpoint's startup requirements rather than its `Request<"Requires", ...>`: a feature reads a request service, which it never receives ([native features](#native-features)). Serve that content as an action.
-- A native `McpServer.resource`, `McpServer.prompt` or `McpServer.toolkit` layer merged beside `layerHttp` builds without error and is never served: `resources/list` is empty, `prompts/list` is not found, and `tools/list` lists only the actions. Each endpoint's registry is its own: pass them as its `features`.
-- An MCP client gets an `isError` refusal instead of the 401 or 403 it re-authorizes on: the handler sent a notification before refusing, so the response had already started. Refuse in the implementation's `authorize`, before the handler runs.
-- `Duplicate MCP tool: <name>` thrown at the `layerHttp` or `runStdio` call: two implementations on one endpoint serve actions of the same name. Split the endpoint, or rename one action. `actions` tells apart only separate contracts sharing a name, listing one; two implementations of the same contract stay both listed: pass one implementation.
-- `Duplicate MCP tool: <name>, claimed by an action and a native feature`, a defect when the endpoint builds: a native tool among its `features` has an action's name. Rename the native tool, or leave the action out of `actions`.
-- `Listed in actions, but no implementation holds it: <names>` thrown at the `layerHttp` or `runStdio` call: those actions are not among the implementations' actions, by identity. `(another contract)` marks one whose name an implementation holds, as a second copy of the contracts module makes. Pass the implementation holding it, or list the contract it implements.
-- `Property 'authentication' is missing` on `layerHttp`'s options: the endpoint serves a protected action and names no `authentication`. `Type 'Other' is not assignable to type 'CurrentActor'` on its `authentication`: the descriptor is another identity's. Give the protected actions' descriptor. `Protected action '<name>' requires its matching authentication descriptor` thrown by `layerHttp`: the same, from plain JavaScript.
-- `Provider<CurrentActor, "example.Login">` among the endpoint's requirements, or `Type 'Provider<...>' is not assignable to type 'never'` where the server is launched: the descriptor's provider is not provided. `Layer.provide(authenticate)` on that `layerHttp` ([Authentication.md](Authentication.md#failure-modes)).
-- `Type 'X' is not assignable to type 'never'` where the server is launched, or `Request<"Requires", X>` in the endpoint's type: a handler or an authorizer yields a request service that no middleware around the endpoint provides. Provide it with router middleware on that `layerHttp`; never an identity at startup. `X` the identity, on an endpoint serving public tools: a public handler reads it, which no public tool gets. Make that action protected.
-- A public tool's call answers 401: it presented a credential that does not verify. Send a valid one, or none.
-- A protected tool's call answers 401 to a signed-in host after a while: its token expired; the host refreshes it, or signs in again, on the challenge's `invalid_token`.
-- A prompt or resource demands credentials: it is served on an endpoint naming a descriptor, where every feature request authenticates. Serve it on an endpoint without protected tools.
-- A stdio program owes `CurrentActor`, `Type 'CurrentActor' is not assignable to type 'never'` at `runMain`: it serves a protected tool, whose caller the host supplies. Provide it around `runStdio`; stdio takes no `authentication`.
-- Client reports a broken transport from a stdio subprocess: something wrote to stdout, such as `console.log`, or a layer provided around `runStdio` did, through the default logger without `Logger.LogToStderr` outermost, or through `Console` or a logger such as `Logger.consoleJson`, which `LogToStderr` does not move. Remove the write, apply `ActionCli.logToStderr` last, or log JSON with `Logger.withConsoleError(Logger.formatJson)`.
-- A stdio host asking for 2025-03-26 or 2024-11-05 is offered 2025-11-25 in the `initialize` result, as MCP negotiates, and disconnects if it cannot speak it. Update the host.
-- An MCP client cannot connect over HTTP: a request answers `400` with JSON-RPC error `-32020`. The client opens with `initialize`, as the 2025 revisions do, and HTTP serves only 2026-07-28. Pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
-- An Origin-bearing request reaches the native handler and gets an empty 403: its `Origin` is not in `allowedOrigins`. Add the exact origin only if the deployment trusts it.
-- A disallowed Origin receives 401 instead: the endpoint's authentication rejected it before the native Origin check. A Host or Origin check that must run before authentication is global middleware ([Authentication.md](Authentication.md#rules)).
-- Browser calls fail despite an allowed Origin: configure CORS outside authentication and the MCP handler (see the browser example above). The native allowlist alone neither handles preflight nor adds CORS response headers.
+- `MCP tool input must be one object with keys, such as a struct: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions' input is a union, an array, a scalar, or an object without keys such as `Schema.Struct({})`. Wrap it in a field, `input: { notification: Schema.Union([Email, Sms]) }`, omit `input` for no arguments, or leave the action out of `actions`.
+- `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: <name>, ...` thrown by `layerHttp` or `runStdio`: those actions hold an `Action.Image` no tool can send as a block ([media](#return-images-and-other-media)). Make it a top-level field of a `Schema.Struct` success, give an optional array as a required one, empty when absent, or leave the action out of `actions`.
+- `Duplicate MCP tool: <name>` thrown by `layerHttp` or `runStdio`: two implementations serve actions of one name. Split the endpoint or rename one. `actions` tells apart only separate contracts sharing a name; of two implementations of one contract, pass one.
+- `Duplicate MCP tool: <name>, claimed by an action and a native feature`, a defect when the endpoint builds: a native tool among `features` has an action's name. Rename it, or leave the action out of `actions`.
+- `Listed in actions, but no implementation holds it: <names>` thrown by `layerHttp` or `runStdio`: those actions are not among the implementations', by identity. `(another contract)` marks one whose name an implementation holds, as a second copy of the contracts module makes. Pass the implementation holding it, or list the contract it implements.
+- `Property 'authentication' is missing` on `layerHttp`'s options: the endpoint serves a protected action and names no descriptor. `Type 'Other' is not assignable to type 'CurrentUser'` on `authentication`: the descriptor is another identity's. `Protected action '<name>' requires its matching authentication descriptor` thrown by `layerHttp`: either, from plain JavaScript. Give the protected actions' descriptor.
+- `Provider<CurrentUser, "notes-service.Login">` among the endpoint's requirements, or `Type 'Provider<...>' is not assignable to type 'never'` where the server is launched: the descriptor's provider is not provided. `Layer.provide(authenticate)` on the routes ([Authentication.md](Authentication.md#failure-modes)).
+- `Type 'X' is not assignable to type 'never'` where the server is launched, or `Request<"Requires", X>` in the endpoint's type: a handler or an authorizer yields a request service no middleware around the endpoint provides. Provide it with router middleware; never an identity at startup. `X` the identity, on an endpoint serving public tools: a public handler reads it, which no public tool gets, signed in or not. Make that action protected.
+- `Type 'CurrentUser' is not assignable to type 'never'` where the server is launched, with `CurrentUser` among the endpoint's startup requirements, not its `Request<"Requires", ...>`: a feature reads a request service, which it never receives ([features](#add-native-prompts-and-resources)). Serve that content as an action.
+- `Type 'CurrentUser' is not assignable to type 'never'` at a stdio program's `runMain`: it serves a protected tool, whose caller the host supplies. Provide it around `runStdio`.
 - `Object literal may only specify known properties, and 'protocols'`: the revisions are fixed. Delete the option.
+- A native resource, prompt or toolkit layer is never served: `resources/list` is empty, `prompts/list` is not found, `tools/list` lists only the actions. It is merged beside the endpoint. Pass it as `features`.
+- A prompt or resource demands credentials: its endpoint names a descriptor. Serve it on an endpoint without protected tools.
+- A public tool's call answers 401: it presented a credential that does not verify. Send a valid one, or none.
+- A protected tool's call answers 401 to a signed-in client after a while: its token expired. The client refreshes it, or signs in again, on the challenge's `invalid_token`.
+- An MCP client gets an `isError` refusal, not the 401 or 403 it re-authorizes on: the handler sent a notification before refusing. Refuse in `authorize`.
+- An MCP client cannot connect over HTTP, a request answering 400 with JSON-RPC error `-32020`: it opens with `initialize`, and HTTP serves only 2026-07-28. Pin the client to it (the official client: `versionNegotiation: { mode: { pin: "2026-07-28" } }`), or serve that host over stdio.
+- A stdio host asking for 2025-03-26 or 2024-11-05 is offered 2025-11-25, and disconnects if it cannot speak it: stdio serves 2026-07-28, 2025-11-25 and 2025-06-18. Update the host.
+- A request written by hand to a stdio server answers JSON-RPC error `-32602`, `Invalid request metadata`: it is neither preceded by `initialize` nor carries the 2026-07-28 metadata. Open with `initialize` and `notifications/initialized`, or give the request's `_meta` its `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` ([stdio](#serve-tools-over-stdio)).
+- A client reports a broken transport from a stdio subprocess: something wrote to stdout. The global `console.log` did, or a layer provided around `runStdio` did, through the default logger, or through `Console` or a logger such as `Logger.consoleJson`, which `logToStderr` does not move. Remove the write, apply `ActionCli.logToStderr` last, or log JSON with `Logger.withConsoleError(Logger.formatJson)`.
+- A request carrying an `Origin` gets an empty 403: the origin is not in `allowedOrigins`. Add the exact origin, only if the deployment trusts it.
+- A disallowed `Origin` gets 401, not 403: the endpoint's authentication refused it before the Origin check ([browser clients](#allow-browser-clients)).
+- Browser calls fail despite an allowed origin, the preflight answering 405: there is no CORS. Add `HttpRouter.cors` ([browser clients](#allow-browser-clients)).
 - `Tool <name> has an output schema but did not return structured content` raised by a Python MCP client for an action that returns nothing: its success is sent as `null`, which a Python SDK release before the fix of python-sdk#3345 reads as missing. Update the SDK.

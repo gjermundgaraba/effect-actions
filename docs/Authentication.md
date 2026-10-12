@@ -1,309 +1,304 @@
 # Authentication
 
-How a remote caller proves the identity a protected contract declares, and its verification on
-the server. A contract states its identity, `caller: CurrentActor` ([Action.md](Action.md#rules)).
-`make` declares how a caller proves it: a named, browser-safe descriptor of one native scheme,
-Bearer unless it names another, which a binding, HTTP or RPC, and an MCP endpoint serving protected actions
-name. `layer` is that
-descriptor's provider: the server-only verifier, which every HTTP,
-MCP or RPC layer serving protected actions requires, and which authenticates their requests before
-decoding them. Token verification, login, and consent stay in the application.
+How a remote caller proves the identity a protected action declares. `Authentication.make`
+declares it: a browser-safe authentication descriptor, which a binding and an MCP endpoint
+serving protected actions name. `Authentication.layer` is that descriptor's provider: the
+server-only verifier, which every HTTP, MCP or RPC layer serving a protected action requires.
+The library runs the verifier you give it and answers its refusals; verifying a token, login and
+consent stay in the application.
 
 ## API
 
 Import `@gjermundgaraba/effect-actions/Authentication`.
 
-| API                                           | Purpose                                                                                                     |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `make(name, identity, { security, error }?)`  | A browser-safe authentication descriptor: how a caller proves `identity`, one native scheme.                |
-| `layer(descriptor, verify, options?)`         | Its provider: the server-only verifier, or an Effect building it once per layer graph, and discovery.       |
-| `protect(descriptor)`                         | Router middleware authenticating a route of the host's own as the descriptor's actions are.                 |
-| `bearerTokenOf(authorization)`                | The bearer token of an `Authorization` header value or `null`, an `Option`, for an unrouted caller.         |
-| `refusalResponse(error, options?)`            | The response authentication answers a refusal with, for a caller the router never routes.                   |
-| `Any`                                         | Any descriptor, erased: what a binding's and an MCP endpoint's `authentication` take.                       |
-| `Descriptor`, `Provider`, `Protection`        | What `make`, `layer` and `protect` return, to name in a package that emits declarations.                    |
-| `Verify`, `Options`, `LayerOptions`           | The verifier's type, of the credential its descriptor's scheme decodes, and `make`'s and `layer`'s options. |
-| `ProtectedResource`, `RefusalResponseOptions` | An OAuth protected resource, and what `refusalResponse` takes.                                              |
+| API                                           | Purpose                                                                                               |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `make(name, identity, { security, error }?)`  | A browser-safe authentication descriptor: how a caller proves `identity`, by one native scheme.       |
+| `layer(descriptor, verify, options?)`         | Its provider: the server-only verifier, or an Effect building it once per layer graph, and discovery. |
+| `protect(descriptor)`                         | Router middleware authenticating a route of the host's own as the descriptor's actions are.           |
+| `bearerTokenOf(authorization)`                | The bearer token of an `Authorization` header value, an `Option`, for an unrouted caller.             |
+| `refusalResponse(error, options?)`            | The response authentication answers a refusal with, for a caller the router never routes.             |
+| `Any`                                         | Any descriptor, erased: what a binding's and an MCP endpoint's `authentication` take.                 |
+| `Descriptor`, `Provider`, `Protection`        | What `make`, `layer` and `protect` return, to name in a package that emits declarations.              |
+| `Verify`, `Options`, `LayerOptions`           | The verifier's type, and `make`'s and `layer`'s options.                                              |
+| `ProtectedResource`, `RefusalResponseOptions` | An OAuth protected resource, and what `refusalResponse` takes.                                        |
 
-`security` is one native `HttpApiSecurity` scheme, `HttpApiSecurity.bearer` when omitted: another is
-`HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`, an API key in a header or the query,
-or `HttpApiSecurity.basic`. Options whose `security` may be left
-out, an optional property or a union with options lacking it, type the verifier's credential as
-that scheme's or Bearer's, as at run time; an explicit type argument naming a scheme requires
-the options argument. `error` is what the verifier may fail with besides a refusal, such as
-its issuer being unreachable: one schema, or a list, held as a list, refused where it encodes with
-a built-in error's `_tag`. A misspelled option is a type error. A descriptor's public fields are
-`name`, `identity`, `security` and `error`; its `~` keys are the library's own wiring, which no
-host composes.
+| Option              | Of                | Meaning                                                                                  |
+| ------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| `security`          | `make`            | One native `HttpApiSecurity` scheme; `HttpApiSecurity.bearer` when omitted.              |
+| `error`             | `make`            | What the verifier may fail with besides a refusal: one schema, or a list.                |
+| `protectedResource` | `layer`           | Bearer only: an OAuth protected resource to publish, or an Effect building one or none.  |
+| `authentication`    | `refusalResponse` | The descriptor refusing: needed for an error it declares, or a scheme other than Bearer. |
+| `protectedResource` | `refusalResponse` | The resource `layer` was given, as a value.                                              |
+| `authorization`     | `refusalResponse` | The request's `Authorization` header: decides whether a 401 says `invalid_token`.        |
 
-`verify` is the verifier itself, or a builder of it, like the one `Action.implement` takes
-([Action.md](Action.md#implementations)): an Effect that yields startup services, such as a token
-verifier, and returns the verifier.
+| Protected resource field | Meaning                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `resource`               | Required exact OAuth resource identifier; its path and query select the discovery URL.        |
+| `authorizationServers`   | Required, nonempty: where clients get tokens.                                                 |
+| `scopesSupported`        | Optional OAuth scope tokens: every scope the resource accepts, published in discovery.        |
+| `scopesRequired`         | Optional, nonempty OAuth scope tokens: every 401 names them, and a first login requests them. |
+| `resourceName`           | Optional human-readable name.                                                                 |
 
-A verifier receives the credential the descriptor's native scheme decodes, a `Redacted<string>`
-token or key, or Basic's `{ username, password }`, and succeeds with the identity, or fails with
-`Action.Unauthenticated`, `Action.Forbidden`, or an error its descriptor declares in `error`. A
-missing or empty credential is refused before it runs. It reads the request the router provides;
-another service it reads per request comes from router middleware provided after the
-authentication.
+## Declare how callers sign in
 
-`options.protectedResource`, for a Bearer descriptor only, is an OAuth protected resource, which
-the provider publishes and names in every challenge, or an Effect that builds one, or none, where
-it is known only at startup: it runs with the verifier's build, and the
-provider's layer requires what it yields. Publishing one, the provider requires the
-`HttpRouter`, which serves it; otherwise it requires no router, so an RPC server over a socket
-or stdio uses it too.
+A protected action declares its identity service, `caller: CurrentUser`
+([Action.md](Action.md#say-who-may-call-an-action)). Declare the descriptor beside that
+service, and name it in every binding and MCP endpoint that serves a protected action:
 
-Given `authentication`, a descriptor of another scheme, `refusalResponse` answers as that
-descriptor's routes do; left out, or a Bearer descriptor, as Bearer's.
+```ts
+// identity/Identity.ts
+export const Login = Authentication.make("notes-service.Login", CurrentUser);
 
-| Protected resource option | Meaning                                                                                       |
-| ------------------------- | --------------------------------------------------------------------------------------------- |
-| `resource`                | Required exact OAuth resource identifier; its path and query select the discovery URL.        |
-| `authorizationServers`    | Required, nonempty: where clients get tokens.                                                 |
-| `scopesSupported`         | Optional OAuth scope tokens: every scope the resource accepts, published in discovery.        |
-| `scopesRequired`          | Optional, nonempty OAuth scope tokens: every 401 names them, and a first login requests them. |
-| `resourceName`            | Optional human-readable name.                                                                 |
-
-## Canonical
-
-The binding, which servers and clients import, names the descriptor, `Login`
-([ActionHttp.md](ActionHttp.md#canonical)):
-
-```ts example=binding.ts
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { CurrentActor } from "./authorization.js";
-import { Double, GetUser, RenameUser, Status, WhoAmI } from "./contracts.js";
-
-// Browser-safe: how a remote caller proves it is CurrentActor, a bearer token unless
-// `security` names another native scheme. The verifier lives in authentication.ts. The literal
-// name identifies the verifier that may provide it.
-export const Login = Authentication.make("example.Login", CurrentActor);
-
-// Protected contracts get native bearer security (enforced and documented); `status`,
-// declared `caller: Action.Anyone`, gets none.
-export const Http = ActionHttp.make([Status, GetUser, RenameUser, Double, WhoAmI], {
+// Api.ts
+export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
+  prefix: "/api",
   authentication: Login,
 });
 ```
 
-The server provides `Login`'s verifier, `authenticate`, to every layer serving protected
-actions ([ActionHttp.md](ActionHttp.md#serving), [ActionMcp.md](ActionMcp.md#canonical)).
+See [notes-service/src/identity/Identity.ts](../examples/notes-service/src/identity/Identity.ts)
+and [notes-service/src/Api.ts](../examples/notes-service/src/Api.ts). An MCP endpoint names it
+the same way ([notes-service/src/routes.ts](../examples/notes-service/src/routes.ts)), and so
+does an RPC binding ([live-rpc/src/Rpc.ts](../examples/live-rpc/src/Rpc.ts)).
 
-```ts example=authentication.ts
-import { Effect, Redacted } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { type Actor, actors } from "./authorization.js";
-import { Login } from "./binding.js";
+- The descriptor is browser-safe, and every client of the binding imports it: keep it in the
+  contract file. Keep `layer`, and what its verifier imports, in server-only modules.
+- The name is the descriptor's type identity: a provider of another descriptor does not
+  satisfy a layer, even one of the same identity. Use one name for one declaration. It holds
+  only letters, digits, `_`, `.` and `-`: `notes-service.Login`, not `notes-service/Login`.
+- A descriptor names one scheme, and a binding or an endpoint names one descriptor, whose
+  identity every protected action it holds declares. There is no fallback between schemes: a
+  host accepting two credentials for one identity declares two descriptors and serves them on
+  two bindings or endpoints
+  ([kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts)).
+- Build a server's binding and its provider from one descriptor value. `ActionHttp.layer` and
+  `ActionRpc.layer` refuse, when they build, a binding whose descriptor is another object than
+  the one its provider was given, equal name and options or not.
+- A local surface has no remote caller and takes no descriptor: the host provides the identity
+  itself ([ActionCli.md](ActionCli.md#name-the-caller), [ActionToolkit.md](ActionToolkit.md#name-the-caller)).
 
-// DEMO ONLY: a token is an actor's name. Verify real tokens with your authorization
-// server's library instead, their audience included: issued for this resource.
-const isActorToken = (token: string): token is keyof typeof actors => Object.hasOwn(actors, token);
+## Verify credentials
 
-// Each request's token, as the native `HttpApiSecurity.bearer` decodes it, to its actor. A
-// missing or empty token never reaches it; an unknown one is the built-in `Unauthenticated`,
-// a 401 every client decodes, as is a missing one.
-export const verify = (
-  token: Redacted.Redacted<string>,
-): Effect.Effect<Actor, Action.Unauthenticated> => {
-  const name = Redacted.value(token);
+Write the verifier in a server-only module, give it to `Authentication.layer`, and provide that
+layer to every layer serving a protected action: `routes.pipe(Layer.provide(authenticate))`. The
+verifier takes the credential and succeeds with the identity, or fails with
+`Action.Unauthenticated`, `Action.Forbidden` or an error the descriptor declares. See
+[notes-service/src/identity/verifier.ts](../examples/notes-service/src/identity/verifier.ts) and
+[notes-service/src/routes.ts](../examples/notes-service/src/routes.ts).
 
-  return isActorToken(name)
-    ? Effect.succeed(actors[name])
-    : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
-};
+- **The library reads no token.** Everything that makes a credential valid is the verifier's to
+  check, with your authorization server's library: its signature, its expiry, and its audience.
+  A token issued for another resource fails with `Unauthenticated`, as MCP authorization
+  requires (RFC 8707). Only a missing or empty credential is refused before the verifier runs.
+- **Never provide the identity service, or a tenant, at startup**, in a layer or around
+  `HttpRouter.serve` or the program. It does not satisfy the provider a protected route
+  requires, and a public handler or a route of your own reading it would serve every caller as
+  that identity. A test sends a credential instead
+  ([Testing.md](Testing.md#test-as-a-signed-in-caller)).
+- A verifier that needs startup services, such as a user directory, is passed as an Effect that
+  yields them and returns the verifier. It is a builder, as `Action.implement` takes one
+  ([Action.md](Action.md#implement-actions)): it runs once per layer graph, and what it yields
+  is a startup requirement of the provider's layer
+  ([kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)).
+- Call `Authentication.layer` once per descriptor and provide that one value wherever a
+  provider is required.
+- A failure that is not the caller's, such as an issuer the verifier cannot reach, is an error
+  the descriptor declares, with `{ httpApiStatus: 503 }`: an `Unauthenticated` would have the
+  caller sign in again, which cannot help. `ActionHttp.client` and `ActionRpc.client` decode
+  it; over MCP it is the endpoint's HTTP answer, not a tool result, and `Testing.mcpClient`
+  fails with an `McpCallError`
+  ([kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts),
+  [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
+- Over RPC the verifier runs for each message of a protected rpc, not once per connection
+  ([live-rpc/src/identity/verifier.ts](../examples/live-rpc/src/identity/verifier.ts)).
 
-// As an OAuth protected resource, it publishes RFC 9728 discovery, public, and every challenge
-// names it, so an MCP client that was refused finds the server issuing its tokens. A first
-// login requests read only; a write refused for its scope steps up.
-export const protectedResource = {
-  resource: "http://localhost:3000/mcp",
-  authorizationServers: ["https://auth.example.com"],
-  scopesSupported: ["users:read", "users:write"],
-  scopesRequired: ["users:read"],
-} satisfies Authentication.ProtectedResource;
+What each surface answers a missing or refused credential with:
+[guarantees.md](guarantees.md#wire-behavior).
 
-// Server-only: `Login`'s verifier, provided to every layer serving protected actions. An
-// Effect building it instead yields startup services, such as a token verifier, as a handler
-// builder does; this demo needs none.
-export const authenticate = Authentication.layer(Login, verify, {
-  protectedResource,
-});
-```
+## Publish OAuth discovery
 
-### Outer and inner middleware
-
-A host serving tenants on their own subdomains, with middleware outside the authentication and
-inside it.
-
-```ts example=authentication-tenant.ts
-import { Context, Effect, Layer, Redacted } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { HttpApiMiddleware } from "effect/http-api";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { type Actor, actors, CurrentActor } from "./authorization.js";
-import { Http, Login } from "./binding.js";
-import { userActions } from "./handlers.js";
-
-/** Each request's tenant: the first label of its host, `acme` for acme.example.com. */
-export class Tenant extends Context.Service<Tenant, string>()("example/Tenant") {}
-
-// Outer: native router middleware, providing what the verifier reads per request.
-const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
-  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    Effect.provideService(route, Tenant, request.headers.host?.split(".")[0] ?? ""),
-  ),
-);
-
-// Inner: reads the identity, so it is native endpoint middleware, which the layer runs inside
-// the authentication of every route it serves, all of them protected.
-export class LogCaller extends HttpApiMiddleware.Service<LogCaller, { requires: CurrentActor }>()(
-  "example/LogCaller",
-) {}
-
-const LogCallerLive = Layer.succeed(LogCaller, (route) =>
-  Effect.flatMap(CurrentActor, ({ id }) =>
-    Effect.map(route, HttpServerResponse.setHeader("x-actor", id)),
-  ),
-);
-
-/** DEMO ONLY: a startup service verifying tokens, as your authorization server's library would. */
-export class Verifier extends Context.Service<
-  Verifier,
-  {
-    readonly verify: (
-      token: Redacted.Redacted<string>,
-    ) => Effect.Effect<Actor, Action.Unauthenticated>;
-  }
->()("example/Verifier") {
-  static readonly layer = Layer.sync(Verifier, () => {
-    const known = new Map<string, Actor>(Object.entries(actors));
-
-    return Verifier.of({
-      verify: (token) =>
-        Effect.fromNullishOr(known.get(Redacted.value(token))).pipe(
-          Effect.mapError(() => new Action.Unauthenticated({ message: "Unknown demo token." })),
-        ),
-    });
-  });
-}
-
-// Like a handler builder: the verifier once, at startup; the token and the tenant per
-// request. An actor of another tenant is refused.
-const authenticate = Authentication.layer(
-  Login,
-  Effect.gen(function* () {
-    const verifier = yield* Verifier;
-
-    return (token: Redacted.Redacted<string>) =>
-      Effect.gen(function* () {
-        const actor = yield* verifier.verify(token);
-
-        if (actor.tenantId !== (yield* Tenant)) {
-          return yield* new Action.Forbidden({ message: "Not a member of this tenant." });
-        }
-
-        return actor;
-      });
-  }),
-);
-
-// Provided in order: each `Layer.provide` gives what the layers before it still owe, so
-// `resolveTenant`, last, gives the Tenant the verifier reads per request. One array,
-// `Layer.provide([authenticate, resolveTenant.layer])`, would leave it owed: an array's
-// members provide to the routes, not to one another.
-export const routes = ActionHttp.layer(Http, userActions, { middleware: [LogCaller] }).pipe(
-  Layer.provide([authenticate, LogCallerLive]),
-  Layer.provide(Verifier.layer),
-  Layer.provide(resolveTenant.layer),
-);
-```
-
-### A scheme other than Bearer
-
-A descriptor naming another native scheme, here a session cookie, gives its verifier the
-credential that scheme decodes. Nothing steps up under it, and it publishes no protected
-resource.
+Give a Bearer descriptor's `layer` a `protectedResource`. The provider then publishes OAuth
+protected-resource discovery (RFC 9728) and names it in every challenge, so an MCP client that
+gets a 401 finds the authorization server.
 
 ```ts
-export const SessionLogin = Authentication.make("example.SessionLogin", CurrentActor, {
-  security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
-});
-
-export const authenticateSession = Authentication.layer(
-  SessionLogin,
-  Effect.map(
-    Sessions,
-    (sessions) => (session: Redacted.Redacted<string>) => sessions.actorOf(Redacted.value(session)),
+export const authenticate = Authentication.layer(Login, verify, {
+  protectedResource: Effect.map(
+    Config.String("PUBLIC_URL").pipe(Config.withDefault("http://localhost:3000")),
+    (url) =>
+      ({
+        resource: `${url}/mcp`,
+        authorizationServers: ["https://auth.example.com"],
+        scopesSupported: [scopes.read, scopes.write],
+        scopesRequired: [scopes.read],
+      }) satisfies Authentication.ProtectedResource,
   ),
+});
+```
+
+See [notes-service/src/identity/verifier.ts](../examples/notes-service/src/identity/verifier.ts)
+and [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts).
+
+- `resource` is the exact public URL of the endpoint clients connect to: discovery is served at
+  `/.well-known/oauth-protected-resource` followed by its path. Only the deployment knows that
+  URL, so give the resource as an Effect reading configuration. It runs when the provider is
+  built; succeeding with `undefined` publishes nothing.
+- The provider checks only that `resource` parses and has no fragment, and that each scope is a
+  scope token. That `resource` and `authorizationServers` are HTTPS, or loopback HTTP in
+  development, is the deployment's to ensure.
+- Give `scopesRequired` whenever some actions need scopes others do not. An MCP client requests
+  the scopes a 401 names, or every one of `scopesSupported` when it names none.
+- Publishing requires the `HttpRouter`. Without a resource the provider requires no router, so
+  an RPC server over a socket or stdio uses it too.
+- Discovery is public. It answers before routing, to any origin, so no authentication and no
+  route middleware covers it: to restrict who reads it, see
+  [Run a request policy before authentication](#run-a-request-policy-before-authentication).
+
+### Step up for a scope
+
+A step-up refusal is one an OAuth client acts on: `Action.Unauthenticated`, which it signs in
+on, or an `Action.Forbidden` naming `scopes`, which it re-authorizes on with those scopes
+added. The authorizer, a handler or the verifier may fail with one:
+[notes-service/src/identity/authorize.ts](../examples/notes-service/src/identity/authorize.ts).
+
+- Step-up is a Bearer descriptor's, for protected actions. On a protected HTTP route, a route
+  under `protect`, and a protected tool's call on an MCP endpoint naming the descriptor, the
+  refusal answers the request with 401 or 403 and its challenge; over MCP that replaces the
+  tool result.
+- Anywhere else, on a public action or under another scheme, no OAuth client can act on it: an
+  authorizer's or a handler's refusal is answered like a declared error, its JSON with its
+  status over HTTP and a tool result over MCP. Over HTTP and MCP a verifier's refusal always
+  answers the request itself. RPC never steps up: a refusal is the call's typed failure.
+- Name scopes only when re-authorizing can grant them. Otherwise fail with a `Forbidden` naming
+  none, a plain 403, rather than a login prompt that cannot help
+  ([kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)).
+- Map another service's refusals before failing with them
+  ([Action.md](Action.md#fail-with-declared-and-built-in-errors)): passed on, a `Forbidden`
+  naming that service's scopes sends this server's caller to re-authorize for them.
+
+## Read request context in a verifier
+
+A verifier may read per-request services: the request, which the router provides, or one of
+your own, such as the tenant a request addresses, which native router middleware provides.
+Provide that middleware after the provider, in a `Layer.provide` of its own:
+
+```ts
+routes.pipe(Layer.provide(authenticate), Layer.provide(resolveTenant.layer));
+```
+
+See [kitchen-sink/src/workspaces/tenant.ts](../examples/kitchen-sink/src/workspaces/tenant.ts),
+[kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)
+and `publicRoutes` in [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts).
+
+- Each `Layer.provide` gives what the layers before it still owe. In one array,
+  `Layer.provide([authenticate, resolveTenant.layer])`, the members provide to the routes and
+  not to one another, and the tenant stays owed.
+- A startup service is yielded by the Effect building the verifier, never by the verifier per
+  request.
+- Router middleware provided around the routes runs before their authentication. Middleware
+  that reads the identity runs inside it: give it to the layer as its own `middleware`
+  ([ActionHttp.md](ActionHttp.md#serve-the-routes), [ActionRpc.md](ActionRpc.md#serve-the-rpcs)).
+
+## Use a scheme other than Bearer
+
+Name the scheme in `security`: an API key in a cookie, a header or the query, or
+`HttpApiSecurity.basic`. The verifier receives what that scheme decodes.
+
+```ts
+export const Session = Authentication.make("tracker.Session", CurrentMember, {
+  security: HttpApiSecurity.apiKey({ in: "cookie", key: "tracker_session" }),
+});
+```
+
+See [kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts)
+and [kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)
+for a session cookie beside Bearer, and [kitchen-sink/src/admin/Admin.ts](../examples/kitchen-sink/src/admin/Admin.ts)
+and [kitchen-sink/src/admin/authenticate.ts](../examples/kitchen-sink/src/admin/authenticate.ts)
+for an API key in a header, for another identity on another listener.
+
+- OAuth is Bearer's. Another scheme takes no `protectedResource` and nothing steps up under it:
+  the scopes a `Forbidden` names there are sent in its JSON and challenge nothing.
+- A browser attaches a cookie to any page's request, so refuse a foreign `Origin` before
+  authentication reads the cookie
+  ([Run a request policy before authentication](#run-a-request-policy-before-authentication)).
+  CORS guards the JSON routes alone, which a foreign page cannot call without a preflight
+  ([ActionHttp.md](ActionHttp.md#call-the-api-from-a-browser)); a WebSocket upgrade is never
+  preflighted, so for rpcs over a socket under a cookie that policy is the only check
+  ([ActionRpc.md](ActionRpc.md#send-request-context-with-a-call)).
+- A scheme the deployment decides, such as a cookie name a framework prefixes over HTTPS, is
+  still one declaration. The server builds its descriptor and its binding at startup, under the
+  same name and identity; a browser's binding keeps a static one, since a client never reads
+  the scheme.
+- Basic's credential reaches the verifier when its username or its password is non-empty, so a
+  verifier may receive an empty username.
+
+## Protect a route of your own
+
+A descriptor covers action routes alone. A route of the host's own beside them, such as a
+download, a page frame or a WebSocket upgrade, takes `Authentication.protect(descriptor)`,
+native router middleware:
+
+```ts
+HttpRouter.add("GET", "/attachments/:id", handler).pipe(
+  Layer.provide(Authentication.protect(Session).layer),
 );
 ```
 
-### A route of your own
+It requires the descriptor's provider, provides the identity to the route, and answers a refusal
+the route fails with as an action's is answered. See
+[kitchen-sink/src/attachments/download.ts](../examples/kitchen-sink/src/attachments/download.ts)
+and [kitchen-sink/test/attachments/attachments.test.ts](../examples/kitchen-sink/test/attachments/attachments.test.ts).
 
-A descriptor covers action endpoints alone: a route of the host's own beside them, such as an
-export, a page frame or a WebSocket upgrade, takes `protect(descriptor)`, native router middleware.
+- No authorizer runs for such a route: it states its own authorization.
+- Every response to a request authentication covers is `Cache-Control: no-store` unless the
+  route states its own caching. A route that does says `private` unless its answer is the same
+  for every caller: a cache in front of the server may store it and serve it to anyone.
+- The route of an RPC protocol needs no `protect`: `ActionRpc.layer` authenticates each
+  message itself.
 
-```ts example=authentication-route.ts
-import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { CurrentActor } from "./authorization.js";
-import { Login } from "./binding.js";
+## Run a request policy before authentication
 
-// A route of the host's own beside the actions, authenticated as they are: the binding's
-// descriptor's provider verifies the request and gives the route the actor. A refusal it
-// fails with is answered as an action's, and a scope a caller lacks steps up under Bearer.
-export const exportRoute = HttpRouter.add(
-  "GET",
-  "/export",
-  Effect.gen(function* () {
-    const actor = yield* CurrentActor;
+A check that must refuse a request before its credential is read, such as a `Host` or `Origin`
+allowlist, is not the layer's own `middleware`, which runs inside authentication. Make it
+global router middleware, `HttpRouter.middleware(check, { global: true })`, which runs before
+routing, and provide it last:
 
-    if (!actor.permissions.includes("users:read")) {
-      return yield* new Action.Forbidden({
-        message: "Requires users:read.",
-        scopes: ["users:read"],
-      });
-    }
-
-    return HttpServerResponse.text(`Users of ${actor.tenantId}.`);
-  }),
-).pipe(Layer.provide(Authentication.protect(Login).layer));
+```ts
+export const publicRoutes = Layer.mergeAll(api, mcp, socket, download, documentation, health).pipe(
+  Layer.provide([authenticateBearer, authenticateSession, quota]),
+  Layer.provide(resolveTenant.layer),
+  Layer.provide(cors),
+  Layer.provide(requestPolicy),
+);
 ```
 
-### Outside the router
+See [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts),
+[kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) and
+[kitchen-sink/test/request-policy.test.ts](../examples/kitchen-sink/test/request-policy.test.ts).
 
-A caller the router never routes authenticates its own header and refuses with `refusalResponse`.
+- **The order decides whether the policy covers discovery.** A provider publishing a protected
+  resource registers its discovery as global middleware when it is built, and global middleware
+  runs in the order it registers. The layer provided last is built first, so the policy
+  registers before the provider. Merged beside the routes, with the provider provided around
+  the merge, it registers after it, and a foreign `Host` reads the discovery document.
+- Global middleware covers every request of the router: discovery, the host's own routes and
+  requests no route matches.
 
-```ts example=authentication-upgrade.ts
-import { Effect } from "effect";
-import { HttpServerResponse } from "effect/http";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import { protectedResource, verify } from "./authentication.js";
-import type { Actor } from "./authorization.js";
+## Refuse outside the router
 
-// A caller the router never routes, such as a Node `upgrade` handler admitting a socket,
-// which authenticates the `Authorization` header itself: read as a route's is, with
-// `bearerTokenOf`, and verified by the routes' own `verify`. A socket writes, so it needs the
-// write scope. It gives the actor, or the response to refuse with, the one authentication
-// answers the same refusal with on a route.
-export const admit = (authorization: string | undefined): Effect.Effect<Actor, Response> =>
+A caller the router never routes, such as a Node `upgrade` handler admitting a socket, holds a
+header and no request. Read the token with `bearerTokenOf`, verify it with the verifier the
+routes use, and answer a refusal with `refusalResponse`, the response authentication answers
+that refusal with on a route. No example has such a caller.
+
+```ts
+const admit = (authorization: string | undefined): Effect.Effect<User, Response> =>
   Effect.fromOption(
     Authentication.bearerTokenOf(authorization),
     () => new Action.Unauthenticated(),
   ).pipe(
     Effect.flatMap(verify),
-    Effect.filterOrFail(
-      (actor) => actor.permissions.includes("users:write"),
-      () => new Action.Forbidden({ message: "Requires users:write.", scopes: ["users:write"] }),
-    ),
     Effect.mapError((error) =>
       HttpServerResponse.toWeb(
         Authentication.refusalResponse(error, { protectedResource, authorization }),
@@ -312,71 +307,133 @@ export const admit = (authorization: string | undefined): Effect.Effect<Actor, R
   );
 ```
 
-## Rules
+- `protectedResource` is the resource `layer` was given, as a value, not the Effect building
+  it: export the verifier the routes use, and where `layer` builds the resource from
+  configuration, build the handler's from the same configuration. Left out, the challenges name
+  no metadata URL and no `scopesRequired`.
+- Give `authorization`, or a 401 to a presented token does not say `invalid_token`.
+- Give `authentication` when the descriptor declares an error the verifier may fail with, or
+  names a scheme other than Bearer: the answer is then the one its routes give.
 
-- `make` is browser-safe and declares no verifier: the binding imports it, and so does every client of the binding. Keep `layer`, and what its verifier imports, in server-only modules.
-- One descriptor per identity and resource. Its name literal is its type identity: a layer serving protected actions requires `Provider<CurrentActor, "example.Login">`, which only `layer(Login, ...)` provides. A provider of another descriptor, even of the same identity, does not satisfy it. Reuse one name only for one declaration. A scheme the deployment decides, such as a cookie name a framework prefixes over HTTPS, is still one declaration: the server builds its descriptor and binding at startup under the same name and identity, and a browser's binding keeps a static one, since a client never reads the scheme. A server builds its binding and its provider from one descriptor value: `ActionHttp.layer` and `ActionRpc.layer` refuse a binding whose descriptor is not the one its provider was built from.
-- The name is also its scheme's OpenAPI component key, as it is, so it holds only letters, digits, `_`, `.` and `-`: `example.Login`, not `example/Login`. `make` throws for any other.
-- A record of schemes as `security`, or anything that is no native scheme, is refused by the types, and throws `Authentication takes one native HttpApiSecurity scheme`. There is no fallback between schemes: a host accepting two credentials serves them on two bindings or endpoints, each naming its own descriptor.
-- OAuth is Bearer's: only a Bearer descriptor's provider takes a `protectedResource`, which the types refuse for another scheme and `layer` throws for, and only under a Bearer descriptor does a protected action's refusal step up ([guarantees.md](guarantees.md#authorization)). Under another scheme, a 401 carries the challenge its scheme has: an `Http` scheme names itself, such as `Token`; Basic sends `Basic realm="<descriptor name>"`, quoted and escaped; an API key sends none. Responses keep `Cache-Control: no-store`.
-- Basic's credential counts as presented when its user-id or its password is non-empty, so a token sent as the password, `Basic base64(":token")`, reaches the verifier. A cookie-authenticated browser client sends its cookie itself; whether a cross-origin page may is the host's CORS policy ([ActionHttp.md](ActionHttp.md#rules)).
-- A binding holding a protected action names its descriptor, `ActionHttp.make(actions, { authentication: Login })` or `ActionRpc.make(actions, { authentication: Login })`, and so does an MCP endpoint serving one, `ActionMcp.layerHttp(apps, { authentication: Login })`: required, and a descriptor of another identity is refused, in the types and when called. One identity per binding or endpoint: every protected action it holds declares the descriptor's.
-- The descriptor both enforces and documents ([ActionHttp.md](ActionHttp.md#security)).
-- Every HTTP, MCP or RPC layer serving a protected action requires the provider: `Layer.provide(authenticate)`. Over RPC it authenticates each message ([ActionRpc.md](ActionRpc.md#rules)), and its refusal is the call's typed failure, with no challenge and no `Cache-Control`. Give each the same `layer` value. A layer serving only public actions requires none.
-- Authentication runs before input decoding, on every remote surface; what each surface reads before it is in [guarantees.md](guarantees.md#authorization).
-- An error the descriptor declares is sent as its JSON with its `httpApiStatus`, or 422 without one, as every protected endpoint of a binding naming the descriptor declares it, so `ActionHttp.client` and a remote CLI command decode it as a typed failure; a public endpoint, which nothing verifies, does not declare it. A route, an MCP endpoint and `protect` send it alike, `no-store`, and challenge it only as a 401. A verifier can fail with nothing else: any other error is a type error, and in plain JavaScript a defect, an empty 500.
-- A failure that is not the caller's, such as an issuer the verifier cannot reach, is a declared error, `error: ProviderUnavailable` with `httpApiStatus: 503`, not a refusal: an `Unauthenticated` would have the caller sign in again, which cannot help. Over MCP it is the endpoint's HTTP answer, before any tool runs, not a tool result: `Testing.mcpClient` fails with an `McpCallError` naming its status and body.
-- It provides the identity to protected routes alone. A public route never gets it, beside protected ones in one layer too, and over HTTP ignores any credential the request carries. A public tool's call on an MCP endpoint naming a descriptor is verified when it presents a credential, refused with 401 when that does not verify, as MCP authorization requires of an invalid or expired token, and passes without one, or with one its scheme decodes as empty, such as `Authorization: Bearer` alone; the tool still gets no identity.
-- Every response to a request it authenticates gets `Cache-Control: no-store` unless its route states its own caching, and every 401 among them its scheme's challenge: [guarantees.md](guarantees.md#wire-behavior).
-- A Bearer descriptor's 401 challenge is `Bearer`, or as a protected resource `Bearer scope="<scopesRequired>", resource_metadata="<metadata URL>"`, `scope` only when `scopesRequired` is given.
-- A 401 to a request that presented a bearer token also names `error="invalid_token"` first (RFC 6750), whoever refused it: the token did not authenticate it, and a client may refresh it before it signs in again. A malformed token, such as `Bearer a b`, is a presented one (RFC 6750 §3.1). A request without one, or with another scheme such as `Basic`, gets no error code.
-- An MCP client requests the scopes a 401 names, or every one of `scopesSupported` when it names none. Give `scopesRequired` whenever some scopes are needed only by some actions, so a first login asks for the least, and a `Forbidden` naming scopes asks for more when a call needs them.
-- Step-up refusals follow [guarantees.md](guarantees.md#authorization).
-- When a `Forbidden` naming `scopes` is sent as an HTTP refusal under a Bearer descriptor, its **403** carries `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scopes>"`. It adds `resource_metadata` as a protected resource, and `error_description` when the message is a valid one (printable ASCII without `"` or `\`).
-- An OAuth client re-authorizes on that challenge with those scopes added, as MCP authorization requires; the official MCP client does.
-- Name scopes only when re-authorizing can grant them. A caller whose credential cannot step up, such as an API key, gets a `Forbidden` naming none: a plain 403, and a tool result over MCP, rather than a login prompt that cannot help.
-- A route of the host's own, such as a WebSocket upgrade route, `RpcServer.layerProtocolWebsocket`'s, takes `protect(descriptor)`, which requires the descriptor's provider ([A route of your own](#a-route-of-your-own)). `ActionRpc.layer` needs none on its protocol's route: it authenticates each message itself. `.combine` puts middleware reading the identity inside it.
-- A caller the router never routes, such as a Node `upgrade` handler, verifies its own credential and answers a refusal with `refusalResponse(error, { protectedResource, authorization })`: the status, JSON, `Cache-Control: no-store` and challenge authentication answers that refusal with, by the rules above, `invalid_token` when `authorization` presented a bearer token. An error the descriptor declares takes the descriptor too, `refusalResponse(error, { authentication: Login, protectedResource, authorization })`, and is answered as its routes answer it. Give it the `protectedResource` given to `layer`, or its challenges name no metadata URL and no `scopesRequired`. It is an `HttpServerResponse`; `HttpServerResponse.toWeb` gives a web `Response`. It refuses, by throwing, the resource `layer` refuses: one under a descriptor of another scheme, an invalid `scopesSupported` or `scopesRequired`, or a `resource` with a fragment.
-- Such a caller reads its header with `bearerTokenOf(authorization)`, an `Option` of the `Redacted` token, given the header as the web `Headers.get` returns it, `null` when absent: the reading every challenge is decided by and a Bearer descriptor's verifier receives, as Effect's `HttpApiSecurity.bearer` decodes a request's header. Whitespace around the header value is no part of it, as an HTTP parser strips it before a route reads it; then `Bearer`, matched case-insensitively, one or more spaces, and the rest of the header is the token, a malformed one such as `a b` too. No scheme, another scheme, or nothing after the scheme is none.
-- Verify that a token was issued for this resource, its audience `resource`, as MCP authorization requires (RFC 8707): one issued for another resource fails with `Unauthenticated`, as any token that does not verify. `layer` publishes `resource` in its discovery, but reads no token.
-- An Effect building the verifier runs when the provider's layer is built, once per layer graph however many layers it is provided to, as a handler builder does ([guarantees.md](guarantees.md#dependency-lifetimes)). The services it yields are startup requirements of that layer: `Authentication.layer(Login, build).pipe(Layer.provide(Verifier.layer))`, or provided after it, `routes.pipe(Layer.provide(authenticate), Layer.provide(Verifier.layer))`. A resource it acquires lives as long as the layer; its failure fails the layer, so the server does not start. A verifier needing no startup service is passed as it is, `Authentication.layer(Login, verify)`.
-- The services a verifier yields per request, beyond what the router provides, such as the request and its scope, are request requirements, as a handler's are. Native router middleware provides them, provided after the authentication, each in a `Layer.provide` of its own, not one array ([Failure modes](#failure-modes)): `routes.pipe(Layer.provide(authenticate), Layer.provide(resolveTenant.layer))`. A startup service, such as a verifier, is yielded by the Effect building the verifier instead, never per request.
-- Middleware reading the identity is the HTTP layer's own `middleware` ([ActionHttp.md](ActionHttp.md#rules)).
-- Router middleware provided around the routes runs before their authentication. Middleware that must also cover discovery and unrouted requests, such as a Host or Origin check, or one setting security headers on every answer, is global middleware, `HttpRouter.middleware(check, { global: true })`, merged beside the routes: it runs before routing. Merged before the routes, it also runs before the discovery `layer` publishes.
-- A local surface has no remote caller: the host provides the identity service itself, as `Effect.provideService(CurrentActor, actor)`, or on a CLI command, `Command.provideSync(CurrentActor, actor)` ([guarantees.md](guarantees.md#authorization), [ActionCli.md](ActionCli.md#trusted-callers)).
-- Resources a verifier acquires in the request scope live until that scope closes, including while the handler runs.
-- Never provide `CurrentActor` or any identity or tenant tag in a startup layer or root context: [guarantees.md](guarantees.md#dependency-lifetimes).
-- A resource read from configuration or a service is given as an Effect: `Authentication.layer(Login, verify, { protectedResource: Effect.map(Settings, ({ resource }) => resource) })`. Succeeding with `undefined` publishes nothing and challenges with a bare `Bearer`.
-- A protected resource's discovery is published once, when the provider's layer is built, and needs no route of its own. It publishes what it is given: the deployment must ensure `resource` and `authorizationServers` are valid OAuth URLs (HTTPS, or loopback HTTP in development).
-- Discovery is served at `/.well-known/oauth-protected-resource` followed by the resource's path (`/.well-known/oauth-protected-resource/mcp` for `https://host/mcp`), for `GET` and `HEAD`, matching that literal path and query, and answers the CORS preflight there. It answers before routing, so no route middleware, authentication included, covers it. Other requests fall through to the host router. Caching policy is the host's.
-- Any origin may read discovery, as a browser MCP client must after a 401: it carries `Access-Control-Allow-Origin: *`, and answers an `OPTIONS` preflight at its URL with **204**, allowing `GET`, `HEAD` and `OPTIONS` and the headers the preflight asks for. Where the host's CORS middleware runs before it, that policy answers discovery's preflight and adds its headers to discovery's reads, so an origin it allows may read discovery, and discovery keeps its `*` where the policy sets no origin. Global middleware runs in the order it registers while layers build, which is the order it is merged in unless something built before it is asynchronous.
+## Examples
+
+| File                                                                                                   | Shows                                                                           |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| [notes-service/src/identity/Identity.ts](../examples/notes-service/src/identity/Identity.ts)           | A Bearer descriptor beside its identity service.                                |
+| [notes-service/src/identity/verifier.ts](../examples/notes-service/src/identity/verifier.ts)           | A plain verifier, and discovery read from config.                               |
+| [notes-service/src/identity/authorize.ts](../examples/notes-service/src/identity/authorize.ts)         | A `Forbidden` naming the scope a call lacks.                                    |
+| [notes-service/src/routes.ts](../examples/notes-service/src/routes.ts)                                 | One provider for HTTP routes and an MCP endpoint.                               |
+| [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts)                     | Refusals over HTTP, and tools called as a signed-in caller, in memory.          |
+| [live-rpc/src/identity/verifier.ts](../examples/live-rpc/src/identity/verifier.ts)                     | A provider without discovery, verifying each RPC message.                       |
+| [kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts)             | Two descriptors for one identity, a cookie beside Bearer; a declared 503.       |
+| [kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)     | Verifiers built from startup services, one reading the tenant per request.      |
+| [kitchen-sink/src/workspaces/tenant.ts](../examples/kitchen-sink/src/workspaces/tenant.ts)             | Router middleware providing what a verifier reads.                              |
+| [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts)                                   | The provide order: providers, tenant, CORS, request policy.                     |
+| [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts)                   | A Host and Origin policy as global middleware, and CORS.                        |
+| [kitchen-sink/test/request-policy.test.ts](../examples/kitchen-sink/test/request-policy.test.ts)       | The policy refusing before authentication and before discovery.                 |
+| [kitchen-sink/src/attachments/download.ts](../examples/kitchen-sink/src/attachments/download.ts)       | `protect` on a route of the host's own, stating its caching.                    |
+| [kitchen-sink/src/admin/Admin.ts](../examples/kitchen-sink/src/admin/Admin.ts)                         | An API key in a header, and a trusted identity no verifier returns.             |
+| [kitchen-sink/src/admin/authenticate.ts](../examples/kitchen-sink/src/admin/authenticate.ts)           | A provider for a second identity, on a second listener.                         |
+| [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts) | A 403 challenge, discovery, an MCP endpoint's 401, a verifier's declared error. |
+| [kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)   | A session cookie authenticating each RPC message.                               |
 
 ## Failure modes
 
-- `Provider<CurrentActor, "example.Login">` among a layer's requirements, `Type 'Provider<...>' is not assignable to type 'never'` where the server is launched, at `Layer.launch` or `NodeRuntime.runMain`, or `Expected 2 arguments, but got 1` at a web handler's `handler(request)`: a layer serves protected actions, and no provider of the binding's or endpoint's descriptor is provided to it. Provide it, `Layer.provide(authenticate)`. A value of the identity provided at startup, around `HttpRouter.serve` or the program, or per request with `HttpRouter.provideRequest`, does not satisfy it, by design. Where the routes require no provider, `Expected 2 arguments` at `handler(request)` means their platform services are not provided instead ([Testing.md](Testing.md#failure-modes)).
-- `Provider<CurrentActor, "example.Login">` still owed although a `layer` is provided: it is a provider of another descriptor, of the same identity or not. Provide the provider of the descriptor the binding or endpoint names.
-- `No overload matches this call` at `ActionHttp.make` or `ActionRpc.make`, its last overload naming `"Protected actions take options naming their authentication"`, or a type error naming `authentication` there or at `ActionMcp.layerHttp`: the binding or endpoint serves a protected action and names no descriptor. Give `{ authentication: Login }`. `"Authentication descriptor does not cover every protected action"` instead: the descriptor's identity is not the one the protected actions declare.
-- `Protected action '<name>' requires its matching authentication descriptor` thrown by `ActionHttp.make`, `ActionHttp.layer`, `ActionRpc.make`, `ActionRpc.layer` or `ActionMcp.layerHttp`: plain JavaScript gave no descriptor, or one of another identity. Give the descriptor of the identity the action declares.
-- A type error on `security` at `make`, or `Authentication takes one native HttpApiSecurity scheme` thrown by `make`: `security` is a record of schemes, or no native scheme at all. Omit it for Bearer, or give one scheme, `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`.
-- A type error on `protectedResource` at `layer`, or `A protected resource is published only for a Bearer scheme` thrown by `layer` or `refusalResponse`: the descriptor names another scheme, which OAuth discovery and challenges do not speak. Drop the resource, or authenticate with a Bearer descriptor.
-- `Invalid authentication name: "<name>", not an OpenAPI key` thrown by `make`: the name holds a character an OpenAPI component key cannot, such as `/` or `:`. Use letters, digits, `_`, `.` and `-`: `example.Login`.
-- `Missing verify: pass a verify function, or an Effect building one`, a defect when the provider's layer builds: `layer` was given neither a function nor an Effect building one, as plain JavaScript may pass. Pass `verify` itself.
-- `Request<"Requires", Tenant>` still owed although the tenant middleware's layer is provided: it was provided in one array with the authentication, `Layer.provide([authenticate, resolveTenant.layer])`, whose members provide to the routes and not to one another. Provide it in a later `Layer.provide` of its own ([Rules](#rules)).
-- An action that must be authenticated answers without credentials: its contract states `caller: Action.Anyone`. Make it protected; the surfaces then authenticate it, whatever its handler reads.
-- A public tool's call answers 401 on an MCP endpoint serving protected tools too: it presented a credential that does not verify, such as an expired token, and the endpoint verifies a presented credential. Send a valid one, or none.
-- An MCP host asks for sign-in when it connects: every tool of the endpoint is protected, so every request authenticates. One serving public tools too lists its tools and runs the public ones without signing in, and a protected tool's call answers the 401 the host signs in on; whether a host signs in then, rather than reporting the error, is the host's.
-- Type error at `layer` on `verify`: a verifier fails with an error that is neither a refusal nor one its descriptor declares, or succeeds with a value that is not the identity. Declare the error in the descriptor's `error`, or map it to a refusal where it is the caller's, and return the identity's type.
-- `Authentication "<name>": error _tag "<tag>" is built in, and declared on every surface` thrown by `make`: an `error` entry encodes with the `_tag` of `InvalidInput`, `Unauthenticated` or `Forbidden`. Fail with the built-in refusal itself, which needs no declaring, or give the error a `_tag` of its own.
-- A verifier's declared error arrives as 422, which a client reads as its request being wrong: the error states no `httpApiStatus`, and a declared error without one is sent as 422, as an action's is. Give it the status it means, such as `{ httpApiStatus: 503 }` for an issuer the verifier cannot reach.
-- `Not a refusal, nor an error the authentication declares` thrown by `refusalResponse`: the error is neither, or the descriptor declaring it was not given. Pass `authentication`.
-- `Verifier` unsatisfied at startup: the Effect building the verifier yields it. Provide it to the provider's layer, `Authentication.layer(Login, build).pipe(Layer.provide(Verifier.layer))`, or above it.
-- A request the Host or Origin check should refuse gets a 401 and a challenge: the check is the HTTP layer's `middleware`, which runs inside the authentication. Make it router middleware around the routes, or global middleware, merged beside the routes, to cover discovery too ([Rules](#rules)).
-- Discovery returns 404: the request path does not match `resource`'s path and query exactly, or the provider is provided to no served layer.
-- An MCP client does not find the authorization server: discovery is not at the well-known URL for the endpoint's path. Set `resource` to the endpoint's exact URL.
-- An MCP client reports `InsufficientScopeError` instead of re-authorizing: it has no OAuth provider configured, so it cannot step up. Configure one, or grant the scope up front.
-- `new Action.Forbidden({ scopes })` throws a schema validation error: a scope is not an OAuth scope token (it is empty, or contains a space, `"` or `\`). Give each scope as its own element.
-- An MCP client asks a user who only reads to consent to writes on first login: the 401 names no scope, so it requests every one of `scopesSupported`. Give `scopesRequired`.
-- `Authentication "<name>": the binding's descriptor is not its provider's`, a defect when `ActionHttp.layer` or `ActionRpc.layer` builds: the binding names a descriptor built apart from the one `layer(...)` was given, such as a browser's static cookie descriptor served with a provider built at startup from the deployment's, or the same options passed to `make` twice. Give the server's binding the descriptor its provider was built from.
-- `Invalid scope in scopesRequired: "<scope>"`, or `in scopesSupported`, thrown by `layer` or `refusalResponse`, or for a built resource a defect when its layer builds: a scope is empty or contains a space, `"` or `\`. Give each scope as its own element.
-- `A protected resource has no fragment: <resource>` thrown by `layer` or `refusalResponse`, or for a built resource a defect when its layer builds: `resource` has a `#fragment`, which no request URL carries, so its discovery would never answer (RFC 9728). Drop the fragment.
-- A route's `Cache-Control` is replaced by `no-store`: an enclosing middleware serialized the response of a failure. Only a route's own answer keeps its caching.
+### Types and startup
+
+- `Provider<CurrentUser, "notes-service.Login">` among a layer's requirements,
+  `Type 'Provider<...>' is not assignable to type 'never'` at `Layer.launch` or
+  `NodeRuntime.runMain`, or `Expected 2 arguments, but got 1` at a web handler's
+  `handler(request)`: a layer serves protected actions and no provider of its descriptor is
+  provided to it. Provide it, `Layer.provide(authenticate)`; nothing else satisfies it, the
+  identity itself included ([Verify credentials](#verify-credentials)). Where the routes require
+  no provider, `Expected 2 arguments` means their platform services are not provided
+  ([Testing.md](Testing.md#failure-modes)).
+- `Provider<...>` still owed although a `layer` is provided: it is the provider of another
+  descriptor, of the same identity or not. Provide the one the binding or endpoint names.
+- `Authentication "<name>": the binding's descriptor is not its provider's`, a defect when
+  `ActionHttp.layer` or `ActionRpc.layer` builds: the binding names a descriptor built apart from
+  the one `layer` was given, such as the same options passed to `make` twice, or a browser's
+  static cookie descriptor served with a provider built at startup. Give the server's binding
+  the descriptor its provider was built from.
+- `No overload matches this call` at `ActionHttp.make` or `ActionRpc.make`, its last overload
+  naming `"Protected actions take options naming their authentication"`, or a type error naming
+  `authentication` there or at `ActionMcp.layerHttp`: a protected action is served and no
+  descriptor named. Give `{ authentication: Login }`.
+  `"Authentication descriptor does not cover every protected action"` instead: the descriptor's
+  identity is not the one the protected actions declare.
+- `Protected action '<name>' requires its matching authentication descriptor` thrown by
+  `ActionHttp.make`, `ActionHttp.layer`, `ActionRpc.make`, `ActionRpc.layer` or
+  `ActionMcp.layerHttp`: plain JavaScript gave no descriptor, or one of another identity.
+- `Invalid authentication name: "<name>", not an OpenAPI key` thrown by `make`: the name holds a
+  character such as `/` or `:`. Use letters, digits, `_`, `.` and `-`.
+- A type error on `security` at `make`, or `Authentication takes one native HttpApiSecurity scheme`
+  thrown by it: `security` is a record of schemes, or no native scheme. Omit it for Bearer, or
+  give one scheme.
+- A type error on `protectedResource` at `layer`, or
+  `A protected resource is published only for a Bearer scheme` thrown by `layer` or
+  `refusalResponse`: the descriptor names another scheme. Drop the resource, or authenticate
+  with a Bearer descriptor.
+- Type error at `layer` on `verify`: the verifier fails with an error that is neither a refusal
+  nor one its descriptor declares, or succeeds with a value that is not the identity. Declare
+  the error in the descriptor's `error`, or map it to a refusal where it is the caller's.
+- `Authentication "<name>": error _tag "<tag>" is built in, and declared on every surface` thrown
+  by `make`: an `error` entry has the `_tag` of `InvalidInput`, `Unauthenticated` or `Forbidden`.
+  Fail with the built-in refusal itself, or give the error a `_tag` of its own.
+- `Missing verify: pass a verify function, or an Effect building one`, a defect when the
+  provider's layer builds: plain JavaScript gave `layer` neither.
+- A startup service the verifier's builder yields is unsatisfied where the server launches:
+  provide it to the provider's layer,
+  `Authentication.layer(Login, build).pipe(Layer.provide(Directory.layer))`, or above it.
+- `Request<"Requires", Tenant>` still owed although the tenant middleware's layer is provided: it
+  is in one array with the provider. Provide it in a later `Layer.provide` of its own
+  ([Read request context in a verifier](#read-request-context-in-a-verifier)).
+
+### Requests
+
+- An action that must be authenticated answers without credentials: its contract states
+  `caller: Action.Anyone`. Make it protected; the surfaces then authenticate it, whatever its
+  handler reads.
+- A request the `Host` or `Origin` check should refuse gets a 401 and a challenge: the check is
+  the layer's own `middleware`, which runs inside authentication. Make it global router
+  middleware ([Run a request policy before authentication](#run-a-request-policy-before-authentication)).
+- A public tool's call answers 401 on an MCP endpoint serving protected tools too: it presented
+  a credential that does not verify, such as an expired token, and the endpoint verifies a
+  credential it is given. Send a valid one, or none.
+- An MCP host asks for sign-in when it connects: every tool of the endpoint is protected, so
+  every request authenticates. An endpoint serving public tools too lists its tools and runs the
+  public ones signed out ([ActionMcp.md](ActionMcp.md#protect-tools)).
+- A verifier's declared error arrives as 422, which a client reads as its request being wrong:
+  the error states no `httpApiStatus`. Give it the status it means, such as
+  `{ httpApiStatus: 503 }`.
+- `Testing.mcpClient` fails with an `McpCallError`, not a typed error, when the verifier fails
+  with a declared one: over MCP it is the endpoint's HTTP answer, before any tool runs. The
+  `McpCallError` names its status and body.
+- A route's `Cache-Control` is replaced by `no-store`: enclosing middleware serialized the
+  response of a failure. Only a route's own answer keeps its caching.
+
+### Discovery and scopes
+
+- Discovery returns 404: the request's path and query do not match `resource`'s exactly, or the
+  provider is provided to no served layer.
+- An MCP client does not find the authorization server: discovery is not at the well-known URL
+  for the endpoint's path. Set `resource` to the endpoint's exact public URL.
+- A request the policy refuses elsewhere still reads the discovery document: the policy
+  registered after the provider. Provide it in the last `Layer.provide`.
+- An MCP client asks a user who only reads to consent to writes on first login: the 401 names no
+  scope, so it requests every one of `scopesSupported`. Give `scopesRequired`.
+- An MCP client reports `InsufficientScopeError` instead of re-authorizing: it has no OAuth
+  provider configured, so it cannot step up. Configure one, or grant the scope up front.
+- `new Action.Forbidden({ scopes })` throws a schema validation error: a scope is no OAuth scope
+  token (it is empty, or holds a space, `"` or `\`). Give each scope as its own element.
+- `Invalid scope in scopesRequired: "<scope>"`, or `in scopesSupported`, thrown by `layer` or
+  `refusalResponse`, or for a built resource a defect when its layer builds: the same, in the
+  resource.
+- `A protected resource has no fragment: <resource>` thrown by `layer` or `refusalResponse`, or
+  for a built resource a defect when its layer builds: `resource` has a `#fragment`, which no
+  request URL carries. Drop it.
+
+### Refusing outside the router
+
+- `Not a refusal, nor an error the authentication declares` thrown by `refusalResponse`: the
+  error is neither, or the descriptor declaring it was not given. Pass `authentication`.
