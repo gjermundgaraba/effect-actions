@@ -43,6 +43,15 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 - Migrate: match `InvalidInput` where a test caught that `SchemaError`.
 
+**`ActionMcp.layerHttp` and `Authentication.protect` refuse a descriptor that is not their
+provider's, as `ActionHttp.layer` and `ActionRpc.layer` do.** Given a descriptor built apart
+from the one `Authentication.layer` took, under the same name, they die when their layer
+builds, with `Authentication "<name>": the binding's descriptor is not its provider's`. They
+followed the provider's scheme silently, so an endpoint declaring one cookie accepted another
+([Authentication-failures.md](docs/Authentication-failures.md)).
+
+- Migrate: build the endpoint, the protected route and the provider from one descriptor value.
+
 ### Additions
 
 - `ActionCli.make` and `remote` take `subcommands`, commands of your own beside the derived ones,
@@ -121,85 +130,44 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
-- [ActionHttp.md](docs/ActionHttp.md#serve-the-routes) says that an `ErrorReporter` is given a
-  declared failure over HTTP, which Effect's `HttpApi` reports, and not over MCP or RPC, and how
-  to mark an error class as unreported.
 - `Testing.layer` logs, as an error, the cause of a defect, of a result that does not encode,
-  or of a failure a route of your own leaves unhandled. It logs nothing for a request that succeeds, is refused, fails with a declared
-  error or finds no route. An empty 500 in a test showed its
-  cause nowhere unless the test provided an `ErrorReporter`: a server's request logger writes
-  it, and a test runs none ([Testing-failures.md](docs/Testing-failures.md)).
+  or of a failure a route of your own leaves unhandled, and nothing for any other request. An
+  empty 500 in a test showed its cause nowhere: a server's request logger writes it, and a test
+  runs none ([Testing-failures.md](docs/Testing-failures.md)).
 - A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the
   binding's authentication declares as its JSON, as it prints every other declared error. It
-  printed it as prose, the error's name alone.
-- No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
-  in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
-  sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
-  what an answering turn does ([ActionToolkit.md](docs/ActionToolkit.md#ask-for-approval)), the
-  shape of a refusal over MCP, and CORS for a browser MCP client.
-- Each module page opens with how to read it (alone, in one tool call) and links its failures
-  page, which the user test's second round showed nothing else led a reader to.
-- Corrected in the docs after that round: another method on an MCP endpoint answers
-  `Allow: POST, DELETE`; an action without input answers 415 to a body with no `Content-Type`;
-  the headers and methods a browser MCP client's CORS allows; what invalid tool arguments
-  answer; two failure entries that named one cause of two.
-- `package.json` names `docs` and `examples` under `directories`.
-- Examples: `live-rpc`'s declared errors carry an HTTP status; `kitchen-sink`'s CORS allows an
-  MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its
-  pattern. `notes-service`'s `export` takes a file argument; `mcp-tools` answers CORS for the
-  origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
-  client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
-  request: each member's conversation kept between requests, an approval answered in a later
-  one, by the member who was asked alone, every open one listed in each turn's answer as Effect would act on it, and a conversation ended where a turn fails or is
-  interrupted
-  ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)). `notes-service` describes its
-  input fields, which a flag's help and a tool's listing show, and its CLI requires
-  `NOTES_TOKEN`, a missing one printed as a message, not a `ConfigError` log line: its public
-  `get-status` and a bare `notes` need the token there too. `mcp-tools`' README says how to
-  connect Claude Code and Claude Desktop and to call the endpoint with `curl`, and a test pins
-  what CORS answers for one configured origin. `live-rpc` has a test over a real WebSocket. `notes-service`'s `export` prints context of its
-  own before a failure, on a line of stderr, leaving the failure's JSON as it is. Comments
-  mark what a copy must decide: a server bound to `127.0.0.1` serves its machine alone, the
-  discovery block's authorization server is `DEMO ONLY`, `notes-service`'s OpenAPI document is
-  public by choice, and an action added to its binding is also a `notes` command. A `kitchen-sink` test calls its rpcs and its JSON routes under one `Testing.layer` ([Testing.md](docs/Testing.md#test-rpcs)).
-- The package ships `examples/`: six complete applications, each a directory with its own
-  tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
-  with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a
-  browser client; `mcp-tools` wraps an upstream API as MCP tools; `assistant` gives the same
-  implementations to a model and to local commands; `live-rpc` is Effect RPC over a WebSocket;
-  `kitchen-sink` uses every module and indexes each export and option to a file. They replace
-  the single-file examples, which were fragments of one demo application
-  ([examples/README.md](examples/README.md)).
-- The docs are organized by task and link to example files instead of embedding them. Each
-  module page keeps its API table, with its failure modes on a page beside it,
-  `<Module>-failures.md`, read when something fails; rules that restated the code are gone, and
-  what stays is how to do a task, a choice, a trap or a boundary. `docs/guarantees.md` is now
-  the wire behavior of every surface in one table, and the library's scope; its lifetime and
-  authorization rules moved to [Action.md](docs/Action.md) and
-  [Authentication.md](docs/Authentication.md). Section anchors changed
-  ([docs/README.md](docs/README.md)). In the skill, a link to an example is its path in a
-  project that installs the package, `node_modules/@gjermundgaraba/effect-actions/examples/…`,
-  which an agent reads without a network.
+  printed the error's name alone.
 - A command reading a field from stdin is listed by its action's description alone in its
-  parent's `--help`; the "Reads <field> from stdin" line, which broke the list of subcommands,
-  stays in the command's own help ([ActionCli.md](docs/ActionCli.md)).
+  parent's `--help`; the "Reads <field> from stdin" line stays in the command's own help
+  ([ActionCli.md](docs/ActionCli.md)).
 - `Authentication.layer` requires the `HttpRouter` only when it publishes a
   `protectedResource`, so the provider serves an RPC server over a socket or stdio too
   ([Authentication.md](docs/Authentication.md)).
 - A timer of the stderr console that `runStdio` and a CLI command give their program, started
   again while it runs, keeps its first start, as Node's does; it restarted
   ([ActionMcp.md](docs/ActionMcp.md)).
+- [ActionHttp.md](docs/ActionHttp.md#serve-the-routes) says that an `ErrorReporter` is given a
+  declared failure over HTTP, which Effect's `HttpApi` reports, and not over MCP or RPC, and how
+  to mark an error class as unreported.
+- The package ships `examples/`: six complete applications, each with its own tests, laid out
+  by domain, from `quickstart` to `kitchen-sink`, which indexes every export and option to a
+  file. They replace the single-file examples, which were fragments of one demo application
+  ([examples/README.md](examples/README.md)).
+- The docs are organized by task and link to example files instead of embedding them: a page
+  per module with its API table, its failure modes beside it on `<Module>-failures.md`, and no
+  page over 16 KB, which a coding agent's tool reads whole. `docs/guarantees.md` is the wire
+  behavior of every surface in one table, and the library's scope; its lifetime and
+  authorization rules moved to [Action.md](docs/Action.md) and
+  [Authentication.md](docs/Authentication.md). Section anchors changed
+  ([docs/README.md](docs/README.md)). [setup.md](docs/setup.md#install) has a `tsconfig.json` to
+  copy.
 - Each module's main export names its page and an example in its JSDoc, for a reader who opens
-  a declaration before the README. The `ActionHttp.layer` JSDoc gives the line that limits
-  request bodies, and `RemoteOptions.client` how a required token that is not set is reported.
-- New failure entries: a service a builder starts yielding, owed by every test; calls to
-  different actions in one array; a wrapped builder whose handlers lose their types;
-  `Schema.Struct(X.input)` ([Testing-failures.md](docs/Testing-failures.md),
-  [Action-failures.md](docs/Action-failures.md)). [setup.md](docs/setup.md#install) has a
-  `tsconfig.json` to copy.
+  a declaration before the README.
 - The agent skill also installs as a Claude Code plugin and a Codex plugin, from this
   repository's marketplace, `effect-actions@effect-actions-marketplace`; it follows the main
-  branch, as `npx skills add` does ([README.md](README.md#for-agents)).
+  branch, as `npx skills add` does ([README.md](README.md#for-agents)). Its links to examples
+  are paths in a project that installs the package, which an agent reads without a network.
+- `package.json` names `docs` and `examples` under `directories`.
 
 ## 0.11.0
 

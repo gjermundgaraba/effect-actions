@@ -26,8 +26,9 @@ release outside the peer range. `npm install effect@~4.0.2` keeps it.
 
 Node `^22.12.0 || ^24.0.0 || >=26.0.0`: the package's `engines`, where its `devEngines` is
 what developing the library itself takes. TypeScript 7 or newer. ESM only. No example ships a
-`tsconfig.json`; this one checks them. `"module": "nodenext"` is required, since the package's
-modules resolve only through its `exports`, and `"strict": true`, which Effect requires:
+`tsconfig.json`; this one checks them. The package's modules resolve only through its
+`exports`, which `"module": "nodenext"` reads, as a bundler project's
+`"moduleResolution": "bundler"` does. `"strict": true` is required, by Effect:
 
 ```json
 {

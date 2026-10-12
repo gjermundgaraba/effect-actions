@@ -14,10 +14,11 @@ Tasks: [Authentication.md](Authentication.md),
   identity itself, nor the provider of another descriptor, of the same identity or not
   ([Verify credentials](Authentication.md#verify-credentials)).
 - `Authentication "<name>": the binding's descriptor is not its provider's`, a defect when
-  `ActionHttp.layer` or `ActionRpc.layer` builds: the binding names a descriptor built apart
-  from the one `layer` was given, such as the same options passed to `make` twice, or a
-  browser's static cookie descriptor served with a provider built at startup. Build the
-  server's binding and its provider from one descriptor value.
+  `ActionHttp.layer`, `ActionRpc.layer`, `ActionMcp.layerHttp` or `Authentication.protect`
+  builds: it names a descriptor built apart from the one `Authentication.layer` was given, such
+  as the same options passed to `make` twice, or a browser's static cookie descriptor served
+  with a provider built at startup. Build the server's surfaces and its provider from one
+  descriptor value.
 - `Protected action '<name>' requires its matching authentication descriptor` thrown by `make`
   or `layer` of `ActionHttp` or `ActionRpc`, or by `ActionMcp.layerHttp`, or a type error there,
   such as `No overload matches this call`, naming `authentication`,
@@ -56,9 +57,11 @@ Tasks: [Authentication.md](Authentication.md),
   the layer's own `middleware`, which runs inside authentication. Make it global router
   middleware
   ([Run a request policy before authentication](Authentication-advanced.md#run-a-request-policy-before-authentication)).
-- An MCP host asks for sign-in when it connects: every tool of the endpoint is protected, so
-  every request authenticates. An endpoint serving public tools too lists its tools and runs the
-  public ones signed out ([ActionMcp.md](ActionMcp.md#protect-tools)).
+- An MCP host asks for sign-in when it connects: every tool of the endpoint is protected, or
+  the host opens a session with `initialize`, as a client of MCP 2025 does, and a session's
+  every request authenticates wherever a protected tool is served. Only a 2026-07-28 request
+  lists the tools and calls a public one signed out, on an endpoint that serves public tools
+  too ([ActionMcp.md](ActionMcp.md#protect-tools)).
 - A verifier's declared error arrives as 422: the error states no `httpApiStatus`. Give it the
   status it means, such as `{ httpApiStatus: 503 }`.
 - `Testing.mcpClient` fails with an `McpCallError`, not a typed error, when the verifier fails

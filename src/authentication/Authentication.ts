@@ -11,15 +11,16 @@ import {
 } from "effect";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
-import type {
-  Any,
-  Credential,
-  Descriptor,
-  Provider,
-  Runtime,
-  Security,
-  SecurityMiddleware,
-  VerifierFailure,
+import {
+  type Any,
+  type Credential,
+  type Descriptor,
+  type Provider,
+  providerOf,
+  type Runtime,
+  type Security,
+  type SecurityMiddleware,
+  type VerifierFailure,
 } from "./provider.js";
 import type { Errors } from "../contract/Action.js";
 import { assertOwnTags, errorList, type ErrorsOf } from "../contract/rules.js";
@@ -557,8 +558,5 @@ export const protect = <I, A, S extends Security, Name extends string, E extends
   authentication: Descriptor<I, A, S, Name, E>,
 ): Protection<I, Name> =>
   HttpRouter.middleware<{ provides: Provides<I>; handles: Refusal }>()(
-    Effect.map(
-      Effect.service(authentication["~provider"]),
-      (runtime) => (route) => runtime.route(route),
-    ),
+    Effect.map(providerOf(authentication), (runtime) => (route) => runtime.route(route)),
   );

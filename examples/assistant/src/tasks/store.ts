@@ -7,8 +7,8 @@ type TaskList = ReadonlyArray<Task>;
 
 const TasksFile = Schema.fromJsonString(Schema.Array(Task));
 
-// Every method reads the whole list and writes it back: the two layers below differ only in
-// where the list is kept.
+// Every method reads the whole list, and a change writes it back: the two layers below differ
+// only in where the list is kept.
 const make = (load: Effect.Effect<TaskList>, save: (tasks: TaskList) => Effect.Effect<void>) => {
   // A model's tool calls in one turn run concurrently. Two changes reading the list before
   // either writes it would lose one, so a change holds this lock from its read to its write.

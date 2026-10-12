@@ -100,7 +100,7 @@ export interface Descriptor<
   readonly security: S;
   /**
    * What its verifier may fail with besides a refusal, as a list: every protected endpoint
-   * declares it, and every remote surface sends it with its status.
+   * declares it, and every remote surface sends it, over HTTP with its status.
    */
   readonly error: E;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
@@ -242,7 +242,9 @@ export const assertAuthentication = (
 // Why: Identity, not equality. Two descriptors of one name share the provider's service, so nothing
 // else tells them apart. Rejected: comparing the schemes, which takes per-kind rules following
 // Effect's decoders and still lets the errors differ.
-export const providerOf = (auth: Any): Effect.Effect<Runtime, never, Provider<unknown>> =>
+export const providerOf = <I, Name extends string>(
+  auth: Descriptor<I, unknown, Security, Name, Action.Errors>,
+): Effect.Effect<Runtime, never, Provider<I, Name>> =>
   Effect.flatMap(Effect.service(auth["~provider"]), (provider) =>
     provider.descriptor === auth
       ? Effect.succeed(provider)
