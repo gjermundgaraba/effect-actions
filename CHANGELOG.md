@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.12.0
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.2`, on TypeScript 7.
 
 ### Breaking changes
 
