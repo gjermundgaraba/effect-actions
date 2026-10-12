@@ -33,6 +33,7 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
   type VerifierError,
+  withVerifierErrors,
 } from "../authentication/provider.js";
 import {
   Anyone,
@@ -275,18 +276,13 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   const mount = mountSegments(options.prefix);
   const security = options.authentication?.["~middleware"];
 
-  // Why: The binding adds a verifier's errors to its protected endpoints itself, as it adds its
-  // own, so they take the status rule, the projected order and the client types of every other
-  // error. Rejected: the security middleware's native `error`, which `HttpApiEndpoint` merges in.
-  const protectedEndpointVerifierErrors = options.authentication?.error ?? [];
-
   const endpoints = actions.map((action) => {
     const isPublic = security === undefined || action.caller === Anyone;
 
     const endpoint = endpointOf(
       action,
       absolutePath([...mount, action.name]),
-      isPublic ? errors : [...errors, ...protectedEndpointVerifierErrors],
+      withVerifierErrors(action, errors, options.authentication?.error),
     ).annotate(OpenApi.Description, action.description);
 
     return isPublic ? endpoint : endpoint.middleware(security);

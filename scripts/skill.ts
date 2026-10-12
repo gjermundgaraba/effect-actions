@@ -31,12 +31,17 @@ description: >
 const linkInstalledExamples = (page: string) =>
   page.replaceAll("](../examples/", "](node_modules/@gjermundgaraba/effect-actions/examples/");
 
+const linkSkillEntry = (page: string) =>
+  page.replaceAll("[README.md](README.md", "[SKILL.md](SKILL.md");
+
 export const renderSkill = (): ReadonlyArray<SkillFile> =>
   readdirSync(docsDirectory)
     .filter((name) => name.endsWith(".md"))
     .sort((left, right) => left.localeCompare(right))
     .map((name) => {
-      const content = linkInstalledExamples(readFileSync(join(docsDirectory, name), "utf8"));
+      const content = linkSkillEntry(
+        linkInstalledExamples(readFileSync(join(docsDirectory, name), "utf8")),
+      );
 
       return name === "README.md"
         ? { path: "SKILL.md", content: `${frontmatter}${content}` }

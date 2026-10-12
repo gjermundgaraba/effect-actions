@@ -12,8 +12,17 @@ const server = Layer.unwrap(
     const publicPort = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
     const adminPort = yield* Config.Port("ADMIN_PORT").pipe(Config.withDefault(3001));
 
+    const limit = ByteSize.mebibytes(1);
+
     const listen = (port: number) =>
-      NodeHttpServer.layer(createServer, { host: "127.0.0.1", port });
+      NodeHttpServer.layer(createServer, {
+        host: "127.0.0.1",
+        port,
+        // A message on the WebSocket of `/rpc` is no request body, so the limit below does not
+        // bound it: Node's WebSocket server reads one of up to 100 MiB whole unless told
+        // otherwise. A larger one closes the socket (1009).
+        websocket: { maxPayload: Number(limit) },
+      });
 
     return Layer.mergeAll(
       // Two audiences, two listeners. Each `HttpRouter.serve` builds its routes in a layer
@@ -22,9 +31,9 @@ const server = Layer.unwrap(
       HttpRouter.serve(publicRoutes).pipe(Layer.provide(listen(publicPort))),
       HttpRouter.serve(adminRoutes).pipe(Layer.provide(listen(adminPort))),
     ).pipe(
-      // Request bodies have no size limit unless the host sets one. This covers every route
-      // of both ports, the MCP endpoint included.
-      Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
+      // Request bodies have no size limit unless the host sets one. This covers every HTTP
+      // route of both ports, the MCP endpoint included.
+      Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, limit)),
       // So what both ports share is provided outside both, once: the builders, then the
       // services the builders, the verifiers and the quota are built from. A workspace an
       // operator suspends on one port is thereby refused on the other.

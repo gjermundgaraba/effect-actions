@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Schema } from "effect";
 import { McpServer } from "effect/ai";
+import { HttpRouter } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import { authenticate } from "../support/app/authentication.js";
@@ -278,6 +279,58 @@ describe("a mixed MCP endpoint", () => {
     }
 
     expect(calls).toEqual([]);
+  });
+});
+
+describe("another HTTP method on a mixed MCP endpoint", () => {
+  it("is authenticated first: a 401 signed out, a browser's preflight included, and the 405 signed in", async () => {
+    const { web } = mixedEndpoint();
+
+    const sent = (method: string, headers: Record<string, string> = {}) =>
+      web.handler(new Request("http://localhost/mcp", { method, headers }));
+
+    const preflight = await sent("OPTIONS", {
+      origin: "http://localhost:3000",
+      "access-control-request-method": "POST",
+    });
+
+    expect([(await sent("GET")).status, (await sent("PUT")).status, preflight.status]).toEqual([
+      401, 401, 401,
+    ]);
+    expect(preflight.headers.get("www-authenticate")).toContain("Bearer");
+
+    const signedIn = await sent("GET", { authorization: "Bearer alice" });
+
+    expect([signedIn.status, signedIn.headers.get("allow"), await signedIn.text()]).toEqual([
+      405,
+      "POST, DELETE",
+      "",
+    ]);
+  });
+});
+
+describe("a browser's preflight to a mixed MCP endpoint behind HttpRouter.cors", () => {
+  it("is answered by the CORS layer, signed out, before the endpoint authenticates it", async () => {
+    const { app } = makeExampleAppRecordingCalls();
+
+    const web = serve(
+      ActionMcp.layerHttp(app, { name: "gate", version: "0", authentication: Login }).pipe(
+        Layer.provide(authenticate),
+        Layer.provide(HttpRouter.cors({ allowedOrigins: ["http://localhost:3000"] })),
+      ),
+    );
+
+    const preflight = await web.handler(
+      new Request("http://localhost/mcp", {
+        method: "OPTIONS",
+        headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" },
+      }),
+    );
+
+    expect([preflight.status, preflight.headers.get("access-control-allow-origin")]).toEqual([
+      204,
+      "http://localhost:3000",
+    ]);
   });
 });
 

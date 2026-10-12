@@ -46,6 +46,7 @@ import {
   type ServerBuildServices,
   type ServedProvider,
   type VerifierError,
+  withVerifierErrors,
 } from "../authentication/provider.js";
 import { type Call, checked, type ErasedMethod } from "../contract/call.js";
 import { type BuiltIn, type BuiltIns, InvalidInput } from "../contract/errors.js";
@@ -122,12 +123,7 @@ const declaredErrorsOf = (
   errors: Action.Errors,
   authentication: Authentication | undefined,
 ): Action.Errors =>
-  projectedErrors(
-    action,
-    action.caller === Anyone || authentication === undefined
-      ? errors
-      : [...errors, ...authentication.error],
-  );
+  projectedErrors(action, withVerifierErrors(action, errors, authentication?.error));
 
 // Why: The same three overloads as `ActionHttp.make`, for the reasons stated there.
 /**
@@ -285,12 +281,24 @@ class InternalError extends Error {
   }
 }
 
-const markedUnreported = (encoded: Schema.Json): Schema.Json => {
-  if (Predicate.isObject(encoded)) {
-    Object.defineProperty(encoded, ErrorReporter.ignore, { value: true });
-  }
+const isJsonObject = (json: Schema.Json): json is Schema.JsonObject => Predicate.isObject(json);
 
-  return encoded;
+const isJsonArray = (json: Schema.Json): json is Schema.JsonArray => Array.isArray(json);
+
+const marked = <Copy extends Schema.JsonObject | Array<Schema.Json>>(copy: Copy): Copy =>
+  Object.defineProperty(copy, ErrorReporter.ignore, { value: true });
+
+// Why: A copy carries the mark. The JSON codec may answer the very object a handler failed
+// with, which the handler may have frozen: marking that one would throw. The copy is made of
+// entries, which define each key: assigning them would run the setter of a key `__proto__`.
+// The mark is a key of its own, a string: a failure that holds that key keeps its value, and
+// is reported or not as it says.
+const markedUnreported = (encoded: Schema.Json): Schema.Json => {
+  if (isJsonArray(encoded)) return marked([...encoded]);
+
+  return isJsonObject(encoded) && !Object.hasOwn(encoded, ErrorReporter.ignore)
+    ? marked(Object.fromEntries(Object.entries(encoded)))
+    : encoded;
 };
 
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
@@ -368,7 +376,9 @@ const handlerOf = (
  * runs the authentication and the middleware itself, then decodes the input. A defect is
  * logged with its cause, reported to the call's `ErrorReporter`s, and answered as its
  * request's generic failure, never failing the connection's other calls; a declared failure is
- * the caller's answer, and never reported.
+ * the caller's answer, and not reported, unless it encodes to a primitive, which Effect's
+ * reporter cannot be told to skip, or holds the reporter's own key,
+ * `~effect/ErrorReporter/ignore`, whose value it keeps.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
  * each implementation's authorization and the handlers of the actions it serves need, as

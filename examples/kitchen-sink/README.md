@@ -83,9 +83,9 @@ src/
 │   └── assistant.ts       the actions as a model's Toolkit, with approval
 ├── assistant/             the model loop, served: a turn per request
 │   ├── Assistant.ts       contract: a turn, askAssistant and answerAssistant
-│   ├── conversations.ts   Conversations: each member's Chat, kept between requests
+│   ├── conversations.ts   Conversations: each member's Chat, one turn at a time, ended where a turn fails
 │   ├── demo-model.ts      DEMO ONLY: a scripted model
-│   └── handlers.ts        the loop, approvals across requests, a model that fails
+│   └── handlers.ts        the loop, approvals across requests, what a turn reports
 ├── attachments/
 │   ├── Attachments.ts     contract: an image in an input and in a success
 │   ├── store.ts

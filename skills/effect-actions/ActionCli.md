@@ -9,7 +9,7 @@ implementations or the binding, so a new action is a new command: list `actions`
 out.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionCli-failures.md](ActionCli-failures.md). Reading order: [README.md](README.md).
+search [ActionCli-failures.md](ActionCli-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 
@@ -156,13 +156,14 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   inside `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
   `authorize` still runs. The `client` option reaches the derived commands alone.
 - **Its output is what it prints**, with `Console.log`: the output rules below are a derived
-  command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, or
-  `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared
+  command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, the binding its
+  client is made from, HTTP or RPC, or `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared
   error as its JSON on stderr, a transport failure named with its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
   passes through. A failure left unmapped, one call's included, is reported as a crash,
   `ERROR (#n)` with a stack trace.
-- **Write the list in the call.** The aggregate's type then carries its commands' failures and
-  services. A list held in options annotated `ActionCli.Options` adds none to the type.
+- **Write the list in the call**, or hold the options with `satisfies ActionCli.Options<…>`. The
+  aggregate's type then carries its commands' failures and services. A list in options
+  annotated `: ActionCli.Options<…>` adds none: the program compiles, then a command's service is not found.
 
 ### Output and exit code
 

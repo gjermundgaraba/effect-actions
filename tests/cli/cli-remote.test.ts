@@ -1,10 +1,12 @@
 import { expect, it } from "@effect/vitest";
-import { Config, ConfigProvider, Console, Effect, flow, Schema } from "effect";
+import { Config, ConfigProvider, Console, Context, Effect, flow, Schema } from "effect";
 import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { causeOf, exec, logged, printed } from "../support/cli-services.js";
 import { serve } from "../support/serve.js";
@@ -343,6 +345,112 @@ it.effect(
           /HttpClientError: .*POST http:\/\/localhost\/api\/remote.*: Error: fetch failed: Error: connect ECONNREFUSED 127\.0\.0\.1:1/,
         ),
       ]);
+    }),
+);
+
+it.effect(
+  "prints a verifier's declared error as its JSON, from a derived command and through toUserError",
+  () =>
+    Effect.gen(function* () {
+      class Caller extends Context.Service<Caller, { readonly id: string }>()(
+        "cli-remote/Caller",
+      ) {}
+
+      class Unavailable extends Schema.TaggedError<Unavailable>()(
+        "Unavailable",
+        { retryAfter: Schema.Finite },
+        { httpApiStatus: 503 },
+      ) {}
+
+      const Login = Authentication.make("cli-remote.Login", Caller, { error: Unavailable });
+
+      const Secret = Action.make("secret", {
+        description: "Reads what only a caller may",
+        readOnly: true,
+        caller: Caller,
+      });
+
+      const Guarded = ActionHttp.make([Secret], { authentication: Login });
+
+      const own = Command.make("own", {}, () =>
+        Effect.flatMap(ActionHttp.client(Guarded), (client) => client.secret()).pipe(
+          ActionCli.toUserError(Guarded),
+        ),
+      );
+
+      const command = ActionCli.remote(Guarded, { name: "cli", subcommands: [own] });
+
+      const stderrOf = (args: ReadonlyArray<string>) =>
+        exec(command, args).pipe(
+          printed,
+          Effect.provide(
+            Testing.layer(async () =>
+              Response.json(Schema.encodeSync(Unavailable)(new Unavailable({ retryAfter: 5 })), {
+                status: 503,
+              }),
+            ),
+          ),
+        );
+
+      const [derived, , derivedErr] = yield* stderrOf(["secret"]);
+
+      expect(causeOf(derived)).toEqual(new Unavailable({ retryAfter: 5 }));
+      expect(derivedErr).toEqual([
+        expect.stringContaining('{"_tag":"Unavailable","retryAfter":5}'),
+      ]);
+      expect((yield* stderrOf(["own"]))[2]).toEqual(derivedErr);
+    }),
+);
+
+it.effect(
+  "prints through toUserError the errors an RPC binding and its authentication declare, as their JSON",
+  () =>
+    Effect.gen(function* () {
+      class Caller extends Context.Service<Caller, { readonly id: string }>()(
+        "cli-remote/RpcCaller",
+      ) {}
+
+      class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {
+        retryAfter: Schema.Finite,
+      }) {}
+
+      class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {
+        retryAfter: Schema.Finite,
+      }) {}
+
+      const Login = Authentication.make("cli-remote.RpcLogin", Caller, { error: Unavailable });
+
+      const Secret = Action.make("secret", {
+        description: "Reads what only a caller may",
+        readOnly: true,
+        caller: Caller,
+      });
+
+      const Rpc = ActionRpc.make([Secret], { authentication: Login, error: [Throttled] });
+
+      const cli = Command.make("cli").pipe(
+        Command.withSubcommands([
+          Command.make("throttled", {}, () =>
+            Effect.fail(new Throttled({ retryAfter: 5 })).pipe(ActionCli.toUserError(Rpc)),
+          ),
+          Command.make("unavailable", {}, () =>
+            Effect.fail(new Unavailable({ retryAfter: 9 })).pipe(ActionCli.toUserError(Rpc)),
+          ),
+          Command.make("by-actions", {}, () =>
+            Effect.fail(new Throttled({ retryAfter: 5 })).pipe(ActionCli.toUserError(Rpc.actions)),
+          ),
+        ]),
+      );
+
+      const stderrOf = (name: string) => Effect.map(printed(exec(cli, [name])), ([, , err]) => err);
+
+      expect(yield* stderrOf("throttled")).toEqual([
+        expect.stringContaining('{"_tag":"Throttled","retryAfter":5}'),
+      ]);
+      expect(yield* stderrOf("unavailable")).toEqual([
+        expect.stringContaining('{"_tag":"Unavailable","retryAfter":9}'),
+      ]);
+      expect(yield* stderrOf("by-actions")).toEqual([expect.not.stringContaining("retryAfter")]);
     }),
 );
 

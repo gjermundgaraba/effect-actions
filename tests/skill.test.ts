@@ -15,3 +15,19 @@ it("keeps skills/effect-actions equal to docs/ (run `vp run docs:sync`)", () => 
     expect(readFileSync(join(skillDirectory, file.path), "utf8"), file.path).toBe(file.content);
   }
 });
+
+it("links each page of the skill only to pages the skill holds, and to the installed examples", () => {
+  const rendered = renderSkill();
+  const held = new Set(rendered.map((file) => file.path));
+
+  const missing = rendered.flatMap((file) =>
+    Array.from(
+      file.content.matchAll(/\]\((?!https?:|mailto:|node_modules\/)([^)#\s]+\.md)/g),
+      ([, target = ""]) => target,
+    )
+      .filter((target) => !held.has(target))
+      .map((target) => `${file.path} links ${target}`),
+  );
+
+  expect(missing).toEqual([]);
+});

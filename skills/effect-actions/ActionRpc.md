@@ -5,7 +5,7 @@ Reach for it when a client keeps a connection open and calls often, such as a pa
 WebSocket, or when the application already speaks Effect RPC.
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
-search [ActionRpc-failures.md](ActionRpc-failures.md). Reading order: [README.md](README.md).
+search [ActionRpc-failures.md](ActionRpc-failures.md). Reading order: [SKILL.md](SKILL.md).
 
 ## API
 

@@ -29,7 +29,15 @@ export const download = Layer.unwrap(
         // caching. An attachment never changes, but it is one workspace's: `private`.
         return HttpServerResponse.uint8Array(image.data, {
           contentType: image.mimeType,
-          headers: { "cache-control": "private, max-age=31536000, immutable" },
+          headers: {
+            "cache-control": "private, max-age=31536000, immutable",
+            // What a member uploaded is served from the application's own origin, and an image
+            // can be a document: an SVG opened by its URL, not in an `<img>`, runs its scripts
+            // as the member reading it. `sandbox` gives it no origin and no scripts, and
+            // `nosniff` keeps the browser to the type stated.
+            "content-security-policy": "sandbox",
+            "x-content-type-options": "nosniff",
+          },
         });
       }).pipe(
         Effect.catchTag("AttachmentNotFound", () =>
