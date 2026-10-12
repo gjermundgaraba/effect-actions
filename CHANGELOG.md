@@ -138,7 +138,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
   client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
   request: each member's conversation kept between requests, an approval answered in a later
-  one, by the member who was asked alone, and a conversation ended where a turn fails or is
+  one, by the member who was asked alone, every open one listed in each turn's answer, and a conversation ended where a turn fails or is
   interrupted
   ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)). `notes-service` describes its
   input fields, which a flag's help and a tool's listing show, and its CLI requires
@@ -146,7 +146,10 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   `get-status` and a bare `notes` need the token there too. `mcp-tools`' README says how to
   connect Claude Code and Claude Desktop and to call the endpoint with `curl`, and a test pins
   what CORS answers for one configured origin. `live-rpc` has a test over a real WebSocket. `notes-service`'s `export` prints context of its
-  own before a failure, on a line of stderr, leaving the failure's JSON as it is.
+  own before a failure, on a line of stderr, leaving the failure's JSON as it is. Comments
+  mark what a copy must decide: a server bound to `127.0.0.1` serves its machine alone, the
+  discovery block's authorization server is `DEMO ONLY`, `notes-service`'s OpenAPI document is
+  public by choice, and an action added to its binding is also a `notes` command. A `kitchen-sink` test calls its rpcs and its JSON routes under one `Testing.layer` ([Testing.md](docs/Testing.md#test-rpcs)).
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a

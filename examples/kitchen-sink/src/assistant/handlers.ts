@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Ref, Schema } from "effect";
 import { type Chat, LanguageModel, type Prompt } from "effect/ai";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../identity/Identity.js";
@@ -22,6 +22,43 @@ const didNotRun = Schema.is(
 
 const callsToRead = (response: Response) =>
   response.toolCalls.length > 0 && approvalsOf(response).length === 0;
+
+// Every request of a conversation that has no answer yet, with the call it is about: read from
+// the `Chat`'s history, which is what Effect matches an answer against. So a request an earlier
+// answer left open is listed in every turn until it is answered, and the example keeps no list
+// of its own that could disagree with the history.
+const openRequestsOf = ({ content: messages }: Prompt.Prompt) => {
+  const answered = new Set(
+    messages.flatMap((message) =>
+      message.role === "tool"
+        ? message.content.flatMap((part) =>
+            part.type === "tool-approval-response" ? [part.approvalId] : [],
+          )
+        : [],
+    ),
+  );
+
+  // A request and the call it is about arrive in one reply, so in one message.
+  return messages.flatMap((message) =>
+    message.role === "assistant"
+      ? message.content.flatMap((request) =>
+          request.type === "tool-approval-request" && !answered.has(request.approvalId)
+            ? message.content.flatMap((call) =>
+                call.type === "tool-call" && call.id === request.toolCallId
+                  ? [
+                      {
+                        approvalId: request.approvalId,
+                        tool: call.name,
+                        arguments: JSON.stringify(call.params),
+                      },
+                    ]
+                  : [],
+              )
+            : [],
+        )
+      : [],
+  );
+};
 
 // The model loop behind a route. The builder runs once, at startup, and yields what a turn is
 // built from: the tools with their handlers, the model, and where conversations are kept. A
@@ -58,15 +95,7 @@ export const assistant = Action.implement(
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),
-          waiting: approvalsOf(response).flatMap(({ approvalId, toolCallId }) =>
-            response.toolCalls
-              .filter((call) => call.id === toolCallId)
-              .map((call) => ({
-                approvalId,
-                tool: call.name,
-                arguments: JSON.stringify(call.params),
-              })),
-          ),
+          waiting: openRequestsOf(yield* Ref.get(chat.history)),
         };
       }).pipe(
         // The model is a startup service, given to each turn here.

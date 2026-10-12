@@ -13,6 +13,8 @@ const server = Layer.unwrap(
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     return HttpRouter.serve(routes).pipe(
+      // `127.0.0.1` serves this machine alone. A server others reach binds another host, read
+      // from config as examples/mcp-tools/src/server.ts reads it.
       Layer.provide(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port })),
       // Request bodies have no size limit unless the host sets one. This covers every route.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),

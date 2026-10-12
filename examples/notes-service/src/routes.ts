@@ -31,6 +31,9 @@ const mcp = ActionMcp.layerHttp(implementations, {
 // The host's own routes sit beside the actions' on the same router.
 const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 
+// Served to anyone, which is a choice: it tells a signed-out caller every action's name and
+// shape. To keep them, leave the route out, or provide `Authentication.protect(Login).layer`
+// to it.
 const openApi = HttpRouter.add(
   "GET",
   "/api/openapi.json",

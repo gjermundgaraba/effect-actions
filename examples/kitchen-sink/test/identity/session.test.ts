@@ -28,8 +28,14 @@ const socket = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
 // `provideMerge`: the test reads the registry the rpcs' verifier reads.
 const served = socket.pipe(Layer.provideMerge(memory));
 
-// The socket beside the public port's routes, as on the server, over one set of services.
-const servedWithHttp = Layer.merge(socket, Testing.layer(publicRoutes)).pipe(Layer.provide(memory));
+// The rpcs beside the public port's routes under one `Testing.layer`, as one server serves
+// them. `provideMerge`: the test calls the JSON routes with the `HttpClient` the rpc client's
+// protocol is given.
+const servedWithHttp = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provideMerge(Testing.layer(Layer.merge(server, publicRoutes))),
+  Layer.provide(memory),
+);
 
 // Each call carries its caller's session cookie, as a browser attaches it, so one client
 // serves several callers. Authentication is per message.

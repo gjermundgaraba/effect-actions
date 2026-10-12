@@ -214,15 +214,19 @@ describe("the assistant, behind a route", () => {
         answers: first === undefined ? [] : [first],
       });
 
-      // The call left open is not listed again: its `approvalId` is the client's to keep.
-      expect(answered).toMatchObject({ ran: [{ tool: "commentOnIssue" }], waiting: [] });
+      // The call left open is listed again, in every turn until it is answered.
+      expect(answered).toMatchObject({ ran: [{ tool: "commentOnIssue" }] });
+      expect(answered.waiting).toEqual([
+        { approvalId: second?.approvalId, tool: "closeIssue", arguments: '{"id":"ACME-1"}' },
+      ]);
       expect(yield* ada.getIssue({ id })).toMatchObject({ status: "open" });
 
-      yield* ada.answerAssistant({
+      const closed = yield* ada.answerAssistant({
         conversation: asked.conversation,
         answers: second === undefined ? [] : [second],
       });
 
+      expect(closed.waiting).toEqual([]);
       expect(yield* ada.getIssue({ id })).toMatchObject({ status: "closed" });
       expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
     }).pipe(

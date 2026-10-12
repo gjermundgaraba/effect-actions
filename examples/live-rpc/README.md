@@ -35,8 +35,10 @@ Three choices here show a feature. Decide each for your application before keepi
 - **A message naming no room is about `lobby`**, to show a default in request context. Yours may
   refuse instead.
 - **The room is a header, not an input**, because `authorize` sees the action and not its input:
-  the membership rule reads the room from request context. A room in the input moves that check
-  into the store.
+  the membership rule reads the room from request context. With the room in the input, the
+  check belongs in the store, never in a helper each handler must remember to call: the store's
+  method takes the member and refuses, as `MessageStore.remove` in `src/chat/store.ts` takes the
+  author and refuses with `NotAuthor`.
 
 ## Layout
 

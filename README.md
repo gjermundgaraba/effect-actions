@@ -4,6 +4,10 @@ Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to
 native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
 underneath.
 
+**If you are a coding agent**, start at [docs/README.md](docs/README.md), not here, and read
+one page per tool call: pages read together are cut. It routes every task, protecting an
+action and limiting request bodies included, to its page and its example.
+
 ## Looks like this
 
 A contract says what an action takes and answers, and who may call it:
@@ -125,8 +129,7 @@ type-checked and tested with the library and ship in the package.
 ## Docs
 
 [docs/](docs/README.md) is written for coding agents: one short page per module, organized by
-task, each linking to the example files that show the task working. An agent reads one page
-per tool call: pages read together are cut, and the rule on each page arrives too late.
+task, each linking to the example files that show the task working.
 
 - [docs/README.md](docs/README.md): start here: which page answers which task, and which
   surface to use for which caller.
