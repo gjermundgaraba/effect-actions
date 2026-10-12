@@ -62,8 +62,9 @@ for an API key in a header.
   a WebSocket upgrade is never preflighted, so for rpcs over a socket under a cookie that policy
   is the only check ([ActionRpc.md](ActionRpc.md#send-request-context-with-a-call)).
 - A scheme the deployment decides, such as a cookie name a framework prefixes over HTTPS, is
-  still one declaration: the server builds its descriptor and its binding at startup, under the
-  same name and identity, and a browser's binding keeps a static one.
+  still one declaration: the server builds its descriptor at startup, under the same name and
+  identity, and from that one value its binding, its endpoint and its `protect`; a browser's
+  binding keeps a static one.
 - Basic's credential reaches the verifier when its username or its password is non-empty, so a
   verifier may receive an empty username.
 

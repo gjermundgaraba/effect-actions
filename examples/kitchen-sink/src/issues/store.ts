@@ -42,15 +42,27 @@ export class IssueStore extends Context.Service<
       return issue;
     });
 
-    const replace = (workspace: string, issue: Issue) =>
-      Effect.sync(() => {
-        issues.set(
-          workspace,
-          of(workspace).map((current) => (current.id === issue.id ? issue : current)),
-        );
+    // No `yield*` between the read and the write: a fiber may be set aside at one, and two
+    // changes that each read the issue before either wrote would keep only the second. A
+    // database does this in one statement or a transaction.
+    const change = Effect.fn("IssueStore.change")(function* (
+      workspace: string,
+      id: string,
+      to: (issue: Issue) => Issue,
+    ) {
+      const issue = of(workspace).find((candidate) => candidate.id === id);
 
-        return issue;
-      });
+      if (issue === undefined) return yield* new IssueNotFound({ id });
+
+      const changed = to(issue);
+
+      issues.set(
+        workspace,
+        of(workspace).map((current) => (current === issue ? changed : current)),
+      );
+
+      return changed;
+    });
 
     return IssueStore.of({
       list: (workspace, status, limit) =>
@@ -76,14 +88,9 @@ export class IssueStore extends Context.Service<
 
           return issue;
         }),
-      comment: Effect.fn("IssueStore.comment")(function* (workspace, id, comment) {
-        const issue = yield* get(workspace, id);
-
-        return yield* replace(workspace, { ...issue, comments: [...issue.comments, comment] });
-      }),
-      close: Effect.fn("IssueStore.close")(function* (workspace, id) {
-        return yield* replace(workspace, { ...(yield* get(workspace, id)), status: "closed" });
-      }),
+      comment: (workspace, id, comment) =>
+        change(workspace, id, (issue) => ({ ...issue, comments: [...issue.comments, comment] })),
+      close: (workspace, id) => change(workspace, id, (issue) => ({ ...issue, status: "closed" })),
     });
   });
 }

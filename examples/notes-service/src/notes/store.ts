@@ -48,8 +48,13 @@ export class NoteStore extends Context.Service<
       get,
       create: (owner, title, body) =>
         Effect.sync(() => save(owner, { id: crypto.randomUUID(), title, body, revision: 1 })),
+      // No `yield*` between the read and the write: a fiber may be set aside at one, and two
+      // updates that each read revision 1 before either wrote would both succeed. A database
+      // does this with a conditional update or a transaction.
       update: Effect.fn("NoteStore.update")(function* (owner, id, body, revision) {
-        const current = yield* get(owner, id);
+        const current = ownedBy(owner).get(id);
+
+        if (current === undefined) return yield* new NoteNotFound({ id });
 
         if (current.revision !== revision) {
           return yield* new NoteChanged({ id, revision: current.revision });
@@ -58,8 +63,7 @@ export class NoteStore extends Context.Service<
         return save(owner, { ...current, body, revision: revision + 1 });
       }),
       remove: Effect.fn("NoteStore.remove")(function* (owner, id) {
-        yield* get(owner, id);
-        ownedBy(owner).delete(id);
+        if (!ownedBy(owner).delete(id)) return yield* new NoteNotFound({ id });
       }),
       count: Effect.sync(() =>
         Array.from(notes.values()).reduce((total, owned) => total + owned.size, 0),

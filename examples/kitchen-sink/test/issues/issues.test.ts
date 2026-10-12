@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Array, Effect, Layer } from "effect";
+import { Array, Effect, Layer, References } from "effect";
 import { RateLimiter } from "effect/persistence";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../../src/identity/Identity.js";
@@ -72,6 +72,32 @@ describe("issues, in process", () => {
       // `toEqual` compares an error's own fields, here `scopes`; never its `message`.
       expect(refused).toEqual(new Action.Forbidden({ scopes: ["issues:write"] }));
       expect(refused.message).toBe("Requires issues:write.");
+    }).pipe(Effect.provide(services)),
+  );
+
+  it.effect("keeps both of two comments made at once", () =>
+    Effect.gen(function* () {
+      const store = yield* IssueStore;
+      const { workspace } = members.ada;
+
+      // Asked of the store, not through `commentOnIssue`, whose write limit this would spend.
+      // A fiber is set aside after every `steps` steps, and two that run at once then take
+      // turns. Each count sets the first comment aside at another point of its work; under
+      // three, the two do not finish.
+      const kept = yield* Effect.forEach(Array.range(3, 60), (steps) =>
+        Effect.gen(function* () {
+          const { id } = yield* store.create(workspace, { title: "Crash", body: "" });
+
+          yield* Effect.all(
+            ["One", "Two"].map((text) => store.comment(workspace, id, { author: "ada", text })),
+            { concurrency: "unbounded" },
+          ).pipe(Effect.provideService(References.MaxOpsBeforeYield, steps));
+
+          return (yield* store.get(workspace, id)).comments.length;
+        }),
+      );
+
+      expect(kept).toEqual(Array.range(3, 60).map(() => 2));
     }).pipe(Effect.provide(services)),
   );
 

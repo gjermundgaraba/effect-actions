@@ -74,6 +74,10 @@ const Identify = Action.make("identify", {
 
 const IdentifyHttp = ActionHttp.make([Identify], { authentication: Login });
 
+const MismatchedCookie = Authentication.make("test.MismatchedCookie", Identity, {
+  security: HttpApiSecurity.apiKey({ in: "cookie", key: "__Secure-session" }),
+});
+
 const identify = Action.implement(Identify, () => Effect.map(Identity, ({ id }) => id), {
   authorize: Action.allowAll,
 });
@@ -961,6 +965,47 @@ describe("a scheme other than Bearer", () => {
 
       await expect(web.handler(post("/api/identify"))).rejects.toThrow(
         `Authentication "test.MismatchedSession": the binding's descriptor is not its provider's`,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "an MCP endpoint",
+      ActionMcp.layerHttp(identify, {
+        name: "test",
+        version: "0",
+        authentication: MismatchedCookie,
+      }),
+      () => rawToolCall("identify"),
+    ],
+    [
+      "a route of the host's own",
+      HttpRouter.add(
+        "GET",
+        "/own",
+        Effect.map(Identity, ({ id }) => HttpServerResponse.text(id)),
+      ).pipe(Layer.provide(Authentication.protect(MismatchedCookie).layer)),
+      () => new Request("http://localhost/own"),
+    ],
+  ] as const)(
+    "refuses, when its layer builds, %s whose descriptor is not its provider's",
+    async (_surface, served, request) => {
+      const web = serve(
+        served.pipe(
+          Layer.provide(
+            Authentication.layer(
+              Authentication.make("test.MismatchedCookie", Identity, {
+                security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
+              }),
+              () => Effect.succeed({ id: "alice" }),
+            ),
+          ),
+        ),
+      );
+
+      await expect(web.handler(request())).rejects.toThrow(
+        `Authentication "test.MismatchedCookie": the binding's descriptor is not its provider's`,
       );
     },
   );

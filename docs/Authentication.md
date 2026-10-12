@@ -65,9 +65,10 @@ does an RPC binding ([live-rpc/src/Rpc.ts](../examples/live-rpc/src/Rpc.ts)).
   fallback between schemes: a host accepting two credentials for one identity declares two
   descriptors and serves them on two bindings or endpoints
   ([kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts)).
-- Build a server's binding and its provider from one descriptor value. `ActionHttp.layer` and
-  `ActionRpc.layer` refuse, when they build, a binding whose descriptor is another object than
-  the one its provider was given, equal name and options or not.
+- Build a server's surfaces and its provider from one descriptor value. `ActionHttp.layer`,
+  `ActionRpc.layer`, `ActionMcp.layerHttp` and `Authentication.protect` refuse, when they build,
+  a descriptor that is another object than the one the provider was given, equal name and
+  options or not.
 - A local surface has no remote caller and takes no descriptor: the host provides the identity
   itself, for a CLI ([ActionCli.md](ActionCli.md#name-the-caller)), a Toolkit
   ([ActionToolkit.md](ActionToolkit.md#name-the-caller)) and an MCP server over stdio

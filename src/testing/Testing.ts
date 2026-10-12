@@ -159,9 +159,11 @@ export interface McpRequestOptions {
 }
 
 /**
- * An answer a client method cannot decode as the action's success or a declared error,
- * such as the native server's message for invalid arguments or an unknown tool. Its message
- * holds the answer.
+ * An answer a client method cannot read as the action's success or a declared error, such as
+ * the native server's message for invalid arguments or an unknown tool, or a result without
+ * its structured content. Its message holds the answer. Structured content that does not
+ * decode as the success is a `SchemaError` instead, and a request that fails an
+ * `HttpClientError`.
  */
 export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
   message: Schema.String,

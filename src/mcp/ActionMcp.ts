@@ -22,6 +22,7 @@ import type * as Action from "../contract/Action.js";
 import {
   assertAuthentication,
   promote,
+  providerOf,
   type Any as Authentication,
   type ProviderOf,
   type Matching,
@@ -487,9 +488,9 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * the server, list its tools, cancel, and call a public tool in a 2026-07-28 request;
  * everything else authenticates first, a session's every request included, so a protected
  * tool's description is listed to anyone but run only for its caller.
- * A call refused with `Unauthenticated`, or with `Forbidden` naming scopes, is answered with
- * its HTTP status and challenge, 401 or 403, as MCP authorization requires; any other
- * failure is a tool result. Claude Code connects with
+ * On a Bearer endpoint, a protected tool's call refused with `Unauthenticated`, or with
+ * `Forbidden` naming scopes, is answered with its HTTP status and challenge, 401 or 403, as MCP
+ * authorization requires, unless its response has started; any other failure is a tool result. Claude Code connects with
  * `claude mcp add --transport http <name> <url>`. In a tool call, what middleware provides per request wins over
  * what the endpoint was built with; native `features` read only what they were built with,
  * never a request's. Never provide an identity at startup: a tool call takes its identity
@@ -549,7 +550,7 @@ export function layerHttp(
 
   const middleware = HttpRouter.middleware(
     Effect.map(
-      authentication["~provider"],
+      providerOf(authentication),
       (runtime) => (route) =>
         Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
           request.method !== "POST" || required(request.headers)
