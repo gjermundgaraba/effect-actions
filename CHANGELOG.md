@@ -74,7 +74,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   overload gave the following error.`: its two signatures take three arguments and two, so a call
   is checked against one, and the cause is two lines nearer the top. This replaces the third
   overload, which repeated the first because TypeScript reports against the last. A public
-  target still takes `{}`, `undefined` or forwarded options as its third argument.
+  target still takes `{}`, `undefined` or forwarded options as its third argument. `typeof
+  Action.implement` reads as the two-argument signature, so `Parameters<typeof Action.implement>[2]`
+  no longer compiles.
 - The compiler names an undeclared error where a handler fails with one: the message ends
   `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
   where it ended `Property '"~builtIn"' is missing`.
@@ -150,7 +152,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
   client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
   request: each member's conversation kept between requests, an approval answered in a later
-  one, by the member who was asked alone, every open one listed in each turn's answer, and a conversation ended where a turn fails or is
+  one, by the member who was asked alone, every open one listed in each turn's answer as Effect would act on it, and a conversation ended where a turn fails or is
   interrupted
   ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)). `notes-service` describes its
   input fields, which a flag's help and a tool's listing show, and its CLI requires

@@ -58,9 +58,10 @@ export function layer(
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
- * released with its scope, without request logs: only the cause of a request that fails, a
- * defect or a result that does not encode, is logged, as an error, where a server's request
- * logger would show it. What they still require is this layer's, as
+ * released with its scope, without request logs: only the cause of a request that an
+ * `ErrorReporter` would be given, a defect, a result that does not encode or a failure a route
+ * of your own leaves unhandled, is logged, as an error, where a server's request logger would
+ * show it. What they still require is this layer's, as
  * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
  * theirs provides, including one a global middleware reads. The routes keep their real
  * authentication: a client sends its caller's credential. Provided around it, the test

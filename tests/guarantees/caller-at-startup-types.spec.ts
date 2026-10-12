@@ -6,12 +6,12 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { type Actor, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
-import { WhoAmI } from "../support/app/contracts.js";
+import { GetUser, WhoAmI } from "../support/app/contracts.js";
 
-interface CallerAtStartup {
+interface CallerAtStartup<Name extends string = "whoAmI"> {
   readonly "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer": {
     readonly caller: CurrentActor;
-    readonly builderOf: "whoAmI";
+    readonly builderOf: Name;
   };
 }
 
@@ -56,6 +56,21 @@ expectTypeOf<Extract<Layer.Services<typeof overHttp>, CurrentActor>>().toBeNever
 expectTypeOf<Extract<Layer.Services<typeof overRpc>, CurrentActor>>().toBeNever();
 
 expectTypeOf<Extract<Layer.Services<typeof overMcp>, CurrentActor>>().toBeNever();
+
+const anotherBuilderYieldsCaller = Action.implement(
+  GetUser,
+  Effect.map(CurrentActor, () => () => Effect.never),
+  { authorize: Action.allowAll },
+);
+
+const listOverHttp = ActionHttp.layer(
+  ActionHttp.make([WhoAmI, GetUser], { authentication: Login }),
+  [builderYieldsCaller, anotherBuilderYieldsCaller],
+);
+
+expectTypeOf<Extract<Layer.Services<typeof listOverHttp>, CallerAtStartup<string>>>().toEqualTypeOf<
+  CallerAtStartup | CallerAtStartup<"getUser">
+>();
 
 const overStdio = ActionMcp.runStdio(builderYieldsCaller, { name: "t", version: "0" });
 

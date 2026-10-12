@@ -23,41 +23,38 @@ const didNotRun = Schema.is(
 const callsToRead = (response: Response) =>
   response.toolCalls.length > 0 && approvalsOf(response).length === 0;
 
-// Every request of a conversation that has no answer yet, with the call it is about: read from
-// the `Chat`'s history, which is what Effect matches an answer against. So a request an earlier
-// answer left open is listed in every turn until it is answered, and the example keeps no list
-// of its own that could disagree with the history.
+// Every request of a conversation that an answer would still act on, with the call it would
+// run: read from the `Chat`'s history, by the rule Effect applies when an answer arrives. A
+// request is open until its call has a result, a denial's included, and its call is the last
+// in the history with that id. So a request an earlier answer left open is listed in every
+// turn until it is answered, and what is listed is what an approval runs.
 const openRequestsOf = ({ content: messages }: Prompt.Prompt) => {
-  const answered = new Set(
+  const resolved = new Set(
     messages.flatMap((message) =>
       message.role === "tool"
-        ? message.content.flatMap((part) =>
-            part.type === "tool-approval-response" ? [part.approvalId] : [],
-          )
+        ? message.content.flatMap((part) => (part.type === "tool-result" ? [part.id] : []))
         : [],
     ),
   );
 
-  // A request and the call it is about arrive in one reply, so in one message.
-  return messages.flatMap((message) =>
-    message.role === "assistant"
-      ? message.content.flatMap((request) =>
-          request.type === "tool-approval-request" && !answered.has(request.approvalId)
-            ? message.content.flatMap((call) =>
-                call.type === "tool-call" && call.id === request.toolCallId
-                  ? [
-                      {
-                        approvalId: request.approvalId,
-                        tool: call.name,
-                        arguments: JSON.stringify(call.params),
-                      },
-                    ]
-                  : [],
-              )
-            : [],
-        )
-      : [],
-  );
+  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
+  const calls = said.filter((part) => part.type === "tool-call");
+
+  return said.flatMap((request) => {
+    if (request.type !== "tool-approval-request" || resolved.has(request.toolCallId)) return [];
+
+    const call = calls.findLast(({ id }) => id === request.toolCallId);
+
+    return call === undefined
+      ? []
+      : [
+          {
+            approvalId: request.approvalId,
+            tool: call.name,
+            arguments: JSON.stringify(call.params),
+          },
+        ];
+  });
 };
 
 // The model loop behind a route. The builder runs once, at startup, and yields what a turn is
