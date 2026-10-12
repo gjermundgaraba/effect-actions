@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Breaking changes
+
+**`ActionMcp.layerHttp` no longer takes Effect's `allowSessionTermination`.** It ends a session,
+and the endpoint serves only the stateless 2026-07-28, so it did nothing.
+
+- Migrate: remove the option.
+
+**`Testing.mcpClient` fails an input that does not encode with `InvalidInput`, as every other
+client does, instead of `SchemaError`.** Nothing is sent, as before.
+
+- Migrate: match `InvalidInput` where a test caught that `SchemaError`.
+
 ### Additions
 
 - `ActionCli.command` and `remoteCommand` take `stdin`, a required field of the input read from
@@ -45,6 +57,9 @@
 - `Authentication.layer` requires the `HttpRouter` only when it publishes a
   `protectedResource`, so the provider serves an RPC server over a socket or stdio too
   ([Authentication.md](docs/Authentication.md)).
+- A timer of the stderr console that `runStdio` and a CLI command give their program, started
+  again while it runs, keeps its first start, as Node's does; it restarted
+  ([ActionMcp.md](docs/ActionMcp.md)).
 - The agent skill also installs as a Claude Code plugin and a Codex plugin, from this
   repository's marketplace, `effect-actions@effect-actions-marketplace`; it follows the main
   branch, as `npx skills add` does ([README.md](README.md#for-agents)).
@@ -885,8 +900,8 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `Testing.layer(routes)` answers any `HttpClient` user in memory: `ActionHttp.client`, the
   native `HttpApiClient`, a remote `ActionCli` command and `Testing.mcpClient`, which calls
   tools as `ActionHttp.client` calls routes. Requests run in the context it is built in, as
-  under `HttpRouter.serve`, and what the routes still require, such as the caller a test
-  stands in for authentication, is provided around it. It never requires the platform
+  under `HttpRouter.serve`, and what the routes still require, such as their builders'
+  services, is provided around it. It never requires the platform
   services `FileSystem`, `Path`, `HttpPlatform` and `Etag.Generator`: one provided around it
   is the routes' own, and `HttpServer.layerServices`' defaults stand in for the rest, whose
   `FileSystem` is a no-op. Its client is its own: the program's other HTTP clients get none of

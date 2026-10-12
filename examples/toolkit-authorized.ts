@@ -1,6 +1,6 @@
 import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer, Stream } from "effect";
-import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { actors, CurrentActor } from "./authorization.js";
 import { double, userActions } from "./handlers.js";
 import { Users } from "./users.js";

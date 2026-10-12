@@ -1,8 +1,8 @@
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
 import { Effect, Schema } from "effect";
-import * as Action from "../src/Action.js";
-import * as ActionCli from "../src/ActionCli.js";
-import * as ActionMcp from "../src/ActionMcp.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 
 const Status = Action.make("status", {
   description: "Report whether the subprocess is ready.",

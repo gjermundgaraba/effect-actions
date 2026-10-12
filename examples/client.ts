@@ -1,6 +1,6 @@
 import { Console, Effect } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import * as ActionHttp from "../src/ActionHttp.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./binding.js";
 
 const lookup = Effect.gen(function* () {

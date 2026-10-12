@@ -1,7 +1,7 @@
 import { Command } from "effect/cli";
 import { Effect } from "effect";
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
-import * as ActionCli from "../src/ActionCli.js";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { Http } from "./binding.js";
 import { Status } from "./contracts.js";
 

@@ -3,15 +3,13 @@
 Reference for `@gjermundgaraba/effect-actions`, written for coding agents. Each public-module
 card has the same sections: **API** (inventory and options), **Canonical** (the one right way to write
 it), **Rules** (must and never), **Failure modes** (what you see when it is wrong, and the fix).
-Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
 Read the card for a module before writing code that uses it. Exported TypeScript declarations are the exact signature reference. Vocabulary is defined in
 [CONTEXT.md](CONTEXT.md); the pages use those terms exactly.
 
 Package facts that apply everywhere:
 
 - Every module is a subpath import: `import * as Action from "@gjermundgaraba/effect-actions/Action"`. There is no package root.
-- The `effect` peer admits the patches of the Effect release the package is tested against, and no later minor until a release is tested against it ([setup.md](setup.md#install)).
-- Action contracts are pure values. Defining contracts and implementations runs neither handlers nor builder Effects. Builder services are acquired when a layer is built, an `Action.client` is acquired, or a local CLI command runs; see [dependency lifetimes](guarantees.md#dependency-lifetimes).
+- The `effect` peer admits only the patches of one Effect release ([setup.md](setup.md#install)).
 
 ## Pages
 
@@ -21,7 +19,7 @@ Package facts that apply everywhere:
 | [Action.md](Action.md)                 | define a contract and who may call it, bind its handler and authorization, use built-in errors, call or test implementations in process (`Action.client`) |
 | [ActionHttp.md](ActionHttp.md)         | serve JSON POST routes, answer bad input, publish OpenAPI, call the API with one Effect method per action                                                 |
 | [ActionMcp.md](ActionMcp.md)           | serve MCP tools over Streamable HTTP or stdio                                                                                                             |
-| [ActionRpc.md](ActionRpc.md)           | serve actions as Effect RPC over HTTP or a WebSocket, call them with one Effect method per action                                                         |
+| [ActionRpc.md](ActionRpc.md)           | serve actions as Effect RPC over any protocol speaking JSON, call them with one Effect method per action                                                  |
 | [ActionToolkit.md](ActionToolkit.md)   | use actions as a native Effect AI `Toolkit` without a server                                                                                              |
 | [ActionCli.md](ActionCli.md)           | run handlers in-process, or call the HTTP API, from a command with derived flags                                                                          |
 | [Authentication.md](Authentication.md) | declare how a remote caller proves its identity, verify it on HTTP, MCP and RPC surfaces, refuse with 401/403, publish RFC 9728 discovery                 |
@@ -38,12 +36,9 @@ Package facts that apply everywhere:
 - Callers are humans or scripts in a terminal: `ActionCli`, `make` and `command` from implementations to run handlers locally, or `remote` and `remoteCommand` from the HTTP binding to call a server.
 - Callers are your own code in the same process, such as a test, a job or a command of your own: `Action.client`, with the methods of `ActionHttp.client`.
 
-Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last. A contract states who may call it, `caller`, and an implementation of protected actions carries its own `authorize`, which every surface runs; surfaces take only their transport's options. A remote surface serving protected actions names their authentication descriptor and requires its verifier, `Authentication.layer`; on a local surface the host provides the identity.
-
-For first-time setup, follow the [minimal program](setup.md#minimal-program).
+Every surface that runs handlers takes the same implementations (`Action.implement(...)`), one or a list, with options last, and enforces each contract's `caller` and its implementation's `authorize` ([guarantees.md](guarantees.md#authorization)).
 
 ## Runnable examples
 
-Repository directory `examples/`: the minimal program, an authenticated application served on
-every surface, and one file per other surface, each listed in its
+Repository directory `examples/`: runnable programs, each listed in its
 [README](https://github.com/gjermundgaraba/effect-actions/tree/main/examples#readme).

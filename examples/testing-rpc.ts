@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
-import * as ActionRpc from "../src/ActionRpc.js";
-import * as Testing from "../src/Testing.js";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { authenticate } from "./authentication.js";
 import { status, userActions } from "./handlers.js";
 import { Rpc } from "./rpc-binding.js";

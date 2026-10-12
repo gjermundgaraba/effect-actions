@@ -126,8 +126,8 @@ release; in a project that installs the package, point the agent at
 ## Status
 
 The `effect` peer admits the patches of the Effect release the package is tested against, since
-the modules the surfaces build on may change in a minor release (see [docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming, uploads, prompts, or resources.
-Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [docs/setup.md](docs/setup.md).
+the modules the surfaces build on may change in a minor release (see [docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads.
+Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [docs/guarantees.md](docs/guarantees.md#scope).
 
 ## Acknowledgements
 

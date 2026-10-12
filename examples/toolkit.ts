@@ -1,7 +1,7 @@
 import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Stream } from "effect";
-import * as Action from "../src/Action.js";
-import * as ActionToolkit from "../src/ActionToolkit.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { Greet } from "./quickstart.js";
 
 // A public action: no authorization, and its tool owes no caller.

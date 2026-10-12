@@ -1,6 +1,6 @@
 import { Schema } from "effect";
-import * as Action from "../src/Action.js";
-import * as ActionHttp from "../src/ActionHttp.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 
 // The contract and its HTTP binding import no server code, so any client can import them,
 // a browser page included.

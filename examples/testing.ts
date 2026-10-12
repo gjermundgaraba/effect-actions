@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import * as ActionHttp from "../src/ActionHttp.js";
-import * as Testing from "../src/Testing.js";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Greet, Http } from "./quickstart.js";
 import { routes } from "./quickstart-server.js";
 

@@ -6,22 +6,21 @@ For people and agents changing the library. Consumers read [docs/](docs/README.m
 
 Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` (`devEngines` in `package.json`; CI tests 22, 24 and 26) and [Vite+](https://viteplus.dev). Run `vp install`, then see
 [AGENTS.md](AGENTS.md) for the commands, the repository map, and the validation rules.
-`devEngines` is Vite+'s own Node floor, which only developing the package needs; `engines`,
-`^22.12.0 || ^24.0.0 || >=26.0.0`, is the floor the published package states to consumers.
+`engines` in `package.json` is the lower floor the published package states to consumers.
 
-Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, docs, and tests.
+Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in names, docs, and tests.
 
 ## Documentation rules
 
-- `README.md` sells the library to humans: the pitch, one showcase snippet, why, install, links. No reference material.
+- `README.md` sells the library to humans: the pitch, the quickstart and what else its implementation becomes, why, install, links, status. No reference material.
 - `docs/` is for coding agents. Each public-module reference card has the same sections: **API**, **Canonical**, **Rules**, **Failure modes**. State what holds and what breaks, without tutorials or narrative. Routing, setup, vocabulary, and shared guarantees use the structure their role needs.
 - `docs/README.md` is the routing table and doubles as the skill body. One line per page saying when to read it.
 - A change to public behavior changes the matching `docs/` page in the same commit. Then run `vp run docs:sync`; `tests/skill.test.ts` fails if the generated skill is stale.
 - API sections inventory exports and options; do not hand-copy complex generic declarations. Exported TypeScript declarations are the exact signature reference.
-- A snippet fenced as ` ```ts example=<file> ` stays byte-identical to that file in `examples/`, which `tests/docs.test.ts` checks, so it stays type-checked; the first snippet of every Canonical section is one. Edit the example, then paste. Compile-only tests assert public API behavior directly, without maintaining a second type definition.
+- A snippet fenced as ` ```ts example=<file> ` stays byte-identical to that file in `examples/`, which `tests/docs.test.ts` checks, so it stays type-checked; the first snippet of every Canonical section is one. Edit the example, then paste.
 - `docs/CONTEXT.md` defines terms. Add a term there before using it in docs.
 - A rule that holds on every surface lives once, in `docs/guarantees.md`. A module card states what is its own and links there; a restated rule drifts.
-- Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Implementation rationale belongs in code comments or below.
+- Docs describe behavior, not the code: no page names a `src/` path, and `tests/docs.test.ts` checks it. Where a reason goes: [Prose comments](#rule-families).
 - Tests assert this library's behavior. Effect's or MCP's own wording is matched by its stable fragment (`toContain('at ["value"]')`), never in full, unless a doc quotes it. A test of Effect's own behavior stays only when a doc promises that behavior: the 415, CORS preflight, the generic MCP defect text.
 - Every file in `examples/` is listed in `examples/README.md`, which `tests/docs.test.ts` checks; `docs/README.md` links there rather than keeping a list of its own.
 
@@ -31,68 +30,19 @@ Vocabulary: [docs/CONTEXT.md](docs/CONTEXT.md). Use its terms in code comments, 
 - A test running an Effect is `it.effect`, which provides a scope, a `TestClock` and a `TestConsole`: it serves its routes with `Testing.layer(routes)` in its scope, sending a raw request with `send`, and what it logs is captured. A command's lines are read from a console of its own run (`logged`, `printed`), so a test running several reads each one's. A codec that completes later awaits a resolved promise, `Effect.promise(() => Promise.resolve())`, which no `TestClock` holds, where `Effect.yieldNow` would still complete synchronously; a test whose handler waits on real time is `it.live`.
 - A test that runs no Effect stays `async`, such as one sending raw requests to a web handler, which `serve` releases when the test finishes. So does a test of an Effect run under no layer, of a context given per request (`serveWithContext`), of `Testing.layer(handler)` run from a Promise test, as a downstream harness runs it, and one pinning a missing requirement with `@ts-expect-error` on `Effect.runPromise`, which `it.effect` would report at the test instead. An `it.effect` test takes `serve`'s handler only to wrap it, recording what a client sends, or to answer a program that provides its own client.
 - Each test provides the layers whose state or builds it reads, such as `Users.layerMemory`, rather than sharing one through `it.layer`.
-- Type pins live in `*.spec.ts` and use `expectTypeOf`; a compile failure is an expression under `@ts-expect-error`, which a runtime test may also put on a call it makes as plain JavaScript would.
-
-## Design notes
-
-One file per decision in [`design/`](design/). Each note is titled, and cited by its title. It states the decision, why, what it costs, and the alternative it rejected; a reversal names the decision it reverses, by commit where one recorded it, in a sentence. History beyond that belongs in commit messages.
-
-- [Strict HTTP input](design/strict-http-input.md)
-- [Schema failures](design/schema-failures.md)
-- [MCP over HTTP](design/mcp-over-http.md)
-- [MCP over stdio](design/mcp-over-stdio.md)
-- [Successes unwrapped](design/successes-unwrapped.md)
-- [Text field](design/text-field.md)
-- [Request values win](design/request-values-win.md)
-- [JSON-typed routes](design/json-typed-routes.md)
-- [Authentication descriptor and provider](design/authentication-descriptor-and-provider.md)
-- [One descriptor per name](design/one-descriptor-per-name.md)
-- [Refusals outside the router](design/refusals-outside-the-router.md)
-- [Built protected resource](design/built-protected-resource.md)
-- [Request body size](design/request-body-size.md)
-- [TypeScript 7](design/typescript-7.md)
-- [Handler requirements](design/handler-requirements.md)
-- [Deferred build channels](design/deferred-build-channels.md)
-- [Contract identity](design/contract-identity.md)
-- [Contract fields](design/contract-fields.md)
-- [Error option](design/error-option.md)
-- [Built authorization](design/built-authorization.md)
-- [Limits](design/limits.md)
-- [Toolkit tool ids](design/toolkit-tool-ids.md)
-- [A scope per call](design/a-scope-per-call.md)
-- [Approval](design/approval.md)
-- [CLI failures](design/cli-failures.md)
-- [CLI console](design/cli-console.md)
-- [Error tags](design/error-tags.md)
-- [Native MCP features](design/native-mcp-features.md)
-- [Empty CLI arrays](design/empty-cli-arrays.md)
-- [CLI services](design/cli-services.md)
-- [In-process client](design/in-process-client.md)
-- [Testing implementations](design/testing-implementations.md)
-- [Binding selection](design/binding-selection.md)
-- [Runtime checks](design/runtime-checks.md)
-- [Enforced security](design/enforced-security.md)
-- [Written return types](design/written-return-types.md)
-- [Input values in messages](design/input-values-in-messages.md)
-- [Builder memoization](design/builder-memoization.md)
-- [One MCP URL](design/one-mcp-url.md)
-- [Effect barrels](design/effect-barrels.md)
-- [Testing a web handler](design/testing-a-web-handler.md)
-- [A request, not a send](design/a-request-not-a-send.md)
-- [Surface selection](design/surface-selection.md)
-- [Contracts by name](design/contracts-by-name.md)
-- [Local and remote CLI](design/local-and-remote-cli.md)
-- [Verifier errors](design/verifier-errors.md)
-- [Media fields](design/media-fields.md)
-- [Stdin field](design/stdin-field.md)
-- [RPC surface](design/rpc-surface.md)
+- A suite lives in the folder of the domain it tests, as `src/` is laid out: `tests/http/` for `ActionHttp`. A suite of a rule every surface keeps goes in `tests/guarantees/`, what is not a suite, a helper or a script a suite runs, in `tests/support/`, and a check of the whole repository (docs, skill, browser imports) at the root.
+- A rule over many inputs is a property (`it.prop`, `it.effect.prop`) over inputs `Arbitrary.schema` derives; behavior that depends on earlier calls is a model checked after generated command sequences. The expected value comes from the generated input or the model, never from the code under test or another surface's answer, and a new property is proven by a planted violation, named in the commit message. An example test stays for one interface between components, and for a rule whose oracle would restate the code, as a name pattern's would; the example suites are not rewritten as properties, since docs cite their readable cases.
+- `vp run test:package` installs the packed tarball into a consumer that runs `examples/quickstart.ts` and `examples/quickstart-server.ts`, copied over the fixture's siblings in `scripts/package-consumer/`, which re-export them so `vp check` type-checks the fixture against them. The examples import the package by name, as the consumer does ([Release](#release)). The consumer is installed outside the repository, without its workspace overrides or source imports, and compiles the published declarations themselves (`skipLibCheck: false`) with the DOM library and no Node types, so the core stays browser-safe. It compiles with `declaration: true`, as a library built on this one does: every exported value must be nameable from the published modules, and what it emits names nothing internal, no `~` key binding its declarations to this package's private type-only fields.
+- Type pins live in `*.spec.ts` and use `expectTypeOf`; a compile failure is an expression under `@ts-expect-error`, which a runtime test may also put on a call it makes as plain JavaScript would. A pin of what a layer owes checks each surface on its own, since over a union one surface's requirements hide the other's absence. Pins over large implementations live in their own file, `tests/guarantees/large-types.spec.ts`, checked beside the others; their fixtures write each identity out rather than passing it to their class as a type argument, which would double their instantiations, a cost no contract `make` returns has.
+- `ErrorReporter.make` drops a second report of one cause, so it shows which causes were reported, never how often. A test asserting a cause is reported once writes its reporter out (`recorder` in `tests/support/reporter.ts`), which records each report; one asserting which causes were reported may use `make`, as over HTTP, where the server's own report of a 500 repeats the route's.
 
 ## Release
 
 The package publishes to the `latest` tag. The `effect` peer is `~` and the Effect release in
 `devDependencies`, the patches of the release the package is tested against; the install commands
 name it, as `tests/docs.test.ts` checks. Effect marks every module the surfaces build on
-(`effect/http`, `effect/http-api`, `effect/ai`, `effect/cli`, `effect/encoding`)
+(`effect/http`, `effect/http-api`, `effect/rpc`, `effect/ai`, `effect/cli`, and `Sse` of
+`effect/encoding`)
 `@stability unstable`, which a minor release may change, and none `experimental`, which a patch
 may. The surfaces also rely on behavior of those
 modules that no type states: a Toolkit finds a tool's handler by the tool's `id`,
@@ -112,14 +62,15 @@ consumer migrates, and any earlier decision it reverses, and why. To release: se
 matches `version`, repeats the CI checks, and publishes. It authenticates as the package's npm
 trusted publisher (this repository and that workflow file, set under the package's npm
 settings), so there is no registry token, and npm attaches provenance.
-`prepublishOnly` builds; `files` ships `dist` and `docs`. The skill is not in the tarball:
+`prepublishOnly` builds, keeping each source module its own file (`unbundle`), since bundled declarations emit a dangling `__exportAll` export with this toolchain; `files` ships `dist` and `docs`. Each PascalCase file in `src/<domain>/` is an entry, and the build writes `package.json`'s exports, the source in the repository and `dist` under `publishConfig.exports`, which pnpm's `pack` and `publish` swap in and npm's would not: publish with `vp pm publish`, and run `vp run build` after adding, renaming or removing a public module, then commit `package.json`: CI fails when the build changes it. The skill is not in the tarball:
 `npx skills add` reads it from GitHub, and agents reading node_modules get `docs/` directly.
 
 ## Lint policy
 
 `vite.config.ts` is the source of truth for rule severities; this section explains the
 decisions behind it. The vendored plugin's provenance and local corrections are in
-[`tools/oxlint/anti-slop/UPSTREAM.md`](tools/oxlint/anti-slop/UPSTREAM.md).
+[`tools/oxlint/anti-slop/UPSTREAM.md`](tools/oxlint/anti-slop/UPSTREAM.md); the repository's
+own rule lives in `tools/oxlint/no-comments/`.
 
 Strict rules are the goal, and lint passes because the code is correct, not because it was
 rewritten to satisfy a pattern matcher. A passing lint run is not evidence of type safety by
@@ -128,19 +79,21 @@ rules.
 
 ### What is checked
 
-Every owned file: `src`, `tests`, `examples`, `scripts` (including the package-consumer fixture
-and `scripts/test-package.mjs`, checked as JavaScript with `allowJs`/`checkJs` and owner-derived
-JSDoc types), the plugin regression tests in `tools/oxlint/tests`, and `vite.config.ts`. Lint runs
+Every owned file: `src`, `tests`, `examples`, `scripts` (the package-consumer fixture included),
+the `no-comments` rule and the plugin regression tests in `tools/oxlint`, and `vite.config.ts`.
+All of it is TypeScript; a script runs with `node --import tsx`. Lint runs
 type-aware with type checking, so `vp check` is one command for format, lint, and compiler
 diagnostics.
 
 Excluded: build output (`dist`), agent caches (`.claude`, `.codex`, …), and the vendored plugin
 sources under `tools/oxlint/anti-slop`, which follow upstream's own style and are covered by the
-regression tests beside them. Nothing owned is excluded to hide findings.
+regression tests beside them. Nothing owned is excluded to hide findings. `examples/` is exempt
+from `no-prose-comments` alone: an example is a doc snippet, and its comments explain it where a
+consumer reads it.
 
 Compiler flags required by policy and set in `tsconfig.json`: `strict`,
 `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. The assembled package consumer
-(`scripts/test-package.mjs`) compiles with the same three flags, so a child configuration does
+(`scripts/test-package.ts`) compiles with the same three flags, so a child configuration does
 not weaken them.
 
 ### Refactor before making an exception
@@ -156,8 +109,8 @@ For each finding:
 4. Distinguish a rule defect from a legitimate exception. A defect is corrected in the vendored
    rule with a regression test and an `UPSTREAM.md` entry. A legitimate case intentionally caught
    by a broad rule gets the smallest justified exception.
-5. Exceptions are line-level (`oxlint-disable-next-line <rule> -- <reason>`) or a tightly bounded
-   disable/enable pair. The reason names the boundary and what the operation still guarantees.
+5. Exceptions are line-level, `oxlint-disable-next-line <rule> -- <reason>`; `no-prose-comments`
+   reports any other form. The reason names the boundary and what the operation still guarantees.
    An unused directive is an error (`reportUnusedDisableDirectives: "deny"`).
 
 Never launder a finding: renaming a parameter, dropping an annotation so inference yields `any`,
@@ -170,10 +123,10 @@ code exactly as unsafe.
   `no-unknown-type-aliases`, `no-object-parameters`, `no-unsafe-dictionary-type`): decode at the
   I/O boundary and pass owner contracts inward. There is no name-based exemption; a parameter named
   `cause` is as unknown as any other, and thrown-value boundaries use an explained directive.
-- **Evidence loss** (`no-known-value-widening`, `no-chained-type-assertions`, `require-safety-comment-for-type-assertion`,
-  `typescript/no-unsafe-type-assertion`): keep inference or validate with `satisfies`. A SAFETY
-  comment is necessary, not sufficient; the type-aware assertion rule needs its own explained
-  directive when an assertion is a genuine erasure boundary.
+- **Evidence loss** (`no-known-value-widening`, `no-chained-type-assertions`,
+  `typescript/no-unsafe-type-assertion`): keep inference or validate with `satisfies`. An
+  assertion that is a genuine erasure boundary takes the type-aware rule's directive, whose reason
+  names the boundary and the invariant that makes the assertion hold.
 - **`any` escape routes** (`typescript/no-unsafe-assignment`, `-argument`, `-call`,
   `-member-access`, `-return`): untyped JSON, SDK generics, callback registries. Type the value at
   its source, for example by importing `package.json` as a typed JSON module instead of parsing it.
@@ -183,15 +136,44 @@ code exactly as unsafe.
   in a loop; fixed-size snapshots may justify an exception.
 - **Reflection** (`no-reflect-apply`, `no-reflect-get`): prefer typed access; keep a concrete
   exception only where receiver or getter semantics matter.
-- **Module mocking** (`no-module-mocking`): replace dependencies through real seams. The rule
-  recognizes `vi` from `@effect/vitest`, this repository's test import, and `vite-plus/test`, as
-  well as `vitest`.
-- **Compile-failure fixtures** (`tests/types.spec.ts`): an expression under `@ts-expect-error`
+- **Module mocking** (`no-module-mocking`): replace dependencies through real seams.
+- **Prose comments** (`no-comments/no-prose-comments`): what a comment said a thing is goes in a
+  name or a type, and why in a test title or the commit message. Three kinds remain. Everywhere, a
+  line directive with its reason after `--`: `// oxlint-disable-next-line <rule> -- <reason>` or `//
+  @ts-expect-error -- <reason>`. In `src/**`, which `vite.config.ts` gives the rule's
+  `allowJsDoc` and `allowWhy`, two more. JSDoc, which is for consumers: what a declaration that
+  ships is and does, read in an editor. The build keeps it on a public module's declarations and
+  on the types they name, a private module's included, and drops it from a re-export, so the
+  private declaration carries the text. A JSDoc comment holding `@ts-expect-error` or `@ts-ignore`
+  is reported, since the compiler honors one on its last line. And a `// Why:` comment, for
+  maintainers: a run of line comments whose first starts with `Why:`, the rest at its column,
+  holding a reason whose loss would let a maintainer undo a deliberate choice or make a rejected
+  one again: a workaround for Effect's or TypeScript's behavior, a deliberate difference from a
+  native API, the alternative that reads as the obvious one. It gives the reason and what breaks,
+  in one to three sentences, never what the code does nor its history. The rule checks the form,
+  not the content: whether JSDoc reaches a consumer, and whether a comment is a reason, are a
+  reviewer's to judge. The rule has no autofix, which would delete the reason with the comment.
+- **Domain imports** (`no-restricted-imports`, `typescript/consistent-type-imports` and
+  `typescript/no-import-type-side-effects` on `src/**`): a relative import is `./<file>.js`,
+  another domain's private `../<domain>/<file>.js`, or the contract's; in `src/contract/`,
+  `./<file>.js` alone. The patterns allow those forms and report every other relative specifier,
+  since a pattern reads a specifier as written and a list of forbidden spellings is never complete.
+  The package's own name, which resolves to source too, and an `import()` type, which no import
+  pattern reads, are reported as well. The rule reporting that type, `consistent-type-imports`, has
+  no option for it alone: in `src/` it reports every `import()` type, and an import used only as a
+  type that lacks `type`. An import whose names all carry `type` inline satisfies it and still
+  leaves `import "./<file>.js"` in the built module, which the bundler keeps in one build and drops
+  in the next: `no-import-type-side-effects` reports it, and `import type { … }` is the form.
+- **Compile-failure fixtures** (`*.spec.ts`): an expression under `@ts-expect-error`
   yields an error type, which the `no-unsafe-*` rules see as `any`. Those lines carry a directive
   stating that nothing runs; the fixture's purpose is the compile failure itself.
 
-Off, with reasons recorded beside the setting in `vite.config.ts`:
+Off:
 
+- `anti-slop/require-safety-comment-for-type-assertion`: an assertion the type-aware
+  `typescript/no-unsafe-type-assertion` reports already carries a directive whose reason states the
+  invariant, and one it does not report the compiler accepts; a `SAFETY:` comment justified the
+  same assertion twice.
 - `anti-slop/no-array-filter-map`: both forms are linear; rewrites change callback order and
   sparse-array semantics without establishing a performance gain.
 - `anti-slop/no-conditional-empty-object-spread`: conditional spread preserves omission semantics
@@ -208,22 +190,17 @@ Off, with reasons recorded beside the setting in `vite.config.ts`:
 ### Verification
 
 - `tools/oxlint/tests/rules.test.ts` runs the corrected rules through Oxlint's `RuleTester`,
-  with an accepted and a still-rejected case for each correction.
+  with an accepted and a still-rejected case for each correction, and
+  `tools/oxlint/tests/no-comments.test.ts` each kept and each reported form of comment.
 - `tools/oxlint/tests/configuration.test.ts` runs `vp lint` once on fixtures inside the
   repository, so the probes go through the registered plugin and the effective configuration:
   unknown parameters named `cause`, module mocking via `@effect/vitest`, `typeof` inside and
   outside predicates, literal evidence in destructured bindings, a justified
-  `no-unknown-parameters` directive and its unused counterpart, and maintained JavaScript.
-  Every other lint, format and type check ignores the fixtures, which hold findings on purpose:
+  `no-unknown-parameters` directive and its unused counterpart, a prose comment reported
+  beside a directive that gives its reason, and, in a fixture's own `src/`, which the
+  configuration gives the overrides of the repository's, an export's JSDoc and a `// Why:` comment
+  kept, both reported outside it, a private declaration's JSDoc reported, and each kind of import
+  across domains reported.
+  Every other lint, format, type check and test run ignores the fixtures, which hold findings on purpose:
   the run sets `LINT_PROBE`, which lifts their lint ignore pattern in `vite.config.ts`, so a
   `vp check` beside `vp test` never reports them.
-
-### History
-
-Historical measurement, not a backlog: when the baseline was adopted (2026-09-19) the repository
-had zero findings under the previous configuration. Enabling the `typescript/no-unsafe-*` rules and
-widening coverage to the scripts surfaced 60 findings, all resolved by refactor or by the
-explained directives listed above. Two rule-behavior gaps (`cause` exemption, unrecognized
-`vite-plus/test` import) and two false positives in `no-known-value-widening` (destructured
-bindings inheriting the initializer's evidence, finite mapped keys classified as open
-dictionaries) were corrected in the vendored rules.

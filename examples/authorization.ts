@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect";
-import * as Action from "../src/Action.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 
 export type Permission = "users:read" | "users:write";
 

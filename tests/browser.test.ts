@@ -1,8 +1,19 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expect, it } from "@effect/vitest";
+import manifest from "../package.json" with { type: "json" };
 
-/** The modules `entry` imports, itself included, following relative imports. */
+const declarationSpecifier = /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm;
+
+const sourceOf = new Map(
+  Object.entries(manifest.exports).map(([subpath, source]) => [
+    `${manifest.name}${subpath.slice(1)}`,
+    source.slice(2),
+  ]),
+);
+
+const isWalked = (specifier: string) => specifier.startsWith(".") || sourceOf.has(specifier);
+
 const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> => {
   const seen = new Map<string, ReadonlyArray<string>>();
   const pending = [entry];
@@ -10,18 +21,17 @@ const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> =>
   for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
     if (seen.has(file)) continue;
 
-    // The specifier of each import or export declaration that has one, and of no other
-    // string: no quote or semicolon comes before its `from`.
-    const specifiers = [
-      ...readFileSync(file, "utf8").matchAll(
-        /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm,
-      ),
-    ].flatMap(([, specifier]) => (specifier === undefined ? [] : [specifier]));
+    const specifiers = [...readFileSync(file, "utf8").matchAll(declarationSpecifier)].flatMap(
+      ([, specifier]) => (specifier === undefined ? [] : [specifier]),
+    );
 
     seen.set(file, specifiers);
 
     for (const specifier of specifiers) {
-      if (specifier.startsWith(".")) {
+      const source = sourceOf.get(specifier);
+
+      if (source !== undefined) pending.push(source);
+      else if (specifier.startsWith(".")) {
         pending.push(join(dirname(file), specifier.replace(/\.js$/, ".ts")));
       }
     }
@@ -30,70 +40,68 @@ const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> =>
   return seen;
 };
 
-/** The Effect specifiers a browser client imports: all a page's import map has to serve. */
-const browserEffect = ["effect", "effect/http", "effect/http-api", "effect/rpc"];
+const importMapEffectSpecifiers = ["effect", "effect/http", "effect/http-api", "effect/rpc"];
 
-// A browser client imports `Action`, `ActionHttp` and `ActionRpc`: they and what they import
-// must load there, so none imports anything specific to Node or a server platform, and Effect
-// only through the barrels above, since a page whose import map serves them bundles a second
-// copy of Effect for any other specifier.
-it.each(["src/Action.ts", "src/ActionHttp.ts", "src/ActionRpc.ts", "src/Authentication.ts"])(
-  "%s imports nothing a browser lacks",
-  (entry) => {
+it.each(["Action", "ActionHttp", "ActionRpc", "Authentication"] as const)(
+  "%s, which a browser client imports, imports no Node or server module, and Effect only through its browser barrels",
+  (module) => {
+    const entry = manifest.exports[`./${module}`].slice(2);
+
     const outside = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
       specifiers
-        .filter((specifier) => !specifier.startsWith(".") && !browserEffect.includes(specifier))
+        .filter(
+          (specifier) => !isWalked(specifier) && !importMapEffectSpecifiers.includes(specifier),
+        )
         .map((specifier) => `${file}: ${specifier}`),
     );
 
     expect(outside).toEqual([]);
-    // It followed the imports: the check is not vacuous.
     expect(modulesOf(entry).size).toBeGreaterThan(3);
   },
 );
 
-// A browser client imports its contracts, their identity declarations and the binding: the
-// application's own modules must load there too.
 it.each([
   "examples/contracts.ts",
   "examples/authorization.ts",
   "examples/binding.ts",
   "examples/rpc-binding.ts",
-])("%s imports nothing a browser lacks", (entry) => {
-  const outside = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
-    specifiers
-      .filter((specifier) => !specifier.startsWith(".") && !browserEffect.includes(specifier))
-      .map((specifier) => `${file}: ${specifier}`),
-  );
+])(
+  "%s, an application module a browser client imports, imports nothing a browser lacks",
+  (entry) => {
+    const outside = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
+      specifiers
+        .filter(
+          (specifier) => !isWalked(specifier) && !importMapEffectSpecifiers.includes(specifier),
+        )
+        .map((specifier) => `${file}: ${specifier}`),
+    );
 
-  expect(outside).toEqual([]);
-  // It followed the imports into the library: the check is not vacuous.
-  expect([...modulesOf(entry).keys()]).toContain("src/Action.ts");
-});
+    expect(outside).toEqual([]);
+    expect([...modulesOf(entry).keys()]).toContain("src/contract/Action.ts");
+  },
+);
 
-// The documented RPC client loads in a page too: Effect's WebSocket is the one specifier it
-// adds, which a page's import map serves beside the library's.
-it("examples/rpc-client.ts imports nothing a browser lacks but effect/socket", () => {
+it("examples/rpc-client.ts imports nothing a browser lacks but effect/socket, which the import map serves beside the library's", () => {
   const outside = [...modulesOf("examples/rpc-client.ts")].flatMap(([file, specifiers]) =>
     specifiers
       .filter(
         (specifier) =>
-          !specifier.startsWith(".") && ![...browserEffect, "effect/socket"].includes(specifier),
+          !isWalked(specifier) &&
+          ![...importMapEffectSpecifiers, "effect/socket"].includes(specifier),
       )
       .map((specifier) => `${file}: ${specifier}`),
   );
 
   expect(outside).toEqual([]);
-  expect([...modulesOf("examples/rpc-client.ts").keys()]).toContain("src/ActionRpc.ts");
+  expect([...modulesOf("examples/rpc-client.ts").keys()]).toContain("src/rpc/ActionRpc.ts");
 });
 
-// Contracts import no transport code, the in-process client among them: `Action` loads no
-// server or client of HTTP, RPC, MCP, the AI toolkit or the CLI.
-it("src/Action.ts imports no transport", () => {
-  const transports = [...modulesOf("src/Action.ts")].flatMap(([file, specifiers]) =>
-    specifiers
-      .filter((specifier) => /^effect\/(?:http|http-api|rpc|ai|cli)(?:\/|$)/.test(specifier))
-      .map((specifier) => `${file}: ${specifier}`),
+it("Action imports no transport, the in-process client included: no HTTP, RPC, MCP, AI toolkit or CLI module", () => {
+  const transports = [...modulesOf(manifest.exports["./Action"].slice(2))].flatMap(
+    ([file, specifiers]) =>
+      specifiers
+        .filter((specifier) => /^effect\/(?:http|http-api|rpc|ai|cli)(?:\/|$)/.test(specifier))
+        .map((specifier) => `${file}: ${specifier}`),
   );
 
   expect(transports).toEqual([]);

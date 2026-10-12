@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
-import * as Action from "../src/Action.js";
-import * as ActionMcp from "../src/ActionMcp.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { Greet } from "./quickstart.js";
 
 const allowedOrigins = ["https://ui.example.com"];

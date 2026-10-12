@@ -1,0 +1,630 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { format } from "node:util";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  Console,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Predicate,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
+import { McpServer } from "effect/ai";
+import { TestClock } from "effect/testing";
+import { describe, expect, it, onTestFinished } from "@effect/vitest";
+import * as Action from "../../src/contract/Action.js";
+import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import * as Testing from "../../src/testing/Testing.js";
+import { statelessRequest } from "../../src/mcp/protocol.js";
+import { everyConsoleMethod } from "../support/console-methods.js";
+import { rawToolCall, send } from "../support/requests.js";
+import { converse, negotiate } from "../support/stdio-host.js";
+
+const connectSubprocess = async (revision: string, script = "examples/mcp-stdio.ts") => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--import", "tsx", script],
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+
+  const output = { stderr: "" };
+  transport.stderr?.on("data", (chunk: Buffer) => {
+    output.stderr += chunk.toString();
+  });
+
+  const pinnedOrOnlyLegacyOffered = revision.startsWith("2026")
+    ? { versionNegotiation: { mode: { pin: revision } } }
+    : { supportedProtocolVersions: [revision] };
+
+  const client = new Client({ name: "stdio-test", version: "0" }, pinnedOrOnlyLegacyOffered);
+
+  return { client, output, connected: client.connect(transport) };
+};
+
+const subprocessCompilingTypeScriptTimeout = 30_000;
+
+describe("MCP stdio example", () => {
+  it.each(["2026-07-28", "2025-11-25"])(
+    "serves list/call to a %s host and keeps logs off protocol stdout",
+    async (revision) => {
+      const { client, output, connected } = await connectSubprocess(revision);
+
+      try {
+        await connected;
+        expect(client.getNegotiatedProtocolVersion()).toBe(revision);
+        expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["status"]);
+        const called = await client.callTool({ name: "status", arguments: {} });
+        const [text] = called.content.map((part) => (part.type === "text" ? part.text : ""));
+
+        expect(called.isError).toBe(false);
+        expect(JSON.parse(text ?? "")).toEqual({ ready: true });
+        expect(called.structuredContent).toEqual({ ready: true });
+      } finally {
+        await client.close();
+      }
+
+      expect(output.stderr).toContain("status called");
+    },
+    subprocessCompilingTypeScriptTimeout,
+  );
+
+  it(
+    "writes every console method and logger to stderr, and only the answer to stdout",
+    async () => {
+      const child = spawn(process.execPath, ["--import", "tsx", "tests/support/stdio-console.ts"], {
+        cwd: process.cwd(),
+      });
+
+      onTestFinished(() => void child.kill());
+
+      const output = { stdout: "", stderr: "" };
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        output.stdout += chunk.toString();
+
+        const answered = output.stdout.includes("\n");
+
+        if (answered && !child.stdin.writableEnded) {
+          child.stdin.end();
+        }
+      });
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        output.stderr += chunk.toString();
+      });
+
+      const exitCodeAndSignal = once(child, "close");
+      const call = statelessRequest("tools/call", { name: "status", arguments: {} }).body;
+
+      child.stdin.write(`${JSON.stringify(call)}\n`);
+      expect(await exitCodeAndSignal).toEqual([0, null]);
+
+      const [answer = "", ...after] = output.stdout.split("\n");
+      const lines = (...printed: ReadonlyArray<string>) => printed.join("\n");
+
+      expect(after).toEqual([""]);
+      expect(JSON.parse(answer)).toMatchObject({ id: 1, result: { isError: false } });
+      expect(output.stderr).toContain('"message":"json logger"');
+      expect(output.stderr).toContain("console log");
+      expect(output.stderr).toContain(lines("log", "info", "debug", "warn", "error", "dirxml"));
+      expect(output.stderr).toContain(lines("{ dir: true }", "[ { table: 1 } ]"));
+      expect(output.stderr).toContain(
+        lines("group", "inside", "collapsed", "deeper", "second line", "{ nested: true }"),
+      );
+      expect(output.stderr).toContain(lines("'dir\\nvalue'", "unlabeled", ""));
+    },
+    subprocessCompilingTypeScriptTimeout,
+  );
+});
+
+describe("runStdio's invalid arguments", () => {
+  const Ping = Action.make("ping", {
+    description: "Answer",
+    readOnly: true,
+    caller: Action.Anyone,
+  });
+
+  const ping = Action.implement(Ping, () => Effect.void);
+
+  const Answered = Schema.fromJsonString(
+    Schema.Union([
+      Schema.Struct({
+        result: Schema.Struct({
+          isError: Schema.Literal(true),
+          content: Schema.Array(Schema.Struct({ text: Schema.String })),
+        }),
+      }),
+      Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
+    ]),
+  );
+
+  it.effect.each([
+    ["2026-07-28", "result"],
+    ["2025-11-25", "result"],
+    ["2025-06-18", "error"],
+  ] as const)("refuses them to a %s host as its %s", ([revision, kind]) =>
+    Effect.gen(function* () {
+      const [line] = yield* converse(
+        ActionMcp.runStdio(ping, { name: "ping", version: "0" }),
+        revision,
+        [{ method: "tools/call", params: { name: "ping", arguments: { invented: true } } }],
+      );
+
+      const answered = Schema.decodeUnknownSync(Answered)(line);
+
+      const message =
+        "result" in answered
+          ? answered.result.content.map(({ text }) => text).join("\n")
+          : answered.error.message;
+
+      expect(Object.keys(answered)).toEqual([kind]);
+      expect(message).toContain("Invalid parameters for tool 'ping'");
+    }),
+  );
+});
+
+describe("runStdio's successes", () => {
+  const read = {
+    description: "Succeeds with one kind of JSON value",
+    readOnly: true,
+    caller: Action.Anyone,
+  } as const;
+
+  const Ready = Action.make("ready", { ...read, success: { ready: Schema.Boolean } });
+  const Count = Action.make("count", { ...read, success: Schema.Finite });
+  const Greeting = Action.make("greeting", { ...read, success: Schema.String });
+  const List = Action.make("list", { ...read, success: Schema.Array(Schema.Finite) });
+  const Reset = Action.make("reset", read);
+
+  const shapes = Action.implement([Ready, Count, Greeting, List, Reset], {
+    ready: () => Effect.succeed({ ready: true }),
+    count: () => Effect.succeed(42),
+    greeting: () => Effect.succeed('say "hi"'),
+    list: () => Effect.succeed([1, 2]),
+    reset: () => Effect.void,
+  });
+
+  const successes = [
+    ["ready", { ready: true }],
+    ["count", 42],
+    ["greeting", 'say "hi"'],
+    ["list", [1, 2]],
+    ["reset", null],
+  ] as const;
+
+  const Listed = Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        tools: Schema.Array(
+          Schema.Struct({ name: Schema.String, outputSchema: Schema.optionalKey(Schema.Json) }),
+        ),
+      }),
+    }),
+  );
+
+  const Called = Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        isError: Schema.Boolean,
+        structuredContent: Schema.optionalKey(Schema.Json),
+        content: Schema.Array(Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })),
+      }),
+    }),
+  );
+
+  it.effect.each([
+    ["2026-07-28", ["ready", "count", "greeting", "list", "reset"]],
+    ["2025-11-25", ["ready"]],
+    ["2025-06-18", ["ready"]],
+  ] as const)("sends each success as it is to a %s host", ([revision, structured]) =>
+    Effect.gen(function* () {
+      const [listed, ...called] = yield* converse(
+        ActionMcp.runStdio(shapes, { name: "shapes", version: "0" }),
+        revision,
+        [
+          { method: "tools/list" },
+          ...successes.map(([name]) => ({ method: "tools/call", params: { name, arguments: {} } })),
+        ],
+      );
+
+      const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+      const listing = tools.filter(({ outputSchema }) => outputSchema !== undefined);
+
+      expect(listing.map(({ name }) => name)).toEqual(structured);
+
+      for (const [index, [name, success]] of successes.entries()) {
+        const { result } = Schema.decodeUnknownSync(Called)(called[index]);
+        const isStructured = structured.some((tool) => tool === name);
+
+        expect(result.isError).toBe(false);
+
+        if (isStructured) {
+          expect(result.structuredContent).toEqual(success);
+        } else {
+          expect(result).not.toHaveProperty("structuredContent");
+        }
+
+        expect(result.content).toEqual([
+          {
+            type: "text",
+            text: !isStructured && Predicate.isString(success) ? success : JSON.stringify(success),
+          },
+        ]);
+      }
+    }),
+  );
+
+  it.effect(
+    "adds serverInfo and resultType to a 2026-07-28 result, over stdio as over HTTP, and neither before",
+    () =>
+      Effect.gen(function* () {
+        const serverInfo = {
+          name: "shapes",
+          version: "0",
+          description: "Every kind of success",
+          websiteUrl: "https://example.com",
+          icons: [{ src: "https://example.com/icon.png" }],
+        };
+
+        const options = { ...serverInfo, instructions: "Call any tool." };
+        const stdio = ActionMcp.runStdio(shapes, options);
+        const call = [{ method: "tools/call", params: { name: "ready", arguments: {} } }];
+        const [current = ""] = yield* converse(stdio, "2026-07-28", call);
+        const [earlier = ""] = yield* converse(stdio, "2025-11-25", call);
+
+        const http = yield* Effect.flatMap(
+          send(rawToolCall("ready")),
+          (response) => response.text,
+        ).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(shapes, options))));
+
+        const own = {
+          isError: false,
+          structuredContent: { ready: true },
+          content: [{ type: "text", text: '{"ready":true}' }],
+        };
+
+        expect(JSON.parse(current)).toEqual({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            _meta: { "io.modelcontextprotocol/serverInfo": serverInfo },
+            resultType: "complete",
+            ...own,
+          },
+        });
+        expect(http.trimEnd()).toBe(current);
+        expect(JSON.parse(earlier)).toEqual({ jsonrpc: "2.0", id: 1, result: own });
+      }),
+  );
+});
+
+it.effect(
+  "leaves a line of stdin that is not JSON unanswered, and answers the request after it",
+  () =>
+    Effect.gen(function* () {
+      const Ping = Action.make("ping", {
+        description: "Answer pong",
+        readOnly: true,
+        caller: Action.Anyone,
+        success: Schema.String,
+      });
+
+      const ping = Action.implement(Ping, () => Effect.succeed("pong"));
+
+      const request = {
+        ...statelessRequest("tools/call", { name: "ping", arguments: {} }).body,
+        id: 1,
+      };
+
+      const answered = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
+      let output = "";
+
+      const stdin = Stream.make("not json\n", "{\n", `${JSON.stringify(request)}\n`).pipe(
+        Stream.concat(Stream.fromEffectDrain(Deferred.await(answered))),
+        Stream.encodeText,
+      );
+
+      const stdout = () =>
+        Sink.forEach((chunk: string | Uint8Array) =>
+          Effect.suspend(() => {
+            output += Predicate.isString(chunk) ? chunk : decoder.decode(chunk, { stream: true });
+
+            return output.endsWith("\n") ? Deferred.succeed(answered, undefined) : Effect.void;
+          }),
+        );
+
+      yield* ActionMcp.runStdio(ping, { name: "ping", version: "0" }).pipe(
+        Effect.provide(Stdio.layerTest({ stdin, stdout })),
+      );
+
+      const lines = output.trimEnd().split("\n");
+
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0] ?? "")).toMatchObject({
+        id: 1,
+        result: { structuredContent: "pong" },
+      });
+    }),
+);
+
+it.live("answers every call piped before stdin closes, then ends", () =>
+  Effect.gen(function* () {
+    const Commit = Action.make("commit", {
+      description: "Commit a write",
+      readOnly: false,
+      caller: Action.Anyone,
+    });
+
+    const call = (id: number) => ({
+      ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
+      id,
+    });
+
+    const decoder = new TextDecoder();
+    let written = "";
+
+    const stillRunningWhenStdinCloses = Action.implement(Commit, () => Effect.sleep(100));
+
+    const stdin = Stream.make(`${JSON.stringify(call(1))}\n${JSON.stringify(call(2))}\n`).pipe(
+      Stream.encodeText,
+    );
+
+    const stdout = () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
+      );
+
+    yield* ActionMcp.runStdio(stillRunningWhenStdinCloses, { name: "commit", version: "0" }).pipe(
+      Effect.provide(Stdio.layerTest({ stdin, stdout })),
+    );
+
+    const Answer = Schema.fromJsonString(
+      Schema.Struct({ id: Schema.Finite, result: Schema.Struct({ isError: Schema.Boolean }) }),
+    );
+
+    const decode = Schema.decodeUnknownSync(Answer);
+
+    const answers = written
+      .trim()
+      .split("\n")
+      .map((line) => decode(line));
+
+    expect(answers.toSorted((a, b) => a.id - b.id)).toEqual([
+      { id: 1, result: { isError: false } },
+      { id: 2, result: { isError: false } },
+    ]);
+  }),
+);
+
+it.live("keeps running a call that never completes after stdin closes, until interrupted", () =>
+  Effect.gen(function* () {
+    const Hang = Action.make("hang", {
+      description: "Never answer",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const call = { ...statelessRequest("tools/call", { name: "hang", arguments: {} }).body, id: 1 };
+    const started = yield* Deferred.make<void>();
+
+    const hang = Action.implement(Hang, () =>
+      Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+
+    const fiber = yield* ActionMcp.runStdio(hang, { name: "hang", version: "0" }).pipe(
+      Effect.provide(
+        Stdio.layerTest({
+          stdin: Stream.make(`${JSON.stringify(call)}\n`).pipe(Stream.encodeText),
+          stdout: () => Sink.drain,
+        }),
+      ),
+      Effect.forkChild,
+    );
+
+    yield* Deferred.await(started);
+    yield* Effect.sleep(50);
+    expect(fiber.pollUnsafe()).toBeUndefined();
+
+    yield* Fiber.interrupt(fiber);
+    expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+  }),
+);
+
+it.effect("serves native features given as features beside the tools", () =>
+  Effect.gen(function* () {
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const [listed = ""] = yield* converse(
+      ActionMcp.runStdio(
+        Action.implement(Ping, () => Effect.void),
+        {
+          name: "test",
+          version: "0",
+          features: McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
+        },
+      ),
+      "2025-11-25",
+      [{ method: "prompts/list" }],
+    );
+
+    expect(JSON.parse(listed)).toMatchObject({ result: { prompts: [{ name: "triage" }] } });
+  }),
+);
+
+it.effect.each(["2025-03-26", "2024-11-05"])("offers 2025-11-25 to a host asking for %s", (asked) =>
+  Effect.gen(function* () {
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const line = yield* negotiate(
+      ActionMcp.runStdio(
+        Action.implement(Ping, () => Effect.void),
+        {
+          name: "test",
+          version: "0",
+        },
+      ),
+      asked,
+    );
+
+    expect(JSON.parse(line)).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
+  }),
+);
+
+describe("runStdio's input schemas", () => {
+  const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
+
+  const Put = Action.make("put", {
+    description: "Store an item",
+    readOnly: false,
+    caller: Action.Anyone,
+    input: { item: Item },
+  });
+
+  const put = Action.implement(Put, () => Effect.void);
+
+  const Listed = Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        tools: Schema.Array(Schema.Struct({ inputSchema: Schema.JsonObject })),
+      }),
+    }),
+  );
+
+  const closedWithItsDefinitions = {
+    type: "object",
+    properties: { item: { $ref: "#/$defs/Item" } },
+    required: ["item"],
+    additionalProperties: false,
+    $defs: {
+      Item: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  it.effect.each(["2026-07-28", "2025-11-25", "2025-06-18"])(
+    "lists the input schema to a %s host",
+    (revision) =>
+      Effect.gen(function* () {
+        const [listed] = yield* converse(
+          ActionMcp.runStdio(put, { name: "items", version: "0" }),
+          revision,
+          [{ method: "tools/list" }],
+        );
+
+        const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+
+        expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([closedWithItsDefinitions]);
+      }),
+  );
+});
+
+const recordingHostConsole = () => {
+  const calls: Array<{ readonly method: string; readonly args: ReadonlyArray<unknown> }> = [];
+
+  const record =
+    (method: string) =>
+    (...args: ReadonlyArray<unknown>) => {
+      calls.push({ method, args });
+    };
+
+  const console: Console.Console = {
+    assert: record("assert"),
+    clear: record("clear"),
+    count: record("count"),
+    countReset: record("countReset"),
+    debug: record("debug"),
+    dir: record("dir"),
+    dirxml: record("dirxml"),
+    error: record("error"),
+    group: record("group"),
+    groupCollapsed: record("groupCollapsed"),
+    groupEnd: record("groupEnd"),
+    info: record("info"),
+    log: record("log"),
+    table: record("table"),
+    time: record("time"),
+    timeEnd: record("timeEnd"),
+    timeLog: record("timeLog"),
+    trace: record("trace"),
+    warn: record("warn"),
+  };
+
+  return { calls, console };
+};
+
+describe("runStdio's console", () => {
+  it.effect("writes every method through the host console's error", () =>
+    Effect.gen(function* () {
+      const host = recordingHostConsole();
+
+      const Status = Action.make("status", {
+        description: "Report",
+        readOnly: true,
+        caller: Action.Anyone,
+      });
+
+      const loggingFromBuilderAtStartup = Action.implement(
+        Status,
+        Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void),
+      );
+
+      yield* ActionMcp.runStdio(loggingFromBuilderAtStartup, {
+        name: "console",
+        version: "0",
+      }).pipe(
+        Effect.provideService(Console.Console, host.console),
+        Effect.provide(Stdio.layerTest({})),
+      );
+
+      expect(host.calls.filter(({ method }) => method !== "error")).toEqual([]);
+      expect(host.calls.map(({ args }) => format(...args))).toEqual([
+        "log",
+        "info",
+        "debug",
+        "warn",
+        "error",
+        "dirxml",
+        "{ dir: true }",
+        "[ { table: 1 } ]",
+        "Assertion failed: assert failed",
+        "Trace: trace",
+        expect.stringMatching(/^ {4}at .*console-methods\.ts/),
+        "default: 1",
+        "default: 2",
+        "calls: 1",
+        "calls: 1",
+        "timer %s: 250ms logged",
+        "timer %s: 1500ms",
+        "group",
+        "inside",
+        "collapsed",
+        "deeper\nsecond line",
+        "{ nested: true }",
+        "'dir\\nvalue'",
+        "unlabeled",
+        "scoped: 250ms",
+        "after",
+      ]);
+    }),
+  );
+});

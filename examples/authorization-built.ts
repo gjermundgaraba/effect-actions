@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import * as Action from "../src/Action.js";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { actors, CurrentActor, type Permission } from "./authorization.js";
 import { WhoAmI } from "./contracts.js";
 
