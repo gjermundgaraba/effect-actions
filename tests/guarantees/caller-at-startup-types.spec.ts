@@ -9,7 +9,10 @@ import { Login } from "../support/app/binding.js";
 import { WhoAmI } from "../support/app/contracts.js";
 
 interface CallerAtStartup {
-  readonly "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer": never;
+  readonly "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer": {
+    readonly caller: CurrentActor;
+    readonly builderOf: "whoAmI";
+  };
 }
 
 class SameShapeAsTheCaller extends Context.Service<SameShapeAsTheCaller, Actor>()(
@@ -36,11 +39,17 @@ const overRpc = ActionRpc.layer(
 
 const overMcp = ActionMcp.layerHttp(builderYieldsCaller, server);
 
-expectTypeOf<CallerAtStartup>().toExtend<Layer.Services<typeof overHttp>>();
+expectTypeOf<
+  Extract<Layer.Services<typeof overHttp>, CallerAtStartup>
+>().toEqualTypeOf<CallerAtStartup>();
 
-expectTypeOf<CallerAtStartup>().toExtend<Layer.Services<typeof overRpc>>();
+expectTypeOf<
+  Extract<Layer.Services<typeof overRpc>, CallerAtStartup>
+>().toEqualTypeOf<CallerAtStartup>();
 
-expectTypeOf<CallerAtStartup>().toExtend<Layer.Services<typeof overMcp>>();
+expectTypeOf<
+  Extract<Layer.Services<typeof overMcp>, CallerAtStartup>
+>().toEqualTypeOf<CallerAtStartup>();
 
 expectTypeOf<Extract<Layer.Services<typeof overHttp>, CurrentActor>>().toBeNever();
 
@@ -65,7 +74,9 @@ const authorizedAtStartup = ActionHttp.layer(
   authorizerBuiltWithCaller,
 );
 
-expectTypeOf<CallerAtStartup>().toExtend<Layer.Services<typeof authorizedAtStartup>>();
+expectTypeOf<
+  Extract<Layer.Services<typeof authorizedAtStartup>, CallerAtStartup>
+>().toEqualTypeOf<CallerAtStartup>();
 
 const handlerYieldsCaller = Action.implement(
   WhoAmI,

@@ -29,7 +29,9 @@ identity provided at startup.** Among the startup requirements of `ActionHttp.la
 authorizer yields is replaced by a type whose one property is named by the sentence
 `"A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"`,
 which is what the compiler now prints last wherever the routes are launched or run, in place of
-`Type 'CurrentUser' is not assignable to type 'never'`. `runStdio`, `ActionToolkit`, `ActionCli`
+`Type 'CurrentUser' is not assignable to type 'never'`. The property's type names the caller
+and the actions whose builder yields it, `{ caller: CurrentUser; builderOf: "createNote" | ... }`:
+the error is reported where the routes are served and run, not where the builder is. `runStdio`, `ActionToolkit`, `ActionCli`
 and `Action.client`, whose host names one caller, are unchanged.
 
 - Migrate: move the `yield*` of the identity into the handler or the authorizer.
@@ -68,6 +70,11 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   { authorize }: your rule, or Action.allowAll"'`, where it ended `'typeof CurrentUser' is not
   assignable to type 'unique symbol'`. The constraint named `ProtectedActionsTakeAuthorize`,
   which the error showed for one action and not for a list, is gone.
+- An error at `Action.implement` no longer starts `No overload matches this call. The last
+  overload gave the following error.`: its two signatures take three arguments and two, so a call
+  is checked against one, and the cause is two lines nearer the top. This replaces the third
+  overload, which repeated the first because TypeScript reports against the last. A public
+  target still takes `{}`, `undefined` or forwarded options as its third argument.
 - The compiler names an undeclared error where a handler fails with one: the message ends
   `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
   where it ended `Property '"~builtIn"' is missing`.

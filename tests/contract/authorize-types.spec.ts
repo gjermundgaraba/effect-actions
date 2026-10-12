@@ -36,6 +36,8 @@ const Open = Action.make("open", {
   success: Schema.String,
 });
 
+declare const forwarded: { readonly authorize?: never } | undefined;
+
 const handlers = {
   get: () => Effect.succeed("a"),
   put: () => Effect.succeed("b"),
@@ -84,6 +86,9 @@ export const authorizeTypes = () => {
 
   Action.implement([Open], { open: handlers.open });
   Action.implement(Open, handlers.open);
+  Action.implement(Open, handlers.open, {});
+  Action.implement(Open, handlers.open, undefined);
+  Action.implement(Open, handlers.open, forwarded);
   // @ts-expect-error -- A public-only implementation takes no authorize.
   Action.implement([Open], { open: handlers.open }, { authorize: Action.allowAll });
   // @ts-expect-error -- Protected actions need authorize.
