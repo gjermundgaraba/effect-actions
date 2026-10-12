@@ -23,7 +23,7 @@ The opinionated policy lives outside this directory in `../../rules/require-read
 
 ## Updating and verification
 
-Fetch an explicit upstream revision, compare the original rule and types against this revision, and port relevant fixes while retaining the adapters above. Update this record and preserve the license. In this repository run `vp check` and `vp test`; see [the parent provenance record](../../UPSTREAM.md) and [CONTRIBUTING.md](../../../../../CONTRIBUTING.md#lint-policy).
+Fetch an explicit upstream revision, compare the original rule and types against this revision, and port relevant fixes while retaining the adapters above. Update this record and preserve the license. In this repository run `vp check` and `vp test`; see [the parent provenance record](../../UPSTREAM.md) and [AGENTS.md](../../../../../AGENTS.md#lint).
 
 The upstream anti-slop repository has focused tests at `rules/require-readable-spacing.test.ts` and `rules/require-readable-spacing-cli.test.ts`. Its `pnpm sync:skill-assets` command and those test files were not copied into this repository. Consult the pinned anti-slop revision in the parent provenance record for that compatibility evidence: exact fixes, comments, semicolon-free code, TypeScript exports/overloads, Effect-style generators, and CLI autofix stability.
 

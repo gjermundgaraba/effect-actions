@@ -2,7 +2,7 @@ name: Latest Effect 4
 
 # The `effect` peer admits only 4.0.x patches, since the modules the surfaces build on are
 # unstable in Effect and a minor release may change them. This runs the full check against the
-# newest 4.x, so a minor that passes can be admitted (CONTRIBUTING.md#release).
+# newest 4.x, so a minor that passes can be admitted (AGENTS.md#release).
 on:
   schedule:
     - cron: "17 6 * * 1"
