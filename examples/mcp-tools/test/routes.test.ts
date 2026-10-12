@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Schema } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { fakeFarm, picture } from "../src/printers/fake.js";
 import { PrintFarm } from "../src/printers/farm.js";
@@ -11,21 +11,32 @@ import { routes } from "../src/routes.js";
 // The real routes answer in memory, and no port is opened.
 
 // What the entrypoint reads from the environment, given to the test as a Layer.
-const configured = ConfigProvider.layer(
-  ConfigProvider.fromEnvRecord({
-    FARM_URL: "https://farm.example.test",
-    FARM_USER: "agent",
-    FARM_PASSWORD: "secret",
-    ALLOWED_ORIGINS: "https://console.example.test,https://wall.example.test",
-  }),
-);
+const farm = { FARM_URL: "https://farm.example.test", FARM_USER: "agent", FARM_PASSWORD: "secret" };
 
 // `Testing.layer` gives the test an `HttpClient` of its own, which reaches the routes. The
 // fake farm is another `HttpClient`, provided to `PrintFarm.layer` alone.
-const served = Testing.layer(routes).pipe(
-  Layer.provide(PrintFarm.layer.pipe(Layer.provide(fakeFarm))),
-  Layer.provide(configured),
-);
+const servedWith = (environment: Record<string, string>) =>
+  Testing.layer(routes).pipe(
+    Layer.provide(PrintFarm.layer.pipe(Layer.provide(fakeFarm))),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
+  );
+
+const served = servedWith({
+  ...farm,
+  ALLOWED_ORIGINS: "https://console.example.test,https://wall.example.test",
+});
+
+// A browser's preflight: what it asks before a cross-origin `POST` with an MCP client's headers.
+const preflight = (origin: string) =>
+  HttpClient.execute(
+    HttpClientRequest.make("OPTIONS")("/mcp", {
+      headers: {
+        origin,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type, mcp-protocol-version",
+      },
+    }),
+  );
 
 // One tool of a `tools/list` answer, as far as this test reads it.
 const Listed = Schema.Struct({
@@ -119,6 +130,39 @@ describe("the tools, over MCP", () => {
       expect((yield* from("https://wall.example.test")).status).toBe(200);
       expect((yield* from("https://elsewhere.example.test")).status).toBe(403);
     }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("answers a listed origin's CORS preflight, and its headers on a tool's answer", () =>
+    Effect.gen(function* () {
+      const asked = yield* preflight("https://console.example.test");
+
+      expect(asked.status).toBe(204);
+      expect(asked.headers["access-control-allow-origin"]).toBe("https://console.example.test");
+      expect(asked.headers["access-control-allow-methods"]).toBe("POST, DELETE");
+      expect(asked.headers["access-control-allow-headers"]).toContain("MCP-Protocol-Version");
+
+      const listed = yield* HttpClient.execute(
+        Testing.mcpRequest(
+          "tools/list",
+          {},
+          { headers: { origin: "https://console.example.test" } },
+        ),
+      );
+
+      expect(listed.headers["access-control-allow-origin"]).toBe("https://console.example.test");
+      expect(listed.headers["access-control-expose-headers"]).toContain("Mcp-Session-Id");
+      expect((yield* preflight("https://elsewhere.example.test")).headers).not.toHaveProperty(
+        "access-control-allow-origin",
+      );
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("allows no origin where none is configured", () =>
+    Effect.gen(function* () {
+      const asked = yield* preflight("https://console.example.test");
+
+      expect(asked.headers).not.toHaveProperty("access-control-allow-origin");
+    }).pipe(Effect.provide(servedWith(farm))),
   );
 
   it.effect("serves the host's own route beside the tools", () =>

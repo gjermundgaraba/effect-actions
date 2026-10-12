@@ -58,9 +58,9 @@ export const GetNote = Action.make("getNote", {
 });
 ```
 
-Start from [quickstart/src/greeting/Greeting.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/greeting/Greeting.ts).
-[notes-service/src/notes/Notes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/notes/Notes.ts) adds declared
-errors and the list, and [kitchen-sink/src/issues/Issues.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/Issues.ts)
+Start from [quickstart/src/greeting/Greeting.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/greeting/Greeting.ts).
+[notes-service/src/notes/Notes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/notes/Notes.ts) adds declared
+errors and the list, and [kitchen-sink/src/issues/Issues.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/Issues.ts)
 uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `change`).
 
 - **The contract file imports no server code and no transport**, so a browser or a CLI can
@@ -79,7 +79,7 @@ uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `ch
   none, apart by their other fields alone, the first that decodes winning.
 - **A contract does not say where it is served**: each surface takes a list of actions. Keep
   those lists in one file beside the contracts
-  ([kitchen-sink/src/Actions.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/Actions.ts)): an action added
+  ([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)): an action added
   later is no tool until listed there.
 - **List an action as a tool only where a model may hold what it takes and returns.** A tool
   call passes both through the model's context and records its arguments on the current span,
@@ -97,8 +97,8 @@ remote surface gets it by authenticating the request
 host provides it ([ActionToolkit.md](ActionToolkit.md#name-the-caller),
 [ActionCli.md](ActionCli.md#name-the-caller), [ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
 
-`CurrentUser` is in [notes-service/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/Identity.ts),
-and a public action in [notes-service/src/status/Status.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/status/Status.ts).
+`CurrentUser` is in [notes-service/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/Identity.ts),
+and a public action in [notes-service/src/status/Status.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/Status.ts).
 
 - **Declare the identity as a `Context.Service`**, in a contract file, apart from its verifier.
 - **Never provide an identity, or a tenant, at startup**: not to a server's layer or root
@@ -109,12 +109,12 @@ and a public action in [notes-service/src/status/Status.ts](https://github.com/g
 - **One identity per action**, and every protected action one remote surface serves declares
   the same one. A tenant is a request-time requirement of the handler, not a second identity.
   A second audience takes its own identity, descriptor and binding (`Operator` in
-  [kitchen-sink/src/admin/Admin.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/admin/Admin.ts)).
+  [kitchen-sink/src/admin/Admin.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/admin/Admin.ts)).
 - **No surface provides a public action an identity.** An action whose answer depends on the
   caller is protected.
 - **One protected contract serves callers with a token over HTTP and a local host without
   one**, never a public copy of it: the host provides the caller around `runStdio`
-  ([notes-service/src/stdio.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/stdio.ts)).
+  ([notes-service/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/stdio.ts)).
 
 ## Implement actions
 
@@ -138,8 +138,8 @@ export const notes = Action.implement(
 );
 ```
 
-A plain handler is [quickstart/src/greeting/handlers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/greeting/handlers.ts),
-and the whole builder above [notes-service/src/notes/handlers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/notes/handlers.ts).
+A plain handler is [quickstart/src/greeting/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/greeting/handlers.ts),
+and the whole builder above [notes-service/src/notes/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/notes/handlers.ts).
 
 - **One implementation may hold public and protected actions**, and actions only some
   surfaces serve: group by domain.
@@ -164,7 +164,7 @@ and the whole builder above [notes-service/src/notes/handlers.ts](https://github
 An implementation holding a protected action states `{ authorize }`: a function of the called
 action that succeeds, or fails with a refusal. Every surface runs it before the handler, and
 none has a policy of its own. An implementation of public actions alone takes none
-([notes-service/src/status/handlers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/status/handlers.ts)), and
+([notes-service/src/status/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/handlers.ts)), and
 the authorizer never runs for a public action.
 
 ```ts
@@ -178,7 +178,7 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
 });
 ```
 
-That is [notes-service/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/identity/authorize.ts).
+That is [notes-service/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/authorize.ts).
 Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an action's
 `readOnly` then changes who may call it.
 
@@ -195,17 +195,17 @@ Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an ac
 - **What a plain authorizer yields is a request-time requirement of every surface.** To read a
   store, make `authorize` an Effect that yields the store once and returns the function, as a
   builder does
-  ([assistant/src/identity/authorize.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/identity/authorize.ts)). It
+  ([assistant/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/identity/authorize.ts)). It
   is built once for each implementation stating it: keep state they share in a service it
   yields.
 - **A limit, such as a rate limit, is the handler's, not the authorizer's.** It fails with an
   error the action declares, and its limiter is a service the builder yields
-  ([kitchen-sink/src/issues/write-limit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/write-limit.ts)):
+  ([kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts)):
   a service is shared wherever it is provided
-  ([kitchen-sink/src/memory.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/memory.ts)), state kept in a
+  ([kitchen-sink/src/memory.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/memory.ts)), state kept in a
   builder only within one layer graph.
 - **A check on one record belongs in the handler's data access**
-  ([notes-service/src/notes/store.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/notes/store.ts)). So does a
+  ([notes-service/src/notes/store.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/notes/store.ts)). So does a
   rule across callers, such as uniqueness.
 
 ## Fail with declared and built-in errors
@@ -216,7 +216,7 @@ failure compiles. What each surface answers is in [guarantees.md](guarantees.md#
 
 - **Fail with `Action.InvalidInput` for input that decodes but cannot be served**, naming
   `issues` of your own, instead of declaring a second error for bad input
-  ([kitchen-sink/src/attachments/handlers.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/attachments/handlers.ts)).
+  ([kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts)).
 - **For input you decode yourself**, such as a header or a route parameter, answer as the
   surfaces do: `Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
 - **Map another service's refusals before failing with them.** A client that decodes the
@@ -224,5 +224,5 @@ failure compiles. What each surface answers is in [guarantees.md](guarantees.md#
   or `Forbidden`. Passed on, it is this server's own refusal: a caller whose token is valid is
   told to sign in again. Map it to an error the action declares, or to a defect.
 - **Map that client's `HttpClientError` and `SchemaError` to one declared error a caller can
-  act on** ([mcp-tools/src/printers/farm.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/src/printers/farm.ts)). As
+  act on** ([mcp-tools/src/printers/farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/farm.ts)). As
   defects, a model reads only a generic text.

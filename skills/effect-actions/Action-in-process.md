@@ -34,12 +34,12 @@ const program = Effect.gen(function* () {
 ```
 
 Acquiring a client needs a `Scope`: under `it.effect` the test supplies it, as in
-[notes-service/test/notes/notes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/notes/notes.test.ts);
-elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/agent.ts).
+[notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts);
+elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/agent.ts).
 
 - **Provide the caller around each call, and startup services around the acquisition.** A call
   reads its own context, never the one the client was acquired in, so one client serves every
-  caller ([assistant/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/identity/identity.test.ts)).
+  caller ([assistant/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/identity/identity.test.ts)).
 - **Acquiring a client runs the builders**, and builds a built authorizer: it owes their startup
   services. Acquire it once, in a builder, a layer, or a scoped program such as a test. Never in
   a handler, which builds on every request.
@@ -47,7 +47,7 @@ elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](https://github
   around the program. With none around them, each builds its own.
 - **Every implemented action has a method**, whether or not a surface serves it. `actions` lists
   the ones to call, and an implementation holding none of them is left unbuilt
-  ([kitchen-sink/test/issues/issues.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/issues/issues.test.ts)).
+  ([kitchen-sink/test/issues/issues.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/issues/issues.test.ts)).
 - **Test what an implementation does here**, and what a surface adds, its authentication,
   statuses and codecs, in memory ([Testing.md](Testing.md#test-routes-in-memory)). Assert on a
   failure as [Testing.md](Testing.md#assert-on-errors) says.
@@ -55,7 +55,7 @@ elsewhere `Effect.scoped` does, as in [kitchen-sink/src/agent.ts](https://github
 ## Share one build across servers
 
 Inside one `HttpRouter.serve` or one `Testing.layer`, a builder runs once, however many surfaces
-serve it. Each builds its routes in a layer graph of its own, which reuses what is provided from
+serve it, a toolkit's `layer` provided to the routes included. Each builds its routes in a layer graph of its own, which reuses what is provided from
 outside it and shares nothing it builds itself: a builder's run, a built authorizer, or a
 service of yours such as an in-memory store.
 
@@ -75,9 +75,9 @@ Layer.mergeAll(
 ).pipe(Layer.provide(builders), Layer.provide(memory));
 ```
 
-That is [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) and
-[kitchen-sink/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/server.ts), two ports;
-[kitchen-sink/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/routes.test.ts) does it with two
+That is [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) and
+[kitchen-sink/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts), two ports;
+[kitchen-sink/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/routes.test.ts) does it with two
 `Testing.layer`s, asserting one run of a builder both ports serve.
 
 - **A job merged beside `HttpRouter.serve`, with no `Action.layer` above both, shares the

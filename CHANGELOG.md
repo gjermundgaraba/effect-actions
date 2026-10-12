@@ -120,7 +120,12 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 - `package.json` names `docs` and `examples` under `directories`.
 - Examples: `live-rpc`'s declared errors carry an HTTP status; `kitchen-sink`'s CORS allows an
   MCP session's `Mcp-Session-Id` and `DELETE`; `mcp-tools`' printer id shows the model its
-  pattern.
+  pattern. `notes-service`'s `export` takes a file argument; `mcp-tools` answers CORS for the
+  origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
+  client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
+  request: each member's conversation kept between requests, an approval answered in a later
+  one, by the member who was asked alone, and a conversation ended where its model fails
+  ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)).
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a
@@ -136,7 +141,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   the wire behavior of every surface in one table, and the library's scope; its lifetime and
   authorization rules moved to [Action.md](docs/Action.md) and
   [Authentication.md](docs/Authentication.md). Section anchors changed
-  ([docs/README.md](docs/README.md)).
+  ([docs/README.md](docs/README.md)). In the skill, a link to an example is its path in a
+  project that installs the package, `node_modules/@gjermundgaraba/effect-actions/examples/…`,
+  which an agent reads without a network.
 - A command reading a field from stdin is listed by its action's description alone in its
   parent's `--help`; the "Reads <field> from stdin" line, which broke the list of subcommands,
   stays in the command's own help ([ActionCli.md](docs/ActionCli.md)).

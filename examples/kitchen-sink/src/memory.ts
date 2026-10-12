@@ -1,6 +1,8 @@
 import { Layer } from "effect";
 import { RateLimiter } from "effect/persistence";
 import { Grants } from "./admin/grants.js";
+import { Conversations } from "./assistant/conversations.js";
+import { demoModel } from "./assistant/demo-model.js";
 import { AttachmentStore } from "./attachments/store.js";
 import { Directory } from "./identity/directory.js";
 import { IssueStore } from "./issues/store.js";
@@ -23,4 +25,6 @@ export const memory = Layer.mergeAll(
   WorkspaceRegistry.layerMemory,
   Directory.layerDemo,
   Grants.layerDemo,
+  Conversations.layerMemory,
+  demoModel,
 );

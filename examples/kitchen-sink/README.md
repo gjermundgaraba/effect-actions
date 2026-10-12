@@ -2,8 +2,8 @@
 
 The reference application: one multi-tenant issue tracker that uses every module of the library
 and nearly every option. Members of a workspace file, discuss and close issues, and attach
-screenshots, over HTTP, MCP, Effect RPC, a CLI and an in-process assistant. Operators suspend
-workspaces on a second port, or from a console on the host.
+screenshots, over HTTP, MCP, Effect RPC, a CLI and an assistant, in process and behind a route.
+Operators suspend workspaces on a second port, or from a console on the host.
 
 Open it when you need a working use of one feature: the [index](#index) maps each export and
 option to the file that shows it. To start an application, copy
@@ -24,6 +24,7 @@ node --import tsx examples/kitchen-sink/src/cli.ts --help
 node --import tsx examples/kitchen-sink/src/cli.ts list-issues -n 5
 node --import tsx examples/kitchen-sink/src/cli.ts get-issue ACME-1
 echo "It crashes on an empty draft" | node --import tsx examples/kitchen-sink/src/cli.ts create-issue --title Crash
+node --import tsx examples/kitchen-sink/src/cli.ts ask-assistant --prompt "Close what is done."   # answers with a call to approve
 
 # The admin port takes an operator key, not a member's token.
 curl -s 127.0.0.1:3001/admin/suspendWorkspace -H 'Content-Type: application/json' \
@@ -80,6 +81,11 @@ src/
 │   ├── handlers.ts        Action.implement over the store
 │   ├── guide.ts           a native MCP resource and prompt
 │   └── assistant.ts       the actions as a model's Toolkit, with approval
+├── assistant/             the model loop, served: a turn per request
+│   ├── Assistant.ts       contract: a turn, askAssistant and answerAssistant
+│   ├── conversations.ts   Conversations: each member's Chat, kept between requests
+│   ├── demo-model.ts      DEMO ONLY: a scripted model
+│   └── handlers.ts        the loop, approvals across requests, a model that fails
 ├── attachments/
 │   ├── Attachments.ts     contract: an image in an input and in a success
 │   ├── store.ts
@@ -111,6 +117,8 @@ test/
 ├── routes.test.ts         the host's surfaces: one port over HTTP and MCP, then both ports
 ├── request-policy.test.ts raw requests to each port as a web handler
 ├── issues/                in process, with Action.client; the assistant's tools
+├── assistant/             the assistant over HTTP, with a scripted model
+├── support/               the scripted model the assistant's tests give the routes
 ├── identity/              what authentication adds: tokens over HTTP, sessions over RPC
 ├── attachments/           images over HTTP and MCP; the download route
 └── admin/                 the operators' grants; the trusted operator
@@ -141,6 +149,7 @@ test/
 | A limit before decoding and a limit in the handlers                     | `src/identity/quota.ts`, `src/issues/write-limit.ts`    |
 | An image for a model and a client (an action), and for a page (a route) | `src/attachments/`                                      |
 | A caller the host names itself                                          | `src/stdio.ts`, `src/ops.ts`, `src/agent.ts`            |
+| A model loop behind a route, approvals answered in a later request      | `src/assistant/handlers.ts`, `src/routes.ts`            |
 | What to test in process and what over the wire                          | `test/issues/issues.test.ts`, `test/routes.test.ts`     |
 
 ## Index
@@ -243,6 +252,9 @@ search for in the file.
 | `make`: `actions`, `needsApproval` (a boolean rule) | `src/issues/assistant.ts`            |
 | `toolkit` given to `LanguageModel`                  | `src/issues/assistant.ts` (`triage`) |
 | `layer`, and the caller per turn                    | `src/agent.ts`                       |
+| `toolkit` and the model yielded in a builder        | `src/assistant/handlers.ts`          |
+| `layer` provided to the routes                      | `src/routes.ts` (`assistantTools`)   |
+| An approval answered in a later request             | `src/assistant/handlers.ts`          |
 | `tools.handle`, a call made by hand                 | `test/issues/assistant.test.ts`      |
 
 ### ActionCli
@@ -270,7 +282,8 @@ search for in the file.
 | A service the test and the routes both read      | `test/identity/session.test.ts` (`served`)                    |
 | A test replacing one service                     | `test/identity/identity.test.ts` (`servedWith`)               |
 | `Action.client`, a caller per call               | `test/issues/issues.test.ts`                                  |
-| A scripted `LanguageModel`                       | `test/issues/assistant.test.ts`                               |
+| A scripted `LanguageModel`                       | `test/issues/assistant.test.ts`, `test/support/scripted.ts`   |
+| A test replacing the model the routes are given  | `test/assistant/assistant.test.ts` (`served`)                 |
 | An error's message asserted beside its fields    | `test/issues/issues.test.ts`                                  |
 
 ## Not shown
@@ -285,7 +298,8 @@ Left out because this application has no honest place for them:
   here has a builder. `implementation.actions`. `mcp._meta`.
 - `ActionCli.command` and `remoteCommand`, one action as one command; `make`'s and `remote`'s
   `actions`; `remote`'s static `client` option. Both CLIs here are aggregates of every action,
-  and the remote one reads its client from `Config`.
+  and the remote one reads its client from `Config`. `subcommands` and `toUserError`, a command
+  written by hand: [notes-service](../notes-service/) has one.
 - `ActionRpc.layer`'s `actions`, `Rpc.group`, and `ActionRpc.client`'s options.
 - A binding's other fields, `Http.actions`, `Http.error` and `Http.authentication`.
 - `ActionMcp`'s `path`, `description`, `websiteUrl`, `icons` and `extensions`; `fetchClient`'s
@@ -296,8 +310,6 @@ Left out because this application has no honest place for them:
   `BuildServices`, `ActionHttp.Client`, `Authentication.Any`.
 - A handler sending MCP notifications through `McpServer.McpServer`, and one reading
   `McpSchema.McpRequestContext`.
-- Answering a model's approval request in a next turn: `agent.ts` stops at the request.
-  [assistant/src/agent.ts](../assistant/src/agent.ts) answers one.
 - A tenant taken from a subdomain. The workspace is a header, so the OAuth resource the server
   publishes is one fixed URL.
 - A second way to the attachment's bytes for token holders: the download route takes the web

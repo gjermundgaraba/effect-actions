@@ -55,9 +55,9 @@ export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
 });
 ```
 
-Files: [quickstart/src/Api.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/Api.ts) (public actions, no options),
-[notes-service/src/Api.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/Api.ts) (protected actions),
-[kitchen-sink/src/Api.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/Api.ts) (`prefix`, `error`, two bindings).
+Files: [quickstart/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/Api.ts) (public actions, no options),
+[notes-service/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/Api.ts) (protected actions),
+[kitchen-sink/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Api.ts) (`prefix`, `error`, two bindings).
 
 - To keep an action off HTTP, leave it out of the binding; its implementation may still serve
   it as a tool or a command.
@@ -83,10 +83,10 @@ const api = ActionHttp.layer(Http, implementations);
 export const routes = Layer.mergeAll(api, mcp, health, openApi).pipe(Layer.provide(authenticate));
 ```
 
-Files: [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/routes.ts) and
-[quickstart/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/server.ts);
-[notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts) and
-[notes-service/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/server.ts).
+Files: [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts) and
+[quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts);
+[notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts) and
+[notes-service/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/server.ts).
 
 - Pass every surface the same list of implementations: the layer serves the binding's actions
   among them.
@@ -95,7 +95,7 @@ Files: [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actio
   Router middleware is the one that reads the request, such as a header:
   `HttpRouter.middleware<{ provides: Tenant }>()((route) => …)`, given as
   `Layer.provide(resolveTenant.layer)`
-  ([kitchen-sink/src/workspaces/tenant.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/workspaces/tenant.ts)).
+  ([kitchen-sink/src/workspaces/tenant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/workspaces/tenant.ts)).
   Without the type argument it runs and the layer still owes the service.
   `HttpRouter.provideRequest(layer)` builds its layer once, at startup, and gives every request
   that one value: never an identity or a tenant
@@ -105,7 +105,7 @@ Files: [quickstart/src/routes.ts](https://github.com/gjermundgaraba/effect-actio
 - Two listeners are two `HttpRouter.serve` calls, each building its routes on its own. What they
   share is provided outside both
   ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers),
-  [kitchen-sink/src/server.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/server.ts)).
+  [kitchen-sink/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts)).
 
 Set a request body limit: a body has none unless the host provides one to `HttpRouter.serve`, as
 below. It covers every route of the server, MCP endpoints included, except a body a route reads
@@ -120,8 +120,8 @@ Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1)
 
 Several layers may serve one binding, each with its own `actions` and `middleware`; serve each
 action from exactly one. Files:
-[kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) (`api`),
-[kitchen-sink/src/identity/quota.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/quota.ts).
+[kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) (`api`),
+[kitchen-sink/src/identity/quota.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/quota.ts).
 
 | Where                                                | Runs                                     | Use it for                                                 |
 | ---------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
@@ -143,8 +143,8 @@ action from exactly one. Files:
 
 Give `Http.api`, a plain `HttpApi`, to `OpenApi.fromApi`, `HttpApiSwagger.layer` or
 `HttpApiScalar.layer`, on routes of the host's own. Files:
-[notes-service/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/routes.ts) (`openApi`),
-[kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) (`documentation`).
+[notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts) (`openApi`),
+[kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) (`documentation`).
 
 - The document's route is public unless you put middleware around it.
 - A header that middleware reads is not in the document: its operations list no `parameters`.
@@ -171,13 +171,13 @@ Effect.gen(function* () {
 }).pipe(Effect.provide(FetchHttpClient.layer), NodeRuntime.runMain);
 ```
 
-Files: [quickstart/src/client.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/src/client.ts),
-[kitchen-sink/src/seed.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/seed.ts) (`baseUrl` from `Config`,
+Files: [quickstart/src/client.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/client.ts),
+[kitchen-sink/src/seed.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/seed.ts) (`baseUrl` from `Config`,
 headers, errors by tag).
 
 - Outside a browser, set `baseUrl`. A token or any other header goes through `transformClient`.
   Where no client is built by hand, as under `ActionCli.remote`, transform the `HttpClient`
-  itself ([notes-service/src/cli.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/cli.ts)).
+  itself ([notes-service/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/cli.ts)).
 - Leave the argument out when `{}` is a valid input. A given argument is the decoded input, so
   it states a defaulted field.
 - A declared error is a typed failure, as its decoded value: the action's own, the binding's,
@@ -193,18 +193,18 @@ headers, errors by tag).
   ([Action.md](Action.md#fail-with-declared-and-built-in-errors)).
 - In a test, provide `Testing.layer(routes)` instead of a network client and leave `baseUrl` out
   ([Testing.md](Testing.md#test-routes-in-memory),
-  [notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts)).
+  [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts)).
 
 ## Call the API from a browser
 
 Code outside an Effect builds the client once with `ActionHttp.fetchClient` and runs each call
 with `Effect.runPromise`. Files:
-[notes-service/src/browser.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/src/browser.ts),
-[kitchen-sink/src/sdk.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/sdk.ts) (a `baseUrl`, two headers).
+[notes-service/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/browser.ts),
+[kitchen-sink/src/sdk.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/sdk.ts) (a `baseUrl`, two headers).
 
 - A page on another origin passes `baseUrl`, and the server must allow that origin with
   `HttpRouter.cors`
-  ([kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts), `cors`).
+  ([kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts), `cors`).
 - An unhandled declared error rejects the promise as its decoded value, so
   `error instanceof Action.Unauthenticated` works in a `catch`. Handle an expected one by its tag
   before `Effect.runPromise`.

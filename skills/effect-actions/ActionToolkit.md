@@ -29,9 +29,9 @@ Exported types: `Tools`, what `make` returns; `Options`, what it takes; `ToolCal
 ## Give a model tools
 
 Pass `toolkit` to `LanguageModel.generateText` or a `Chat`, and provide `layer`:
-[assistant/src/toolkit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/toolkit.ts) and
-[assistant/src/agent.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/agent.ts), with a scripted model in
-[assistant/src/scripted.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/scripted.ts).
+[assistant/src/toolkit.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/toolkit.ts) and
+[assistant/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/agent.ts), with a scripted model in
+[assistant/src/scripted.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/scripted.ts).
 
 ```ts
 export const { toolkit, layer } = ActionToolkit.make([tasks, identity]);
@@ -47,18 +47,18 @@ conversations.pipe(
 ```
 
 - **One `generateText` is one request to the model.** Its tool calls run, and their results come back in the response, unread by the model. For the model to read them, ask the `Chat` again with `prompt: []` while a response has `toolCalls` and no `tool-approval-request`.
-- Without `actions`, every action of the implementations is a tool, one added later included. Where a model must not get them all, list the tools ([Action.md](Action.md#define-a-contract)): [kitchen-sink/src/issues/assistant.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/assistant.ts).
+- Without `actions`, every action of the implementations is a tool, one added later included. Where a model must not get them all, list the tools ([Action.md](Action.md#define-a-contract)): [kitchen-sink/src/issues/assistant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/assistant.ts).
 - A refusal or a declared error is not raised: it is a tool result with `isFailure: true`, which the model reads.
-- A turn's tool calls, the approved calls of an answering turn included, run concurrently unless `generateText` is given a `concurrency`. A service they share must tolerate it: [assistant/src/tasks/store.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/tasks/store.ts) locks each change.
+- A turn's tool calls, the approved calls of an answering turn included, run concurrently unless `generateText` is given a `concurrency`. A service they share must tolerate it: [assistant/src/tasks/store.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/tasks/store.ts) locks each change.
 - Arguments the input does not declare are dropped, where HTTP and a CLI refuse them ([guarantees.md](guarantees.md#wire-behavior)): a misspelled optional argument is ignored silently.
 - Beside other tools, merge natively and provide every handler layer: `Toolkit.merge(toolkit, others)` with `Layer.mergeAll(layer, othersHandlers)`.
-- **A model loop behind a route.** Yield `toolkit` and the model in the implementation's builder, `Action.implement(Ask, Effect.map(toolkit, (tools) => (input) => ...))`: what the handler itself yields is owed per request. Provide `layer` to the route's layer, `ActionHttp.layer(Http, ask).pipe(Layer.provide(layer))`, not in the handler, so the tools share the routes' build ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers)). A tool call runs as the request's caller, unless the handler provides another around it.
+- **A model loop behind a route.** Yield `toolkit` and the model in the implementation's builder, `Action.implement(Ask, Effect.map(toolkit, (tools) => (input) => ...))`: what the handler itself yields is owed per request. Provide `layer` to the route's layer, `ActionHttp.layer(Http, ask).pipe(Layer.provide(layer))`, not in the handler, so the tools share the routes' build ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers)). A tool call runs as the request's caller, unless the handler provides another around it. Keep each caller's `Chat` in a service between requests, and answer an approval in a later one: [kitchen-sink/src/assistant/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/handlers.ts), provided in [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) and tested over HTTP in [kitchen-sink/test/assistant/assistant.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/assistant/assistant.test.ts).
 
 ### Call a tool by hand
 
 `yield* toolkit` gives `tools.handle(name, arguments)`, which takes the JSON a model sends, an
 ISO string for a `Schema.Date`, and returns an Effect of a stream of results:
-[assistant/test/toolkit.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/toolkit.test.ts). The handler starts
+[assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts). The handler starts
 when `handle` runs, so provide the caller around the whole
 `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, not around the stream alone. `handle`
 never asks for approval.
@@ -66,7 +66,7 @@ never asks for approval.
 ## Name the caller
 
 Provide the identity around each turn, or each call made by hand, as `actingFor` does in
-[assistant/src/toolkit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/toolkit.ts): the approval rule, `authorize`
+[assistant/src/toolkit.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/toolkit.ts): the approval rule, `authorize`
 and the handlers of every call in the turn read it.
 
 - Never provide an identity to `layer`, which is built once for every caller. It satisfies no protected tool's call, which still owes its own in its type, and it silently answers for any call that lacks one.
@@ -76,9 +76,9 @@ and the handlers of every call in the turn read it.
 
 `needsApproval` is one rule over every call a model makes, asked before the call runs. Every
 write: `needsApproval: (call) => !call.action.readOnly`
-([kitchen-sink/src/issues/assistant.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/issues/assistant.ts)). A
+([kitchen-sink/src/issues/assistant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/assistant.ts)). A
 rule reading the call's input and its caller:
-[assistant/src/toolkit.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/toolkit.ts).
+[assistant/src/toolkit.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/toolkit.ts).
 
 - `call` is `{ name, action, input }`, the input decoded, over every action of the implementations, whatever `actions` lists. Check `call.name` to narrow the other two.
 - The rule's `Effect` requires nothing: read the caller with `Effect.serviceOption`, and decide what the absence of one means.
@@ -87,7 +87,7 @@ rule reading the call's input and its caller:
 
 A call that needs approval does not run: the turn ends with a `tool-approval-request` part in
 `response.content` in place of its result. Start the next turn with the person's answers
-([assistant/src/agent.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/agent.ts)):
+([assistant/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/agent.ts)):
 
 ```ts
 chat
@@ -108,9 +108,9 @@ chat
 ```
 
 - The answer needs the prompt history, where its request is found by `approvalId`. Sent alone through a bare `LanguageModel.generateText`, it runs nothing and raises nothing. Use a `Chat`, or send again the assistant message holding the call and its request, before the answer.
-- An approved call runs in the answering turn, before the model is asked again, as whoever that turn runs as: provide the caller who was asked. `authorize` runs for it too ([assistant/test/toolkit.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/toolkit.test.ts)).
+- An approved call runs in the answering turn, before the model is asked again, as whoever that turn runs as: provide the caller who was asked. `authorize` runs for it too ([assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts)).
 - **Each request is answered on its own.** Of a turn's several requests, an approved call runs, a denied one (`approved: false`) does not and gives the model a failed result, and one left unanswered stays open for a later turn. To require every answer at once, check it in the host.
 - **Continue on `toolCalls`, never on `toolResults`.** The answering turn's response holds the approved call's result, no tool call, and the model's reply to it: a loop that continues while a response has tool results asks the model again and loses that reply.
-- **If the model fails after an approved call**, the call has run, the `Chat` has recorded nothing of that turn, and the same answer sent again runs the call again. Record an answer before its turn, and report the call's outcome from the host.
-- **Show the person what is asked.** A request names its call by `toolCallId`; that call, in `response.toolCalls`, holds the model's `params`, typed `unknown` ([assistant/src/agent.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/src/agent.ts) joins the two): decode them with `Schema.toCodecJson(AddTask.input)`, the tool's parameters.
+- **If the model fails after an approved call**, the call has run, the `Chat` has recorded nothing of that turn, and the same answer sent again runs the call again. End the conversation where a turn fails, or record an answer before its turn, and say in the error that an approved call may have run: `kitchen-sink/src/assistant/handlers.ts` does the first.
+- **Show the person what is asked.** A request names its call by `toolCallId`; that call, in `response.toolCalls`, holds the model's `params`, typed `unknown` ([assistant/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/agent.ts) joins the two): decode them with `Schema.toCodecJson(AddTask.input)`, the tool's parameters.
 - **Only the person asked answers.** A `tool-approval-response` whose `approvalId` matches an open request in the history is acted on, as the turn's caller: take an `approvalId` only from that caller, and keep the `Chat` where its owner alone reaches it.

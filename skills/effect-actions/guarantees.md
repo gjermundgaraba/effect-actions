@@ -26,7 +26,7 @@ One call, on each surface. An HTTP route is `POST <prefix>/<action>` with a JSON
 - **Earlier MCP revisions.** The MCP column is MCP 2026-07-28. A 2025-11-25 or 2025-06-18 client, over HTTP or stdio, gets `structuredContent` only for a success that is an object, and any other success as its text block alone, a string unquoted; a 2025-06-18 client gets invalid arguments as a JSON-RPC error instead of a result. Over HTTP such a client opens a session, which on an endpoint serving a protected tool only a signed-in caller does: it signs in for every request there, a public tool's call and `tools/list` included. Stdio authenticates nothing: the host provides the identity around `runStdio` ([Serve tools over stdio](ActionMcp.md#serve-tools-over-stdio)).
 - **Request bodies have no size limit** unless the host sets one, on every route of the server, MCP endpoints included ([Serve the routes](ActionHttp.md#serve-the-routes)).
 
-[kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts) asserts the 401 and the 403 as sent, and [assistant/test/toolkit.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/toolkit.test.ts) a refusal as a Toolkit result.
+[kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts) asserts the 401 and the 403 as sent, and [assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts) a refusal as a Toolkit result.
 
 ## Scope
 
@@ -40,4 +40,4 @@ What the library does not do, where a reader might expect it to:
 - **Stream, upload or retry.** Actions are unary JSON calls. One decoded input, one success or one declared error. Every HTTP route is a `POST`, a read-only action's included; RPC needs a protocol speaking JSON.
 - **Expire MCP sessions, or serve MCP features other than tools.** A session a client of a 2025 revision opens over HTTP lasts until that client ends it or the process stops ([Serve tools over HTTP](ActionMcp.md#serve-tools-over-http)). Prompts and resources are Effect's native ones, given as `features` ([Add native prompts and resources](ActionMcp.md#add-native-prompts-and-resources)).
 - **Mix identities.** An action names one identity service, and a remote surface one authentication descriptor.
-- **Harden a deployment.** Real token validation, request limits and error reporting are the application's. The examples mark each shortcut they take `DEMO ONLY`: [examples](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/README.md).
+- **Harden a deployment.** Real token validation, request limits and error reporting are the application's. The examples mark each shortcut they take `DEMO ONLY`: [examples](node_modules/@gjermundgaraba/effect-actions/examples/README.md).

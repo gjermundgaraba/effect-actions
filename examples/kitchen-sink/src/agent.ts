@@ -1,7 +1,7 @@
 import { NodeRuntime } from "@effect/platform-node";
-import { Console, Effect, Layer, Stream } from "effect";
-import { LanguageModel } from "effect/ai";
+import { Console, Effect, Layer } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { demoModel } from "./assistant/demo-model.js";
 import { CurrentMember } from "./identity/Identity.js";
 import { members } from "./identity/members.js";
 import { layer, triage } from "./issues/assistant.js";
@@ -11,17 +11,7 @@ import { limiter } from "./memory.js";
 
 // Entrypoint: `node --import tsx examples/kitchen-sink/src/agent.ts`.
 // The assistant as a local program: a model calling the issue actions as tools, in process.
-
-// DEMO ONLY: a scripted model that always asks for the same two tools. A real one is a
-// provider's layer, such as `AnthropicLanguageModel.layer`.
-const scripted = LanguageModel.make({
-  generateText: () =>
-    Effect.succeed([
-      { type: "tool-call", id: "1", name: "listIssues", params: { status: "open" } },
-      { type: "tool-call", id: "2", name: "closeIssue", params: { id: "ACME-1" } },
-    ] as const),
-  streamText: () => Stream.empty,
-});
+// The server serves the same tools behind a route, a turn per request: assistant/handlers.ts.
 
 const program = Effect.gen(function* () {
   // Code of your own calls the implementation typed, with `Action.client`: the same decoding,
@@ -33,7 +23,7 @@ const program = Effect.gen(function* () {
   const turn = yield* triage("Close what is done.");
 
   // The read ran: its result is here. The write did not: it waits for the member's approval,
-  // which the host answers in the next turn with a `tool-approval-response` prompt part.
+  // which a host answers in the next turn, as assistant/handlers.ts does.
   for (const { name, encodedResult } of turn.toolResults) {
     yield* Console.log(`${name} answered`, encodedResult);
   }
@@ -51,6 +41,7 @@ program.pipe(
   Effect.provideService(CurrentMember, members.ada),
   // Startup services only. An identity provided here would be every caller's.
   Effect.provide(layer.pipe(Layer.provideMerge(Layer.merge(IssueStore.layerMemory, limiter)))),
-  Effect.provideServiceEffect(LanguageModel.LanguageModel, scripted),
+  // DEMO ONLY: a scripted model. A real one is a provider's layer, in its place.
+  Effect.provide(demoModel),
   NodeRuntime.runMain,
 );

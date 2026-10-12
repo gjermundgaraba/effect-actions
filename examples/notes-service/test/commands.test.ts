@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Schema, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Layer, Schema, Stdio, Stream } from "effect";
 import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestConsole } from "effect/testing";
@@ -52,21 +52,32 @@ describe("the commands", () => {
       yield* run("ada", ["create-note", "--title", "Plan"], "First draft\n");
       yield* run("ada", ["create-note", "--title", "Budget"], "Too small\n");
 
-      expect(yield* run("ada", ["export"])).toEqual([
+      // The command writes with the real file system, so the test gives it a real directory.
+      const files = yield* FileSystem.FileSystem;
+      const file = `${yield* files.makeTempDirectoryScoped()}/notes.md`;
+
+      expect(yield* run("ada", ["export", file])).toEqual([`Wrote 2 notes to ${file}`]);
+      expect(yield* files.readFileString(file)).toBe(
         "# Plan\n\nFirst draft\n\n# Budget\n\nToo small",
-      ]);
-    }).pipe(Effect.provide(served)),
+      );
+    }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fail as the server refuses, a command of their own included", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(run("mallory", ["export"]));
+      const refused = yield* Effect.flip(run("mallory", ["export", "notes.md"]));
 
       expect(refused).toBeInstanceOf(CliError.UserError);
       expect(refused).toHaveProperty(
         "userMessage",
         '{"_tag":"Unauthenticated","message":"Unknown demo token."}',
       );
+
+      // Not an action's error: the file system's, named in the message.
+      const unwritable = yield* Effect.flip(run("ada", ["export", "no-such-directory/notes.md"]));
+
+      expect(unwritable).toBeInstanceOf(CliError.UserError);
+      expect(unwritable).toHaveProperty("userMessage", expect.stringMatching(/^PlatformError: /));
 
       const missing = yield* Effect.flip(run("ada", ["get-note", "9"]));
 

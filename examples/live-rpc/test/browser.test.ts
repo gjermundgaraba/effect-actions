@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { openChat } from "../src/browser.js";
+import { chatOver, openChat } from "../src/browser.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 
@@ -74,4 +75,31 @@ describe("the page's client", () => {
       });
     }).pipe(Effect.provide(served)),
   );
+
+  // `connect(url)` is this with a WebSocket. Each test's runtime builds its own layer, and so
+  // its own store.
+  it("answers a page that is not an Effect program with promises, on one connection", async () => {
+    const chat = chatOver(served);
+
+    const posted = await chat.room("lobby", "ada").post("Deploying at noon.");
+
+    expect(posted).toEqual({ id: 1, author: "ada", text: "Deploying at noon." });
+    expect(await chat.room("lobby", "grace").read(0)).toEqual({
+      access: "member",
+      messages: [posted],
+    });
+    expect(await chat.room("lobby", "grace").remove(posted.id)).toBe("not-yours");
+    expect(await chat.room("ops", "expired").read(0)).toEqual({
+      access: "signed-out",
+      messages: [],
+    });
+    expect(await chat.rooms()).toEqual([{ name: "lobby", messages: 1 }]);
+
+    // A failure `openChat` does not handle rejects: here, a text the contract refuses.
+    await expect(chat.room("lobby", "ada").post("")).rejects.toBeInstanceOf(Action.InvalidInput);
+
+    await chat.close();
+
+    await expect(chat.rooms()).rejects.toThrow();
+  });
 });

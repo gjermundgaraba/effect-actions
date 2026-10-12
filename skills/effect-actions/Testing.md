@@ -52,18 +52,18 @@ it.effect("keeps each user's notes their own", () =>
 );
 ```
 
-See [notes-service/test/notes/notes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/notes/notes.test.ts).
+See [notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts).
 
 - Replace the edge, not the service under test:
-  [mcp-tools/test/printers/printers.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/printers/printers.test.ts)
+  [mcp-tools/test/printers/printers.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/printers/printers.test.ts)
   runs the real upstream service over a fake `HttpClient` Layer.
 - `it.effect` runs on a test clock: fork a call that waits, `TestClock.adjust`, then join it.
 - A stdio server runs the same implementations: test them here. A subprocess test adds only what
   the process adds, stdout carrying nothing but the protocol.
 - A Toolkit and a CLI need no `Testing` export: call `toolkit.handle` or script a
-  `LanguageModel` ([assistant/test/toolkit.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/toolkit.test.ts)),
+  `LanguageModel` ([assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts)),
   and run commands with `Command.runWith`
-  ([assistant/test/commands.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/commands.test.ts)).
+  ([assistant/test/commands.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/commands.test.ts)).
 
 ## Test routes in memory
 
@@ -76,26 +76,26 @@ const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
 
 Under it, `ActionHttp.client(Http)` needs no `baseUrl`, and `HttpClient.get("/healthz")` reaches
 the host's own routes. Each test builds the routes anew, so each starts from an empty store. See
-[notes-service/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/notes-service/test/routes.test.ts); the smallest
+[notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts); the smallest
 test is
-[quickstart/test/greeting/greeting.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/quickstart/test/greeting/greeting.test.ts).
+[quickstart/test/greeting/greeting.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/test/greeting/greeting.test.ts).
 
 - A service the test reads too goes around `layer` with `Layer.provideMerge`, so handlers and
   test share one instance
-  ([kitchen-sink/test/identity/session.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/session.test.ts)).
+  ([kitchen-sink/test/identity/session.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/session.test.ts)).
 - Two `layer`s are two servers: a second one runs every builder again, and they share only what
   is provided around both. For two ports, that is `Action.layer(implementations)` and the
-  services ([kitchen-sink/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/routes.test.ts),
+  services ([kitchen-sink/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/routes.test.ts),
   [Action-in-process.md](Action-in-process.md#share-one-build-across-servers)).
 - The client is `layer`'s own. A fake upstream is another `HttpClient`: provide it to the service
-  that calls out ([mcp-tools/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/routes.test.ts)).
+  that calls out ([mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts)).
 - Every request on `layer`'s client reaches the routes, whatever its host: a client given a
   `baseUrl`, a remote `ActionCli` command's included, runs in memory unchanged.
 - Requests run in the test's context: a `ConfigProvider` or the test clock around the test
   reaches middleware and handlers.
 - To send raw web `Request`s too, build one `HttpRouter.toWebHandler` and dispose it yourself;
   `Testing.layer(web.handler)` gives the typed clients the same handler
-  ([kitchen-sink/test/request-policy.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/request-policy.test.ts)).
+  ([kitchen-sink/test/request-policy.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/request-policy.test.ts)).
 
 ## Test as a signed-in caller
 
@@ -116,7 +116,7 @@ Both clients take it: `ActionHttp.client(Http, as("reader"))` and
   provider of their own descriptor satisfies them.
 - To change what a credential verifies as, replace the service the verifier reads (`servedWith`
   in
-  [kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts)),
+  [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)),
   or provide a test verifier: another `Authentication.layer` of the same descriptor.
 
 A typed client decodes a refusal to its error. To assert on the answer as sent, build the request
@@ -135,7 +135,7 @@ A method fails with the action's declared errors and the built-in ones as decode
 `McpCallError` for any other answer. Only a tool's result carries the action's own errors: an HTTP
 answer other than 200 decodes as a refusal alone, so an error a verifier declares, typed over
 `ActionHttp.client`, is an `McpCallError` here
-([kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts)).
+([kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)).
 
 A method decodes a refusal alike whether the endpoint answered a 401 or a 403 or returned a tool
 result in a 200 ([guarantees.md](guarantees.md#wire-behavior)): to assert which, send the call
@@ -147,9 +147,9 @@ For that, and for what the client's types will not send or its decoding hides (`
 `yield* HttpClient.execute(Testing.mcpRequest("tools/call", { name: "whoAmI", arguments: {} }))`
 succeeds with the response whatever its status, to read `response.status`, `response.headers`
 and `yield* response.json`
-([kitchen-sink/test/identity/identity.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/identity/identity.test.ts)
+([kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)
 asserts a 401 so, and
-[mcp-tools/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/mcp-tools/test/routes.test.ts) reads `tools/list`).
+[mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts) reads `tools/list`).
 For a web handler or `fetch`, pass an absolute `url`: `HttpClientRequest.toWebResult(request)` is
 then a `Result` holding the web `Request`, taken with `Result.getOrThrow`.
 
@@ -176,8 +176,8 @@ const as = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${t
 
 Authentication is per message, so each call carries its credential and one client serves every
 caller: `client.postMessage({ text }).pipe(as("ada"))`. See
-[live-rpc/test/routes.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/test/routes.test.ts);
-[live-rpc/test/browser.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/live-rpc/test/browser.test.ts) tests a page's client
+[live-rpc/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/test/routes.test.ts);
+[live-rpc/test/browser.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/test/browser.test.ts) tests a page's client
 the same way. Effect's `RpcTest.makeClient` is no substitute: it asks for handlers of the
 binding's group, which `ActionRpc.layer` does not provide (`Handler<"…">` stays required).
 
@@ -199,4 +199,4 @@ message asserted beside it. The message is all a model reads of a tool's failure
 
 A Toolkit raises neither a refusal nor a declared error: each is a result the model reads, so
 assert `isFailure` and `result.message`
-([assistant/test/toolkit.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/assistant/test/toolkit.test.ts)).
+([assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts)).

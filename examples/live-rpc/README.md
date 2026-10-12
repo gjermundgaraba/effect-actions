@@ -22,7 +22,8 @@ vp test examples/live-rpc
 ```
 
 `client.ts` runs the browser's client from Node: two members on one socket, then each failure
-a page handles. `browser.ts` is imported by a page, not run. The tokens are fixed names (`ada`,
+a page handles. `browser.ts` is imported by a page, not run: `openChat` for a page that is an
+Effect program, `connect(url)` for one that calls with promises. The tokens are fixed names (`ada`,
 `grace`) and the store is memory: replace both before deploying anything.
 
 ## When you copy this
@@ -53,8 +54,8 @@ src/
 │   └── verifier.ts    Authentication.layer: tokens to members, server only
 ├── Rpc.ts             the RPC binding of every action
 ├── routes.ts          the rpcs, authenticated and with their middleware, not yet on a protocol
-├── server.ts          entrypoint: the rpcs over a WebSocket at /rpc
-├── browser.ts         client module: the connection and the chat, for a web page
+├── server.ts          entrypoint: the rpcs over a WebSocket at /rpc, its messages bounded
+├── browser.ts         client module: the connection and the chat, as Effects and as promises
 └── client.ts          entrypoint: that client, run from Node
 test/
 ├── chat/              in process, with Action.client
@@ -74,10 +75,10 @@ test/
   host: a page provides the browser's, `client.ts` provides Node's.
 - **The socket belongs to the Layer providing it.** `connection(url)` opens it when it is built
   and closes it when it is released: provide it once around the page's program, or keep it in
-  a `ManagedRuntime`. The scope `openChat` needs holds only the client.
+  a `ManagedRuntime`, as `connect(url)` does. The scope `openChat` needs holds only the client.
 - **No test opens a port.** `Testing.layer` answers HTTP requests and cannot upgrade a WebSocket,
   so the tests give the same rpcs Effect's HTTP protocol. The socket itself is exercised by
-  running `client.ts`.
+  running `client.ts`, and no test sends a message over the size `server.ts` allows.
 
 ## Where to look
 

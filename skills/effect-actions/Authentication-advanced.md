@@ -36,8 +36,8 @@ not to one another, and the tenant stays owed:
 routes.pipe(Layer.provide(authenticate), Layer.provide(resolveTenant.layer));
 ```
 
-See [kitchen-sink/src/workspaces/tenant.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/workspaces/tenant.ts)
-and [kitchen-sink/src/identity/authenticate.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/authenticate.ts).
+See [kitchen-sink/src/workspaces/tenant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/workspaces/tenant.ts)
+and [kitchen-sink/src/identity/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/authenticate.ts).
 
 - Router middleware provided around the routes runs before their authentication. Middleware
   that reads the identity runs inside it: give it to the layer as its own `middleware`
@@ -47,10 +47,10 @@ and [kitchen-sink/src/identity/authenticate.ts](https://github.com/gjermundgarab
 
 Name the scheme in `make`'s `security`: an API key in a cookie, a header or the query, such as
 `HttpApiSecurity.apiKey({ in: "cookie", key: "tracker_session" })`, or `HttpApiSecurity.basic`.
-See [kitchen-sink/src/identity/Identity.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/Identity.ts)
-and [kitchen-sink/src/identity/authenticate.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/identity/authenticate.ts)
-for a session cookie beside Bearer, and [kitchen-sink/src/admin/Admin.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/admin/Admin.ts)
-and [kitchen-sink/src/admin/authenticate.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/admin/authenticate.ts)
+See [kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts)
+and [kitchen-sink/src/identity/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/authenticate.ts)
+for a session cookie beside Bearer, and [kitchen-sink/src/admin/Admin.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/admin/Admin.ts)
+and [kitchen-sink/src/admin/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/admin/authenticate.ts)
 for an API key in a header.
 
 - OAuth is Bearer's. Another scheme takes no `protectedResource` and nothing steps up under it:
@@ -79,8 +79,8 @@ HttpRouter.add("GET", "/attachments/:id", handler).pipe(
 ```
 
 It answers a refusal the route fails with as an action's is answered. See
-[kitchen-sink/src/attachments/download.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/attachments/download.ts)
-and [kitchen-sink/test/attachments/attachments.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/attachments/attachments.test.ts).
+[kitchen-sink/src/attachments/download.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/download.ts)
+and [kitchen-sink/test/attachments/attachments.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/attachments/attachments.test.ts).
 
 - No authorizer runs for such a route: it states its own authorization.
 - Every response to a request authentication covers is `Cache-Control: no-store` unless the
@@ -100,9 +100,9 @@ request of the router, and provide it last:
 routes.pipe(Layer.provide(authenticate), Layer.provide(requestPolicy));
 ```
 
-See [kitchen-sink/src/request-policy.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/request-policy.ts),
-`publicRoutes` in [kitchen-sink/src/routes.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/src/routes.ts) and
-[kitchen-sink/test/request-policy.test.ts](https://github.com/gjermundgaraba/effect-actions/blob/main/examples/kitchen-sink/test/request-policy.test.ts).
+See [kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts),
+`publicRoutes` in [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) and
+[kitchen-sink/test/request-policy.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/request-policy.test.ts).
 
 - **An MCP endpoint's `allowedOrigins` checks no `Host`.** It refuses only an unlisted `Origin`:
   a request sending none passes, whatever its `Host`. The example's policy refuses a `Host` that
