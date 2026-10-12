@@ -18,6 +18,9 @@ same schemas, handler and authorization.
 
 ## How to read these pages
 
+**Arriving with an error?** Search the `*-failures.md` pages for a fragment of its message
+first (step 5), before the examples and the pages.
+
 1. **Open one page per tool call, with your file-reading tool.** A page fits one read. Several
    in one call, however many commands it runs, are cut by its output limit, and what is cut goes
    unnoticed.
@@ -48,7 +51,7 @@ there is no package root.
 | [setup.md](setup.md)                                     | install, import the modules, write the minimal program, lay out an application, bundle a browser client                                     |
 | [Action.md](Action.md)                                   | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors                                |
 | [Action-in-process.md](Action-in-process.md)             | call actions from your own code, such as a job; share one build of the implementations across servers and jobs                              |
-| [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, publish OpenAPI, call them from Effect or from a browser                                           |
+| [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, limit request bodies, publish OpenAPI, call them from Effect or a browser                          |
 | [ActionMcp.md](ActionMcp.md)                             | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add prompts and resources |
 | [ActionRpc.md](ActionRpc.md)                             | bind actions to Effect rpcs, serve them on a protocol, call them, send request context with a call                                          |
 | [ActionToolkit.md](ActionToolkit.md)                     | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval                                                     |

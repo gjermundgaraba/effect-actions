@@ -56,10 +56,11 @@ servers, see [Action-in-process.md](Action-in-process.md#share-one-build-across-
 
 - The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
   Claude Code 2.1 and Codex CLI 0.162 both connect, as tested in October 2026:
-  [notes-service](../examples/notes-service/README.md#run-it) has the commands.
+  [notes-service](../examples/notes-service/README.md#run-it) has the commands,
+  [mcp-tools](../examples/mcp-tools/README.md#connect-a-client) those for stdio and Claude Desktop.
 - **A client of a 2025 revision opens a session** with `initialize`; a 2026-07-28 request stands
   alone. A session holds what its client sent there and no identity: each request authenticates,
-  as its own caller. It lasts until its client ends it with a `DELETE` or the process stops, as
+  as its own caller. It lasts until its client ends it with a `DELETE`, answered 204, or the process stops, as
   Effect expires none, so limit request bodies, which bounds what one holds. Where an endpoint
   serves a protected tool, only a signed-in caller opens one, and that client signs in for every
   request, a public tool's call included. An endpoint of public tools alone lets anyone open them.
@@ -79,7 +80,6 @@ ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: 
   // DEMO ONLY: a real host reads who started it, from its own login or configuration.
   Effect.provideService(CurrentUser, users.ada),
   Effect.provide([NodeStdio.layer, NoteStore.layerMemory]),
-  // stdout carries the protocol alone, so logs and failures go to stderr.
   ActionCli.logToStderr,
   NodeRuntime.runMain,
 );
@@ -88,21 +88,24 @@ ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: 
 See [notes-service/src/stdio.ts](../examples/notes-service/src/stdio.ts), and
 [mcp-tools/src/stdio.ts](../examples/mcp-tools/src/stdio.ts) for public tools.
 
-To try a server by hand, pipe it one request. Without an `initialize` handshake before it, a
-request carries the 2026-07-28 metadata in its `_meta`, as `Testing.mcpRequest` builds it:
+To try a server by hand, send it one request, its 2026-07-28 metadata in `_meta` as
+`Testing.mcpRequest` builds it. Over HTTP it also needs all five headers:
 
 ```sh
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus","arguments":{},"_meta":{"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' |
-  node --import tsx examples/notes-service/src/stdio.ts
+BODY='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus","arguments":{},"_meta":{"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}'
+echo "$BODY" | node --import tsx examples/notes-service/src/stdio.ts
+curl http://127.0.0.1:3000/mcp -d "$BODY" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'MCP-Method: tools/call' -H 'MCP-Name: getStatus'
 ```
 
 - **stdout carries the protocol alone.** `runStdio` sends its own program's Effect logs and
   `Console` output to stderr. For the layers provided around it, apply `ActionCli.logToStderr`
   last, before `runMain`: it moves their default logger and reports a startup failure there too.
   Nothing moves the global `console.log`: keep it off stdout.
-- **A subprocess has its own services.** It runs the handlers itself, with the layers it is
-  given, so it shares a server's data only through a store both reach, never one in memory. A
-  host that should see what the server holds connects to its HTTP endpoint.
+- **A subprocess has its own services.** It runs the handlers itself, so it shares a server's
+  data only through a store both reach, never one in memory. A host that should see what the
+  server holds connects to its HTTP endpoint.
 - **No token arrives, so the host names the caller.** stdio takes no `authentication`: provide the
   protected tools' identity around `runStdio`, whose one caller is whoever started it. Each
   implementation's `authorize` still runs, so give that caller what it checks. Tools served
@@ -112,8 +115,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus"
 - **Test the tools without a process**: the implementations in process over a fake upstream
   ([mcp-tools/test/printers/printers.test.ts](../examples/mcp-tools/test/printers/printers.test.ts)),
   an endpoint in memory
-  ([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)). A subprocess
-  test adds only that stdout carries the protocol alone.
+  ([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)).
 
 ## Describe tools to a model
 
@@ -173,7 +175,6 @@ Name the protected actions' authentication descriptor and provide its provider t
 const mcp = ActionMcp.layerHttp(implementations, {
   name: "notes-service",
   version: "1.0.0",
-  instructions: "Notes belong to the signed-in user. Read a note before updating it.",
   authentication: Login,
 });
 
@@ -215,7 +216,8 @@ A browser MCP client sends its page's `Origin`, and needs two things.
   [mcp-tools/src/routes.ts](../examples/mcp-tools/src/routes.ts).
 - **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
   `HttpRouter.cors`, global to the router, only where an origin is configured: given an empty
-  list, it answers `Access-Control-Allow-Origin: *`. Allow the methods `POST` and
+  list, it answers `Access-Control-Allow-Origin: *`, and given one origin it names that origin
+  to every request, an unlisted page's included, which `allowedOrigins` still refuses. Allow the methods `POST` and
   `DELETE`, the endpoint's only ones, and the headers `Content-Type`, `Authorization`,
   `MCP-Protocol-Version`, `MCP-Method`, `MCP-Name` and `Mcp-Session-Id`; expose
   `WWW-Authenticate`, `MCP-Protocol-Version` and `Mcp-Session-Id`: the same `routes.ts`, and
@@ -237,8 +239,7 @@ one and pass it as `features`:
 around the endpoint, never to the `features` layer itself: there it is built again for the
 features alone, so a resource reads another store than the tools write.
 
-- Merged beside the endpoint, not given as `features`, they build without error and are never
-  served.
+- Merged beside the endpoint, not given as `features`, they build and are never served.
 - No `authorize` runs for them, and they run with the services they were built with, never a
   request's, so they cannot read the caller. Content that depends on the caller is an action.
 - On an endpoint naming `authentication`, every prompt and resource request needs a credential,
@@ -250,10 +251,9 @@ features alone, so a resource reads another store than the tools write.
 A handler yields `McpServer.McpServer` and sends through it:
 `server.notifications["notifications/progress"]({ progressToken, progress })`.
 `McpSchema.McpRequestContext` holds what the client sent: its `clientInfo`, and the request's
-`_meta` as `requestMetadata`. The endpoint and `runStdio` provide both. An implementation also
-served on another surface, where nothing provides them, reads them with `Effect.serviceOption`.
+`_meta` as `requestMetadata`. The endpoint and `runStdio` provide both; an implementation also
+served on another surface reads them with `Effect.serviceOption`.
 
 - On 2026-07-28, a progress notification is sent only with the token its request carried,
   `requestMetadata?.progressToken`. With another, or when the client sent none, it is dropped
   silently.
-- A refusal after a notification is a tool result: [Protect tools](#protect-tools).

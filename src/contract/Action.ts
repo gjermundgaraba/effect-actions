@@ -103,7 +103,10 @@ export interface Options {
    */
   readonly caller: typeof Anyone | Context.Key<unknown, unknown>;
   readonly description: string;
-  /** A schema or struct fields. Omit, or give `{}`, for an action without arguments. */
+  /**
+   * A schema or struct fields. Omit, or give `{}`, for an action without arguments. A field's
+   * `description` annotation is what a model reads in a tool's listing and a flag's help in a CLI.
+   */
   readonly input?: Codec | Fields | undefined;
   /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
   readonly success?: Codec | Fields | undefined;
@@ -408,6 +411,10 @@ const authorizerOf = (before: ErasedAuthorizer) =>
  * them. `Action.allowAll` permits every authenticated caller. An Effect may build the
  * authorizer once, with startup requirements separate from its per-call requirements.
  */
+// Why: Two overloads that no call can both be a candidate for: one takes three arguments, the
+// other two. TypeScript then reports a mismatch as that of the one signature the call could have
+// matched, where three candidates read "No overload matches this call. The last overload gave the
+// following error." before the cause. This one is first, so an authorizer is typed from it.
 export function implement<
   const T extends Target,
   RequestServices extends (T extends ReadonlyArray<Any>
@@ -424,11 +431,9 @@ export function implement<
   handlers:
     | HandlersOf<T, R, RequestServices>
     | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
-  options: {
-    readonly authorize: [Protected<ActionsOf<T>>] extends [never]
-      ? never
-      : Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX>;
-  },
+  options: [Protected<ActionsOf<T>>] extends [never]
+    ? { readonly authorize?: "A public-only target takes no authorize" } | undefined
+    : { readonly authorize: Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX> },
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
   const T extends Target,
@@ -438,41 +443,12 @@ export function implement<
   R = never,
   EX = never,
   RX = never,
-  RA = never,
-  EAX = never,
-  RAX = never,
 >(
   actions: T & TakesNoAuthorize<T>,
   handlers:
     | HandlersOf<T, R, RequestServices>
     | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
-  options?: { readonly authorize?: never },
-): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
-// Why: This repeats the first overload, since TypeScript reports a call matching none against the
-// last overload alone: a misspelled `authorize` as an unknown key, and one given to public actions
-// by this message. The first stays first, so an authorizer is typed from it.
-export function implement<
-  const T extends Target,
-  RequestServices extends (T extends ReadonlyArray<Any>
-    ? { readonly [K in NamesOf<T>]: unknown }
-    : never),
-  R = never,
-  EX = never,
-  RX = never,
-  RA = never,
-  EAX = never,
-  RAX = never,
->(
-  actions: T,
-  handlers:
-    | HandlersOf<T, R, RequestServices>
-    | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
-  options: {
-    readonly authorize: [Protected<ActionsOf<T>>] extends [never]
-      ? "A public-only target takes no authorize"
-      : Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX>;
-  },
-): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
+): Implemented<T, RequestServices, R, EX, RX, never, never, never>;
 export function implement(
   actions: Target,
   handlers: Built | Effect.Effect<Built, unknown, unknown>,

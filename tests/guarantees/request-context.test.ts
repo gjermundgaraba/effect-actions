@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
+  Cause,
   Context,
   Effect,
   ErrorReporter,
@@ -388,38 +389,53 @@ describe("what the routes were built with", () => {
       }),
   );
 
-  const boom = Action.implement(Boom, () => Effect.die(new Error("boom")));
+  class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
 
-  const boomOver: Record<
+  const Find = Action.make("find", {
+    description: "Fail as declared.",
+    readOnly: true,
+    caller: Action.Anyone,
+    error: Gone,
+  });
+
+  const failing = Action.implement([Boom, Find], {
+    boom: () => Effect.die(new Error("boom")),
+    find: () => Effect.fail(new Gone()),
+  });
+
+  const failingOver: Record<
     "HTTP" | "MCP" | "RPC",
     {
       readonly routes: Layer.Layer<never, unknown, Served>;
-      readonly call: Effect.Effect<unknown, unknown, HttpClient.HttpClient>;
+      readonly call: (
+        name: "boom" | "find",
+      ) => Effect.Effect<unknown, unknown, HttpClient.HttpClient>;
     }
   > = {
     HTTP: {
-      routes: ActionHttp.layer(ActionHttp.make([Boom]), boom),
-      call: Effect.suspend(() => send(post("/api/boom"))),
+      routes: ActionHttp.layer(ActionHttp.make([Boom, Find]), failing),
+      call: (name) => Effect.suspend(() => send(post(`/api/${name}`))),
     },
     MCP: {
-      routes: ActionMcp.layerHttp(boom, { name: "test", version: "0" }),
-      call: Effect.suspend(() => send(rawToolCall("boom"))),
+      routes: ActionMcp.layerHttp(failing, { name: "test", version: "0" }),
+      call: (name) => Effect.suspend(() => send(rawToolCall(name))),
     },
     RPC: {
-      routes: ActionRpc.layer(ActionRpc.make([Boom]), boom).pipe(
+      routes: ActionRpc.layer(ActionRpc.make([Boom, Find]), failing).pipe(
         Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
         Layer.provide(RpcSerialization.layerJson),
       ),
-      call: Effect.flatMap(ActionRpc.client(ActionRpc.make([Boom])), (client) =>
-        Effect.exit(client.boom()),
-      ).pipe(
-        Effect.scoped,
-        Effect.provide(
-          RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-            Layer.provide(RpcSerialization.layerJson),
+      call: (name) =>
+        Effect.flatMap(ActionRpc.client(ActionRpc.make([Boom, Find])), (client) =>
+          Effect.exit(client[name]()),
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(
+            RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+              Layer.provide(RpcSerialization.layerJson),
+            ),
           ),
         ),
-      ),
     },
   };
 
@@ -428,9 +444,9 @@ describe("what the routes were built with", () => {
     (transport) =>
       Effect.gen(function* () {
         const reported: Array<string> = [];
-        const { routes, call } = boomOver[transport];
+        const { routes, call } = failingOver[transport];
 
-        yield* call.pipe(
+        yield* call("boom").pipe(
           Effect.provide(
             Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(reported)])))),
           ),
@@ -446,9 +462,9 @@ describe("what the routes were built with", () => {
       Effect.gen(function* () {
         const layer: Array<string> = [];
         const server: Array<string> = [];
-        const { routes, call } = boomOver[transport];
+        const { routes, call } = failingOver[transport];
 
-        yield* call.pipe(
+        yield* call("boom").pipe(
           Effect.provide(
             Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(layer)])))).pipe(
               Layer.provide(
@@ -463,6 +479,84 @@ describe("what the routes were built with", () => {
         expect(layer).toEqual([]);
         expect(server).toEqual(["Error: boom"]);
       }),
+  );
+
+  it.effect.each([
+    ["HTTP", [expect.stringContaining("Gone")]],
+    ["MCP", []],
+    ["RPC", []],
+  ] as const)(
+    "reports a declared failure over HTTP, as Effect's HttpApi does, and not over MCP or RPC (%s)",
+    ([transport, expected]) =>
+      Effect.gen(function* () {
+        const reported: Array<string> = [];
+        const { routes, call } = failingOver[transport];
+
+        yield* call("find").pipe(
+          Effect.provide(
+            Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(reported)])))),
+          ),
+        );
+
+        expect(reported).toEqual(expected);
+      }),
+  );
+
+  it.effect(
+    "gives a reporter a declared failure and an undecodable input as Info over HTTP, and no failure of a class marked ignored",
+    () => {
+      class Hidden extends Schema.TaggedError<Hidden>()("Hidden", {}) {
+        override readonly [ErrorReporter.ignore] = true;
+      }
+
+      const Hide = Action.make("hide", {
+        description: "Fail with a class marked ignored.",
+        readOnly: true,
+        caller: Action.Anyone,
+        error: Hidden,
+      });
+
+      const Take = Action.make("take", {
+        description: "Take a number.",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: { n: Schema.Finite },
+      });
+
+      const actions = [Find, Hide, Take] as const;
+
+      const implemented = Action.implement(actions, {
+        find: () => Effect.fail(new Gone()),
+        hide: () => Effect.fail(new Hidden()),
+        take: () => Effect.void,
+      });
+
+      const given: Array<string> = [];
+
+      const reporter = ErrorReporter.make(({ cause, severity }) => {
+        given.push(`${severity}: ${Cause.pretty(cause)}`);
+      });
+
+      return Effect.gen(function* () {
+        const statuses = yield* Effect.forEach(["find", "hide", "take"], (name) =>
+          Effect.map(send(post(`/api/${name}`)), ({ status }) => status),
+        );
+
+        expect(statuses).toEqual([422, 422, 400]);
+        expect(given).toEqual([
+          expect.stringMatching(/^Info: [^]*Gone/),
+          expect.stringMatching(/^Info: [^]*InvalidInput/),
+        ]);
+      }).pipe(
+        Effect.provide(
+          Testing.layer(
+            ActionHttp.layer(ActionHttp.make(actions), implemented).pipe(
+              Layer.provide(ErrorReporter.layer([reporter])),
+            ),
+          ),
+        ),
+      );
+    },
   );
 
   it("answers a success that does not encode with an empty 500, reported once, over HTTP", async () => {

@@ -35,6 +35,8 @@ codex mcp add notes --url http://127.0.0.1:3000/mcp --bearer-token-env-var NOTES
 
 The server reads `PORT` (default 3000) and `PUBLIC_URL`, the address it tells OAuth clients it
 is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
+Every command asks for `NOTES_TOKEN`, the public `get-status` included: without it a command
+prints one message on stderr saying to set it, and exits 1. `--help` needs none.
 
 The tokens are fixed names and the store is memory: replace both before deploying anything.
 
@@ -59,13 +61,13 @@ src/
 ├── routes.ts          every surface of the host: /api, /mcp, /healthz, the OpenAPI document
 ├── server.ts          entrypoint: the HTTP server
 ├── stdio.ts           entrypoint: MCP for a local agent
-├── commands.ts        the commands calling the server, one of them written by hand
-├── cli.ts             entrypoint: the commands, connected from config
+├── commands.ts        the commands calling the server, one written by hand, and their connection
+├── cli.ts             entrypoint: the commands, given that connection
 └── browser.ts         client module: promises for a web page
 test/
 ├── notes/             in process, with Action.client
 ├── routes.test.ts     over HTTP and MCP in memory, with Testing.layer
-└── commands.test.ts   the commands, against the same routes in memory
+└── commands.test.ts   the commands and their connection, against the same routes in memory
 ```
 
 - **A folder per domain, not per mechanism.** Everything about notes is in `notes/`; there is no
@@ -84,6 +86,7 @@ test/
 | To see                                                        | Read                             |
 | ------------------------------------------------------------- | -------------------------------- |
 | A contract with declared errors and their statuses            | `src/notes/Notes.ts`             |
+| Input fields described, for `--help` and a tool's schema      | `src/notes/Notes.ts`             |
 | Handlers getting a service once and the caller per call       | `src/notes/handlers.ts`          |
 | A public action beside protected ones                         | `src/status/`                    |
 | Authorization from `readOnly`, refusing with a scope          | `src/identity/authorize.ts`      |
@@ -93,8 +96,10 @@ test/
 | The same actions over stdio, the host naming the caller       | `src/stdio.ts`                   |
 | A CLI derived from the binding: an argument, a field on stdin | `src/commands.ts`                |
 | A command written by hand beside the derived ones             | `src/commands.ts`                |
-| The CLI's connection, read from config                        | `src/cli.ts`                     |
+| The CLI's connection, read from config when a command runs    | `src/commands.ts`, `src/cli.ts`  |
+| A missing token as one message, not a `ConfigError` report    | `src/commands.ts`                |
 | A promise client handling each declared error by its tag      | `src/browser.ts`                 |
 | Testing handlers and authorization with no transport          | `test/notes/notes.test.ts`       |
 | Testing routes, tools and refusals in memory                  | `test/routes.test.ts`            |
 | Testing commands against the routes in memory                 | `test/commands.test.ts`          |
+| Testing `--help` and the connection with config as a Layer    | `test/commands.test.ts`          |

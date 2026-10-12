@@ -330,7 +330,9 @@ const isTransformedAsWhole = (ast: SchemaAST.AST): boolean =>
 // it for a model: a flag's help reads it there too, so one description serves both. A field
 // decoded from another type is read on its decoded side, then on the encoded one, which is the
 // side a tool lists. Where both a schema and a later check are described, help shows the later;
-// a description of the field's key, written with `annotateKey`, comes before both.
+// a description of the field's key, written with `annotateKey`, comes before both, and a
+// repeated flag with none of its own shows its element's, which each value given is: read on
+// either side whatever the element decodes to, since the encoded side alone says it repeats.
 const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
   ast.context?.annotations?.description ??
   SchemaAST.resolveDescription(ast) ??
@@ -344,6 +346,13 @@ const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
 
 const describedThroughAbsence = (ast: SchemaAST.AST): string | undefined =>
   ownOrSuspendedDescriptionOf(ast) ?? ownOrSuspendedDescriptionOf(withoutOptionalAbsence(ast));
+
+const describedByElement = (ast: SchemaAST.AST): string | undefined => {
+  const array = unsuspended(withoutOptionalAbsence(ast));
+  const element = SchemaAST.isArrays(array) ? array.rest[0] : undefined;
+
+  return element === undefined ? undefined : describedThroughAbsence(element);
+};
 
 const fieldParams = (
   encoded: SchemaAST.Objects,
@@ -374,7 +383,9 @@ const fieldParams = (
     const documented = declaredField ?? property.type;
 
     const description =
-      describedThroughAbsence(documented) ?? describedThroughAbsence(property.type);
+      describedThroughAbsence(documented) ??
+      describedThroughAbsence(property.type) ??
+      (repeats ? (describedByElement(documented) ?? describedByElement(property.type)) : undefined);
 
     const help = withHint(description, hint);
 

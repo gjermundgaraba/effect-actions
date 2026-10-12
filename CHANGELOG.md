@@ -29,7 +29,9 @@ identity provided at startup.** Among the startup requirements of `ActionHttp.la
 authorizer yields is replaced by a type whose one property is named by the sentence
 `"A builder yields the caller, which a server has per request: yield it in a handler or an authorizer"`,
 which is what the compiler now prints last wherever the routes are launched or run, in place of
-`Type 'CurrentUser' is not assignable to type 'never'`. `runStdio`, `ActionToolkit`, `ActionCli`
+`Type 'CurrentUser' is not assignable to type 'never'`. The property's type names the caller
+and the actions whose builder yields it, `{ caller: CurrentUser; builderOf: "createNote" | ... }`:
+the error is reported where the routes are served and run, not where the builder is. `runStdio`, `ActionToolkit`, `ActionCli`
 and `Action.client`, whose host names one caller, are unchanged.
 
 - Migrate: move the `yield*` of the identity into the handler or the authorizer.
@@ -61,12 +63,20 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   array of objects with its fields, `A JSON array of {id, approved?}.`
 - A flag's help shows the field's description wherever it is annotated. One annotated before a
   check, or on the field's key with `annotateKey`, where an MCP tool's listing reads it, was
-  missing from `--help`.
+  missing from `--help`. A repeated flag with no
+  description of its own shows its element's.
 - The compiler says what is missing where a protected action is implemented without
   `authorize`: the message ends `is not assignable to type '"A protected action takes
   { authorize }: your rule, or Action.allowAll"'`, where it ended `'typeof CurrentUser' is not
   assignable to type 'unique symbol'`. The constraint named `ProtectedActionsTakeAuthorize`,
   which the error showed for one action and not for a list, is gone.
+- An error at `Action.implement` no longer starts `No overload matches this call. The last
+  overload gave the following error.`: its two signatures take three arguments and two, so a call
+  is checked against one, and the cause is two lines nearer the top. This replaces the third
+  overload, which repeated the first because TypeScript reports against the last. A public
+  target still takes `{}`, `undefined` or forwarded options as its third argument. `typeof
+  Action.implement` reads as the two-argument signature, so `Parameters<typeof Action.implement>[2]`
+  no longer compiles.
 - The compiler names an undeclared error where a handler fails with one: the message ends
   `Property '"~declared in the action's error, or built in"' is missing in type 'NoteTooLong'`,
   where it ended `Property '"~builtIn"' is missing`.
@@ -89,7 +99,7 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   when it does not, and runs the authorizer. Refusals are the typed `Unauthenticated` and
   `Forbidden`, with no challenge or step-up. A defect, a middleware that throws included, is
   logged and answered as that request's `Internal server error` alone, reported once with its
-  cause to the call's `ErrorReporter`s; a declared failure is not reported, as over HTTP, unless it encodes to a primitive (`error: Schema.String`), which Effect's reporter cannot be told to skip and reports as `Info`. Request services come from the layer's `middleware` or
+  cause to the call's `ErrorReporter`s; a declared failure is not reported. Request services come from the layer's `middleware` or
   router middleware, never startup. Public and protected actions are served over any protocol,
   a socket server and stdio included; `layer` refuses to build under a protocol
   that does not speak JSON, such as schema-binary's. This
@@ -108,13 +118,17 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- [ActionHttp.md](docs/ActionHttp.md#serve-the-routes) says that an `ErrorReporter` is given a
+  declared failure over HTTP, which Effect's `HttpApi` reports, and not over MCP or RPC, and how
+  to mark an error class as unreported.
+- `Testing.layer` logs, as an error, the cause of a defect, of a result that does not encode,
+  or of a failure a route of your own leaves unhandled. It logs nothing for a request that succeeds, is refused, fails with a declared
+  error or finds no route. An empty 500 in a test showed its
+  cause nowhere unless the test provided an `ErrorReporter`: a server's request logger writes
+  it, and a test runs none ([Testing-failures.md](docs/Testing-failures.md)).
 - A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the
   binding's authentication declares as its JSON, as it prints every other declared error. It
   printed it as prose, the error's name alone.
-- `ActionRpc.layer` answers a declared failure its handler froze. Marking it unreported threw,
-  and the call died with a `TypeError` instead. One that encodes to an array is no longer
-  reported, and one holding a key named `~effect/ErrorReporter/ignore` keeps its value, which
-  the mark overwrote with `true`.
 - No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
   in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
   sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and
@@ -133,9 +147,18 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
   origins it is configured with; `live-rpc` bounds a WebSocket message and has a promise
   client, `connect(url)`; `kitchen-sink` serves its assistant behind a route, a turn per
   request: each member's conversation kept between requests, an approval answered in a later
-  one, by the member who was asked alone, and a conversation ended where a turn fails or is
+  one, by the member who was asked alone, every open one listed in each turn's answer as Effect would act on it, and a conversation ended where a turn fails or is
   interrupted
-  ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)).
+  ([ActionToolkit.md](docs/ActionToolkit.md#give-a-model-tools)). `notes-service` describes its
+  input fields, which a flag's help and a tool's listing show, and its CLI requires
+  `NOTES_TOKEN`, a missing one printed as a message, not a `ConfigError` log line: its public
+  `get-status` and a bare `notes` need the token there too. `mcp-tools`' README says how to
+  connect Claude Code and Claude Desktop and to call the endpoint with `curl`, and a test pins
+  what CORS answers for one configured origin. `live-rpc` has a test over a real WebSocket. `notes-service`'s `export` prints context of its
+  own before a failure, on a line of stderr, leaving the failure's JSON as it is. Comments
+  mark what a copy must decide: a server bound to `127.0.0.1` serves its machine alone, the
+  discovery block's authorization server is `DEMO ONLY`, `notes-service`'s OpenAPI document is
+  public by choice, and an action added to its binding is also a `notes` command. A `kitchen-sink` test calls its rpcs and its JSON routes under one `Testing.layer` ([Testing.md](docs/Testing.md#test-rpcs)).
 - The package ships `examples/`: six complete applications, each a directory with its own
   tests, laid out by domain. `quickstart` is the smallest program; `notes-service` is a service
   with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a

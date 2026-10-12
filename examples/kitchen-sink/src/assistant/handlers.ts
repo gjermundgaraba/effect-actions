@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Ref, Schema } from "effect";
 import { type Chat, LanguageModel, type Prompt } from "effect/ai";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../identity/Identity.js";
@@ -22,6 +22,40 @@ const didNotRun = Schema.is(
 
 const callsToRead = (response: Response) =>
   response.toolCalls.length > 0 && approvalsOf(response).length === 0;
+
+// Every request of a conversation that an answer would still act on, with the call it would
+// run: read from the `Chat`'s history, by the rule Effect applies when an answer arrives. A
+// request is open until its call has a result, a denial's included, and its call is the last
+// in the history with that id. So a request an earlier answer left open is listed in every
+// turn until it is answered, and what is listed is what an approval runs.
+const openRequestsOf = ({ content: messages }: Prompt.Prompt) => {
+  const resolved = new Set(
+    messages.flatMap((message) =>
+      message.role === "tool"
+        ? message.content.flatMap((part) => (part.type === "tool-result" ? [part.id] : []))
+        : [],
+    ),
+  );
+
+  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
+  const calls = said.filter((part) => part.type === "tool-call");
+
+  return said.flatMap((request) => {
+    if (request.type !== "tool-approval-request" || resolved.has(request.toolCallId)) return [];
+
+    const call = calls.findLast(({ id }) => id === request.toolCallId);
+
+    return call === undefined
+      ? []
+      : [
+          {
+            approvalId: request.approvalId,
+            tool: call.name,
+            arguments: JSON.stringify(call.params),
+          },
+        ];
+  });
+};
 
 // The model loop behind a route. The builder runs once, at startup, and yields what a turn is
 // built from: the tools with their handlers, the model, and where conversations are kept. A
@@ -58,15 +92,7 @@ export const assistant = Action.implement(
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),
-          waiting: approvalsOf(response).flatMap(({ approvalId, toolCallId }) =>
-            response.toolCalls
-              .filter((call) => call.id === toolCallId)
-              .map((call) => ({
-                approvalId,
-                tool: call.name,
-                arguments: JSON.stringify(call.params),
-              })),
-          ),
+          waiting: openRequestsOf(yield* Ref.get(chat.history)),
         };
       }).pipe(
         // The model is a startup service, given to each turn here.

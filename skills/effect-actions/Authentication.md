@@ -145,7 +145,7 @@ added. The authorizer, a handler or the verifier may fail with one:
   answered like a declared error, and RPC never steps up: a refusal is the call's typed failure
   ([guarantees.md](guarantees.md#wire-behavior)).
 - Name scopes only when re-authorizing can grant them: a server with fixed tokens, such as API
-  keys, names none. A `Forbidden` naming none prompts no login. Over HTTP it is a 403 without a
+  keys, leaves `scopes` out. A `Forbidden` without them prompts no login. Over HTTP it is a 403 without a
   challenge. Over MCP it is an `isError` tool result, in a 200, from the authorizer or a
   handler, and the endpoint's 403 only from the verifier
   ([kitchen-sink/src/identity/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/authenticate.ts)).

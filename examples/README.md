@@ -58,7 +58,8 @@ the parts of it that it needs:
   local surface which caller. Nothing below it knows what it got, so a test chooses its own.
 - **Tests mirror the source.** A domain's tests sit in `test/<domain>/`, most calling its
   implementation in process with `Action.client`; a test of a root file, such as `routes.ts`,
-  sits beside them and calls the real routes in memory with `Testing.layer`. None opens a port.
+  sits beside them and calls the real routes in memory with `Testing.layer`. One opens a port:
+  live-rpc's `server.test.ts`, for the WebSocket no in-memory test reaches.
 
 In a monorepo, the contract files and the binding are the package that the server, the CLI and
 the website all depend on; the rest is the server.

@@ -35,8 +35,10 @@ Three choices here show a feature. Decide each for your application before keepi
 - **A message naming no room is about `lobby`**, to show a default in request context. Yours may
   refuse instead.
 - **The room is a header, not an input**, because `authorize` sees the action and not its input:
-  the membership rule reads the room from request context. A room in the input moves that check
-  into the store.
+  the membership rule reads the room from request context. With the room in the input, the
+  check belongs in the store, never in a helper each handler must remember to call: the store's
+  method takes the member and refuses, as `MessageStore.remove` in `src/chat/store.ts` takes the
+  author and refuses with `NotAuthor`.
 
 ## Layout
 
@@ -60,7 +62,8 @@ src/
 test/
 ├── chat/              in process, with Action.client
 ├── routes.test.ts     over RPC in memory, with Testing.layer
-└── browser.test.ts    the page's client against the same rpcs
+├── browser.test.ts    the page's client against the same rpcs
+└── server.test.ts     the socket itself: a listening port, connect(url), the bound on a message
 ```
 
 - **The PascalCase files are what a page imports.** `Chat.ts`, `Identity.ts` and `Rpc.ts` import
@@ -76,9 +79,10 @@ test/
 - **The socket belongs to the Layer providing it.** `connection(url)` opens it when it is built
   and closes it when it is released: provide it once around the page's program, or keep it in
   a `ManagedRuntime`, as `connect(url)` does. The scope `openChat` needs holds only the client.
-- **No test opens a port.** `Testing.layer` answers HTTP requests and cannot upgrade a WebSocket,
-  so the tests give the same rpcs Effect's HTTP protocol. The socket itself is exercised by
-  running `client.ts`, and no test sends a message over the size `server.ts` allows.
+- **One test file opens a port.** `Testing.layer` answers HTTP requests and cannot upgrade a
+  WebSocket, so `routes.test.ts` and `browser.test.ts` give the same rpcs Effect's HTTP protocol,
+  in memory. `server.test.ts` covers what that leaves out: it serves them over a WebSocket on a
+  port the system picks, calls with `connect(url)`, and sends a message over the server's bound.
 
 ## Where to look
 
@@ -100,3 +104,4 @@ test/
 | Testing rpcs, authentication and middleware in memory                  | `test/routes.test.ts`                           |
 | The binding's native `RpcGroup` called by Effect's own client          | `test/routes.test.ts`                           |
 | Testing the client's handling of each error and refusal                | `test/browser.test.ts`                          |
+| Testing over a real WebSocket, and a message over `maxPayload`         | `test/server.test.ts`                           |

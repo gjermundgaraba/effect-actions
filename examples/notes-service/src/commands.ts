@@ -1,5 +1,6 @@
-import { Console, Effect, FileSystem } from "effect";
-import { Argument, Command } from "effect/cli";
+import { Config, Console, Effect, FileSystem, flow } from "effect";
+import { Argument, CliError, Command } from "effect/cli";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./Api.js";
@@ -26,6 +27,9 @@ const exportNotes = Command.make(
 
       yield* Console.log(`Wrote ${whole.length} notes to ${file}`);
     }).pipe(
+      // Context of your own for a failure goes to stderr before it, on a line of its own. A
+      // `UserError` wrapped around the failure instead would put its JSON mid-sentence.
+      Effect.tapError(() => Console.error(`The export to ${file} did not finish.`)),
       // Once, around the whole command: it then fails as a derived command does, an action's
       // error printed as its JSON on stderr and any other, a file that cannot be written for
       // one, named. A failure left as it is would be reported as a crash, with an `ERROR (#n)`
@@ -49,4 +53,33 @@ export const commands = ActionCli.remote(Http, {
   // `Command.withSubcommands` on the result would replace the derived commands, so your own
   // go here.
   subcommands: [exportNotes],
+});
+
+// Where the server is and who is calling, read from config: the `HttpClient` every command
+// above calls with. It is an Effect, not a value, so that cli.ts provides it on the commands
+// and it runs when one of them does.
+export const connection = Effect.gen(function* () {
+  const url = yield* Config.String("NOTES_URL").pipe(Config.withDefault("http://127.0.0.1:3000"));
+
+  // Required, since every command but `get-status` is refused without one. A failure of what a
+  // command is provided is no action's error: left as it is, a missing token is reported as a
+  // crash, the log line `ERROR (#n): ConfigError: SchemaError(Expected string at
+  // ["NOTES_TOKEN"])`. Mapped to a `UserError`, it is printed as any failure of a command is:
+  // the message under an `ERROR` heading on stderr, and exit 1. Only this read is mapped, so
+  // the message is true of every failure it covers. A CLI whose public commands must answer
+  // signed out reads the token with `Config.option` instead and adds the header when it is there.
+  const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
+    Effect.mapError(
+      (cause) =>
+        new CliError.UserError({
+          cause,
+          userMessage: "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=ada",
+        }),
+    ),
+  );
+
+  return HttpClient.mapRequest(
+    yield* HttpClient.HttpClient,
+    flow(HttpClientRequest.prependUrl(url), HttpClientRequest.bearerToken(token)),
+  );
 });

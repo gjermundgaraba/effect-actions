@@ -214,15 +214,19 @@ describe("the assistant, behind a route", () => {
         answers: first === undefined ? [] : [first],
       });
 
-      // The call left open is not listed again: its `approvalId` is the client's to keep.
-      expect(answered).toMatchObject({ ran: [{ tool: "commentOnIssue" }], waiting: [] });
+      // The call left open is listed again, in every turn until it is answered.
+      expect(answered).toMatchObject({ ran: [{ tool: "commentOnIssue" }] });
+      expect(answered.waiting).toEqual([
+        { approvalId: second?.approvalId, tool: "closeIssue", arguments: '{"id":"ACME-1"}' },
+      ]);
       expect(yield* ada.getIssue({ id })).toMatchObject({ status: "open" });
 
-      yield* ada.answerAssistant({
+      const closed = yield* ada.answerAssistant({
         conversation: asked.conversation,
         answers: second === undefined ? [] : [second],
       });
 
+      expect(closed.waiting).toEqual([]);
       expect(yield* ada.getIssue({ id })).toMatchObject({ status: "closed" });
       expect((yield* ada.getIssue({ id })).comments).toHaveLength(1);
     }).pipe(
@@ -237,6 +241,102 @@ describe("the assistant, behind a route", () => {
         ),
       ),
     ),
+  );
+
+  it.effect("keeps listing a request left open while its member asks for something else", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+      const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+      const first = yield* ada.askAssistant({ prompt: "Say it is fixed." });
+
+      const second = yield* ada.askAssistant({
+        conversation: first.conversation,
+        prompt: "Close it too.",
+      });
+
+      expect(second.waiting.map(({ tool }) => tool)).toEqual(["commentOnIssue", "closeIssue"]);
+
+      const [, close] = approving(second.waiting);
+
+      const closed = yield* ada.answerAssistant({
+        conversation: first.conversation,
+        answers: close === undefined ? [] : [close],
+      });
+
+      // Each answer runs its own call: the close ran, the comment still waits.
+      expect(closed.ran).toEqual([{ tool: "closeIssue", failed: false }]);
+      expect(closed.waiting).toEqual(first.waiting);
+      expect(yield* ada.getIssue({ id })).toMatchObject({ status: "closed", comments: [] });
+    }).pipe(
+      served(
+        scripted(
+          [call("1", "commentOnIssue", { id: "ACME-1", text: "Fixed." })],
+          [call("2", "closeIssue", { id: "ACME-1" })],
+          says("Closed."),
+        ),
+      ),
+    ),
+  );
+
+  // A provider gives each call an id of its own. Where a model does not, Effect runs the last
+  // call with the id an approval names: the list shows that call, not the one first asked.
+  it.effect("lists, for a call id a model used twice, the call an approval would run", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+      const { id } = yield* ada.createIssue({ title: "Crash", body: "On save." });
+      const first = yield* ada.askAssistant({ prompt: "Say it is fixed." });
+
+      const second = yield* ada.askAssistant({
+        conversation: first.conversation,
+        prompt: "Close it too.",
+      });
+
+      expect(second.waiting.map(({ tool }) => tool)).toEqual(["closeIssue", "closeIssue"]);
+
+      const answered = yield* ada.answerAssistant({
+        conversation: first.conversation,
+        answers: approving(first.waiting),
+      });
+
+      expect(answered).toMatchObject({ ran: [{ tool: "closeIssue" }], waiting: [] });
+      expect(yield* ada.getIssue({ id })).toMatchObject({ status: "closed", comments: [] });
+    }).pipe(
+      served(
+        scripted(
+          [call("same", "commentOnIssue", { id: "ACME-1", text: "Fixed." })],
+          [call("same", "closeIssue", { id: "ACME-1" })],
+          says("Closed."),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("runs what its member approves in each turn of the demo model", () =>
+    Effect.gen(function* () {
+      const ada = yield* asAda;
+
+      yield* ada.createIssue({ title: "Crash", body: "On save." });
+
+      const first = yield* ada.askAssistant({ prompt: "Tidy up." });
+
+      yield* ada.answerAssistant({
+        conversation: first.conversation,
+        answers: approving(first.waiting),
+      });
+
+      const again = yield* ada.askAssistant({
+        conversation: first.conversation,
+        prompt: "Once more.",
+      });
+
+      const answered = yield* ada.answerAssistant({
+        conversation: first.conversation,
+        answers: approving(again.waiting),
+      });
+
+      expect(again.waiting.map(({ tool }) => tool)).toEqual(["closeIssue"]);
+      expect(answered).toMatchObject({ ran: [{ tool: "closeIssue" }], waiting: [] });
+    }).pipe(Effect.provide(Testing.layer(publicRoutes).pipe(Layer.provide(memory)))),
   );
 
   it.effect("refuses a request answering one approval twice, and runs nothing of it", () =>

@@ -10,8 +10,8 @@ import { CurrentMember } from "../identity/Identity.js";
  * What a turn ended with. A call in `ran` ran in this turn, `failed` where it was refused or
  * failed with a declared error; one the member denied, or one in a reply the provider cut
  * short, did not run and is not listed. A call in `waiting` has not run: `answerAssistant`
- * decides it. `waiting` holds what this turn asked: a call left unanswered by an earlier
- * answer stays open, and is not listed again.
+ * decides it. `waiting` holds every open request of the conversation: one this turn
+ * asked, and one an earlier answer left unanswered, until it is answered.
  */
 export const Turn = Schema.Struct({
   conversation: Schema.String,

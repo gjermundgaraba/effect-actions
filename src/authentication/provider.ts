@@ -182,14 +182,18 @@ export type RemoteRequest<App, A extends Action.Any> =
  * `BuildServices` states it, with the caller a builder yields named as the mistake it is: a server
  * has its caller per request.
  */
-export type ServerBuildServices<App, A extends Action.Any> =
-  BuildServices<App, A> extends infer R
+export type ServerBuildServices<App, A extends Action.Any> = App extends unknown
+  ? BuildServices<App, A> extends infer R
     ? R extends Identity<Protected<A>>
       ? {
-          readonly "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer": never;
+          readonly "A builder yields the caller, which a server has per request: yield it in a handler or an authorizer": {
+            readonly caller: R;
+            readonly builderOf: Serving<App, A>["name"];
+          };
         }
       : R
-    : never;
+    : never
+  : never;
 
 /**
  * What a call of `A` under the descriptor `D` may fail with from its verifier: the errors `D`

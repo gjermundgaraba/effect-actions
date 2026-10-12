@@ -109,12 +109,19 @@ Files: [quickstart/src/routes.ts](../examples/quickstart/src/routes.ts) and
 
 Set a request body limit: a body has none unless the host provides one to `HttpRouter.serve`, as
 below. It covers every route of the server, MCP endpoints included, except a body a route reads
-as a stream. On Node (`NodeHttpServer`), a request over it gets no response: its connection is
+as a stream. On Node (`NodeHttpServer`), a request over it gets no response, not a 413: its connection is
 closed. `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
 
 ```ts
 Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
 ```
+
+An `ErrorReporter` the server runs with is also given, with severity `Info`, what a handler
+or `authorize` fails with and an input that does not decode, a declared 404, a 403 or a 400:
+Effect's `HttpApi` reports a route's failures, of which a refused credential is none. MCP and
+RPC report a defect alone. To keep a declared error out of a tracker, give its class
+`override readonly [ErrorReporter.ignore] = true`; a built-in error takes no mark, so drop
+`Info` there.
 
 ### Split a binding across layers, and add middleware
 
@@ -177,7 +184,7 @@ headers, errors by tag).
 
 - Outside a browser, set `baseUrl`. A token or any other header goes through `transformClient`.
   Where no client is built by hand, as under `ActionCli.remote`, transform the `HttpClient`
-  itself ([notes-service/src/cli.ts](../examples/notes-service/src/cli.ts)).
+  itself (`connection` in [notes-service/src/commands.ts](../examples/notes-service/src/commands.ts)).
 - Leave the argument out when `{}` is a valid input. A given argument is the decoded input, so
   it states a defaulted field.
 - A declared error is a typed failure, as its decoded value: the action's own, the binding's,

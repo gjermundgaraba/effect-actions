@@ -64,7 +64,7 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
 - 415 `Unsupported content-type: <type>` (`none` without one): the request is not typed as JSON,
   such as `fetch`'s default `text/plain` for a string body. Send `Content-Type: application/json`.
 - Empty 500: a defect, or a handler result not matching the success schema. The cause is in the
-  server's logs.
+  server's logs, written by its request logger, and under `Testing.layer` in the test's, as an error.
 
 ## Client methods
 

@@ -72,6 +72,8 @@ Run it with Effect's own `Command.run`:
   `TestConsole.logLines` holds every line of the test, each `unknown`, not of one run: take each
   run's own and compare or decode them, as
   [notes-service/test/commands.test.ts](../examples/notes-service/test/commands.test.ts) does.
+  A run also fails with Effect CLI's own errors, such as a flag that does not parse: only a
+  `UserError` has a `userMessage`, so match it (`Effect.catchTag("UserError", …)`) before reading one.
 
 ## Call a server from commands
 
@@ -88,11 +90,14 @@ every command option.
   `client: { baseUrl, transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) }`.
   One read from `Config` configures the `HttpClient` provided on the command, with
   `Command.provideEffect(HttpClient.HttpClient, …)` as `notes-service/src/cli.ts` does, so
-  `--help` needs neither.
+  `--help` needs neither. A command of your own in `subcommands` calls through the same client.
 - **Configure the client on the command, never around the program.** Around the program it
   rewrites every request the program makes, an absolute URL too, and sends each one the token.
-- **Read the token with `Config.option` when the binding has a public action.** A required
-  token makes the public command fail without one.
+- **A token every command needs is required, its failure mapped to a `CliError.UserError`**, or a
+  missing one prints a raw `ConfigError` log line: `connection` in
+  [notes-service/src/commands.ts](../examples/notes-service/src/commands.ts). Where a public
+  command must answer signed out, read it with `Config.option` and add the header when it is
+  there: [kitchen-sink/src/cli.ts](../examples/kitchen-sink/src/cli.ts).
 - **Test a remote command the same way** as a local one, with `Testing.layer(routes)` provided
   as its `HttpClient` ([Testing.md](Testing.md#test-routes-in-memory)). Export the command from
   a module apart from the entrypoint that runs it
@@ -159,7 +164,9 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
   command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, the binding its
   client is made from, HTTP or RPC, or `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared
   error as its JSON on stderr, a transport failure named with its causes. A message of your own is `new CliError.UserError({ cause, userMessage })`, which
-  passes through. A failure left unmapped, one call's included, is reported as a crash,
+  passes through. To add context to a failure, such as how far a batch got, print it inside the
+  pipe, `Effect.tapError(() => Console.error(…))`: wrapping the `UserError` in another puts its
+  JSON mid-sentence and hides the action's failure from `catchReason`. A failure left unmapped, one call's included, is reported as a crash,
   `ERROR (#n)` with a stack trace.
 - **Write the list in the call**, or hold the options with `satisfies ActionCli.Options<…>`. The
   aggregate's type then carries its commands' failures and services. A list in options
@@ -167,8 +174,8 @@ const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes]
 
 ### Output and exit code
 
-- **A command writes only its result to stdout**: the success as JSON, or the text `render`
-  returns.
+- **A command writes only its result to stdout**: the success as JSON, indented by two spaces,
+  or the text `render` returns.
 - **Everything else a command runs writes to stderr**: its Effect logs and Effect `Console`
   output. The global `console.log` and other direct writes bypass Effect and still reach stdout.
 - **A failure of the action is printed once on stderr, under Effect CLI's `ERROR` heading, as

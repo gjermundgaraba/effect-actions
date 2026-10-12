@@ -9,6 +9,7 @@ import {
   Schema,
   type Scope,
   type Types,
+  SchemaTransformation,
 } from "effect";
 import { type Headers, HttpClientRequest, type HttpRouter, HttpServerRequest } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
@@ -281,25 +282,29 @@ class InternalError extends Error {
   }
 }
 
-const isJsonObject = (json: Schema.Json): json is Schema.JsonObject => Predicate.isObject(json);
+// Why: A declared failure is the caller's answer, which no error reporter is given. The mark
+// that says so is on this wrapper, which the server's group encodes to the JSON it holds, and
+// never on the JSON: a mark on the failure touches a value the handler made, and a primitive
+// takes none. It prints as its JSON, which is what a trace of the server's span shows.
+class DeclaredFailure {
+  readonly [ErrorReporter.ignore] = true;
 
-const isJsonArray = (json: Schema.Json): json is Schema.JsonArray => Array.isArray(json);
+  constructor(readonly json: Schema.Json) {}
 
-const marked = <Copy extends Schema.JsonObject | Array<Schema.Json>>(copy: Copy): Copy =>
-  Object.defineProperty(copy, ErrorReporter.ignore, { value: true });
+  toString() {
+    return Predicate.isString(this.json) ? this.json : JSON.stringify(this.json);
+  }
+}
 
-// Why: A copy carries the mark. The JSON codec may answer the very object a handler failed
-// with, which the handler may have frozen: marking that one would throw. The copy is made of
-// entries, which define each key: assigning them would run the setter of a key `__proto__`.
-// The mark is a key of its own, a string: a failure that holds that key keeps its value, and
-// is reported or not as it says.
-const markedUnreported = (encoded: Schema.Json): Schema.Json => {
-  if (isJsonArray(encoded)) return marked([...encoded]);
-
-  return isJsonObject(encoded) && !Object.hasOwn(encoded, ErrorReporter.ignore)
-    ? marked(Object.fromEntries(Object.entries(encoded)))
-    : encoded;
-};
+const DeclaredFromJson = Schema.Json.pipe(
+  Schema.decodeTo(
+    Schema.instanceOf(DeclaredFailure),
+    SchemaTransformation.transform({
+      decode: (json) => new DeclaredFailure(json),
+      encode: (failure) => failure.json,
+    }),
+  ),
+);
 
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(error));
@@ -320,7 +325,7 @@ const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
         ? encode(failure.success.error).pipe(
             Effect.matchCauseEffect({
               onFailure: (unencoded) => internal(Cause.combine(cause, unencoded)),
-              onSuccess: (encoded) => Effect.fail(markedUnreported(encoded)),
+              onSuccess: (encoded) => Effect.fail(new DeclaredFailure(encoded)),
             }),
           )
         : Effect.failCause(cause);
@@ -356,8 +361,8 @@ const handlerOf = (
       call,
     );
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the call's encoded success through, or fail; the boundary fails with an encoded error alone, or an interruption.
-    return boundary(wrapped) as Effect.Effect<Schema.Json, Schema.Json, unknown>;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the call's encoded success through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
+    return boundary(wrapped) as Effect.Effect<Schema.Json, DeclaredFailure, unknown>;
   };
 };
 
@@ -376,9 +381,7 @@ const handlerOf = (
  * runs the authentication and the middleware itself, then decodes the input. A defect is
  * logged with its cause, reported to the call's `ErrorReporter`s, and answered as its
  * request's generic failure, never failing the connection's other calls; a declared failure is
- * the caller's answer, and not reported, unless it encodes to a primitive, which Effect's
- * reporter cannot be told to skip, or holds the reporter's own key,
- * `~effect/ErrorReporter/ignore`, whose value it keeps.
+ * the caller's answer, and not reported.
  *
  * The layer fails as the builders do, needs at startup what they need, and per request what
  * each implementation's authorization and the handlers of the actions it serves need, as
@@ -419,7 +422,11 @@ export function layer(
 
   const jsonGroup = RpcGroup.make(
     ...actions.map((action) =>
-      Rpc.make(action.name, { payload: Schema.Json, success: Schema.Json, error: Schema.Json }),
+      Rpc.make(action.name, {
+        payload: Schema.Json,
+        success: Schema.Json,
+        error: DeclaredFromJson,
+      }),
     ),
   );
 

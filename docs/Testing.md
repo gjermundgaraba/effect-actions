@@ -5,7 +5,8 @@ what its handlers and its `authorize` do. `Testing.layer` answers the real route
 through Effect's own `HttpClient`: what a surface adds, such as authentication, statuses,
 challenges and tool results as sent. The examples put a domain's tests in `test/<domain>/` and
 tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which supplies the
-`Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`.
+`Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`
+(both imported from `effect/testing`).
 
 Read this page alone, in one tool call: pages read together are cut. When something fails,
 search [Testing-failures.md](Testing-failures.md). Reading order: [README.md](README.md).
@@ -178,7 +179,11 @@ Authentication is per message, so each call carries its credential and one clien
 caller: `client.postMessage({ text }).pipe(as("ada"))`. See
 [live-rpc/test/routes.test.ts](../examples/live-rpc/test/routes.test.ts);
 [live-rpc/test/browser.test.ts](../examples/live-rpc/test/browser.test.ts) tests a page's client
-the same way. Effect's `RpcTest.makeClient` is no substitute: it asks for handlers of the
+the same way. To call JSON routes in the same test, merge both route layers into the one
+`Testing.layer` and give it to the protocol with `Layer.provideMerge`, which keeps its `HttpClient`
+for the test
+([kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)).
+Effect's `RpcTest.makeClient` is no substitute: it asks for handlers of the
 binding's group, which `ActionRpc.layer` does not provide (`Handler<"…">` stays required).
 
 ## Assert on errors

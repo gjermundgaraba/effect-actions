@@ -54,7 +54,10 @@ interface AnyBinding {
  * whole Effect through it: a failure that is a declared error, the binding's and its
  * authentication's included, or a built-in one becomes a `UserError` whose message is its JSON, and any other, a transport
  * failure for one, a `UserError` naming it and the causes beneath it. An Effect CLI error, your
- * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is.
+ * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is. To
+ * add context, such as how far a batch got, print it before this in the pipe, with
+ * `Effect.tapError(() => Console.error(…))`: a `UserError` wrapped around the result would
+ * replace its JSON.
  */
 export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
   "actions" in calls
@@ -258,7 +261,8 @@ const checkedCommandsOf = (
  * Project one implemented action into a native Effect CLI command that runs its handler in
  * process, behind its implementation's authorization. It is named after the action in kebab
  * case with one flag per field of its input (`--user-id`), or `--input` taking the whole input
- * as JSON when it is not a struct. It needs what the authorization, its handler and its builder
+ * as JSON when it is not a struct. The flag of an array of strings or numbers is repeated for each value, a boolean
+ * field is a switch, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
  * `UserError`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
  */
@@ -312,7 +316,10 @@ export type RemoteCommandOptions<A extends Action.Any = Action.Any> = CommandOpt
 export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
   /**
    * Every subcommand's client options, as `ActionHttp.client` takes them: `baseUrl`, and
-   * `transformClient` for credentials. They reach this aggregate's requests alone.
+   * `transformClient` for credentials. They reach this aggregate's requests alone. A URL or a
+   * token read from `Config` goes instead into the `HttpClient` provided on the command, with
+   * `Command.provideEffect(HttpClient.HttpClient, …)`: it is read when a command runs, so
+   * `--help` needs neither, and a command of your own in `subcommands` calls through it too.
    */
   readonly client?: ClientOptions;
 };
@@ -331,7 +338,8 @@ type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
  * its action in kebab case and run in process. `commands` gives a subcommand the options
  * `command` takes, by action name; `subcommands` adds commands of your own, which
  * `Command.withSubcommands` on the result would put in the derived ones' place. `remote` calls a
- * server instead.
+ * server instead. A test runs it in memory, with no process:
+ * `Command.runWith(command, { version })(args)`.
  */
 export function make<
   const Apps extends Served,

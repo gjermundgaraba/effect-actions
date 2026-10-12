@@ -32,7 +32,7 @@ const spend = Effect.gen(function* () {
 
     yield* limiter
       .consume({
-        key: `requests/${member.workspace}/${member.id}`,
+        key: JSON.stringify(["requests", member.workspace, member.id]),
         limit: 60,
         window: "1 minute",
         onExceeded: "fail",

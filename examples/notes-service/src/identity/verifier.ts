@@ -27,6 +27,7 @@ export const authenticate = Authentication.layer(Login, verify, {
     (url) =>
       ({
         resource: `${url}/mcp`,
+        // DEMO ONLY: no server is there. Yours is your authorization server's issuer.
         authorizationServers: ["https://auth.example.com"],
         scopesSupported: [scopes.read, scopes.write],
         scopesRequired: [scopes.read],
