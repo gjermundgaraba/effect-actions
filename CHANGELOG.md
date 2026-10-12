@@ -116,6 +116,9 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 ### Other changes
 
+- [ActionHttp.md](docs/ActionHttp.md#serve-the-routes) says that an `ErrorReporter` is given a
+  declared failure over HTTP, which Effect's `HttpApi` reports, and not over MCP or RPC, and how
+  to mark an error class as unreported. A test pins it.
 - `Testing.layer` logs, as an error, the cause of a request that an `ErrorReporter` would be
   given: a defect, a result that does not encode, or a failure a route of your own leaves
   unhandled. It logs nothing for a request that succeeds, is refused, fails with a declared

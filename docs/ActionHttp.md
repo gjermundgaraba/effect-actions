@@ -116,6 +116,11 @@ closed. `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform se
 Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
 ```
 
+An `ErrorReporter` the server runs with is given a declared or built-in failure too, such as a
+404 an action declares, with severity `Info`: Effect's `HttpApi` reports every failure of a
+route. MCP and RPC report a defect alone. To keep an error out of a tracker, give its class
+`readonly [ErrorReporter.ignore] = true`.
+
 ### Split a binding across layers, and add middleware
 
 Several layers may serve one binding, each with its own `actions` and `middleware`; serve each
