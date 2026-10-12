@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
+  Cause,
   Context,
   Effect,
   ErrorReporter,
@@ -499,6 +500,63 @@ describe("what the routes were built with", () => {
 
         expect(reported).toEqual(expected);
       }),
+  );
+
+  it.effect(
+    "gives a reporter a declared failure and an undecodable input as Info over HTTP, and no failure of a class marked ignored",
+    () => {
+      class Hidden extends Schema.TaggedError<Hidden>()("Hidden", {}) {
+        override readonly [ErrorReporter.ignore] = true;
+      }
+
+      const Hide = Action.make("hide", {
+        description: "Fail with a class marked ignored.",
+        readOnly: true,
+        caller: Action.Anyone,
+        error: Hidden,
+      });
+
+      const Take = Action.make("take", {
+        description: "Take a number.",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: { n: Schema.Finite },
+      });
+
+      const actions = [Find, Hide, Take] as const;
+
+      const implemented = Action.implement(actions, {
+        find: () => Effect.fail(new Gone()),
+        hide: () => Effect.fail(new Hidden()),
+        take: () => Effect.void,
+      });
+
+      const given: Array<string> = [];
+
+      const reporter = ErrorReporter.make(({ cause, severity }) => {
+        given.push(`${severity}: ${Cause.pretty(cause)}`);
+      });
+
+      return Effect.gen(function* () {
+        const statuses = yield* Effect.forEach(["find", "hide", "take"], (name) =>
+          Effect.map(send(post(`/api/${name}`)), ({ status }) => status),
+        );
+
+        expect(statuses).toEqual([422, 422, 400]);
+        expect(given).toEqual([
+          expect.stringMatching(/^Info: [^]*Gone/),
+          expect.stringMatching(/^Info: [^]*InvalidInput/),
+        ]);
+      }).pipe(
+        Effect.provide(
+          Testing.layer(
+            ActionHttp.layer(ActionHttp.make(actions), implemented).pipe(
+              Layer.provide(ErrorReporter.layer([reporter])),
+            ),
+          ),
+        ),
+      );
+    },
   );
 
   it("answers a success that does not encode with an empty 500, reported once, over HTTP", async () => {

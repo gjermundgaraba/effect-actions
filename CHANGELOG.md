@@ -120,21 +120,15 @@ client does, instead of `SchemaError`.** Nothing is sent, as before.
 
 - [ActionHttp.md](docs/ActionHttp.md#serve-the-routes) says that an `ErrorReporter` is given a
   declared failure over HTTP, which Effect's `HttpApi` reports, and not over MCP or RPC, and how
-  to mark an error class as unreported. A test pins it.
-- `Testing.layer` logs, as an error, the cause of a request that an `ErrorReporter` would be
-  given: a defect, a result that does not encode, or a failure a route of your own leaves
-  unhandled. It logs nothing for a request that succeeds, is refused, fails with a declared
+  to mark an error class as unreported.
+- `Testing.layer` logs, as an error, the cause of a defect, of a result that does not encode,
+  or of a failure a route of your own leaves unhandled. It logs nothing for a request that succeeds, is refused, fails with a declared
   error or finds no route. An empty 500 in a test showed its
   cause nowhere unless the test provided an `ErrorReporter`: a server's request logger writes
   it, and a test runs none ([Testing-failures.md](docs/Testing-failures.md)).
 - A command derived over HTTP (`ActionCli.remote`, `remoteCommand`) prints an error the
   binding's authentication declares as its JSON, as it prints every other declared error. It
   printed it as prose, the error's name alone.
-- `ActionRpc.layer` answers every declared failure as the JSON it encodes to, and reports none.
-  One its handler froze died with a `TypeError`, since marking it unreported threw; one that
-  encodes to an array or to a primitive was reported; and one holding a key named
-  `~effect/ErrorReporter/ignore` had its value overwritten. The mark is now on a wrapper the
-  server encodes to that JSON, never on the failure or a copy of it.
 - No page of `docs/` is over 16 KB, which a coding agent's tool reads whole: `Action.md`'s
   in-process client and shared build are `Action-in-process.md`, and `Authentication.md`'s
   sections past a bearer token are `Authentication-advanced.md`. The pages state what sixteen user-test sessions lacked, among it the model loop and

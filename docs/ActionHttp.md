@@ -116,10 +116,12 @@ closed. `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform se
 Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
 ```
 
-An `ErrorReporter` the server runs with is given a declared or built-in failure too, such as a
-404 an action declares, with severity `Info`: Effect's `HttpApi` reports every failure of a
-route. MCP and RPC report a defect alone. To keep an error out of a tracker, give its class
-`readonly [ErrorReporter.ignore] = true`.
+An `ErrorReporter` the server runs with is also given, with severity `Info`, what a handler
+or `authorize` fails with and an input that does not decode, a declared 404, a 403 or a 400:
+Effect's `HttpApi` reports a route's failures, of which a refused credential is none. MCP and
+RPC report a defect alone. To keep a declared error out of a tracker, give its class
+`override readonly [ErrorReporter.ignore] = true`; a built-in error takes no mark, so drop
+`Info` there.
 
 ### Split a binding across layers, and add middleware
 

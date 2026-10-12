@@ -8,9 +8,11 @@ import {
   Exit,
   Layer,
   Logger,
+  Predicate,
   Redacted,
   Schema,
   SchemaTransformation,
+  Tracer,
 } from "effect";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import { RpcClient, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
@@ -569,7 +571,7 @@ describe("ActionRpc internal errors", () => {
 });
 
 it.effect(
-  "answers a declared failure as the JSON it is, whatever it is made of, and reports none",
+  "answers a declared failure as the JSON it is, whatever it is made of, reports none, and traces it as that JSON",
   () => {
     const Refuse = Action.make("refuse", {
       description: "Refuses with the JSON it is given",
@@ -601,6 +603,24 @@ it.effect(
     ];
 
     const reported: Array<string> = [];
+    const spans: Array<Tracer.Span> = [];
+
+    const tracer = Tracer.make({
+      span(options) {
+        const span = Tracer.nativeTracer.span(options);
+
+        spans.push(span);
+
+        return span;
+      },
+    });
+
+    const tracedFailures = () =>
+      spans.flatMap(({ kind, status }) =>
+        kind === "server" && Predicate.isTagged(status, "Ended") && Exit.isFailure(status.exit)
+          ? Cause.prettyErrors(status.exit.cause).map(({ message }) => message)
+          : [],
+      );
 
     return Effect.gen(function* () {
       const client = yield* ActionRpc.client(Refusing);
@@ -611,12 +631,16 @@ it.effect(
 
       expect(answered).toEqual(failures);
       expect(reported).toEqual([]);
+      expect(tracedFailures()).toEqual(
+        failures.map((json) => (json === '"declined"' ? "declined" : json)),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
         inMemoryProtocolTo(
           servedAtRpcOverHttp(ActionRpc.layer(Refusing, refuse)).pipe(
             Layer.provide(ErrorReporter.layer([recorder(reported)])),
+            Layer.provide(Layer.succeed(Tracer.Tracer, tracer)),
           ),
         ),
       ),

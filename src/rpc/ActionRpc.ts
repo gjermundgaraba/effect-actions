@@ -4,6 +4,7 @@ import {
   Effect,
   ErrorReporter,
   Layer,
+  Predicate,
   Result,
   Schema,
   type Scope,
@@ -283,13 +284,16 @@ class InternalError extends Error {
 
 // Why: A declared failure is the caller's answer, which no error reporter is given. The mark
 // that says so is on this wrapper, which the server's group encodes to the JSON it holds, and
-// never on the JSON: marking the failure itself, or a copy of it, was tried, and needed a case
-// each for a frozen value, a key `__proto__`, an array and its iterator, left a primitive
-// reported, and let a failure holding the mark's key decide for itself.
+// never on the JSON: a mark on the failure touches a value the handler made, and a primitive
+// takes none. It prints as its JSON, which is what a trace of the server's span shows.
 class DeclaredFailure {
   readonly [ErrorReporter.ignore] = true;
 
   constructor(readonly json: Schema.Json) {}
+
+  toString() {
+    return Predicate.isString(this.json) ? this.json : JSON.stringify(this.json);
+  }
 }
 
 const DeclaredFromJson = Schema.Json.pipe(
@@ -357,7 +361,7 @@ const handlerOf = (
       call,
     );
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the call's encoded success through, or fail; the boundary fails with an encoded error alone, or an interruption.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the call's encoded success through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
     return boundary(wrapped) as Effect.Effect<Schema.Json, DeclaredFailure, unknown>;
   };
 };

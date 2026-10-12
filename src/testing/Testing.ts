@@ -58,10 +58,9 @@ export function layer(
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network: provide
  * it to `ActionHttp.client` and to `mcpClient`. The routes are built with this layer and
- * released with its scope, without request logs: only the cause of a request that an
- * `ErrorReporter` would be given, a defect, a result that does not encode or a failure a route
- * of your own leaves unhandled, is logged, as an error, where a server's request logger would
- * show it. What they still require is this layer's, as
+ * released with its scope, without request logs: only the cause of a defect, of a result that
+ * does not encode or of a failure a route of your own leaves unhandled is logged, as an error,
+ * where a server's request logger would show it. What they still require is this layer's, as
  * under `HttpRouter.serve`: a builder's services, and a per-request service no middleware of
  * theirs provides, including one a global middleware reads. The routes keep their real
  * authentication: a client sends its caller's credential. Provided around it, the test
@@ -121,9 +120,9 @@ export function layer(
 }
 
 // Why: A server's request logger shows the cause of an empty 500, and a test runs none: the
-// cause is logged here, or a test sees a status and nothing else. Only what an `ErrorReporter`
-// is given, so a 404 or a refusal stays silent, as every request that succeeds does. Rejected:
-// Effect's request logger, a line for every request of every test.
+// cause is logged here, or a test sees a status and nothing else. Only a failure that reaches
+// the router unhandled, so a 404 or a refusal stays silent, as every request that succeeds
+// does. Rejected: Effect's request logger, a line for every request of every test.
 const isReported = (cause: Cause.Cause<unknown>): boolean =>
   cause.reasons.some(
     (reason) =>
