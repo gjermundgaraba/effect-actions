@@ -163,3 +163,25 @@ export const assertOwnTags = (what: string, errors: Action.Errors): void => {
     throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
   }
 };
+
+/**
+ * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, no built-in error in
+ * `error`, and the descriptor every protected action names. Returns `error` as a list.
+ */
+export const bindingOf = <D extends Proving>(
+  what: string,
+  actions: ReadonlyArray<Action.Any>,
+  options: {
+    readonly error?: Action.Errors | Action.Errors[number] | undefined;
+    readonly authentication?: D | undefined;
+  },
+) => {
+  assertOnce("action", actions);
+
+  const error = errorList(options.error);
+
+  assertOwnTags(what, error);
+  assertAuthentication(actions, options.authentication);
+
+  return { error, authentication: options.authentication };
+};
