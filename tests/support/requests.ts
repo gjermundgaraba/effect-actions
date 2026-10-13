@@ -91,6 +91,21 @@ const RawToolCallSuccess = Schema.Struct({
   result: Schema.Struct({ structuredContent: Schema.Json }),
 });
 
+const ToolReply = Schema.fromJsonString(
+  Schema.Struct({
+    result: Schema.Struct({
+      isError: Schema.Boolean,
+      content: Schema.Array(Schema.Struct({ text: Schema.String })),
+    }),
+  }),
+);
+
+export const toolReplyOf = (text: string) =>
+  Effect.map(Schema.decodeUnknownEffect(ToolReply)(text), ({ result }) => ({
+    isError: result.isError,
+    text: result.content[0]?.text,
+  }));
+
 export const valueOf = async (response: Response): Promise<Schema.Json> =>
   Schema.decodeUnknownSync(RawToolCallSuccess)(await response.json()).result.structuredContent;
 

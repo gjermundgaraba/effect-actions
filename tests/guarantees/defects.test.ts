@@ -1,5 +1,16 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, ErrorReporter, Exit, Layer, Logger, Option, Schema, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Layer,
+  Logger,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import { AiError } from "effect/ai";
 import { CliError } from "effect/cli";
 import { RpcSerialization, RpcServer } from "effect/rpc";
@@ -17,6 +28,7 @@ import {
   rawToolCall,
   send,
   sendRawNdjson,
+  toolReplyOf,
   valueOrSquashedCause,
 } from "../support/requests.js";
 
@@ -48,10 +60,14 @@ const Status = Action.make("status", {
   success: Schema.String,
 });
 
-const actions = [Crash, Leak, Count, Brittle, Status] as const;
+const defect = new Error("db password hunter2");
 
-const app = Action.implement(actions, {
-  crash: () => Effect.die(new Error("db password hunter2")),
+const failing = [Crash, Leak, Count, Brittle] as const;
+
+const served = [...failing, Status] as const;
+
+const app = Action.implement(served, {
+  crash: () => Effect.die(defect),
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: the contract broken, as plain JavaScript could.
   leak: () => Effect.fail(new Leaked({ id: "secret-id" }) as never),
   count: () => Effect.succeed(Infinity),
@@ -60,9 +76,9 @@ const app = Action.implement(actions, {
 });
 
 const routes = Layer.mergeAll(
-  ActionHttp.layer(ActionHttp.make(actions), app),
+  ActionHttp.layer(ActionHttp.make(served), app),
   ActionMcp.layerHttp(app, { name: "defects", version: "0" }),
-  ActionRpc.layer(ActionRpc.make(actions), app).pipe(
+  ActionRpc.layer(ActionRpc.make(served), app).pipe(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
     Layer.provide(RpcSerialization.layerNdjson),
   ),
@@ -70,31 +86,21 @@ const routes = Layer.mergeAll(
 
 const tools = ActionToolkit.make(app);
 
-const failing = ["crash", "leak", "count", "brittle"] as const;
-
 type Failing = (typeof failing)[number];
 
-const ToolReply = Schema.fromJsonString(
-  Schema.Struct({
-    result: Schema.Struct({
-      isError: Schema.Boolean,
-      content: Schema.Array(Schema.Struct({ text: Schema.String })),
-    }),
-  }),
-);
-
-const toolCall = (name: Failing) =>
-  Effect.flatMap(send(rawToolCall(name)), (response) =>
-    Effect.map(
-      Effect.flatMap(response.text, Schema.decodeUnknownEffect(ToolReply)),
-      ({ result }) => ({
-        isError: result.isError,
-        text: result.content[0]?.text,
-      }),
+const died = (cause: Cause.Cause<unknown>) => ({
+  died: cause.reasons
+    .filter(Cause.isDieReason)
+    .map(({ defect: died }) =>
+      died === defect
+        ? "the handler's defect"
+        : Predicate.hasProperty(died, "_tag")
+          ? died._tag
+          : "another defect",
     ),
-  );
+});
 
-const toolkitCall = (name: Failing) =>
+const toolkitCall = ({ name }: Failing) =>
   Effect.gen(function* () {
     const toolkit = yield* tools.toolkit;
 
@@ -102,32 +108,39 @@ const toolkitCall = (name: Failing) =>
   }).pipe(
     Effect.provide(tools.layer),
     Effect.exit,
-    Effect.map((exit) =>
-      Exit.isSuccess(exit)
-        ? "a result"
-        : Cause.hasDies(exit.cause)
-          ? "the call's defect"
-          : Cause.findErrorOption(exit.cause).pipe(
-              Option.filter(AiError.isAiError),
-              Option.match({
-                onNone: () => "another failure",
-                onSome: ({ reason }) => `an AiError, ${reason._tag}`,
-              }),
-            ),
-    ),
+    Effect.map((exit) => {
+      if (Exit.isSuccess(exit)) return { answered: "a result", sent: "" };
+
+      if (Cause.hasDies(exit.cause)) return { answered: died(exit.cause), sent: "" };
+
+      return Cause.findErrorOption(exit.cause).pipe(
+        Option.filter(AiError.isAiError),
+        Option.match({
+          onNone: () => ({ answered: "another failure", sent: "" }),
+          onSome: ({ reason }) => ({
+            answered: reason.message.startsWith(`Failed to encode result for tool '${name}'`)
+              ? "an AiError naming the tool"
+              : reason.message,
+            sent: reason.message,
+          }),
+        }),
+      );
+    }),
   );
 
-const command = (name: Failing) =>
-  exec(ActionCli.command(app, actions.find((action) => action.name === name) ?? Status), []).pipe(
+const command = (action: Failing) =>
+  exec(ActionCli.command(app, action), []).pipe(
     Effect.exit,
     Effect.map((exit) => {
-      if (Exit.isSuccess(exit)) return "a success";
+      if (Exit.isSuccess(exit)) return { answered: "a success", sent: "" };
 
-      if (Cause.hasDies(exit.cause)) return "the command's defect";
+      if (Cause.hasDies(exit.cause)) return { answered: died(exit.cause), sent: "" };
 
       const error = Cause.squash(exit.cause);
 
-      return error instanceof CliError.UserError ? { printed: error.userMessage } : String(error);
+      return error instanceof CliError.UserError
+        ? { answered: { printed: error.userMessage }, sent: error.userMessage ?? "" }
+        : { answered: String(error), sent: String(error) };
     }),
   );
 
@@ -136,47 +149,67 @@ const internalToolError = "Tool execution failed due to an internal server error
 const surfaces = [
   {
     surface: "HTTP",
-    reports: failing.length,
-    answers: Effect.forEach(failing, (name) =>
+    reporting: "each, some twice as Effect's HTTP server reports a failed response again",
+    reports: { atLeast: failing.length, atMost: 2 * failing.length },
+    logs: failing.length,
+    answers: Effect.forEach(failing, ({ name }) =>
       Effect.flatMap(send(post(`/api/${name}`)), (response) =>
-        Effect.map(response.text, (body) => ({ status: response.status, body })),
+        Effect.map(response.text, (body) => ({
+          answered: { status: response.status, body },
+          sent: body,
+        })),
       ),
     ),
     guaranteed: failing.map(() => ({ status: 500, body: "" })),
   },
   {
     surface: "MCP",
-    reports: failing.length,
-    answers: Effect.forEach(failing, toolCall),
+    reporting: "each once",
+    reports: { atLeast: failing.length, atMost: failing.length },
+    logs: failing.length,
+    answers: Effect.forEach(failing, ({ name }) =>
+      Effect.flatMap(send(rawToolCall(name)), (response) =>
+        Effect.flatMap(response.text, (text) =>
+          Effect.map(toolReplyOf(text), (answered) => ({ answered, sent: text })),
+        ),
+      ),
+    ),
     guaranteed: failing.map(() => ({ isError: true, text: internalToolError })),
   },
   {
     surface: "RPC",
-    reports: failing.length,
+    reporting: "each once, answering the connection's other call",
+    reports: { atLeast: failing.length, atMost: failing.length },
+    logs: failing.length,
     answers: Effect.map(
-      sendRawNdjson([...failing, "status"].map((tag) => ({ tag, payload: {} }))),
-      ({ exits }) => exits.map(valueOrSquashedCause),
+      sendRawNdjson(served.map(({ name }) => ({ tag: name, payload: {} }))),
+      ({ text, exits }) =>
+        exits.map((exit) => ({ answered: valueOrSquashedCause(exit), sent: text })),
     ),
     guaranteed: [...failing.map(() => new Error("Internal server error")), "up"],
   },
   {
     surface: "Toolkit",
-    reports: 0,
+    reporting: "nothing",
+    reports: { atLeast: 0, atMost: 0 },
+    logs: 0,
     answers: Effect.forEach(failing, toolkitCall),
-    guaranteed: failing.map((name) =>
-      name === "crash" ? "the call's defect" : "an AiError, ToolResultEncodingError",
+    guaranteed: failing.map(({ name }) =>
+      name === "crash" ? { died: ["the handler's defect"] } : "an AiError naming the tool",
     ),
   },
   {
     surface: "CLI",
-    reports: 0,
+    reporting: "nothing",
+    reports: { atLeast: 0, atMost: 0 },
+    logs: 0,
     answers: Effect.forEach(failing, command),
     guaranteed: failing.map(
-      (name) =>
+      ({ name }) =>
         ({
-          crash: "the command's defect",
+          crash: { died: ["the handler's defect"] },
           leak: { printed: "Leaked" },
-          count: "the command's defect",
+          count: { died: ["SchemaError"] },
           brittle: { printed: "Fragile" },
         })[name],
     ),
@@ -184,13 +217,13 @@ const surfaces = [
 ] as const;
 
 it.effect.each(surfaces)(
-  "answers a defect, an undeclared failure, and a success or an error that does not encode as guarantees.md's table states, sending no cause, and logging and reporting each, over $surface",
-  ({ answers, guaranteed, reports }) =>
+  "answers a defect, an undeclared failure, and a success or an error that does not encode as guarantees.md's table states, sending no cause, over $surface, logging and reporting $reporting",
+  ({ answers, guaranteed, reports, logs }) =>
     Effect.gen(function* () {
       const reported: Array<string> = [];
       const logged: Array<string> = [];
 
-      const answered = yield* answers.pipe(
+      const calls = yield* answers.pipe(
         Effect.provide(Testing.layer(routes)),
         Effect.provide(ErrorReporter.layer([recorder(reported)])),
         Effect.provide(
@@ -202,10 +235,14 @@ it.effect.each(surfaces)(
         ),
       );
 
-      expect(answered).toEqual(guaranteed);
-      expect(JSON.stringify(answered)).not.toMatch(/hunter2|secret-id/);
+      expect(calls.map(({ answered }) => answered)).toEqual(guaranteed);
 
-      expect(reported.length).toBeGreaterThanOrEqual(reports);
-      expect(logged.length).toBeGreaterThanOrEqual(reports);
+      for (const { sent } of calls) expect(sent).not.toMatch(/hunter2|secret-id/);
+
+      expect(reported.length).toBeGreaterThanOrEqual(reports.atLeast);
+      expect(reported.length).toBeLessThanOrEqual(reports.atMost);
+      expect(logged).toHaveLength(logs);
+      expect(reported.some((report) => report.includes("hunter2"))).toBe(logs > 0);
+      expect(logged.some((log) => log.includes("hunter2"))).toBe(logs > 0);
     }),
 );

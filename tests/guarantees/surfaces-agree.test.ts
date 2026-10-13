@@ -12,7 +12,7 @@ import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { exec, logged } from "../support/cli-services.js";
-import { as, rawToolCall, send, withBearer } from "../support/requests.js";
+import { as, rawToolCall, send, toolReplyOf, withBearer } from "../support/requests.js";
 
 const jsonTextOf = <T, E>(schema: Schema.Codec<T, E>) =>
   Schema.fromJsonString(Schema.toCodecJson(schema));
@@ -155,22 +155,10 @@ const encodedFailure = Schema.encodeEffect(jsonTextOf(Failure));
 
 const decodeFailureText = Schema.decodeUnknownEffect(jsonTextOf(Failure));
 
-const ToolErrorReply = Schema.fromJsonString(
-  Schema.Struct({
-    result: Schema.Struct({
-      isError: Schema.Literal(true),
-      content: Schema.Tuple([Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })]),
-    }),
-  }),
-);
-
 const failureTextOf = (response: HttpClientResponse.HttpClientResponse) =>
   Effect.flatMap(response.text, (text) =>
     response.status === 200
-      ? Effect.map(
-          Schema.decodeUnknownEffect(ToolErrorReply)(text),
-          ({ result }) => result.content[0].text,
-        )
+      ? Effect.map(toolReplyOf(text), (reply) => reply.text)
       : Effect.succeed(text),
   );
 
@@ -202,7 +190,9 @@ const failureOnEachSurface = (failure: typeof Failure.Type) =>
         asCaller,
         Effect.flip,
         Effect.flatMap((error) =>
-          decodeFailureText(error instanceof CliError.UserError ? error.userMessage : error),
+          error instanceof CliError.UserError
+            ? decodeFailureText(error.userMessage)
+            : Effect.die(error),
         ),
       ),
     };
