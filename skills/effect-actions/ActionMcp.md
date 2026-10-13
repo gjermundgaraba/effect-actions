@@ -49,15 +49,15 @@ export const routes = Layer.mergeAll(
 );
 ```
 
-See [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts) and
-[quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts). Surfaces given the same
-implementations in one set of routes run each builder once, so a note written over HTTP is read
-as a tool: [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts). For two
-servers, see [Action-in-process.md](Action-in-process.md#share-one-build-across-servers).
+See [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts) and `server.ts` beside it.
+Surfaces in one set of routes run each builder once, so a note written over HTTP is read as a
+tool: [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts). For two servers,
+see [Action-in-process.md](Action-in-process.md#share-one-build-across-servers).
 
 - The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
   Claude Code 2.1 and Codex CLI 0.162 connect (October 2026):
-  `claude mcp add --transport http <name> <url>/mcp --header "Authorization: Bearer <token>"`;
+  `claude mcp add --transport http <name> <url>/mcp --header "Authorization: Bearer <token>"`,
+  `codex mcp add <name> --url <url>/mcp --bearer-token-env-var <VAR>`;
   [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/README.md#connect-a-client) has stdio and Claude Desktop.
 - **A client of a 2025 revision opens a session** with `initialize`; a 2026-07-28 request stands
   alone. A session holds what its client sent there and no identity: each request authenticates,

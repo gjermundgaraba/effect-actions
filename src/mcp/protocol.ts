@@ -28,8 +28,8 @@ export const defaultPath = "/mcp";
 
 /**
  * An MCP request's parameters, as `Testing.mcpRequest` takes them: JSON, with any `_meta`, leaving
- * out an `undefined` one, as a caller may. A helper passing on arguments types them as this,
- * or as `Schema.Json`, never `unknown`.
+ * out an `undefined` one, as a caller may. A helper passing on whole params types them as this,
+ * and a tool's `arguments` as `Schema.Json`, never `unknown`.
  */
 export interface Params {
   readonly _meta?: { readonly [key: string]: Schema.Json };

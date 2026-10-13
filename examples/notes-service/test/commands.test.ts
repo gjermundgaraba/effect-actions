@@ -1,12 +1,23 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Schema, Stdio, Stream } from "effect";
+import {
+  Arbitrary,
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Schema,
+  Stdio,
+  Stream,
+} from "effect";
 import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestConsole } from "effect/testing";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { Http } from "../src/Api.js";
 import { commands, connection } from "../src/commands.js";
-import { Note, NoteNotFound } from "../src/notes/Notes.js";
+import { ImportNotes, Note, NoteNotFound } from "../src/notes/Notes.js";
 import { NoteStore } from "../src/notes/store.js";
 import { routes } from "../src/routes.js";
 
@@ -41,6 +52,29 @@ const connected = (environment: Record<string, string>, args: ReadonlyArray<stri
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
     Effect.provide(NodeServices.layer),
   );
+
+const fitsAFile = (text: string) =>
+  new TextDecoder().decode(new TextEncoder().encode(text)) === text;
+
+// Lines a random string almost never holds, each one the format has to keep apart from a title.
+const trickyLines = Arbitrary.array(
+  Arbitrary.schema(Schema.Literals(["", "# A heading", "\\# Escaped", "\\\\# Twice", "#tag"])),
+);
+
+const importable = Arbitrary.all([
+  Arbitrary.schema(ImportNotes.input),
+  Arbitrary.array(trickyLines),
+]).pipe(
+  Arbitrary.map(([{ notes }, extra]) =>
+    notes.map(({ title, body }, place) => ({
+      title,
+      body: [body, ...(extra[place] ?? [])].join("\n"),
+    })),
+  ),
+  Arbitrary.filter((notes) =>
+    notes.every(({ title, body }) => fitsAFile(title) && fitsAFile(body)),
+  ),
+);
 
 describe("the commands", () => {
   it.effect("take an argument, a flag and stdin, and print what `render` returns", () =>
@@ -120,6 +154,39 @@ describe("the commands", () => {
         ),
       );
     }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
+  );
+
+  // Any notes the contract accepts, generated from its schema, with lines that start as a title
+  // would added to their bodies. A file holds Unicode text, so a string JSON carries but no file
+  // can, one with a lone surrogate, is left out.
+  it.effect.prop(
+    "import every note `export` wrote as it was, whatever its body holds",
+    [importable],
+    ([notes]) =>
+      Effect.gen(function* () {
+        const files = yield* FileSystem.FileSystem;
+        const file = `${yield* files.makeTempDirectoryScoped()}/notes.md`;
+
+        const as = (token: string) =>
+          ActionHttp.client(Http).pipe(
+            Effect.updateService(
+              HttpClient.HttpClient,
+              HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+            ),
+          );
+
+        const [ada, grace] = [yield* as("ada"), yield* as("grace")];
+
+        yield* ada.importNotes({ notes });
+        yield* run("ada", ["export", file]);
+        yield* run("grace", ["import", file]);
+
+        const { notes: listed } = yield* grace.listNotes();
+        const read = yield* Effect.forEach(listed, ({ id }) => grace.getNote({ id }));
+
+        expect(read.map(({ title, body }) => ({ title, body }))).toEqual(notes);
+      }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
+    { arbitrary: { runs: 50 } },
   );
 
   it.effect("fail as the server refuses, a command of their own included", () =>

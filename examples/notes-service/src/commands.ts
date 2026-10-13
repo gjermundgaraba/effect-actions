@@ -5,6 +5,13 @@ import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./Api.js";
 
+// The file's format: each note a `# ` title line, a blank line and its body, the notes apart by
+// a blank line. A body line that starts as a title would is written with a backslash before it,
+// as Markdown escapes one, and `import` takes it off, so every note reads back as it was.
+const escape = (body: string) => body.replaceAll(/^(?=\\*# )/gmu, "\\");
+
+const unescape = (body: string) => body.replaceAll(/^\\(?=\\*# )/gmu, "");
+
 // A command of your own, for what no single action does: this one calls two and writes a file.
 // It is a native Effect CLI command, so its syntax and its output are what you write: `notes
 // export notes.md` takes its argument from `Argument`, as a flag would come from `Flag`. It
@@ -22,7 +29,7 @@ const exportNotes = Command.make(
 
       yield* files.writeFileString(
         file,
-        whole.map((note) => `# ${note.title}\n\n${note.body}`).join("\n\n"),
+        whole.map((note) => `# ${note.title}\n\n${escape(note.body)}`).join("\n\n"),
       );
 
       yield* Console.log(`Wrote ${whole.length} notes to ${file}`);
@@ -43,9 +50,8 @@ const exportNotes = Command.make(
 // The other half of `export`: it reads such a file and creates its notes with one call of the
 // bulk action, so the server checks every note before it writes any. The command reads the file
 // and nothing more. `Argument.FileText` reads it, and a missing file is a usage error naming it,
-// where `Argument.String` and `FileSystem` would print the platform's error. A body holding a
-// line that starts with `# ` after a blank line is read as two notes: this is a demo format.
-// The derived `import-notes` stays beside it, taking the notes as a JSON array in `--notes`.
+// where `Argument.String` and `FileSystem` would print the platform's error. Text before the
+// first title is refused, not dropped: the file is not one `export` wrote. The derived `import-notes` stays beside it, taking the notes as a JSON array in `--notes`.
 const importNotes = Command.make(
   "import",
   {
@@ -57,13 +63,20 @@ const importNotes = Command.make(
     Effect.gen(function* () {
       const client = yield* ActionHttp.client(Http);
 
+      if (text !== "" && !text.startsWith("# ")) {
+        return yield* new CliError.UserError({
+          cause: text.split("\n", 1)[0],
+          userMessage: "The file does not start with a `# ` title, as `notes export` writes one.",
+        });
+      }
+
       const notes = text
         .split(/\n\n(?=# )/u)
-        .filter((note) => note.startsWith("# "))
+        .filter((note) => note !== "")
         .map((note) => {
           const [title = "", ...body] = note.slice(2).split("\n\n");
 
-          return { title, body: body.join("\n\n") };
+          return { title, body: unescape(body.join("\n\n")) };
         });
 
       const { notes: created } = yield* client.importNotes({ notes });

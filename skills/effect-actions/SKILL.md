@@ -34,7 +34,7 @@ first (step 5), before the examples and the pages.
    sections link.
 5. **When something fails, search the `*-failures.md` pages** for a fragment of the message,
    your own code's first compile error included, before reasoning it out:
-   `grep -rn '<fragment>' node_modules/@gjermundgaraba/effect-actions/docs/*-failures.md`. Each
+   `grep -rnF "<fragment>" node_modules/@gjermundgaraba/effect-actions/docs/*-failures.md`. Each
    module page has one beside it, such as [Action-failures.md](Action-failures.md).
 
 A service others call is [notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/) plus

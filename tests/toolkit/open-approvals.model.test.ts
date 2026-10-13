@@ -17,6 +17,7 @@ const Command = Schema.Union([
     calls: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })),
   }),
   Schema.TaggedStruct("Answer", {
+    streamedTurnFails: Schema.Boolean,
     picks: Schema.Array(
       Schema.Struct({
         place: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8 })),
@@ -42,8 +43,14 @@ it.effect.prop(
   [commands],
   ([turns]) =>
     Effect.gen(function* () {
+      const dying = yield* Ref.make(false);
+
       const { toolkit, layer } = ActionToolkit.make(
-        Action.implement(Erase, ({ id }) => Effect.succeed(`erased ${id}`)),
+        Action.implement(Erase, ({ id }) =>
+          Effect.flatMap(Ref.get(dying), (dies) =>
+            dies ? Effect.die("the turn failed") : Effect.succeed(`erased ${id}`),
+          ),
+        ),
         { needsApproval: () => true },
       );
 
@@ -60,6 +67,15 @@ it.effect.prop(
         chat
           .generateText({ prompt, toolkit })
           .pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provide(layer));
+
+      const failingStreamedTurn = (prompt: Parameters<typeof chat.streamText>[0]["prompt"]) =>
+        Ref.set(dying, true).pipe(
+          Effect.andThen(Stream.runDrain(chat.streamText({ prompt, toolkit }))),
+          Effect.provideService(LanguageModel.LanguageModel, model),
+          Effect.provide(layer),
+          Effect.exit,
+          Effect.ensuring(Ref.set(dying, false)),
+        );
 
       const asked: Array<{ readonly approvalId: string; readonly toolCallId: string }> = [];
       const answered = new Set<string>();
@@ -82,7 +98,7 @@ it.effect.prop(
 
                 asked.push(...requestsOf(yield* turn("erase")));
               }),
-            Answer: ({ picks }) =>
+            Answer: ({ streamedTurnFails, picks }) =>
               Effect.gen(function* () {
                 const waiting = open();
 
@@ -95,16 +111,20 @@ it.effect.prop(
                   ]),
                 );
 
-                yield* turn([
+                const prompt = [
                   {
-                    role: "tool",
+                    role: "tool" as const,
                     content: [...answers].map(([approvalId, approved]) => ({
                       type: "tool-approval-response" as const,
                       approvalId,
                       approved,
                     })),
                   },
-                ]);
+                ];
+
+                yield* streamedTurnFails
+                  ? failingStreamedTurn(prompt)
+                  : Effect.asVoid(turn(prompt));
 
                 for (const approvalId of answers.keys()) answered.add(approvalId);
               }),
@@ -122,4 +142,82 @@ it.effect.prop(
       );
     }),
   { arbitrary: { runs: 200 } },
+);
+
+it.effect(
+  "lists exactly the calls that approving every listed request runs, in a history that repeats ids",
+  () =>
+    Effect.gen(function* () {
+      const erased: Array<string> = [];
+
+      const { toolkit, layer } = ActionToolkit.make(
+        Action.implement(Erase, ({ id }) =>
+          Effect.sync(() => {
+            erased.push(id);
+
+            return `erased ${id}`;
+          }),
+        ),
+        { needsApproval: () => true },
+      );
+
+      const model = yield* LanguageModel.make({
+        generateText: () => Effect.succeed([...silence]),
+        streamText: () => Stream.empty,
+      });
+
+      const chat = yield* Chat.fromPrompt([
+        { role: "user", content: "erase" },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool-call", id: "repeated", name: "erase", params: { id: "first of two" } },
+            { type: "tool-approval-request", approvalId: "twice", toolCallId: "repeated" },
+            { type: "tool-call", id: "other", name: "erase", params: { id: "replaced" } },
+            { type: "tool-approval-request", approvalId: "twice", toolCallId: "other" },
+            { type: "tool-call", id: "repeated", name: "erase", params: { id: "second of two" } },
+            { type: "tool-call", id: "done", name: "erase", params: { id: "already ran" } },
+            { type: "tool-approval-request", approvalId: "ran", toolCallId: "done" },
+            { type: "tool-approval-request", approvalId: "callless", toolCallId: "missing" },
+            { type: "tool-call", id: "plain", name: "erase", params: { id: "plain" } },
+            { type: "tool-approval-request", approvalId: "plain", toolCallId: "plain" },
+            { type: "tool-approval-request", approvalId: "last", toolCallId: "repeated" },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              id: "done",
+              name: "erase",
+              isFailure: false,
+              result: "erased already ran",
+            },
+          ],
+        },
+      ]);
+
+      const listed = ActionToolkit.openApprovals(yield* Ref.get(chat.history));
+
+      yield* chat
+        .generateText({
+          prompt: [
+            {
+              role: "tool",
+              content: listed.map(({ approvalId }) => ({
+                type: "tool-approval-response" as const,
+                approvalId,
+                approved: true,
+              })),
+            },
+          ],
+          toolkit,
+        })
+        .pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provide(layer));
+
+      expect(listed.map(({ params }) => params)).toEqual(erased.map((id) => ({ id })));
+      expect(erased).toEqual(["replaced", "plain", "second of two"]);
+      expect(ActionToolkit.openApprovals(yield* Ref.get(chat.history))).toEqual([]);
+    }),
 );

@@ -16,9 +16,9 @@ const approvalsOf = (response: Response) =>
   response.content.filter((part) => part.type === "tool-approval-request");
 
 // What Effect gives the model as the result of a call that did not run: one its member denied,
-// or one in a reply the provider cut short. Never part of a route's answer: a denial's `reason`
-// is `undefined` unless the member gave one, which is not JSON, and the route would answer an
-// empty 500.
+// or one in a reply the provider cut short. Left out of `ran` below, which lists the calls that
+// ran, and never answered as it is: a denial's `reason` is `undefined` unless the member gave
+// one, which is not JSON.
 const didNotRun = Schema.is(
   Schema.Struct({ type: Schema.Literals(["execution-denied", "execution-interrupted"]) }),
 );
