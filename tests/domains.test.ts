@@ -1,11 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "@effect/vitest";
 
 const declarationSpecifier =
-  /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)"\.\.\/([a-z]+)\//gm;
+  /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)["']\.\.\/([a-z]+)\//gm;
 
-const source = new URL("../src/", import.meta.url).pathname;
+const source = fileURLToPath(new URL("../src/", import.meta.url));
 
 const importsOf = new Map(
   readdirSync(source).map((domain) => [
