@@ -83,7 +83,8 @@ export const UpdateNote = Action.make("updateNote", {
   readOnly: false,
   caller: CurrentUser,
   // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
-  // a write. `createNote` and `importNotes`, which only add, say `false`.
+  // a write, as is any update of what is stored, a flag such as "read" included.
+  // `createNote` and `importNotes`, which only add, say `false`.
 });
 
 export const DeleteNote = Action.make("deleteNote", {
@@ -98,12 +99,13 @@ export const DeleteNote = Action.make("deleteNote", {
 // tools and the CLI then all have it, and the whole list is decoded, so checked, before the
 // handler writes any of it. A command of your own only reads the file and calls this once
 // (commands.ts). `importNotes` adds and removes nothing, so `destructiveHint` is `false`.
+// Each note is `createNote`'s input: an action's `input` is a schema already, used as it is.
 export const ImportNotes = Action.make("importNotes", {
   description:
     "Create several notes at once, such as those `notes export` wrote. Every note is checked " +
     "before any is written: an import holding one that is not valid writes none.",
   input: {
-    notes: Schema.Array(Schema.Struct({ title: Title, body: Body }))
+    notes: Schema.Array(CreateNote.input)
       .check(
         Schema.isMinLength(1, { message: "An import holds at least one note." }),
         Schema.isMaxLength(100, { message: "An import holds at most 100 notes." }),

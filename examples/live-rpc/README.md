@@ -7,6 +7,9 @@ identity of its own. A message naming no room is about the default one, `lobby`.
 
 Start here if a client keeps a connection open and calls often, or if the application already
 speaks Effect RPC. For a JSON API or MCP tools, start from [notes-service](../notes-service/).
+To serve these same actions as JSON too, see
+[ActionRpc.md](../../docs/ActionRpc.md#serve-the-rpcs): kitchen-sink's `src/routes.ts` and
+`src/server.ts` merge both.
 Actions are unary, so nothing streams: the page reads again, passing the last id it holds.
 
 ## Run it
@@ -28,10 +31,10 @@ Effect program, `connect(url)` for one that calls with promises. The tokens are 
 
 ## When you copy this
 
-Three choices here show a feature. Decide each for your application before keeping it:
+Four choices here show a feature. Decide each for your application before keeping it:
 
 - **`listRooms` is public** to show a public rpc beside protected ones. It tells a signed-out
-  caller every room's name.
+  caller every room's name and how many messages it holds; a room appears once someone posts.
 - **A message naming no room is about `lobby`**, to show a default in request context. Yours may
   refuse instead.
 - **The room is a header, not an input**, because `authorize` sees the action and not its input:
@@ -39,6 +42,8 @@ Three choices here show a feature. Decide each for your application before keepi
   check belongs in the store, never in a helper each handler must remember to call: the store's
   method takes the member and refuses, as `MessageStore.remove` in `src/chat/store.ts` takes the
   author and refuses with `NotAuthor`.
+- **`browser.ts` takes a message already gone as removed**, `MessageNotFound` included, since
+  that is what the page asked for. Yours may tell the user it was not there.
 
 ## Layout
 

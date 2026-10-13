@@ -225,8 +225,8 @@ failure compiles. What each surface answers is in [guarantees.md](guarantees.md#
 - **Fail with `Action.InvalidInput` for input that decodes but cannot be served**, naming
   `issues` of your own, instead of declaring a second error for bad input
   ([kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts)).
-- **For input you decode yourself**, such as a header or a route parameter, answer as the
-  surfaces do: `Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
+- **For input you decode yourself** on the server, such as a header or a route parameter,
+  answer as the surfaces do: `Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
 - **Map another service's refusals before failing with them.** A client that decodes the
   built-in errors, such as `ActionHttp.client`, hands a handler that service's `Unauthenticated`
   or `Forbidden`. Passed on, it is this server's own refusal: a caller whose token is valid is

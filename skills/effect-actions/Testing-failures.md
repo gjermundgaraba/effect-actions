@@ -1,6 +1,9 @@
 # Testing failure modes
 
 What you see when something is wrong, and the fix. Search for a fragment of the message.
+A missing service's error can start
+`… with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined'`: search a line
+beneath it, `is missing the following properties from type 'Scope'`, instead.
 The tasks are in [Testing.md](Testing.md).
 
 - A route answers an empty 500, which a client method reports as `HttpClientError: Decode error (500 …)`: a defect, or a result that does not encode. `Testing.layer` logs the cause as an error on the process console, under `it.effect` too, and nothing for a request that succeeds or is refused: read the test's output, or collect it with a `Logger` or an `ErrorReporter` provided around the layer.
