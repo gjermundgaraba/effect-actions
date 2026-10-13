@@ -133,22 +133,20 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   const served = select(toList(apps), options?.actions);
   const needsApproval = options?.needsApproval;
 
-  const { toolkit, layer } = bindTools(served, {
-    label: "tool",
-    // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id
-    // carries its implementation's key. A key per `make` call separates nothing its implementation
-    // does not, and a toolkit and a layer from two calls then type-check, as `Tool.HandlersFor` is
-    // keyed by name, and die on the first call.
-    tool: (tool, action, app) =>
-      Object.assign(
-        needsApproval === undefined
-          ? tool
-          : tool.setNeedsApproval((input, context) =>
-              needsApproval({ name: action.name, action, input }, context),
-            ),
-        { id: `${Implementation.runKey(app)}/${action.name}` },
-      ),
-  });
+  // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
+  // its implementation's key. A key per `make` call separates nothing its implementation does not,
+  // and a toolkit and a layer from two calls then type-check, as `Tool.HandlersFor` is keyed by
+  // name, and die on the first call.
+  const { toolkit, layer } = bindTools(served, (tool, action, app) =>
+    Object.assign(
+      needsApproval === undefined
+        ? tool
+        : tool.setNeedsApproval((input, context) =>
+            needsApproval({ name: action.name, action, input }, context),
+          ),
+      { id: `${Implementation.runKey(app)}/${action.name}` },
+    ),
+  );
 
   return { toolkit, layer: layer.pipe(provideHandlers(served)) };
 }

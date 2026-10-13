@@ -328,7 +328,7 @@ describe("what the routes were built with", () => {
   });
 
   it.effect.each(["HTTP", "MCP"] as const)(
-    "yields to what the server runs in, unless HttpRouter.provideRequest gives it to its requests, shown by an ordinary reference, since the native MCP server drops the log level from the context it registers tools in, over %s",
+    "yields to what the server runs in, unless HttpRouter.provideRequest gives it to its requests, a reference and the log level alike, over %s",
     (transport) =>
       Effect.gen(function* () {
         const Stage = Context.Reference<string>("request-context/Stage", {

@@ -2,17 +2,11 @@ import { type Context, Effect, type Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import type * as Action from "../contract/Action.js";
 import { assertOnce, projectedErrors } from "../contract/rules.js";
-import { acquire, type AnyImplementation, type ErasedHandler } from "../contract/implementation.js";
+import { acquire, type AnyImplementation } from "../contract/implementation.js";
 
 interface BoundTools {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>;
   readonly layer: Layer.Layer<Tool.HandlersFor<Record<string, Tool.Any>>, unknown, unknown>;
-}
-
-export interface Projection {
-  readonly label: string;
-  readonly tool: (tool: Tool.Any, action: Action.Any, app: AnyImplementation) => Tool.Any;
-  readonly handler?: (run: ErasedHandler<unknown>, action: Action.Any) => ErasedHandler<unknown>;
 }
 
 const annotateIfGiven = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S | undefined) =>
@@ -50,26 +44,24 @@ const jsonToolOf = (action: Action.Any) =>
 
 export const bindTools = (
   apps: ReadonlyArray<AnyImplementation>,
-  projection: Projection,
+  project: (tool: Tool.Any, action: Action.Any, app: AnyImplementation) => Tool.Any,
 ): BoundTools => {
   assertOnce(
-    projection.label,
+    "tool",
     apps.flatMap((app) => app.actions),
   );
 
   const toolkit = Toolkit.make(
     ...apps.flatMap((app) =>
       app.actions.map((action) =>
-        annotateFromContract(projection.tool(jsonToolOf(action), action, app), action),
+        annotateFromContract(project(jsonToolOf(action), action, app), action),
       ),
     ),
   );
 
   const layer = toolkit.toLayer(
     Effect.map(acquire(apps), (bound) =>
-      Object.fromEntries(
-        bound.map(([action, run]) => [action.name, projection.handler?.(run, action) ?? run]),
-      ),
+      Object.fromEntries(bound.map(([action, run]) => [action.name, run])),
     ),
   );
 

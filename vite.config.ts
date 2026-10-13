@@ -24,7 +24,6 @@ const sharedPrivateFiles = [
   "authentication/provider.js",
   "authentication/refusal.js",
   "stdio/console.js",
-  "toolkit/tools.js",
 ];
 
 export default defineConfig({

@@ -145,7 +145,9 @@ describe("MCP registration without media", () => {
       );
 
       expect(ours).toEqual(theirs);
-      expect(reportedDefects).toEqual(reports);
+      expect(reportedDefects).toEqual(
+        reports.map((message) => message.replace(/^Toolkit\./, "ActionMcp.")),
+      );
       expect(reportedDefects).toHaveLength(2);
 
       expect(replyOf(ours[1] ?? "")).toEqual({
