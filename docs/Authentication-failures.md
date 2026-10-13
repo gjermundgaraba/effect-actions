@@ -66,7 +66,7 @@ Tasks: [Authentication.md](Authentication.md),
   status it means, such as `{ httpApiStatus: 503 }`.
 - `ActionMcp.client` fails with an `McpCallError`, not a typed error, when the verifier fails
   with an error its descriptor declares: over MCP that failure is the endpoint's HTTP answer,
-  before any tool runs. The `McpCallError` names its status and body.
+  before any tool runs. Pass the endpoint's descriptor as the client's `authentication`.
 - A route's `Cache-Control` is replaced by `no-store`: only a route's own answer keeps its
   caching, and this response is a failure that enclosing middleware serialized.
 

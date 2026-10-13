@@ -19,7 +19,7 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { makeTestHttp, makeTestMcp } from "../support/server.js";
 import { CurrentActor } from "../support/app/authorization.js";
-import { Double, GetUser, RenameUser, WhoAmI } from "../support/app/contracts.js";
+import { Double, GetUser, RenameUser, Status, WhoAmI } from "../support/app/contracts.js";
 import { authenticate } from "../support/app/authentication.js";
 import { Login } from "../support/app/binding.js";
 import { userActions } from "../support/app/handlers.js";
@@ -1663,6 +1663,22 @@ export const actionMcpClientTypes = Effect.gen(function* () {
     Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
     Effect.catchTag("Unauthenticated", () => Effect.succeed(undefined)),
   );
+
+  class IssuerDown extends Schema.TaggedError<IssuerDown>()("IssuerDown", {}) {}
+
+  const Guarded = Authentication.make("types-spec.Guarded", CurrentActor, { error: IssuerDown });
+  const guarded = yield* ActionMcp.client([Status, WhoAmI], { authentication: Guarded });
+
+  expectTypeOf<Effect.Error<ReturnType<typeof guarded.whoAmI>>>().toEqualTypeOf<
+    | IssuerDown
+    | Action.BuiltIn
+    | Schema.SchemaError
+    | HttpClientError.HttpClientError
+    | ActionMcp.McpCallError
+  >();
+  expectTypeOf<Effect.Error<ReturnType<typeof guarded.status>>>().toEqualTypeOf<
+    Action.BuiltIn | Schema.SchemaError | HttpClientError.HttpClientError | ActionMcp.McpCallError
+  >();
 });
 
 export const maybeAbsentOptionTypes = (enabled: boolean) => {

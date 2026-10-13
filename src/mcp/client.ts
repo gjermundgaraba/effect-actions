@@ -8,10 +8,11 @@ import {
 } from "effect/http";
 import { McpSchema } from "effect/ai";
 import { Sse } from "effect/encoding";
+import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
 import type * as Action from "../contract/Action.js";
 import { type Call, checked } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
-import { assertOnce, projectedErrors } from "../contract/rules.js";
+import { Anyone, assertOnce, projectedErrors } from "../contract/rules.js";
 import { defaultPath, httpProtocol, type Lift, liftOf, unliftedFrom } from "./protocol.js";
 
 /**
@@ -58,8 +59,8 @@ export const statelessRequest = (method: string, params: Params) => {
   };
 };
 
-/** Where `client` sends, and through what client. */
-export interface ClientOptions {
+/** Where `client` sends, through what client, and what the endpoint's authentication declares. */
+export interface ClientOptions<D extends Authentication | undefined = Authentication | undefined> {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `Testing.layer`. Defaults to `/mcp`,
    * the default `layerHttp` path.
@@ -70,6 +71,12 @@ export interface ClientOptions {
    * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
    */
   readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
+  /**
+   * The endpoint's descriptor, as `layerHttp` takes it: an error its verifier declares, the
+   * endpoint's HTTP answer for a protected tool, is then that error's decoded value, as over
+   * `ActionHttp.client`.
+   */
+  readonly authentication?: D;
 }
 
 /** Where a `request` goes, and with what headers. */
@@ -94,18 +101,19 @@ export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallErr
   message: Schema.String,
 }) {}
 
-type CallError<A extends Action.Any> =
+type CallError<A extends Action.Any, D> =
   | A["error"][number]["Type"]
+  | VerifierError<A, D>["Type"]
   | BuiltIn
   | Schema.SchemaError
   | HttpClientError.HttpClientError
   | McpCallError;
 
 /** Every action of `Actions` as `client.<action>(input)`, calling its tool. */
-export type Client<Actions extends ReadonlyArray<Action.Any>> = {
+export type Client<Actions extends ReadonlyArray<Action.Any>, D = undefined> = {
   readonly [A in Actions[number] as A["name"]]: Call<
     A,
-    Effect.Effect<A["success"]["Type"], CallError<A>>
+    Effect.Effect<A["success"]["Type"], CallError<A, D>>
   >;
 };
 
@@ -150,6 +158,7 @@ const callTool = (
   url: string,
   action: Action.Any,
   lift: Lift,
+  refusedWith: Action.Errors,
   input: Action.Any["input"]["Type"],
 ): Effect.Effect<unknown, unknown> => {
   const { name } = action;
@@ -167,7 +176,7 @@ const callTool = (
     const text = yield* response.text;
 
     if (response.status !== 200) {
-      return yield* failWith(Refusal.members, text, other(`answered ${response.status}: ${text}`));
+      return yield* failWith(refusedWith, text, other(`answered ${response.status}: ${text}`));
     }
 
     const reply = replyOf(response, text);
@@ -205,17 +214,20 @@ const callTool = (
  * media field from the blocks whose `_meta` names it, and a success that is media, or whose
  * every field is, from its blocks alone. A declared error the tool returns, the action's own
  * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication
- * answers with: a test telling a 401 or 403 from a tool result asserts the status of a request
+ * answers with, or an error its verifier declares, given the `authentication`: a test telling a 401 or 403 from a tool result asserts the status of a request
  * `request` builds. The argument may be omitted when `{}` is a valid input. Requires the
  * native `HttpClient`, such as the one `Testing.layer` provides.
  */
-export function client<const Actions extends ReadonlyArray<Action.Any>>(
+export function client<
+  const Actions extends ReadonlyArray<Action.Any>,
+  D extends Authentication | undefined = undefined,
+>(
   actions: Actions,
-  options?: ClientOptions,
-): Effect.Effect<Client<Actions>, never, HttpClient.HttpClient>;
+  options?: ClientOptions<D>,
+): Effect.Effect<Client<Actions, D>, never, HttpClient.HttpClient>;
 export function client(
   actions: ReadonlyArray<Action.Any>,
-  { url = defaultPath, transformClient = identity }: ClientOptions = {},
+  { url = defaultPath, transformClient = identity, authentication }: ClientOptions = {},
 ): Effect.Effect<
   {
     readonly [name: string]: (...input: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>;
@@ -232,7 +244,15 @@ export function client(
       actions.map((action) => {
         const lift = liftOf(action.success);
 
-        return [action.name, checked(action, (input) => callTool(http, url, action, lift, input))];
+        const refusedWith = [
+          ...Refusal.members,
+          ...(action.caller === Anyone ? [] : (authentication?.error ?? [])),
+        ];
+
+        return [
+          action.name,
+          checked(action, (input) => callTool(http, url, action, lift, refusedWith, input)),
+        ];
       }),
     );
   });

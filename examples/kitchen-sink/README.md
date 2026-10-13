@@ -238,7 +238,7 @@ search for in the file.
 | An image block from a media field                | `src/attachments/Attachments.ts` (`GetAttachment`)            |
 | `client`: `transformClient`                      | `test/routes.test.ts`                                         |
 | `client`, decoding an image                      | `test/attachments/attachments.test.ts`                        |
-| `McpCallError`                                   | `test/identity/identity.test.ts`                              |
+| `client`: `authentication`, a verifier's error   | `test/identity/identity.test.ts`                              |
 | `request`: `headers`, `url`                      | `test/attachments/attachments.test.ts`, `test/routes.test.ts` |
 
 ### ActionRpc

@@ -21,7 +21,9 @@ import {
   UserNotFound,
   WhoAmI,
 } from "../support/app/contracts.js";
+import { CurrentActor } from "../support/app/authorization.js";
 import * as Action from "../../src/contract/Action.js";
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -263,6 +265,42 @@ describe("client", () => {
 
       expect(results).toEqual(["true: all", "true: x"]);
     }),
+  );
+
+  it.effect(
+    "decodes an error the endpoint's verifier declares, given its authentication, for a protected tool alone",
+    () =>
+      Effect.gen(function* () {
+        class Unavailable extends Schema.TaggedError<Unavailable>()(
+          "Unavailable",
+          { retryAfter: Schema.Finite },
+          { httpApiStatus: 503 },
+        ) {}
+
+        const Guarded = Authentication.make("mcp-client.Guarded", CurrentActor, {
+          error: Unavailable,
+        });
+
+        const unavailable = new Unavailable({ retryAfter: 5 });
+
+        const failures = yield* Effect.all([
+          Effect.flatMap(ActionMcp.client([WhoAmI, Status], { authentication: Guarded }), (mcp) =>
+            Effect.all([Effect.flip(mcp.whoAmI()), Effect.flip(mcp.status())]),
+          ),
+          Effect.flatMap(ActionMcp.client([WhoAmI]), (mcp) => Effect.flip(mcp.whoAmI())),
+        ]).pipe(
+          Effect.provide(
+            Testing.layer(async () =>
+              Response.json(Schema.encodeSync(Unavailable)(unavailable), { status: 503 }),
+            ),
+          ),
+        );
+
+        expect(failures).toEqual([
+          [unavailable, expect.any(ActionMcp.McpCallError)],
+          expect.any(ActionMcp.McpCallError),
+        ]);
+      }),
   );
 
   it.effect("fails with an McpCallError holding any other answer", () =>

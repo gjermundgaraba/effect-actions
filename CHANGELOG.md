@@ -33,6 +33,9 @@ it, where it failed with a `UserError` printed as its tag and message.
 
 ### Other changes
 
+- **`ActionMcp.client` takes the endpoint's `authentication`**, as `layerHttp` does: an error its
+  verifier declares, the endpoint's HTTP answer for a protected tool, is then its decoded value and
+  in the method's type, as over `ActionHttp.client`, where it was an `McpCallError`.
 - **A mixed MCP endpoint lets a client that base64-encodes a public tool's `Mcp-Name`**
   (`=?base64?…?=`) call it signed out, as Effect routes that name. This reverses 0.10.0's "a
   Base64-encoded tool name names no public tool, and authenticates", which answered such a call 401.
