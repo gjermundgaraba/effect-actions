@@ -201,27 +201,30 @@ const toolOf = (action: Action.Any, outputSchema: McpSchema.Tool["outputSchema"]
 // registry's public `addTool`.
 const registerTools = Effect.fnUntraced(function* (
   apps: ReadonlyArray<AnyImplementation>,
-  lifts: ReadonlyMap<string, Lift>,
   authentication: Authentication | undefined,
 ) {
   const registry = yield* McpServer.McpServer;
   const bound = yield* acquire(apps);
   const built = yield* Effect.context<unknown>();
 
-  const internalErrorUnlessInterrupted = (cause: Cause.Cause<ErasedValue>) => {
-    const failure = Cause.findFail(cause);
+  const internalError = (cause: Cause.Cause<ErasedValue>) =>
+    Effect.logError(cause).pipe(
+      Effect.andThen(ErrorReporter.report(cause)),
+      Effect.as(textErrorResult(nativeInternalErrorText)),
+    );
 
-    return Result.isFailure(failure) && !Cause.hasDies(cause)
-      ? Effect.failCause(failure.failure)
-      : Effect.logError(cause).pipe(
-          Effect.andThen(ErrorReporter.report(cause)),
-          Effect.as(textErrorResult(nativeInternalErrorText)),
-        );
-  };
+  const internalErrorUnlessInvalidOrInterrupted = (cause: Cause.Cause<ErasedValue>) =>
+    Cause.hasDies(cause)
+      ? internalError(cause)
+      : Result.match(Cause.findFail(cause), {
+          onFailure: Effect.failCause,
+          onSuccess: ({ error }) =>
+            error instanceof McpSchema.InvalidParams ? Effect.fail(error) : internalError(cause),
+        });
 
   for (const [action, run] of bound) {
-    const lift = lifts.get(action.name);
-    const media = lift === undefined || lift.fields.length === 0 ? undefined : lift;
+    const lift = liftOf(action.success);
+    const media = lift.fields.length === 0 ? undefined : lift;
 
     const structured =
       media === undefined
@@ -302,7 +305,7 @@ const registerTools = Effect.fnUntraced(function* (
       annotations: Context.empty(),
       handle: (payload: ErasedValue) =>
         Effect.annotateCurrentSpan({ tool: action.name, parameters: payload ?? {} }).pipe(
-          Effect.andThen(decode(payload ?? {})),
+          Effect.andThen(() => decode(payload ?? {})),
           Effect.mapError(
             ({ message }) =>
               new McpSchema.InvalidParams({
@@ -327,9 +330,9 @@ const registerTools = Effect.fnUntraced(function* (
                 onSuccess: (success) =>
                   Effect.map(encodeSuccess(success), (encoded) => resultOf(encoded, success)),
               }),
-              Effect.catchCause(internalErrorUnlessInterrupted),
             ),
           ),
+          Effect.catchCause(internalErrorUnlessInvalidOrInterrupted),
           // Why: A call runs over what the endpoint was built with, its startup services and the
           // handlers' builds, and what the request provides wins, as a native toolkit handler's
           // context does.
@@ -358,13 +361,13 @@ const server = <Out, R>(
 
   assertToolShapes(lifted);
 
-  const lifts = new Map(lifted.map(([{ name }, lift]) => [name, lift]));
+  const names = new Set(lifted.map(([{ name }]) => name));
 
   const register = Effect.gen(function* () {
     const registry = yield* McpServer.McpServer;
 
     const namesClaimedByFeatures = registry.tools.flatMap(({ tool }) =>
-      lifts.has(tool.name) ? [tool.name] : [],
+      names.has(tool.name) ? [tool.name] : [],
     );
 
     if (namesClaimedByFeatures.length > 0) {
@@ -375,7 +378,7 @@ const server = <Out, R>(
       );
     }
 
-    yield* registerTools(apps, lifts, authentication);
+    yield* registerTools(apps, authentication);
   });
 
   // Why: Effect's registry is one layer, shared by a whole layer graph, so `Layer.fresh` gives each

@@ -346,7 +346,7 @@ export const select = (
   });
 };
 
-export const servedBy = (
+const servedBy = (
   what: string,
   bound: ReadonlyArray<Action.Any>,
   apps: ReadonlyArray<AnyImplementation>,

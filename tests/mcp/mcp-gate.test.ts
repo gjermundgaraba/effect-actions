@@ -95,7 +95,7 @@ describe("a mixed MCP endpoint", () => {
     expect(calls).toEqual(["double"]);
   });
 
-  it("reads a base64-encoded Mcp-Name as the runtime routes it: a public call is admitted signed out, a protected one refused", async () => {
+  it("reads a base64-encoded Mcp-Name as the runtime routes it: a public call is admitted signed out, a protected one refused, also under a public name", async () => {
     const { web, calls } = mixedEndpoint();
 
     const named = (request: Request, name: string) => {
@@ -111,6 +111,9 @@ describe("a mixed MCP endpoint", () => {
 
     const protectedCall = named(rawToolCall("double", { value: "21" }), "double");
     expect((await web.handler(protectedCall)).status).toBe(401);
+
+    const publicNameOverProtectedCall = named(rawToolCall("double", { value: "21" }), "status");
+    expect((await web.handler(publicNameOverProtectedCall)).status).toBe(400);
     expect(calls).toEqual([]);
   });
 
