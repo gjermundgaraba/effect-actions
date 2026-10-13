@@ -122,8 +122,8 @@ each case are the table in [guarantees.md](guarantees.md#wire-behavior).
 
 `ActionMcp.client(actions, options?)` gives one method per action, calling its tool and decoding
 the result as `ActionHttp.client` decodes a route's, an image included. Pass the contract values
-the endpoint serves, such as `implementation.actions`. Its options are `url`, default `/mcp`, and
-`transformClient`, as `ActionHttp.client` takes it.
+the endpoint serves, such as `implementation.actions`. Its failures:
+[ActionMcp-failures.md](ActionMcp-failures.md).
 
 A method fails with the action's declared errors and the built-in ones as decoded values, and with
 `McpCallError` for any other answer, a result without its structured content included;
@@ -147,8 +147,7 @@ and `yield* response.json`
 asserts a 401 so, and
 [mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts) reads `tools/list`).
 For a web handler or `fetch`, pass an absolute `url`: `HttpClientRequest.toWebResult(request)` is
-then a `Result` holding the web `Request`, taken with `Result.getOrThrow`. A helper passing on a tool's
-`arguments` types them `Schema.Json`, and whole `params` `ActionMcp.Params`, never `unknown`.
+then a `Result` holding the web `Request`, taken with `Result.getOrThrow`.
 
 ## Test rpcs
 

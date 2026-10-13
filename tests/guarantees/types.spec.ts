@@ -1637,7 +1637,7 @@ export const servedRequirementTypes = () => {
   });
 };
 
-export const mcpClientTypes = Effect.gen(function* () {
+export const actionMcpClientTypes = Effect.gen(function* () {
   const mcp = yield* ActionMcp.client([Double, WhoAmI, GetUser]);
   const call = mcp.double({ value: 2 });
 

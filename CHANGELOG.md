@@ -21,16 +21,6 @@ decoding and failures.
 | `Testing.McpRequestOptions`                  | `ActionMcp.RequestOptions`                  |
 | `Testing.McpParams`                          | `ActionMcp.Params`                          |
 
-```ts
-// Before
-const mcp = yield * Testing.mcpClient([Greet]);
-const listed = yield * HttpClient.execute(Testing.mcpRequest("tools/list"));
-
-// After
-const mcp = yield * ActionMcp.client([Greet]);
-const listed = yield * HttpClient.execute(ActionMcp.request("tools/list"));
-```
-
 ### Other changes
 
 - **A command's `InvalidInput` names every field that does not decode**, as HTTP, RPC, MCP and

@@ -22,8 +22,8 @@ import { clientOf, type Served } from "./memory.js";
 
 /**
  * For a web handler the test already owns; most tests want `layer(routes)`, below, with
- * `ActionHttp.client` and `ActionMcp.client`. The native `HttpClient`, answered by `handler` instead of
- * the network: a web handler the test serves, which other tests may share, such as
+ * `ActionHttp.client` and `ActionMcp.client`. The native `HttpClient`, answered by `handler`
+ * instead of the network: a web handler the test serves, which other tests may share, such as
  * `HttpRouter.toWebHandler(routes.pipe(Layer.provide(HttpServer.layerServices))).handler`,
  * the routes' platform services provided, as `layer(routes)` provides them itself. It is the
  * client `layer(routes)` gives, without building anything: the test owns the handler, and

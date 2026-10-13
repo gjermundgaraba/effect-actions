@@ -29,17 +29,12 @@ import { layer as host } from "../support/app/app.js";
 import { authenticate } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Http, Login } from "../support/app/binding.js";
-import { Double, GetUser, RenameUser, WhoAmI } from "../support/app/contracts.js";
+import { GetUser } from "../support/app/contracts.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { as } from "../support/requests.js";
-
-const headersAs = (token = "alice") => ({ headers: { authorization: `Bearer ${token}` } });
-
-const mcpAs = (token = "alice") =>
-  ActionMcp.client([GetUser, RenameUser, Double, WhoAmI], as(token));
 
 describe("layer", () => {
   it.effect("runs requests in the program's context, middleware and handlers alike", () =>
@@ -92,12 +87,12 @@ describe("layer", () => {
           const client = yield* ActionHttp.client(Http, as("alice"));
 
           const listed = yield* HttpClient.execute(
-            ActionMcp.request("tools/list", {}, headersAs()),
+            ActionMcp.request("tools/list", {}, { headers: { authorization: "Bearer alice" } }),
           );
 
           return [
             yield* client.getUser({ id: "1" }),
-            yield* (yield* mcpAs()).getUser({ id: "1" }),
+            yield* (yield* ActionMcp.client([GetUser], as("alice"))).getUser({ id: "1" }),
             listed.status,
           ];
         }),
