@@ -199,11 +199,10 @@ sign in. What a signed-in caller may do is each implementation's
   to signed-out callers, or public ones open to a session's client, serve the public tools on an
   endpoint of their own: a second `layerHttp` on another `path`.
 - No listing is filtered by caller: `authorize` refuses the call, not the sight of the tool.
-- On a Bearer endpoint, a protected tool's `Unauthenticated`, or `Forbidden` naming `scopes`,
-  answers the request with 401 or 403 and a challenge the client acts on, in place of a tool
-  result ([Authentication.md](Authentication.md#step-up-for-a-scope)). A `Forbidden` naming none
-  is an `isError` tool result, in a 200. Once a handler has sent a notification the response has
-  started, and its refusal is a tool result: refuse in `authorize`.
+- On a Bearer endpoint, a protected tool's step-up refusal answers the request, not a tool
+  result ([Authentication.md](Authentication.md#step-up-for-a-scope),
+  [guarantees.md](guarantees.md#wire-behavior)). Once a handler has sent a notification the
+  response has started, and its refusal is a tool result: refuse in `authorize`.
 - Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)):
   [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts).
 
