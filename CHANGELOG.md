@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+Built and tested against `effect` and `@effect/platform-node` `4.0.3`. The `effect` peer is now
+`~4.0.3`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.0.3 or a later 4.0.x patch**, the release the package is
+now tested against.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.0.3`.
+
 ### Additions
 
 - **`ActionToolkit.openApprovals(history)`** lists the approval requests a conversation's history
