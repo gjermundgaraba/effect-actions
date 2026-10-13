@@ -35,7 +35,7 @@ const isMedia = Schema.is(Media);
 
 const isMediaArray = Schema.is(Schema.Array(Media));
 
-export interface Field {
+interface Field {
   readonly name: string | undefined;
   readonly kind: Kind;
   readonly many: boolean;

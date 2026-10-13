@@ -40,6 +40,9 @@ decoding and failures.
   must authenticate, or sends a token, gets 401 without a valid one before `allowedOrigins` is
   checked; and which errors protecting an action raises in its existing tests. `Testing-failures.md` says which line of a missing
   service's error to search under `exactOptionalPropertyTypes`.
+- The docs' advice for decoding input of your own reports every issue, as the surfaces do; it
+  reported only the first. What a refusal answers on each surface is stated once, in
+  `docs/guarantees.md`, which `Forbidden`'s JSDoc now points to.
 - `notes-service`'s `importNotes` takes `CreateNote.input` as each note's schema; `live-rpc`
   routes to serving the same actions as JSON and names another choice to decide when copying.
 

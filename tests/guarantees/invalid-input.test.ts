@@ -9,6 +9,7 @@ import {
   Schema,
   SchemaTransformation,
   Stream,
+  Struct,
 } from "effect";
 import { McpSchema } from "effect/ai";
 import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -705,7 +706,7 @@ describe("input with several fields that do not decode", () => {
     input: { a: Short, b: Short, c: Short },
   });
 
-  const names = ["a", "b", "c"] as const;
+  const names = Struct.keys(Fields.input.fields);
 
   const app = Action.implement(Fields, () => Effect.void);
 

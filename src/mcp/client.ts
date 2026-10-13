@@ -61,7 +61,7 @@ export const statelessRequest = (method: string, params: Params) => {
 /** Where `client` sends, and through what client. */
 export interface ClientOptions {
   /**
-   * The endpoint, resolved by the `HttpClient`: relative under `layer`. Defaults to `/mcp`,
+   * The endpoint, resolved by the `HttpClient`: relative under `Testing.layer`. Defaults to `/mcp`,
    * the default `layerHttp` path.
    */
   readonly url?: string;
@@ -75,7 +75,7 @@ export interface ClientOptions {
 /** Where a `request` goes, and with what headers. */
 export interface RequestOptions {
   /**
-   * The endpoint, resolved by the `HttpClient` that sends the request: relative under `layer`.
+   * The endpoint, resolved by the `HttpClient` that sends the request: relative under `Testing.layer`.
    * Defaults to `/mcp`, as `client`'s does; converting to a web `Request` needs an absolute
    * one.
    */
