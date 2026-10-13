@@ -166,39 +166,41 @@ export interface Approval {
 
 /**
  * The approval requests still open in a conversation's history, such as a `Chat`'s, in the
- * order they were asked: those no tool result has answered, an approved or denied call's
- * included. A turn's response lists only the requests that turn made, and the answering turn's
- * none, so read every open one here. Each names the call it asks for, the last of the history
- * with its tool-call id, as Effect resolves an answer.
+ * order they were asked: those with neither an answer nor a tool result. An answer recorded
+ * without a result, as a `streamText` turn that failed while its call ran leaves it, is not
+ * open: the next turn acts on it unasked, and another answer would run the call twice. A turn's
+ * response lists only the requests that turn made, and the answering turn's none, so read every
+ * open one here. Each names the call an answer would run, found as Effect finds it: the last
+ * request with its `approvalId`, listed where it was asked, and the last call with its id.
  * Guide: `docs/ActionToolkit.md` in this package; in an application:
  * `examples/kitchen-sink/src/assistant/handlers.ts`.
  */
 export const openApprovals = ({ content: messages }: Prompt.Prompt): ReadonlyArray<Approval> => {
+  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
+  const told = messages.flatMap((message) => (message.role === "tool" ? message.content : []));
+
   const answered = new Set(
-    messages.flatMap((message) =>
-      message.role === "tool"
-        ? message.content.flatMap((part) => (part.type === "tool-result" ? [part.id] : []))
-        : [],
-    ),
+    told.flatMap((part) => (part.type === "tool-approval-response" ? [part.approvalId] : [])),
   );
 
-  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
-  const calls = said.filter((part) => part.type === "tool-call");
+  const ran = new Set(told.flatMap((part) => (part.type === "tool-result" ? [part.id] : [])));
 
-  return said.flatMap((request) => {
-    if (request.type !== "tool-approval-request" || answered.has(request.toolCallId)) return [];
+  const calls = new Map(
+    said.flatMap((part) => (part.type === "tool-call" ? [[part.id, part] as const] : [])),
+  );
 
-    const call = calls.findLast(({ id }) => id === request.toolCallId);
+  const requests = said
+    .filter((part) => part.type === "tool-approval-request")
+    .filter(
+      ({ approvalId }, place, all) =>
+        all.findLastIndex((later) => later.approvalId === approvalId) === place,
+    );
 
-    return call === undefined
+  return requests.flatMap(({ approvalId, toolCallId }) => {
+    const call = calls.get(toolCallId);
+
+    return call === undefined || answered.has(approvalId) || ran.has(toolCallId)
       ? []
-      : [
-          {
-            approvalId: request.approvalId,
-            toolCallId: request.toolCallId,
-            name: call.name,
-            params: call.params,
-          },
-        ];
+      : [{ approvalId, toolCallId, name: call.name, params: call.params }];
   });
 };

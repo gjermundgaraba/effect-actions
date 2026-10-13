@@ -67,8 +67,8 @@ export const GetCameraSnapshot = Action.make("get_camera_snapshot", {
   mcp: { title: "Camera snapshot" },
 });
 
-// A write that adds something and removes nothing says so: MCP assumes a write is destructive
-// unless `destructiveHint` is false. A second call is refused, so it is not idempotent.
+// Destructive, MCP's default for a write: a print sets a machine to work and spends material,
+// which is more than adding a record. A second call is refused, so it is not idempotent.
 export const StartPrint = Action.make("start_print", {
   ...tool,
   description:
@@ -80,7 +80,7 @@ export const StartPrint = Action.make("start_print", {
   },
   success: Printer,
   readOnly: false,
-  mcp: { title: "Start a print", destructiveHint: false },
+  mcp: { title: "Start a print" },
 });
 
 // Idempotent: the same call again leaves the printer as the first left it.
@@ -96,7 +96,7 @@ export const SetPaused = Action.make("set_paused", {
   success: Printer,
   readOnly: false,
   // Destructive, MCP's default for a write: a pause interrupts a running print. Only a write
-  // that adds says `destructiveHint: false`.
+  // that only adds, such as creating a record, says `destructiveHint: false`.
   mcp: { title: "Pause or resume a print", idempotentHint: true },
 });
 

@@ -2,28 +2,49 @@
 
 ## Unreleased
 
+Built and tested against `effect` and `@effect/platform-node` `4.0.3`. The `effect` peer is now
+`~4.0.3`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.0.3 or a later 4.0.x patch**, the release the package is
+now tested against.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.0.3`.
+
 ### Additions
 
+- `ActionMcp.layerHttp` takes Effect 4.0.3's `allowSubscriptions`: `false` turns off MCP
+  2026-07-28 subscriptions ([ActionMcp.md](docs/ActionMcp.md#api)).
 - **`ActionToolkit.openApprovals(history)`** lists the approval requests a conversation's history
-  still holds open, each with the call it asks for (`approvalId`, `toolCallId`, `name`,
-  `params`), by the rule Effect applies when an answer arrives. It replaces the function the
-  kitchen-sink assistant defined, which applications copied.
+  still holds open, each an `Approval` with the call an answer would run (`approvalId`,
+  `toolCallId`, `name`, `params`): those with neither an answer nor a result, the call found as
+  Effect finds it. An answer recorded without a result, as a `streamText` turn that failed
+  while its call ran leaves it, is not open: the next turn acts on it, and another answer would
+  run the call twice. It replaces the function the kitchen-sink assistant defined, which
+  applications copied, and which listed such a request again
+  ([ActionToolkit.md](docs/ActionToolkit.md)).
 
 ### Other changes
 
 - **`Testing.layer` logs the cause of a failed request on the process console, under `it.effect`
   too.** `it.effect` provides a `TestConsole`, which kept the log out of the test's output, so a
-  test saw only `Decode error (500 …)`. A `Logger` provided around the layer still receives it.
+  test saw only `Decode error (500 …)`. A `Logger` provided around the layer still receives it;
+  a `Console` provided around it, `it.effect`'s included, no longer does: collect the log with a
+  `Logger`.
 - `destructiveHint`'s JSDoc and [ActionMcp.md](docs/ActionMcp.md#describe-tools-to-a-model)
   use MCP's words: a non-destructive tool performs only additive updates. The examples' hints
-  follow it.
-- The docs say how to read a page whose output was cut, show the `claude mcp add` line for a
-  protected endpoint, and gain failure entries for an optional `userMessage`, a module name that
+  follow it: `mcp-tools`' `start_print` and `set_paused` are now destructive.
+- The docs say how to read a page whose output was cut, show the `claude mcp add` and
+  `codex mcp add` lines for a protected endpoint, say how to type an MCP request's `arguments`
+  in a test helper, and gain failure entries for an optional `userMessage`, a module name that
   differs only in case (TS1149) and an error `toBeInstanceOf` does not narrow.
 - `notes-service` adds `importNotes`, a bulk import as one action, and a `notes import` command
-  that reads a file with `Argument.FileText` and calls it. The example servers read `HOST`;
-  `live-rpc`'s `NotAuthor` no longer names the message's author; `mcp-tools` links
-  [ActionMcp.md](docs/ActionMcp.md) for tools that need a token.
+  that reads a file `notes export` wrote and calls it once; `export` escapes a body line that
+  starts as a title would, so every note reads back as it was, up to the action's 100; a title
+  is one line. The example servers read `HOST`; `live-rpc`'s `NotAuthor` no longer names the
+  message's author; `mcp-tools` links [ActionMcp.md](docs/ActionMcp.md) for tools that need a
+  token.
 
 ## 0.12.0
 

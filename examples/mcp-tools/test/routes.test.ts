@@ -79,7 +79,7 @@ describe("the tools, over MCP", () => {
         },
         {
           name: "start_print",
-          annotations: { title: "Start a print", ...hints(false, false, false) },
+          annotations: { title: "Start a print", ...hints(false, true, false) },
         },
         {
           name: "set_paused",

@@ -36,8 +36,9 @@ const Id = Schema.String.annotate({
 // generic "Expected a value with a length of at least 1". A model and a CLI user read it too.
 const Title = Schema.String.check(
   Schema.isMinLength(1, { message: "A note needs a title." }),
+  Schema.isPattern(/^[^\r\n\u2028\u2029]*$/u, { message: "A title is one line." }),
 ).annotate({
-  description: "A short name for the note, at least one character.",
+  description: "A short name for the note: one line, at least one character.",
 });
 
 const Body = Schema.String.annotate({ description: "The note's whole text." });
@@ -82,7 +83,7 @@ export const UpdateNote = Action.make("updateNote", {
   readOnly: false,
   caller: CurrentUser,
   // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
-  // a write. Only `createNote`, which adds, says `false`.
+  // a write. `createNote` and `importNotes`, which only add, say `false`.
 });
 
 export const DeleteNote = Action.make("deleteNote", {
@@ -103,7 +104,10 @@ export const ImportNotes = Action.make("importNotes", {
     "before any is written: an import holding one that is not valid writes none.",
   input: {
     notes: Schema.Array(Schema.Struct({ title: Title, body: Body }))
-      .check(Schema.isMinLength(1), Schema.isMaxLength(100))
+      .check(
+        Schema.isMinLength(1, { message: "An import holds at least one note." }),
+        Schema.isMaxLength(100, { message: "An import holds at most 100 notes." }),
+      )
       .annotate({ description: "The notes to create, in order: from 1 to 100." }),
   },
   success: { notes: Schema.Array(Note) },

@@ -31,8 +31,8 @@ Import `@gjermundgaraba/effect-actions/Testing`.
 | `mcpRequest`: `headers`        | Request headers.                                                                |
 
 Exported types: `McpClient<Actions>`, `McpClientOptions`, `McpRequestOptions`, and `McpParams`,
-the `params` of `mcpRequest`: JSON values, so a helper passing arguments on types them
-`McpParams`, not `unknown`.
+the `params` of `mcpRequest`. A helper passing on a tool's `arguments` types them `Schema.Json`,
+and whole `params` `McpParams`, never `unknown`.
 
 ## Test an implementation in process
 
