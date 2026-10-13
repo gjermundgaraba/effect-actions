@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
+import { Base64 } from "effect/encoding";
 import { McpServer } from "effect/ai";
 import { HttpRouter } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
@@ -94,6 +95,53 @@ describe("a mixed MCP endpoint", () => {
     expect(calls).toEqual(["double"]);
   });
 
+  it("reads a base64-encoded Mcp-Name as the runtime routes it: a public call is admitted signed out, a protected one refused", async () => {
+    const { web, calls } = mixedEndpoint();
+
+    const named = (request: Request, name: string) => {
+      request.headers.set("mcp-name", `=?base64?${Base64.encode(name)}?=`);
+
+      return request;
+    };
+
+    expect(await valueOf(await web.handler(named(rawToolCall("status"), "status")))).toEqual({
+      service: "gate",
+      users: 1,
+    });
+
+    const protectedCall = named(rawToolCall("double", { value: "21" }), "double");
+    expect((await web.handler(protectedCall)).status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  it("never gives a public tool an identity, though its request presents a valid credential", async () => {
+    const Whoever = Action.make("whoever", {
+      description: "Whether the call has a caller",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.Boolean,
+    });
+
+    const whoever = Action.implement(Whoever, () =>
+      Effect.map(Effect.serviceOption(CurrentActor), Option.isSome),
+    );
+
+    const { app } = makeExampleAppRecordingCalls();
+
+    const web = serve(
+      ActionMcp.layerHttp([app, whoever], {
+        name: "gate",
+        version: "0",
+        authentication: Login,
+      }).pipe(Layer.provide(authenticate)),
+    );
+
+    expect(await valueOf(await web.handler(withBearer(rawToolCall("whoever"), "reader")))).toBe(
+      false,
+    );
+    expect(await valueOf(await web.handler(rawToolCall("whoever")))).toBe(false);
+  });
+
   it("answers a public tool's step-up refusal as its result, signed in or not, as HTTP does", async () => {
     const Peek = Action.make("peek", {
       description: "Peek",
@@ -163,10 +211,6 @@ describe("a mixed MCP endpoint", () => {
     const withoutRoutingName = rawToolCall("status");
     withoutRoutingName.headers.delete("mcp-name");
     expect((await web.handler(withoutRoutingName)).status).toBe(401);
-
-    const base64EncodedPublicName = rawToolCall("status");
-    base64EncodedPublicName.headers.set("mcp-name", `=?base64?${btoa("status")}?=`);
-    expect((await web.handler(base64EncodedPublicName)).status).toBe(401);
 
     for (const [method, params] of [
       ["resources/read", { uri: "docs://readme" }],

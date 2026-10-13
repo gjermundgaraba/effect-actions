@@ -23,6 +23,9 @@ decoding and failures.
 
 ### Other changes
 
+- **A mixed MCP endpoint lets a client that base64-encodes a public tool's `Mcp-Name`**
+  (`=?base64?…?=`) call it signed out, as Effect routes that name. This reverses 0.10.0's "a
+  Base64-encoded tool name names no public tool, and authenticates", which answered such a call 401.
 - An MCP tool whose handler fails with an undeclared `AiError`, such as one a model call leaks, is
   answered with the internal error text and reported, as every other undeclared failure is; it
   was sent as the tool's error result.
