@@ -197,16 +197,14 @@ const toolOf = (action: Action.Any, outputSchema: McpSchema.Tool["outputSchema"]
 
 // Why: Effect's `registerToolkit` sends every success as `structuredContent` and one JSON text
 // block and takes no option, so each action is registered here from its bound handler, through the
-// registry's public `addTool`, with the native answers: arguments that do not decode are
-// `InvalidParams`, a declared error is an `isError` result of its JSON, and a defect or an
-// undeclared failure is logged, reported and answered with the native internal error text.
+// registry's public `addTool`.
 const registerTools = Effect.fnUntraced(function* (
   apps: ReadonlyArray<AnyImplementation>,
   lifts: ReadonlyMap<string, Lift>,
   authentication: Authentication | undefined,
 ) {
   const registry = yield* McpServer.McpServer;
-  const runs = new Map(yield* acquire(apps));
+  const bound = yield* acquire(apps);
   const built = yield* Effect.context<unknown>();
 
   const internalErrorUnlessInterrupted = (cause: Cause.Cause<ErasedValue>) => {
@@ -220,11 +218,7 @@ const registerTools = Effect.fnUntraced(function* (
         );
   };
 
-  for (const action of apps.flatMap((app) => app.actions)) {
-    const run = runs.get(action);
-
-    if (run === undefined) throw new Error(`No handler for MCP tool ${action.name}`);
-
+  for (const [action, run] of bound) {
     const lift = lifts.get(action.name);
     const media = lift === undefined || lift.fields.length === 0 ? undefined : lift;
 
@@ -306,12 +300,15 @@ const registerTools = Effect.fnUntraced(function* (
       tool,
       annotations: Context.empty(),
       handle: (payload: ErasedValue) =>
-        Effect.annotateCurrentSpan({ tool: action.name, parameters: payload }).pipe(
+        Effect.annotateCurrentSpan({ tool: action.name, parameters: payload ?? {} }).pipe(
           Effect.andThen(decode(payload ?? {})),
           Effect.mapError(
             ({ message }) =>
               new McpSchema.InvalidParams({
-                message: `Invalid parameters for tool '${action.name}': ${message}`,
+                message: new AiError.ToolParameterValidationError({
+                  toolName: action.name,
+                  description: message,
+                }).message,
               }),
           ),
           Effect.flatMap((input) =>

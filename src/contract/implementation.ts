@@ -149,9 +149,11 @@ export class Implementation<
         ? yield* source.#authorizer.key
         : () => Effect.void;
 
-      return bound
-        .filter(([action]) => actions.includes(action))
-        .map(([action, handle]) => [action, dispatch(action, handle, before)] as const);
+      return actions.flatMap((action) =>
+        bound.flatMap(([held, handle]) =>
+          held === action ? [[action, dispatch(action, handle, before)] as const] : [],
+        ),
+      );
     });
   }
 

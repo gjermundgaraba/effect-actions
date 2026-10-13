@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, JsonPointer, Layer, Predicate, Schema } from "effect";
-import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpClient } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
@@ -850,7 +850,7 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("turns invalid output and errors, and defects, into sanitized native failures on both transports", async () => {
+  it("turns invalid output and errors, undeclared failures and defects into sanitized native failures on both transports", async () => {
     const Broken = Action.make("broken", {
       description: "Bad output",
       readOnly: false,
@@ -875,17 +875,32 @@ describe("projection boundaries", () => {
       success: Schema.String,
     });
 
-    const apps = Action.implement([Broken, Refused, Boom], {
+    const Leaked = Action.make("leaked", {
+      description: "Undeclared failure",
+      readOnly: false,
+      caller: Action.Anyone,
+      success: Schema.String,
+    });
+
+    const leakedFromAModel = AiError.make({
+      module: "LanguageModel",
+      method: "generateText",
+      reason: new AiError.UnknownError({ description: "secret prompt" }),
+    });
+
+    const apps = Action.implement([Broken, Refused, Boom, Leaked], {
       broken: () => Effect.succeed(Infinity),
       refused: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
       boom: () => Effect.die(new Error("secret database password")),
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A handler failing with an error its contract does not declare, which the types refuse.
+      leaked: () => Effect.fail(leakedFromAModel as never),
     });
 
     const web = makeTestHttp(apps);
 
     const mcp = makeTestMcp(apps);
 
-    for (const name of ["broken", "refused", "boom"]) {
+    for (const name of ["broken", "refused", "boom", "leaked"]) {
       const http = await web.handler(post(`/api/${name}`));
       expect(http.status).toBe(500);
       expect(await http.text()).toBe("");
@@ -936,34 +951,43 @@ describe("projection boundaries", () => {
     });
   });
 
-  it.effect("passes HTTP cancellation to the running Effect and finalizes it", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const stopped = yield* Deferred.make<void>();
+  it.effect.each(["HTTP", "MCP"] as const)(
+    "passes %s cancellation to the running Effect and finalizes it",
+    (transport) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const stopped = yield* Deferred.make<void>();
 
-      const Slow = Action.make("slow", {
-        description: "Wait",
-        readOnly: false,
-        caller: Action.Anyone,
-        success: Schema.String,
-      });
+        const Slow = Action.make("slow", {
+          description: "Wait",
+          readOnly: false,
+          caller: Action.Anyone,
+          success: Schema.String,
+        });
 
-      const apps = Action.implement([Slow], {
-        slow: () =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.ensuring(Deferred.succeed(stopped, undefined)),
-          ),
-      });
+        const apps = Action.implement([Slow], {
+          slow: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Deferred.succeed(stopped, undefined)),
+            ),
+        });
 
-      yield* Effect.gen(function* () {
-        const running = yield* Effect.forkChild(send(post("/api/slow")));
+        const routes =
+          transport === "HTTP"
+            ? ActionHttp.layer(ActionHttp.make([Slow]), apps)
+            : ActionMcp.layerHttp(apps, { name: "test", version: "0" });
 
-        yield* Deferred.await(started);
-        yield* Fiber.interrupt(running);
-        yield* Deferred.await(stopped);
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Slow]), apps))));
-    }),
+        yield* Effect.gen(function* () {
+          const running = yield* Effect.forkChild(
+            send(transport === "HTTP" ? post("/api/slow") : rawToolCall("slow")),
+          );
+
+          yield* Deferred.await(started);
+          yield* Fiber.interrupt(running);
+          yield* Deferred.await(stopped);
+        }).pipe(Effect.provide(Testing.layer(routes)));
+      }),
   );
 });
 
