@@ -1,7 +1,14 @@
-import { Array as Arr, Context, Effect, Layer, Option } from "effect";
+import { Array as Arr, Cause, Context, Effect, Exit, Layer, Option, Schema } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
-import { Anyone, assertAuthentication, assertDistinct, assertOnce, type Proving } from "./rules.js";
+import {
+  Anyone,
+  assertAuthentication,
+  assertDistinct,
+  assertOnce,
+  projectedErrors,
+  type Proving,
+} from "./rules.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
@@ -523,6 +530,41 @@ const dispatch = (
   const authorization =
     action.caller === Anyone ? Effect.void : Effect.suspend(() => before(action));
 
+  const validate = Schema.decodeUnknownEffect(Schema.toType(Schema.Union(projectedErrors(action))));
+
+  // Why: A failure the action's errors reject, undeclared or breaking one of their checks, is the
+  // call's defect on every surface, beside why they reject it and with its trace: logs and reports
+  // then name it, where a surface encoding it named only the encoding's error.
+  const asDefects = (
+    reason: Cause.Fail<ErasedValue>,
+    rejected: Cause.Cause<Schema.SchemaError>,
+  ) => {
+    const trace = Context.makeUnsafe<never>(reason.annotations);
+
+    return [
+      Cause.makeDieReason(reason.error).annotate(trace),
+      Cause.makeDieReason(Cause.squash(rejected)).annotate(trace),
+    ];
+  };
+
+  const declaredOrDefect = Effect.fnUntraced(function* (cause: Cause.Cause<ErasedValue>) {
+    const reasons: Array<Cause.Reason<ErasedValue>> = [];
+
+    for (const reason of cause.reasons) {
+      if (Cause.isFailReason(reason)) {
+        const validated = yield* Effect.exit(validate(reason.error));
+
+        reasons.push(
+          ...(Exit.isSuccess(validated) ? [reason] : asDefects(reason, validated.cause)),
+        );
+      } else {
+        reasons.push(reason);
+      }
+    }
+
+    return yield* Effect.failCause(Cause.fromReasons(reasons));
+  });
+
   return (input) => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
@@ -534,7 +576,11 @@ const dispatch = (
     );
 
     return Effect.scoped(
-      authentication.pipe(Effect.andThen(authorization), Effect.andThen(handled)),
+      authentication.pipe(
+        Effect.andThen(authorization),
+        Effect.andThen(handled),
+        Effect.catchCause(declaredOrDefect),
+      ),
     );
   };
 };

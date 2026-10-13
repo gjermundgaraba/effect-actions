@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, ErrorReporter, Layer, Schema, SchemaGetter, Stream } from "effect";
+import { Effect, Layer, Schema, SchemaGetter, Stream } from "effect";
 import { McpServer, Tool, Toolkit } from "effect/ai";
 import { Base64 } from "effect/encoding";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -122,18 +122,9 @@ describe("MCP registration without media", () => {
 
   it.effect("lists and answers as Effect's registerToolkit does, over HTTP", () =>
     Effect.gen(function* () {
-      const reports: Array<string> = [];
-
-      const reporter = ErrorReporter.layer([
-        ErrorReporter.make(({ error }) => void reports.push(error.message)),
-      ]);
-
       const ours = yield* answersOverHttp(requests).pipe(
         Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options))),
-        Effect.provide(reporter),
       );
-
-      const reportedDefects = reports.splice(0);
 
       const theirs = yield* answersOverHttp(requests).pipe(
         Effect.provide(
@@ -141,14 +132,9 @@ describe("MCP registration without media", () => {
             ActionMcp.layerHttp([], { ...options, features: nativeRegistrationOfSameTools }),
           ),
         ),
-        Effect.provide(reporter),
       );
 
       expect(ours).toEqual(theirs);
-      expect(reportedDefects).toEqual(
-        reports.map((message) => message.replace(/^Toolkit\./, "ActionMcp.")),
-      );
-      expect(reportedDefects).toHaveLength(2);
 
       expect(replyOf(ours[1] ?? "")).toEqual({
         result: {

@@ -129,8 +129,9 @@ A method fails with the action's declared errors and the built-in ones as decode
 `McpCallError` for any other answer, a result without its structured content included;
 structured content that does not decode as the success is a `SchemaError`, and a request that
 fails Effect's `HttpClientError`. Only a tool's result carries the action's own errors: an HTTP
-answer other than 200 decodes as a refusal alone, so an error a verifier declares, typed over
-`ActionHttp.client`, is an `McpCallError` here
+answer other than 200 decodes as a refusal, or, given the endpoint's `authentication`, as an error
+its verifier declares for a protected tool, as `ActionHttp.client` types it; otherwise it is an
+`McpCallError`
 ([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
 
 A method decodes a refusal alike whether the endpoint answered a 401 or a 403 or returned a tool

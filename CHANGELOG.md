@@ -21,16 +21,32 @@ decoding and failures.
 | `Testing.McpRequestOptions`                  | `ActionMcp.RequestOptions`                  |
 | `Testing.McpParams`                          | `ActionMcp.Params`                          |
 
+**A failure an action's errors reject is its call's defect on every surface**: one it does not
+declare, which a cast or plain JavaScript lets through, or one breaking a check of its schema,
+which the types let through, such as `Infinity` in a struct error's `Schema.Finite` field. The
+defect carries the failure, with its trace, and the `SchemaError` saying why. A class error's
+checks are not rerun, so one built with `disableChecks` still fails to encode, as before. HTTP,
+MCP and RPC answer it as before, and their logs and error reporters now name
+the failure, where HTTP's and MCP's named only the error encoding it. A Toolkit call dies with it,
+where it failed with an `AiError`, `Failed to encode result for tool …`, and a command dies with
+it, where it failed with a `UserError` printed as its tag and message.
+
+- Migrate: declare the error on the action, or fix the value. A host matching the `AiError` or the `UserError` for
+  such a failure matches the defect instead.
+
 ### Other changes
 
+- **`ActionMcp.client` takes the endpoint's `authentication`**, as `layerHttp` does: an error its
+  verifier declares, the endpoint's HTTP answer for a protected tool, is then its decoded value and
+  in the method's type, as over `ActionHttp.client`, where it was an `McpCallError`.
 - **A mixed MCP endpoint lets a client that base64-encodes a public tool's `Mcp-Name`**
   (`=?base64?…?=`) call it signed out, as Effect routes that name. This reverses 0.10.0's "a
   Base64-encoded tool name names no public tool, and authenticates", which answered such a call 401.
 - An MCP tool whose handler fails with an undeclared `AiError`, such as one a model call leaks, is
   answered with the internal error text and reported, as every other undeclared failure is; it
   was sent as the tool's error result.
-- An `ErrorReporter` gets an MCP tool's result or failure that does not encode as an `AiError` of
-  module `ActionMcp`, where it was `Toolkit`, and its description names only the declared errors.
+- An `ErrorReporter` gets an MCP tool's result or declared error that does not encode as a
+  defect, its `SchemaError`, where it was an `AiError` of module `Toolkit`.
 - **A command's `InvalidInput` names every field that does not decode**, as HTTP, RPC, MCP and
   `Action.client` do; it named only the first.
 - A Toolkit tool carries all four MCP hint annotations, MCP's default where the action's `mcp`

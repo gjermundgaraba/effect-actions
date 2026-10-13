@@ -9,7 +9,6 @@ import {
   type JsonSchema,
   Layer,
   Predicate,
-  Result,
   Schema,
   type Stdio,
 } from "effect";
@@ -216,14 +215,8 @@ const registerTools = Effect.fnUntraced(function* (
       Effect.as(textErrorResult(nativeInternalErrorText)),
     );
 
-  const internalErrorUnlessInvalidOrInterrupted = (cause: Cause.Cause<ErasedValue>) =>
-    Cause.hasDies(cause)
-      ? internalError(cause)
-      : Result.match(Cause.findFail(cause), {
-          onFailure: Effect.failCause,
-          onSuccess: ({ error }) =>
-            error instanceof McpSchema.InvalidParams ? Effect.fail(error) : internalError(cause),
-        });
+  const internalErrorOnDefect = (cause: Cause.Cause<McpSchema.InvalidParams>) =>
+    Cause.hasDies(cause) ? internalError(cause) : Effect.failCause(cause);
 
   for (const [action, run] of bound) {
     const lift = liftOf(action.success);
@@ -249,18 +242,7 @@ const registerTools = Effect.fnUntraced(function* (
     const encoder = (schema: Schema.Top) => {
       const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(schema));
 
-      return (value: ErasedValue) =>
-        Effect.mapError(encode(value), ({ message }) =>
-          AiError.make({
-            module: "ActionMcp",
-            method: `${action.name}.handle`,
-            reason: new AiError.ToolResultEncodingError({
-              toolName: action.name,
-              toolResult: value,
-              description: message,
-            }),
-          }),
-        );
+      return (value: ErasedValue) => Effect.orDie(encode(value));
     };
 
     const encodeSuccess = encoder(action.success);
@@ -335,7 +317,7 @@ const registerTools = Effect.fnUntraced(function* (
               }),
             ),
           ),
-          Effect.catchCause(internalErrorUnlessInvalidOrInterrupted),
+          Effect.catchCause(internalErrorOnDefect),
           // Why: A call runs over what the endpoint was built with, its startup services and the
           // handlers' builds, and what the request provides wins, as a native toolkit handler's
           // context does.

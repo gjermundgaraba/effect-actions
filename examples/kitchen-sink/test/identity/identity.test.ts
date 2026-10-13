@@ -7,7 +7,7 @@ import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { Directory } from "../../src/identity/directory.js";
-import { IssuerUnavailable, QuotaExceeded, WhoAmI } from "../../src/identity/Identity.js";
+import { IssuerUnavailable, Login, QuotaExceeded, WhoAmI } from "../../src/identity/Identity.js";
 import { memory } from "../../src/memory.js";
 import { publicRoutes } from "../../src/routes.js";
 
@@ -111,14 +111,20 @@ describe("a bearer token", () => {
   it.effect("fails with the verifier's declared error, a typed 503, when the issuer is down", () =>
     Effect.gen(function* () {
       const http = yield* ActionHttp.client(Http, as("ada", "acme"));
-      const mcp = yield* ActionMcp.client([WhoAmI], as("ada", "acme"));
+
+      // Over MCP it is the endpoint's HTTP answer, before any tool runs, not a tool's result: the
+      // client decodes it given the descriptor the endpoint serves with.
+      const mcp = yield* ActionMcp.client([WhoAmI], {
+        ...as("ada", "acme"),
+        authentication: Login,
+      });
 
       expect(yield* Effect.flip(http.whoAmI())).toEqual(
         new IssuerUnavailable({ retryAfterSeconds: 30 }),
       );
-      // Over MCP it is the endpoint's HTTP answer, before any tool runs, not a tool's result:
-      // the client fails with the error that holds such an answer.
-      expect(yield* Effect.flip(mcp.whoAmI())).toBeInstanceOf(ActionMcp.McpCallError);
+      expect(yield* Effect.flip(mcp.whoAmI())).toEqual(
+        new IssuerUnavailable({ retryAfterSeconds: 30 }),
+      );
     }).pipe(Effect.provide(servedWith(issuerDown))),
   );
 });

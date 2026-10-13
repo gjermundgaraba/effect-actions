@@ -447,14 +447,14 @@ describe("Action.client", () => {
       const unencoded = yield* defectOf(client.count());
       const undeclared = yield* Effect.exit(client.ping());
 
-      const schemaErrorThenFailure = Exit.isFailure(undeclared)
+      const failureThenSchemaError = Exit.isFailure(undeclared)
         ? undeclared.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
         : [];
 
       expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain('at ["count"]');
-      expect(schemaErrorThenFailure).toHaveLength(2);
-      expect(Schema.isSchemaError(schemaErrorThenFailure[0])).toBe(true);
-      expect(schemaErrorThenFailure[1]).toBeInstanceOf(Unlisted);
+      expect(failureThenSchemaError).toHaveLength(2);
+      expect(failureThenSchemaError[0]).toBeInstanceOf(Unlisted);
+      expect(Schema.isSchemaError(failureThenSchemaError[1])).toBe(true);
     }),
   );
 
@@ -517,6 +517,49 @@ describe("Action.client", () => {
       ]);
       expect(Cause.pretty(cause)).toMatch(/^\s+at quota \(.*client\.test\.ts/m);
     }),
+  );
+
+  it.effect(
+    "keeps the trace of a failure it makes a defect, and checks each failure of a cause apart",
+    () =>
+      Effect.gen(function* () {
+        class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+
+        class Unlisted extends Schema.TaggedError<Unlisted>()("Unlisted", {}) {}
+
+        const Status = Action.make("status", {
+          description: "Status",
+          readOnly: true,
+          caller: Action.Anyone,
+          error: [Busy],
+        });
+
+        const busy = new Busy();
+        const unlisted = new Unlisted();
+
+        const client = yield* Action.client(
+          Action.implement(Status, () =>
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: a cause holding an undeclared failure beside a declared one, as plain JavaScript could.
+            Effect.failCause(Cause.combine(Cause.fail(busy), Cause.fail(unlisted as never))).pipe(
+              Effect.withSpan("quota"),
+            ),
+          ),
+        );
+
+        const cause = yield* Effect.flip(Effect.sandbox(client.status()));
+
+        expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([busy]);
+        expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
+          unlisted,
+          expect.any(Schema.SchemaError),
+        ]);
+        expect(
+          cause.reasons
+            .filter(Cause.isDieReason)
+            .map((reason) => Cause.pretty(Cause.fromReasons([reason])))
+            .every((printed) => /^\s+at quota \(.*client\.test\.ts/m.test(printed)),
+        ).toBe(true);
+      }),
   );
 
   it.effect(

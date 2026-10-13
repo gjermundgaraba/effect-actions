@@ -41,8 +41,9 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 All but `actions`, `features` and `authentication` are Effect's own `McpServer` options, passed
 through. Its `protocols` and `allowSessionTermination` are not options.
 
-`client` takes `url`, default `/mcp`, and `transformClient`; `request` takes `url` and `headers`.
-Types: `Client<Actions>`, `ClientOptions`, `RequestOptions`, `Params`.
+`client` takes `url`, default `/mcp`, `transformClient`, and the endpoint's `authentication`, so an
+error its verifier declares decodes; `request` takes `url` and `headers`.
+Types: `Client<Actions, D>`, `ClientOptions`, `RequestOptions`, `Params`.
 
 ## Serve tools over HTTP
 
