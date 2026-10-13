@@ -2,12 +2,22 @@ import { type Context, Effect, Option } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
-import { Anyone } from "../contract/rules.js";
-import type {
-  BuildServices,
-  Protected,
-  ServedRequest,
-  Serving,
+import {
+  Anyone,
+  assertDistinct,
+  assertOnce,
+  assertOwnTags,
+  errorList,
+  projectedErrors,
+} from "../contract/rules.js";
+import {
+  type BuildServices,
+  type Protected,
+  type Served,
+  type ServedRequest,
+  type Serving,
+  servedBy,
+  toList,
 } from "../contract/implementation.js";
 import { type Refusal, Unauthenticated } from "../contract/errors.js";
 
@@ -205,17 +215,79 @@ export type VerifierError<A extends Action.Any, D> = A["caller"] extends typeof 
     ? E[number]
     : never;
 
+/** The errors a binding declares for every call, and its protected actions' authentication's. */
+export interface Declaring {
+  readonly error: Action.Errors;
+  readonly authentication?: { readonly error: Action.Errors } | undefined;
+}
+
 // Why: A surface adds a verifier's errors to its protected actions itself, as it adds its own,
 // so they take the status rule, the projected order and the client types of every other error.
 // Rejected: the HTTP security middleware's native `error`, which `HttpApiEndpoint` merges in.
-export const withVerifierErrors = (
-  action: Action.Any,
-  errors: Action.Errors,
-  verifierErrors: Action.Errors | undefined,
-): Action.Errors =>
-  action.caller === Anyone || verifierErrors === undefined
-    ? errors
-    : [...errors, ...verifierErrors];
+/**
+ * Every error a binding's call of `action` declares: the built-in ones, the action's, the
+ * binding's and, where `action` is protected, its authentication's.
+ */
+export const bindingErrors = (action: Action.Any, binding: Declaring): Action.Errors =>
+  projectedErrors(
+    action,
+    action.caller === Anyone || binding.authentication === undefined
+      ? binding.error
+      : [...binding.error, ...binding.authentication.error],
+  );
+
+/**
+ * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, no built-in error in
+ * `error`, and the descriptor every protected action names. Returns `error` as a list.
+ */
+export const bindingOf = (
+  what: string,
+  actions: ReadonlyArray<Action.Any>,
+  options: {
+    readonly error?: Action.Errors | Action.Errors[number] | undefined;
+    readonly authentication?: Any | undefined;
+  },
+) => {
+  assertOnce("action", actions);
+
+  const error = errorList(options.error);
+
+  assertOwnTags(what, error);
+  assertAuthentication(actions, options.authentication);
+
+  return { error, authentication: options.authentication };
+};
+
+/**
+ * What `ActionHttp.layer` and `ActionRpc.layer` serve, with the checks they share; `authentication`
+ * is the binding's where a served action is protected.
+ */
+export const servingOf = (
+  what: string,
+  binding: {
+    readonly actions: ReadonlyArray<Action.Any>;
+    readonly authentication?: Any | undefined;
+  },
+  served: Served,
+  options: {
+    readonly actions?: ReadonlyArray<Action.Any> | undefined;
+    readonly middleware?: ReadonlyArray<{ readonly key: string }> | undefined;
+  },
+) => {
+  const apps = servedBy(what, binding.actions, toList(served), options.actions);
+  const actions = apps.flatMap((app) => app.actions);
+
+  assertAuthentication(actions, binding.authentication);
+  assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
+
+  return {
+    apps,
+    actions,
+    authentication: actions.some((action) => action.caller !== Anyone)
+      ? binding.authentication
+      : undefined,
+  };
+};
 
 export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
   never,

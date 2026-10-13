@@ -6,6 +6,7 @@ import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-ap
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -889,6 +890,17 @@ const billing = Action.implement([Invoice, Audit], {
 });
 
 const Http = ActionHttp.make([WhoAmI, Invoice, Audit]);
+
+it("refuses a binding error with a built-in error's tag, on each binding", () => {
+  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+  const refusal = 'binding: error _tag "Forbidden" is built in, and declared on every surface';
+
+  expect(() => ActionHttp.make([identity], { error: [Forbidden] })).toThrow(
+    `ActionHttp ${refusal}`,
+  );
+  expect(() => ActionRpc.make([identity], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
+});
 
 describe("HTTP bindings", () => {
   it.each([

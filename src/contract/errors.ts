@@ -3,8 +3,6 @@ import { Effect, Predicate, Schema, SchemaIssue } from "effect";
 const defaultedMessage = (fallback: string) =>
   Schema.String.pipe(Schema.withConstructorDefault(Effect.succeed(fallback)));
 
-export const statuses = { InvalidInput: 400, Unauthenticated: 401, Forbidden: 403 } as const;
-
 const Issue = Schema.Struct({
   path: Schema.Array(Schema.Union([Schema.String, Schema.Finite])),
   message: Schema.String,
@@ -31,7 +29,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
     message: defaultedMessage("The input does not match the action's input."),
     issues: Schema.Array(Issue).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
-  { httpApiStatus: statuses.InvalidInput },
+  { httpApiStatus: 400 },
 ) {
   declare private readonly "~declared in the action's error, or built in": unknown;
 
@@ -61,7 +59,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   "Unauthenticated",
   { message: defaultedMessage("Authentication is required.") },
-  { httpApiStatus: statuses.Unauthenticated },
+  { httpApiStatus: 401 },
 ) {
   declare private readonly "~declared in the action's error, or built in": unknown;
 }
@@ -84,7 +82,7 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()(
     message: defaultedMessage("Not allowed."),
     scopes: Schema.optionalKey(Schema.NonEmptyArray(ScopeToken)),
   },
-  { httpApiStatus: statuses.Forbidden },
+  { httpApiStatus: 403 },
 ) {
   declare private readonly "~declared in the action's error, or built in": unknown;
 }

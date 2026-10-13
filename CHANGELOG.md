@@ -4,6 +4,8 @@
 
 ### Other changes
 
+- **A command's `InvalidInput` names every field that does not decode**, as HTTP, RPC, MCP and
+  `Action.client` do; it named only the first. Every surface now decodes input through one rule.
 - `destructiveHint`'s JSDoc says an update of a stored flag, such as "read", stays destructive.
 - The docs say a hand-written command's client already checks a file's input, so a decode of
   its own only repeats that check; that undecodable tool arguments are an `AiError`, not

@@ -2,8 +2,8 @@ import { Cause, Effect, Logger, Runtime, type Schema } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "../contract/Action.js";
-import { assertDistinct, assertKnown } from "../contract/rules.js";
-import { type VerifierError, withVerifierErrors } from "../authentication/provider.js";
+import { assertDistinct, assertKnown, projectedErrors } from "../contract/rules.js";
+import { bindingErrors, type Declaring, type VerifierError } from "../authentication/provider.js";
 import {
   type UserError,
   command as makeCommand,
@@ -42,10 +42,8 @@ export type { UserError } from "./commands.js";
 
 // Why: The three fields `toUserError` reads, which the bindings of `ActionHttp.make` and
 // `ActionRpc.make` both have: a command of your own calls through either.
-interface AnyBinding {
-  readonly authentication?: { readonly error: Action.Errors } | undefined;
+interface AnyBinding extends Declaring {
   readonly actions: ReadonlyArray<Action.Any>;
-  readonly error: Action.Errors;
 }
 
 /**
@@ -61,11 +59,8 @@ interface AnyBinding {
  */
 export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
   "actions" in calls
-    ? failingAsDerived(calls.actions, (action) => endpointErrorsOf(calls, action))
-    : failingAsDerived(calls, () => []);
-
-const endpointErrorsOf = (binding: AnyBinding, action: Action.Any) =>
-  withVerifierErrors(action, binding.error, binding.authentication?.error);
+    ? failingAsDerived(calls.actions, (action) => bindingErrors(action, calls))
+    : failingAsDerived(calls, (action) => projectedErrors(action));
 
 /**
  * An aggregate command of the actions `A`: its name, the actions that are its subcommands,
@@ -187,7 +182,12 @@ const inProcess = <A extends Action.Any>(
 ) => {
   const app = theImplementationOf(apps, action);
 
-  return makeCommand(action, (input) => runWithBuildOfItsOwn(app, action, input), options);
+  return makeCommand(
+    action,
+    (input) => runWithBuildOfItsOwn(app, action, input),
+    options,
+    projectedErrors(action),
+  );
 };
 
 const overHttp = <A extends Action.Any>(
@@ -202,7 +202,7 @@ const overHttp = <A extends Action.Any>(
     action,
     (input) => Effect.flatMap(methods(binding, client), (methodOf) => methodOf(action)(input)),
     options,
-    endpointErrorsOf(binding, action),
+    bindingErrors(action, binding),
   );
 };
 

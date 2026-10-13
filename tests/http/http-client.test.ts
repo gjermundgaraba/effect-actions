@@ -447,14 +447,6 @@ it.effect("declares a binding's errors on every endpoint, so middleware's answer
   }),
 );
 
-it("refuses a binding error with a built-in error's tag", () => {
-  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
-
-  expect(() => ActionHttp.make([Get], { error: [Forbidden] })).toThrow(
-    'ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface',
-  );
-});
-
 const namedRecordingFetch =
   (name: string, handler: Handler, used: Array<string>): typeof globalThis.fetch =>
   (input, init) => {

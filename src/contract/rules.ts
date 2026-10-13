@@ -1,6 +1,6 @@
 import { Predicate, Schema, SchemaAST, type Types } from "effect";
 import type * as Action from "./Action.js";
-import { builtIns, statuses } from "./errors.js";
+import { builtIns } from "./errors.js";
 
 export const errorList = (
   error: Action.Errors[number] | Action.Errors | undefined,
@@ -112,10 +112,10 @@ const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
     return tag === undefined ? [] : members(tag).flatMap(literalValues).filter(Predicate.isString);
   });
 
+const builtInTags = new Set(builtIns.flatMap((error) => encodedTags(error.ast)));
+
 export const assertOwnTags = (what: string, errors: Action.Errors): void => {
-  const tag = errors
-    .flatMap((error) => encodedTags(error.ast))
-    .find((tag) => Object.hasOwn(statuses, tag));
+  const tag = errors.flatMap((error) => encodedTags(error.ast)).find((tag) => builtInTags.has(tag));
 
   if (tag !== undefined) {
     throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);

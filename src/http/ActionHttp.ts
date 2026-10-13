@@ -21,7 +21,6 @@ import {
 } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
 import {
-  assertAuthentication,
   type Any as Authentication,
   type DescriptorOf,
   type Identity,
@@ -33,20 +32,13 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
   type VerifierError,
-  withVerifierErrors,
+  bindingErrors,
+  bindingOf,
+  servingOf,
 } from "../authentication/provider.js";
-import {
-  Anyone,
-  assertDistinct,
-  assertOnce,
-  assertOwnTags,
-  type Certain,
-  errorList,
-  type ErrorsOf,
-  projectedErrors,
-} from "../contract/rules.js";
-import { declared } from "./declared.js";
-import type { ErasedMethod } from "../contract/call.js";
+import { Anyone, type Certain, type ErrorsOf, projectedErrors } from "../contract/rules.js";
+import { declared } from "../authentication/refusal.js";
+import { type ErasedMethod, inputParseOptions } from "../contract/call.js";
 import { type AnyHttp, type Client, methods, type Options as ClientOptions } from "./client.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
 import { SchemaErrors, schemaErrors } from "./schema-errors.js";
@@ -60,11 +52,9 @@ import {
   type MiddlewareOf,
   provideHandlers,
   type Served,
-  servedBy,
   type Serving,
   type Selected,
   type Holding,
-  toList,
 } from "../contract/implementation.js";
 
 export type { Client } from "./client.js";
@@ -230,7 +220,7 @@ const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Error
   HttpApiEndpoint.post(action.name, path, {
     payload: action.input.pipe(HttpApiSchema.asJson()),
     success: action.success,
-    error: projectedErrors(action, errors).flatMap(declared),
+    error: errors.flatMap(declared),
   });
 
 const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
@@ -266,16 +256,9 @@ export function make<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions & PublicOnly<Actions>,
 ): Binding<Actions, [], undefined>;
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): AnyHttp {
-  assertOnce("action", actions);
-
-  const errors = errorList(options.error);
-
-  assertOwnTags("ActionHttp binding", errors);
-
-  assertAuthentication(actions, options.authentication);
-
+  const bound = bindingOf("ActionHttp binding", actions, options);
   const mount = mountSegments(options.prefix);
-  const security = options.authentication?.["~middleware"];
+  const security = bound.authentication?.["~middleware"];
 
   const endpoints = actions.map((action) => {
     const isPublic = security === undefined || action.caller === Anyone;
@@ -283,7 +266,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
     const endpoint = endpointOf(
       action,
       absolutePath([...mount, action.name]),
-      withVerifierErrors(action, errors, options.authentication?.error),
+      bindingErrors(action, bound),
     ).annotate(OpenApi.Description, action.description);
 
     return isPublic ? endpoint : endpoint.middleware(security);
@@ -291,13 +274,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
 
   const api = apiOf(groupName(mount), endpoints);
 
-  return {
-    actions,
-    error: errors,
-    prefix: absolutePath(mount),
-    api,
-    authentication: options.authentication,
-  };
+  return { actions, ...bound, prefix: absolutePath(mount), api };
 }
 
 // Why: `HttpApiBuilder.group` lays the context it is built in over each request's, so a startup
@@ -383,10 +360,11 @@ export function layer(
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const apps = servedBy("HTTP binding", binding.actions, toList(served), options.actions);
-  const actions = apps.flatMap((app) => app.actions);
-  assertAuthentication(actions, binding.authentication);
-  assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
+  const {
+    apps,
+    actions,
+    authentication: auth,
+  } = servingOf("HTTP binding", binding, served, options);
 
   const mount = mountSegments(binding.prefix);
   const name = groupName(mount);
@@ -395,7 +373,11 @@ export function layer(
     name,
     actions.map((action) => {
       const endpoint = withinLayerMiddleware(
-        endpointOf(action, absolutePath([...mount, action.name]), binding.error)
+        endpointOf(
+          action,
+          absolutePath([...mount, action.name]),
+          projectedErrors(action, binding.error),
+        )
           .middleware(JsonContentType)
           .middleware(SchemaErrors),
         options.middleware,
@@ -405,15 +387,11 @@ export function layer(
         ? endpoint
         : endpoint.middleware(StepUp).middleware(binding.authentication["~middleware"]);
     }),
-  ).annotate(HttpApi.PayloadParseOptions, { errors: "all", onExcessProperty: "error" });
+  ).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
 
   const handlers = Layer.unwrap(
     Effect.gen(function* () {
       const bound = yield* acquire(apps);
-
-      const auth = actions.some((action) => action.caller !== Anyone)
-        ? binding.authentication
-        : undefined;
 
       const authentication =
         auth === undefined

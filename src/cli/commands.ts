@@ -1,7 +1,6 @@
 import {
   Console,
   Effect,
-  flow,
   Option,
   Predicate,
   Record,
@@ -14,15 +13,10 @@ import {
 } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../contract/Action.js";
-import {
-  assertDistinct,
-  literalValues,
-  members,
-  projectedErrors,
-  unsuspended,
-} from "../contract/rules.js";
+import { assertDistinct, literalValues, members, unsuspended } from "../contract/rules.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
+import { decodeInput } from "../contract/call.js";
 
 type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? true extends Types.IsUnion<E>
@@ -516,11 +510,9 @@ const userErrorOf = (errors: Action.Errors) => {
 
 export const failingAsDerived = (
   actions: ReadonlyArray<Action.Any>,
-  surfaceErrorsOf: (action: Action.Any) => Action.Errors,
+  errorsOf: (action: Action.Any) => Action.Errors,
 ) => {
-  const failure = userErrorOf([
-    ...new Set(actions.flatMap((action) => projectedErrors(action, surfaceErrorsOf(action)))),
-  ]);
+  const failure = userErrorOf([...new Set(actions.flatMap(errorsOf))]);
 
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.catchIf(
@@ -583,9 +575,7 @@ const inputConfig = <A extends Action.Any>(
 ): InputConfig<A> => {
   const codec = Schema.toCodecJson(action.input);
   const encoded = unsuspended(SchemaAST.toEncoded(codec.ast));
-  const decodeRefusingUndeclared = Schema.decodeUnknownEffect(codec, { onExcessProperty: "error" });
-
-  const decode = flow(decodeRefusingUndeclared, Effect.mapError(InvalidInput.fromSchemaError));
+  const decode = decodeInput(action);
 
   const isStructOfNamedFields =
     SchemaAST.isObjects(encoded) &&
@@ -660,8 +650,8 @@ const inputConfig = <A extends Action.Any>(
 export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
-  options?: Options<A>,
-  errors: Action.Errors = [],
+  options: Options<A> | undefined,
+  errors: Action.Errors,
 ): Command.Command<string, never, {}, UserError<E | InvalidInput>, R> => {
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;
@@ -673,7 +663,7 @@ export const command = <A extends Action.Any, E, R>(
     options?.stdin,
   );
 
-  const failure = userErrorOf(projectedErrors(action, errors));
+  const failure = userErrorOf(errors);
 
   assertDistinct(
     "flag",
