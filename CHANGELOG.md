@@ -23,6 +23,9 @@ decoding and failures.
 
 ### Other changes
 
+- An MCP endpoint registers each action's tool from its handler, not through a native toolkit. The
+  listing and every answer are unchanged; an `ErrorReporter` now gets a result that does not
+  encode as an `AiError` of module `ActionMcp`, where it was `Toolkit`.
 - **A command's `InvalidInput` names every field that does not decode**, as HTTP, RPC, MCP and
   `Action.client` do; it named only the first.
 - `destructiveHint`'s JSDoc says an update of a stored flag, such as "read", stays destructive.

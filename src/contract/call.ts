@@ -14,7 +14,7 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Encoded"]
   : (input: A["input"]["Type"]) => R;
 
 /**
- * How HTTP, RPC and a command decode a request's input: reporting every issue, and refusing a
+ * How HTTP, RPC, MCP and a command decode a request's input: reporting every issue, and refusing a
  * field the input does not declare.
  */
 export const inputParseOptions = { errors: "all", onExcessProperty: "error" } as const;

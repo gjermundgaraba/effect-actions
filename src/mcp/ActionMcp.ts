@@ -8,15 +8,12 @@ import {
   JsonPointer,
   type JsonSchema,
   Layer,
-  Option,
   Predicate,
-  References,
   Result,
   Schema,
   type Stdio,
-  Stream,
 } from "effect";
-import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { AiError, McpSchema, McpServer } from "effect/ai";
 import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import {
@@ -29,7 +26,8 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
 } from "../authentication/provider.js";
-import { Anyone, assertAuthentication } from "../contract/rules.js";
+import { Anyone, assertAuthentication, assertOnce, projectedErrors } from "../contract/rules.js";
+import { inputParseOptions } from "../contract/call.js";
 import {
   defaultPath,
   fieldKey,
@@ -43,8 +41,8 @@ import {
 } from "./protocol.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
-import { bindTools, type Projection } from "../toolkit/tools.js";
 import {
+  acquire,
   type Protected,
   type ActionOf,
   type AnyImplementation,
@@ -114,17 +112,11 @@ type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provi
 
 type Features<R> = Exclude<R, McpServer.McpServer>;
 
-const strictToolProjection: Projection = {
-  label: "MCP tool",
-  tool: (tool) => tool.annotate(Tool.Strict, true),
-};
-
 const isToolArgumentsSchema = Schema.is(McpSchema.ToolJson);
 
-const nativeToolJsonSchema = (
-  schema: Schema.Top,
-  strict: boolean,
-): JsonSchema.JsonSchema | undefined => {
+// Why: MCP requires an object root, so a top-level `$ref` is inlined, as Effect's private
+// `toolJsonSchema` does for `registerToolkit`; tests/mcp/media.test.ts compares the listings.
+const toolJsonSchema = (schema: Schema.Top, strict: boolean): JsonSchema.JsonSchema | undefined => {
   const document = Schema.toJsonSchemaDocument(schema, {
     onExcessProperty: strict ? "error" : "ignore",
   });
@@ -145,8 +137,7 @@ const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): v
 
   const inputs = actions
     .filter(
-      (action) =>
-        !isToolArgumentsSchema(nativeToolJsonSchema(Schema.toCodecJson(action.input), true)),
+      (action) => !isToolArgumentsSchema(toolJsonSchema(Schema.toCodecJson(action.input), true)),
     )
     .map(({ name }) => name);
 
@@ -182,192 +173,173 @@ const contentBlockOf = ({ kind, field, value }: Lifted): McpSchema.ContentBlock 
   ...(field === undefined ? {} : { _meta: { [fieldKey]: field } }),
 });
 
-const parameterValidationErrorOf = (error: ErasedValue) =>
-  AiError.isAiError(error) && Predicate.isTagged(error.reason, "ToolParameterValidationError")
-    ? error.reason
-    : undefined;
-
-const omitRequestServices = Context.omit(
-  McpSchema.McpRequestContext,
-  McpSchema.McpServerClient,
-  HttpServerRequest.HttpServerRequest,
-  References.CurrentLogLevel,
-);
+const toolOf = (action: Action.Any, outputSchema: McpSchema.Tool["outputSchema"]) =>
+  Effect.map(
+    Schema.decodeUnknownEffect(McpSchema.ToolJson)(
+      toolJsonSchema(Schema.toCodecJson(action.input), true),
+    ),
+    (inputSchema) =>
+      new McpSchema.Tool({
+        name: action.name,
+        description: action.description,
+        inputSchema,
+        outputSchema,
+        annotations: {
+          ...(action.mcp.title === undefined ? {} : { title: action.mcp.title }),
+          readOnlyHint: action.readOnly,
+          destructiveHint: action.mcp.destructiveHint ?? !action.readOnly,
+          idempotentHint: action.mcp.idempotentHint ?? false,
+          openWorldHint: action.mcp.openWorldHint ?? true,
+        },
+        _meta: action.mcp._meta === undefined ? undefined : { ...action.mcp._meta },
+      }),
+  );
 
 // Why: Effect's `registerToolkit` sends every success as `structuredContent` and one JSON text
-// block and takes no option, so every tool, with media or without, is registered here, through the
-// registry's public `addTool`. This follows `registerToolkit` step by step, `omitRequestServices`
-// and `nativeToolJsonSchema` copying its private helpers; a test in tests/mcp/media.test.ts
-// compares the two for tools without media.
-const registerToolsLiftingMedia = Effect.fnUntraced(function* (
-  toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>,
+// block and takes no option, so each action is registered here from its bound handler, through the
+// registry's public `addTool`, with the native answers: arguments that do not decode are
+// `InvalidParams`, a declared error is an `isError` result of its JSON, and a defect or an
+// undeclared failure is logged, reported and answered with the native internal error text.
+const registerTools = Effect.fnUntraced(function* (
+  apps: ReadonlyArray<AnyImplementation>,
   lifts: ReadonlyMap<string, Lift>,
+  authentication: Authentication | undefined,
 ) {
   const registry = yield* McpServer.McpServer;
+  const runs = new Map(yield* acquire(apps));
+  const built = yield* Effect.context<unknown>();
 
-  const built = yield* toolkit.pipe(
-    Effect.updateContext((context: Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>) =>
-      Context.merge(
-        context,
-        Context.mergeAll(
-          ...Object.values(toolkit.tools).flatMap((tool) => {
-            const key = Context.Service<Tool.Handler<string>>(tool.id);
-
-            return Option.toArray(Context.getOption(context, key)).map((handler) =>
-              Context.make(key, { ...handler, context: omitRequestServices(handler.context) }),
-            );
-          }),
-        ),
-      ),
-    ),
-  );
-
-  const retainedServices = omitRequestServices(
-    yield* Effect.context<Tool.HandlerServices<Tool.Any>>(),
-  );
-
-  const propagateInterruptOrReportInternal = (cause: Cause.Cause<ErasedValue>) => {
+  const internalErrorUnlessInterrupted = (cause: Cause.Cause<ErasedValue>) => {
     const failure = Cause.findFail(cause);
 
     return Result.isFailure(failure) && !Cause.hasDies(cause)
       ? Effect.failCause(failure.failure)
       : Effect.logError(cause).pipe(
-          Effect.andThen(Effect.provideContext(ErrorReporter.report(cause), retainedServices)),
+          Effect.andThen(ErrorReporter.report(cause)),
           Effect.as(textErrorResult(nativeInternalErrorText)),
         );
   };
 
-  const invalidParamsOrInternal = (cause: Cause.Cause<ErasedValue>) => {
-    const failure = Cause.findFail(cause);
+  for (const action of apps.flatMap((app) => app.actions)) {
+    const run = runs.get(action);
 
-    if (Result.isSuccess(failure)) {
-      const { error } = failure.success;
-      const origin = Context.get(Cause.reasonAnnotations(failure.success), Toolkit.FailureOrigin);
-      const invalid = origin === "parameters" ? parameterValidationErrorOf(error) : undefined;
+    if (run === undefined) throw new Error(`No handler for MCP tool ${action.name}`);
 
-      if (invalid !== undefined)
-        return Effect.fail(new McpSchema.InvalidParams({ message: invalid.message }));
-    }
+    const lift = lifts.get(action.name);
+    const media = lift === undefined || lift.fields.length === 0 ? undefined : lift;
 
-    return propagateInterruptOrReportInternal(cause);
-  };
-
-  const registrations = yield* Effect.forEach(Object.entries(built.tools), ([name, tool]) =>
-    Effect.gen(function* () {
-      const strict = Tool.getStrictMode(tool) === true;
-
-      const decodeOptions = {
-        onExcessProperty: strict ? "error" : "ignore",
-        errors: "all",
-      } as const;
-
-      const lift = lifts.get(name);
-      const media = lift === undefined || lift.fields.length === 0 ? undefined : lift;
-
-      const structured =
-        media === undefined
-          ? tool.successSchema
-          : media.rest === undefined
-            ? undefined
-            : Schema.toCodecJson(media.rest);
-
-      const outputSchema =
-        structured === undefined
+    const structured =
+      media === undefined
+        ? Schema.toCodecJson(action.success)
+        : media.rest === undefined
           ? undefined
-          : yield* Schema.decodeUnknownEffect(McpSchema.ToolOutputJson)(
-              nativeToolJsonSchema(structured, false),
-            ).pipe(Effect.orDie);
+          : Schema.toCodecJson(media.rest);
 
-      const inputSchema = yield* Schema.decodeUnknownEffect(McpSchema.ToolJson)(
-        nativeToolJsonSchema(tool.parametersSchema, strict),
-      ).pipe(Effect.orDie);
+    const outputSchema =
+      structured === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(McpSchema.ToolOutputJson)(
+            toolJsonSchema(structured, false),
+          ).pipe(Effect.orDie);
 
-      const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
+    const tool = yield* toolOf(action, outputSchema).pipe(Effect.orDie);
+    const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(action.input), inputParseOptions);
 
-      const resultWithLiftedMedia = ({ encodedResult, result }: Tool.HandlerResult<Tool.Any>) => {
-        if (media === undefined) {
-          // Why: A success is sent as it encodes, a number, a string, an array or `null` included,
-          // never wrapped in an object and never left out. A Python SDK release before the fix
-          // of python-sdk#3345 reads a `null` `structuredContent` as missing, which is the SDK's
-          // bug.
-          return new McpSchema.CallToolResult({
-            isError: false,
-            structuredContent: encodedResult,
-            content: nativeJsonTextOf(encodedResult),
-          });
-        }
+    const encoder = (schema: Schema.Top) => {
+      const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(schema));
 
-        const blocks = liftedFrom(media, result).map(contentBlockOf);
+      return (value: ErasedValue) =>
+        Effect.mapError(encode(value), ({ message }) =>
+          AiError.make({
+            module: "ActionMcp",
+            method: `${action.name}.handle`,
+            reason: new AiError.ToolResultEncodingError({
+              toolName: action.name,
+              toolResult: value,
+              description: message,
+            }),
+          }),
+        );
+    };
 
-        if (structured === undefined) {
-          return new McpSchema.CallToolResult({ isError: false, content: blocks });
-        }
+    const encodeSuccess = encoder(action.success);
+    const encodeFailure = encoder(Schema.Union(projectedErrors(action)));
 
-        const encodedRestOfStruct = Predicate.isObject(encodedResult)
-          ? Object.fromEntries(
-              Object.entries(encodedResult).filter(([key]) => !liftedFieldNames.has(key)),
-            )
-          : encodedResult;
+    const call =
+      authentication === undefined || action.caller === Anyone
+        ? run
+        : (input: ErasedValue) => recordStepUp(promote(authentication, run(input)));
 
+    const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
+
+    const resultOf = (encoded: ErasedValue, success: ErasedValue) => {
+      if (media === undefined) {
+        // Why: A success is sent as it encodes, a number, a string, an array or `null` included,
+        // never wrapped in an object and never left out. A Python SDK release before the fix
+        // of python-sdk#3345 reads a `null` `structuredContent` as missing, which is the SDK's
+        // bug.
         return new McpSchema.CallToolResult({
           isError: false,
-          structuredContent: encodedRestOfStruct,
-          content: [...nativeJsonTextOf(encodedRestOfStruct), ...blocks],
+          structuredContent: encoded,
+          content: nativeJsonTextOf(encoded),
         });
-      };
+      }
 
-      const listed = new McpSchema.Tool({
-        name,
-        description: Tool.getDescription(tool),
-        inputSchema,
-        outputSchema,
-        annotations: {
-          ...Context.getOption(tool.annotations, Tool.Title).pipe(
-            Option.map((title) => ({ title })),
-            Option.getOrUndefined,
-          ),
-          readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
-          destructiveHint: Context.get(tool.annotations, Tool.Destructive),
-          idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
-          openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
-        },
-        _meta: Context.getOrUndefined(tool.annotations, Tool.Meta),
+      const blocks = liftedFrom(media, success).map(contentBlockOf);
+
+      if (structured === undefined) {
+        return new McpSchema.CallToolResult({ isError: false, content: blocks });
+      }
+
+      const encodedRestOfStruct = Predicate.isObject(encoded)
+        ? Object.fromEntries(Object.entries(encoded).filter(([key]) => !liftedFieldNames.has(key)))
+        : encoded;
+
+      return new McpSchema.CallToolResult({
+        isError: false,
+        structuredContent: encodedRestOfStruct,
+        content: [...nativeJsonTextOf(encodedRestOfStruct), ...blocks],
       });
+    };
 
-      return {
-        tool: listed,
-        annotations: tool.annotations,
-        handle: (payload: ErasedValue) =>
-          built.handle(name, payload ?? {}, undefined, decodeOptions).pipe(
-            Stream.unwrap,
-            Stream.runLast,
-            Effect.flatMap(Effect.fromOption),
-            Effect.flatMap((result) =>
-              !result.isFailure
-                ? Effect.succeed(resultWithLiftedMedia(result))
-                : result.failureOrigin === "handler"
-                  ? Effect.succeed(
+    yield* registry.addTool({
+      tool,
+      annotations: Context.empty(),
+      handle: (payload: ErasedValue) =>
+        Effect.annotateCurrentSpan({ tool: action.name, parameters: payload }).pipe(
+          Effect.andThen(decode(payload ?? {})),
+          Effect.mapError(
+            ({ message }) =>
+              new McpSchema.InvalidParams({
+                message: `Invalid parameters for tool '${action.name}': ${message}`,
+              }),
+          ),
+          Effect.flatMap((input) =>
+            call(input).pipe(
+              Effect.matchEffect({
+                onFailure: (error) =>
+                  Effect.map(
+                    encodeFailure(error),
+                    (encoded) =>
                       new McpSchema.CallToolResult({
                         isError: true,
-                        content: nativeJsonTextOf(result.encodedResult),
+                        content: nativeJsonTextOf(encoded),
                       }),
-                    )
-                  : Effect.failCause(
-                      Cause.annotate(
-                        Cause.fail(result.result),
-                        Context.make(Toolkit.FailureOrigin, result.failureOrigin ?? "result"),
-                      ),
-                    ),
+                  ),
+                onSuccess: (success) =>
+                  Effect.map(encodeSuccess(success), (encoded) => resultOf(encoded, success)),
+              }),
+              Effect.catchCause(internalErrorUnlessInterrupted),
             ),
-            Effect.catchCause(invalidParamsOrInternal),
-            Effect.provideContext(retainedServices),
           ),
-      };
-    }),
-  );
-
-  for (const registration of registrations) {
-    yield* registry.addTool(registration);
+          // Why: A call runs over what the endpoint was built with, its startup services and the
+          // handlers' builds, and what the request provides wins, as a native toolkit handler's
+          // context does.
+          Effect.updateContext((request: Context.Context<McpSchema.McpRequestContext>) =>
+            Context.merge(built, request),
+          ),
+        ),
+    });
   }
 });
 
@@ -377,17 +349,9 @@ const server = <Out, R>(
   features: Layer.Layer<never, unknown, unknown> = Layer.empty,
   authentication?: Authentication,
 ) => {
-  const binding = bindTools(
-    apps,
-    authentication === undefined
-      ? strictToolProjection
-      : {
-          ...strictToolProjection,
-          handler: (run, action) => (input) =>
-            action.caller === Anyone
-              ? run(input)
-              : recordStepUp(promote(authentication, run(input))),
-        },
+  assertOnce(
+    "MCP tool",
+    apps.flatMap((app) => app.actions),
   );
 
   const lifted = apps.flatMap((app) =>
@@ -413,13 +377,7 @@ const server = <Out, R>(
       );
     }
 
-    const handlers = yield* Layer.build(binding.layer);
-
-    // Why: The registration lays the context it runs in over every call's, as `registerToolkit`
-    // does, so it runs with the handlers and the registry alone and a request's own value wins.
-    yield* registerToolsLiftingMedia(binding.toolkit, lifts).pipe(
-      Effect.setContext(Context.add(handlers, McpServer.McpServer, registry)),
-    );
+    yield* registerTools(apps, lifts, authentication);
   });
 
   // Why: Effect's registry is one layer, shared by a whole layer graph, so `Layer.fresh` gives each
