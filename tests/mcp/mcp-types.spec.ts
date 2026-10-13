@@ -63,6 +63,12 @@ expectTypeOf(ActionMcp.layerHttp(status, { ...options, features })).toEqualTypeO
   Layer.Layer<never, Cause.IllegalArgumentError | Missing, HttpRouter.HttpRouter | Docs>
 >();
 
+expectTypeOf(
+  ActionMcp.layerHttp(status, { ...options, features, requestScoped: true }),
+).toEqualTypeOf<
+  Layer.Layer<never, Cause.IllegalArgumentError | Missing, HttpRouter.HttpRouter | Docs>
+>();
+
 expectTypeOf(ActionMcp.runStdio(status, { ...options, features })).toEqualTypeOf<
   Effect.Effect<void, Cause.IllegalArgumentError | Missing, Stdio.Stdio | Docs>
 >();

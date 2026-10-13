@@ -34,6 +34,20 @@ it, where it failed with a `UserError` printed as its tag and message.
 - Migrate: declare the error on the action, or fix the value. A host matching the `AiError` or the `UserError` for
   such a failure matches the defect instead.
 
+### Additions
+
+- **`ActionMcp.layerHttp(..., { requestScoped: true })` serves MCP on a host that runs nothing
+  between requests, such as Cloudflare Workers.** It uses Effect 4.0.4's
+  `McpServer.layerHttpRequestScoped`: each request runs on a server of its own, which ends with
+  its response, where the endpoint ran one server for every request, which such a host cannot
+  keep. The endpoint speaks MCP 2026-07-28 alone and keeps no session, so a client that opens
+  with `initialize`, such as Codex, is refused there: serve it from a long-lived host, as before.
+  Authentication, the mixed endpoint's gate, progress notifications and `ActionMcp.client` work
+  as on a long-lived endpoint, and native `features` but for list-change notifications and
+  `McpServer.elicit`; `allowSubscriptions` is ignored there.
+  `notes-service` adds `src/worker.ts`, its routes as a `fetch` handler
+  ([ActionMcp.md](docs/ActionMcp.md#serve-tools-over-http)).
+
 ### Other changes
 
 - **`ActionMcp.client` takes the endpoint's `authentication`**, as `layerHttp` does: an error its

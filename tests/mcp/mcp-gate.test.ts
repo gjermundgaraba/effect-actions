@@ -41,7 +41,10 @@ const makeExampleAppRecordingCalls = () => {
   return { app, calls };
 };
 
-const mixedEndpoint = (features?: Layer.Layer<never>) => {
+const mixedEndpoint = ({
+  features,
+  requestScoped = false,
+}: { readonly features?: Layer.Layer<never>; readonly requestScoped?: boolean } = {}) => {
   const { app, calls } = makeExampleAppRecordingCalls();
 
   const web = serve(
@@ -49,6 +52,7 @@ const mixedEndpoint = (features?: Layer.Layer<never>) => {
       name: "gate",
       version: "0",
       authentication: Login,
+      requestScoped,
       ...(features === undefined ? {} : { features }),
     }).pipe(Layer.provide(authenticate)),
   );
@@ -56,9 +60,12 @@ const mixedEndpoint = (features?: Layer.Layer<never>) => {
   return { web, calls };
 };
 
-describe("a mixed MCP endpoint", () => {
+describe.each([
+  { transport: "long-lived", requestScoped: false },
+  { transport: "request-scoped", requestScoped: true },
+])("a mixed MCP endpoint, $transport", ({ requestScoped }) => {
   it("admits a signed-out caller's public call, and answers a protected tool's call with the 401 a client signs in on", async () => {
-    const { web, calls } = mixedEndpoint();
+    const { web, calls } = mixedEndpoint({ requestScoped });
 
     expect(await valueOf(await web.handler(rawToolCall("status")))).toEqual({
       service: "gate",
@@ -96,7 +103,7 @@ describe("a mixed MCP endpoint", () => {
   });
 
   it("reads a base64-encoded Mcp-Name as the runtime routes it: a public call is admitted signed out, a protected one refused, also under a public name", async () => {
-    const { web, calls } = mixedEndpoint();
+    const { web, calls } = mixedEndpoint({ requestScoped });
 
     const named = (request: Request, name: string) => {
       request.headers.set("mcp-name", `=?base64?${Base64.encode(name)}?=`);
@@ -136,6 +143,7 @@ describe("a mixed MCP endpoint", () => {
         name: "gate",
         version: "0",
         authentication: Login,
+        requestScoped,
       }).pipe(Layer.provide(authenticate)),
     );
 
@@ -161,6 +169,7 @@ describe("a mixed MCP endpoint", () => {
         name: "gate",
         version: "0",
         authentication: Login,
+        requestScoped,
       }).pipe(Layer.provide(authenticate)),
     );
 
@@ -173,7 +182,7 @@ describe("a mixed MCP endpoint", () => {
   });
 
   it("lets anyone discover the server and its tools, protected ones included", async () => {
-    const { web } = mixedEndpoint();
+    const { web } = mixedEndpoint({ requestScoped });
 
     for (const method of ["server/discover", "tools/list"]) {
       expect([method, (await web.handler(mcpRequest({ method }))).status]).toEqual([method, 200]);
@@ -186,7 +195,7 @@ describe("a mixed MCP endpoint", () => {
   });
 
   it("refuses a protected tool, prompt or resource before decoding its arguments", async () => {
-    const { web, calls } = mixedEndpoint();
+    const { web, calls } = mixedEndpoint({ requestScoped });
 
     const protectedMalformedArguments = await web.handler(rawToolCall("renameUser", { id: "1" }));
 
@@ -245,7 +254,7 @@ describe("a mixed MCP endpoint", () => {
       content: ({ email }) => Effect.succeed(`Customer ${email}`),
     });
 
-    const { web } = mixedEndpoint(promptCompletingFromAppData);
+    const { web } = mixedEndpoint({ features: promptCompletingFromAppData, requestScoped });
 
     const complete = {
       ref: { type: "ref/prompt", name: "customer" },
@@ -278,7 +287,7 @@ describe("a mixed MCP endpoint", () => {
   });
 
   it("leaves no body the native runtime skips validating to slip past it", async () => {
-    const { web, calls } = mixedEndpoint();
+    const { web, calls } = mixedEndpoint({ requestScoped });
     const rename = { name: "renameUser", arguments: { id: "1", name: "Eve" } };
 
     const bodiesNativeHeaderValidationSkips = [

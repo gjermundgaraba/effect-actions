@@ -94,11 +94,9 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
 }
 
 /**
- * One Streamable HTTP MCP endpoint, speaking MCP 2026-07-28, 2025-11-25 or 2025-06-18, as the
- * client negotiates: `Options`, and every native `McpServer.layerHttp` option, `allowedOrigins`
- * among them, except `protocols` and `allowSessionTermination`, which are fixed, with `path`
- * defaulting to `/mcp`. A client of a 2025 revision opens a session with `initialize`, which
- * lasts until that client ends it with a DELETE, answered 204, or the process stops.
+ * One Streamable HTTP MCP endpoint: `Options`, every native `McpServer.layerHttp` option,
+ * `allowedOrigins` among them, except `protocols` and `allowSessionTermination`, which are fixed,
+ * with `path` defaulting to `/mcp`, and `requestScoped`.
  */
 export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
   extends
@@ -110,6 +108,14 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
   readonly authentication?: Authentication;
+  /**
+   * `true` runs a server per request, as Effect's `McpServer.layerHttpRequestScoped` does, for a
+   * host such as Cloudflare Workers where nothing may outlive a request. It speaks MCP 2026-07-28
+   * alone, so a client that opens with `initialize` is refused, and it keeps no session. It has
+   * no subscriptions, so `allowSubscriptions` is ignored, and native `features` send no
+   * list-change notification and cannot use `McpServer.elicit`.
+   */
+  readonly requestScoped?: boolean | undefined;
 }
 
 type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext | McpServer.McpServer>;
@@ -434,7 +440,8 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28, 2025-11-25 or
  * 2025-06-18, as the client negotiates. A 2026-07-28 request stands alone; a client of a 2025
  * revision opens a session with `initialize`, which holds what it sent there and no identity,
- * and lasts until that client ends it with a DELETE, answered 204, or the process stops.
+ * and lasts until that client ends it with a DELETE, answered 204, or the process stops. For a
+ * serverless host, see `requestScoped`.
  *
  * Protected tools need the `authentication` descriptor their contracts name, and the
  * provider `Authentication.layer` builds from it. On an endpoint of protected tools only,
@@ -481,7 +488,14 @@ export function layerHttp<
 >;
 export function layerHttp(
   apps: Served,
-  { actions, features, path, authentication, ...options }: LayerHttpOptions<unknown, unknown>,
+  {
+    actions,
+    features,
+    path = defaultPath,
+    authentication,
+    requestScoped,
+    ...options
+  }: LayerHttpOptions<unknown, unknown>,
 ) {
   const selected = select(toList(apps), actions);
   const served = selected.flatMap((app) => app.actions);
@@ -489,12 +503,9 @@ export function layerHttp(
 
   const transport = server(
     selected,
-    McpServer.layerHttp({
-      ...options,
-      path: path ?? defaultPath,
-      protocols,
-      allowSessionTermination: true,
-    }),
+    requestScoped === true
+      ? McpServer.layerHttpRequestScoped({ ...options, path, protocols: [httpProtocol] })
+      : McpServer.layerHttp({ ...options, path, protocols, allowSessionTermination: true }),
     features,
     authentication,
   );

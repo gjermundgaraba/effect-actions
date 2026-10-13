@@ -18,7 +18,7 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `layerHttp(implementations, options)` | A Layer serving the actions as tools at one HTTP endpoint.  |
 | `runStdio(implementations, options)`  | An Effect serving them on standard I/O until stdin closes.  |
 | `Options`                             | Type of `runStdio`'s options.                               |
-| `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and four for HTTP. |
+| `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and HTTP's own.    |
 | `client(actions, options?)`           | An Effect of a client calling each action's tool.           |
 | `request(method, params?, options?)`  | One MCP request, as the native `HttpClientRequest` to send. |
 | `McpCallError`                        | A client method's failure for an answer it cannot decode.   |
@@ -36,10 +36,11 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `path`                               | HTTP only: the endpoint's path; defaults to `/mcp`.        |
 | `allowedOrigins`                     | HTTP only: the exact origins allowed; none by default.     |
 | `allowSubscriptions`                 | HTTP only: `false` turns off 2026-07-28 subscriptions.     |
+| `requestScoped`                      | HTTP only: `true` runs a server per request.               |
 | `authentication`                     | HTTP only: the protected tools' authentication descriptor. |
 
-All but `actions`, `features` and `authentication` are Effect's own `McpServer` options, passed
-through. Its `protocols` and `allowSessionTermination` are not options.
+All but `actions`, `features`, `authentication` and `requestScoped` are Effect's own `McpServer`
+options, passed through. Its `protocols` and `allowSessionTermination` are not options.
 
 `client` takes `url`, default `/mcp`, `transformClient`, and the endpoint's `authentication`, so an
 error its verifier declares decodes; `request` takes `url` and `headers`.
@@ -73,6 +74,9 @@ see [Action-in-process.md](Action-in-process.md#share-one-build-across-servers).
   Effect expires none, so limit request bodies, which bounds what one holds. Where an endpoint
   serves a protected tool, only a signed-in caller opens one, and that client signs in for every
   request, a public tool's call included. An endpoint of public tools alone lets anyone open them.
+- **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`: a server per
+  request, speaking 2026-07-28 alone with no session. Connect a client that opens with
+  `initialize` to a long-lived endpoint: [notes-service/src/worker.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/worker.ts).
 - An endpoint without `authentication` answers whoever reaches its port. Bind it to loopback or to
   a network only trusted clients are on, and limit request bodies
   ([ActionHttp.md](ActionHttp.md#serve-the-routes)):
@@ -97,16 +101,9 @@ ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: 
 See [notes-service/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/stdio.ts), and
 [mcp-tools/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/stdio.ts) for public tools.
 
-To try a server by hand, send it one request, its 2026-07-28 metadata in `_meta` as
-`request` builds it. Over HTTP it also needs all five headers:
-
-```sh
-BODY='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus","arguments":{},"_meta":{"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}'
-echo "$BODY" | node --import tsx examples/notes-service/src/stdio.ts
-curl http://127.0.0.1:3000/mcp -d "$BODY" -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'MCP-Method: tools/call' -H 'MCP-Name: getStatus'
-```
+To try a server by hand, send one request as `request` builds it, its 2026-07-28 metadata in
+`_meta`: [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/README.md#connect-a-client) has the `curl`, with
+HTTP's five headers, and [notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/README.md#run-it) the stdio command.
 
 - **stdout carries the protocol alone.** `runStdio` sends its own program's Effect logs and
   `Console` output to stderr. For the layers provided around it, apply `ActionCli.logToStderr`

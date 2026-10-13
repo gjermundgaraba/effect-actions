@@ -25,6 +25,10 @@ node --import tsx examples/notes-service/src/cli.ts list-notes
 node --import tsx examples/notes-service/src/cli.ts export notes.md   # a command written by hand
 node --import tsx examples/notes-service/src/cli.ts import notes.md   # one importNotes call
 
+# The stdio server, given one MCP 2026-07-28 request on stdin
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus","arguments":{},"_meta":{"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' |
+  node --import tsx examples/notes-service/src/stdio.ts
+
 vp test examples/notes-service
 ```
 
@@ -35,7 +39,9 @@ claude mcp add --transport http notes http://127.0.0.1:3000/mcp --header "Author
 codex mcp add notes --url http://127.0.0.1:3000/mcp --bearer-token-env-var NOTES_TOKEN
 ```
 
-`src/stdio.ts` is the other way in: a subprocess the host starts, with a store of its own.
+`src/stdio.ts` is another way in: a subprocess the host starts, with a store of its own.
+`src/worker.ts` serves the same routes as a `fetch` handler, for a serverless host such as
+Cloudflare Workers ([ActionMcp.md](../../docs/ActionMcp.md#serve-tools-over-http)).
 
 The server reads `HOST` (default `127.0.0.1`), `PORT` (default 3000) and `PUBLIC_URL`, the
 address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
@@ -64,6 +70,7 @@ src/
 ├── Api.ts             the HTTP binding of every domain's actions
 ├── routes.ts          every surface of the host: /api, /mcp, /healthz, the OpenAPI document
 ├── server.ts          entrypoint: the HTTP server
+├── worker.ts          entrypoint: a fetch handler for a serverless host
 ├── stdio.ts           entrypoint: MCP for a local agent
 ├── commands.ts        the commands calling the server, one written by hand, and their connection
 ├── cli.ts             entrypoint: the commands, given that connection
@@ -71,6 +78,7 @@ src/
 test/
 ├── notes/             in process, with Action.client
 ├── routes.test.ts     over HTTP and MCP in memory, with Testing.layer
+├── worker.test.ts     the worker's own fetch handler, with Testing.layer
 └── commands.test.ts   the commands and their connection, against the same routes in memory
 ```
 
@@ -81,8 +89,9 @@ test/
   on the server, each named for its role, never the domain: `notes.ts` beside `Notes.ts` is one
   file on a disk that ignores case (TS1149).
 - **One entrypoint per way of running it.** Each chooses its own implementations: `server.ts`
-  picks the store and the HTTP server, `stdio.ts` names the local user, a test provides its own
-  store. Nothing below an entrypoint knows which it got.
+  picks the store and the HTTP server, `worker.ts` the routes for a serverless host, `stdio.ts`
+  names the local user, a test provides its own store. Nothing below an entrypoint knows which
+  it got.
 - **In a monorepo** the contract files and `Api.ts` are the package the server, the CLI and the
   website all depend on; the lowercase files and `routes.ts` are the server.
 
@@ -99,6 +108,7 @@ test/
 | One implementation served over HTTP and MCP                   | `src/routes.ts`                  |
 | Config, a body limit and the host's own routes                | `src/server.ts`, `src/routes.ts` |
 | The same actions over stdio, the host naming the caller       | `src/stdio.ts`                   |
+| A serverless entrypoint, the MCP endpoint `requestScoped`     | `src/worker.ts`, `src/routes.ts` |
 | A CLI derived from the binding: an argument, a field on stdin | `src/commands.ts`                |
 | A command written by hand beside the derived ones             | `src/commands.ts`                |
 | A bulk import as one action, its command reading a file       | `src/notes/`, `src/commands.ts`  |

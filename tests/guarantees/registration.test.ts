@@ -105,6 +105,94 @@ it("keeps a session of a 2025 revision until its client ends it", async () => {
   expect((await web.handler(endSession(session))).status).toBe(404);
 });
 
+describe("a request-scoped MCP endpoint", () => {
+  const Count = Action.make("count", {
+    description: "Count",
+    readOnly: true,
+    caller: Action.Anyone,
+    input: { from: Schema.Finite },
+    success: Schema.Finite,
+  });
+
+  const counting = Action.implement(Count, ({ from }) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+
+      yield* server.notifications["notifications/progress"]({ progressToken: "p", progress: 1 });
+
+      return from + 1;
+    }),
+  );
+
+  const scoped = ActionMcp.layerHttp(counting, {
+    name: "scoped",
+    version: "0",
+    requestScoped: true,
+  });
+
+  it("speaks MCP 2026-07-28 alone: no session, no subscription, and a DELETE answered 405", async () => {
+    const web = serve(scoped);
+
+    const discovered = await web.handler(mcpRequest({ method: "server/discover" }));
+
+    expect(await discovered.json()).toMatchObject({
+      result: {
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: { listChanged: false } },
+      },
+    });
+
+    const initialized = await web.handler(
+      sessionRequest({ method: "initialize", params: initializeParams }),
+    );
+
+    expect(initialized.status).toBe(400);
+    expect(initialized.headers.get("mcp-session-id")).toBeNull();
+    expect(await initialized.json()).toMatchObject({
+      error: { code: -32020, message: "MCP-Protocol-Version header is required" },
+    });
+
+    const ended = await web.handler(endSession("any"));
+    expect([ended.status, ended.headers.get("allow")]).toEqual([405, "POST"]);
+
+    const listened = await web.handler(
+      mcpRequest({
+        method: "subscriptions/listen",
+        params: { notifications: { toolsListChanged: true } },
+      }),
+    );
+
+    expect(await listened.text()).toContain('"error":{"code":-32601');
+  });
+
+  it("answers a call with the handler's progress notifications before its result", async () => {
+    const web = serve(scoped);
+
+    const called = await web.handler(
+      mcpRequest({
+        method: "tools/call",
+        params: { name: "count", arguments: { from: 1 }, _meta: { progressToken: "p" } },
+      }),
+    );
+
+    const text = await called.text();
+
+    expect(called.status).toBe(200);
+    expect(text.indexOf('"method":"notifications/progress"')).toBeGreaterThan(-1);
+    expect(text.indexOf('"structuredContent":2')).toBeGreaterThan(
+      text.indexOf('"method":"notifications/progress"'),
+    );
+  });
+
+  it.effect("is called by ActionMcp.client as a long-lived endpoint is", () =>
+    Effect.gen(function* () {
+      const mcp = yield* ActionMcp.client([Count]);
+
+      expect(yield* mcp.count({ from: 41 })).toBe(42);
+    }).pipe(Effect.provide(Testing.layer(scoped))),
+  );
+});
+
 it.each([
   ["2025-11-25", "result"],
   ["2025-06-18", "error"],
