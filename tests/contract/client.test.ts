@@ -447,14 +447,14 @@ describe("Action.client", () => {
       const unencoded = yield* defectOf(client.count());
       const undeclared = yield* Effect.exit(client.ping());
 
-      const schemaErrorThenFailure = Exit.isFailure(undeclared)
+      const failureThenSchemaError = Exit.isFailure(undeclared)
         ? undeclared.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
         : [];
 
       expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain('at ["count"]');
-      expect(schemaErrorThenFailure).toHaveLength(2);
-      expect(Schema.isSchemaError(schemaErrorThenFailure[0])).toBe(true);
-      expect(schemaErrorThenFailure[1]).toBeInstanceOf(Unlisted);
+      expect(failureThenSchemaError).toHaveLength(2);
+      expect(failureThenSchemaError[0]).toBeInstanceOf(Unlisted);
+      expect(Schema.isSchemaError(failureThenSchemaError[1])).toBe(true);
     }),
   );
 

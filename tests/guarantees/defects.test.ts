@@ -170,7 +170,7 @@ const command = (action: Failing) =>
 
 const internalToolError = "Tool execution failed due to an internal server error.";
 
-const defectMessages = [defect.message, decoderDefect.message];
+const defectMessages = [defect.message, decoderDefect.message, "Leaked"];
 
 const surfaces = [
   {
@@ -211,7 +211,7 @@ const surfaces = [
     reporting: "each once, answering the connection's other call",
     reports: { atLeast: failing.length, atMost: failing.length },
     logs: failing.length,
-    logsNaming: [...defectMessages, "Leaked"],
+    logsNaming: defectMessages,
     reportsNaming: defectMessages,
     answers: Effect.map(
       sendRawNdjson(served.map(({ name }) => ({ tag: name, payload }))),
@@ -232,7 +232,7 @@ const surfaces = [
       ({ name }) =>
         ({
           crash: { died: ["the handler's defect"] },
-          leak: "an AiError naming the tool",
+          leak: { died: ["Leaked", "SchemaError"] },
           count: "an AiError naming the tool",
           brittle: "an AiError naming the tool",
           garbled: { died: ["the decoder's defect"] },
@@ -251,7 +251,7 @@ const surfaces = [
       ({ name }) =>
         ({
           crash: { died: ["the handler's defect"] },
-          leak: { printed: "Leaked" },
+          leak: { died: ["Leaked", "SchemaError"] },
           count: { died: ["SchemaError"] },
           brittle: { printed: "Fragile" },
           garbled: { died: ["the decoder's defect"] },

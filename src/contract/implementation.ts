@@ -1,7 +1,14 @@
-import { Array as Arr, Context, Effect, Layer, Option } from "effect";
+import { Array as Arr, Cause, Context, Effect, Layer, Option, Result, Schema } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
-import { Anyone, assertAuthentication, assertDistinct, assertOnce, type Proving } from "./rules.js";
+import {
+  Anyone,
+  assertAuthentication,
+  assertDistinct,
+  assertOnce,
+  projectedErrors,
+  type Proving,
+} from "./rules.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
@@ -523,6 +530,29 @@ const dispatch = (
   const authorization =
     action.caller === Anyone ? Effect.void : Effect.suspend(() => before(action));
 
+  const validate = Schema.decodeUnknownEffect(Schema.toType(Schema.Union(projectedErrors(action))));
+
+  // Why: A failure the action does not declare, which a cast or plain JavaScript lets through,
+  // is the call's defect on every surface, carrying it and why it is not declared: logs and
+  // reports then name it, where a surface encoding it named only the encoding's error.
+  const declaredOrDefect = (cause: Cause.Cause<ErasedValue>) =>
+    Result.match(Cause.findFail(cause), {
+      onFailure: () => Effect.failCause(cause),
+      onSuccess: ({ error }) =>
+        Effect.matchEffect(validate(error), {
+          onSuccess: () => Effect.failCause(cause),
+          onFailure: (undeclared) =>
+            Effect.failCause(
+              Cause.fromReasons([
+                ...cause.reasons.map((reason) =>
+                  Cause.isFailReason(reason) ? Cause.makeDieReason(reason.error) : reason,
+                ),
+                Cause.makeDieReason(undeclared),
+              ]),
+            ),
+        }),
+    });
+
   return (input) => {
     const handled = Effect.withSpan(
       Effect.annotateLogs(
@@ -534,7 +564,11 @@ const dispatch = (
     );
 
     return Effect.scoped(
-      authentication.pipe(Effect.andThen(authorization), Effect.andThen(handled)),
+      authentication.pipe(
+        Effect.andThen(authorization),
+        Effect.andThen(handled),
+        Effect.catchCause(declaredOrDefect),
+      ),
     );
   };
 };
