@@ -520,6 +520,49 @@ describe("Action.client", () => {
   );
 
   it.effect(
+    "keeps the trace of a failure it makes a defect, and checks each failure of a cause apart",
+    () =>
+      Effect.gen(function* () {
+        class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+
+        class Unlisted extends Schema.TaggedError<Unlisted>()("Unlisted", {}) {}
+
+        const Status = Action.make("status", {
+          description: "Status",
+          readOnly: true,
+          caller: Action.Anyone,
+          error: [Busy],
+        });
+
+        const busy = new Busy();
+        const unlisted = new Unlisted();
+
+        const client = yield* Action.client(
+          Action.implement(Status, () =>
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: a cause holding an undeclared failure beside a declared one, as plain JavaScript could.
+            Effect.failCause(Cause.combine(Cause.fail(busy), Cause.fail(unlisted as never))).pipe(
+              Effect.withSpan("quota"),
+            ),
+          ),
+        );
+
+        const cause = yield* Effect.flip(Effect.sandbox(client.status()));
+
+        expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([busy]);
+        expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
+          unlisted,
+          expect.any(Schema.SchemaError),
+        ]);
+        expect(
+          cause.reasons
+            .filter(Cause.isDieReason)
+            .map((reason) => Cause.pretty(Cause.fromReasons([reason])))
+            .every((printed) => /^\s+at quota \(.*client\.test\.ts/m.test(printed)),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect(
     "runs each handler in its action's span, a child of the caller's, never the acquisition's",
     () =>
       Effect.gen(function* () {

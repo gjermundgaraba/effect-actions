@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Context, Effect, Layer, Option, Result, Schema } from "effect";
+import { Array as Arr, Cause, Context, Effect, Exit, Layer, Option, Schema } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
 import {
@@ -532,26 +532,38 @@ const dispatch = (
 
   const validate = Schema.decodeUnknownEffect(Schema.toType(Schema.Union(projectedErrors(action))));
 
-  // Why: A failure the action does not declare, which a cast or plain JavaScript lets through,
-  // is the call's defect on every surface, carrying it and why it is not declared: logs and
-  // reports then name it, where a surface encoding it named only the encoding's error.
-  const declaredOrDefect = (cause: Cause.Cause<ErasedValue>) =>
-    Result.match(Cause.findFail(cause), {
-      onFailure: () => Effect.failCause(cause),
-      onSuccess: ({ error }) =>
-        Effect.matchEffect(validate(error), {
-          onSuccess: () => Effect.failCause(cause),
-          onFailure: (undeclared) =>
-            Effect.failCause(
-              Cause.fromReasons([
-                ...cause.reasons.map((reason) =>
-                  Cause.isFailReason(reason) ? Cause.makeDieReason(reason.error) : reason,
-                ),
-                Cause.makeDieReason(undeclared),
-              ]),
-            ),
-        }),
-    });
+  // Why: A failure the action's errors reject, undeclared or breaking one of their checks, is the
+  // call's defect on every surface, beside why they reject it and with its trace: logs and reports
+  // then name it, where a surface encoding it named only the encoding's error.
+  const asDefects = (
+    reason: Cause.Fail<ErasedValue>,
+    rejected: Cause.Cause<Schema.SchemaError>,
+  ) => {
+    const trace = Context.makeUnsafe<never>(reason.annotations);
+
+    return [
+      Cause.makeDieReason(reason.error).annotate(trace),
+      Cause.makeDieReason(Cause.squash(rejected)).annotate(trace),
+    ];
+  };
+
+  const declaredOrDefect = Effect.fnUntraced(function* (cause: Cause.Cause<ErasedValue>) {
+    const reasons: Array<Cause.Reason<ErasedValue>> = [];
+
+    for (const reason of cause.reasons) {
+      if (Cause.isFailReason(reason)) {
+        const validated = yield* Effect.exit(validate(reason.error));
+
+        reasons.push(
+          ...(Exit.isSuccess(validated) ? [reason] : asDefects(reason, validated.cause)),
+        );
+      } else {
+        reasons.push(reason);
+      }
+    }
+
+    return yield* Effect.failCause(Cause.fromReasons(reasons));
+  });
 
   return (input) => {
     const handled = Effect.withSpan(

@@ -57,6 +57,15 @@ const Brittle = Action.make("brittle", {
   error: Fragile,
 });
 
+const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
+
+const Strict = Action.make("strict", {
+  ...anyone,
+  description:
+    "Fails with a struct error breaking its check, which validation reruns for a struct.",
+  error: Domain,
+});
+
 const decoderDefect = new Error("decoder hunter2");
 
 const Garbled = Action.make("garbled", {
@@ -82,7 +91,7 @@ const Status = Action.make("status", {
 
 const defect = new Error("db password hunter2");
 
-const failing = [Crash, Leak, Count, Brittle, Garbled] as const;
+const failing = [Crash, Leak, Count, Brittle, Strict, Garbled] as const;
 
 const served = [...failing, Status] as const;
 
@@ -92,6 +101,7 @@ const app = Action.implement(served, {
   leak: () => Effect.fail(new Leaked({ id: "secret-id" }) as never),
   count: () => Effect.succeed(Infinity),
   brittle: () => Effect.fail(new Fragile({ value: Infinity }, { disableChecks: true })),
+  strict: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
   garbled: () => Effect.void,
   status: () => Effect.succeed("up"),
 });
@@ -170,7 +180,7 @@ const command = (action: Failing) =>
 
 const internalToolError = "Tool execution failed due to an internal server error.";
 
-const defectMessages = [defect.message, decoderDefect.message, "Leaked"];
+const defectMessages = [defect.message, decoderDefect.message, "Leaked", "Domain"];
 
 const surfaces = [
   {
@@ -235,6 +245,7 @@ const surfaces = [
           leak: { died: ["Leaked", "SchemaError"] },
           count: "an AiError naming the tool",
           brittle: "an AiError naming the tool",
+          strict: { died: ["Domain", "SchemaError"] },
           garbled: { died: ["the decoder's defect"] },
         })[name],
     ),
@@ -254,6 +265,7 @@ const surfaces = [
           leak: { died: ["Leaked", "SchemaError"] },
           count: { died: ["SchemaError"] },
           brittle: { printed: "Fragile" },
+          strict: { died: ["Domain", "SchemaError"] },
           garbled: { died: ["the decoder's defect"] },
         })[name],
     ),

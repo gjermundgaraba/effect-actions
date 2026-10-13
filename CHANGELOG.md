@@ -21,14 +21,17 @@ decoding and failures.
 | `Testing.McpRequestOptions`                  | `ActionMcp.RequestOptions`                  |
 | `Testing.McpParams`                          | `ActionMcp.Params`                          |
 
-**A failure an action does not declare is its call's defect on every surface**, carrying the
-failure and the `SchemaError` saying why it is not declared, which a cast or plain JavaScript
-lets through. HTTP, MCP and RPC answer it as before, and their logs and error reporters now name
+**A failure an action's errors reject is its call's defect on every surface**: one it does not
+declare, which a cast or plain JavaScript lets through, or one breaking a check of its schema,
+which the types let through, such as `Infinity` in a struct error's `Schema.Finite` field. The
+defect carries the failure, with its trace, and the `SchemaError` saying why. A class error's
+checks are not rerun, so one built with `disableChecks` still fails to encode, as before. HTTP,
+MCP and RPC answer it as before, and their logs and error reporters now name
 the failure, where HTTP's and MCP's named only the error encoding it. A Toolkit call dies with it,
 where it failed with an `AiError`, `Failed to encode result for tool …`, and a command dies with
 it, where it failed with a `UserError` printed as its tag and message.
 
-- Migrate: declare the error on the action. A host matching the `AiError` or the `UserError` for
+- Migrate: declare the error on the action, or fix the value. A host matching the `AiError` or the `UserError` for
   such a failure matches the defect instead.
 
 ### Other changes
