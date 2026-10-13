@@ -197,8 +197,8 @@ Derive the rule from `action.readOnly`, never from an `mcp` hint: changing an ac
 - **Name `scopes` in a `Forbidden` only where re-authorizing can grant them.** An OAuth
   challenge answers them, which a client follows only where the server publishes discovery
   ([Authentication.md](Authentication.md#publish-oauth-discovery)); with fixed tokens, such as
-  API keys, leave `scopes` out (it holds at least one: `scopes: []` is a type error). Without scopes it is a 403 over HTTP and, over MCP, an `isError` tool
-  result in a 200 ([guarantees.md](guarantees.md#wire-behavior)).
+  API keys, leave `scopes` out (it holds at least one: `scopes: []` is a type error). What a
+  refusal answers on each surface is in [guarantees.md](guarantees.md#wire-behavior).
 - **What a plain authorizer yields is a request-time requirement of every surface.** To read a
   store, make `authorize` an Effect that yields the store once and returns the function, as a
   builder does
@@ -226,7 +226,8 @@ failure compiles. What each surface answers is in [guarantees.md](guarantees.md#
   `issues` of your own, instead of declaring a second error for bad input
   ([kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts)).
 - **For input you decode yourself** on the server, such as a header or a route parameter,
-  answer as the surfaces do: `Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
+  answer as the surfaces do, with every issue and no excess property:
+  `Schema.decodeUnknownEffect(schema)(value, { errors: "all", onExcessProperty: "error" }).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
 - **Map another service's refusals before failing with them.** A client that decodes the
   built-in errors, such as `ActionHttp.client`, hands a handler that service's `Unauthenticated`
   or `Forbidden`. Passed on, it is this server's own refusal: a caller whose token is valid is

@@ -106,7 +106,7 @@ it("lists every example in examples/README.md and gives each a README", () => {
   }
 });
 
-it("installs Effect at the package's peer range, which no other page states", () => {
+it("installs Effect at the package's peer range in README.md and docs/setup.md", () => {
   const range = manifest.peerDependencies.effect;
 
   for (const page of ["README.md", "docs/setup.md"]) {

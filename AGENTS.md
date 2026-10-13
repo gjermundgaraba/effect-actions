@@ -65,7 +65,7 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 ## Lint
 
 - Fix the owning cause, not the diagnostic's spelling. Do not hide findings through renaming, inference to `any`, casts, one-use helpers or excluded files. Preserve external-input and third-party boundary safety. Fix defective vendored rules with regression tests and an entry in `tools/oxlint/anti-slop/UPSTREAM.md`, which also says why each rule that is off is off; legitimate exceptions must explain the boundary and surviving guarantee.
-- In `src/`, put consumer JSDoc on the declaration that ships, including private-module types, not its re-export. Use `// Why:` for a non-obvious decision and what would break if reversed, in one to three sentences; other rationale belongs in names, types, test titles or commit messages. Example comments teach.
+- In `src/`, put consumer JSDoc on the declaration that ships, including private-module types, not its re-export. Use `// Why:` for a non-obvious decision and what would break if reversed; other rationale belongs in names, types, test titles or commit messages. Example comments teach.
 
 ## Release
 
