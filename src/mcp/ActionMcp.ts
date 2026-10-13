@@ -213,7 +213,7 @@ const registerTools = Effect.fnUntraced(function* (
       Effect.as(textErrorResult(nativeInternalErrorText)),
     );
 
-  const internalErrorUnlessRefused = (cause: Cause.Cause<ErasedValue>) =>
+  const internalErrorUnlessInvalidOrInterrupted = (cause: Cause.Cause<ErasedValue>) =>
     Cause.hasDies(cause)
       ? internalError(cause)
       : Result.match(Cause.findFail(cause), {
@@ -332,7 +332,7 @@ const registerTools = Effect.fnUntraced(function* (
               }),
             ),
           ),
-          Effect.catchCause(internalErrorUnlessRefused),
+          Effect.catchCause(internalErrorUnlessInvalidOrInterrupted),
           // Why: A call runs over what the endpoint was built with, its startup services and the
           // handlers' builds, and what the request provides wins, as a native toolkit handler's
           // context does.

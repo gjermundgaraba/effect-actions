@@ -170,13 +170,16 @@ const command = (action: Failing) =>
 
 const internalToolError = "Tool execution failed due to an internal server error.";
 
+const defectMessages = [defect.message, decoderDefect.message];
+
 const surfaces = [
   {
     surface: "HTTP",
     reporting: "each, some twice as Effect's HTTP server reports a failed response again",
     reports: { atLeast: failing.length, atMost: 2 * failing.length },
     logs: failing.length,
-    logsNaming: ["hunter2"],
+    logsNaming: defectMessages,
+    reportsNaming: defectMessages,
     answers: Effect.forEach(failing, ({ name }) =>
       Effect.flatMap(send(post(`/api/${name}`, payload)), (response) =>
         Effect.map(response.text, (body) => ({
@@ -192,7 +195,8 @@ const surfaces = [
     reporting: "each once",
     reports: { atLeast: failing.length, atMost: failing.length },
     logs: failing.length,
-    logsNaming: ["hunter2"],
+    logsNaming: defectMessages,
+    reportsNaming: defectMessages,
     answers: Effect.forEach(failing, ({ name }) =>
       Effect.flatMap(send(rawToolCall(name, payload)), (response) =>
         Effect.flatMap(response.text, (text) =>
@@ -207,7 +211,8 @@ const surfaces = [
     reporting: "each once, answering the connection's other call",
     reports: { atLeast: failing.length, atMost: failing.length },
     logs: failing.length,
-    logsNaming: ["hunter2", "Leaked"],
+    logsNaming: [...defectMessages, "Leaked"],
+    reportsNaming: defectMessages,
     answers: Effect.map(
       sendRawNdjson(served.map(({ name }) => ({ tag: name, payload }))),
       ({ text, exits }) =>
@@ -221,6 +226,7 @@ const surfaces = [
     reports: { atLeast: 0, atMost: 0 },
     logs: 0,
     logsNaming: [],
+    reportsNaming: [],
     answers: Effect.forEach(failing, toolkitCall),
     guaranteed: failing.map(
       ({ name }) =>
@@ -239,6 +245,7 @@ const surfaces = [
     reports: { atLeast: 0, atMost: 0 },
     logs: 0,
     logsNaming: [],
+    reportsNaming: [],
     answers: Effect.forEach(failing, command),
     guaranteed: failing.map(
       ({ name }) =>
@@ -255,7 +262,7 @@ const surfaces = [
 
 it.effect.each(surfaces)(
   "answers a defect, an undeclared failure, and a success or an error that does not encode as guarantees.md's table states, sending no cause, over $surface, logging and reporting $reporting",
-  ({ answers, guaranteed, reports, logs, logsNaming }) =>
+  ({ answers, guaranteed, reports, logs, logsNaming, reportsNaming }) =>
     Effect.gen(function* () {
       const reported: Array<string> = [];
       const logged: Array<string> = [];
@@ -278,7 +285,13 @@ it.effect.each(surfaces)(
       expect(reported.length).toBeGreaterThanOrEqual(reports.atLeast);
       expect(reported.length).toBeLessThanOrEqual(reports.atMost);
       expect(logged).toHaveLength(logs);
-      expect(reported.some((report) => report.includes("hunter2"))).toBe(logs > 0);
+
+      for (const fragment of reportsNaming) {
+        expect(
+          reported.some((report) => report.includes(fragment)),
+          fragment,
+        ).toBe(true);
+      }
 
       for (const fragment of logsNaming) {
         expect(
