@@ -185,7 +185,7 @@ const resolve = (scenario: Scenario) => {
 
 type Outcome =
   | `answered ${string}`
-  | `failed with ${"Refused" | "Forbidden" | "Unauthenticated"}`
+  | `failed with ${"Refused" | "InvalidInput" | "Forbidden" | "Unauthenticated"}`
   | "undeclared";
 
 interface Tally {
@@ -272,7 +272,9 @@ const bindingAt = (index: number) => {
 
 const tokenOf = (caller: Caller) => (caller === "anonymous" ? undefined : caller);
 
-const isDeclared = Schema.is(Schema.Union([Refused, Action.Forbidden, Action.Unauthenticated]));
+const isDeclared = Schema.is(
+  Schema.Union([Refused, Action.InvalidInput, Action.Forbidden, Action.Unauthenticated]),
+);
 
 const settle = <E, R>(call: Effect.Effect<string, E, R>): Effect.Effect<Outcome, never, R> =>
   Effect.map(Effect.exit(call), (exit): Outcome =>

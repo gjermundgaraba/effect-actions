@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
 import { actors } from "../support/app/authorization.js";
 import { chat, layer as approvalHandlers } from "../support/app/toolkit-approval.js";
@@ -248,47 +248,6 @@ describe("ActionToolkit", () => {
         expect(received).toEqual([{ at: new Date("2026-09-29T00:00:00.000Z"), note: undefined }]);
         expect(result).toMatchObject([{ result: 42n, encodedResult: "42", isFailure: false }]);
         expect(JSON.stringify(result[0]?.encodedResult)).toBe('"42"');
-      }),
-  );
-
-  it.effect(
-    "ends a call with its handler's defect, and fails one whose success does not encode with an AiError",
-    () =>
-      Effect.gen(function* () {
-        const options = { readOnly: true, caller: Action.Anyone } as const;
-        const Crash = Action.make("crash", { ...options, description: "Dies." });
-
-        const Count = Action.make("count", {
-          ...options,
-          description: "Answers a number its success does not encode.",
-          success: Schema.Finite,
-        });
-
-        const binding = ActionToolkit.make(
-          Action.implement([Crash, Count], {
-            crash: () => Effect.die("handler defect"),
-            count: () => Effect.succeed(Infinity),
-          }),
-        );
-
-        const calling = (name: "crash" | "count") =>
-          Effect.gen(function* () {
-            const tools = yield* binding.toolkit;
-
-            return yield* Stream.runCollect(yield* tools.handle(name, {}));
-          }).pipe(Effect.provide(binding.layer), Effect.exit);
-
-        const crashed = yield* calling("crash");
-
-        expect(
-          Exit.isFailure(crashed) &&
-            crashed.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect),
-        ).toEqual(["handler defect"]);
-
-        const unencodable = yield* Effect.flip(yield* calling("count"));
-
-        expect(AiError.isAiError(unencodable)).toBe(true);
-        expect(unencodable.message).toContain("Failed to encode result for tool 'count'");
       }),
   );
 

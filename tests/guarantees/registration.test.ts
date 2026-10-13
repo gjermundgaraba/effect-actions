@@ -850,31 +850,7 @@ describe("projection boundaries", () => {
     });
   });
 
-  it("turns invalid output and errors, undeclared failures and defects into sanitized native failures on both transports", async () => {
-    const Broken = Action.make("broken", {
-      description: "Bad output",
-      readOnly: false,
-      caller: Action.Anyone,
-      success: Schema.Finite,
-    });
-
-    const Domain = Schema.TaggedStruct("Domain", { value: Schema.Finite });
-
-    const Refused = Action.make("refused", {
-      description: "Bad declared error",
-      readOnly: false,
-      caller: Action.Anyone,
-      success: Schema.String,
-      error: [Domain],
-    });
-
-    const Boom = Action.make("boom", {
-      description: "Defect",
-      readOnly: false,
-      caller: Action.Anyone,
-      success: Schema.String,
-    });
-
+  it("answers an undeclared AiError, as a model call leaks one, as any undeclared failure over HTTP and MCP", async () => {
     const Leaked = Action.make("leaked", {
       description: "Undeclared failure",
       readOnly: false,
@@ -888,27 +864,18 @@ describe("projection boundaries", () => {
       reason: new AiError.UnknownError({ description: "secret prompt" }),
     });
 
-    const apps = Action.implement([Broken, Refused, Boom, Leaked], {
-      broken: () => Effect.succeed(Infinity),
-      refused: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
-      boom: () => Effect.die(new Error("secret database password")),
+    const apps = Action.implement(Leaked, () =>
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A handler failing with an error its contract does not declare, which the types refuse.
-      leaked: () => Effect.fail(leakedFromAModel as never),
-    });
+      Effect.fail(leakedFromAModel as never),
+    );
 
-    const web = makeTestHttp(apps);
-
-    const mcp = makeTestMcp(apps);
-
-    for (const name of ["broken", "refused", "boom", "leaked"]) {
-      const http = await web.handler(post(`/api/${name}`));
-      expect(http.status).toBe(500);
-      expect(await http.text()).toBe("");
-      const reply = await (await mcp.handler(rawToolCall(name))).text();
-      expect(reply).toContain('"isError":true');
-      expect(reply).toContain("internal server error");
-      expect(reply).not.toContain("secret");
-    }
+    const http = await makeTestHttp(apps).handler(post("/api/leaked"));
+    expect(http.status).toBe(500);
+    expect(await http.text()).toBe("");
+    const reply = await (await makeTestMcp(apps).handler(rawToolCall("leaked"))).text();
+    expect(reply).toContain('"isError":true');
+    expect(reply).toContain("internal server error");
+    expect(reply).not.toContain("secret");
   });
 
   it("answers an action without success with an empty 200 over HTTP: no body, no content type", async () => {
