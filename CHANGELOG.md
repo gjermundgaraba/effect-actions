@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Breaking changes
+
+**The MCP client and request builder move from `Testing` to `ActionMcp`**, beside the server
+they call, as `ActionHttp.client` sits beside `ActionHttp.layer`. `Testing` keeps `layer`, the
+in-memory `HttpClient` both clients run on. Nothing else changes: the same arguments, options,
+decoding and failures.
+
+- Migrate: import `@gjermundgaraba/effect-actions/ActionMcp` and rename.
+
+| Before                                       | After                                       |
+| -------------------------------------------- | ------------------------------------------- |
+| `Testing.mcpClient(actions, options?)`       | `ActionMcp.client(actions, options?)`       |
+| `Testing.mcpRequest(method, params?, opts?)` | `ActionMcp.request(method, params?, opts?)` |
+| `Testing.McpCallError`                       | `ActionMcp.McpCallError`                    |
+| `Testing.McpClient<Actions>`                 | `ActionMcp.Client<Actions>`                 |
+| `Testing.McpClientOptions`                   | `ActionMcp.ClientOptions`                   |
+| `Testing.McpRequestOptions`                  | `ActionMcp.RequestOptions`                  |
+| `Testing.McpParams`                          | `ActionMcp.Params`                          |
+
+```ts
+// Before
+const mcp = yield * Testing.mcpClient([Greet]);
+const listed = yield * HttpClient.execute(Testing.mcpRequest("tools/list"));
+
+// After
+const mcp = yield * ActionMcp.client([Greet]);
+const listed = yield * HttpClient.execute(ActionMcp.request("tools/list"));
+```
+
 ### Other changes
 
 - **A command's `InvalidInput` names every field that does not decode**, as HTTP, RPC, MCP and

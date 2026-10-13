@@ -3,7 +3,7 @@ import type { HttpClient, HttpClientError } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
-import * as Testing from "../../src/testing/Testing.js";
+import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
 
@@ -116,7 +116,7 @@ const Find = Action.make("find", {
 
 export const classInputOmittedWhenItsFieldsAreOptional = Effect.gen(function* () {
   const methods = yield* ActionHttp.client(ActionHttp.make([Filter, Find]));
-  const mcp = yield* Testing.mcpClient([Filter, Find]);
+  const mcp = yield* ActionMcp.client([Filter, Find]);
 
   const all: ReadonlyArray<string> = yield* methods.filter();
   const tagged: ReadonlyArray<string> = yield* methods.filter(new Filters({ tag: "x" }));

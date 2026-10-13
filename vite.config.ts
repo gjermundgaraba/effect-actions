@@ -25,7 +25,6 @@ const sharedPrivateFiles = [
   "authentication/refusal.js",
   "stdio/console.js",
   "toolkit/tools.js",
-  "mcp/protocol.js",
 ];
 
 export default defineConfig({

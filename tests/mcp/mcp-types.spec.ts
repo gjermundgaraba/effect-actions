@@ -5,7 +5,6 @@ import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
-import * as Testing from "../../src/testing/Testing.js";
 
 const options = { name: "t", version: "0" };
 
@@ -85,7 +84,7 @@ const listed = Action.implement([Action.make("first", read), Action.make("second
   second: done,
 });
 
-export const clientWithOneMethodPerTool = Effect.map(Testing.mcpClient(listed.actions), (mcp) => {
+export const clientWithOneMethodPerTool = Effect.map(ActionMcp.client(listed.actions), (mcp) => {
   expectTypeOf<keyof typeof mcp>().toEqualTypeOf<"first" | "second">();
 });
 

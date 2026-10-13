@@ -1,5 +1,6 @@
 import { Deferred, Effect, Option, Predicate, Schema, Sink, Stdio, Stream } from "effect";
-import { httpProtocol, type Params, statelessRequest } from "../../src/mcp/protocol.js";
+import { type Params, statelessRequest } from "../../src/mcp/client.js";
+import { httpProtocol } from "../../src/mcp/protocol.js";
 
 export interface HostRequest {
   readonly method: string;

@@ -4,6 +4,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { type HttpApiClient, OpenApi } from "effect/http-api";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -49,12 +50,12 @@ const served = await Effect.gen(function* () {
   void checkClientTypes;
 
   const greeting = yield* client.greet({ name: "Ada" });
-  const mcp = yield* Testing.mcpClient([Greet]);
+  const mcp = yield* ActionMcp.client([Greet]);
   const called = yield* mcp.greet({ name: "Ada" });
-  const listed = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
+  const listed = yield* HttpClient.execute(ActionMcp.request("tools/list"));
 
   const raw = yield* HttpClient.execute(
-    Testing.mcpRequest("tools/call", { name: "greet", arguments: { name: "Ada" } }),
+    ActionMcp.request("tools/call", { name: "greet", arguments: { name: "Ada" } }),
   );
 
   return { greeting, called, listed: listed.status, raw: yield* raw.text };

@@ -351,9 +351,9 @@ describe("media fields over MCP", () => {
       }),
   );
 
-  it.effect("decodes each media success in Testing.mcpClient as the handler returned it", () =>
+  it.effect("decodes each media success in ActionMcp.client as the handler returned it", () =>
     Effect.gen(function* () {
-      const client = yield* Testing.mcpClient(actions);
+      const client = yield* ActionMcp.client(actions);
 
       expect(yield* client.shot()).toEqual({ screen, image });
       expect(yield* client.maybe({ present: true })).toEqual({ title: "Home", image });
@@ -384,7 +384,7 @@ describe("media fields over MCP", () => {
         result: { isError: true, content: [{ type: "text", text: '{"_tag":"Gone","id":1}' }] },
       });
 
-      const client = yield* Testing.mcpClient([Lost]);
+      const client = yield* ActionMcp.client([Lost]);
 
       expect(yield* Effect.flip(client.lost())).toEqual(new Gone({ id: 1 }));
     }).pipe(
@@ -507,7 +507,7 @@ describe("the rest of a media success", () => {
 
       expect(answered.map(replyOf)).toEqual([lifted, lifted]);
 
-      const client = yield* Testing.mcpClient([SuspendedField, SuspendedSuccess]);
+      const client = yield* ActionMcp.client([SuspendedField, SuspendedSuccess]);
 
       expect(yield* client.later()).toEqual({ title: "Home", image });
       expect(yield* client.deferred()).toEqual({ title: "Home", image });
@@ -601,7 +601,7 @@ describe("the rest of a media success", () => {
         },
       ]);
 
-      const client = yield* Testing.mcpClient([Strip, Gallery]);
+      const client = yield* ActionMcp.client([Strip, Gallery]);
 
       expect(yield* client.strip()).toEqual([photo, image]);
       expect(yield* client.gallery()).toEqual({ total: 2, pages: [image, photo] });
@@ -609,7 +609,7 @@ describe("the rest of a media success", () => {
   );
 });
 
-describe("Testing.mcpClient and a media result", () => {
+describe("ActionMcp.client and a media result", () => {
   const clientAnsweringEveryCallWith = (result: Schema.Json) =>
     Effect.provideService(
       HttpClient.HttpClient,
@@ -622,7 +622,7 @@ describe("Testing.mcpClient and a media result", () => {
 
   it.effect("takes a media field from its blocks alone, never from the structured content", () =>
     Effect.gen(function* () {
-      const client = yield* Testing.mcpClient([Shot], { url: "http://localhost/mcp" });
+      const client = yield* ActionMcp.client([Shot], { url: "http://localhost/mcp" });
 
       const error = yield* Effect.flip(client.shot());
 
@@ -643,7 +643,7 @@ describe("Testing.mcpClient and a media result", () => {
 
   it.effect("fails a result whose structured content is no object", () =>
     Effect.gen(function* () {
-      const client = yield* Testing.mcpClient([OnlyImageRequired], { url: "http://localhost/mcp" });
+      const client = yield* ActionMcp.client([OnlyImageRequired], { url: "http://localhost/mcp" });
 
       const error = yield* Effect.flip(client.captioned());
 
@@ -659,7 +659,7 @@ describe("Testing.mcpClient and a media result", () => {
 
   it.effect("fails a result with more blocks than its one image", () =>
     Effect.gen(function* () {
-      const client = yield* Testing.mcpClient([Shot], { url: "http://localhost/mcp" });
+      const client = yield* ActionMcp.client([Shot], { url: "http://localhost/mcp" });
 
       const error = yield* Effect.flip(client.shot());
 

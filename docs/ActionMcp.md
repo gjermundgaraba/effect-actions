@@ -19,6 +19,9 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `runStdio(implementations, options)`  | An Effect serving them on standard I/O until stdin closes.  |
 | `Options`                             | Type of `runStdio`'s options.                               |
 | `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and four for HTTP. |
+| `client(actions, options?)`           | An Effect of a client calling each action's tool.           |
+| `request(method, params?, options?)`  | One MCP request, as the native `HttpClientRequest` to send. |
+| `McpCallError`                        | A client method's failure for an answer it cannot decode.   |
 
 `implementations` is one implementation or a list.
 
@@ -37,6 +40,9 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
 All but `actions`, `features` and `authentication` are Effect's own `McpServer` options, passed
 through. Its `protocols` and `allowSessionTermination` are not options.
+
+`client` and `request` take `url`, default `/mcp`, and `transformClient` or `headers`. Types:
+`Client<Actions>`, `ClientOptions`, `RequestOptions`, `Params`.
 
 ## Serve tools over HTTP
 
@@ -91,7 +97,7 @@ See [notes-service/src/stdio.ts](../examples/notes-service/src/stdio.ts), and
 [mcp-tools/src/stdio.ts](../examples/mcp-tools/src/stdio.ts) for public tools.
 
 To try a server by hand, send it one request, its 2026-07-28 metadata in `_meta` as
-`Testing.mcpRequest` builds it. Over HTTP it also needs all five headers:
+`request` builds it. Over HTTP it also needs all five headers:
 
 ```sh
 BODY='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"getStatus","arguments":{},"_meta":{"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}'
@@ -112,10 +118,7 @@ curl http://127.0.0.1:3000/mcp -d "$BODY" -H 'Content-Type: application/json' \
   protected tools' identity around `runStdio`, whose one caller is whoever started it. Each
   implementation's `authorize` still runs, so give that caller what it checks. Tools served
   behind a token over HTTP keep their one protected contract here: never a public copy.
-- **Test the tools without a process**: the implementations in process over a fake upstream
-  ([mcp-tools/test/printers/printers.test.ts](../examples/mcp-tools/test/printers/printers.test.ts)),
-  an endpoint in memory
-  ([mcp-tools/test/routes.test.ts](../examples/mcp-tools/test/routes.test.ts)).
+- **Test the tools without a process**: [Testing.md](Testing.md#test-mcp-tools).
 
 ## Describe tools to a model
 
@@ -156,8 +159,8 @@ success: { printer: Printer, image: Action.Image },
 
 The tool sends the field as an image block, after the JSON of the rest. Every other surface sends
 it as JSON, the bytes in base64. See
-[mcp-tools/src/printers/Printers.ts](../examples/mcp-tools/src/printers/Printers.ts), and
-[Testing.md](Testing.md#test-mcp-tools) for the client that decodes it back.
+[mcp-tools/src/printers/Printers.ts](../examples/mcp-tools/src/printers/Printers.ts); `client`
+decodes it back.
 
 - An image is a top-level field of a struct success, bare, optional or a required array, or the
   whole success or an array of it. Anywhere else in a served action, as in a `Schema.NullOr`, a
@@ -203,8 +206,6 @@ sign in. What a signed-in caller may do is each implementation's
   started, and its refusal is a tool result: refuse in `authorize`.
 - Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)):
   [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts).
-  `Testing.mcpClient` decodes a refusal alike from a 401, a 403 or a tool result: to assert the
-  status, send `Testing.mcpRequest`.
 
 ## Allow browser clients
 
@@ -239,7 +240,6 @@ one and pass it as `features`:
 around the endpoint, never to the `features` layer itself: there it is built again for the
 features alone, so a resource reads another store than the tools write.
 
-- Merged beside the endpoint, not given as `features`, they build and are never served.
 - No `authorize` runs for them, and they run with the services they were built with, never a
   request's, so they cannot read the caller. Content that depends on the caller is an action.
 - On an endpoint naming `authentication`, every prompt and resource request needs a credential,

@@ -62,7 +62,7 @@ describe("the identity authentication provides", () => {
 
         const answered = yield* Effect.gen(function* () {
           const http = yield* ActionHttp.client(Http, as("alice"));
-          const mcp = yield* Testing.mcpClient([WhoAmI, RenameUser], as("alice"));
+          const mcp = yield* ActionMcp.client([WhoAmI, RenameUser], as("alice"));
 
           const identities = {
             http: (yield* http.whoAmI()).id,
@@ -76,7 +76,7 @@ describe("the identity authentication provides", () => {
 
           const anonymous = {
             http: yield* Effect.flatMap(ActionHttp.client(Public), (client) => client.caller()),
-            mcp: yield* Effect.flatMap(Testing.mcpClient([Caller], { url: "/mcp/caller" }), (mcp) =>
+            mcp: yield* Effect.flatMap(ActionMcp.client([Caller], { url: "/mcp/caller" }), (mcp) =>
               mcp.caller(),
             ),
           };
@@ -106,7 +106,7 @@ describe("the identity authentication provides", () => {
 
         const users = yield* Effect.gen(function* () {
           const http = yield* ActionHttp.client(Http, as("alice"));
-          const mcp = yield* Testing.mcpClient([GetUser], as("alice"));
+          const mcp = yield* ActionMcp.client([GetUser], as("alice"));
 
           return [yield* http.getUser({ id: "1" }), yield* mcp.getUser({ id: "1" })];
         }).pipe(Effect.provide(server));
@@ -374,7 +374,7 @@ describe("what the routes were built with", () => {
         const probeAt = (path: keyof typeof bindings) =>
           transport === "HTTP"
             ? Effect.flatMap(ActionHttp.client(bindings[path]), (client) => client.probe())
-            : Effect.flatMap(Testing.mcpClient([Probe], { url: path }), (mcp) => mcp.probe());
+            : Effect.flatMap(ActionMcp.client([Probe], { url: path }), (mcp) => mcp.probe());
 
         const answers = yield* Effect.all([probeAt("/built"), probeAt("/scoped")]).pipe(
           Effect.provide(Testing.layer(routes)),

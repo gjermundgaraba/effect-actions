@@ -151,7 +151,7 @@ export const lookupLayer: Layer.Layer<
 
 export const testing = Testing.layer(lookupHttp);
 
-export const mcpLookup = Testing.mcpClient([Lookup]);
+export const mcpLookup = ActionMcp.client([Lookup]);
 
 export const protectedRoute = Authentication.protect(Login);
 

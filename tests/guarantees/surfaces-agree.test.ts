@@ -129,7 +129,7 @@ const successOnEachSurface = (input: typeof Payload.Type) =>
   Effect.gen(function* () {
     const http = yield* ActionHttp.client(Http);
     const rpc = yield* ActionRpc.client(Rpc);
-    const mcp = yield* Testing.mcpClient([Echo, Fail]);
+    const mcp = yield* ActionMcp.client([Echo, Fail]);
     const inProcess = yield* Action.client(app);
     const toolkit = yield* tools.toolkit;
 
@@ -151,7 +151,7 @@ const failureOnEachSurface = (failure: typeof Failure.Type) =>
   Effect.gen(function* () {
     const http = yield* ActionHttp.client(Http, as(token));
     const rpc = yield* ActionRpc.client(Rpc);
-    const mcp = yield* Testing.mcpClient([Echo, Fail], as(token));
+    const mcp = yield* ActionMcp.client([Echo, Fail], as(token));
     const inProcess = yield* Action.client(app);
     const toolkit = yield* tools.toolkit;
 
