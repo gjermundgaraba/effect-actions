@@ -1,4 +1,4 @@
-import { Predicate, Result, Schema, SchemaAST } from "effect";
+import { Predicate, Schema, SchemaAST } from "effect";
 import { McpProtocol, type McpSchema } from "effect/ai";
 import { Base64 } from "effect/encoding";
 import type * as Action from "../contract/Action.js";
@@ -26,30 +26,6 @@ export const protocols = [
 ] as const;
 
 export const defaultPath = "/mcp";
-
-const base64Prefix = "=?base64?";
-
-const base64Suffix = "?=";
-
-const printableAscii = /^[\t\x20-\x7e]*$/;
-
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-
-const utf8Of = (bytes: Uint8Array) => Result.try(() => utf8.decode(bytes));
-
-// Why: The runtime routes a 2026-07-28 request by its `Mcp-Name` read this way, printable ASCII as
-// sent and anything else base64-encoded between `=?base64?` and `?=`, in a decoder it keeps
-// internal. A gate admitting a public tool by that header must read the name the runtime routes:
-// compared as sent, an encoded public tool's name is refused signed out.
-export const routedName = (header: string): string | undefined => {
-  if (!header.startsWith(base64Prefix) || !header.endsWith(base64Suffix)) {
-    return printableAscii.test(header) ? header : undefined;
-  }
-
-  return Result.getOrUndefined(
-    Result.flatMap(Base64.decode(header.slice(base64Prefix.length, -base64Suffix.length)), utf8Of),
-  );
-};
 
 type Codec = Action.Any["success"];
 

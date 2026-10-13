@@ -14,6 +14,7 @@ import {
   type Stdio,
 } from "effect";
 import { AiError, McpSchema, McpServer } from "effect/ai";
+import { Base64 } from "effect/encoding";
 import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import {
@@ -38,7 +39,6 @@ import {
   liftedFrom,
   liftOf,
   protocols,
-  routedName,
 } from "./protocol.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
@@ -393,7 +393,14 @@ const server = <Out, R>(
 const anonymousMethods = new Set(["server/discover", "tools/list", "notifications/cancelled"]);
 
 const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
-  const open = new Set(actions.filter(({ caller }) => caller === Anyone).map(({ name }) => name));
+  // Why: The runtime routes a 2026-07-28 request by its `Mcp-Name` decoded, a name as sent or
+  // base64-encoded between `=?base64?` and `?=`, so a public tool's name is admitted in either form.
+  // An action's name is plain ASCII, whose standard encoding is one string: any other fails closed.
+  const open = new Set(
+    actions
+      .filter(({ caller }) => caller === Anyone)
+      .flatMap(({ name }) => [name, `=?base64?${Base64.encode(name)}?=`]),
+  );
 
   return (headers: Headers.Headers): boolean => {
     if (open.size === 0) return true;
@@ -410,8 +417,7 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
 
     if (method !== "tools/call") return true;
 
-    const header = headers["mcp-name"];
-    const name = header === undefined ? undefined : routedName(header);
+    const name = headers["mcp-name"];
 
     return name === undefined || !open.has(name);
   };
