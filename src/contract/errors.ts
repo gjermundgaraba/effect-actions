@@ -72,9 +72,8 @@ const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
  * The caller may not run this action: an implementation's `authorize` refuses. `scopes`,
  * when given, are every OAuth scope the call needs: a refusal naming them is answered with
  * the `insufficient_scope` challenge an OAuth client re-authorizes on, so name them only where
- * re-authorizing can grant them. Over HTTP it is a 403 either way. Over MCP, from an authorizer
- * or a handler, it is a 403 only when it names scopes on an endpoint under Bearer, and
- * otherwise a tool result with `isError: true`, in a 200 response.
+ * re-authorizing can grant them. What it answers on each surface: `docs/guarantees.md` in this
+ * package.
  */
 export class Forbidden extends Schema.TaggedError<Forbidden>()(
   "Forbidden",
