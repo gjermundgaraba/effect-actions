@@ -20,6 +20,14 @@ const packageNameImport = {
 
 const anyRelativeImport = ["./**", "../**"];
 
+const sharedPrivateFiles = [
+  "authentication/provider.js",
+  "authentication/refusal.js",
+  "stdio/console.js",
+  "toolkit/tools.js",
+  "mcp/protocol.js",
+];
+
 export default defineConfig({
   staged: {
     "*": "vp check --fix",
@@ -135,12 +143,12 @@ export default defineConfig({
                   group: [
                     ...anyRelativeImport,
                     "!./*.js",
-                    "!../[a-z]*/[a-z]*.js",
+                    "!../[a-z]*/[A-Z]*.js",
                     "!../contract/*.js",
+                    ...sharedPrivateFiles.map((file) => `!../${file}`),
                   ],
                   caseSensitive: true,
-                  message:
-                    "A relative import is ./<file>.js, another domain's private ../<domain>/<file>.js, or the contract's.",
+                  message: `A relative import is ./<file>.js, another domain's public ../<domain>/<Module>.js, the contract's, or a shared private file: ${sharedPrivateFiles.join(", ")}.`,
                 },
               ],
             },

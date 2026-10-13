@@ -434,14 +434,6 @@ export function layer(
   );
 }
 
-const erasedClient = (
-  binding: AnyHttp,
-  options?: ClientOptions,
-): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> =>
-  Effect.map(methods(binding, options), (methodOf) =>
-    Object.fromEntries(binding.actions.map((action) => [action.name, methodOf(action)])),
-  );
-
 /**
  * Effect's native `HttpApiClient` for a binding, one method per action taking the
  * action's input directly: `client.greet({ name })`. The argument may be omitted when `{}`
@@ -464,7 +456,7 @@ export function client(
   binding: AnyHttp,
   options?: ClientOptions,
 ): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
-  return erasedClient(binding, options);
+  return methods(binding, options);
 }
 
 /**
@@ -484,7 +476,7 @@ export function fetchClient(
   binding: AnyHttp,
   { fetch, ...options }: FetchClientOptions = {},
 ): { readonly [name: string]: ErasedMethod } {
-  return erasedClient(binding, options).pipe(
+  return methods(binding, options).pipe(
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(
       FetchHttpClient.Fetch,

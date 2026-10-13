@@ -16,12 +16,7 @@ import {
   failingAsDerived,
   type Options as CommandOptions,
 } from "./commands.js";
-import {
-  type AnyHttp,
-  assertInBinding,
-  type Options as ClientOptions,
-  methods,
-} from "../http/client.js";
+import * as ActionHttp from "../http/ActionHttp.js";
 import {
   acquire,
   type ActionOf,
@@ -197,16 +192,25 @@ const inProcess = <A extends Action.Any>(
 };
 
 const overHttp = <A extends Action.Any>(
-  binding: AnyHttp,
+  binding: ActionHttp.Any,
   action: A,
   options: CommandOptions<A> | undefined,
-  client: ClientOptions | undefined,
+  client: ActionHttp.ClientOptions | undefined,
 ) => {
-  assertInBinding(binding.actions, action);
+  if (!binding.actions.includes(action)) {
+    throw new Error(`Action "${action.name}" is not in this HTTP binding`);
+  }
 
   return makeCommand(
     action,
-    (input) => Effect.flatMap(methods(binding, client), (methodOf) => methodOf(action)(input)),
+    (input) =>
+      Effect.flatMap(ActionHttp.client(binding, client), (methods) => {
+        const method = methods[action.name];
+
+        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+
+        return method(input);
+      }),
     options,
     bindingErrors(action, binding),
   );
@@ -294,7 +298,7 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
  * nothing locally.
  */
 export function remoteCommand<
-  const H extends AnyHttp,
+  const H extends ActionHttp.Any,
   A extends H["actions"][number],
   const O = {},
 >(
@@ -315,7 +319,7 @@ export type RemoteCommandOptions<A extends Action.Any = Action.Any> = CommandOpt
    * Its client's options, as `ActionHttp.client` takes them: `baseUrl`, and
    * `transformClient` for credentials. They reach this command's requests alone.
    */
-  readonly client?: ClientOptions;
+  readonly client?: ActionHttp.ClientOptions;
 };
 
 /** A remote aggregate command's options, its actions `A`. */
@@ -330,10 +334,10 @@ export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
    * command's failure and prints as a crash line: map the read,
    * `Effect.mapError((cause) => new CliError.UserError({ cause, userMessage: "TOKEN is not set" }))`.
    */
-  readonly client?: ClientOptions;
+  readonly client?: ActionHttp.ClientOptions;
 };
 
-type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
+type HttpUserError<H extends ActionHttp.Any, A extends Action.Any> = UserError<
   | A["error"][number]["Type"]
   | H["error"][number]["Type"]
   | VerifierError<A, H["authentication"]>["Type"]
@@ -399,7 +403,7 @@ export function make<
  * commands of your own.
  */
 export function remote<
-  const H extends AnyHttp,
+  const H extends ActionHttp.Any,
   const O extends Selection<H["actions"][number]> = {},
   const Own extends Subcommands = [],
 >(
