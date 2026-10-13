@@ -2,7 +2,7 @@
 
 What you see when something is wrong, and the fix. Search for a fragment of the message.
 A missing service's error can start
-`… with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined'`: search the line
+`… with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined'`: search a line
 beneath it, `is missing the following properties from type 'Scope'`, instead.
 The tasks are in [Testing.md](Testing.md).
 

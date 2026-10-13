@@ -83,7 +83,7 @@ export const UpdateNote = Action.make("updateNote", {
   readOnly: false,
   caller: CurrentUser,
   // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
-  // a write, as is any change to what is stored, a flag such as "read" included.
+  // a write, as is any update of what is stored, a flag such as "read" included.
   // `createNote` and `importNotes`, which only add, say `false`.
 });
 

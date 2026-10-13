@@ -211,10 +211,10 @@ sign in. What a signed-in caller may do is each implementation's
 A browser MCP client sends its page's `Origin`, and needs two things.
 
 - **`allowedOrigins`.** A request carrying an `Origin` is refused with 403 unless that exact
-  origin is listed, so a page a user happens to visit cannot call the tools; one without, as
-  other clients send, passes. Authentication runs first: a request without a valid token gets
-  401, whatever its Origin. Read the list from configuration:
-  [mcp-tools/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/routes.ts).
+  origin is listed, so a page a user visits cannot call the tools; one without, as other
+  clients send, passes. Authentication runs first, so the verifier sees a token from any origin:
+  a request that must authenticate, or sends a token, gets 401 without a valid one. Read the
+  list from config: [mcp-tools/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/routes.ts).
 - **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
   `HttpRouter.cors`, global to the router, only where an origin is configured: given an empty
   list, it answers `Access-Control-Allow-Origin: *`, and given one origin it names that origin
@@ -225,8 +225,8 @@ A browser MCP client sends its page's `Origin`, and needs two things.
   [kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts) with
   authentication.
 
-A `Host` allowlist, for a request that sends no `Origin`, or an Origin check
-that must run first is a request policy:
+A `Host` allowlist, for a request that sends no `Origin`, or an Origin check that must run first
+is a request policy:
 [Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
 
 ## Add native prompts and resources

@@ -148,10 +148,10 @@ In an aggregate, a command's options go under `commands`, keyed by the action's 
 ### Add a command of your own
 
 Work every surface should offer, a bulk import for one, is an action first: a command of your
-own then only reads the file and sends what it holds, not decoded with the action's schema: the
-server checks it as any call, naming a bad entry by its path. `notes import <file>` reads
-`Argument.FileText` and calls `importNotes`. For a syntax the options cannot express, such as a flag named apart
-from its field, build the command with native `Command.make`, `Flag` and `Argument`, and pass it
+own then only reads the file and calls it. Its client checks the input as it encodes it, naming
+a bad entry by its path, so a decode of your own only repeats that check. `notes import <file>`
+reads `Argument.FileText` and calls `importNotes`. For a syntax the options cannot express, such
+as a flag named apart from its field, build the command with native `Command.make`, `Flag` and `Argument`, and pass it
 in `subcommands`: `notes export <file>` takes `Argument.String("file")`
 ([notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts)):
 

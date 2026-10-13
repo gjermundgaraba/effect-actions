@@ -70,10 +70,12 @@ does an RPC binding ([live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-a
   `ActionRpc.layer`, `ActionMcp.layerHttp` and `Authentication.protect` refuse, when they build,
   a descriptor that is another object than the one the provider was given, equal name and
   options or not.
-- Protecting an action that tests already call breaks them at compile time. An `Action.client`
-  call then owes `Type 'CurrentUser' is missing … from type 'Scope'`: provide the caller around
-  each call. A test that builds `layerHttp` itself gets `Property 'authentication' is missing`:
-  serve `routes` with `Testing.layer` ([Testing-failures.md](Testing-failures.md)).
+- Protecting an action that tests already call breaks them. An `Action.client` call then owes
+  `Type 'CurrentUser' is missing … from type 'Scope'`: provide the caller around each call
+  ([Testing-failures.md](Testing-failures.md)). A test that builds `ActionMcp.layerHttp` itself
+  gets `Property 'authentication' is missing`: serve `routes` with `Testing.layer`
+  ([ActionMcp-failures.md](ActionMcp-failures.md)). A call over HTTP without a credential gets
+  `Unauthenticated` at run time.
 - A local surface has no remote caller and takes no descriptor: the host provides the identity
   itself, for a CLI ([ActionCli.md](ActionCli.md#name-the-caller)), a Toolkit
   ([ActionToolkit.md](ActionToolkit.md#name-the-caller)) and an MCP server over stdio

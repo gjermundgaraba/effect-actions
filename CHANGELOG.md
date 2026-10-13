@@ -5,14 +5,14 @@
 ### Other changes
 
 - `destructiveHint`'s JSDoc says an update of a stored flag, such as "read", stays destructive.
-- The docs say a hand-written command sends what a file holds for the server to check, not
-  decoded with the action's schema; that undecodable tool arguments are an `AiError`, not
-  `InvalidInput`; how to name an assistant's files against TS1149; that a request without a
-  valid token gets 401 before `allowedOrigins` is checked; and which errors protecting an
-  action raises in its existing tests. `Testing-failures.md` says which line of a missing
+- The docs say a hand-written command's client already checks a file's input, so a decode of
+  its own only repeats that check; that undecodable tool arguments are an `AiError`, not
+  `InvalidInput`; how to name an assistant's files against TS1149; that an MCP request that
+  must authenticate, or sends a token, gets 401 without a valid one before `allowedOrigins` is
+  checked; and which errors protecting an action raises in its existing tests. `Testing-failures.md` says which line of a missing
   service's error to search under `exactOptionalPropertyTypes`.
 - `notes-service`'s `importNotes` takes `CreateNote.input` as each note's schema; `live-rpc`
-  routes to serving the same actions as JSON and names two more choices to decide when copying.
+  routes to serving the same actions as JSON and names another choice to decide when copying.
 
 ## 0.14.0
 
