@@ -464,22 +464,6 @@ describe("projection boundaries", () => {
         ]),
       ),
     ).toEqual(annotations);
-
-    const hints = [Tool.Destructive, Tool.Idempotent, Tool.OpenWorld];
-
-    expect(
-      Object.fromEntries(
-        Object.entries(tools).map(([name, tool]) => [
-          name,
-          hints.filter(({ key }) => tool.annotations.mapUnsafe.has(key)),
-        ]),
-      ),
-    ).toEqual({
-      lookup: hints,
-      append: [Tool.Destructive],
-      wipe: [Tool.Idempotent],
-      purge: [Tool.Destructive],
-    });
   });
 
   it("carries a title and `_meta` to its MCP and native tools, only where given", async () => {

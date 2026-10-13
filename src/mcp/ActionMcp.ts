@@ -27,7 +27,13 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
 } from "../authentication/provider.js";
-import { Anyone, assertAuthentication, assertOnce, projectedErrors } from "../contract/rules.js";
+import {
+  Anyone,
+  assertAuthentication,
+  assertOnce,
+  hintsOf,
+  projectedErrors,
+} from "../contract/rules.js";
 import { inputParseOptions } from "../contract/call.js";
 import {
   defaultPath,
@@ -187,10 +193,7 @@ const toolOf = (action: Action.Any, outputSchema: McpSchema.Tool["outputSchema"]
         outputSchema,
         annotations: {
           ...(action.mcp.title === undefined ? {} : { title: action.mcp.title }),
-          readOnlyHint: action.readOnly,
-          destructiveHint: action.mcp.destructiveHint ?? !action.readOnly,
-          idempotentHint: action.mcp.idempotentHint ?? false,
-          openWorldHint: action.mcp.openWorldHint ?? true,
+          ...hintsOf(action),
         },
         _meta: action.mcp._meta === undefined ? undefined : { ...action.mcp._meta },
       }),

@@ -163,3 +163,69 @@ export const assertOwnTags = (what: string, errors: Action.Errors): void => {
     throw new Error(`${what}: error _tag "${tag}" is built in, and declared on every surface`);
   }
 };
+
+/**
+ * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, no built-in error in
+ * `error`, and the descriptor every protected action names. Returns `error` as a list.
+ */
+export const bindingOf = <D extends Proving>(
+  what: string,
+  actions: ReadonlyArray<Action.Any>,
+  options: {
+    readonly error?: Action.Errors | Action.Errors[number] | undefined;
+    readonly authentication?: D | undefined;
+  },
+) => {
+  assertOnce("action", actions);
+
+  const error = errorList(options.error);
+
+  assertOwnTags(what, error);
+  assertAuthentication(actions, options.authentication);
+
+  return { error, authentication: options.authentication };
+};
+
+export const httpApiStatusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+
+const statusThroughSuspensions = (ast: SchemaAST.AST): number | undefined =>
+  httpApiStatusOf(ast) ??
+  (SchemaAST.isSuspend(ast) ? statusThroughSuspensions(ast.thunk()) : undefined);
+
+/**
+ * `error` as an endpoint declares it: each member of a union without a status of its own apart,
+ * each with its status, 422 without one.
+ */
+export const declared = (error: Action.Errors[number]): Action.Errors => {
+  const status = statusThroughSuspensions(error.ast);
+
+  if (status !== undefined) {
+    return [
+      httpApiStatusOf(error.ast) === undefined ? error.annotate({ httpApiStatus: status }) : error,
+    ];
+  }
+
+  const resolved = unsuspended(error.ast);
+
+  if (
+    SchemaAST.isUnion(resolved) &&
+    resolved.checks === undefined &&
+    resolved.encoding === undefined
+  ) {
+    return resolved.types.flatMap((member) => declared(Schema.make<Action.Errors[number]>(member)));
+  }
+
+  return [error.annotate({ httpApiStatus: 422 })];
+};
+
+/**
+ * An action's MCP tool hints, MCP's defaults where its `mcp` leaves one out: a write destructive,
+ * a read not, no tool idempotent and every tool open-world. A given value passes through, as MCP
+ * calls `destructiveHint` and `idempotentHint` meaningless on a read-only tool.
+ */
+export const hintsOf = ({ readOnly, mcp }: Action.Any) => ({
+  readOnlyHint: readOnly,
+  destructiveHint: mcp.destructiveHint ?? !readOnly,
+  idempotentHint: mcp.idempotentHint ?? false,
+  openWorldHint: mcp.openWorldHint ?? true,
+});

@@ -1,10 +1,12 @@
-import type { Effect, Layer, Schema } from "effect";
-import type { Prompt, Tool, Toolkit } from "effect/ai";
+import { type Context, Effect, type Layer, Schema } from "effect";
+import { type Prompt, Tool, Toolkit } from "effect/ai";
 import type * as Action from "../contract/Action.js";
 import type { BuiltIns } from "../contract/errors.js";
-import { bindTools } from "./tools.js";
+import { assertOnce, hintsOf, projectedErrors } from "../contract/rules.js";
 import {
+  acquire,
   type ActionOf,
+  type AnyImplementation,
   type BuildServices,
   type BuildError,
   type Holding,
@@ -99,6 +101,38 @@ interface ErasedOptions {
   ): boolean | Effect.Effect<boolean>;
 }
 
+const annotateIfGiven = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S | undefined) =>
+  value === undefined ? tool : tool.annotate(key, value);
+
+// Why: Every hint is annotated, MCP's default where the contract leaves it out, from the
+// `hintsOf` MCP's listing spreads, so the two cannot disagree. 0.10.0 annotated a hint only where
+// given and left the rest to Effect's defaults, which MCP's listing no longer reads.
+const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
+  const { readOnlyHint, destructiveHint, idempotentHint, openWorldHint } = hintsOf(action);
+  const { title, _meta } = action.mcp;
+
+  const hinted = tool
+    .annotate(Tool.Readonly, readOnlyHint)
+    .annotate(Tool.Destructive, destructiveHint)
+    .annotate(Tool.Idempotent, idempotentHint)
+    .annotate(Tool.OpenWorld, openWorldHint);
+
+  return annotateIfGiven(
+    annotateIfGiven(hinted, Tool.Title, title),
+    Tool.Meta,
+    _meta === undefined ? undefined : { ..._meta },
+  );
+};
+
+const jsonToolOf = (action: Action.Any) =>
+  Tool.make(action.name, {
+    description: action.description,
+    parameters: Schema.toCodecJson(action.input),
+    success: Schema.toCodecJson(action.success),
+    failure: Schema.toCodecJson(Schema.Union(projectedErrors(action))),
+    failureMode: "return",
+  });
+
 type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 
 /**
@@ -133,18 +167,34 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   const served = select(toList(apps), options?.actions);
   const needsApproval = options?.needsApproval;
 
+  assertOnce(
+    "tool",
+    served.flatMap((app) => app.actions),
+  );
+
   // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
   // its implementation's key. A key per `make` call separates nothing its implementation does not,
   // and a toolkit and a layer from two calls then type-check, as `Tool.HandlersFor` is keyed by
   // name, and die on the first call.
-  const { toolkit, layer } = bindTools(served, (tool, action, app) =>
+  const toolOf = (action: Action.Any, app: AnyImplementation) =>
     Object.assign(
       needsApproval === undefined
-        ? tool
-        : tool.setNeedsApproval((input, context) =>
+        ? jsonToolOf(action)
+        : jsonToolOf(action).setNeedsApproval((input, context) =>
             needsApproval({ name: action.name, action, input }, context),
           ),
       { id: `${Implementation.runKey(app)}/${action.name}` },
+    );
+
+  const toolkit = Toolkit.make(
+    ...served.flatMap((app) =>
+      app.actions.map((action) => annotateFromContract(toolOf(action, app), action)),
+    ),
+  );
+
+  const layer = toolkit.toLayer(
+    Effect.map(acquire(served), (bound) =>
+      Object.fromEntries(bound.map(([action, run]) => [action.name, run])),
     ),
   );
 

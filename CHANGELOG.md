@@ -33,6 +33,10 @@ decoding and failures.
   module `ActionMcp`, where it was `Toolkit`, and its description names only the declared errors.
 - **A command's `InvalidInput` names every field that does not decode**, as HTTP, RPC, MCP and
   `Action.client` do; it named only the first.
+- A Toolkit tool carries all four MCP hint annotations, MCP's default where the action's `mcp`
+  leaves one out, the values MCP's listing gives. This reverses 0.10.0's annotating only a given
+  hint: the listing no longer reads the Toolkit's annotations, so both now take the hints from one
+  place.
 - `destructiveHint`'s JSDoc says an update of a stored flag, such as "read", stays destructive.
 - The docs say a hand-written command's client already checks a file's input, so a decode of
   its own only repeats that check; that undecodable tool arguments are an `AiError`, not
