@@ -14,12 +14,12 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Encoded"]
   : (input: A["input"]["Type"]) => R;
 
 /**
- * How every surface decodes a request's input: reporting every issue, and refusing a field the
- * input does not declare.
+ * How HTTP, RPC and a command decode a request's input: reporting every issue, and refusing a
+ * field the input does not declare.
  */
 export const inputParseOptions = { errors: "all", onExcessProperty: "error" } as const;
 
-/** Decode `action`'s input from its JSON form, as every surface does, or fail with `InvalidInput`. */
+/** Decode `action`'s input from its JSON form by `inputParseOptions`, or fail with `InvalidInput`. */
 export const decodeInput = (
   action: Action.Any,
 ): ((encoded: ErasedValue) => Effect.Effect<ErasedValue, InvalidInput>) => {

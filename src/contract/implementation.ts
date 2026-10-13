@@ -1,7 +1,15 @@
 import { Array as Arr, Context, Effect, Layer, Option } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
-import { Anyone, assertOnce } from "./rules.js";
+import {
+  Anyone,
+  assertAuthentication,
+  assertDistinct,
+  assertOnce,
+  assertOwnTags,
+  errorList,
+  type Proving,
+} from "./rules.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
@@ -366,6 +374,59 @@ export const servedBy = (
   assertOnce("served action", actions);
 
   return served;
+};
+
+/**
+ * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, no built-in error in
+ * `error`, and the descriptor every protected action names. Returns `error` as a list.
+ */
+export const bindingOf = <D extends Proving>(
+  what: string,
+  actions: ReadonlyArray<Action.Any>,
+  options: {
+    readonly error?: Action.Errors | Action.Errors[number] | undefined;
+    readonly authentication?: D | undefined;
+  },
+) => {
+  assertOnce("action", actions);
+
+  const error = errorList(options.error);
+
+  assertOwnTags(what, error);
+  assertAuthentication(actions, options.authentication);
+
+  return { error, authentication: options.authentication };
+};
+
+/**
+ * What `ActionHttp.layer` and `ActionRpc.layer` serve, with the checks they share;
+ * `authentication` is the binding's where a served action is protected.
+ */
+export const servingOf = <D extends Proving>(
+  what: string,
+  binding: {
+    readonly actions: ReadonlyArray<Action.Any>;
+    readonly authentication?: D | undefined;
+  },
+  served: Served,
+  options: {
+    readonly actions?: ReadonlyArray<Action.Any> | undefined;
+    readonly middleware?: ReadonlyArray<{ readonly key: string }> | undefined;
+  },
+) => {
+  const apps = servedBy(what, binding.actions, toList(served), options.actions);
+  const actions = apps.flatMap((app) => app.actions);
+
+  assertAuthentication(actions, binding.authentication);
+  assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
+
+  return {
+    apps,
+    actions,
+    authentication: actions.some((action) => action.caller !== Anyone)
+      ? binding.authentication
+      : undefined,
+  };
 };
 
 /** The protected members of a contract union. */

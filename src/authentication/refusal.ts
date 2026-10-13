@@ -87,8 +87,13 @@ const insufficientScopeChallenge = (
       ])
     : undefined;
 
+const refusalSchemas: { readonly [Tag in Refusal["_tag"]]: Declared } = {
+  Unauthenticated,
+  Forbidden,
+};
+
 export const plain = (error: Refusal): HttpServerResponse.HttpServerResponse =>
-  responseOf(Schema.is(Forbidden)(error) ? Forbidden : Unauthenticated, error);
+  responseOf(refusalSchemas[error._tag], error);
 
 export const answer = (
   error: Refusal,

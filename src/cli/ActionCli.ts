@@ -2,8 +2,14 @@ import { Cause, Effect, Logger, Runtime, type Schema } from "effect";
 import { Command } from "effect/cli";
 import type { HttpClient, HttpClientError } from "effect/http";
 import type * as Action from "../contract/Action.js";
-import { assertDistinct, assertKnown, projectedErrors } from "../contract/rules.js";
-import { bindingErrors, type Declaring, type VerifierError } from "../authentication/provider.js";
+import {
+  assertDistinct,
+  assertKnown,
+  projectedErrors,
+  bindingErrors,
+  type Declaring,
+} from "../contract/rules.js";
+import type { VerifierError } from "../authentication/provider.js";
 import {
   type UserError,
   command as makeCommand,

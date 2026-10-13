@@ -32,11 +32,14 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
   type VerifierError,
-  bindingErrors,
-  bindingOf,
-  servingOf,
 } from "../authentication/provider.js";
-import { Anyone, type Certain, type ErrorsOf, projectedErrors } from "../contract/rules.js";
+import {
+  Anyone,
+  type Certain,
+  type ErrorsOf,
+  projectedErrors,
+  bindingErrors,
+} from "../contract/rules.js";
 import { declared } from "../authentication/refusal.js";
 import { type ErasedMethod, inputParseOptions } from "../contract/call.js";
 import { type AnyHttp, type Client, methods, type Options as ClientOptions } from "./client.js";
@@ -55,6 +58,8 @@ import {
   type Serving,
   type Selected,
   type Holding,
+  bindingOf,
+  servingOf,
 } from "../contract/implementation.js";
 
 export type { Client } from "./client.js";
@@ -360,11 +365,7 @@ export function layer(
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const {
-    apps,
-    actions,
-    authentication: auth,
-  } = servingOf("HTTP binding", binding, served, options);
+  const { apps, actions, authentication } = servingOf("HTTP binding", binding, served, options);
 
   const mount = mountSegments(binding.prefix);
   const name = groupName(mount);
@@ -373,6 +374,8 @@ export function layer(
     name,
     actions.map((action) => {
       const endpoint = withinLayerMiddleware(
+        // Why: Without the verifier's errors, which `make` declares: the security middleware
+        // answers them itself, so a served route never fails with one.
         endpointOf(
           action,
           absolutePath([...mount, action.name]),
@@ -383,9 +386,9 @@ export function layer(
         options.middleware,
       );
 
-      return action.caller === Anyone || binding.authentication === undefined
+      return action.caller === Anyone || authentication === undefined
         ? endpoint
-        : endpoint.middleware(StepUp).middleware(binding.authentication["~middleware"]);
+        : endpoint.middleware(StepUp).middleware(authentication["~middleware"]);
     }),
   ).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
 
@@ -393,12 +396,12 @@ export function layer(
     Effect.gen(function* () {
       const bound = yield* acquire(apps);
 
-      const authentication =
-        auth === undefined
+      const security =
+        authentication === undefined
           ? Layer.empty
-          : yield* Effect.map(providerOf(auth), (provider) =>
+          : yield* Effect.map(providerOf(authentication), (provider) =>
               Layer.mergeAll(
-                Layer.succeed(auth["~middleware"], provider.middleware),
+                Layer.succeed(authentication["~middleware"], provider.middleware),
                 Layer.succeed(StepUp, provider.stepUp),
               ),
             );
@@ -419,12 +422,7 @@ export function layer(
           byName as never,
         ),
       ).pipe(
-        Layer.provide([
-          schemaErrors(),
-          jsonContentType(),
-          authentication,
-          ...hostProvidedMiddleware,
-        ]),
+        Layer.provide([schemaErrors(), jsonContentType(), security, ...hostProvidedMiddleware]),
         buildInEmptyContext,
       );
     }),

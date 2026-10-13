@@ -23,7 +23,7 @@ import {
   RpcServer,
 } from "effect/rpc";
 import type * as Action from "../contract/Action.js";
-import { Anyone, type Certain, type ErrorsOf } from "../contract/rules.js";
+import { Anyone, type Certain, type ErrorsOf, bindingErrors } from "../contract/rules.js";
 import {
   type Any as Authentication,
   type Credential,
@@ -37,9 +37,6 @@ import {
   type ServerBuildServices,
   type ServedProvider,
   type VerifierError,
-  bindingErrors,
-  bindingOf,
-  servingOf,
 } from "../authentication/provider.js";
 import { type Call, checked, decodeInput, type ErasedMethod } from "../contract/call.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
@@ -57,6 +54,8 @@ import {
   type Selected,
   type Served,
   type Serving,
+  bindingOf,
+  servingOf,
 } from "../contract/implementation.js";
 
 type BindingError = Action.Errors[number];
@@ -383,11 +382,7 @@ export function layer(
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const {
-    apps,
-    actions,
-    authentication: auth,
-  } = servingOf("RPC binding", binding, served, options);
+  const { apps, actions, authentication } = servingOf("RPC binding", binding, served, options);
 
   const middleware = options.middleware ?? [];
 
@@ -417,7 +412,9 @@ export function layer(
         Effect.service(key),
       );
 
-      const authenticate = auth === undefined ? undefined : yield* authenticationStepOf(auth);
+      const authenticate =
+        authentication === undefined ? undefined : yield* authenticationStepOf(authentication);
+
       const bound = yield* acquire(apps);
 
       const byName = Object.fromEntries(

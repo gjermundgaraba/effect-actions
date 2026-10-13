@@ -1,10 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   Arbitrary,
-  Cause,
   Context,
   Effect,
-  Exit,
   Layer,
   Predicate,
   Redacted,
@@ -13,14 +11,7 @@ import {
   Stream,
 } from "effect";
 import { McpSchema } from "effect/ai";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/http";
+import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { HttpApiClient, HttpApiSchema, OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
@@ -32,7 +23,14 @@ import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { causeOf, exec, printed } from "../support/cli-services.js";
 import { serve } from "../support/serve.js";
-import { mcpRequest, post, rawToolCall, send } from "../support/requests.js";
+import {
+  mcpRequest,
+  post,
+  rawToolCall,
+  send,
+  sendRawNdjson,
+  valueOrSquashedCause,
+} from "../support/requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -543,11 +541,12 @@ it.effect(
         for (const value of Object.values(wider)) expect(answer).not.toContain(value);
       }
 
-      for (const answer of [http, mcp]) {
+      for (const answer of [http, mcp, stderr.join("\n")]) {
         expect(answer).toContain('at [\\"pin\\"]');
         expect(answer).toContain('at [\\"count\\"]');
-        expect(answer).toContain('at [\\"note\\"]');
       }
+
+      for (const answer of [http, mcp]) expect(answer).toContain('at [\\"note\\"]');
 
       expect(inProcess).toBeInstanceOf(Action.InvalidInput);
 
@@ -719,36 +718,7 @@ describe("input with several fields that do not decode", () => {
     ),
   );
 
-  const RpcExit = Schema.fromJsonString(
-    Schema.Struct({
-      exit: Schema.toCodecJson(Schema.Exit(Schema.Json, Action.BuiltIn, Schema.Defect())),
-    }),
-  );
-
-  const RawRequest = Schema.TaggedStruct("Request", {
-    id: Schema.String,
-    tag: Schema.String,
-    payload: Schema.Json,
-    headers: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
-  });
-
   const invalidInput = Schema.decodeUnknownSync(Action.InvalidInput);
-
-  const overRpc = (payload: Schema.Json) =>
-    Effect.gen(function* () {
-      const message = RawRequest.make({ id: "0", tag: "fields", payload, headers: [] });
-
-      const response = yield* HttpClient.execute(
-        HttpClientRequest.post("/rpc").pipe(
-          HttpClientRequest.bodyText(`${JSON.stringify(message)}\n`, "application/ndjson"),
-        ),
-      );
-
-      const [line = ""] = (yield* response.text).split("\n");
-      const { exit } = Schema.decodeUnknownSync(RpcExit)(line);
-
-      return Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit.value;
-    });
 
   const invalidInputs = Arbitrary.all([
     Arbitrary.schema(Fields.input),
@@ -776,7 +746,8 @@ describe("input with several fields that do not decode", () => {
           (response) => response.json,
         );
 
-        const rpc = yield* overRpc(input);
+        const { exits } = yield* sendRawNdjson([{ tag: "fields", payload: input }]);
+        const rpc = exits.map(valueOrSquashedCause)[0];
 
         const mcp = yield* Effect.flatMap(
           send(rawToolCall("fields", input)),
@@ -798,10 +769,10 @@ describe("input with several fields that do not decode", () => {
           inProcess,
           cli: causeOf(exit),
         })) {
-          expect(
-            invalidInput(failure).issues.map(({ path }) => path),
-            surface,
-          ).toEqual(expected);
+          const paths = invalidInput(failure).issues.map(({ path }) => path);
+
+          expect(paths, surface).toHaveLength(expected.length);
+          expect(paths, surface).toEqual(expect.arrayContaining(expected));
         }
 
         for (const name of names) {

@@ -38,6 +38,48 @@ export const projectedErrors = (action: Action.Any, surface: Action.Errors = [])
   ...new Set([...builtIns, ...action.error, ...surface]),
 ];
 
+/** The errors a binding declares for every call, and its protected actions' authentication's. */
+export interface Declaring {
+  readonly error: Action.Errors;
+  readonly authentication?: { readonly error: Action.Errors } | undefined;
+}
+
+// Why: A surface adds a verifier's errors to its protected actions itself, as it adds its own,
+// so they take the status rule, the projected order and the client types of every other error.
+// Rejected: the HTTP security middleware's native `error`, which `HttpApiEndpoint` merges in.
+/**
+ * Every error a binding's call of `action` declares: the built-in ones, the action's, the
+ * binding's and, where `action` is protected, its authentication's.
+ */
+export const bindingErrors = (action: Action.Any, binding: Declaring): Action.Errors =>
+  projectedErrors(
+    action,
+    action.caller === Anyone || binding.authentication === undefined
+      ? binding.error
+      : [...binding.error, ...binding.authentication.error],
+  );
+
+/** An authentication descriptor, as the checks read it: the identity it proves. */
+export interface Proving {
+  readonly identity: { readonly key: string };
+}
+
+export const assertAuthentication = (
+  actions: ReadonlyArray<Action.Any>,
+  authentication: Proving | undefined,
+): void => {
+  for (const action of actions) {
+    if (
+      action.caller !== Anyone &&
+      (authentication === undefined || action.caller.key !== authentication.identity.key)
+    ) {
+      throw new Error(
+        `Protected action '${action.name}' requires its matching authentication descriptor`,
+      );
+    }
+  }
+};
+
 /**
  * The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not, and no
  * authorizer runs for it. Registered globally, so two copies of the package agree on it, as they
