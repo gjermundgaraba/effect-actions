@@ -437,7 +437,7 @@ const runScenario = (scenario: Scenario) =>
 
       return settle(
         Effect.flatMap(
-          Testing.mcpClient(catalogue, {
+          ActionMcp.client(catalogue, {
             url: `/m${call.surface.index}`,
             ...(token === undefined ? {} : as(token)),
           }),

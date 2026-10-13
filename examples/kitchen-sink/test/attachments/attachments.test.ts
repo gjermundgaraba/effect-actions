@@ -4,6 +4,7 @@ import { Array, Effect, flow, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { GetAttachment } from "../../src/attachments/Attachments.js";
@@ -42,7 +43,7 @@ describe("attachments, over HTTP and MCP", () => {
     Effect.gen(function* () {
       const attachment = yield* attached;
       const http = yield* ActionHttp.client(Http, as("ada", "acme"));
-      const mcp = yield* Testing.mcpClient([GetAttachment], as("ada", "acme"));
+      const mcp = yield* ActionMcp.client([GetAttachment], as("ada", "acme"));
 
       expect(attachment).toMatchObject({ name: "crash.png", mimeType: "image/png", size: 68 });
 
@@ -56,7 +57,7 @@ describe("attachments, over HTTP and MCP", () => {
       // As sent: the tool's result holds the rest of the success as JSON, and the image as a
       // content block of its own, which a model receives as an image.
       const call = yield* HttpClient.execute(
-        Testing.mcpRequest(
+        ActionMcp.request(
           "tools/call",
           { name: "getAttachment", arguments: { id: attachment.id } },
           { headers: { authorization: "Bearer ada", "x-workspace": "acme" } },

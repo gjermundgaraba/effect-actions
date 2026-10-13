@@ -1,12 +1,13 @@
 import { Predicate, Schema, SchemaAST } from "effect";
-import { McpProtocol } from "effect/ai";
+import { McpProtocol, type McpSchema } from "effect/ai";
+import { Base64 } from "effect/encoding";
 import type * as Action from "../contract/Action.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import { isMarked, type Kind, kindOf, Media } from "../contract/media.js";
 import { unsuspended } from "../contract/rules.js";
 
 // Why: The stateless revision is the one a request written without a handshake speaks, as
-// `mcpRequest` below writes it, and the one whose routing headers the runtime checks against the
+// `request` writes it, and the one whose routing headers the runtime checks against the
 // body, which a mixed endpoint's gate relies on.
 export const httpProtocol = McpProtocol.v2026_07_28;
 
@@ -25,53 +26,6 @@ export const protocols = [
 ] as const;
 
 export const defaultPath = "/mcp";
-
-/**
- * An MCP request's parameters, as `Testing.mcpRequest` takes them: JSON, with any `_meta`, leaving
- * out an `undefined` one, as a caller may. A helper passing on whole params types them as this,
- * and a tool's `arguments` as `Schema.Json`, never `unknown`.
- */
-export interface Params {
-  readonly _meta?: { readonly [key: string]: Schema.Json };
-  readonly [key: string]: Schema.Json | undefined;
-}
-
-const mcpNameHeaderOf = (method: string, params: Params) =>
-  method === "resources/read" ? params.uri : params.name;
-
-/**
- * One stateless MCP request of `method` with `params`, as `ActionMcp.layerHttp` serves it:
- * the headers routing it, which repeat what its body says, and its JSON-RPC body. The client
- * metadata goes in `_meta`, under any given, such as a `progressToken`; the protocol version
- * is always the request's own.
- */
-export const statelessRequest = (method: string, params: Params) => {
-  const { protocolVersion } = httpProtocol;
-  const name = mcpNameHeaderOf(method, params);
-
-  return {
-    headers: {
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": protocolVersion,
-      "mcp-method": method,
-      ...(Predicate.isString(name) ? { "mcp-name": name } : {}),
-    },
-    body: {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: {
-        ...params,
-        _meta: {
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
-          ...params._meta,
-          "io.modelcontextprotocol/protocolVersion": protocolVersion,
-        },
-      },
-    },
-  };
-};
 
 type Codec = Action.Any["success"];
 
@@ -212,3 +166,39 @@ export const liftedFrom = (lift: Lift, success: ErasedValue): ReadonlyArray<Lift
 
     return values.map((media) => ({ kind, field: name, value: media }));
   });
+
+const mediaOf = ({ name, kind, many }: Field, result: McpSchema.CallToolResult) => {
+  const values = result.content.flatMap((block) =>
+    block.type === kind && block._meta?.[fieldKey] === name
+      ? [{ data: Base64.encode(block.data), mimeType: block.mimeType }]
+      : [],
+  );
+
+  return many || values.length > 1 ? values : values[0];
+};
+
+/**
+ * The encoded success a tool result carries, `liftedFrom` undone: its structured content, each
+ * lifted field from the blocks whose `_meta` names it, and a success that is media from its
+ * blocks alone.
+ */
+export const unliftedFrom = (lift: Lift, result: McpSchema.CallToolResult) => {
+  const [whole] = lift.fields;
+
+  if (whole !== undefined && whole.name === undefined) return mediaOf(whole, result);
+
+  const { structuredContent = {} } = result;
+
+  if (!Predicate.isObject(structuredContent)) return structuredContent;
+
+  const lifted = new Set(lift.fields.map(({ name }) => name));
+
+  return Object.fromEntries([
+    ...Object.entries(structuredContent).filter(([key]) => !lifted.has(key)),
+    ...lift.fields.flatMap((field) => {
+      const value = mediaOf(field, result);
+
+      return field.name === undefined || value === undefined ? [] : [[field.name, value] as const];
+    }),
+  ]);
+};

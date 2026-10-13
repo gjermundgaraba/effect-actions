@@ -23,7 +23,7 @@ page.
 - **Host**: the application that serves the surfaces: it builds their layers, provides their services and runs the server, subprocess or CLI.
 - **Surface**: where callers reach actions. A **remote surface** authenticates its callers (`ActionHttp.layer`, `ActionMcp.layerHttp`, `ActionRpc.layer`). A **local surface** has no one to authenticate (`ActionToolkit`, a local `ActionCli` command, `ActionMcp.runStdio`, `Action.client`): the host provides the identity.
 - **Binding**: what `ActionHttp.make` or `ActionRpc.make` returns: the actions its surface serves, as browser-safe data the server and every client share.
-- **Client**: one method per action, `client.<action>(input)`: `ActionHttp.client`, `ActionRpc.client`, `Testing.mcpClient` and, in process, `Action.client`.
+- **Client**: one method per action, `client.<action>(input)`: `ActionHttp.client`, `ActionRpc.client`, `ActionMcp.client` and, in process, `Action.client`.
 - **Authorizer**: `authorize`, a function of the called action that an implementation of protected actions states. It succeeds or fails with a refusal ([Action.md](Action.md#authorize-calls)).
 - **Authentication descriptor**: what `Authentication.make` returns: a named, browser-safe declaration of how a remote caller proves an identity. A binding or an MCP endpoint serving protected actions names it.
 - **Authentication provider**: what `Authentication.layer` returns for a descriptor, holding its **verifier**: the server-only function from a credential to the identity.

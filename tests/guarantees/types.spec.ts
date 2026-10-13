@@ -1637,25 +1637,25 @@ export const servedRequirementTypes = () => {
   });
 };
 
-export const mcpClientTypes = Effect.gen(function* () {
-  const mcp = yield* Testing.mcpClient([Double, WhoAmI, GetUser]);
+export const actionMcpClientTypes = Effect.gen(function* () {
+  const mcp = yield* ActionMcp.client([Double, WhoAmI, GetUser]);
   const call = mcp.double({ value: 2 });
 
   expectTypeOf<typeof call>().toEqualTypeOf<
     Effect.Effect<
       number,
-      Action.BuiltIn | Schema.SchemaError | HttpClientError.HttpClientError | Testing.McpCallError
+      Action.BuiltIn | Schema.SchemaError | HttpClientError.HttpClientError | ActionMcp.McpCallError
     >
   >();
 
   expectTypeOf<
-    Effect.Services<ReturnType<typeof Testing.mcpClient>>
+    Effect.Services<ReturnType<typeof ActionMcp.client>>
   >().toEqualTypeOf<HttpClient.HttpClient>();
 
   // @ts-expect-error -- The input is the action's decoded input.
   void mcp.double({ value: "2" });
   expectTypeOf(
-    Testing.mcpRequest("tools/list", { _meta: { progressToken: "p" } }),
+    ActionMcp.request("tools/list", { _meta: { progressToken: "p" } }),
   ).toEqualTypeOf<HttpClientRequest.HttpClientRequest>();
 
   yield* mcp.getUser({ id: "1" }).pipe(
@@ -1767,12 +1767,12 @@ export const exportedTypes = (binding: ActionHttp.Any, app: Action.AnyImplementa
   const httpOptions: ActionMcp.LayerHttpOptions = { name: "test", version: "0" };
   const serverOptions: ActionMcp.Options = { name: "test", version: "0" };
   const shared: ActionMcp.LayerHttpOptions = serverOptions;
-  const call: Testing.McpClientOptions = { url: "/mcp" };
-  const request: Testing.McpRequestOptions = { url: "/mcp", headers: {} };
-  const params: Testing.McpParams = { name: "double", _meta: { progressToken: "p" } };
+  const call: ActionMcp.ClientOptions = { url: "/mcp" };
+  const request: ActionMcp.RequestOptions = { url: "/mcp", headers: {} };
+  const params: ActionMcp.Params = { name: "double", _meta: { progressToken: "p" } };
 
-  expectTypeOf<Parameters<typeof Testing.mcpRequest>[1]>().toEqualTypeOf<
-    Testing.McpParams | undefined
+  expectTypeOf<Parameters<typeof ActionMcp.request>[1]>().toEqualTypeOf<
+    ActionMcp.Params | undefined
   >();
 
   const auth: Authentication.ProtectedResource = {

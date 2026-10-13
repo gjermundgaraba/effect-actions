@@ -3,6 +3,7 @@ import { Effect, flow, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Tools } from "../src/Actions.js";
 import { AdminHttp, Http } from "../src/Api.js";
@@ -43,7 +44,7 @@ describe("the public port", () => {
 
   it.effect("lists the tools to a signed-out MCP client, the unlisted action left out", () =>
     Effect.gen(function* () {
-      const listing = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
+      const listing = yield* HttpClient.execute(ActionMcp.request("tools/list"));
       const text = yield* listing.text;
 
       expect(listing.status).toBe(200);
@@ -55,7 +56,7 @@ describe("the public port", () => {
   it.effect("serves one store to both surfaces: an issue filed over HTTP is read as a tool", () =>
     Effect.gen(function* () {
       const http = yield* ActionHttp.client(Http, ada);
-      const mcp = yield* Testing.mcpClient(Tools, ada);
+      const mcp = yield* ActionMcp.client(Tools, ada);
       const issue = yield* http.createIssue({ title: "Crash", body: "On save." });
 
       expect(yield* mcp.getIssue({ id: issue.id })).toEqual(issue);
@@ -66,7 +67,7 @@ describe("the public port", () => {
     Effect.gen(function* () {
       // The request policy lets both through: one is the request's own origin, one is listed.
       const from = (url: string, origin: string) =>
-        HttpClient.execute(Testing.mcpRequest("tools/list", {}, { url, headers: { origin } }));
+        HttpClient.execute(ActionMcp.request("tools/list", {}, { url, headers: { origin } }));
 
       const listed = yield* from("/mcp", "http://localhost:6274");
       const sameHost = yield* from("http://127.0.0.1/mcp", "http://127.0.0.1");

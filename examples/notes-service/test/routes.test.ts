@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../src/Api.js";
 import { Notes } from "../src/notes/Notes.js";
@@ -67,7 +68,7 @@ describe("the service, over HTTP and MCP", () => {
   it.effect("serves one store to both surfaces: a note written over HTTP is read as a tool", () =>
     Effect.gen(function* () {
       const http = yield* ActionHttp.client(Http, as("ada"));
-      const mcp = yield* Testing.mcpClient([GetStatus, ...Notes], as("ada"));
+      const mcp = yield* ActionMcp.client([GetStatus, ...Notes], as("ada"));
       const note = yield* http.createNote({ title: "Plan", body: "Draft" });
 
       expect(yield* mcp.getNote({ id: note.id })).toEqual(note);
@@ -77,7 +78,7 @@ describe("the service, over HTTP and MCP", () => {
 
   it.effect("lists every tool to a signed-out MCP client, as one of them is public", () =>
     Effect.gen(function* () {
-      const response = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
+      const response = yield* HttpClient.execute(ActionMcp.request("tools/list"));
 
       expect(response.status).toBe(200);
       expect(yield* response.text).toContain('"name":"createNote"');

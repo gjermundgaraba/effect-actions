@@ -64,7 +64,7 @@ Tasks: [Authentication.md](Authentication.md),
   too ([ActionMcp.md](ActionMcp.md#protect-tools)).
 - A verifier's declared error arrives as 422: the error states no `httpApiStatus`. Give it the
   status it means, such as `{ httpApiStatus: 503 }`.
-- `Testing.mcpClient` fails with an `McpCallError`, not a typed error, when the verifier fails
+- `ActionMcp.client` fails with an `McpCallError`, not a typed error, when the verifier fails
   with an error its descriptor declares: over MCP that failure is the endpoint's HTTP answer,
   before any tool runs. The `McpCallError` names its status and body.
 - A route's `Cache-Control` is replaced by `no-store`: only a route's own answer keeps its

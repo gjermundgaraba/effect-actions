@@ -165,7 +165,7 @@ describe("selecting an implementation's actions", () => {
   };
 
   const call = (path: string, name: "identity" | "secret") =>
-    Effect.flatMap(Testing.mcpClient([identity, secret], { ...as("alice"), url: path }), (mcp) =>
+    Effect.flatMap(ActionMcp.client([identity, secret], { ...as("alice"), url: path }), (mcp) =>
       mcp[name]().pipe(Effect.catchTag("Forbidden", ({ _tag }) => Effect.succeed(_tag))),
     );
 
@@ -525,7 +525,7 @@ describe("a builder beside HttpRouter.serve", () => {
 
         const greetings = yield* Effect.gen(function* () {
           const client = yield* ActionHttp.client(ActionHttp.make([Greet]));
-          const tools = yield* Testing.mcpClient([Greet]);
+          const tools = yield* ActionMcp.client([Greet]);
 
           return [yield* client.greet(), yield* tools.greet()];
         }).pipe(
@@ -573,7 +573,7 @@ describe("a builder beside HttpRouter.serve", () => {
 
         const counts = yield* Effect.gen(function* () {
           const client = yield* ActionHttp.client(ChatHttp);
-          const endpoint = yield* Testing.mcpClient([Count]);
+          const endpoint = yield* ActionMcp.client([Count]);
 
           return [yield* client.chat(), yield* endpoint.count(), yield* client.chat()];
         }).pipe(

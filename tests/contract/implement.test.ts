@@ -297,7 +297,7 @@ describe("authorization", () => {
     expect((await web.handler(withBearer(post("/api/hello"), "bob"))).status).toBe(403);
     expect(
       await Effect.runPromise(
-        Effect.flatMap(Testing.mcpClient([Hello], as("alice")), (mcp) => mcp.hello()).pipe(
+        Effect.flatMap(ActionMcp.client([Hello], as("alice")), (mcp) => mcp.hello()).pipe(
           Effect.provide(Testing.layer(web.handler)),
         ),
       ),
@@ -433,7 +433,7 @@ describe("builder acquisition", () => {
       surface: "ActionMcp.layerHttp",
       build: ({ pair, solo }: Fixture) =>
         Effect.gen(function* () {
-          const mcp = yield* Testing.mcpClient([One]);
+          const mcp = yield* ActionMcp.client([One]);
 
           expect(yield* mcp.one()).toBe(1);
         }).pipe(

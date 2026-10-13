@@ -226,16 +226,20 @@ search for in the file.
 
 ### ActionMcp
 
-| Export or option                                 | File                                                |
-| ------------------------------------------------ | --------------------------------------------------- |
-| `layerHttp`, public and protected tools together | `src/routes.ts` (`mcp`)                             |
-| `layerHttp`: `authentication`, `instructions`    | `src/routes.ts` (`mcp`)                             |
-| `layerHttp`: `actions`, one action left off      | `src/routes.ts` (`mcp`), `src/Actions.ts` (`Tools`) |
-| `layerHttp`: `allowedOrigins`                    | `src/routes.ts` (`mcp`), `test/routes.test.ts`      |
-| `layerHttp`: `features`, a resource and a prompt | `src/issues/guide.ts`                               |
-| CORS for a browser MCP client                    | `src/request-policy.ts` (`cors`)                    |
-| `runStdio`, the host naming the caller           | `src/stdio.ts`                                      |
-| An image block from a media field                | `src/attachments/Attachments.ts` (`GetAttachment`)  |
+| Export or option                                 | File                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------- |
+| `layerHttp`, public and protected tools together | `src/routes.ts` (`mcp`)                                       |
+| `layerHttp`: `authentication`, `instructions`    | `src/routes.ts` (`mcp`)                                       |
+| `layerHttp`: `actions`, one action left off      | `src/routes.ts` (`mcp`), `src/Actions.ts` (`Tools`)           |
+| `layerHttp`: `allowedOrigins`                    | `src/routes.ts` (`mcp`), `test/routes.test.ts`                |
+| `layerHttp`: `features`, a resource and a prompt | `src/issues/guide.ts`                                         |
+| CORS for a browser MCP client                    | `src/request-policy.ts` (`cors`)                              |
+| `runStdio`, the host naming the caller           | `src/stdio.ts`                                                |
+| An image block from a media field                | `src/attachments/Attachments.ts` (`GetAttachment`)            |
+| `client`: `transformClient`                      | `test/routes.test.ts`                                         |
+| `client`, decoding an image                      | `test/attachments/attachments.test.ts`                        |
+| `McpCallError`                                   | `test/identity/identity.test.ts`                              |
+| `request`: `headers`, `url`                      | `test/attachments/attachments.test.ts`, `test/routes.test.ts` |
 
 ### ActionRpc
 
@@ -271,22 +275,18 @@ search for in the file.
 
 ### Testing
 
-| Export or option                                 | File                                                          |
-| ------------------------------------------------ | ------------------------------------------------------------- |
-| `layer(routes)`                                  | `test/identity/identity.test.ts`                              |
-| `layer(routes)`, twice, over shared builders     | `test/routes.test.ts` (`shared`)                              |
-| `layer(handler)`, over `HttpRouter.toWebHandler` | `test/request-policy.test.ts`                                 |
-| `mcpClient`: `transformClient`                   | `test/routes.test.ts`                                         |
-| `mcpClient`, decoding an image                   | `test/attachments/attachments.test.ts`                        |
-| `McpCallError`                                   | `test/identity/identity.test.ts`                              |
-| `mcpRequest`: `headers`, `url`                   | `test/attachments/attachments.test.ts`, `test/routes.test.ts` |
-| RPC in memory, over Effect's HTTP protocol       | `test/identity/session.test.ts`                               |
-| A service the test and the routes both read      | `test/identity/session.test.ts` (`served`)                    |
-| A test replacing one service                     | `test/identity/identity.test.ts` (`servedWith`)               |
-| `Action.client`, a caller per call               | `test/issues/issues.test.ts`                                  |
-| A scripted `LanguageModel`                       | `test/issues/assistant.test.ts`, `test/support/scripted.ts`   |
-| A test replacing the model the routes are given  | `test/assistant/assistant.test.ts` (`served`)                 |
-| An error's message asserted beside its fields    | `test/issues/issues.test.ts`                                  |
+| Export or option                                 | File                                                        |
+| ------------------------------------------------ | ----------------------------------------------------------- |
+| `layer(routes)`                                  | `test/identity/identity.test.ts`                            |
+| `layer(routes)`, twice, over shared builders     | `test/routes.test.ts` (`shared`)                            |
+| `layer(handler)`, over `HttpRouter.toWebHandler` | `test/request-policy.test.ts`                               |
+| RPC in memory, over Effect's HTTP protocol       | `test/identity/session.test.ts`                             |
+| A service the test and the routes both read      | `test/identity/session.test.ts` (`served`)                  |
+| A test replacing one service                     | `test/identity/identity.test.ts` (`servedWith`)             |
+| `Action.client`, a caller per call               | `test/issues/issues.test.ts`                                |
+| A scripted `LanguageModel`                       | `test/issues/assistant.test.ts`, `test/support/scripted.ts` |
+| A test replacing the model the routes are given  | `test/assistant/assistant.test.ts` (`served`)               |
+| An error's message asserted beside its fields    | `test/issues/issues.test.ts`                                |
 
 ## Not shown
 

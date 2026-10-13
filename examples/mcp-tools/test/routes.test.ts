@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { fakeFarm, picture } from "../src/printers/fake.js";
 import { PrintFarm } from "../src/printers/farm.js";
@@ -59,7 +60,7 @@ describe("the tools, over MCP", () => {
   it.effect("lists every tool with the hints its contract states", () =>
     Effect.gen(function* () {
       // A raw request, for what no typed client shows: here, the listing itself.
-      const response = yield* HttpClient.execute(Testing.mcpRequest("tools/list"));
+      const response = yield* HttpClient.execute(ActionMcp.request("tools/list"));
       const { result } = yield* HttpClientResponse.schemaBodyJson(Listed)(response);
 
       const hints = (readOnlyHint: boolean, destructiveHint: boolean, idempotentHint: boolean) => ({
@@ -97,7 +98,7 @@ describe("the tools, over MCP", () => {
     Effect.gen(function* () {
       // A client method per tool: it sends `tools/call` and decodes the result, the image
       // from its image block, as the handler returned it.
-      const mcp = yield* Testing.mcpClient(Printers);
+      const mcp = yield* ActionMcp.client(Printers);
 
       expect(yield* mcp.get_camera_snapshot({ printer_id: "mk4-1" })).toEqual({
         printer: {
@@ -113,7 +114,7 @@ describe("the tools, over MCP", () => {
 
   it.effect("answers the farm's refusal as the tool's declared error, message and all", () =>
     Effect.gen(function* () {
-      const mcp = yield* Testing.mcpClient(Printers);
+      const mcp = yield* ActionMcp.client(Printers);
       const error = yield* Effect.flip(mcp.get_camera_snapshot({ printer_id: "mini-1" }));
 
       expect(error).toBeInstanceOf(PrintFarmError);
@@ -124,7 +125,7 @@ describe("the tools, over MCP", () => {
   it.effect("accepts the browser origins the configuration lists, and no other", () =>
     Effect.gen(function* () {
       const from = (origin: string) =>
-        HttpClient.execute(Testing.mcpRequest("tools/list", {}, { headers: { origin } }));
+        HttpClient.execute(ActionMcp.request("tools/list", {}, { headers: { origin } }));
 
       expect((yield* from("https://console.example.test")).status).toBe(200);
       expect((yield* from("https://wall.example.test")).status).toBe(200);
@@ -142,7 +143,7 @@ describe("the tools, over MCP", () => {
       expect(asked.headers["access-control-allow-headers"]).toContain("MCP-Protocol-Version");
 
       const listed = yield* HttpClient.execute(
-        Testing.mcpRequest(
+        ActionMcp.request(
           "tools/list",
           {},
           { headers: { origin: "https://console.example.test" } },
@@ -170,7 +171,7 @@ describe("the tools, over MCP", () => {
       expect(asked.headers["access-control-allow-origin"]).toBe("https://console.example.test");
 
       const called = yield* HttpClient.execute(
-        Testing.mcpRequest(
+        ActionMcp.request(
           "tools/list",
           {},
           { headers: { origin: "https://elsewhere.example.test" } },

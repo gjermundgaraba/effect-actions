@@ -63,6 +63,10 @@ import {
   toList,
 } from "../contract/implementation.js";
 
+export { client, McpCallError, request } from "./client.js";
+
+export type { Client, ClientOptions, Params, RequestOptions } from "./client.js";
+
 /**
  * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option except
  * `protocols`, the server information, `instructions` and `extensions`, the actions `A` that

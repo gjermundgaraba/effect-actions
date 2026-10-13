@@ -258,7 +258,7 @@ it.effect(
 
         yield* (yield* ActionHttp.client(SaveHttp)).save(wider);
         yield* (yield* HttpApiClient.make(SaveHttp.api)).save({ payload: wider });
-        yield* (yield* Testing.mcpClient([Save])).save(wider);
+        yield* (yield* ActionMcp.client([Save])).save(wider);
       }).pipe(
         Effect.provide(
           Testing.layer(

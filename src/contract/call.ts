@@ -7,7 +7,7 @@ import type { ErasedValue } from "./implementation.js";
  * A call of `A` answering `R`. It may leave its input out when `{}` is a valid encoded input,
  * such as for an action declared without `input` or one whose every field has a decoding
  * default, and then sends the input `{}` decodes to. Every client shares this rule:
- * `ActionHttp.client`, `ActionRpc.client`, `Testing.mcpClient` and `Action.client`.
+ * `ActionHttp.client`, `ActionRpc.client`, `ActionMcp.client` and `Action.client`.
  */
 export type Call<A extends Action.Any, R> = {} extends A["input"]["Encoded"]
   ? (...input: [] | [input: A["input"]["Type"]]) => R

@@ -1267,7 +1267,7 @@ describe("authentication around a surface", () => {
 
         expect(yield* response.json).toBe("actor:alice: hi");
 
-        const mcp = yield* Testing.mcpClient([Secret], as("alice"));
+        const mcp = yield* ActionMcp.client([Secret], as("alice"));
 
         expect(yield* mcp.secret({ note: "hi" })).toBe("actor:alice: hi");
       }).pipe(Effect.provide(Testing.layer(routes)));
@@ -1372,7 +1372,7 @@ describe("authentication around a surface", () => {
 
   it.effect("authenticates every request to an endpoint of protected tools alone", () =>
     Effect.gen(function* () {
-      const anonymous = yield* Testing.mcpClient([Secret]);
+      const anonymous = yield* ActionMcp.client([Secret]);
       expect(yield* Effect.flip(anonymous.secret({ note: "hi" }))).toBeInstanceOf(
         Action.Unauthenticated,
       );
@@ -1387,7 +1387,7 @@ describe("authentication around a surface", () => {
 
       expect(malformed.status).toBe(401);
 
-      const alice = yield* Testing.mcpClient([Secret], as("alice"));
+      const alice = yield* ActionMcp.client([Secret], as("alice"));
 
       expect(yield* alice.secret({ note: "hi" })).toBe("alice: hi");
     }).pipe(
@@ -1510,7 +1510,7 @@ describe("Authentication.layer beside other middleware", () => {
 
   const mcpCall = (headers: Record<string, string>) =>
     Effect.flatMap(
-      Testing.mcpClient([WhoAmI], {
+      ActionMcp.client([WhoAmI], {
         transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
       }),
       (mcp) => mcp.whoAmI(),

@@ -804,7 +804,7 @@ describe("projection boundaries", () => {
         yield* Effect.gen(function* () {
           for (const url of ["/a", "/b"]) {
             const read = yield* HttpClient.execute(
-              Testing.mcpRequest("resources/read", { uri: "docs://readme" }, { url }),
+              ActionMcp.request("resources/read", { uri: "docs://readme" }, { url }),
             );
 
             expect(yield* read.json).toMatchObject({
@@ -812,7 +812,7 @@ describe("projection boundaries", () => {
             });
 
             const got = yield* HttpClient.execute(
-              Testing.mcpRequest("prompts/get", { name: "triage" }, { url }),
+              ActionMcp.request("prompts/get", { name: "triage" }, { url }),
             );
 
             expect(yield* got.json).toMatchObject({

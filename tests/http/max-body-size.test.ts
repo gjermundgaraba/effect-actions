@@ -5,7 +5,6 @@ import { HttpClient, HttpClientRequest, HttpRouter, HttpServerRequest } from "ef
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import * as Testing from "../../src/testing/Testing.js";
 
 const Echo = Action.make("echo", {
   description: "Echo the text",
@@ -30,7 +29,7 @@ it.effect(
 
       const tool = (text: string) =>
         client.execute(
-          Testing.mcpRequest("tools/call", { name: "echo", arguments: { text } }, { url: "/mcp" }),
+          ActionMcp.request("tools/call", { name: "echo", arguments: { text } }, { url: "/mcp" }),
         );
 
       const small = "x".repeat(16);

@@ -21,7 +21,7 @@ import { describe, expect, it, onTestFinished } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { statelessRequest } from "../../src/mcp/protocol.js";
+import { statelessRequest } from "../../src/mcp/client.js";
 import { everyConsoleMethod } from "../support/console-methods.js";
 import { rawToolCall, send } from "../support/requests.js";
 import { converse, negotiate } from "../support/stdio-host.js";

@@ -29,7 +29,7 @@ Import `@gjermundgaraba/effect-actions/Action`.
 | `Action`, `Any`, `Implementation`              | Concrete and erased contracts, and bound implementations.    |
 | `AnyImplementation`, `AnyImplementation<A>`    | Any implementation, or any of actions `A`, erased.           |
 | `BuildServices`, `BuildError`                  | What builders read and fail with at startup.                 |
-| `implementation.actions`                       | Its exact contracts, as `Testing.mcpClient` takes them.      |
+| `implementation.actions`                       | Its exact contracts, as `ActionMcp.client` takes them.       |
 | `Handler`, `Handlers`, `Authorize`             | A typed handler, a list's record of them, and an authorizer. |
 | `Options`, `Mcp`                               | What `make` takes, and its `mcp` options.                    |
 

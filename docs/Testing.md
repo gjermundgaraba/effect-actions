@@ -16,23 +16,13 @@ When something fails, search [Testing-failures.md](Testing-failures.md). Reading
 
 Import `@gjermundgaraba/effect-actions/Testing`.
 
-| API                                     | Purpose                                                                       |
-| --------------------------------------- | ----------------------------------------------------------------------------- |
-| `layer(routes)`                         | A `Layer<HttpClient>` answering requests with `routes` in memory.             |
-| `layer(handler)`                        | A `Layer<HttpClient>` answering requests with a web handler the test serves.  |
-| `mcpClient(actions, options?)`          | An Effect of a client calling each action's tool, like `ActionHttp.client`.   |
-| `mcpRequest(method, params?, options?)` | One MCP request, as the native `HttpClientRequest` the test sends.            |
-| `McpCallError`                          | A client method's failure for an answer it cannot decode; `message` holds it. |
+| API              | Purpose                                                                      |
+| ---------------- | ---------------------------------------------------------------------------- |
+| `layer(routes)`  | A `Layer<HttpClient>` answering requests with `routes` in memory.            |
+| `layer(handler)` | A `Layer<HttpClient>` answering requests with a web handler the test serves. |
 
-| Option                         | Meaning                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| `url`                          | The endpoint; default `/mcp`, the `ActionMcp.layerHttp` default.                |
-| `mcpClient`: `transformClient` | Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token. |
-| `mcpRequest`: `headers`        | Request headers.                                                                |
-
-Exported types: `McpClient<Actions>`, `McpClientOptions`, `McpRequestOptions`, and `McpParams`,
-the `params` of `mcpRequest`. A helper passing on a tool's `arguments` types them `Schema.Json`,
-and whole `params` `McpParams`, never `unknown`.
+MCP tools are tested with `ActionMcp.client` and `ActionMcp.request`
+([Test MCP tools](#test-mcp-tools)).
 
 ## Test an implementation in process
 
@@ -113,7 +103,7 @@ const as = (token: string) => ({
 ```
 
 Both clients take it: `ActionHttp.client(Http, as("reader"))` and
-`Testing.mcpClient([GetStatus, ...Notes], as("ada"))`.
+`ActionMcp.client([GetStatus, ...Notes], as("ada"))`.
 
 - Never provide the identity to `layer`, around it or to the routes. It is a type error: only a
   provider of their own descriptor satisfies them.
@@ -130,9 +120,10 @@ each case are the table in [guarantees.md](guarantees.md#wire-behavior).
 
 ## Test MCP tools
 
-`Testing.mcpClient(actions, options?)` gives one method per action, calling its tool and decoding
+`ActionMcp.client(actions, options?)` gives one method per action, calling its tool and decoding
 the result as `ActionHttp.client` decodes a route's, an image included. Pass the contract values
-the endpoint serves, such as `implementation.actions`.
+the endpoint serves, such as `implementation.actions`. Its failures:
+[ActionMcp-failures.md](ActionMcp-failures.md).
 
 A method fails with the action's declared errors and the built-in ones as decoded values, and with
 `McpCallError` for any other answer, a result without its structured content included;
@@ -148,8 +139,8 @@ yourself and read its status.
 
 For that, and for what the client's types will not send or its decoding hides (`tools/list`, an
 `Origin` header, a refusal's challenge, a malformed call), build the request with
-`Testing.mcpRequest`. It returns a native `HttpClientRequest`:
-`yield* HttpClient.execute(Testing.mcpRequest("tools/call", { name: "whoAmI", arguments: {} }))`
+`ActionMcp.request`. It returns a native `HttpClientRequest`:
+`yield* HttpClient.execute(ActionMcp.request("tools/call", { name: "whoAmI", arguments: {} }))`
 succeeds with the response whatever its status, to read `response.status`, `response.headers`
 and `yield* response.json`
 ([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)

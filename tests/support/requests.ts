@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit, Predicate, Result, Schema } from "effect";
 import { type Headers, HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
-import * as Testing from "../../src/testing/Testing.js";
+import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 
 export const send = (request: Request) => HttpClient.execute(HttpClientRequest.fromWeb(request));
 
@@ -14,7 +14,7 @@ export const post = (path: string, body: Schema.Json = {}): Request =>
 
 interface McpRequestOptions {
   readonly method: string;
-  readonly params?: Testing.McpParams;
+  readonly params?: ActionMcp.Params;
   readonly headers?: Headers.Input;
   readonly path?: string;
 }
@@ -27,7 +27,7 @@ export const mcpRequest = ({
 }: McpRequestOptions): Request =>
   Result.getOrThrow(
     HttpClientRequest.toWebResult(
-      Testing.mcpRequest(method, params, { url: `http://localhost${path}`, headers }),
+      ActionMcp.request(method, params, { url: `http://localhost${path}`, headers }),
     ),
   );
 
