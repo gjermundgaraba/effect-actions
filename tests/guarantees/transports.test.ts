@@ -11,7 +11,7 @@ import { makeTestApp } from "../support/server.js";
 import { Http } from "../support/app/binding.js";
 import { UserNotFound } from "../support/app/contracts.js";
 import { httpClient, serve } from "../support/serve.js";
-import { mcpRequest, valueOf } from "../support/requests.js";
+import { mcpRequest, post, valueOf, withBearer } from "../support/requests.js";
 import { withMcpClient } from "../support/mcp-client.js";
 
 let app: ReturnType<typeof makeTestApp>;
@@ -23,27 +23,7 @@ beforeEach(() => {
   app = makeTestApp();
 });
 
-const request = (path: string, token = "alice", body?: Schema.Json, method?: string) => {
-  const init: RequestInit = {
-    method: method ?? (body === undefined ? "GET" : "POST"),
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-  };
-
-  if (body !== undefined) init.body = JSON.stringify(body);
-
-  return new Request(`http://localhost${path}`, init);
-};
-
-const anonymous = (path: string, body?: Schema.Json) => {
-  const init: RequestInit = { headers: { "content-type": "application/json" } };
-
-  if (body !== undefined) {
-    init.method = "POST";
-    init.body = JSON.stringify(body);
-  }
-
-  return new Request(`http://localhost${path}`, init);
-};
+const get = (path: string) => new Request(`http://localhost${path}`);
 
 const authenticatedFetch = (token: string) => (request: Request) => {
   request.headers.set("authorization", `Bearer ${token}`);
@@ -79,7 +59,7 @@ describe("one implementation, both transports", () => {
   });
 
   it("decodes input transforms on both transports; MCP sends the encoded result itself", async () => {
-    const http = await app.handler(request("/api/double", "alice", { value: "21" }));
+    const http = await app.handler(withBearer(post("/api/double", { value: "21" }), "alice"));
     expect(await http.json()).toBe(42);
     const reply = await tool("double", { value: "21" });
     expect(reply.isError).toBe(false);
@@ -90,22 +70,22 @@ describe("one implementation, both transports", () => {
   it("a write through MCP is immediately visible through HTTP", async () => {
     const reply = await tool("renameUser", { id: "1", name: "Lovelace" });
     expect(reply.isError).toBe(false);
-    const response = await app.handler(request("/api/getUser", "alice", { id: "1" }));
+    const response = await app.handler(withBearer(post("/api/getUser", { id: "1" }), "alice"));
     expect(await response.json()).toEqual({ id: "1", name: "Lovelace" });
-    const other = await app.handler(request("/api/getUser", "bob", { id: "1" }));
+    const other = await app.handler(withBearer(post("/api/getUser", { id: "1" }), "bob"));
     expect(await other.json()).toEqual({ id: "1", name: "Grace" });
   });
 
   it("serves domain errors structured over HTTP and as text over MCP, an error without a message as its encoding", async () => {
-    const http = await app.handler(request("/api/getUser", "alice", { id: "missing" }));
+    const http = await app.handler(withBearer(post("/api/getUser", { id: "missing" }), "alice"));
 
     expect(http.status).toBe(404);
-    const body = await http.json();
-    expect(body).toEqual(Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" })));
+    const encoded = Schema.encodeSync(UserNotFound)(new UserNotFound({ id: "missing" }));
+    expect(await http.json()).toEqual(encoded);
     const reply = await tool("getUser", { id: "missing" });
     expect(reply.isError).toBe(true);
     expect(reply.structuredContent).toBeUndefined();
-    expect(reply.content).toEqual([{ type: "text", text: JSON.stringify(body) }]);
+    expect(reply.content).toEqual([{ type: "text", text: JSON.stringify(encoded) }]);
   });
 
   it("the host's authorization runs on every call; discovery is not filtered per actor", async () => {
@@ -128,7 +108,7 @@ describe("one implementation, both transports", () => {
     );
 
     const forbidden = await app.handler(
-      request("/api/renameUser", "reader", { id: "1", name: "unauthorized" }),
+      withBearer(post("/api/renameUser", { id: "1", name: "unauthorized" }), "reader"),
     );
 
     expect(forbidden.status).toBe(403);
@@ -136,12 +116,12 @@ describe("one implementation, both transports", () => {
       'Bearer error="insufficient_scope", scope="users:write", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp", error_description="Requires users:write."',
     );
     expect(await forbidden.json()).toEqual(forbiddenBody);
-    expect(await (await app.handler(request("/api/getUser", "alice", { id: "1" }))).json()).toEqual(
-      {
-        id: "1",
-        name: "Ada",
-      },
-    );
+    expect(
+      await (await app.handler(withBearer(post("/api/getUser", { id: "1" }), "alice"))).json(),
+    ).toEqual({
+      id: "1",
+      name: "Ada",
+    });
   });
 
   it("keeps concurrent request actors isolated over MCP", async () => {
@@ -176,7 +156,9 @@ describe("one implementation, both transports", () => {
     const tokens = Array.from({ length: 20 }, (_, index) => (index % 2 === 0 ? "alice" : "bob"));
 
     const responses = await Promise.all(
-      tokens.map(async (token) => (await app.handler(request("/api/whoAmI", token, {}))).json()),
+      tokens.map(async (token) =>
+        (await app.handler(withBearer(post("/api/whoAmI", {}), token))).json(),
+      ),
     );
 
     expect(responses).toEqual(
@@ -199,7 +181,9 @@ describe("one implementation, both transports", () => {
       );
     }
 
-    expect((await app.handler(request("/api/getUser", "toString", { id: "1" }))).status).toBe(401);
+    expect(
+      (await app.handler(withBearer(post("/api/getUser", { id: "1" }), "toString"))).status,
+    ).toBe(401);
   });
 
   it("rejects untrusted hosts and browser origins in the example host", async () => {
@@ -212,7 +196,7 @@ describe("one implementation, both transports", () => {
 
     const foreignPublic = new Request(
       "http://attacker.example/api/status",
-      anonymous("/api/status", {}),
+      post("/api/status", {}),
     );
 
     expect((await app.handler(foreignPublic)).status).toBe(403);
@@ -223,7 +207,7 @@ describe("one implementation, both transports", () => {
     expect((await discovery("attacker.example")).status).toBe(403);
     expect((await discovery("localhost")).status).toBe(200);
 
-    const crossOrigin = request("/api/getUser", "alice", { id: "1" });
+    const crossOrigin = withBearer(post("/api/getUser", { id: "1" }), "alice");
     crossOrigin.headers.set("origin", "https://evil.example");
     expect((await app.handler(crossOrigin)).status).toBe(403);
   });
@@ -261,7 +245,7 @@ describe("one implementation, both transports", () => {
     });
 
     const document = Schema.decodeUnknownSync(schema)(
-      await (await app.handler(request("/api/openapi.json"))).json(),
+      await (await app.handler(withBearer(get("/api/openapi.json"), "alice"))).json(),
     );
 
     expect(document.openapi).toBe("3.1.0");
@@ -302,18 +286,18 @@ describe("one implementation, both transports", () => {
 
 describe("public and protected actions of one host", () => {
   it("serves status and the document without credentials, the user actions only with them", async () => {
-    const status = await app.handler(anonymous("/api/status", {}));
+    const status = await app.handler(post("/api/status", {}));
     expect(status.status).toBe(200);
     expect(await status.json()).toEqual({ service: "effect-actions", users: 2 });
 
-    const document = await app.handler(anonymous("/api/openapi.json"));
+    const document = await app.handler(get("/api/openapi.json"));
     expect(document.status).toBe(200);
     expect(await document.json()).toEqual(OpenApi.fromApi(Http.api));
 
-    const unauthenticated = await app.handler(anonymous("/api/whoAmI", {}));
+    const unauthenticated = await app.handler(post("/api/whoAmI", {}));
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.headers.get("www-authenticate")).toBe(protectedResourceChallenge);
-    expect((await app.handler(request("/api/whoAmI", "alice", {}))).status).toBe(200);
+    expect((await app.handler(withBearer(post("/api/whoAmI", {}), "alice"))).status).toBe(200);
   });
 
   it("documents the bearer scheme on every route but status, for Swagger UI too", async () => {
@@ -334,7 +318,7 @@ describe("public and protected actions of one host", () => {
       "/api/whoAmI": [{ "example.Login": [] }],
     });
 
-    expect(await (await app.handler(anonymous("/docs"))).text()).toContain(
+    expect(await (await app.handler(get("/docs"))).text()).toContain(
       '"securitySchemes":{"example.Login":{"type":"http","scheme":"Bearer"}}',
     );
   });
@@ -418,8 +402,8 @@ describe("public and protected actions of one host", () => {
   });
 
   it("serves an MCP-only action as a tool, sharing state with the HTTP actions", async () => {
-    expect((await app.handler(request("/api/listChanges", "alice", {}))).status).toBe(404);
-    await app.handler(request("/api/renameUser", "alice", { id: "1", name: "Augusta" }));
+    expect((await app.handler(withBearer(post("/api/listChanges", {}), "alice"))).status).toBe(404);
+    await app.handler(withBearer(post("/api/renameUser", { id: "1", name: "Augusta" }), "alice"));
 
     const changes = await tool("listChanges", {});
     expect(changes.structuredContent).toEqual({

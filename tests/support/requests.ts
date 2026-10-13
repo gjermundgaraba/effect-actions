@@ -45,6 +45,17 @@ export const initializeParams = {
   clientInfo: { name: "session", version: "0" },
 } as const;
 
+export const sessionMessage = (
+  method: string,
+  params?: Schema.Json | ActionMcp.Params,
+  id = 1,
+) => ({
+  jsonrpc: "2.0",
+  ...(method.startsWith("notifications/") ? {} : { id }),
+  method,
+  ...(params === undefined ? {} : { params }),
+});
+
 export const sessionRequest = ({
   method,
   params = {},
@@ -60,12 +71,7 @@ export const sessionRequest = ({
       ...(Predicate.isString(session) ? { "mcp-session-id": session } : {}),
       ...headers,
     },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      ...(method.startsWith("notifications/") ? {} : { id: 1 }),
-      method,
-      params,
-    }),
+    body: JSON.stringify(sessionMessage(method, params)),
   });
 
 export const endSession = (session: string, path = "/mcp"): Request =>

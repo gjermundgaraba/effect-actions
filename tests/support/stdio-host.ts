@@ -1,6 +1,7 @@
 import { Deferred, Effect, Option, Predicate, Schema, Sink, Stdio, Stream } from "effect";
 import { type Params, statelessRequest } from "../../src/mcp/client.js";
 import { httpProtocol } from "../../src/mcp/protocol.js";
+import { sessionMessage } from "./requests.js";
 
 export interface HostRequest {
   readonly method: string;
@@ -14,7 +15,7 @@ const idOf = Schema.decodeUnknownOption(
 const message = (revision: string, id: number, { method, params = {} }: HostRequest) =>
   revision === httpProtocol.protocolVersion
     ? { ...statelessRequest(method, params).body, id }
-    : { jsonrpc: "2.0", id, method, params };
+    : sessionMessage(method, params, id);
 
 const sessionInitialize = (revision: string): HostRequest => ({
   method: "initialize",
@@ -50,7 +51,7 @@ const exchange = <E>(
           Stream.make(
             `${JSON.stringify(message(revision, id, request))}\n`,
             ...(id === 0
-              ? [`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`]
+              ? [`${JSON.stringify(sessionMessage("notifications/initialized"))}\n`]
               : []),
           ),
           Stream.fromEffectDrain(Deferred.await(reply)),

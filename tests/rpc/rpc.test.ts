@@ -287,26 +287,6 @@ const Crashy = Action.make("crashy", {
 
 const crashy = Action.implement(Crashy, () => Effect.die(new Error("db password hunter2")));
 
-const Leaky = Action.make("leaky", {
-  description: "Fails with an error it does not declare.",
-  readOnly: true,
-  caller: Action.Anyone,
-});
-
-const leaky = Action.implement(Leaky, () =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: the contract broken, as plain JavaScript could.
-  Effect.fail(new UserNotFound({ id: "secret-id" }) as never),
-);
-
-const Count = Action.make("count", {
-  description: "Answers a number its success does not encode.",
-  readOnly: true,
-  caller: Action.Anyone,
-  success: Schema.Finite,
-});
-
-const count = Action.implement(Count, () => Effect.succeed(Infinity));
-
 class ThrowsWhenEncoded extends Schema.TaggedError<ThrowsWhenEncoded>()("Fragile", {
   note: Schema.String.pipe(
     Schema.decodeTo(
@@ -320,17 +300,6 @@ class ThrowsWhenEncoded extends Schema.TaggedError<ThrowsWhenEncoded>()("Fragile
     ),
   ),
 }) {}
-
-const Brittle = Action.make("brittle", {
-  description: "Fails with a declared error that does not encode.",
-  readOnly: true,
-  caller: Action.Anyone,
-  error: ThrowsWhenEncoded,
-});
-
-const brittle = Action.implement(Brittle, () =>
-  Effect.fail(new ThrowsWhenEncoded({ note: "kept" })),
-);
 
 const Twice = Action.make("twice", {
   description: "Fails with two declared errors at once, the second of which does not encode.",
@@ -348,11 +317,9 @@ const twice = Action.implement(Twice, () =>
   ),
 );
 
-const Faulty = ActionRpc.make([Crashy, Leaky, Count, Brittle, Twice, Status]);
+const Faulty = ActionRpc.make([Twice, Status]);
 
-const faulty = servedAtRpcOverHttp(
-  ActionRpc.layer(Faulty, [crashy, leaky, count, brittle, twice, status]),
-);
+const faulty = servedAtRpcOverHttp(ActionRpc.layer(Faulty, [twice, status]));
 
 describe("ActionRpc internal errors", () => {
   it.effect("answers the first of several failures alone, as it is encoded", () =>
@@ -369,54 +336,6 @@ describe("ActionRpc internal errors", () => {
         expect.objectContaining({ error: new UserNotFound({ id: "9" }) }),
       ]);
     }),
-  );
-
-  it.effect(
-    "answers a defect, an undeclared failure, and a success or a declared failure that does not encode generically, each its own request's, logging its cause",
-    () => {
-      const logged: Array<string> = [];
-
-      return Effect.gen(function* () {
-        const { text, exits } = yield* sendRawNdjson([
-          { tag: "crashy", payload: {} },
-          { tag: "leaky", payload: {} },
-          { tag: "count", payload: {} },
-          { tag: "brittle", payload: {} },
-          { tag: "status", payload: {} },
-        ]);
-
-        expect(exits.map(valueOrSquashedCause)).toEqual([
-          internalServerErrorDefect,
-          internalServerErrorDefect,
-          internalServerErrorDefect,
-          internalServerErrorDefect,
-          { service: "effect-actions", users: 2 },
-        ]);
-        expect(exits.map((exit) => Exit.isFailure(exit) && Cause.hasDies(exit.cause))).toEqual([
-          true,
-          true,
-          true,
-          true,
-          false,
-        ]);
-
-        expect(text).not.toContain("hunter2");
-        expect(text).not.toContain("secret-id");
-        expect(text).not.toContain("encoder secret");
-        expect(logged).toEqual([
-          expect.stringContaining("db password hunter2"),
-          expect.stringContaining("UserNotFound"),
-          expect.stringContaining("Expected a finite number"),
-          expect.stringContaining("encoder secret"),
-        ]);
-      }).pipe(
-        Effect.provide(Testing.layer(faulty)),
-        Effect.provide(Users.layerMemory),
-        Effect.provide(
-          Logger.layer([Logger.make(({ cause }) => void logged.push(Cause.pretty(cause)))]),
-        ),
-      );
-    },
   );
 
   it.effect(

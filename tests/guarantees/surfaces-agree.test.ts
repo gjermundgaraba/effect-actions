@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Arbitrary, Context, Effect, Layer, Redacted, Schema, Stream, Struct } from "effect";
+import { CliError } from "effect/cli";
+import type { HttpClientResponse } from "effect/http";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
@@ -10,7 +12,7 @@ import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { exec, logged } from "../support/cli-services.js";
-import { as } from "../support/requests.js";
+import { as, rawToolCall, send, withBearer } from "../support/requests.js";
 
 const jsonTextOf = <T, E>(schema: Schema.Codec<T, E>) =>
   Schema.fromJsonString(Schema.toCodecJson(schema));
@@ -147,6 +149,31 @@ const successOnEachSurface = (input: typeof Payload.Type) =>
     };
   }).pipe(Effect.provide(comparedSurfaces));
 
+const failCommand = ActionCli.command(app, Fail);
+
+const encodedFailure = Schema.encodeEffect(jsonTextOf(Failure));
+
+const decodeFailureText = Schema.decodeUnknownEffect(jsonTextOf(Failure));
+
+const ToolErrorReply = Schema.fromJsonString(
+  Schema.Struct({
+    result: Schema.Struct({
+      isError: Schema.Literal(true),
+      content: Schema.Tuple([Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })]),
+    }),
+  }),
+);
+
+const failureTextOf = (response: HttpClientResponse.HttpClientResponse) =>
+  Effect.flatMap(response.text, (text) =>
+    response.status === 200
+      ? Effect.map(
+          Schema.decodeUnknownEffect(ToolErrorReply)(text),
+          ({ result }) => result.content[0].text,
+        )
+      : Effect.succeed(text),
+  );
+
 const failureOnEachSurface = (failure: typeof Failure.Type) =>
   Effect.gen(function* () {
     const http = yield* ActionHttp.client(Http, as(token));
@@ -166,8 +193,18 @@ const failureOnEachSurface = (failure: typeof Failure.Type) =>
         rpc.fail({ failure }).pipe(RpcClient.withHeaders({ authorization: `Bearer ${token}` })),
       ),
       mcp: yield* Effect.flip(mcp.fail({ failure })),
+      rawMcp: yield* send(
+        withBearer(rawToolCall("fail", yield* failArguments({ failure })), token),
+      ).pipe(Effect.flatMap(failureTextOf), Effect.flatMap(decodeFailureText)),
       toolkit: toolResult?.isFailure === true ? toolResult.result : toolResult,
       inProcess: yield* Effect.flip(inProcess.fail({ failure }).pipe(asCaller)),
+      cli: yield* exec(failCommand, ["--failure", yield* encodedFailure(failure)]).pipe(
+        asCaller,
+        Effect.flip,
+        Effect.flatMap((error) =>
+          decodeFailureText(error instanceof CliError.UserError ? error.userMessage : error),
+        ),
+      ),
     };
   }).pipe(Effect.provide(comparedSurfaces));
 
@@ -226,7 +263,7 @@ describe("surfaces answer one call alike", () => {
   );
 
   it.effect.prop(
-    "fails over HTTP, RPC, MCP, the Toolkit and in process with the generated declared error, as JSON text carries it, its message included",
+    "fails over HTTP, RPC, MCP, raw MCP, the Toolkit, in process and as a command with the generated declared error, as JSON text carries it, its message included",
     [Arbitrary.schema(Failure)],
     ([failure]) =>
       Effect.map(failureOnEachSurface(failure), (answers) => {
