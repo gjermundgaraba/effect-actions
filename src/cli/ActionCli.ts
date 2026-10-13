@@ -17,11 +17,10 @@ import {
   type Options as CommandOptions,
 } from "./commands.js";
 import {
-  type AnyHttp,
-  assertInBinding,
-  type Options as ClientOptions,
-  methods,
-} from "../http/client.js";
+  type Any as AnyHttp,
+  client as httpClient,
+  type ClientOptions,
+} from "../http/ActionHttp.js";
 import {
   acquire,
   type ActionOf,
@@ -202,11 +201,20 @@ const overHttp = <A extends Action.Any>(
   options: CommandOptions<A> | undefined,
   client: ClientOptions | undefined,
 ) => {
-  assertInBinding(binding.actions, action);
+  if (!binding.actions.includes(action)) {
+    throw new Error(`Action "${action.name}" is not in this HTTP binding`);
+  }
 
   return makeCommand(
     action,
-    (input) => Effect.flatMap(methods(binding, client), (methodOf) => methodOf(action)(input)),
+    (input) =>
+      Effect.flatMap(httpClient(binding, client), (methods) => {
+        const method = methods[action.name];
+
+        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+
+        return method(input);
+      }),
     options,
     bindingErrors(action, binding),
   );

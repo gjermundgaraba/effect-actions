@@ -67,28 +67,24 @@ type NativeMethod = (request: {
 
 type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
-export const assertInBinding = (actions: ReadonlyArray<Action.Any>, action: Action.Any): void => {
-  if (!actions.includes(action)) {
-    throw new Error(`Action "${action.name}" is not in this HTTP binding`);
-  }
-};
-
 export const methods = (
   http: AnyHttp,
   options: Options = {},
-): Effect.Effect<(action: Action.Any) => ErasedMethod, never, HttpClient.HttpClient> =>
+): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> =>
   Effect.map(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
     HttpApiClient.make(http.api as HttpApi.HttpApi<string>, options),
     (client) => {
       const native: NativeClient = client;
 
-      return (action) => {
-        const method = native[action.name];
+      return Object.fromEntries(
+        http.actions.map((action) => {
+          const method = native[action.name];
 
-        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+          if (method === undefined) throw new Error(`No client method for ${action.name}`);
 
-        return checked(action, (payload) => method({ payload }));
-      };
+          return [action.name, checked(action, (payload) => method({ payload }))];
+        }),
+      );
     },
   );
