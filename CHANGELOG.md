@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.4`. The `effect` peer is now
+`~4.0.4`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.0.4 or a later 4.0.x patch**, the release the package is
+now tested against.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.0.4`.
+
 ## 0.13.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.3`. The `effect` peer is now

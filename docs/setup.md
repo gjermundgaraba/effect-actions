@@ -10,21 +10,21 @@ When something fails, search [setup-failures.md](setup-failures.md). Reading ord
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@~4.0.3
+pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
 ```
 
 | Need                                | Add                                                              |
 | ----------------------------------- | ---------------------------------------------------------------- |
-| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.3`                                   |
-| Tests                               | `vitest@^5.0.3` and `@effect/vitest@~4.0.3`, as dev dependencies |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.4`                                   |
+| Tests                               | `vitest@^5.0.3` and `@effect/vitest@~4.0.4`, as dev dependencies |
 | Type checking                       | `typescript@^7.0.2`, as a dev dependency                         |
 | Running a TypeScript entrypoint     | `tsx`, as a dev dependency: `node --import tsx <entrypoint>.ts`  |
 
 The `effect` peer admits only the patches of the Effect release the package is tested against:
 a minor release may change the unstable Effect modules the surfaces build on.
 
-Keep the tilde in `package.json`: `^4.0.3`, which npm writes for `effect@4.0.3`, admits a minor
-release outside the peer range. `npm install effect@~4.0.3` keeps it.
+Keep the tilde in `package.json`: `^4.0.4`, which npm writes for `effect@4.0.4`, admits a minor
+release outside the peer range. `npm install effect@~4.0.4` keeps it.
 
 Node `^22.12.0 || ^24.0.0 || >=26.0.0`: the package's `engines`, where its `devEngines` is
 what developing the library itself takes. TypeScript 7 or newer. ESM only. No example ships a

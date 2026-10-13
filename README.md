@@ -100,11 +100,11 @@ const greeting = Effect.gen(function* () {
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@~4.0.3
+pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
 ```
 
 It needs TypeScript 7 or newer and is ESM only
-([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.3` to serve or run a CLI from Node. Every module is a
+([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.4` to serve or run a CLI from Node. Every module is a
 subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
 contracts-only bundle never loads a server.
 
