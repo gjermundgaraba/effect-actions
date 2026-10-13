@@ -21,8 +21,8 @@ first (step 5), before the examples and the pages.
 3. **Read [Action.md](Action.md) completely.** Every surface builds on it.
 4. **Read the page of each surface you serve** ([Pages](#pages)), and the example files its task
    sections link.
-5. **When something fails, search the `*-failures.md` pages** for a fragment of the message,
-   your own code's first compile error included, before reasoning it out:
+5. **When something fails, search the `*-failures.md` pages** for a fragment of the message
+   without quotes, your own code's first compile error included, before reasoning it out:
    `grep -rnF "<fragment>" node_modules/@gjermundgaraba/effect-actions/docs/*-failures.md`. Each
    module page has one beside it, such as [Action-failures.md](Action-failures.md).
 

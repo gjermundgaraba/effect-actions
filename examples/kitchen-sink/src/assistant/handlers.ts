@@ -17,8 +17,7 @@ const approvalsOf = (response: Response) =>
 
 // What Effect gives the model as the result of a call that did not run: one its member denied,
 // or one in a reply the provider cut short. Left out of `ran` below, which lists the calls that
-// ran, and never answered as it is: a denial's `reason` is `undefined` unless the member gave
-// one, which is not JSON.
+// ran.
 const didNotRun = Schema.is(
   Schema.Struct({ type: Schema.Literals(["execution-denied", "execution-interrupted"]) }),
 );
@@ -62,7 +61,7 @@ export const assistant = Action.implement(
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),
-          // Every request of the conversation an answer would still act on, with the call it
+          // Every request of the conversation still waiting for an answer, with the call it
           // would run, read from the `Chat`'s history by the rule Effect applies when an answer
           // arrives: one an earlier answer left open is listed in every turn until answered.
           // The arguments are shown as JSON, as the member approves them.
@@ -106,7 +105,8 @@ export const assistant = Action.implement(
           : turn(conversation, prompt),
       // The answers start the next turn, in which an approved call runs, as this request's
       // caller, before the model is asked again. Only the member who was asked reaches the
-      // conversation, and an `approvalId` that matches no open request of it runs nothing.
+      // conversation, and a turn that fails ends it, so no answer is left without its result:
+      // an `approvalId` that `openApprovals` would not list runs nothing.
       answerAssistant: ({ conversation, answers }) =>
         turn(conversation, [
           {

@@ -173,14 +173,14 @@ it.effect(
           content: [
             { type: "tool-call", id: "repeated", name: "erase", params: { id: "first of two" } },
             { type: "tool-approval-request", approvalId: "twice", toolCallId: "repeated" },
+            { type: "tool-call", id: "plain", name: "erase", params: { id: "plain" } },
+            { type: "tool-approval-request", approvalId: "plain", toolCallId: "plain" },
             { type: "tool-call", id: "other", name: "erase", params: { id: "replaced" } },
             { type: "tool-approval-request", approvalId: "twice", toolCallId: "other" },
             { type: "tool-call", id: "repeated", name: "erase", params: { id: "second of two" } },
             { type: "tool-call", id: "done", name: "erase", params: { id: "already ran" } },
             { type: "tool-approval-request", approvalId: "ran", toolCallId: "done" },
             { type: "tool-approval-request", approvalId: "callless", toolCallId: "missing" },
-            { type: "tool-call", id: "plain", name: "erase", params: { id: "plain" } },
-            { type: "tool-approval-request", approvalId: "plain", toolCallId: "plain" },
             { type: "tool-approval-request", approvalId: "last", toolCallId: "repeated" },
           ],
         },
@@ -217,7 +217,7 @@ it.effect(
         .pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provide(layer));
 
       expect(listed.map(({ params }) => params)).toEqual(erased.map((id) => ({ id })));
-      expect(erased).toEqual(["replaced", "plain", "second of two"]);
+      expect(erased).toEqual(["plain", "replaced", "second of two"]);
       expect(ActionToolkit.openApprovals(yield* Ref.get(chat.history))).toEqual([]);
     }),
 );

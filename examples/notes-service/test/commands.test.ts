@@ -58,7 +58,17 @@ const fitsAFile = (text: string) =>
 
 // Lines a random string almost never holds, each one the format has to keep apart from a title.
 const trickyLines = Arbitrary.array(
-  Arbitrary.schema(Schema.Literals(["", "# A heading", "\\# Escaped", "\\\\# Twice", "#tag"])),
+  Arbitrary.schema(
+    Schema.Literals([
+      "",
+      "# A heading",
+      "\\# Escaped",
+      "\\\\# Twice",
+      "#tag",
+      "\r# After a carriage return",
+      "\u2028# After a line separator",
+    ]),
+  ),
 );
 
 const importable = Arbitrary.all([
@@ -187,6 +197,43 @@ describe("the commands", () => {
         expect(read.map(({ title, body }) => ({ title, body }))).toEqual(notes);
       }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
     { arbitrary: { runs: 50 } },
+  );
+
+  it.effect(
+    "import an empty file as no notes, and refuse one `export` did not write or too long",
+    () =>
+      Effect.gen(function* () {
+        const files = yield* FileSystem.FileSystem;
+        const directory = yield* files.makeTempDirectoryScoped();
+
+        yield* files.writeFileString(`${directory}/empty.md`, "");
+
+        expect(yield* run("grace", ["import", `${directory}/empty.md`])).toEqual([
+          "Created 0 notes",
+        ]);
+
+        yield* files.writeFileString(`${directory}/preamble.md`, "My notes\n\n# Plan\n\nDraft");
+
+        expect(
+          yield* Effect.flip(run("grace", ["import", `${directory}/preamble.md`])),
+        ).toHaveProperty(
+          "userMessage",
+          "The file does not start with a `# ` title, as `notes export` writes one.",
+        );
+
+        const many = Array.from({ length: 101 }, (_, place) => `# Note ${place}\n\nBody`);
+
+        yield* files.writeFileString(`${directory}/many.md`, many.join("\n\n"));
+
+        expect(yield* Effect.flip(run("grace", ["import", `${directory}/many.md`]))).toHaveProperty(
+          "userMessage",
+          expect.stringContaining("An import holds at most 100 notes."),
+        );
+
+        expect(yield* run("grace", ["list-notes"])).toEqual([
+          JSON.stringify({ notes: [] }, null, 2),
+        ]);
+      }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fail as the server refuses, a command of their own included", () =>

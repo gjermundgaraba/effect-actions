@@ -7,9 +7,10 @@
 - **`ActionToolkit.openApprovals(history)`** lists the approval requests a conversation's history
   still holds open, each an `Approval` with the call an answer would run (`approvalId`,
   `toolCallId`, `name`, `params`): those with neither an answer nor a result, the call found as
-  Effect finds it. An answer recorded without a result, as a failed `streamText` turn leaves
-  it, is not open: the next turn acts on it. It replaces the function the kitchen-sink
-  assistant defined, which applications copied, and which listed such a request again
+  Effect finds it. An answer recorded without a result, as a `streamText` turn that failed
+  while its call ran leaves it, is not open: the next turn acts on it, and another answer would
+  run the call twice. It replaces the function the kitchen-sink assistant defined, which
+  applications copied, and which listed such a request again
   ([ActionToolkit.md](docs/ActionToolkit.md)).
 
 ### Other changes
@@ -28,10 +29,10 @@
   differs only in case (TS1149) and an error `toBeInstanceOf` does not narrow.
 - `notes-service` adds `importNotes`, a bulk import as one action, and a `notes import` command
   that reads a file `notes export` wrote and calls it once; `export` escapes a body line that
-  starts as a title would, so every note reads back as it was, and a title is one line. The
-  example servers read `HOST`;
-  `live-rpc`'s `NotAuthor` no longer names the message's author; `mcp-tools` links
-  [ActionMcp.md](docs/ActionMcp.md) for tools that need a token.
+  starts as a title would, so every note reads back as it was, up to the action's 100; a title
+  is one line. The example servers read `HOST`; `live-rpc`'s `NotAuthor` no longer names the
+  message's author; `mcp-tools` links [ActionMcp.md](docs/ActionMcp.md) for tools that need a
+  token.
 
 ## 0.12.0
 

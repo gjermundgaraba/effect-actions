@@ -36,7 +36,7 @@ const Id = Schema.String.annotate({
 // generic "Expected a value with a length of at least 1". A model and a CLI user read it too.
 const Title = Schema.String.check(
   Schema.isMinLength(1, { message: "A note needs a title." }),
-  Schema.isPattern(/^[^\r\n]*$/u, { message: "A title is one line." }),
+  Schema.isPattern(/^[^\r\n\u2028\u2029]*$/u, { message: "A title is one line." }),
 ).annotate({
   description: "A short name for the note: one line, at least one character.",
 });

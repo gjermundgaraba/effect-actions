@@ -167,10 +167,11 @@ export interface Approval {
 /**
  * The approval requests still open in a conversation's history, such as a `Chat`'s, in the
  * order they were asked: those with neither an answer nor a tool result. An answer recorded
- * without a result, as a `streamText` turn that failed leaves it, is not open: the next turn
- * acts on it unasked. A turn's response lists only the requests that turn made, and the
- * answering turn's none, so read every open one here. Each names the call an answer would run,
- * found as Effect finds it: the last request with its `approvalId`, the last call with its id.
+ * without a result, as a `streamText` turn that failed while its call ran leaves it, is not
+ * open: the next turn acts on it unasked, and another answer would run the call twice. A turn's
+ * response lists only the requests that turn made, and the answering turn's none, so read every
+ * open one here. Each names the call an answer would run, found as Effect finds it: the last
+ * request with its `approvalId`, listed where it was asked, and the last call with its id.
  * Guide: `docs/ActionToolkit.md` in this package; in an application:
  * `examples/kitchen-sink/src/assistant/handlers.ts`.
  */
@@ -188,13 +189,14 @@ export const openApprovals = ({ content: messages }: Prompt.Prompt): ReadonlyArr
     said.flatMap((part) => (part.type === "tool-call" ? [[part.id, part] as const] : [])),
   );
 
-  const requests = new Map(
-    said.flatMap((part) =>
-      part.type === "tool-approval-request" ? [[part.approvalId, part.toolCallId] as const] : [],
-    ),
-  );
+  const requests = said
+    .filter((part) => part.type === "tool-approval-request")
+    .filter(
+      ({ approvalId }, place, all) =>
+        all.findLastIndex((later) => later.approvalId === approvalId) === place,
+    );
 
-  return Array.from(requests).flatMap(([approvalId, toolCallId]) => {
+  return requests.flatMap(({ approvalId, toolCallId }) => {
     const call = calls.get(toolCallId);
 
     return call === undefined || answered.has(approvalId) || ran.has(toolCallId)
