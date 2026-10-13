@@ -14,6 +14,8 @@ now tested against.
 
 ### Additions
 
+- `ActionMcp.layerHttp` takes Effect 4.0.3's `allowSubscriptions`: `false` turns off MCP
+  2026-07-28 subscriptions ([ActionMcp.md](docs/ActionMcp.md#api)).
 - **`ActionToolkit.openApprovals(history)`** lists the approval requests a conversation's history
   still holds open, each an `Approval` with the call an answer would run (`approvalId`,
   `toolCallId`, `name`, `params`): those with neither an answer nor a result, the call found as

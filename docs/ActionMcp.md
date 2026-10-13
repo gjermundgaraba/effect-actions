@@ -13,12 +13,12 @@ When something fails, search [ActionMcp-failures.md](ActionMcp-failures.md). Rea
 
 Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
-| API                                   | Purpose                                                      |
-| ------------------------------------- | ------------------------------------------------------------ |
-| `layerHttp(implementations, options)` | A Layer serving the actions as tools at one HTTP endpoint.   |
-| `runStdio(implementations, options)`  | An Effect serving them on standard I/O until stdin closes.   |
-| `Options`                             | Type of `runStdio`'s options.                                |
-| `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and three for HTTP. |
+| API                                   | Purpose                                                     |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `layerHttp(implementations, options)` | A Layer serving the actions as tools at one HTTP endpoint.  |
+| `runStdio(implementations, options)`  | An Effect serving them on standard I/O until stdin closes.  |
+| `Options`                             | Type of `runStdio`'s options.                               |
+| `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and four for HTTP. |
 
 `implementations` is one implementation or a list.
 
@@ -32,6 +32,7 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `features`                           | One Layer of native resources, prompts and tools to serve. |
 | `path`                               | HTTP only: the endpoint's path; defaults to `/mcp`.        |
 | `allowedOrigins`                     | HTTP only: the exact origins allowed; none by default.     |
+| `allowSubscriptions`                 | HTTP only: `false` turns off 2026-07-28 subscriptions.     |
 | `authentication`                     | HTTP only: the protected tools' authentication descriptor. |
 
 All but `actions`, `features` and `authentication` are Effect's own `McpServer` options, passed
@@ -110,9 +111,7 @@ curl http://127.0.0.1:3000/mcp -d "$BODY" -H 'Content-Type: application/json' \
 - **No token arrives, so the host names the caller.** stdio takes no `authentication`: provide the
   protected tools' identity around `runStdio`, whose one caller is whoever started it. Each
   implementation's `authorize` still runs, so give that caller what it checks. Tools served
-  behind a token over HTTP keep their one protected contract here: never a public copy. An HTTP
-  server has many callers: never provide an identity at its startup, where it would stand for
-  every request.
+  behind a token over HTTP keep their one protected contract here: never a public copy.
 - **Test the tools without a process**: the implementations in process over a fake upstream
   ([mcp-tools/test/printers/printers.test.ts](../examples/mcp-tools/test/printers/printers.test.ts)),
   an endpoint in memory

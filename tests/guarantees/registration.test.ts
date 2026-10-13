@@ -31,6 +31,7 @@ it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the na
       websiteUrl: "https://example.com",
       icons: [{ src: "https://example.com/icon.png" }],
       extensions: { "io.example/extension": {} },
+      allowSubscriptions: false,
     }),
   );
 
@@ -52,6 +53,15 @@ it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the na
       capabilities: { extensions: { "io.example/extension": {} } },
     },
   });
+
+  const listened = await web.handler(
+    mcpRequest({
+      method: "subscriptions/listen",
+      params: { notifications: { toolsListChanged: true } },
+    }),
+  );
+
+  expect(await listened.text()).toContain('"error":{"code":-32601');
 
   for (const protocolVersion of ["2025-11-25", "2025-06-18"]) {
     const initialized = await web.handler(
