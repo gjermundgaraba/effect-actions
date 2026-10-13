@@ -1,6 +1,56 @@
-import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema, SchemaAST } from "effect";
 import { HttpServerResponse } from "effect/http";
-import { Refusal, statuses } from "../contract/errors.js";
+import { HttpApiSchema } from "effect/http-api";
+import type * as Action from "../contract/Action.js";
+import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
+import { unsuspended } from "../contract/rules.js";
+
+const httpApiStatusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+
+const statusThroughSuspensions = (ast: SchemaAST.AST): number | undefined =>
+  httpApiStatusOf(ast) ??
+  (SchemaAST.isSuspend(ast) ? statusThroughSuspensions(ast.thunk()) : undefined);
+
+type Declared = Action.Errors[number];
+
+/**
+ * `error` as an endpoint declares it: each member of a union without a status of its own apart,
+ * each with its status, 422 without one.
+ */
+export const declared = (error: Declared): ReadonlyArray<Declared> => {
+  const status = statusThroughSuspensions(error.ast);
+
+  if (status !== undefined) {
+    return [httpApiStatusOf(error.ast) === undefined ? HttpApiSchema.status(status)(error) : error];
+  }
+
+  const resolved = unsuspended(error.ast);
+
+  if (
+    SchemaAST.isUnion(resolved) &&
+    resolved.checks === undefined &&
+    resolved.encoding === undefined
+  ) {
+    return resolved.types.flatMap((member) => declared(Schema.make<Declared>(member)));
+  }
+
+  return [HttpApiSchema.status(422)(error)];
+};
+
+const responseOf = (schema: Declared, error: Declared["Type"]) =>
+  HttpServerResponse.jsonUnsafe(Schema.encodeUnknownSync(Schema.toCodecJson(schema))(error), {
+    status: httpApiStatusOf(schema.ast) ?? 422,
+  });
+
+/** `error` answered as an endpoint declaring `errors` answers it, if one of them declares it. */
+export const declaredResponse = (
+  errors: ReadonlyArray<Declared>,
+  error: Declared["Type"],
+): HttpServerResponse.HttpServerResponse | undefined => {
+  const schema = errors.flatMap(declared).find((each) => Schema.is(each)(error));
+
+  return schema === undefined ? undefined : responseOf(schema, error);
+};
 
 const rfc6750ErrorDescriptionCharacters = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
 
@@ -18,8 +68,6 @@ export const challenge = (
 export const bearer = (
   parameters: ReadonlyArray<readonly [name: string, value: string | undefined]>,
 ): string => challenge("Bearer", parameters);
-
-const encode = Schema.encodeSync(Refusal);
 
 export const isRefusal = Schema.is(Refusal);
 
@@ -39,8 +87,13 @@ const insufficientScopeChallenge = (
       ])
     : undefined;
 
+const refusalSchemas: { readonly [Tag in Refusal["_tag"]]: Declared } = {
+  Unauthenticated,
+  Forbidden,
+};
+
 export const plain = (error: Refusal): HttpServerResponse.HttpServerResponse =>
-  HttpServerResponse.jsonUnsafe(encode(error), { status: statuses[error._tag] });
+  responseOf(refusalSchemas[error._tag], error);
 
 export const answer = (
   error: Refusal,

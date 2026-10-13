@@ -13,6 +13,21 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Encoded"]
   ? (...input: [] | [input: A["input"]["Type"]]) => R
   : (input: A["input"]["Type"]) => R;
 
+/**
+ * How HTTP, RPC and a command decode a request's input: reporting every issue, and refusing a
+ * field the input does not declare.
+ */
+export const inputParseOptions = { errors: "all", onExcessProperty: "error" } as const;
+
+/** Decode `action`'s input from its JSON form by `inputParseOptions`, or fail with `InvalidInput`. */
+export const decodeInput = (
+  action: Action.Any,
+): ((encoded: ErasedValue) => Effect.Effect<ErasedValue, InvalidInput>) => {
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(action.input), inputParseOptions);
+
+  return (encoded) => Effect.mapError(decode(encoded), InvalidInput.fromSchemaError);
+};
+
 export const inputOf = (
   action: Action.Any,
   args: ReadonlyArray<ErasedValue>,

@@ -20,7 +20,6 @@ import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import {
-  assertAuthentication,
   promote,
   providerOf,
   type Any as Authentication,
@@ -30,7 +29,7 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
 } from "../authentication/provider.js";
-import { Anyone } from "../contract/rules.js";
+import { Anyone, assertAuthentication } from "../contract/rules.js";
 import {
   defaultPath,
   fieldKey,

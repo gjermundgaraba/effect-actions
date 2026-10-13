@@ -14,7 +14,7 @@ import {
   SchemaTransformation,
   Tracer,
 } from "effect";
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import { RpcClient, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import { SocketServer } from "effect/socket";
 import { authenticate, verify } from "../support/app/authentication.js";
@@ -35,6 +35,7 @@ import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { recorder } from "../support/reporter.js";
+import { sendRawNdjson, valueOrSquashedCause } from "../support/requests.js";
 
 const Rpc = ActionRpc.make([Status, GetUser, RenameUser, Double, WhoAmI], {
   authentication: Login,
@@ -73,56 +74,7 @@ const withClient = <A, E, R>(
     Effect.provide(Users.layerMemory),
   );
 
-const RawRequest = Schema.TaggedStruct("Request", {
-  id: Schema.String,
-  tag: Schema.String,
-  payload: Schema.Json,
-  headers: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
-});
-
-const RawAnswer = Schema.fromJsonString(
-  Schema.Struct({
-    exit: Schema.toCodecJson(Schema.Exit(Schema.Json, Action.BuiltIn, Schema.Defect())),
-  }),
-);
-
 const internalServerErrorDefect = new Error("Internal server error");
-
-const valueOrSquashedCause = <A, E>(exit: Exit.Exit<A, E>) =>
-  Exit.isSuccess(exit) ? exit.value : Cause.squash(exit.cause);
-
-interface RawMessage {
-  readonly tag: string;
-  readonly payload: Schema.Json;
-  readonly headers?: ReadonlyArray<readonly [string, string]>;
-}
-
-const sendRawNdjson = (messages: ReadonlyArray<RawMessage>, token?: string) =>
-  Effect.gen(function* () {
-    const body = messages
-      .map(({ tag, payload, headers = [] }, id) =>
-        JSON.stringify(RawRequest.make({ id: String(id), tag, payload, headers })),
-      )
-      .join("\n");
-
-    const request = HttpClientRequest.post("/rpc").pipe(
-      HttpClientRequest.bodyText(`${body}\n`, "application/ndjson"),
-    );
-
-    const response = yield* HttpClient.execute(
-      token === undefined ? request : HttpClientRequest.bearerToken(request, token),
-    );
-
-    const text = yield* response.text;
-
-    return {
-      text,
-      exits: text
-        .split("\n")
-        .filter((line) => line !== "")
-        .map((line) => Schema.decodeUnknownSync(RawAnswer)(line).exit),
-    };
-  });
 
 describe("ActionRpc over the HTTP protocol", () => {
   it.effect("answers a public action without a credential, its input left out", () =>

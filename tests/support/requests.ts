@@ -1,5 +1,6 @@
-import { Predicate, Result, Schema } from "effect";
+import { Cause, Effect, Exit, Predicate, Result, Schema } from "effect";
 import { type Headers, HttpClient, HttpClientRequest } from "effect/http";
+import * as Action from "../../src/contract/Action.js";
 import * as Testing from "../../src/testing/Testing.js";
 
 export const send = (request: Request) => HttpClient.execute(HttpClientRequest.fromWeb(request));
@@ -92,3 +93,52 @@ export const withBearer = (request: Request, token: string): Request => {
 
   return request;
 };
+
+const RawRequest = Schema.TaggedStruct("Request", {
+  id: Schema.String,
+  tag: Schema.String,
+  payload: Schema.Json,
+  headers: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+});
+
+const RawAnswer = Schema.fromJsonString(
+  Schema.Struct({
+    exit: Schema.toCodecJson(Schema.Exit(Schema.Json, Action.BuiltIn, Schema.Defect())),
+  }),
+);
+
+export const valueOrSquashedCause = <A, E>(exit: Exit.Exit<A, E>) =>
+  Exit.isSuccess(exit) ? exit.value : Cause.squash(exit.cause);
+
+export interface RawMessage {
+  readonly tag: string;
+  readonly payload: Schema.Json;
+  readonly headers?: ReadonlyArray<readonly [string, string]>;
+}
+
+export const sendRawNdjson = (messages: ReadonlyArray<RawMessage>, token?: string) =>
+  Effect.gen(function* () {
+    const body = messages
+      .map(({ tag, payload, headers = [] }, id) =>
+        JSON.stringify(RawRequest.make({ id: String(id), tag, payload, headers })),
+      )
+      .join("\n");
+
+    const request = HttpClientRequest.post("/rpc").pipe(
+      HttpClientRequest.bodyText(`${body}\n`, "application/ndjson"),
+    );
+
+    const response = yield* HttpClient.execute(
+      token === undefined ? request : HttpClientRequest.bearerToken(request, token),
+    );
+
+    const text = yield* response.text;
+
+    return {
+      text,
+      exits: text
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => Schema.decodeUnknownSync(RawAnswer)(line).exit),
+    };
+  });

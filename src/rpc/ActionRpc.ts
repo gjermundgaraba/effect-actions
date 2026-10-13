@@ -23,18 +23,8 @@ import {
   RpcServer,
 } from "effect/rpc";
 import type * as Action from "../contract/Action.js";
+import { Anyone, type Certain, type ErrorsOf, bindingErrors } from "../contract/rules.js";
 import {
-  Anyone,
-  assertDistinct,
-  assertOnce,
-  assertOwnTags,
-  type Certain,
-  errorList,
-  type ErrorsOf,
-  projectedErrors,
-} from "../contract/rules.js";
-import {
-  assertAuthentication,
   type Any as Authentication,
   type Credential,
   type DescriptorOf,
@@ -47,10 +37,9 @@ import {
   type ServerBuildServices,
   type ServedProvider,
   type VerifierError,
-  withVerifierErrors,
 } from "../authentication/provider.js";
-import { type Call, checked, type ErasedMethod } from "../contract/call.js";
-import { type BuiltIn, type BuiltIns, InvalidInput } from "../contract/errors.js";
+import { type Call, checked, decodeInput, type ErasedMethod } from "../contract/call.js";
+import type { BuiltIn, BuiltIns } from "../contract/errors.js";
 import {
   acquire,
   type BuildError,
@@ -64,9 +53,9 @@ import {
   provideHandlers,
   type Selected,
   type Served,
-  servedBy,
   type Serving,
-  toList,
+  bindingOf,
+  servingOf,
 } from "../contract/implementation.js";
 
 type BindingError = Action.Errors[number];
@@ -119,13 +108,6 @@ export interface Options<E extends Action.Errors = Action.Errors> {
   readonly authentication?: Authentication;
 }
 
-const declaredErrorsOf = (
-  action: Action.Any,
-  errors: Action.Errors,
-  authentication: Authentication | undefined,
-): Action.Errors =>
-  projectedErrors(action, withVerifierErrors(action, errors, authentication?.error));
-
 // Why: The same three overloads as `ActionHttp.make`, for the reasons stated there.
 /**
  * Bind actions once, for servers and clients alike, each as an rpc named after it, taking
@@ -149,25 +131,19 @@ export function make<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions & PublicOnly<Actions>,
 ): Binding<Actions, [], undefined>;
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): Any {
-  assertOnce("action", actions);
-
-  const errors = errorList(options.error);
-
-  assertOwnTags("ActionRpc binding", errors);
-
-  assertAuthentication(actions, options.authentication);
+  const bound = bindingOf("ActionRpc binding", actions, options);
 
   const group = RpcGroup.make(
     ...actions.map((action) =>
       Rpc.make(action.name, {
         payload: action.input,
         success: action.success,
-        error: Schema.Union(declaredErrorsOf(action, errors, options.authentication)),
+        error: Schema.Union(bindingErrors(action, bound)),
       }),
     ),
   );
 
-  return { actions, error: errors, group, authentication: options.authentication };
+  return { actions, ...bound, group };
 }
 
 type Middleware = ReadonlyArray<RpcMiddleware.AnyService>;
@@ -339,17 +315,13 @@ const handlerOf = (
   steps: ReadonlyArray<Step>,
   error: Schema.Union<Action.Errors>,
 ) => {
-  const decodeStrictly = Schema.decodeUnknownEffect(Schema.toCodecJson(action.input), {
-    errors: "all",
-    onExcessProperty: "error",
-  });
+  const decode = decodeInput(action);
 
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.success));
   const boundary = callBoundaryOf(error);
 
   return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
-    const call = Effect.suspend(() => decodeStrictly(payload)).pipe(
-      Effect.mapError(InvalidInput.fromSchemaError),
+    const call = Effect.suspend(() => decode(payload)).pipe(
       Effect.flatMap(run),
       Effect.flatMap(encode),
     );
@@ -410,16 +382,9 @@ export function layer(
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const apps = servedBy("RPC binding", binding.actions, toList(served), options.actions);
-  const actions = apps.flatMap((app) => app.actions);
-  assertAuthentication(actions, binding.authentication);
+  const { apps, actions, authentication } = servingOf("RPC binding", binding, served, options);
 
   const middleware = options.middleware ?? [];
-  assertDistinct("middleware", middleware, (key) => key.key);
-
-  const auth = actions.some((action) => action.caller !== Anyone)
-    ? binding.authentication
-    : undefined;
 
   const jsonGroup = RpcGroup.make(
     ...actions.map((action) =>
@@ -447,7 +412,9 @@ export function layer(
         Effect.service(key),
       );
 
-      const authenticate = auth === undefined ? undefined : yield* authenticationStepOf(auth);
+      const authenticate =
+        authentication === undefined ? undefined : yield* authenticationStepOf(authentication);
+
       const bound = yield* acquire(apps);
 
       const byName = Object.fromEntries(
@@ -461,7 +428,7 @@ export function layer(
                 action.caller === Anyone || authenticate === undefined
                   ? listedMiddleware
                   : [...listedMiddleware, authenticate],
-                Schema.Union(declaredErrorsOf(action, binding.error, binding.authentication)),
+                Schema.Union(bindingErrors(action, binding)),
               ),
             ] as const,
         ),

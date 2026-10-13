@@ -2,7 +2,7 @@ import { type Context, Effect, Option } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
-import { Anyone } from "../contract/rules.js";
+import type { Anyone } from "../contract/rules.js";
 import type {
   BuildServices,
   Protected,
@@ -205,39 +205,11 @@ export type VerifierError<A extends Action.Any, D> = A["caller"] extends typeof 
     ? E[number]
     : never;
 
-// Why: A surface adds a verifier's errors to its protected actions itself, as it adds its own,
-// so they take the status rule, the projected order and the client types of every other error.
-// Rejected: the HTTP security middleware's native `error`, which `HttpApiEndpoint` merges in.
-export const withVerifierErrors = (
-  action: Action.Any,
-  errors: Action.Errors,
-  verifierErrors: Action.Errors | undefined,
-): Action.Errors =>
-  action.caller === Anyone || verifierErrors === undefined
-    ? errors
-    : [...errors, ...verifierErrors];
-
 export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
   never,
 ]
   ? never
   : ProviderOf<D>;
-
-export const assertAuthentication = (
-  actions: ReadonlyArray<Action.Any>,
-  auth: Any | undefined,
-): void => {
-  for (const action of actions) {
-    if (
-      action.caller !== Anyone &&
-      (auth === undefined || action.caller.key !== auth.identity.key)
-    ) {
-      throw new Error(
-        `Protected action '${action.name}' requires its matching authentication descriptor`,
-      );
-    }
-  }
-};
 
 // Why: Identity, not equality. Two descriptors of one name share the provider's service, so nothing
 // else tells them apart. Rejected: comparing the schemes, which takes per-kind rules following

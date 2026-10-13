@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Arbitrary,
   Context,
   Effect,
   Layer,
@@ -11,16 +12,25 @@ import {
 } from "effect";
 import { McpSchema } from "effect/ai";
 import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { RpcSerialization, RpcServer } from "effect/rpc";
 import { HttpApiClient, HttpApiSchema, OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { exec, printed } from "../support/cli-services.js";
+import { causeOf, exec, printed } from "../support/cli-services.js";
 import { serve } from "../support/serve.js";
-import { mcpRequest, post, rawToolCall, send } from "../support/requests.js";
+import {
+  mcpRequest,
+  post,
+  rawToolCall,
+  send,
+  sendRawNdjson,
+  valueOrSquashedCause,
+} from "../support/requests.js";
 
 class Rejected extends Schema.TaggedError<Rejected>()(
   "Rejected",
@@ -531,11 +541,12 @@ it.effect(
         for (const value of Object.values(wider)) expect(answer).not.toContain(value);
       }
 
-      for (const answer of [http, mcp]) {
+      for (const answer of [http, mcp, stderr.join("\n")]) {
         expect(answer).toContain('at [\\"pin\\"]');
         expect(answer).toContain('at [\\"count\\"]');
-        expect(answer).toContain('at [\\"note\\"]');
       }
+
+      for (const answer of [http, mcp]) expect(answer).toContain('at [\\"note\\"]');
 
       expect(inProcess).toBeInstanceOf(Action.InvalidInput);
 
@@ -682,4 +693,92 @@ it("publishes `success: {}` as the closed empty object", async () => {
       ],
     },
   });
+});
+
+describe("input with several fields that do not decode", () => {
+  const Short = Schema.String.check(Schema.isMaxLength(8));
+
+  const Fields = Action.make("fields", {
+    description: "Take three short fields.",
+    readOnly: true,
+    caller: Action.Anyone,
+    input: { a: Short, b: Short, c: Short },
+  });
+
+  const names = ["a", "b", "c"] as const;
+
+  const app = Action.implement(Fields, () => Effect.void);
+
+  const routes = Layer.mergeAll(
+    ActionHttp.layer(ActionHttp.make([Fields]), app),
+    ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+    ActionRpc.layer(ActionRpc.make([Fields]), app).pipe(
+      Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+      Layer.provide(RpcSerialization.layerNdjson),
+    ),
+  );
+
+  const invalidInput = Schema.decodeUnknownSync(Action.InvalidInput);
+
+  const invalidInputs = Arbitrary.all([
+    Arbitrary.schema(Fields.input),
+    Arbitrary.schema(Schema.Literals([...names, "none"])),
+  ]).pipe(
+    Arbitrary.map(([input, valid]) => {
+      const broken = names.filter((name) => name !== valid);
+
+      return {
+        broken,
+        input: { ...input, ...Object.fromEntries(broken.map((name) => [name, "x".repeat(9)])) },
+      };
+    }),
+  );
+
+  it.effect.prop(
+    "names every field that does not decode by its path, over HTTP, RPC, MCP, a command and in process",
+    [invalidInputs],
+    ([{ broken, input }]) =>
+      Effect.gen(function* () {
+        const expected = broken.map((name) => [name]);
+
+        const http = yield* Effect.flatMap(
+          send(post("/api/fields", input)),
+          (response) => response.json,
+        );
+
+        const { exits } = yield* sendRawNdjson([{ tag: "fields", payload: input }]);
+        const rpc = exits.map(valueOrSquashedCause)[0];
+
+        const mcp = yield* Effect.flatMap(
+          send(rawToolCall("fields", input)),
+          (response) => response.text,
+        );
+
+        const [exit] = yield* printed(
+          exec(
+            ActionCli.command(app, Fields),
+            names.map((name) => `--${name}=${input[name]}`),
+          ),
+        );
+
+        const inProcess = yield* Effect.flip((yield* Action.client(app)).fields(input));
+
+        for (const [surface, failure] of Object.entries({
+          http,
+          rpc,
+          inProcess,
+          cli: causeOf(exit),
+        })) {
+          const paths = invalidInput(failure).issues.map(({ path }) => path);
+
+          expect(paths, surface).toHaveLength(expected.length);
+          expect(paths, surface).toEqual(expect.arrayContaining(expected));
+        }
+
+        for (const name of names) {
+          expect(mcp.includes(`at [\\"${name}\\"]`), `mcp ${name}`).toBe(broken.includes(name));
+        }
+      }).pipe(Effect.provide(Testing.layer(routes))),
+    { arbitrary: { runs: 50 } },
+  );
 });
