@@ -212,7 +212,8 @@ A browser MCP client sends its page's `Origin`, and needs two things.
 
 - **`allowedOrigins`.** A request carrying an `Origin` is refused with 403 unless that exact
   origin is listed, so a page a user happens to visit cannot call the tools; one without, as
-  other clients send, passes. Read the list from configuration:
+  other clients send, passes. Authentication runs first: a request without a valid token gets
+  401, whatever its Origin. Read the list from configuration:
   [mcp-tools/src/routes.ts](../examples/mcp-tools/src/routes.ts).
 - **CORS.** `allowedOrigins` only refuses: it answers no preflight and adds no header. Add
   `HttpRouter.cors`, global to the router, only where an origin is configured: given an empty
@@ -224,8 +225,7 @@ A browser MCP client sends its page's `Origin`, and needs two things.
   [kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts) with
   authentication.
 
-The endpoint's authentication runs before its Origin check, so `allowedOrigins` keeps no request
-from the verifier. A `Host` allowlist, for a request that sends no `Origin`, or an Origin check
+A `Host` allowlist, for a request that sends no `Origin`, or an Origin check
 that must run first is a request policy:
 [Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
 

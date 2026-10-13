@@ -11,7 +11,9 @@ import { routes } from "../src/routes.js";
 import { GetStatus } from "../src/status/Status.js";
 
 // What the wire adds: the real routes, behind their real authentication, answering in memory.
-// No port is opened. The caller is the token each client sends, as in production.
+// No port is opened. The caller is the token each client sends, as in production. A service a
+// builder yields is provided here, as server.ts provides it: one left out is a `Scope` error at
+// every `it.effect` (docs/Testing-failures.md).
 const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
 
 const as = (token: string) => ({

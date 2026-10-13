@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Other changes
+
+- `destructiveHint`'s JSDoc says an update of a stored flag, such as "read", stays destructive.
+- The docs say a hand-written command sends what a file holds for the server to check, not
+  decoded with the action's schema; that undecodable tool arguments are an `AiError`, not
+  `InvalidInput`; how to name an assistant's files against TS1149; that a request without a
+  valid token gets 401 before `allowedOrigins` is checked; and which errors protecting an
+  action raises in its existing tests. `Testing-failures.md` says which line of a missing
+  service's error to search under `exactOptionalPropertyTypes`.
+- `notes-service`'s `importNotes` takes `CreateNote.input` as each note's schema; `live-rpc`
+  routes to serving the same actions as JSON and names two more choices to decide when copying.
+
 ## 0.14.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.4`. The `effect` peer is now

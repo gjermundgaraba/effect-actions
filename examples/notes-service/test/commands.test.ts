@@ -22,7 +22,8 @@ import { NoteStore } from "../src/notes/store.js";
 import { routes } from "../src/routes.js";
 
 // What the commands add to the routes: their syntax and what they print. They call the real
-// routes in memory, as a client with a token does, where cli.ts connects them to a server.
+// routes in memory, as a client with a token does, where cli.ts connects them to a server. A
+// service a builder yields is provided here too (routes.test.ts).
 const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
 
 // Effect's own runner, given arguments instead of the process's. The console of `it.effect`

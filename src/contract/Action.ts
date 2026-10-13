@@ -78,7 +78,7 @@ export interface Mcp {
    * `annotations.destructiveHint`, meaningful for a write only. Left out, a write is listed as
    * destructive, MCP's default: state `false` for one that only adds, MCP's "only additive
    * updates". One that replaces, removes or interrupts, such as an edit or a restart, stays
-   * destructive.
+   * destructive, an update of a stored flag such as "read" included.
    */
   readonly destructiveHint?: boolean | undefined;
   /** `annotations.idempotentHint`, meaningful for a write only. */
