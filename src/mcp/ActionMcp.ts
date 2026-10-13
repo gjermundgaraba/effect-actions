@@ -38,6 +38,7 @@ import {
   liftedFrom,
   liftOf,
   protocols,
+  routedName,
 } from "./protocol.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
@@ -409,7 +410,8 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
 
     if (method !== "tools/call") return true;
 
-    const name = headers["mcp-name"];
+    const header = headers["mcp-name"];
+    const name = header === undefined ? undefined : routedName(header);
 
     return name === undefined || !open.has(name);
   };

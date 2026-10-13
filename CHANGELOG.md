@@ -23,6 +23,11 @@ decoding and failures.
 
 ### Other changes
 
+- **A mixed MCP endpoint reads a base64-encoded `Mcp-Name` as Effect's runtime routes it**, so a
+  client that encodes the name of a public tool calls it signed out. This reverses 0.10.0's "the
+  routing headers decide as they are": the runtime routes the decoded name, so the gate refused a
+  public call it would have run, and admitted nothing it should not. A public tool still never
+  gets an identity, whatever credential its request presents.
 - An MCP tool whose handler fails with an undeclared `AiError`, such as one a model call leaks, is
   answered with the internal error text and reported, as every other undeclared failure is; it
   was sent as the tool's error result.
