@@ -1,41 +1,10 @@
-import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema, SchemaAST } from "effect";
+import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema } from "effect";
 import { HttpServerResponse } from "effect/http";
-import { HttpApiSchema } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
 import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
-import { unsuspended } from "../contract/rules.js";
-
-const httpApiStatusOf = SchemaAST.resolveAt<number>("httpApiStatus");
-
-const statusThroughSuspensions = (ast: SchemaAST.AST): number | undefined =>
-  httpApiStatusOf(ast) ??
-  (SchemaAST.isSuspend(ast) ? statusThroughSuspensions(ast.thunk()) : undefined);
+import { declared, httpApiStatusOf } from "../contract/rules.js";
 
 type Declared = Action.Errors[number];
-
-/**
- * `error` as an endpoint declares it: each member of a union without a status of its own apart,
- * each with its status, 422 without one.
- */
-export const declared = (error: Declared): ReadonlyArray<Declared> => {
-  const status = statusThroughSuspensions(error.ast);
-
-  if (status !== undefined) {
-    return [httpApiStatusOf(error.ast) === undefined ? HttpApiSchema.status(status)(error) : error];
-  }
-
-  const resolved = unsuspended(error.ast);
-
-  if (
-    SchemaAST.isUnion(resolved) &&
-    resolved.checks === undefined &&
-    resolved.encoding === undefined
-  ) {
-    return resolved.types.flatMap((member) => declared(Schema.make<Declared>(member)));
-  }
-
-  return [HttpApiSchema.status(422)(error)];
-};
 
 const responseOf = (schema: Declared, error: Declared["Type"]) =>
   HttpServerResponse.jsonUnsafe(Schema.encodeUnknownSync(Schema.toCodecJson(schema))(error), {

@@ -40,8 +40,8 @@ import {
   projectedErrors,
   bindingErrors,
   bindingOf,
+  declared,
 } from "../contract/rules.js";
-import { declared } from "../authentication/refusal.js";
 import { type ErasedMethod, inputParseOptions } from "../contract/call.js";
 import { type AnyHttp, type Client, methods, type Options as ClientOptions } from "./client.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
