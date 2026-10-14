@@ -24,6 +24,9 @@ the sentence it had, now a declared field built from `tool` and `reason`.
 
 ### Examples
 
+- **Customize generated tools with native Effect APIs.** The assistant uses `Tool.Title` and
+  `Toolkit.merge` to label approval requests, reusing the original handler layer. The recipe in
+  `ActionToolkit.md` covers customization and adding other native tools. No library API changes.
 - **Adapters live in `platform/`.** A Layer that reaches a technology is no longer a static of
   its domain's service: mcp-tools' `PrintFarm.layer` is `printFarm` in
   `src/platform/print-farm.ts`, beside the fake farm, and assistant's `TaskStore.layerFile` is

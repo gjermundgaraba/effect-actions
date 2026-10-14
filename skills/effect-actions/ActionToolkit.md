@@ -53,9 +53,31 @@ conversations.pipe(
 - A refusal or a declared error is not raised: it is a tool result with `isFailure: true`, which the model reads. So are arguments that do not decode, an `AiError` (`ToolParameterValidationError`), not `InvalidInput`: neither `authorize` nor the handler ran.
 - A turn's tool calls, the approved calls of an answering turn included, run concurrently unless `generateText` is given a `concurrency`. A service they share must tolerate it: [assistant/src/tasks/store.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/tasks/store.ts) locks each change.
 - Arguments the input does not declare are dropped, where HTTP and a CLI refuse them ([guarantees.md](guarantees.md#wire-behavior)): a misspelled optional argument is ignored silently.
-- Beside other tools, merge natively and provide every handler layer: `Toolkit.merge(toolkit, others)` with `Layer.mergeAll(layer, othersHandlers)`.
 - **A model loop behind a route.** Yield `toolkit` and the model in the implementation's builder, `Action.implement(Ask, Effect.map(toolkit, (tools) => (input) => ...))`: what the handler itself yields is owed per request. Provide `layer` to the route's layer, `ActionHttp.layer(Http, ask).pipe(Layer.provide(layer))`, not in the handler, so the tools share the routes' build ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers)). A tool call runs as the request's caller, unless the handler provides another around it. Keep each caller's `Chat` in a service between requests ([kitchen-sink/src/assistant/conversations.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/conversations.ts)), and answer an approval in a later one: [kitchen-sink/src/assistant/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/handlers.ts), with a scripted model in [demo-model.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/demo-model.ts), which the entrypoint provides through [kitchen-sink/src/memory.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/memory.ts), and tested over HTTP in [kitchen-sink/test/assistant/assistant.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/assistant/assistant.test.ts). Name the files as it does, the route's contract `Assistant.ts` and the loop `handlers.ts`, from the first one written: a lowercase `assistant.ts` beside the contract fails with TS1149 ([setup-failures.md](setup-failures.md)).
 - **The real model comes later?** Provide a scripted one from the entrypoint until then, as the kitchen-sink does. Reading the model with `Effect.serviceOption` hides the requirement: the server builds without one and every request fails.
+
+### Customize the native tools
+
+Give a generated tool a title for your approval display with native `Tool` and `Toolkit` from
+`effect/ai`: [assistant/src/toolkit.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/toolkit.ts). The host reads the
+title when printing approval requests in [agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/agent.ts).
+
+```ts
+const actions = ActionToolkit.make([tasks, identity]);
+const toolkit = Toolkit.merge(
+  actions.toolkit,
+  Toolkit.make(actions.toolkit.tools.addTask.annotate(Tool.Title, "Add a task")),
+);
+const layer = actions.layer;
+```
+
+- `Toolkit.merge` keeps the later definition on a name collision. Put the customized one last;
+  keep names distinct when adding unrelated tools.
+- `annotate` and `annotateMerge` return a new definition preserving the generated tool's handler
+  identity and approval rule. Keep the original `layer`. Recreating it with `Tool.make` under
+  the same name does not preserve that binding.
+- To add other native tools, use `Toolkit.merge(toolkit, others)` and provide both handler layers
+  with `Layer.mergeAll(layer, othersHandlers)`.
 
 ### Call a tool by hand
 

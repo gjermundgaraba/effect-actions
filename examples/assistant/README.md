@@ -78,6 +78,7 @@ test/
 | To see                                                               | Read                                               |
 | -------------------------------------------------------------------- | -------------------------------------------------- |
 | Implementations as a native Effect AI `Toolkit`                      | `src/toolkit.ts`                                   |
+| Native tool titles in the approval display                           | `src/toolkit.ts`, `src/agent.ts`                   |
 | One approval rule reading the call and its caller                    | `src/toolkit.ts`                                   |
 | A turn run as a member, and an approval answered through a `Chat`    | `src/agent.ts`                                     |
 | Where a real `LanguageModel` plugs in                                | `src/agent.ts`, `src/scripted.ts`                  |

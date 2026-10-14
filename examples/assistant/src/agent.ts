@@ -1,6 +1,6 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
-import { Console, Effect, Layer } from "effect";
-import { Chat, type LanguageModel, type Prompt } from "effect/ai";
+import { Console, Context, Effect, Layer } from "effect";
+import { Chat, type LanguageModel, type Prompt, Tool } from "effect/ai";
 import type { Member } from "./identity/Identity.js";
 import { members } from "./identity/members.js";
 import { Permissions } from "./identity/permissions.js";
@@ -28,9 +28,13 @@ const report = (member: Member) => (response: Response) => {
       ...response.toolResults.map(
         ({ name, encodedResult }) => `  ${name} -> ${JSON.stringify(encodedResult)}`,
       ),
-      ...response.toolCalls.flatMap(({ id, name, params }) =>
-        waiting.includes(id) ? [`  ${name} ${JSON.stringify(params)} waits for approval`] : [],
-      ),
+      ...response.toolCalls.flatMap(({ id, name, params }) => {
+        const title = Context.getOrElse(toolkit.tools[name].annotations, Tool.Title, () => name);
+
+        return waiting.includes(id)
+          ? [`  ${title} ${JSON.stringify(params)} waits for approval`]
+          : [];
+      }),
       ...(response.text === "" ? [] : [`  "${response.text}"`]),
     ].join("\n"),
   );
