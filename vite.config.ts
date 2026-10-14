@@ -127,6 +127,13 @@ export default defineConfig({
     },
     overrides: [
       {
+        files: ["**/*.test.ts", "**/*.spec.ts"],
+        rules: {
+          "anti-slop-effect/no-manual-tag-comparison": "off",
+          "anti-slop-effect/no-manual-tagged-construction": "off",
+        },
+      },
+      {
         files: sourceOrLintProbe("**"),
         rules: {
           "no-comments/no-prose-comments": ["error", { allowJsDoc: true, allowWhy: true }],
