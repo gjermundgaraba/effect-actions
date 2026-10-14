@@ -247,5 +247,5 @@ failure compiles. What each surface answers is in [guarantees.md](guarantees.md#
   or `Forbidden`. Passed on, it is this server's own refusal: a caller whose token is valid is
   told to sign in again. Map it to an error the action declares, or to a defect.
 - **Map that client's `HttpClientError` and `SchemaError` to one declared error a caller can
-  act on** ([mcp-tools/src/printers/farm.ts](../examples/mcp-tools/src/printers/farm.ts)). As
+  act on** ([mcp-tools/src/platform/print-farm.ts](../examples/mcp-tools/src/platform/print-farm.ts)). As
   defects, a model reads only a generic text.

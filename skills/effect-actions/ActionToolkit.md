@@ -44,7 +44,7 @@ const turn = chat.generateText({ prompt, toolkit }).pipe(actingFor(member));
 conversations.pipe(
   Effect.provide(model),
   // Once, around the program. Startup services only, never a caller.
-  Effect.provide(layer.pipe(Layer.provide([TaskStore.layerFile, Permissions.layerMemory]))),
+  Effect.provide(layer.pipe(Layer.provide([tasksFile, Permissions.layerMemory]))),
 );
 ```
 

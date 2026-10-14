@@ -53,7 +53,7 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 - `README.md` is the human pitch and quickstart, not a reference. `docs/` guides consumer agents through tasks, choices, traps, boundaries and failures. Avoid duplicating reference material from types, JSDoc or examples; concise behavioral summaries may accompany example links. Link to the example files that show a task; embed a snippet only where a few lines orient faster than opening the file. Edit README quickstart examples at their source first.
 - Keep docs flat and pages focused on a task or concept. Keep each page under 16,000 bytes as a safety margin against tool-output truncation, checked by `tests/docs.test.ts`; split by topic when needed. Module pages inventory exports/options in **API**, without copying generic signatures, then link examples by task. Put independently readable symptoms and fixes in `<Module>-failures.md`. Route readers through `docs/README.md`; define new terms in `docs/CONTEXT.md`; keep wire behavior once in `docs/guarantees.md`.
-- Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Comments teach why; mark deployment shortcuts `DEMO ONLY`.
+- Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Their domains declare services; a Layer reaching a technology (a file, a database, an upstream API) is an adapter in `src/platform/`, which no domain imports. Comments teach why; mark deployment shortcuts `DEMO ONLY`.
 - Edit `docs/`, never generated `skills/effect-actions/`; run `vp run docs:sync` after docs changes.
 
 ## Tests

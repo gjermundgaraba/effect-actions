@@ -91,9 +91,11 @@ and no `name` or `arguments`.
 src/
 ├── printers/
 │   ├── Printers.ts    contract: the printer, the one declared error, the five tools
-│   ├── farm.ts        PrintFarm, the upstream API as a service, and its Layer
-│   ├── fake.ts        DEMO ONLY: the farm's API answered in memory, as an HttpClient
+│   ├── farm.ts        PrintFarm, the upstream as a service: what the handlers call
 │   └── handlers.ts    Action.implement: tool to service
+├── platform/
+│   ├── print-farm.ts  printFarm, PrintFarm's Layer over the farm's HTTP API
+│   └── fake-farm.ts   DEMO ONLY: the farm's API answered in memory, as an HttpClient
 ├── instructions.ts    the server's name, version and its instructions for the model
 ├── routes.ts          the HTTP surface: /mcp and /healthz
 ├── server.ts          entrypoint: MCP over HTTP
@@ -103,13 +105,14 @@ test/
 └── routes.test.ts     over MCP in memory, with Testing.layer
 ```
 
-- **The upstream is a service, built once.** `PrintFarm.layer` reads its URL and credentials
-  from `Config`, takes whichever `HttpClient` the entrypoint provides, and signs in while it is
-  built. The handlers get it already signed in and only delegate: `handlers.ts` maps each tool
-  onto a method of `farm.ts`, which knows nothing of tools, so a second caller of the farm, a
-  job or another surface, takes the service alone.
+- **The upstream is a service, built once.** `farm.ts` declares what the handlers need of the
+  farm, and `platform/print-farm.ts` is its Layer over the farm's HTTP API: it reads its URL and
+  credentials from `Config`, takes whichever `HttpClient` the entrypoint provides, and signs in
+  while it is built. The handlers get it already signed in and only delegate: `handlers.ts`
+  maps each tool onto a method of `PrintFarm`, which knows nothing of tools or HTTP, so a second
+  caller of the farm, a job or another surface, takes the service alone.
 - **One declared error, mapped in one place.** A refusal, an unreachable farm, an answer of
-  another shape and one that never comes each leave `farm.ts` as a `PrintFarmError` with a
+  another shape and one that never comes each leave `platform/print-farm.ts` as a `PrintFarmError` with a
   message a model can act on. No handler catches anything.
 - **What a model sends is checked by the contract.** A printer id becomes part of the farm's
   URL, so its schema admits only what is safe there, and anything else is refused before a
@@ -128,14 +131,14 @@ test/
 | One declared error shared by every tool                         | `src/printers/Printers.ts`       |
 | An input a model cannot use to reach another URL                | `src/printers/Printers.ts`       |
 | A tool answering an image beside other fields                   | `src/printers/Printers.ts`       |
-| An upstream client reading `Config`, signing in once            | `src/printers/farm.ts`           |
-| An upstream's failures mapped to the declared error             | `src/printers/farm.ts`           |
+| An upstream client reading `Config`, signing in once            | `src/platform/print-farm.ts`     |
+| An upstream's failures mapped to the declared error             | `src/platform/print-farm.ts`     |
 | A builder yielding a service, and handlers that only delegate   | `src/printers/handlers.ts`       |
 | Server `instructions`, shared by both transports                | `src/instructions.ts`            |
 | Allowed origins from `Config`, their CORS, and `/healthz`       | `src/routes.ts`                  |
 | A request body limit, and where an unauthenticated server binds | `src/server.ts`                  |
 | A stdio server whose logs go to stderr                          | `src/stdio.ts`                   |
-| A fake upstream provided as a Layer, to a test or an entrypoint | `src/printers/fake.ts`           |
+| A fake upstream provided as a Layer, to a test or an entrypoint | `src/platform/fake-farm.ts`      |
 | Testing tools and each upstream failure's message in process    | `test/printers/printers.test.ts` |
 | Testing listed hints, an image and the origin check in memory   | `test/routes.test.ts`            |
 | Testing CORS for one configured origin and for several          | `test/routes.test.ts`            |

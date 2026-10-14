@@ -3,8 +3,8 @@ import { Effect, Layer } from "effect";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { serverInfo } from "./instructions.js";
-import { fakeFarm } from "./printers/fake.js";
-import { PrintFarm } from "./printers/farm.js";
+import { fakeFarm } from "./platform/fake-farm.js";
+import { printFarm } from "./platform/print-farm.js";
 import { printers } from "./printers/handlers.js";
 
 // Entrypoint: an MCP server a local agent starts as a subprocess, with FARM_URL, FARM_USER and
@@ -17,10 +17,10 @@ ActionMcp.runStdio(printers, serverInfo).pipe(
     NodeStdio.layer,
     // DEMO ONLY: `fakeFarm` answers the farm's API in memory. A real server provides
     // `FetchHttpClient.layer` in its place.
-    PrintFarm.layer.pipe(Layer.provide(fakeFarm)),
+    printFarm.pipe(Layer.provide(fakeFarm)),
   ]),
   // stdout carries the protocol alone. Applied last, this sends every log to stderr, the
-  // sign-in line `PrintFarm.layer` logs included, and a startup failure too.
+  // sign-in line `printFarm` logs included, and a startup failure too.
   ActionCli.logToStderr,
   NodeRuntime.runMain,
 );

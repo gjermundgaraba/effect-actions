@@ -38,7 +38,8 @@ page.
 
 The parts of the layout every example uses: [examples/README.md](node_modules/@gjermundgaraba/effect-actions/examples/README.md#how-they-are-laid-out).
 
-- **Domain**: one subject of the application, such as notes or identity, and the folder holding everything about it. A folder is never a mechanism, such as `contracts/` or `handlers/`.
+- **Domain**: one subject of the application, such as notes or identity, and the folder holding everything about it. A folder is never a mechanism, such as `contracts/` or `handlers/`, but **Platform**.
+- **Platform**: `platform/`, the one folder named for a mechanism: the adapters, each a service's Layer over a technology, such as a file or an upstream HTTP API. A domain imports none of them; an entrypoint provides them.
 - **Contract file**: the PascalCase file of a domain, such as `notes/Notes.ts`: its schemas, errors and actions, and the identity and descriptor it declares. It imports no server code.
 - **Routes**: `routes.ts`, the host's surfaces as one Layer. A route, singular, is one HTTP route.
 - **Entrypoint**: a file that runs the application one way, such as `server.ts`, `stdio.ts` or `cli.ts`: the **composition root**, the one place that chooses the services, the platform and, on a local surface, the caller.

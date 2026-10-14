@@ -24,6 +24,11 @@ the sentence it had, now a declared field built from `tool` and `reason`.
 
 ### Examples
 
+- **Adapters live in `platform/`.** A Layer that reaches a technology is no longer a static of
+  its domain's service: mcp-tools' `PrintFarm.layer` is `printFarm` in
+  `src/platform/print-farm.ts`, beside the fake farm, and assistant's `TaskStore.layerFile` is
+  `tasksFile` in `src/platform/tasks-file.ts`, built with `TaskStore.make`. The domain keeps the
+  service, its constructor and its in-memory Layer. No library API changes.
 - **`notes-service` demonstrates optional write deduplication.** Pass `requestId` to `createNote`
   (CLI: `--request-id`) and reuse it with the same content to replay the original result;
   changed content fails with `RequestConflict`. Calls without a key create a new note each time.

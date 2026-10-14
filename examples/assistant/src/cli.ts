@@ -6,7 +6,7 @@ import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { commands } from "./commands.js";
 import { CurrentCaller, type Operator } from "./identity/Identity.js";
 import { Permissions } from "./identity/permissions.js";
-import { TaskStore } from "./tasks/store.js";
+import { tasksFile } from "./platform/tasks-file.js";
 
 // Entrypoint: `node --import tsx examples/assistant/src/cli.ts list-tasks`.
 // The operator's own tool. No credential arrives at a terminal, so this host names the caller
@@ -17,7 +17,7 @@ const operator: Operator = { kind: "operator", id: userInfo().username };
 const assistant = commands.pipe(
   // Services go on the command, so they are built when an action runs: `--help` and a
   // mistyped flag never open the tasks file.
-  Command.provide(Layer.mergeAll(TaskStore.layerFile, Permissions.layerMemory)),
+  Command.provide(Layer.mergeAll(tasksFile, Permissions.layerMemory)),
   Command.provideSync(CurrentCaller, operator),
 );
 

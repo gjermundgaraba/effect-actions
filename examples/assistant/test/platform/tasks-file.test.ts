@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
+import { tasksFile } from "../../src/platform/tasks-file.js";
 import { TaskStore } from "../../src/tasks/store.js";
 
 // The file store, on a file of the test's own: `ASSISTANT_TASKS` is set through a
@@ -13,7 +14,7 @@ const fileStore = Effect.gen(function* () {
   const tasks = path.join(directory, "tasks.json");
   const config = ConfigProvider.fromUnknown({ ASSISTANT_TASKS: tasks });
 
-  return TaskStore.layerFile.pipe(Layer.provide(ConfigProvider.layer(config)));
+  return tasksFile.pipe(Layer.provide(ConfigProvider.layer(config)));
 });
 
 describe("the file store", () => {

@@ -3,8 +3,8 @@ import { ConfigProvider, Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { fakeFarm, picture } from "../src/printers/fake.js";
-import { PrintFarm } from "../src/printers/farm.js";
+import { fakeFarm, picture } from "../src/platform/fake-farm.js";
+import { printFarm } from "../src/platform/print-farm.js";
 import { PrintFarmError, Printers } from "../src/printers/Printers.js";
 import { routes } from "../src/routes.js";
 
@@ -15,10 +15,10 @@ import { routes } from "../src/routes.js";
 const farm = { FARM_URL: "https://farm.example.test", FARM_USER: "agent", FARM_PASSWORD: "secret" };
 
 // `Testing.layer` gives the test an `HttpClient` of its own, which reaches the routes. The
-// fake farm is another `HttpClient`, provided to `PrintFarm.layer` alone.
+// fake farm is another `HttpClient`, provided to `printFarm` alone.
 const servedWith = (environment: Record<string, string>) =>
   Testing.layer(routes).pipe(
-    Layer.provide(PrintFarm.layer.pipe(Layer.provide(fakeFarm))),
+    Layer.provide(printFarm.pipe(Layer.provide(fakeFarm))),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
   );
 
