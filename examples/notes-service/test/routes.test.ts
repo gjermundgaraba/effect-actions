@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
@@ -82,6 +82,45 @@ describe("the service, over HTTP and MCP", () => {
 
       expect(response.status).toBe(200);
       expect(yield* response.text).toContain('"name":"createNote"');
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("retries a committed HTTP write over MCP after its response is lost", () =>
+    Effect.gen(function* () {
+      const http = yield* ActionHttp.client(Http, {
+        transformClient: (client) =>
+          client.pipe(
+            as("ada").transformClient,
+            // The real server finishes the write, but the caller receives no response.
+            HttpClient.transform((response, request) =>
+              response.pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new HttpClientError.HttpClientError({
+                      reason: new HttpClientError.TransportError({
+                        request,
+                        description: "Response lost after commit",
+                      }),
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      });
+
+      const mcp = yield* ActionMcp.client([GetStatus, ...Notes], as("ada"));
+      const input = { requestId: "plan", title: "Plan", body: "Draft" };
+
+      expect(yield* Effect.flip(http.createNote(input))).toBeInstanceOf(
+        HttpClientError.HttpClientError,
+      );
+      expect(yield* mcp.getStatus()).toEqual({ service: "notes-service", notes: 1 });
+
+      const replay = yield* mcp.createNote(input);
+
+      expect(replay).toMatchObject({ title: "Plan", body: "Draft", revision: 1 });
+      expect(yield* mcp.listNotes()).toEqual({ notes: [{ id: replay.id, title: "Plan" }] });
     }).pipe(Effect.provide(served)),
   );
 });

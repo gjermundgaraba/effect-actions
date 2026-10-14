@@ -25,6 +25,12 @@ export class NoteChanged extends Schema.TaggedError<NoteChanged>()(
   { httpApiStatus: 409 },
 ) {}
 
+export class RequestConflict extends Schema.TaggedError<RequestConflict>()(
+  "RequestConflict",
+  { requestId: Schema.String },
+  { httpApiStatus: 409 },
+) {}
+
 // A description on an input field is that field's help on every surface: beside its flag or
 // argument in a command's `--help`, and in the input schema a model reads from the MCP tool
 // listing and the OpenAPI document. A field without one has a flag with no help.
@@ -43,6 +49,8 @@ const Title = Schema.String.check(
 
 const Body = Schema.String.annotate({ description: "The note's whole text." });
 
+const Content = Schema.Struct({ title: Title, body: Body });
+
 export const ListNotes = Action.make("listNotes", {
   description: "List your notes, without their bodies.",
   success: { notes: Schema.Array(Schema.Struct({ id: Schema.String, title: Schema.String })) },
@@ -60,9 +68,17 @@ export const GetNote = Action.make("getNote", {
 });
 
 export const CreateNote = Action.make("createNote", {
-  description: "Create a note.",
-  input: { title: Title, body: Body },
+  description:
+    "Create a note. To retry safely, supply a requestId and reuse it with the same content.",
+  input: {
+    requestId: Schema.optionalKey(Schema.NonEmptyString).annotate({
+      description:
+        "An optional key for this creation. Keep it for retries; without one, every call creates a note.",
+    }),
+    ...Content.fields,
+  },
   success: Note,
+  error: RequestConflict,
   readOnly: false,
   caller: CurrentUser,
   mcp: { destructiveHint: false },
@@ -98,14 +114,15 @@ export const DeleteNote = Action.make("deleteNote", {
 // Work every surface should offer is an action, a bulk import included: the HTTP API, the MCP
 // tools and the CLI then all have it, and the whole list is decoded, so checked, before the
 // handler writes any of it. A command of your own only reads the file and calls this once
-// (commands.ts). `importNotes` adds and removes nothing, so `destructiveHint` is `false`.
-// Each note is `createNote`'s input: an action's `input` is a schema already, used as it is.
+// (commands.ts). `importNotes` only adds notes, so `destructiveHint` is `false`.
+// Imports share note content with `createNote`, but exclude request keys because bulk creation
+// does not deduplicate.
 export const ImportNotes = Action.make("importNotes", {
   description:
     "Create several notes at once, such as those `notes export` wrote. Every note is checked " +
     "before any is written: an import holding one that is not valid writes none.",
   input: {
-    notes: Schema.Array(CreateNote.input)
+    notes: Schema.Array(Content)
       .check(
         Schema.isMinLength(1, { message: "An import holds at least one note." }),
         Schema.isMaxLength(100, { message: "An import holds at most 100 notes." }),

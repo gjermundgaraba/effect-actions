@@ -50,6 +50,37 @@ prints one message on stderr saying to set it, and exits 1. `--help` needs none.
 
 The tokens are fixed names and the store is memory: replace both before deploying anything.
 
+## Retry a creation
+
+`createNote({ title, body })` creates a new note on every call. To retry safely, add an optional
+`requestId`. Generate it once for a new creation, for example with `crypto.randomUUID()`, and
+keep it with the pending operation outside any retry loop. After a lost response, send the
+same key and content again. For the CLI, pass `--request-id` and keep it when repeating the
+command:
+
+```sh
+echo "First draft" | node --import tsx examples/notes-service/src/cli.ts create-note --request-id plan-1 --title Plan
+```
+
+The key belongs to the signed-in caller and the `createNote` operation. Another caller can use
+it independently. The same caller repeating the key and content gets the original result;
+different content fails with `RequestConflict`. A new key creates a new note, even when its
+content is identical. Every attempt still runs authorization.
+
+The replay result is a snapshot of the creation. Updating or deleting the note leaves that
+snapshot intact: replay neither changes the note back nor recreates it. `importNotes` has no
+request key; each import creates new notes. Calls without a key are not idempotent, so the
+creation tool does not advertise `idempotentHint: true`.
+
+[src/notes/store.ts](src/notes/store.ts) owns creation and replay recording.
+
+**DEMO ONLY:** notes and replay records live in this process's memory, without eviction. They
+do not survive a restart or coordinate separate server instances. A deployed store must commit
+the mutation and replay record in one transaction, enforce uniqueness of caller, operation and
+key, and define a retention window. An expired key no longer protects a retry. External side
+effects need the upstream system's cooperation: a local record cannot make a separate network
+call atomic. The library supplies neither replay storage nor automatic retries.
+
 ## Layout
 
 ```text
@@ -102,6 +133,7 @@ test/
 | A contract with declared errors and their statuses            | `src/notes/Notes.ts`             |
 | Input fields described, for `--help` and a tool's schema      | `src/notes/Notes.ts`             |
 | Handlers getting a service once and the caller per call       | `src/notes/handlers.ts`          |
+| A write safe to retry with the same caller and request key    | `src/notes/store.ts`             |
 | A public action beside protected ones                         | `src/status/`                    |
 | Authorization from `readOnly`, refusing with a scope          | `src/identity/authorize.ts`      |
 | A token verifier and OAuth discovery read from config         | `src/identity/verifier.ts`       |

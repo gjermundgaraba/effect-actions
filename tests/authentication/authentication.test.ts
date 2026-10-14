@@ -733,23 +733,28 @@ describe("an error a descriptor declares", () => {
     await response.json(),
   ];
 
-  it("is declared on every protected endpoint, and decoded by its clients, as their type says", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionHttp.client(Http, as("down"));
+  it.effect(
+    "is declared on every protected endpoint, and decoded by its clients, as their type says",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionHttp.client(Http, as("down"));
 
-      expect(yield* Effect.flip(client.identify())).toEqual(unavailable);
-      expect(yield* client.open()).toBe("open");
+        expect(yield* Effect.flip(client.identify())).toEqual(unavailable);
+        expect(yield* client.open()).toBe("open");
 
-      expectTypeOf<Unavailable>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
-      expectTypeOf<Expired>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
-      expectTypeOf<Unavailable>().not.toExtend<Effect.Error<ReturnType<typeof client.open>>>();
+        expectTypeOf<Unavailable>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
+        expectTypeOf<Expired>().toExtend<Effect.Error<ReturnType<typeof client.identify>>>();
+        expectTypeOf<Unavailable>().not.toExtend<Effect.Error<ReturnType<typeof client.open>>>();
 
-      const document = OpenApi.fromApi(Http.api);
-      expect(Object.keys(document.paths["/api/identify"]?.post?.responses ?? {})).toEqual(
-        expect.arrayContaining(["401", "503"]),
-      );
-      expect(Object.keys(document.paths["/api/open"]?.post?.responses ?? {})).not.toContain("503");
-    }).pipe(Effect.provide(Testing.layer(routes)), Effect.runPromise));
+        const document = OpenApi.fromApi(Http.api);
+        expect(Object.keys(document.paths["/api/identify"]?.post?.responses ?? {})).toEqual(
+          expect.arrayContaining(["401", "503"]),
+        );
+        expect(Object.keys(document.paths["/api/open"]?.post?.responses ?? {})).not.toContain(
+          "503",
+        );
+      }).pipe(Effect.provide(Testing.layer(routes))),
+  );
 
   it("is sent as its status and the JSON its schema encodes, its text as it is, no-store and unchallenged, on every remote surface alike", async () => {
     const web = serve(routes);

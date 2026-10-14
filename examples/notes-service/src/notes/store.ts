@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { type Note, NoteChanged, NoteNotFound } from "./Notes.js";
+import { type Note, NoteChanged, NoteNotFound, RequestConflict } from "./Notes.js";
 
 /**
  * Where notes live, each owned by one user. Ownership is checked here, in the data access, so no
@@ -10,7 +10,12 @@ export class NoteStore extends Context.Service<
   {
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<Note>>;
     readonly get: (owner: string, id: string) => Effect.Effect<Note, NoteNotFound>;
-    readonly create: (owner: string, title: string, body: string) => Effect.Effect<Note>;
+    readonly create: (
+      owner: string,
+      title: string,
+      body: string,
+      requestId?: string,
+    ) => Effect.Effect<Note, RequestConflict>;
     /** Every note or none: a database does this in one transaction. */
     readonly createAll: (
       owner: string,
@@ -26,11 +31,13 @@ export class NoteStore extends Context.Service<
     readonly count: Effect.Effect<number>;
   }
 >()("notes-service/NoteStore") {
-  // DEMO ONLY: memory, lost when the process stops. A real store is another Layer of this
-  // service, chosen by the entrypoint.
+  // DEMO ONLY: notes and replay records live in this process's memory, without eviction.
   static readonly layerMemory = Layer.sync(NoteStore, () => {
     // One map per owner: a note is only ever looked up among its owner's, whatever id is asked.
     const notes = new Map<string, Map<string, Note>>();
+
+    // Keep the original result even after the note is updated or deleted.
+    const creations = new Map<string, Map<string, Note>>();
 
     const ownedBy = (owner: string) => notes.get(owner) ?? new Map<string, Note>();
 
@@ -51,8 +58,31 @@ export class NoteStore extends Context.Service<
     return NoteStore.of({
       list: (owner) => Effect.sync(() => Array.from(ownedBy(owner).values())),
       get,
-      create: (owner, title, body) =>
-        Effect.sync(() => save(owner, { id: crypto.randomUUID(), title, body, revision: 1 })),
+      create: Effect.fn("NoteStore.create")(function* (owner, title, body, requestId) {
+        if (requestId !== undefined) {
+          const recorded = creations.get(owner)?.get(requestId);
+
+          if (recorded !== undefined) {
+            if (recorded.title !== title || recorded.body !== body) {
+              return yield* new RequestConflict({ requestId });
+            }
+
+            return recorded;
+          }
+        }
+
+        // No yield between lookup, mutation and recording: concurrent calls cannot interleave
+        // or interruption leave a note without its result.
+        const note = save(owner, { id: crypto.randomUUID(), title, body, revision: 1 });
+
+        if (requestId !== undefined) {
+          const requests = creations.get(owner) ?? new Map<string, Note>();
+          requests.set(requestId, note);
+          creations.set(owner, requests);
+        }
+
+        return note;
+      }),
       createAll: (owner, all) =>
         Effect.sync(() =>
           all.map(({ title, body }) =>
