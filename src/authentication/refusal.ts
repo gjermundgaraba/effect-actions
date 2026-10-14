@@ -2,7 +2,7 @@ import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema } from "ef
 import { HttpServerResponse } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
-import { declared, httpApiStatusOf } from "../contract/rules.js";
+import { declared, httpApiStatusOf } from "../contract/status.js";
 
 type Declared = Action.Errors[number];
 

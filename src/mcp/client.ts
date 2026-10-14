@@ -12,7 +12,9 @@ import type { Any as Authentication, VerifierError } from "../authentication/pro
 import type * as Action from "../contract/Action.js";
 import { type Call, checked } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
-import { Anyone, assertOnce, projectedErrors } from "../contract/rules.js";
+import { Anyone } from "../contract/caller.js";
+import { projectedErrors } from "../contract/declared.js";
+import { assertOnce } from "../contract/names.js";
 import { defaultPath, httpProtocol, type Lift, liftOf, unliftedFrom } from "./protocol.js";
 
 /**

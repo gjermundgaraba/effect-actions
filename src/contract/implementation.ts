@@ -1,14 +1,9 @@
 import { Array as Arr, Cause, Context, Effect, Exit, Layer, Option, Schema } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
-import {
-  Anyone,
-  assertAuthentication,
-  assertDistinct,
-  assertOnce,
-  projectedErrors,
-  type Proving,
-} from "./rules.js";
+import { Anyone, assertAuthentication, type Proving } from "./caller.js";
+import { projectedErrors } from "./declared.js";
+import { assertDistinct, assertOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and

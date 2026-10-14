@@ -1,14 +1,8 @@
 import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
-import {
-  Anyone,
-  assertOwnTags,
-  assertKnown,
-  assertName,
-  assertOnce,
-  errorList,
-  projectedErrors,
-} from "./rules.js";
+import { Anyone } from "./caller.js";
+import { assertOwnTags, errorList, projectedErrors } from "./declared.js";
+import { assertKnown, assertName, assertOnce } from "./names.js";
 import { type Call, inputOf } from "./call.js";
 import { type BuiltIn, type BuiltIns, InvalidInput, type Refusal } from "./errors.js";
 import {
@@ -63,7 +57,7 @@ type CodecOf<S extends Codec | Fields> = S extends Codec
       : Extract<Schema.Struct<S>, Codec>
     : never;
 
-export { Anyone } from "./rules.js";
+export { Anyone } from "./caller.js";
 
 /**
  * How the action's tool presents itself over MCP, in MCP's own names; every field is optional
