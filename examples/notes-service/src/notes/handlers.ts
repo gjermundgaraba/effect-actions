@@ -23,8 +23,8 @@ export const notes = Action.implement(
           return { notes: owned.map(({ id, title }) => ({ id, title })) };
         }),
       getNote: ({ id }) => Effect.flatMap(CurrentUser, (user) => store.get(user.id, id)),
-      createNote: ({ title, body }) =>
-        Effect.flatMap(CurrentUser, (user) => store.create(user.id, title, body)),
+      createNote: ({ requestId, title, body }) =>
+        Effect.flatMap(CurrentUser, (user) => store.create(user.id, title, body, requestId)),
       updateNote: ({ id, body, revision }) =>
         Effect.flatMap(CurrentUser, (user) => store.update(user.id, id, body, revision)),
       deleteNote: ({ id }) => Effect.flatMap(CurrentUser, (user) => store.remove(user.id, id)),

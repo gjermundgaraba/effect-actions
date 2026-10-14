@@ -10,10 +10,10 @@ same schemas, handler and authorization.
 **Arriving with an error?** Search the `*-failures.md` pages for a fragment of its message
 first (step 5), before the examples and the pages.
 
-1. **Open one page per tool call, with your file-reading tool.** A page fits one read. Several
-   in one call, however many commands it runs, can be cut by its output limit, with no mark or
-   with one that understates what is lost. If an output says it was truncated, read that page
-   again alone.
+1. **Open one page per tool call, with your file-reading tool.** Pages are kept small to reduce
+   truncation. Several in one call, however many commands it runs, can be cut by its output
+   limit, with no mark or with one that understates what is lost. If an output says it was
+   truncated, read that page again alone.
 2. **Start from the example closest to what you are building** ([Examples](#examples)). Its
    README has a layout tree and a "Where to look" table naming the file for each thing. Copy its
    layout and idioms: the examples are the reference for how code is written. An example shows

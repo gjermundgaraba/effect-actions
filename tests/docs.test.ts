@@ -93,7 +93,7 @@ it.each(docsPages)("%s names no source path of the library, which does not ship"
   expect(read(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
 });
 
-it.each(docsPages)("%s fits one read of an agent's tool, which cuts a longer output", (page) => {
+it.each(docsPages)("%s stays below the 16 KB safety margin for tool-output truncation", (page) => {
   expect(Buffer.byteLength(read(page))).toBeLessThan(16_000);
 });
 

@@ -12,6 +12,14 @@ action span's final exit. Span names and attributes stay the same.
 - Migrate: adjust dashboards that treated action duration as handler time. Add a named span
   inside the handler when that measurement is needed separately. No consumer API changes.
 
+### Examples
+
+- **`notes-service` demonstrates optional write deduplication.** Pass `requestId` to `createNote`
+  (CLI: `--request-id`) and reuse it with the same content to replay the original result;
+  changed content fails with `RequestConflict`. Calls without a key create a new note each time.
+  `importNotes` shares a content schema instead of `CreateNote.input`, replacing 0.15.0's schema
+  reuse so imports exclude request metadata. No library API changes.
+
 ## 0.16.0
 
 ### Breaking changes
