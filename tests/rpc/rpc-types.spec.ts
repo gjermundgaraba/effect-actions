@@ -220,6 +220,96 @@ ActionRpc.layer(ActionRpc.make([Open], { error: Throttled }), app, { middleware:
 // @ts-expect-error -- A middleware needing a client counterpart reaches no client of the binding.
 ActionRpc.layer(Rpc, app, { middleware: [ForClient] });
 
+class Region extends Context.Service<Region, string>()("rpc-types/Region") {}
+
+class NeedsRegion extends RpcMiddleware.Service<NeedsRegion, { requires: Region }>()(
+  "rpc-types/NeedsRegion",
+) {}
+
+class GivesRegion extends RpcMiddleware.Service<GivesRegion, { provides: Region }>()(
+  "rpc-types/GivesRegion",
+) {}
+
+class Logged extends RpcMiddleware.Service<Logged>()("rpc-types/Logged") {}
+
+const outerGivesRegion = ActionRpc.layer(Rpc, app, { middleware: [NeedsRegion, GivesRegion] });
+
+expectTypeOf<OwedPerRequest<typeof outerGivesRegion>>().toEqualTypeOf<Tenant>();
+
+// @ts-expect-error -- Explicit options naming middleware require the options, which alone install it.
+ActionRpc.layer<typeof Rpc, typeof app, { readonly middleware: [typeof GivesRegion] }>(Rpc, app);
+
+const shared: ReadonlyArray<typeof NeedsRegion | typeof GivesRegion> = [NeedsRegion, GivesRegion];
+
+const unknownOrderOwesAny = ActionRpc.layer(Rpc, app, { middleware: shared });
+
+expectTypeOf<OwedPerRequest<typeof unknownOrderOwesAny>>().toEqualTypeOf<Tenant | Region>();
+
+const maybeGiven: ActionRpc.LayerOptions<[typeof NeedsRegion, typeof GivesRegion]> = {};
+
+const maybeAbsentMiddleware = ActionRpc.layer(Rpc, app, maybeGiven);
+
+expectTypeOf<OwedPerRequest<typeof maybeAbsentMiddleware>>().toEqualTypeOf<Tenant | Region>();
+
+declare const regional: boolean;
+
+const conditionallyGiven = ActionRpc.layer(
+  Rpc,
+  app,
+  regional ? { middleware: [NeedsRegion, GivesRegion] } : {},
+);
+
+expectTypeOf<OwedPerRequest<typeof conditionallyGiven>>().toEqualTypeOf<Tenant | Region>();
+
+expectTypeOf<GivesRegion>().toExtend<Layer.Services<typeof conditionallyGiven>>();
+
+const slotOfSeveralProvidesNothing = ActionRpc.layer(Rpc, app, {
+  middleware: [NeedsRegion, regional ? GivesRegion : Logged],
+});
+
+expectTypeOf<OwedPerRequest<typeof slotOfSeveralProvidesNothing>>().toEqualTypeOf<
+  Tenant | Region
+>();
+
+const maybeAbsentErrors: ActionRpc.Options<readonly [typeof Throttled]> & {
+  readonly authentication: typeof Login;
+} = { authentication: Login };
+
+const Unsure = ActionRpc.make([Get], maybeAbsentErrors);
+
+expectTypeOf(Unsure.error).toEqualTypeOf<readonly [typeof Throttled] | []>();
+
+// @ts-expect-error -- Options that may leave `errors` out may declare none, so the error is undeclared.
+ActionRpc.layer(Unsure, app, { middleware: [ThrottlingLimit] });
+
+const unsized: Array<typeof Throttled> = [];
+
+const either: readonly [typeof Throttled | typeof Unavailable] = [Unavailable];
+
+const extra: ReadonlyArray<typeof Unavailable> = [];
+
+const Unsized = ActionRpc.make([Get], { authentication: Login, error: unsized });
+
+const Either = ActionRpc.make([Get], { authentication: Login, error: either });
+
+const Variadic = ActionRpc.make([Get], { authentication: Login, error: [Throttled, ...extra] });
+
+// @ts-expect-error -- Not surely declared by this binding.
+ActionRpc.layer(Unsized, app, { middleware: [ThrottlingLimit] });
+
+// @ts-expect-error -- Not surely declared by this binding.
+ActionRpc.layer(Either, app, { middleware: [ThrottlingLimit] });
+
+// @ts-expect-error -- Not surely declared by this binding.
+ActionRpc.layer(Variadic, app, { middleware: [ThrottlingLimit] });
+
+class BuiltInFailingAllowlist extends RpcMiddleware.Service<BuiltInFailingAllowlist>()(
+  "rpc-types/Allowlist",
+  { error: Action.Forbidden },
+) {}
+
+ActionRpc.layer(Rpc, app, { middleware: [BuiltInFailingAllowlist] });
+
 export const fullyProvidedOverHostProtocol = ActionRpc.layer(Rpc, app, {
   middleware: [ResolveTenant],
 }).pipe(
