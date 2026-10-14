@@ -31,7 +31,6 @@ it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the na
       websiteUrl: "https://example.com",
       icons: [{ src: "https://example.com/icon.png" }],
       extensions: { "io.example/extension": {} },
-      allowSubscriptions: false,
     }),
   );
 
@@ -54,15 +53,6 @@ it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the na
     },
   });
 
-  const listened = await web.handler(
-    mcpRequest({
-      method: "subscriptions/listen",
-      params: { notifications: { toolsListChanged: true } },
-    }),
-  );
-
-  expect(await listened.text()).toContain('"error":{"code":-32601');
-
   for (const protocolVersion of ["2025-11-25", "2025-06-18"]) {
     const initialized = await web.handler(
       sessionRequest({ method: "initialize", params: { ...initializeParams, protocolVersion } }),
@@ -83,6 +73,70 @@ it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the na
   );
 
   expect(await tooOld.json()).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
+});
+
+describe("2026-07-28 subscriptions", () => {
+  const ping = Action.implement(
+    Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+      input: {},
+      success: Schema.Literal("pong"),
+    }),
+    () => Effect.succeed("pong" as const),
+  );
+
+  const readme = McpServer.resource({
+    uri: "docs://readme",
+    name: "README",
+    content: Effect.succeed("#"),
+  });
+
+  const discover = (web: ReturnType<typeof serve>) =>
+    web.handler(mcpRequest({ method: "server/discover" })).then((response) => response.json());
+
+  it("are off on an endpoint of actions alone, whose tools never change", async () => {
+    const web = serve(ActionMcp.layerHttp(ping, { name: "actions", version: "0" }));
+
+    expect(await discover(web)).toMatchObject({
+      result: { capabilities: { tools: { listChanged: false } } },
+    });
+
+    const listened = await web.handler(
+      mcpRequest({
+        method: "subscriptions/listen",
+        params: { notifications: { toolsListChanged: true } },
+      }),
+    );
+
+    expect(await listened.text()).toContain('"error":{"code":-32601');
+  });
+
+  it("are on with features, whose resources may update, as Effect's default", async () => {
+    const web = serve(
+      ActionMcp.layerHttp(ping, { name: "features", version: "0", features: readme }),
+    );
+
+    expect(await discover(web)).toMatchObject({
+      result: {
+        capabilities: {
+          tools: { listChanged: true },
+          resources: { listChanged: true, subscribe: true },
+        },
+      },
+    });
+  });
+
+  it("are on without features where allowSubscriptions is true", async () => {
+    const web = serve(
+      ActionMcp.layerHttp(ping, { name: "allowed", version: "0", allowSubscriptions: true }),
+    );
+
+    expect(await discover(web)).toMatchObject({
+      result: { capabilities: { tools: { listChanged: true } } },
+    });
+  });
 });
 
 it("keeps a session of a 2025 revision until its client ends it", async () => {
