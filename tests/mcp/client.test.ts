@@ -296,9 +296,18 @@ describe("client", () => {
           ),
         );
 
-        expect(failures).toEqual([
-          [unavailable, expect.any(ActionMcp.McpCallError)],
-          expect.any(ActionMcp.McpCallError),
+        const undeclared = {
+          _tag: "McpCallError",
+          reason: {
+            _tag: "StatusError",
+            status: 503,
+            body: JSON.stringify(Schema.encodeSync(Unavailable)(unavailable)),
+          },
+        };
+
+        expect(failures).toMatchObject([
+          [unavailable, { ...undeclared, tool: "status" }],
+          { ...undeclared, tool: "whoAmI" },
         ]);
       }),
   );
@@ -354,17 +363,41 @@ describe("client", () => {
         ),
       );
 
-      expect([...failures, ...nonMcpAnswers].map((failure) => failure._tag)).toEqual(
-        Array(5).fill("McpCallError"),
+      expect([...failures, ...nonMcpAnswers]).toMatchObject([
+        {
+          _tag: "McpCallError",
+          tool: "getUser",
+          reason: { _tag: "UndeclaredError" },
+        },
+        {
+          tool: "missing_tool",
+          reason: { _tag: "ProtocolError", code: -32602 },
+        },
+        { tool: "missing_tool", reason: { _tag: "StatusError", status: 404 } },
+        { tool: "missing_tool", reason: { _tag: "NoReply", body: "not json" } },
+        {
+          tool: "missing_tool",
+          reason: {
+            _tag: "NoStructuredContent",
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [] } }),
+          },
+        },
+      ]);
+
+      expect(String(failures[0])).toContain("Invalid parameters for tool 'getUser'");
+
+      expect(String(nonMcpAnswers[0])).toContain(
+        'MCP tools/call "missing_tool" had no reply: not json',
       );
 
-      expect([...failures, ...nonMcpAnswers].map(String)).toEqual([
-        expect.stringContaining("Invalid parameters for tool 'getUser'"),
-        expect.stringContaining('MCP tools/call "missing_tool" failed with'),
-        expect.stringContaining('MCP tools/call "missing_tool" answered 404'),
-        expect.stringContaining('MCP tools/call "missing_tool" had no reply: not json'),
-        expect.stringContaining('MCP tools/call "missing_tool" returned no structured content'),
-      ]);
+      const status = yield* callMissingAt("/nowhere").pipe(
+        Effect.flip,
+        Effect.flatMap(Effect.fail),
+        Effect.catchReason("McpCallError", "StatusError", ({ status }) => Effect.succeed(status)),
+        againstHost,
+      );
+
+      expect(status).toBe(404);
     }),
   );
 

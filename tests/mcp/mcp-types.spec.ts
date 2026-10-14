@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Schema, type Stdio } from "effect";
+import { Cause, Context, Effect, Layer, Schema, type Stdio, type Types } from "effect";
 import { type McpSchema, McpServer } from "effect/ai";
 import type { HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
@@ -166,3 +166,7 @@ expectTypeOf<
     >
   >
 >().toBeUnknown();
+
+expectTypeOf<Types.ReasonTags<ActionMcp.McpCallError>>().toEqualTypeOf<
+  "StatusError" | "ProtocolError" | "NoReply" | "UndeclaredError" | "NoStructuredContent"
+>();

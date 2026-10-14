@@ -1,4 +1,4 @@
-import { Effect, identity, Option, Predicate, Schema } from "effect";
+import { Effect, identity, Match, Option, Predicate, Schema } from "effect";
 import {
   type Headers,
   HttpClient,
@@ -92,16 +92,65 @@ export interface RequestOptions {
   readonly headers?: Headers.Input;
 }
 
+/** The endpoint answered with an HTTP status other than 200, and a body no declared error decodes. */
+class StatusError extends Schema.TaggedError<StatusError>()("StatusError", {
+  status: Schema.Int,
+  body: Schema.String,
+}) {}
+
 /**
- * An answer a client method cannot read as the action's success or a declared error, such as
- * the native server's message for invalid arguments or an unknown tool, or a result without
- * its structured content. Its message holds the answer. Structured content that does not
- * decode as the success is a `SchemaError` instead, and a request that fails an
- * `HttpClientError`.
+ * The endpoint answered with a JSON-RPC error, such as the native server's for invalid arguments
+ * or an unknown tool.
  */
-export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
+class ProtocolError extends Schema.TaggedError<ProtocolError>()("ProtocolError", {
+  code: Schema.Finite,
   message: Schema.String,
 }) {}
+
+/** The endpoint answered 200 without a JSON-RPC reply to read, as JSON or as an event stream. */
+class NoReply extends Schema.TaggedError<NoReply>()("NoReply", { body: Schema.String }) {}
+
+/** The tool returned an error whose text decodes as none of the action's declared errors. */
+class UndeclaredError extends Schema.TaggedError<UndeclaredError>()("UndeclaredError", {
+  text: Schema.String,
+}) {}
+
+/** The tool returned a result without the structured content its action's success needs. */
+class NoStructuredContent extends Schema.TaggedError<NoStructuredContent>()("NoStructuredContent", {
+  body: Schema.String,
+}) {}
+
+const Reason = Schema.Union([
+  StatusError,
+  ProtocolError,
+  NoReply,
+  UndeclaredError,
+  NoStructuredContent,
+]);
+
+const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
+  StatusError: ({ status, body }) => `answered ${status}: ${body}`,
+  ProtocolError: ({ code, message }) => `failed with ${code}: ${message}`,
+  NoReply: ({ body }) => `had no reply: ${body}`,
+  UndeclaredError: ({ text }) => `returned an error: ${text}`,
+  NoStructuredContent: ({ body }) => `returned no structured content: ${body}`,
+});
+
+/**
+ * An answer a client method cannot read as the action's success or a declared error: `reason`
+ * says which, with what the endpoint sent, so a caller branches on it with
+ * `Effect.catchReason("McpCallError", "StatusError", ...)`. `message` names the tool and the
+ * reason. Structured content that does not decode as the success is a `SchemaError` instead,
+ * and a request that fails an `HttpClientError`.
+ */
+export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
+  tool: Schema.String,
+  reason: Reason,
+  message: Schema.String,
+}) {}
+
+const callError = (tool: string, reason: (typeof Reason)["Type"]): McpCallError =>
+  new McpCallError({ tool, reason, message: `MCP tools/call "${tool}" ${sentenceOf(reason)}` });
 
 type CallError<A extends Action.Any, D> =
   | A["error"][number]["Type"]
@@ -165,9 +214,6 @@ const callTool = (
 ): Effect.Effect<unknown, unknown> => {
   const { name } = action;
 
-  const other = (answer: string) =>
-    new McpCallError({ message: `MCP tools/call "${name}" ${answer}` });
-
   return Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
@@ -178,17 +224,21 @@ const callTool = (
     const text = yield* response.text;
 
     if (response.status !== 200) {
-      return yield* failWith(refusedWith, text, other(`answered ${response.status}: ${text}`));
+      return yield* failWith(
+        refusedWith,
+        text,
+        callError(name, new StatusError({ status: response.status, body: text })),
+      );
     }
 
     const reply = replyOf(response, text);
 
-    if (Option.isNone(reply)) return yield* Effect.fail(other(`had no reply: ${text}`));
+    if (Option.isNone(reply)) {
+      return yield* Effect.fail(callError(name, new NoReply({ body: text })));
+    }
 
     if ("error" in reply.value) {
-      const { code, message } = reply.value.error;
-
-      return yield* Effect.fail(other(`failed with ${code}: ${message}`));
+      return yield* Effect.fail(callError(name, new ProtocolError(reply.value.error)));
     }
 
     const { result } = reply.value;
@@ -196,11 +246,15 @@ const callTool = (
     if (result.isError === true) {
       const error = textOf(result.content.find((block) => block.type === "text")) ?? "";
 
-      return yield* failWith(projectedErrors(action), error, other(`returned an error: ${error}`));
+      return yield* failWith(
+        projectedErrors(action),
+        error,
+        callError(name, new UndeclaredError({ text: error })),
+      );
     }
 
     if (result.structuredContent === undefined && lift.rest !== undefined) {
-      return yield* Effect.fail(other(`returned no structured content: ${text}`));
+      return yield* Effect.fail(callError(name, new NoStructuredContent({ body: text })));
     }
 
     return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(action.success))(
