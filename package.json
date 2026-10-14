@@ -1,6 +1,6 @@
 {
   "name": "@gjermundgaraba/effect-actions",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Define Effect action contracts once and project them onto HTTP, MCP, Effect RPC, native Toolkits, and CLIs.",
   "keywords": [
     "ai-agents",
