@@ -26,13 +26,10 @@ import {
   type Required as RequiredAuthentication,
   type ServerBuildServices,
 } from "../authentication/provider.js";
-import {
-  Anyone,
-  assertAuthentication,
-  assertOnce,
-  hintsOf,
-  projectedErrors,
-} from "../contract/rules.js";
+import { Anyone, assertAuthentication } from "../contract/caller.js";
+import { projectedErrors } from "../contract/declared.js";
+import { hintsOf } from "../contract/hints.js";
+import { assertOnce } from "../contract/names.js";
 import { inputParseOptions } from "../contract/call.js";
 import {
   defaultPath,

@@ -23,7 +23,7 @@ import {
   type VerifierFailure,
 } from "./provider.js";
 import type { Errors } from "../contract/Action.js";
-import { assertOwnTags, errorList, type ErrorsOf } from "../contract/rules.js";
+import { assertOwnTags, errorList, type ErrorsOf } from "../contract/declared.js";
 import { type Refusal, scopeToken, Unauthenticated } from "../contract/errors.js";
 import type { Known, OptionalUnless } from "../contract/implementation.js";
 import {

@@ -23,13 +23,8 @@ import {
   RpcServer,
 } from "effect/rpc";
 import type * as Action from "../contract/Action.js";
-import {
-  Anyone,
-  type Certain,
-  type ErrorsOf,
-  bindingErrors,
-  bindingOf,
-} from "../contract/rules.js";
+import { Anyone } from "../contract/caller.js";
+import { type Certain, type ErrorsOf, bindingErrors, bindingOf } from "../contract/declared.js";
 import {
   type Any as Authentication,
   type Credential,

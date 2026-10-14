@@ -2,7 +2,7 @@ import { type Context, Effect, Option } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
-import type { Anyone } from "../contract/rules.js";
+import type { Anyone } from "../contract/caller.js";
 import type {
   BuildServices,
   Protected,

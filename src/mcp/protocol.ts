@@ -4,7 +4,7 @@ import { Base64 } from "effect/encoding";
 import type * as Action from "../contract/Action.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import { isMarked, type Kind, kindOf, Media } from "../contract/media.js";
-import { unsuspended } from "../contract/rules.js";
+import { unsuspended } from "../contract/ast.js";
 
 // Why: The stateless revision is the one a request written without a handshake speaks, as
 // `request` writes it, and the one whose routing headers the runtime checks against the

@@ -13,7 +13,8 @@ import {
 } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../contract/Action.js";
-import { assertDistinct, literalValues, members, unsuspended } from "../contract/rules.js";
+import { literalValues, members, unsuspended } from "../contract/ast.js";
+import { assertDistinct } from "../contract/names.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";

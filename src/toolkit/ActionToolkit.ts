@@ -2,7 +2,9 @@ import { type Context, Effect, type Layer, Schema } from "effect";
 import { type Prompt, Tool, Toolkit } from "effect/ai";
 import type * as Action from "../contract/Action.js";
 import type { BuiltIns } from "../contract/errors.js";
-import { assertOnce, hintsOf, projectedErrors } from "../contract/rules.js";
+import { projectedErrors } from "../contract/declared.js";
+import { hintsOf } from "../contract/hints.js";
+import { assertOnce } from "../contract/names.js";
 import {
   acquire,
   type ActionOf,

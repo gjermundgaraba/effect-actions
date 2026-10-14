@@ -33,15 +33,15 @@ import {
   type ServerBuildServices,
   type VerifierError,
 } from "../authentication/provider.js";
+import { Anyone } from "../contract/caller.js";
 import {
-  Anyone,
   type Certain,
   type ErrorsOf,
   projectedErrors,
   bindingErrors,
   bindingOf,
-  declared,
-} from "../contract/rules.js";
+} from "../contract/declared.js";
+import { declared } from "../contract/status.js";
 import { type ErasedMethod, inputParseOptions } from "../contract/call.js";
 import { type AnyHttp, type Client, methods, type Options as ClientOptions } from "./client.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
