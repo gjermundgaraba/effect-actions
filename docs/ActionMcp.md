@@ -25,22 +25,22 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 
 `implementations` is one implementation or a list.
 
-| Option                               | Meaning                                                    |
-| ------------------------------------ | ---------------------------------------------------------- |
-| `name`, `version`                    | Required server information.                               |
-| `description`, `websiteUrl`, `icons` | Optional server information.                               |
-| `instructions`                       | Optional text for the model about the server as a whole.   |
-| `extensions`                         | Optional native capability extensions.                     |
-| `actions`                            | The implementations' actions that are tools; default all.  |
-| `features`                           | One Layer of native resources, prompts and tools to serve. |
-| `path`                               | HTTP only: the endpoint's path; defaults to `/mcp`.        |
-| `allowedOrigins`                     | HTTP only: the exact origins allowed; none by default.     |
-| `allowSubscriptions`                 | HTTP only: `false` turns off 2026-07-28 subscriptions.     |
-| `requestScoped`                      | HTTP only: `true` runs a server per request.               |
-| `authentication`                     | HTTP only: the protected tools' authentication descriptor. |
+| Option                               | Meaning                                                     |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `name`, `version`                    | Required server information.                                |
+| `description`, `websiteUrl`, `icons` | Optional server information.                                |
+| `instructions`                       | Optional text for the model about the server as a whole.    |
+| `extensions`                         | Optional native capability extensions.                      |
+| `actions`                            | The implementations' actions that are tools; default all.   |
+| `features`                           | One Layer of native resources, prompts and tools to serve.  |
+| `path`                               | HTTP only: the endpoint's path; defaults to `/mcp`.         |
+| `allowedOrigins`                     | HTTP only: the exact origins allowed; none by default.      |
+| `allowSubscriptions`                 | HTTP only: 2026-07-28 subscriptions; default if `features`. |
+| `requestScoped`                      | HTTP only: `true` runs a server per request.                |
+| `authentication`                     | HTTP only: the protected tools' authentication descriptor.  |
 
 All but `actions`, `features`, `authentication` and `requestScoped` are Effect's own `McpServer`
-options, passed through. Its `protocols` and `allowSessionTermination` are not options.
+options. Its `protocols` and `allowSessionTermination` are not options.
 
 `client` takes `url`, default `/mcp`, `transformClient`, and the endpoint's `authentication`, so an
 error its verifier declares decodes; `request` takes `url` and `headers`.

@@ -94,9 +94,9 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
 }
 
 /**
- * One Streamable HTTP MCP endpoint: `Options`, every native `McpServer.layerHttp` option,
- * `allowedOrigins` among them, except `protocols` and `allowSessionTermination`, which are fixed,
- * with `path` defaulting to `/mcp`, and `requestScoped`.
+ * One Streamable HTTP MCP endpoint: `Options`, `authentication`, `requestScoped`, and every native
+ * `McpServer.layerHttp` option, `allowedOrigins` among them, except `protocols` and
+ * `allowSessionTermination`, which are fixed.
  */
 export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
   extends
@@ -108,6 +108,13 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
   readonly authentication?: Authentication;
+  /**
+   * Whether MCP 2026-07-28 clients may subscribe, holding a stream open for list changes and
+   * resource updates. Defaults to whether `features` are given: an endpoint of actions alone
+   * registers its tools once, before any client connects, and serves no resource. Pass `true`
+   * where a handler changes the server through `McpServer.McpServer`.
+   */
+  readonly allowSubscriptions?: boolean | undefined;
   /**
    * `true` runs a server per request, as Effect's `McpServer.layerHttpRequestScoped` does, for a
    * host such as Cloudflare Workers where nothing may outlive a request. It speaks MCP 2026-07-28
@@ -494,6 +501,7 @@ export function layerHttp(
     path = defaultPath,
     authentication,
     requestScoped,
+    allowSubscriptions = features !== undefined,
     ...options
   }: LayerHttpOptions<unknown, unknown>,
 ) {
@@ -505,7 +513,13 @@ export function layerHttp(
     selected,
     requestScoped === true
       ? McpServer.layerHttpRequestScoped({ ...options, path, protocols: [httpProtocol] })
-      : McpServer.layerHttp({ ...options, path, protocols, allowSessionTermination: true }),
+      : McpServer.layerHttp({
+          ...options,
+          path,
+          protocols,
+          allowSessionTermination: true,
+          allowSubscriptions,
+        }),
     features,
     authentication,
   );

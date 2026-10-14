@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**An MCP endpoint over HTTP serving actions alone has no 2026-07-28 subscriptions**:
+`ActionMcp.layerHttp`'s `allowSubscriptions` defaults to whether `features` are given, where it
+was Effect's `true`. Discovery advertises `listChanged: false` and `subscriptions/listen` answers
+Method not found, where a subscriber held a stream open for changes such an endpoint makes only
+where a handler changes the server: it registers its actions' tools once, before any client
+connects, and serves no resource. An endpoint with `features` keeps Effect's subscriptions,
+resource updates included. A 2025 revision's session is unchanged, as Effect applies the option
+to 2026-07-28 alone, and so is `runStdio`, as `McpServer.layerStdio` has no such option.
+
+- Migrate: drop `allowSubscriptions: false` from an endpoint without `features`, where it is now
+  the default; keep it on one with `features` to keep subscriptions off. Pass `true` where a
+  handler changes the server through `McpServer.McpServer`.
+
 ## 0.15.0
 
 ### Breaking changes
