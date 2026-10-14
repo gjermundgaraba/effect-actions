@@ -140,7 +140,7 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
   field's `description`, annotated before the check: after a custom one it is lost too.
 - A declared error reaches the model as an `isError` result whose text is the error's JSON. Write
   its `message` for the model, which acts on it:
-  [mcp-tools/src/printers/farm.ts](../examples/mcp-tools/src/printers/farm.ts). Every other case:
+  [mcp-tools/src/platform/print-farm.ts](../examples/mcp-tools/src/platform/print-farm.ts). Every other case:
   [guarantees.md](guarantees.md#wire-behavior).
 - `actions` lists the tools, and only listed actions must suit MCP:
   [kitchen-sink/src/Actions.ts](../examples/kitchen-sink/src/Actions.ts). Leave out an action a

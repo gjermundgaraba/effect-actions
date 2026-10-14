@@ -1,10 +1,10 @@
 import { Buffer } from "node:buffer";
 import { Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import type { Printer } from "./Printers.js";
+import type { Printer } from "../printers/Printers.js";
 
 // DEMO ONLY: the farm's HTTP API answered in memory, so the example and its tests run without
-// a farm. It is an `HttpClient`, so `PrintFarm.layer` sends it the requests it would send over
+// a farm. It is an `HttpClient`, so `printFarm` sends it the requests it would send over
 // the network. A real application has no such file: its entrypoints provide a real client,
 // `FetchHttpClient.layer` from `effect/http`.
 

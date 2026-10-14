@@ -5,7 +5,7 @@ import type { Member } from "./identity/Identity.js";
 import { members } from "./identity/members.js";
 import { Permissions } from "./identity/permissions.js";
 import { scripted } from "./scripted.js";
-import { TaskStore } from "./tasks/store.js";
+import { tasksFile } from "./platform/tasks-file.js";
 import { actingFor, layer, toolkit } from "./toolkit.js";
 
 // Entrypoint: `node --import tsx examples/assistant/src/agent.ts`.
@@ -86,7 +86,7 @@ conversations.pipe(
   // that provider's client, in place of the scripted one. Nothing below this line changes.
   Effect.provide(model),
   // Startup services only: where tasks and permissions are kept. Never a caller.
-  Effect.provide(layer.pipe(Layer.provide([TaskStore.layerFile, Permissions.layerMemory]))),
+  Effect.provide(layer.pipe(Layer.provide([tasksFile, Permissions.layerMemory]))),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,
 );

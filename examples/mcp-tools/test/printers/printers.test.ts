@@ -8,8 +8,8 @@ import {
 } from "effect/http";
 import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { fakeFarm } from "../../src/printers/fake.js";
-import { PrintFarm } from "../../src/printers/farm.js";
+import { fakeFarm } from "../../src/platform/fake-farm.js";
+import { printFarm } from "../../src/platform/print-farm.js";
 import { printers } from "../../src/printers/handlers.js";
 import { PrintFarmError } from "../../src/printers/Printers.js";
 
@@ -19,7 +19,7 @@ import { PrintFarmError } from "../../src/printers/Printers.js";
 // The real `PrintFarm` over an upstream of the test's: its requests, its sign-in and its error
 // mapping all run, and only the network is replaced. Its settings come from a Layer too.
 const farmOver = (upstream: Layer.Layer<HttpClient.HttpClient>) =>
-  PrintFarm.layer.pipe(
+  printFarm.pipe(
     Layer.provide(upstream),
     Layer.provide(
       ConfigProvider.layer(

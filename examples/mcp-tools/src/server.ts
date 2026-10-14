@@ -2,8 +2,8 @@ import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { ByteSize, Config, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
-import { fakeFarm } from "./printers/fake.js";
-import { PrintFarm } from "./printers/farm.js";
+import { fakeFarm } from "./platform/fake-farm.js";
+import { printFarm } from "./platform/print-farm.js";
 import { routes } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/mcp-tools/src/server.ts`, with FARM_URL, FARM_USER
@@ -22,8 +22,8 @@ const server = Layer.unwrap(
       // short fields, so anything larger is not one.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.kibibytes(64))),
       // DEMO ONLY: `fakeFarm` answers the farm's API in memory. A real server provides
-      // `FetchHttpClient.layer` in its place, and `PrintFarm.layer` calls the farm at FARM_URL.
-      Layer.provide(PrintFarm.layer.pipe(Layer.provide(fakeFarm))),
+      // `FetchHttpClient.layer` in its place, and `printFarm` calls the farm at FARM_URL.
+      Layer.provide(printFarm.pipe(Layer.provide(fakeFarm))),
     );
   }),
 );

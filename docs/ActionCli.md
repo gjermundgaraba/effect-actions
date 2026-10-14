@@ -47,7 +47,7 @@ Pass implementations to `make`, and provide the services and the caller on the c
 
 ```ts
 const assistant = ActionCli.make([tasks, identity], { name: "assistant" }).pipe(
-  Command.provide(Layer.mergeAll(TaskStore.layerFile, Permissions.layerMemory)),
+  Command.provide(Layer.mergeAll(tasksFile, Permissions.layerMemory)),
   Command.provideSync(CurrentCaller, operator),
 );
 ```

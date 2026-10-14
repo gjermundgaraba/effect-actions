@@ -38,22 +38,30 @@ the parts of it that it needs:
 ├── src/
 │   ├── <domain>/
 │   │   ├── <Domain>.ts    the contract: schemas, errors, actions
-│   │   ├── <service>.ts   a service and its Layer
+│   │   ├── <service>.ts   a service, its constructor and any in-memory Layer
 │   │   └── handlers.ts    the implementation: contract to service
+│   ├── platform/          a service's Layer over a database, a file or an upstream API
 │   ├── Api.ts, Rpc.ts     the bindings, where a surface has one
 │   ├── routes.ts          the host's remote surfaces as Layers, where it serves any
 │   └── server.ts …        one entrypoint per way of running it
 └── test/
     ├── <domain>/          what the domain does
+    ├── platform/          an adapter, against a stand-in for what it reaches
     └── routes.test.ts     what the surfaces add, called in memory
 ```
 
 - **Folders are domains, not mechanisms.** Everything about notes is in `notes/`; there is no
-  `contracts/`, `handlers/` or `tools/` folder.
+  `contracts/`, `handlers/` or `tools/` folder. `platform/`, the adapters, is the one exception.
 - **The PascalCase file in a domain is its contract.** It imports no server code, so a browser
   or a CLI can import it. Lowercase files beside it run on the server, each named for its role
   (`handlers.ts`, `store.ts`), never for the domain: `notes.ts` beside `Notes.ts` is one file on
   a disk that ignores case.
+- **Technology stays out of domains.** A domain's service declares what its handlers need; a
+  Layer that reaches a file system, a database or another service's API is an adapter, in
+  `platform/`, named for what it reaches (`tasks-file.ts`, `print-farm.ts`), and turns that
+  technology's failures into the domain's declared errors, or into defects where no caller can
+  act on them. A Layer in memory, which reaches
+  nothing, stays beside its service.
 - **An entrypoint is where implementations are chosen**: which store, which platform, and on a
   local surface which caller. Nothing below it knows what it got, so a test chooses its own.
 - **Tests mirror the source.** A domain's tests sit in `test/<domain>/`, most calling its
