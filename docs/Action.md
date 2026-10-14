@@ -158,10 +158,24 @@ and the whole builder above [notes-service/src/notes/handlers.ts](../examples/no
 - **Pass the builder to `implement` itself.** Through `.pipe(...)` or a wrapper such as
   `Effect.withSpan(builder, name)`, an `Effect.fn` handler it returns takes an `any` input. A
   builder written apart returns its record `satisfies Action.Handlers<typeof actions>`.
-- **Leave a handler's `Effect.fn` unnamed**: each handler already runs in a span named after its
-  action, and its log lines carry `action.name` and `action.read_only`.
+- **Leave a handler's `Effect.fn` unnamed** unless you need handler-only timing: each action
+  already has a span ([Observe calls](#observe-calls)).
 - **Calling the function you passed to `implement` skips authorization.** Call the
   implementation through [`Action.client`](Action-in-process.md#call-actions-in-process).
+
+## Observe calls
+
+The span named after an action includes authorization, handler execution and call cleanup.
+Its exit reflects the final dispatch outcome; the span and its logs carry `action.name` and
+`action.read_only`.
+
+Transport credential verification, input decoding and response encoding run outside this span.
+A request rejected by verification or decoding has no action span; response encoding can fail
+after the action span succeeds.
+
+Add a named handler span to measure handler time alone. The named authorizer in
+[notes-service/src/identity/authorize.ts](../examples/notes-service/src/identity/authorize.ts)
+similarly measures authorization as a child of the action span.
 
 ## Authorize calls
 

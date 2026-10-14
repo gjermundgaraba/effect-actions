@@ -21,7 +21,32 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 const probe = join(root, "tools/oxlint/tests", `probe-${process.pid}-${Date.now()}`);
 
+const tagAssertions = [
+  "import { assert, expect } from '@effect/vitest';",
+  "import type { Tracer } from 'effect';",
+  "",
+  "export const check = (status: Tracer.SpanStatus) => {",
+  "  assert(status._tag === 'Ended');",
+  "  expect(status).toMatchObject({ _tag: 'Ended' });",
+  "",
+  "  return status.exit;",
+  "};",
+  "",
+].join("\n");
+
 const cases = [
+  {
+    name: "allows tag assertions in runtime and type tests while retaining the rules elsewhere",
+    files: {
+      "tags.test.ts": tagAssertions,
+      "tags.spec.ts": tagAssertions,
+      "tags.ts": tagAssertions,
+    },
+    findings: [
+      "tags.ts: anti-slop-effect(no-manual-tag-comparison)",
+      "tags.ts: anti-slop-effect(no-manual-tagged-construction)",
+    ],
+  },
   {
     name: "enforces unknown parameters regardless of their name",
     files: {

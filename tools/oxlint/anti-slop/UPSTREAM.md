@@ -42,6 +42,11 @@ without answering its reason.
 - `anti-slop-effect/no-service-constructor-imports`: a `make[A-Z]` name cannot establish that an
   import is a dependency-bearing service constructor, and a namespace import bypasses it, which
   rewards the import change the policy calls laundering.
+- `anti-slop-effect/no-manual-tag-comparison` and `no-manual-tagged-construction` are off in
+  `*.test.ts` and `*.spec.ts`: expected `_tag` literals describe observations, and direct tag
+  assertions use TypeScript's native narrowing. Requiring production constructors for expected
+  values can couple an oracle to the code it checks. Type-aware safety rules still apply, and
+  both tag rules remain enabled outside test files. Configuration probes cover that boundary.
 
 ## Local rule corrections
 

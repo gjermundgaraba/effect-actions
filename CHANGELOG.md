@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**Action spans measure shared dispatch, including authorization and cleanup.** This reverses
+the handler-only boundary: authorizer spans are now children of the action span, and their logs
+carry the action attributes. Refusals, validated failures and cleanup defects appear in the
+action span's final exit. Span names and attributes stay the same.
+
+- Migrate: adjust dashboards that treated action duration as handler time. Add a named span
+  inside the handler when that measurement is needed separately. No consumer API changes.
+
 ## 0.16.0
 
 ### Breaking changes

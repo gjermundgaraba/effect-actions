@@ -1,5 +1,16 @@
-import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Logger, Option, References, Schema, Stream, Tracer } from "effect";
+import { assert, describe, expect, it } from "@effect/vitest";
+import {
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Logger,
+  Option,
+  References,
+  Schema,
+  Stream,
+  Tracer,
+} from "effect";
 import { NodeHttpServer } from "@effect/platform-node";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
@@ -14,8 +25,17 @@ import { authenticate } from "../support/app/authentication.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { withMcpClient } from "../support/mcp-client.js";
-import { as, mcpRequest, post, rawToolCall, send, withBearer } from "../support/requests.js";
+import {
+  as,
+  mcpRequest,
+  post,
+  rawToolCall,
+  send,
+  toolReplyOf,
+  withBearer,
+} from "../support/requests.js";
 import { serve, serveWithContext } from "../support/serve.js";
+import { recordSpans } from "../support/tracing.js";
 
 class Actor extends Context.Service<Actor, string>()("bindings/Actor") {}
 
@@ -727,28 +747,16 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
     name: "identity" | "guarded" = "identity",
     authorize: Action.Authorize<typeof Guarded> = Action.allowAll,
   ) => {
-    const logs: unknown[] = [];
-    const annotations: Array<ReadonlyMap<string, unknown>> = [];
-    const parents = new Map<string, string | undefined>();
-    const spans = new Map<string, Tracer.Span>();
+    const logs: Array<{ message: unknown; annotations: ReadonlyMap<string, unknown> }> = [];
+    const { spans, tracer } = recordSpans();
 
     const logger = Logger.make((options) => {
-      logs.push(options.message);
-      annotations.push(
-        new Map(Object.entries(options.fiber.getRef(References.CurrentLogAnnotations))),
-      );
-    });
-
-    const tracer = Tracer.make({
-      span(options) {
-        const parent = Option.getOrUndefined(options.parent);
-
-        parents.set(options.name, parent?._tag === "Span" ? parent.name : undefined);
-        const span = Tracer.nativeTracer.span(options);
-        spans.set(options.name, span);
-
-        return span;
-      },
+      logs.push({
+        message: options.message,
+        annotations: new Map(
+          Object.entries(options.fiber.getRef(References.CurrentLogAnnotations)),
+        ),
+      });
     });
 
     const app = Action.implement(
@@ -779,48 +787,138 @@ describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (tran
         {
           fetch: (request) => web.handler(withBearer(request, "alice"), context),
         },
-        (client) => client.callTool({ name, arguments: {} }).catch(() => undefined),
+        (client) => client.callTool({ name, arguments: {} }),
       );
     }
 
-    return { logs, annotations, parents, spans };
+    return { logs, spans };
   };
 
   it("runs the handler in an action span under the request span", async () => {
-    const { logs, annotations, parents, spans } = await run(() =>
+    const { logs, spans } = await run(() =>
       Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
     );
 
-    expect(logs).toContainEqual(["handler ran"]);
-    expect(parents.get("action.identity")).toBe("identity");
-    expect(parents.get("identity")).toMatch(requestSpan);
+    const action = spans.get("identity");
+    const child = spans.get("action.identity");
+    assert(action && child);
+
+    expect(Option.getOrUndefined(child.parent)).toBe(action);
+
+    const parent = Option.getOrUndefined(action.parent);
+    assert(parent?._tag === "Span");
+    expect(parent.name).toMatch(requestSpan);
 
     const identity = new Map<string, unknown>([
       ["action.name", "identity"],
       ["action.read_only", false],
     ]);
 
-    expect(spans.get("identity")?.attributes).toEqual(identity);
-    expect(annotations).toContainEqual(identity);
+    expect(action.attributes).toEqual(identity);
+    expect(logs).toContainEqual({ message: ["handler ran"], annotations: identity });
   });
 
-  it("runs the authorizer outside the action span, under the request span", async () => {
-    const { parents } = await run(
+  it("runs the authorizer in the action span with its log annotations", async () => {
+    const { logs, spans } = await run(
       () => Effect.succeed("ok"),
       "guarded",
-      () => Effect.withSpan(Effect.void, "authorize"),
+      () => Effect.withSpan(Effect.log("authorizer ran"), "authorize"),
     );
 
-    expect(parents.get("authorize")).toMatch(requestSpan);
-    expect(parents.get("guarded")).toMatch(requestSpan);
+    expect(logs).toContainEqual({
+      message: ["authorizer ran"],
+      annotations: new Map<string, unknown>([
+        ["action.name", "guarded"],
+        ["action.read_only", false],
+      ]),
+    });
+    const action = spans.get("guarded");
+    const child = spans.get("authorize");
+    assert(action && child);
+
+    expect(Option.getOrUndefined(child.parent)).toBe(action);
+
+    const parent = Option.getOrUndefined(action.parent);
+    assert(parent?._tag === "Span");
+    expect(parent.name).toMatch(requestSpan);
   });
 
-  it("opens the action span even when the handler throws before returning an effect", async () => {
-    const { parents } = await run(() => {
-      throw new Error("boom");
-    });
+  const Count = Action.make("count", {
+    description: "Answers a value its success cannot encode",
+    readOnly: true,
+    caller: CurrentActor,
+    input: { value: Schema.Finite },
+    success: Schema.Finite,
+  });
 
-    expect(parents.get("identity")).toMatch(requestSpan);
+  const count = Action.implement(Count, () => Effect.succeed(Infinity), {
+    authorize: Action.allowAll,
+  });
+
+  const countRoutes = (
+    transport === "HTTP"
+      ? ActionHttp.layer(ActionHttp.make([Count], { authentication: Login }), count)
+      : ActionMcp.layerHttp(count, { name: "test", version: "0", authentication: Login })
+  ).pipe(Layer.provide(authenticate));
+
+  const requestCount = (value: Schema.Json, token: string) =>
+    withBearer(
+      transport === "HTTP" ? post("/api/count", { value }) : rawToolCall("count", { value }),
+      token,
+    );
+
+  it("rejects invalid credentials before opening an action span", async () => {
+    const { spans, tracer } = recordSpans();
+    const web = serveWithContext(countRoutes);
+
+    const response = await web.handler(
+      requestCount(1, "unknown"),
+      Context.make(Tracer.Tracer, tracer),
+    );
+
+    expect(response.status).toBe(401);
+    expect(spans.has("count")).toBe(false);
+  });
+
+  it("rejects invalid input before opening an action span", async () => {
+    const { spans, tracer } = recordSpans();
+    const web = serveWithContext(countRoutes);
+
+    const response = await web.handler(
+      requestCount("invalid", "alice"),
+      Context.make(Tracer.Tracer, tracer),
+    );
+
+    if (transport === "HTTP") {
+      expect(response.status).toBe(400);
+    } else {
+      const reply = await Effect.runPromise(toolReplyOf(await response.text()));
+      expect(reply.isError).toBe(true);
+      expect(reply.text).toContain("Invalid parameters for tool 'count'");
+    }
+
+    expect(spans.has("count")).toBe(false);
+  });
+
+  it("ends a successful action span before response encoding fails", async () => {
+    const { spans, tracer } = recordSpans();
+    const web = serveWithContext(countRoutes);
+
+    const response = await web.handler(
+      requestCount(1, "alice"),
+      Context.make(Tracer.Tracer, tracer),
+    );
+
+    if (transport === "HTTP") {
+      expect(response.status).toBe(500);
+    } else {
+      expect(await response.json()).toMatchObject({ result: { isError: true } });
+    }
+
+    expect(spans.get("count")?.status).toMatchObject({
+      _tag: "Ended",
+      exit: Exit.succeed(Infinity),
+    });
   });
 });
 

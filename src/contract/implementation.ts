@@ -565,22 +565,15 @@ const dispatch = (
     return yield* Effect.failCause(Cause.fromReasons(reasons));
   });
 
-  return (input) => {
-    const handled = Effect.withSpan(
-      Effect.annotateLogs(
-        Effect.suspend(() => handle(input)),
-        actionAttributes,
-      ),
-      action.name,
-      { captureStackTrace: false, attributes: actionAttributes },
-    );
-
-    return Effect.scoped(
+  return (input) =>
+    Effect.scoped(
       authentication.pipe(
         Effect.andThen(authorization),
-        Effect.andThen(handled),
+        Effect.andThen(Effect.suspend(() => handle(input))),
         Effect.catchCause(declaredOrDefect),
       ),
+    ).pipe(
+      Effect.annotateLogs(actionAttributes),
+      Effect.withSpan(action.name, { attributes: actionAttributes }, { captureStackTrace: false }),
     );
-  };
 };

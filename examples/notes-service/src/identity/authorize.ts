@@ -8,6 +8,7 @@ import { CurrentUser, scopes } from "./Identity.js";
 // answered a challenge, which only a server publishing discovery (verifier.ts) can follow up.
 // Where tokens are fixed, such as API keys, name no scope: the refusal is then a plain one.
 // So `scopes` below goes when `protectedResource` in verifier.ts does: copy both or neither.
+// This named span measures authorization within the action's span, including a refusal.
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const scope = action.readOnly ? scopes.read : scopes.write;
   const user = yield* CurrentUser;
