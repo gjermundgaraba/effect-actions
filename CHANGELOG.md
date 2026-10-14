@@ -12,6 +12,16 @@ action span's final exit. Span names and attributes stay the same.
 - Migrate: adjust dashboards that treated action duration as handler time. Add a named span
   inside the handler when that measurement is needed separately. No consumer API changes.
 
+**`ActionMcp.McpCallError` says why in a tagged `reason`, not only in its message.** It holds
+the `tool` called and one of `StatusError` (`status`, `body`), `ProtocolError` (`code`,
+`message`), `NoReply` (`body`), `UndeclaredError` (`text`) or `NoStructuredContent` (`body`), as
+Effect's `HttpClientError` holds its reason. Its `message` keeps
+the sentence it had, now a declared field built from `tool` and `reason`.
+
+- Migrate: branch on `error.reason._tag`, or recover one reason with
+  `Effect.catchReason("McpCallError", "StatusError", ({ status }) => ...)`, where code matched
+  the message text.
+
 ### Examples
 
 - **`notes-service` demonstrates optional write deduplication.** Pass `requestId` to `createNote`

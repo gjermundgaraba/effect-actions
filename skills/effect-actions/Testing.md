@@ -126,7 +126,9 @@ the endpoint serves, such as `implementation.actions`. Its failures:
 [ActionMcp-failures.md](ActionMcp-failures.md).
 
 A method fails with the action's declared errors and the built-in ones as decoded values, and with
-`McpCallError` for any other answer, a result without its structured content included;
+`McpCallError` for any other answer: its `reason` says which, `StatusError`, `ProtocolError`,
+`NoReply`, `UndeclaredError` or `NoStructuredContent`, with what the endpoint sent, so a test
+asserts on `reason` and `Effect.catchReason("McpCallError", "StatusError", ...)` recovers one;
 structured content that does not decode as the success is a `SchemaError`, and a request that
 fails Effect's `HttpClientError`. Only a tool's result carries the action's own errors: an HTTP
 answer other than 200 decodes as a refusal, or, given the endpoint's `authentication`, as an error

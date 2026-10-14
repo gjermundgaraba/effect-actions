@@ -21,7 +21,7 @@ Import `@gjermundgaraba/effect-actions/ActionMcp`.
 | `LayerHttpOptions`                    | Type of `layerHttp`'s options: `Options` and HTTP's own.    |
 | `client(actions, options?)`           | An Effect of a client calling each action's tool.           |
 | `request(method, params?, options?)`  | One MCP request, as the native `HttpClientRequest` to send. |
-| `McpCallError`                        | A client method's failure for an answer it cannot decode.   |
+| `McpCallError`                        | A client method's undecodable answer, by tagged `reason`.   |
 
 `implementations` is one implementation or a list.
 
