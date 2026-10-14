@@ -506,29 +506,21 @@ export function layer(
           oauth
             ? Effect.catchIf(route, isStepUp, (error) => Effect.succeed(answer(error, metadataUrl)))
             : route,
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
         http: ((route, optional) =>
-          Effect.flatMap(
-            HttpApiBuilder.securityDecode(security),
-            (credential) =>
-              optional && !presented(credential)
-                ? route
-                : verified(
-                    credential,
-                    oauth ? answerStepUp(route, metadataUrl) : route,
-                    authentication["~verified"],
-                  ),
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
+          Effect.flatMap(HttpApiBuilder.securityDecode(security), (credential) =>
+            optional && !presented(credential)
+              ? route
+              : verified(
+                  credential,
+                  oauth ? answerStepUp(route, metadataUrl) : route,
+                  authentication["~verified"],
+                ),
           )) as Runtime["http"],
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
         route: ((route: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>) =>
-          Effect.flatMap(
-            HttpApiBuilder.securityDecode(security),
-            (credential) =>
-              verified(
-                credential,
-                Effect.catchIf(route, isRefusal, refuse),
-                authentication.identity,
-              ),
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
+          Effect.flatMap(HttpApiBuilder.securityDecode(security), (credential) =>
+            verified(credential, Effect.catchIf(route, isRefusal, refuse), authentication.identity),
           )) as Runtime["route"],
       };
     }),
