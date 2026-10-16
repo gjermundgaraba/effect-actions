@@ -36,7 +36,7 @@ Exported types: `Binding`; `Any`, any binding; `Client<typeof Http>`, a client's
 | `layer`: `actions`          | The bound actions it serves: `[GetUser]`. Defaults to every one the implementations hold.         |
 | `layer`: `middleware`       | Native `HttpApiMiddleware` around every route it serves, the first innermost.                     |
 | `client`: `baseUrl`         | What routes resolve against: `https://api.example.com`. Omitted: relative ones, a page's origin.  |
-| `client`: `transformClient` | Wraps the native `HttpClient`: `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.     |
+| `client`: `transformClient` | Wraps the native `HttpClient`: a token, or a sign-in per request, whose failures each call adds.  |
 | `fetchClient`: `fetch`      | Its `fetch`, beside `client`'s options. Omitted: the global `fetch`, looked up on every call.     |
 
 Each action is served at `POST <prefix>/<action>`, a `readOnly` one too. One without `success`
@@ -185,9 +185,12 @@ Files: [quickstart/src/client.ts](node_modules/@gjermundgaraba/effect-actions/ex
 [kitchen-sink/src/seed.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/seed.ts) (`baseUrl` from `Config`,
 headers, errors by tag).
 
-- Outside a browser, set `baseUrl`. A token or any other header goes through `transformClient`.
-  Where no client is built by hand, as under `ActionCli.remote`, transform the `HttpClient`
-  itself (`connection` in [notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts)).
+- Outside a browser, set `baseUrl`. A token or any other header goes through `transformClient`:
+  `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. A credential read or refreshed
+  as each request is sent, which may fail, is
+  `(client) => HttpClient.mapRequestEffect(client, authorize)`: each call then also fails with
+  `authorize`'s own errors, as they are, and requires its services. `ActionMcp.client` takes the
+  same transform, and `ActionCli.remote` the client itself as its `client`.
 - Leave the argument out when `{}` is a valid input. A given argument is the decoded input, so
   it states a defaulted field.
 - A declared error is a typed failure, as its decoded value: the action's own, the binding's,
@@ -215,6 +218,8 @@ with `Effect.runPromise`. Files:
 - A page on another origin passes `baseUrl`, and the server must allow that origin with
   `HttpRouter.cors`
   ([kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts), `cors`).
+- A `transformClient` requiring a service, such as the session's token, makes each call require
+  it: provide it on the call before `Effect.runPromise`.
 - An unhandled declared error rejects the promise as its decoded value, so
   `error instanceof Action.Unauthenticated` works in a `catch`. Handle an expected one by its tag
   before `Effect.runPromise`.

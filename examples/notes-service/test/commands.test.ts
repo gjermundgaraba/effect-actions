@@ -16,7 +16,7 @@ import { TestConsole } from "effect/testing";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../src/Api.js";
-import { commands, connection } from "../src/commands.js";
+import { commands } from "../src/commands.js";
 import { ImportNotes, Note, NoteNotFound } from "../src/notes/Notes.js";
 import { NoteStore } from "../src/notes/store.js";
 import { routes } from "../src/routes.js";
@@ -26,17 +26,16 @@ import { routes } from "../src/routes.js";
 // service a builder yields is provided here too (routes.test.ts).
 const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
 
-// Effect's own runner, given arguments instead of the process's. The console of `it.effect`
-// keeps every line printed, so a run returns the lines it added.
-const run = (token: string, args: ReadonlyArray<string>, stdin = "") =>
+// Effect's own runner, given arguments instead of the process's, and what the commands read from
+// the environment as a Layer, so the test decides whether a token is configured, whatever the
+// shell holds. The console of `it.effect` keeps every line printed, so a run returns the lines
+// it added.
+const connected = (environment: Record<string, string>, args: ReadonlyArray<string>, stdin = "") =>
   Effect.gen(function* () {
     const before = (yield* TestConsole.logLines).length;
 
     yield* Command.runWith(commands, { version: "0" })(args).pipe(
-      Effect.updateService(
-        HttpClient.HttpClient,
-        HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
-      ),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
       Effect.provide(Stdio.layerTest({ stdin: Stream.make(new TextEncoder().encode(stdin)) })),
       Effect.provide(NodeServices.layer),
     );
@@ -44,15 +43,9 @@ const run = (token: string, args: ReadonlyArray<string>, stdin = "") =>
     return (yield* TestConsole.logLines).slice(before);
   });
 
-// The commands as cli.ts connects them, with what it reads from the environment given as a
-// Layer, so the test decides whether a token is configured, whatever the shell holds.
-const connected = (environment: Record<string, string>, args: ReadonlyArray<string>) =>
-  Command.runWith(commands.pipe(Command.provideEffect(HttpClient.HttpClient, connection)), {
-    version: "0",
-  })(args).pipe(
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
-    Effect.provide(NodeServices.layer),
-  );
+// A run as the caller `token` names.
+const run = (token: string, args: ReadonlyArray<string>, stdin = "") =>
+  connected({ NOTES_TOKEN: token }, args, stdin);
 
 const fitsAFile = (text: string) =>
   new TextDecoder().decode(new TextEncoder().encode(text)) === text;
@@ -270,9 +263,10 @@ describe("the commands", () => {
       const refused = yield* Effect.flip(connected({}, ["list-notes"]));
 
       expect(refused).toBeInstanceOf(CliError.UserError);
+      expect(refused).toHaveProperty("cause._tag", "MissingToken");
       expect(refused).toHaveProperty(
         "userMessage",
-        "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
+        "MissingToken: NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
       );
 
       // What a person sees: that message, once, on stderr, and no report of a `ConfigError`.
@@ -280,7 +274,7 @@ describe("the commands", () => {
         expect.stringContaining("NOTES_TOKEN is not set."),
       ]);
 
-      // The token is read when a command runs, so its help needs none.
+      // The token is read when a command runs, so help needs none.
       yield* connected({}, ["list-notes", "--help"]);
 
       expect(yield* TestConsole.logLines).toHaveLength(2);

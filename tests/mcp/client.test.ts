@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
-import { Effect, Layer, Result, Schema, SchemaGetter } from "effect";
+import { Context, Effect, Layer, Option, Result, Schema, SchemaGetter } from "effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -28,6 +28,7 @@ import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { as } from "../support/requests.js";
+import { serve } from "../support/serve.js";
 
 const againstHost = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
   program.pipe(Effect.provide(Testing.layer(host)));
@@ -98,6 +99,56 @@ describe("client", () => {
         HttpClient.make(() => Effect.die("sent")),
       ),
     ),
+  );
+
+  it.effect(
+    "fails with what its transform fails with, as it is, sending nothing, and authorizes a call with what the transform requires",
+    () =>
+      Effect.gen(function* () {
+        class SignInRequired extends Schema.TaggedError<SignInRequired>()("SignInRequired", {
+          message: Schema.String,
+        }) {}
+
+        class SignIn extends Context.Service<SignIn, { readonly token: Option.Option<string> }>()(
+          "mcp-client/SignIn",
+        ) {}
+
+        const sent: Array<string | null> = [];
+        const web = serve(host);
+
+        const recording = Testing.layer((request) => {
+          sent.push(request.headers.get("authorization"));
+
+          return web.handler(request);
+        });
+
+        const mcp = yield* ActionMcp.client([WhoAmI], {
+          transformClient: (client) =>
+            HttpClient.mapRequestEffect(client, (request) =>
+              Effect.flatMap(SignIn, ({ token }) =>
+                Option.match(token, {
+                  onNone: () => Effect.fail(new SignInRequired({ message: "Run `acme login`" })),
+                  onSome: (bearer) =>
+                    Effect.succeed(HttpClientRequest.bearerToken(request, bearer)),
+                }),
+              ),
+            ),
+        }).pipe(Effect.provide(recording));
+
+        const signedOut = yield* Effect.flip(mcp.whoAmI()).pipe(
+          Effect.provideService(SignIn, { token: Option.none() }),
+        );
+
+        expect(signedOut).toStrictEqual(new SignInRequired({ message: "Run `acme login`" }));
+        expect(sent).toEqual([]);
+
+        const caller = yield* mcp
+          .whoAmI()
+          .pipe(Effect.provideService(SignIn, { token: Option.some("alice") }));
+
+        expect(caller).toEqual({ id: "alice", tenantId: "acme" });
+        expect(sent).toEqual(["Bearer alice"]);
+      }),
   );
 
   it.effect("decodes a built-in error a tool returns as its class", () =>

@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Config, ConfigProvider, Console, Context, Effect, flow, Schema } from "effect";
+import { Config, ConfigProvider, Console, Context, Effect, Exit, Option, Schema } from "effect";
 import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
@@ -455,7 +455,7 @@ it.effect(
 );
 
 it.effect(
-  "nests under a host's own tree, with a connection of its own that no other command's requests take",
+  "nests under a host's own tree, with a connection of its own that no other command's requests take, failing as a command when it cannot be read",
   () =>
     Effect.gen(function* () {
       const web = serve(ActionHttp.layer(Http, freshRecordingImplementation().app));
@@ -469,20 +469,18 @@ it.effect(
           : web.handler(request);
       });
 
-      const api = ActionCli.remote(Http, { name: "api" }).pipe(
-        Command.provideEffect(
-          HttpClient.HttpClient,
-          Effect.gen(function* () {
-            const url = yield* Config.String("ACME_URL");
-            const token = yield* Config.Redacted("ACME_TOKEN");
+      const api = ActionCli.remote(Http, {
+        name: "api",
+        client: Effect.gen(function* () {
+          const baseUrl = yield* Config.String("ACME_URL");
+          const token = yield* Config.Redacted("ACME_TOKEN");
 
-            return HttpClient.mapRequest(
-              yield* HttpClient.HttpClient,
-              flow(HttpClientRequest.prependUrl(url), HttpClientRequest.bearerToken(token)),
-            );
-          }),
-        ),
-      );
+          return yield* ActionHttp.client(Http, {
+            baseUrl,
+            transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+          });
+        }),
+      });
 
       const hostsOwnLogin = Command.make("login", {}, () =>
         Effect.asVoid(
@@ -514,10 +512,19 @@ it.effect(
       yield* runWith({}, ["api", "--help"]);
       yield* runWith({}, ["api", "remote", "--help"]);
       expect(requests).toHaveLength(2);
+
+      const [unset, , stderr] = yield* printed(exec(cli, ["api", "remote", "--value", "21"])).pipe(
+        Effect.provide(fetchLayer),
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: {} })),
+      );
+
+      expect(causeOf(unset)).toHaveProperty("_tag", "ConfigError");
+      expect(stderr).toEqual([expect.stringContaining("ConfigError: ")]);
+      expect(requests).toHaveLength(2);
     }),
 );
 
-it.effect("connects through its client options, which no other command's requests take", () =>
+it.effect("connects through its client, which no other command's requests take", () =>
   Effect.gen(function* () {
     const web = serve(ActionHttp.layer(Http, freshRecordingImplementation().app));
     const requests: Array<{ url: string; authorization: string | null }> = [];
@@ -530,10 +537,10 @@ it.effect("connects through its client options, which no other command's request
         : web.handler(request);
     });
 
-    const client = {
+    const client = ActionHttp.client(Http, {
       baseUrl: "http://api.example.com",
       transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("secret")),
-    };
+    });
 
     const hostsOwnLogin = Command.make("login", {}, () =>
       Effect.asVoid(
@@ -565,6 +572,95 @@ it.effect("connects through its client options, which no other command's request
       { url: "https://auth.example.com/device/code", authorization: null },
     ]);
   }),
+);
+
+it.effect(
+  "fails with what its client's methods fail with, named on stderr, and reads nothing for help",
+  () =>
+    Effect.gen(function* () {
+      class SignInRequired extends Schema.TaggedError<SignInRequired>()("SignInRequired", {
+        message: Schema.String,
+      }) {}
+
+      class SignIn extends Context.Service<SignIn, { readonly token: Option.Option<string> }>()(
+        "cli-remote/SignIn",
+      ) {}
+
+      const web = serve(ActionHttp.layer(Http, freshRecordingImplementation().app));
+      const authorizations: Array<string | null> = [];
+      let reads = 0;
+
+      const fetchLayer = Testing.layer((request) => {
+        authorizations.push(request.headers.get("authorization"));
+
+        return web.handler(request);
+      });
+
+      const client = ActionHttp.client(Http, {
+        transformClient: (http) =>
+          HttpClient.mapRequestEffect(http, (request) =>
+            Effect.flatMap(SignIn, ({ token }) => {
+              reads++;
+
+              return Option.match(token, {
+                onNone: () => Effect.fail(new SignInRequired({ message: "Run `acme login`" })),
+                onSome: (bearer) => Effect.succeed(HttpClientRequest.bearerToken(request, bearer)),
+              });
+            }),
+          ),
+      });
+
+      const cli = ActionCli.remote(Http, { name: "acme", client });
+
+      const run = (token: Option.Option<string>, args: ReadonlyArray<string>) =>
+        printed(exec(cli, args)).pipe(
+          Effect.provide(fetchLayer),
+          Effect.provideService(SignIn, { token }),
+        );
+
+      const [signedOut, , stderr] = yield* run(Option.none(), ["remote", "--value", "21"]);
+
+      expect(causeOf(signedOut)).toStrictEqual(new SignInRequired({ message: "Run `acme login`" }));
+      expect(stderr).toEqual([expect.stringContaining("SignInRequired: Run `acme login`")]);
+      expect(authorizations).toEqual([]);
+
+      const [, output] = yield* run(Option.some("secret"), ["remote", "--value", "21"]);
+
+      expect(output).toEqual(['"42"']);
+      expect(authorizations).toEqual(["Bearer secret"]);
+
+      yield* run(Option.none(), ["remote", "--help"]);
+      expect(reads).toBe(2);
+    }),
+);
+
+it.effect(
+  "prints a CliError.UserError its client fails with as it is, in derived commands and its own alike",
+  () =>
+    Effect.gen(function* () {
+      const signIn = new CliError.UserError({ cause: "no session", userMessage: "Sign in first" });
+      const api = Effect.andThen(Effect.fail(signIn), ActionHttp.client(Http));
+
+      const own = Command.make("own", {}, () =>
+        Effect.asVoid(api).pipe(ActionCli.toUserError(Http)),
+      );
+
+      const cli = ActionCli.remote(Http, { name: "acme", client: api, subcommands: [own] });
+
+      const web = serve(ActionHttp.layer(Http, freshRecordingImplementation().app));
+
+      const run = (args: ReadonlyArray<string>) =>
+        printed(exec(cli, args)).pipe(Effect.provide(Testing.layer(web.handler)));
+
+      const [derivedExit, , derived] = yield* run(["remote", "--value", "1"]);
+      const [ownExit, , owned] = yield* run(["own"]);
+
+      expect(Exit.findErrorOption(derivedExit)).toStrictEqual(Option.some(signIn));
+      expect(Exit.findErrorOption(ownExit)).toStrictEqual(Option.some(signIn));
+      expect(derived).toEqual([expect.stringContaining("Sign in first")]);
+      expect(derived.join("\n")).not.toContain("no session");
+      expect(owned).toEqual(derived);
+    }),
 );
 
 it.effect("sends a field read from stdin as its flag would send it", () =>

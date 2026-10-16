@@ -8,7 +8,7 @@ import {
   Scope,
   type Types,
 } from "effect";
-import type { Etag, HttpClient, HttpPlatform } from "effect/http";
+import type { Etag, HttpClient, HttpClientError, HttpPlatform } from "effect/http";
 import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
@@ -71,7 +71,10 @@ export type { AnyHttp as Any } from "./client.js";
 export type { Options as ClientOptions } from "./client.js";
 
 /** What `fetchClient` takes: `client`'s options, and the `fetch` its calls send with. */
-export interface FetchClientOptions extends ClientOptions {
+export interface FetchClientOptions<
+  E = HttpClientError.HttpClientError,
+  R = never,
+> extends ClientOptions<E, R> {
   /**
    * What each call sends with. Omitted: the global `fetch`, looked up on every call, so one
    * installed after the client is built, such as a test's stub, is used.
@@ -446,24 +449,30 @@ export function layer(
  * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` when the
  * server could not be reached or answered with a status or body the contract does not
  * declare, or a `SchemaError` when the success does not decode. An input that does not encode
- * fails with `InvalidInput`, and nothing is sent.
+ * fails with `InvalidInput`, and nothing is sent. A call also fails with what the client
+ * `transformClient` returns fails with, as it is, and requires what that client requires.
  */
 export function client<const H extends AnyHttp>(
   binding: H,
   options?: ClientOptions,
 ): Effect.Effect<Client<H>, never, HttpClient.HttpClient>;
+export function client<const H extends AnyHttp, E, R>(
+  binding: H,
+  options: ClientOptions<E, R>,
+): Effect.Effect<Client<H, E, R>, never, HttpClient.HttpClient>;
 export function client(
   binding: AnyHttp,
-  options?: ClientOptions,
-): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> {
-  return methods(binding, options);
+  options?: ClientOptions | ClientOptions<unknown, unknown>,
+): Effect.Effect<unknown, never, HttpClient.HttpClient> {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the native client is invariant in what it fails with and requires, so no one type holds both overloads' options; each overload states the channels its own options give.
+  return methods(binding, options as ClientOptions<unknown, unknown>);
 }
 
 /**
  * `client` built once over `fetch`, for code that holds a client outside an Effect, such as
- * a browser app: its methods are the same Effects and require nothing, so each call runs
- * alone, as `Effect.runPromise(api.greet({ name }))`. The options are `client`'s, and
- * `fetch`.
+ * a browser app: its methods are the same Effects, which require only what `transformClient`
+ * requires, so a call without one runs alone, as `Effect.runPromise(api.greet({ name }))`. The
+ * options are `client`'s, and `fetch`.
  *
  * Each call sends with `options.fetch`, or with the global `fetch` as it is when the call
  * runs.
@@ -472,11 +481,16 @@ export function fetchClient<const H extends AnyHttp>(
   binding: H,
   options?: FetchClientOptions,
 ): Client<H>;
+export function fetchClient<const H extends AnyHttp, E, R>(
+  binding: H,
+  options: FetchClientOptions<E, R>,
+): Client<H, E, R>;
 export function fetchClient(
   binding: AnyHttp,
-  { fetch, ...options }: FetchClientOptions = {},
+  { fetch, ...options }: FetchClientOptions | FetchClientOptions<unknown, unknown> = {},
 ): { readonly [name: string]: ErasedMethod } {
-  return methods(binding, options).pipe(
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: as `client`'s, each overload states the channels its own options give. Building runs no request, so it needs only the `HttpClient` provided here; what a transform requires, each call requires.
+  return methods(binding, options as ClientOptions<unknown, never>).pipe(
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(
       FetchHttpClient.Fetch,

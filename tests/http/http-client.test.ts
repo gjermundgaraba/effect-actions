@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Layer, Schema, SchemaTransformation } from "effect";
+import { Cause, Context, Effect, Layer, Option, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
@@ -133,6 +133,52 @@ it.effect("passes the native client options through, such as a bearer token on e
       "Bearer alice",
     ]);
   }),
+);
+
+class SignInRequired extends Schema.TaggedError<SignInRequired>()("SignInRequired", {
+  message: Schema.String,
+}) {}
+
+class SignIn extends Context.Service<SignIn, { readonly token: Option.Option<string> }>()(
+  "http-client/SignIn",
+) {}
+
+const authorizing = (client: HttpClient.HttpClient) =>
+  HttpClient.mapRequestEffect(client, (request) =>
+    Effect.flatMap(SignIn, ({ token }) =>
+      Option.match(token, {
+        onNone: () => Effect.fail(new SignInRequired({ message: "Run `notes login`" })),
+        onSome: (bearer) => Effect.succeed(HttpClientRequest.bearerToken(request, bearer)),
+      }),
+    ),
+  );
+
+it.effect(
+  "fails a call with what its transform fails with, as it is, sending nothing, and authorizes one with what the transform requires",
+  () =>
+    Effect.gen(function* () {
+      const { handler, requests } = serveNotesRecordingRequests();
+
+      const client = yield* ActionHttp.client(Http, { transformClient: authorizing }).pipe(
+        Effect.provide(Testing.layer(handler)),
+      );
+
+      const signedOut = yield* Effect.flip(client.get({ id: "a" })).pipe(
+        Effect.provideService(SignIn, { token: Option.none() }),
+      );
+
+      expect(signedOut).toStrictEqual(new SignInRequired({ message: "Run `notes login`" }));
+      expect(requests).toEqual([]);
+
+      const note = yield* client
+        .get({ id: "a" })
+        .pipe(Effect.provideService(SignIn, { token: Option.some("alice") }));
+
+      expect(note.id).toBe("a");
+      expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
+        "Bearer alice",
+      ]);
+    }),
 );
 
 it.effect("fails with Effect's own errors when the contract cannot account for the answer", () =>
@@ -483,6 +529,31 @@ it("builds a fetch client outside an Effect, each sending with its own fetch", a
 
   await expect(missing).rejects.toBeInstanceOf(NotFound);
   await expect(missing).rejects.toEqual(new NotFound({ id: "missing" }));
+});
+
+it("builds a fetch client whose transform requires a service, which each call is given", async () => {
+  const { handler, requests } = serveNotesRecordingRequests();
+
+  const api = ActionHttp.fetchClient(Http, {
+    baseUrl: "http://localhost",
+    transformClient: authorizing,
+    fetch: (input, init) => handler(new Request(input, init)),
+  });
+
+  const signedIn = { token: Option.some("t0k") };
+  const signedOut = { token: Option.none() };
+
+  const note = await Effect.runPromise(
+    api.get({ id: "a" }).pipe(Effect.provideService(SignIn, signedIn)),
+  );
+
+  const refused = Effect.runPromise(
+    api.get({ id: "b" }).pipe(Effect.provideService(SignIn, signedOut)),
+  );
+
+  expect(note.id).toBe("a");
+  await expect(refused).rejects.toEqual(new SignInRequired({ message: "Run `notes login`" }));
+  expect(requests.map((request) => request.headers.get("authorization"))).toEqual(["Bearer t0k"]);
 });
 
 it("sends a fetch client's calls with the global fetch as each call finds it", async () => {

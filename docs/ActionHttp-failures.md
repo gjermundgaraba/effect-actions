@@ -53,6 +53,12 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
   the binding's `error`, given inline so its type is certain, or move the check to the handlers
   and declare the error on their actions.
 
+- `No overload matches this call` at `client`, naming `Options<unknown, unknown>`: options built
+  before the call hold the generic `HttpClient.mapRequestEffect(authorize)`, whose failures the
+  call cannot infer, or a helper types them as `Parameters<typeof ActionHttp.client>[1]`. Write
+  the transform as `(client) => HttpClient.mapRequestEffect(client, authorize)`, and type such
+  options as `ActionHttp.ClientOptions<E, R>`.
+
 ## Requests
 
 - A route answers without credentials: its contract is `caller: Action.Anyone`.

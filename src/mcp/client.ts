@@ -1,4 +1,4 @@
-import { Effect, identity, Match, Option, Predicate, Schema } from "effect";
+import { Effect, Match, Option, Predicate, Schema } from "effect";
 import {
   type Headers,
   HttpClient,
@@ -61,8 +61,15 @@ export const statelessRequest = (method: string, params: Params) => {
   };
 };
 
-/** Where `client` sends, through what client, and what the endpoint's authentication declares. */
-export interface ClientOptions<D extends Authentication | undefined = Authentication | undefined> {
+/**
+ * Where `client` sends, through what client, and what the endpoint's authentication declares: the
+ * client `transformClient` returns may fail with `E` and require `R`.
+ */
+export interface ClientOptions<
+  D extends Authentication | undefined = Authentication | undefined,
+  E = HttpClientError.HttpClientError,
+  R = never,
+> {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `Testing.layer`. Defaults to `/mcp`,
    * the default `layerHttp` path.
@@ -72,7 +79,7 @@ export interface ClientOptions<D extends Authentication | undefined = Authentica
    * Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token is
    * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
    */
-  readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient;
+  readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient.With<E, R>;
   /**
    * The endpoint's descriptor, as `layerHttp` takes it: an error its verifier declares, the
    * endpoint's HTTP answer for a protected tool, is then that error's decoded value, as over
@@ -160,11 +167,19 @@ type CallError<A extends Action.Any, D> =
   | HttpClientError.HttpClientError
   | McpCallError;
 
-/** Every action of `Actions` as `client.<action>(input)`, calling its tool. */
-export type Client<Actions extends ReadonlyArray<Action.Any>, D = undefined> = {
+/**
+ * Every action of `Actions` as `client.<action>(input)`, calling its tool. Each call also fails
+ * with `E` and requires `R`, what its `transformClient` adds.
+ */
+export type Client<
+  Actions extends ReadonlyArray<Action.Any>,
+  D = undefined,
+  E = never,
+  R = never,
+> = {
   readonly [A in Actions[number] as A["name"]]: Call<
     A,
-    Effect.Effect<A["success"]["Type"], CallError<A, D>>
+    Effect.Effect<A["success"]["Type"], CallError<A, D> | E, R>
   >;
 };
 
@@ -204,14 +219,16 @@ const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) 
     Effect.flatMap(Effect.fail),
   );
 
+// Why: `execute` alone, since the native client is invariant in what it fails with and requires:
+// no one client type holds both a plain client and a transformed one, but each one's `execute` fits.
 const callTool = (
-  client: HttpClient.HttpClient,
+  client: Pick<HttpClient.HttpClient.With<unknown, unknown>, "execute">,
   url: string,
   action: Action.Any,
   lift: Lift,
   refusedWith: Action.Errors,
   input: Action.Any["input"]["Type"],
-): Effect.Effect<unknown, unknown> => {
+): Effect.Effect<unknown, unknown, unknown> => {
   const { name } = action;
 
   return Effect.gen(function* () {
@@ -281,20 +298,27 @@ export function client<
   actions: Actions,
   options?: ClientOptions<D>,
 ): Effect.Effect<Client<Actions, D>, never, HttpClient.HttpClient>;
+export function client<
+  const Actions extends ReadonlyArray<Action.Any>,
+  E,
+  R,
+  D extends Authentication | undefined = undefined,
+>(
+  actions: Actions,
+  options: ClientOptions<D, E, R>,
+): Effect.Effect<Client<Actions, D, E, R>, never, HttpClient.HttpClient>;
 export function client(
   actions: ReadonlyArray<Action.Any>,
-  { url = defaultPath, transformClient = identity, authentication }: ClientOptions = {},
-): Effect.Effect<
   {
-    readonly [name: string]: (...input: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown>;
-  },
-  never,
-  HttpClient.HttpClient
-> {
+    url = defaultPath,
+    transformClient,
+    authentication,
+  }: ClientOptions | ClientOptions<Authentication | undefined, unknown, unknown> = {},
+): Effect.Effect<unknown, never, HttpClient.HttpClient> {
   assertOnce("action", actions);
 
   return Effect.map(HttpClient.HttpClient, (native) => {
-    const http = transformClient(native);
+    const http = transformClient === undefined ? native : transformClient(native);
 
     return Object.fromEntries(
       actions.map((action) => {

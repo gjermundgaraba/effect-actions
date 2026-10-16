@@ -72,7 +72,9 @@ implementation is also:
 ```ts
 const { toolkit, layer } = ActionToolkit.make(greeting); // native Effect AI Toolkit and its handler layer
 const cli = ActionCli.make(greeting, { name: "greetings" }); // greetings greet --name Ada
-const remote = ActionCli.remoteCommand(Http, Greet, { client: { baseUrl } }); // greet --name Ada, over HTTP
+const remote = ActionCli.remoteCommand(Http, Greet, {
+  client: ActionHttp.client(Http, { baseUrl }),
+}); // greet --name Ada, over HTTP
 const local = Action.client(greeting); // the HTTP client's methods, in process
 const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greeting); // Effect RPC, on the protocol the host provides
 ```

@@ -3,6 +3,7 @@ import { Config, Effect, flow, Option } from "effect";
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./Api.js";
 
 // Entrypoint: `node --import tsx examples/kitchen-sink/src/cli.ts list-issues`.
@@ -41,27 +42,24 @@ const tracker = ActionCli.remote(Http, {
         `${attachment.name}: ${image.mimeType}, ${image.data.byteLength} bytes`,
     },
   },
-}).pipe(
-  // The connection is read from `Config` when a command runs, so `--help` needs none of it.
-  // It is provided on this command, so it reaches these commands' requests and no others.
-  // The token and the workspace are optional: `tracker get-status` is public and needs neither,
-  // and any other command without them gets the server's 401.
-  Command.provideEffect(
-    HttpClient.HttpClient,
-    Effect.gen(function* () {
-      const url = yield* Config.String("TRACKER_URL").pipe(
-        Config.withDefault("http://127.0.0.1:3000"),
-      );
+  // The connection, read from `Config` when a command runs, so `--help` needs none of it. It is
+  // these commands' client, so it reaches their requests and no others. The token and the
+  // workspace are optional: `tracker get-status` is public and needs neither, and any other
+  // command without them gets the server's 401.
+  client: Effect.gen(function* () {
+    const baseUrl = yield* Config.String("TRACKER_URL").pipe(
+      Config.withDefault("http://127.0.0.1:3000"),
+    );
 
-      const token = yield* Config.option(Config.Redacted("TRACKER_TOKEN"));
-      const workspace = yield* Config.option(Config.String("TRACKER_WORKSPACE"));
+    const token = yield* Config.option(Config.Redacted("TRACKER_TOKEN"));
+    const workspace = yield* Config.option(Config.String("TRACKER_WORKSPACE"));
 
-      const unchanged = (request: HttpClientRequest.HttpClientRequest) => request;
+    const unchanged = (request: HttpClientRequest.HttpClientRequest) => request;
 
-      return HttpClient.mapRequest(
-        yield* HttpClient.HttpClient,
+    return yield* ActionHttp.client(Http, {
+      baseUrl,
+      transformClient: HttpClient.mapRequest(
         flow(
-          HttpClientRequest.prependUrl(url),
           Option.match(token, {
             onNone: () => unchanged,
             onSome: (value) => HttpClientRequest.bearerToken(value),
@@ -71,10 +69,10 @@ const tracker = ActionCli.remote(Http, {
             onSome: (slug) => HttpClientRequest.setHeader("x-workspace", slug),
           }),
         ),
-      );
-    }),
-  ),
-);
+      ),
+    });
+  }),
+});
 
 // A result is printed on stdout. A failure goes to stderr, under an `ERROR` heading, as the JSON
 // HTTP sends, such as `{"_tag":"IssueNotFound","id":"ACME-9"}`, and the command exits 1.

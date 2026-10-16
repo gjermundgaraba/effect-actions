@@ -1,21 +1,16 @@
-import { Cause, Effect, Logger, Runtime, type Schema } from "effect";
-import { Command } from "effect/cli";
-import type { HttpClient, HttpClientError } from "effect/http";
+import { Cause, Effect, Logger, Runtime } from "effect";
+import { type CliError, Command } from "effect/cli";
+import type { HttpClient } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { projectedErrors, bindingErrors, type Declaring } from "../contract/declared.js";
 import { assertDistinct, assertKnown } from "../contract/names.js";
-import type { VerifierError } from "../authentication/provider.js";
 import {
   type UserError,
   command as makeCommand,
   failingAsDerived,
   type Options as CommandOptions,
 } from "./commands.js";
-import {
-  type Any as AnyHttp,
-  client as httpClient,
-  type ClientOptions,
-} from "../http/ActionHttp.js";
+import { type Any as AnyHttp, type Client, client as httpClient } from "../http/ActionHttp.js";
 import {
   acquire,
   type ActionOf,
@@ -59,8 +54,8 @@ interface AnyBinding extends Declaring {
  */
 export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
   "actions" in calls
-    ? failingAsDerived(calls.actions, (action) => bindingErrors(action, calls))
-    : failingAsDerived(calls, (action) => projectedErrors(action));
+    ? failingAsDerived(calls.actions.flatMap((action) => bindingErrors(action, calls)))
+    : failingAsDerived(calls.flatMap((action) => projectedErrors(action)));
 
 /**
  * An aggregate command of the actions `A`: its name, the actions that are its subcommands,
@@ -194,7 +189,7 @@ const overHttp = <A extends Action.Any>(
   binding: AnyHttp,
   action: A,
   options: CommandOptions<A> | undefined,
-  client: ClientOptions | undefined,
+  client: ErasedClient | undefined,
 ) => {
   if (!binding.actions.includes(action)) {
     throw new Error(`Action "${action.name}" is not in this HTTP binding`);
@@ -203,7 +198,7 @@ const overHttp = <A extends Action.Any>(
   return makeCommand(
     action,
     (input) =>
-      Effect.flatMap(httpClient(binding, client), (methods) => {
+      Effect.flatMap(client ?? httpClient(binding), (methods) => {
         const method = methods[action.name];
 
         if (method === undefined) throw new Error(`No client method for ${action.name}`);
@@ -273,7 +268,8 @@ const checkedCommandsOf = (
  * as JSON when it is not a struct. The flag of an array of strings or numbers is repeated for each value, a boolean
  * field is a switch, `--no-<name>` sending `false` as a required one left out does, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
- * `UserError`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
+ * `UserError`, or an Effect CLI error as it is, such as a builder's `CliError.UserError`, which
+ * `Command.run` prints on stderr. `remoteCommand` calls a server instead.
  */
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
   implementations: Apps,
@@ -283,7 +279,7 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
   string,
   never,
   {},
-  UserError<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
+  Failing<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
 > {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the command runs `action` by its one implementation among `implementations`, so its channels are what `Local` states for that implementation.
@@ -292,58 +288,61 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
 
 /**
  * Project one action of an HTTP binding into a native Effect CLI command, derived as `command`
- * derives it, that calls the action over HTTP through its `ActionHttp.client` method, made with
- * the `client` options on the host's `HttpClient`, and fails as the method does. It runs
- * nothing locally.
+ * derives it, that calls the action through `client`'s method and fails as the method does, or
+ * as the Effect building the client does. `client` is an Effect of the binding's client, such as
+ * `ActionHttp.client(Http, { baseUrl })`, run each time the command runs; omitted, it is
+ * `ActionHttp.client(binding)` on the host's `HttpClient`. It runs nothing locally.
  */
 export function remoteCommand<
   const H extends AnyHttp,
   A extends H["actions"][number],
   const O = {},
+  C extends ClientOf<H> | undefined = undefined,
 >(
   binding: H,
   action: A,
   options?: O &
-    NoInfer<RemoteCommandOptions<A>> &
-    NoInfer<Known<O, RemoteCommandOptions<Action.Any>>>,
-): Command.Command<string, never, {}, HttpUserError<H, A>, HttpClient.HttpClient> {
+    NoInfer<CommandOptions<A>> &
+    NoInfer<Known<O, RemoteKeys<CommandOptions<Action.Any>>>> & { readonly client?: C },
+): Command.Command<string, never, {}, Failing<CallFailure<H, C, A>>, CallServices<C, A>>;
+export function remoteCommand(
+  binding: AnyHttp,
+  action: Action.Any,
+  options?: CommandOptions<Action.Any> & { readonly client?: ErasedClient | undefined },
+): Command.Command<string, never, {}, unknown, unknown> {
   const { client, ...syntax } = options ?? {};
 
   return overHttp(binding, action, options === undefined ? undefined : syntax, client);
 }
 
-/** A remote command's options, its action `A`. */
-export type RemoteCommandOptions<A extends Action.Any = Action.Any> = CommandOptions<A> & {
-  /**
-   * Its client's options, as `ActionHttp.client` takes them: `baseUrl`, and
-   * `transformClient` for credentials. They reach this command's requests alone.
-   */
-  readonly client?: ClientOptions;
-};
+type ClientOf<H extends AnyHttp> = Effect.Effect<Client<H, unknown, unknown>, unknown, unknown>;
 
-/** A remote aggregate command's options, its actions `A`. */
-export type RemoteOptions<A extends Action.Any = Action.Any> = Options<A> & {
-  /**
-   * Every subcommand's client options, as `ActionHttp.client` takes them: `baseUrl`, and
-   * `transformClient` for credentials. They reach this aggregate's requests alone. A URL or a
-   * token read from `Config` goes instead into the `HttpClient` provided on the command, with
-   * `Command.provideEffect(HttpClient.HttpClient, …)`: it is read when a command runs, so
-   * `--help` needs neither, and a command of your own in `subcommands` calls through it too.
-   * A required one that is not set fails that Effect with a `ConfigError`, which is no
-   * command's failure and prints as a crash line: map the read,
-   * `Effect.mapError((cause) => new CliError.UserError({ cause, userMessage: "TOKEN is not set" }))`.
-   */
-  readonly client?: ClientOptions;
-};
+type ErasedClient = ClientOf<AnyHttp>;
 
-type HttpUserError<H extends AnyHttp, A extends Action.Any> = UserError<
-  | A["error"][number]["Type"]
-  | H["error"][number]["Type"]
-  | VerifierError<A, H["authentication"]>["Type"]
-  | Action.BuiltIn
-  | HttpClientError.HttpClientError
-  | Schema.SchemaError
->;
+type RemoteKeys<Keys> = Keys & { readonly client?: unknown };
+
+type Failing<F> = UserError<Exclude<F, CliError.CliError>> | Extract<F, CliError.CliError>;
+
+// Why: Distributive over the action, so an aggregate's call is any of its methods'.
+type Called<M, A extends Action.Any> = A extends unknown
+  ? A["name"] extends keyof M
+    ? M[A["name"]] extends (...input: never) => infer Call
+      ? Call
+      : never
+    : never
+  : never;
+
+// Why: Distributive over the client, so one that may be `undefined` also fails and requires as
+// its omission does: as `ActionHttp.client(binding)` on the host's `HttpClient`.
+type CallFailure<H extends AnyHttp, C, A extends Action.Any> =
+  C extends Effect.Effect<infer M, infer CE, unknown>
+    ? CE | Effect.Error<Called<M, A>>
+    : Effect.Error<Called<Client<H>, A>>;
+
+type CallServices<C, A extends Action.Any> =
+  C extends Effect.Effect<infer M, unknown, infer CR>
+    ? CR | Effect.Services<Called<M, A>>
+    : HttpClient.HttpClient;
 
 /**
  * Project every implemented action as a subcommand of one aggregate command, each named after
@@ -369,7 +368,7 @@ export function make<
   string,
   {},
   {},
-  | UserError<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>
+  | Failing<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>
   | Command.Error<OwnCommand<Own>>,
   | Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
   | Command.Services<OwnCommand<Own>>
@@ -397,28 +396,34 @@ export function make<
 
 /**
  * Project every action of an HTTP binding as a subcommand of one aggregate command, derived as
- * `make` derives it, each calling its action over HTTP. `client` configures every derived
- * subcommand's client; `commands` gives one the options `command` takes; `subcommands` adds
- * commands of your own.
+ * `make` derives it, each calling its action through `client`'s method, as `remoteCommand`
+ * does. `commands` gives one the options `command` takes; `subcommands` adds commands of your
+ * own, which call through the same client by yielding the Effect given as `client`.
  */
 export function remote<
   const H extends AnyHttp,
   const O extends Selection<H["actions"][number]> = {},
   const Own extends Subcommands = [],
+  C extends ClientOf<H> | undefined = undefined,
 >(
   binding: H,
   options: O &
-    NoInfer<RemoteOptions<H["actions"][number]>> &
-    NoInfer<KnownOptions<O, RemoteOptions<Action.Any>, H["actions"][number]>> & {
+    NoInfer<Options<H["actions"][number]>> &
+    NoInfer<KnownOptions<O, RemoteKeys<Options<Action.Any>>, H["actions"][number]>> & {
+      readonly client?: C;
       readonly subcommands?: Own | undefined;
     },
 ): Command.Command<
   string,
   {},
   {},
-  HttpUserError<H, Selected<O, H["actions"][number]>> | Command.Error<OwnCommand<Own>>,
-  HttpClient.HttpClient | Command.Services<OwnCommand<Own>>
-> {
+  Failing<CallFailure<H, C, Selected<O, H["actions"][number]>>> | Command.Error<OwnCommand<Own>>,
+  CallServices<C, Selected<O, H["actions"][number]>> | Command.Services<OwnCommand<Own>>
+>;
+export function remote(
+  binding: AnyHttp,
+  options: Options & { readonly client?: ErasedClient | undefined },
+): Command.Command<string, {}, {}, unknown, unknown> {
   const listed = options.actions;
 
   if (listed !== undefined) assertHeld("the binding does not hold it", listed, binding.actions);
@@ -433,8 +438,7 @@ export function remote<
     (action, syntax) => overHttp(binding, action, syntax, options.client),
   );
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list: each calls one action through the binding's client, so the aggregate's channels are the unions of what a client method states over them.
-  return group as never;
+  return group;
 }
 
 // Why: Applied around the whole program, since `runMain`'s report of a defect or of a failed host

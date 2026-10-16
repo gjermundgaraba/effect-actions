@@ -509,11 +509,11 @@ const userErrorOf = (errors: Action.Errors) => {
     );
 };
 
-export const failingAsDerived = (
-  actions: ReadonlyArray<Action.Any>,
-  errorsOf: (action: Action.Any) => Action.Errors,
-) => {
-  const failure = userErrorOf([...new Set(actions.flatMap(errorsOf))]);
+// Why: An Effect CLI error, a `CliError.UserError` of your own included, passes through as it is,
+// in a derived command as in one of your own: described again, it would print its cause beside
+// its `userMessage`.
+export const failingAsDerived = (errors: Action.Errors) => {
+  const failure = userErrorOf([...new Set(errors)]);
 
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.catchIf(
@@ -653,7 +653,7 @@ export const command = <A extends Action.Any, E, R>(
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
   options: Options<A> | undefined,
   errors: Action.Errors,
-): Command.Command<string, never, {}, UserError<E | InvalidInput>, R> => {
+) => {
   const name = options?.name ?? kebab(action.name);
   const render = options?.render;
 
@@ -664,7 +664,7 @@ export const command = <A extends Action.Any, E, R>(
     options?.stdin,
   );
 
-  const failure = userErrorOf(errors);
+  const failing = failingAsDerived(errors);
 
   assertDistinct(
     "flag",
@@ -693,7 +693,7 @@ export const command = <A extends Action.Any, E, R>(
   const run = (parsed: Parsed, rendered: ((output: A["success"]["Type"]) => string) | undefined) =>
     decode(parsed).pipe(
       Effect.flatMap(execute),
-      Effect.catch(failure),
+      failing,
       Effect.flatMap((value) => printedOutput(action, value, rendered)),
       withStderrConsole,
       Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Console.log })),
