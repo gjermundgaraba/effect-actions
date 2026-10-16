@@ -1,9 +1,43 @@
-import { Config, Console, Effect, FileSystem, flow } from "effect";
+import { Config, Console, Effect, FileSystem, Schema } from "effect";
 import { Argument, CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./Api.js";
+
+// What a command fails with when no token is configured: a tagged error of the CLI's own, printed
+// on stderr as `MissingToken: <message>` under an `ERROR` heading, and exit 1.
+class MissingToken extends Schema.TaggedError<MissingToken>()("MissingToken", {
+  message: Schema.String,
+}) {}
+
+// The binding's typed client, connected to where the server is and as who is calling, both read
+// from config. It is an Effect, not a client: every command here, the derived ones and your own,
+// runs it when it runs, so `--help` and a mistyped flag read nothing. It reaches these commands'
+// requests and no others.
+const api = Effect.gen(function* () {
+  const baseUrl = yield* Config.String("NOTES_URL").pipe(
+    Config.withDefault("http://127.0.0.1:3000"),
+  );
+
+  // Required, since every command but `get-status` is refused without one. Left as it is, a
+  // missing token prints as `ConfigError: …`; mapped, it prints the message, which says what to
+  // do. A CLI whose public commands must answer signed out reads the token with `Config.option`
+  // instead and adds the header when it is there.
+  const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
+    Effect.mapError(
+      () =>
+        new MissingToken({
+          message: "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
+        }),
+    ),
+  );
+
+  return yield* ActionHttp.client(Http, {
+    baseUrl,
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+  });
+});
 
 // The file's format: each note a `# ` title line, a blank line and its body, the notes apart by
 // a blank line. A body line that starts as a title would is written with a backslash before it,
@@ -15,14 +49,14 @@ const unescape = (body: string) => body.replaceAll(/^\\(?=\\*# )/gmu, "");
 // A command of your own, for what no single action does: this one calls two and writes a file.
 // It is a native Effect CLI command, so its syntax and its output are what you write: `notes
 // export notes.md` takes its argument from `Argument`, as a flag would come from `Flag`. It
-// calls the server through the binding's typed client, on the `HttpClient` the derived commands
-// use, and writes with the `FileSystem` every Effect CLI command has.
+// calls the server through `api`, the client the derived commands call, and writes with the
+// `FileSystem` every Effect CLI command has.
 const exportNotes = Command.make(
   "export",
   { file: Argument.String("file").pipe(Argument.withDescription("The Markdown file to write.")) },
   ({ file }) =>
     Effect.gen(function* () {
-      const client = yield* ActionHttp.client(Http);
+      const client = yield* api;
       const files = yield* FileSystem.FileSystem;
       const { notes } = yield* client.listNotes();
       const whole = yield* Effect.forEach(notes, ({ id }) => client.getNote({ id }));
@@ -63,7 +97,7 @@ const importNotes = Command.make(
   },
   ({ text }) =>
     Effect.gen(function* () {
-      const client = yield* ActionHttp.client(Http);
+      const client = yield* api;
 
       if (text === "") return yield* Console.log("Created 0 notes");
 
@@ -93,6 +127,7 @@ const importNotes = Command.make(
 // it: test/commands.test.ts.
 export const commands = ActionCli.remote(Http, {
   name: "notes",
+  client: api,
   commands: {
     // `notes create-note --title Draft < draft.md`: the body is piped in, not a flag.
     createNote: { stdin: "body" },
@@ -103,35 +138,4 @@ export const commands = ActionCli.remote(Http, {
   // `Command.withSubcommands` on the result would replace the derived commands, so your own
   // go here.
   subcommands: [exportNotes, importNotes],
-});
-
-// Where the server is and who is calling, read from config: the `HttpClient` every command
-// above calls with. It is an Effect, not a value, so that cli.ts provides it on the commands
-// and it runs when one of them does.
-export const connection = Effect.gen(function* () {
-  const url = yield* Config.String("NOTES_URL").pipe(Config.withDefault("http://127.0.0.1:3000"));
-
-  // Required, since every command but `get-status` is refused without one. A failure of what a
-  // command is provided is no action's error: left as it is, a missing token is reported as a
-  // crash, the log line `ERROR (#n): ConfigError: SchemaError(Expected string at
-  // ["NOTES_TOKEN"])`. Mapped to a `UserError`, it is printed as any failure of a command is:
-  // the message under an `ERROR` heading on stderr, and exit 1. `userMessage` is all that is
-  // printed, never `cause`: what the user needs from the cause goes into the message. A CLI
-  // whose public commands must answer signed out reads the token with `Config.option` instead
-  // and adds the header when it is there.
-  const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
-    Effect.mapError(
-      (cause) =>
-        new CliError.UserError({
-          cause,
-          userMessage:
-            "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
-        }),
-    ),
-  );
-
-  return HttpClient.mapRequest(
-    yield* HttpClient.HttpClient,
-    flow(HttpClientRequest.prependUrl(url), HttpClientRequest.bearerToken(token)),
-  );
 });

@@ -104,7 +104,7 @@ src/
 ├── worker.ts          entrypoint: a fetch handler for a serverless host
 ├── stdio.ts           entrypoint: MCP for a local agent
 ├── commands.ts        the commands calling the server, one written by hand, and their connection
-├── cli.ts             entrypoint: the commands, given that connection
+├── cli.ts             entrypoint: the commands
 └── browser.ts         client module: promises for a web page
 test/
 ├── notes/             in process, with Action.client
@@ -144,7 +144,7 @@ test/
 | A CLI derived from the binding: an argument, a field on stdin | `src/commands.ts`                |
 | A command written by hand beside the derived ones             | `src/commands.ts`                |
 | A bulk import as one action, its command reading a file       | `src/notes/`, `src/commands.ts`  |
-| The CLI's connection, read from config when a command runs    | `src/commands.ts`, `src/cli.ts`  |
+| The CLI's connection, read from config when a command runs    | `src/commands.ts`                |
 | A missing token as one message, not a `ConfigError` report    | `src/commands.ts`                |
 | A promise client handling each declared error by its tag      | `src/browser.ts`                 |
 | Testing handlers and authorization with no transport          | `test/notes/notes.test.ts`       |

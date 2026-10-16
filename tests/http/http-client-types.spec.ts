@@ -1,9 +1,10 @@
 import { type DateTime, Effect, Schema } from "effect";
-import type { HttpClient, HttpClientError } from "effect/http";
+import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import { authorize, authorizing, Credentials, SignInRequired } from "../support/credentials.js";
 
 class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
 
@@ -173,3 +174,59 @@ export const bindingErrorTypes = Effect.gen(function* () {
 
   yield* methods.count().pipe(Effect.catchTag("Throttled", () => Effect.succeed(0)));
 });
+
+export const transformErrorsAndServices = Effect.gen(function* () {
+  const built = ActionHttp.client(Throttling, { transformClient: authorizing });
+
+  expectTypeOf<Effect.Services<typeof built>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+  const methods = yield* built;
+  const get = methods.get({ id: "a" });
+
+  expectTypeOf<Effect.Error<typeof get>>().toEqualTypeOf<
+    Missing | Throttled | SignInRequired | EveryCallFailure
+  >();
+  expectTypeOf<Effect.Services<typeof get>>().toEqualTypeOf<Credentials>();
+
+  const inline = yield* ActionHttp.client(Throttling, {
+    transformClient: (client) => HttpClient.mapRequestEffect(client, authorize),
+  });
+
+  expectTypeOf(inline).toEqualTypeOf(methods);
+
+  yield* methods.count().pipe(
+    Effect.catchTag("SignInRequired", () => Effect.succeed(0)),
+    Effect.provideService(Credentials, { token: Effect.succeed("t0k") }),
+  );
+
+  // @ts-expect-error -- A call requires what the transform requires.
+  const unprovided: Effect.Effect<number, unknown> = methods.count();
+  void unprovided;
+});
+
+export const plainTransformKeepsTheChannels = Effect.gen(function* () {
+  const bearer = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")) };
+
+  const methods = yield* ActionHttp.client(Throttling, bearer);
+  const count = methods.count();
+
+  expectTypeOf<Effect.Error<typeof count>>().toEqualTypeOf<Throttled | EveryCallFailure>();
+  expectTypeOf<Effect.Services<typeof count>>().toEqualTypeOf<never>();
+});
+
+const failingFetched = ActionHttp.fetchClient(Throttling, {
+  transformClient: (client) =>
+    HttpClient.mapRequestEffect(client, () => Effect.fail(new SignInRequired())),
+});
+
+expectTypeOf<Effect.Error<ReturnType<typeof failingFetched.count>>>().toEqualTypeOf<
+  Throttled | SignInRequired | EveryCallFailure
+>();
+
+expectTypeOf<Effect.Services<ReturnType<typeof failingFetched.count>>>().toEqualTypeOf<never>();
+
+const authorizedFetched = ActionHttp.fetchClient(Throttling, { transformClient: authorizing });
+
+expectTypeOf<
+  Effect.Services<ReturnType<typeof authorizedFetched.count>>
+>().toEqualTypeOf<Credentials>();

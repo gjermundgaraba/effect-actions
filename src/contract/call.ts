@@ -36,14 +36,14 @@ export const inputOf = (
     ? Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))({})
     : Effect.succeed(args[0]);
 
-export type ErasedMethod = (
+export type ErasedMethod<R = never> = (
   ...input: ReadonlyArray<ErasedValue>
-) => Effect.Effect<ErasedValue, unknown>;
+) => Effect.Effect<ErasedValue, unknown, R>;
 
-export const checked = (
+export const checked = <R>(
   action: Action.Any,
-  send: (payload: ErasedValue) => Effect.Effect<ErasedValue, unknown>,
-): ErasedMethod => {
+  send: (payload: ErasedValue) => Effect.Effect<ErasedValue, unknown, R>,
+): ErasedMethod<R> => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), { errors: "all" });
 
   return (...args) =>

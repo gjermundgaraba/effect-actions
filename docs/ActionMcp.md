@@ -44,7 +44,7 @@ options. Its `protocols` and `allowSessionTermination` are not options.
 
 `client` takes `url`, default `/mcp`, `transformClient`, and the endpoint's `authentication`, so an
 error its verifier declares decodes; `request` takes `url` and `headers`.
-Types: `Client<Actions, D>`, `ClientOptions`, `RequestOptions`, `Params`.
+Types: `Client<Actions, D, E, R>`, `ClientOptions`, `RequestOptions`, `Params`.
 
 ## Serve tools over HTTP
 

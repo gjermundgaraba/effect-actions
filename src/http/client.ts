@@ -1,5 +1,5 @@
 import { Effect, type Schema } from "effect";
-import type { HttpClient, HttpClientError } from "effect/http";
+import { HttpClient, type HttpClientError } from "effect/http";
 import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
 import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
@@ -8,14 +8,24 @@ import type { BuiltIns } from "../contract/errors.js";
 import type { ErasedValue } from "../contract/implementation.js";
 
 /**
- * The native `HttpApiClient.make` options except `transformResponse`: `baseUrl` and
- * `transformClient`. `transformResponse` may change a call's success, failure or
- * services, which the method types cannot follow.
+ * The native `HttpApiClient.make` options except `transformResponse`, which may change a call's
+ * success, failure or services the method types cannot follow: `baseUrl`, and `transformClient`,
+ * which may return a client failing with `E` or requiring `R` of its own, as
+ * `HttpApiClient.makeWith` takes one.
  */
-export type Options = Omit<
+export interface Options<E = HttpClientError.HttpClientError, R = never> extends Pick<
   NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
-  "transformResponse"
->;
+  "baseUrl"
+> {
+  /**
+   * Wraps the native `HttpClient` the calls send with: a bearer token is
+   * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. A method also fails with what
+   * the returned client fails with beyond an `HttpClientError`, and requires what it requires.
+   */
+  readonly transformClient?:
+    | ((client: HttpClient.HttpClient) => HttpClient.HttpClient.With<E, R>)
+    | undefined;
+}
 
 type BindingError = Action.Errors[number];
 
@@ -32,9 +42,9 @@ export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
-type Method<A extends Action.Any, E extends BindingError> = Call<
+type Method<A extends Action.Any, E extends BindingError, CE, CR> = Call<
   A,
-  Effect.Effect<A["success"]["Type"], MethodError<A, E>>
+  Effect.Effect<A["success"]["Type"], MethodError<A, E> | CE, CR>
 >;
 
 /**
@@ -52,30 +62,34 @@ export interface AnyHttp {
 
 /**
  * Every action of the binding `H`, as `client.<action>(input)`: a protected one may also fail
- * with what its descriptor's verifier declares.
+ * with what its descriptor's verifier declares. Each call also fails with `E` and requires `R`,
+ * what its `transformClient` adds.
  */
-export type Client<H extends AnyHttp> = {
+export type Client<H extends AnyHttp, E = never, R = never> = {
   readonly [A in H["actions"][number] as A["name"]]: Method<
     A,
-    H["error"][number] | VerifierError<A, H["authentication"]>
+    H["error"][number] | VerifierError<A, H["authentication"]>,
+    E,
+    R
   >;
 };
 
-type NativeMethod = (request: {
+type NativeMethod<R> = (request: {
   readonly payload: ErasedValue;
-}) => Effect.Effect<ErasedValue, unknown>;
+}) => Effect.Effect<ErasedValue, unknown, R>;
 
-type NativeClient = { readonly [name: string]: NativeMethod | undefined };
+type NativeClient<R> = { readonly [name: string]: NativeMethod<R> | undefined };
 
-export const methods = (
+const methodsWith = <E, R>(
   http: AnyHttp,
-  options: Options = {},
-): Effect.Effect<{ readonly [name: string]: ErasedMethod }, never, HttpClient.HttpClient> =>
+  httpClient: HttpClient.HttpClient.With<E, R>,
+  baseUrl: Options["baseUrl"],
+): Effect.Effect<{ readonly [name: string]: ErasedMethod<R> }> =>
   Effect.map(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
-    HttpApiClient.make(http.api as HttpApi.HttpApi<string>, options),
+    HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, { baseUrl, httpClient }),
     (client) => {
-      const native: NativeClient = client;
+      const native: NativeClient<R> = client;
 
       return Object.fromEntries(
         http.actions.map((action) => {
@@ -87,4 +101,14 @@ export const methods = (
         }),
       );
     },
+  );
+
+export const methods = <E, R>(
+  http: AnyHttp,
+  { baseUrl, transformClient }: Options<E, R> = {},
+): Effect.Effect<{ readonly [name: string]: ErasedMethod<R> }, never, HttpClient.HttpClient> =>
+  Effect.flatMap(HttpClient.HttpClient, (native) =>
+    transformClient === undefined
+      ? methodsWith(http, native, baseUrl)
+      : methodsWith(http, transformClient(native), baseUrl),
   );

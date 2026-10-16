@@ -1,10 +1,11 @@
 import { Cause, Context, Effect, Layer, Schema, type Stdio, type Types } from "effect";
 import { type McpSchema, McpServer } from "effect/ai";
-import type { HttpRouter } from "effect/http";
+import { HttpClient, type HttpClientError, HttpClientRequest, type HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
+import { authorizing, Credentials, SignInRequired } from "../support/credentials.js";
 
 const options = { name: "t", version: "0" };
 
@@ -170,3 +171,34 @@ expectTypeOf<
 expectTypeOf<Types.ReasonTags<ActionMcp.McpCallError>>().toEqualTypeOf<
   "StatusError" | "ProtocolError" | "NoReply" | "UndeclaredError" | "NoStructuredContent"
 >();
+
+type CallFailure =
+  | Action.BuiltIn
+  | Schema.SchemaError
+  | HttpClientError.HttpClientError
+  | ActionMcp.McpCallError;
+
+export const transformErrorsAndServices = Effect.gen(function* () {
+  const built = ActionMcp.client([Open, Private], {
+    authentication: Login,
+    transformClient: authorizing,
+  });
+
+  expectTypeOf<Effect.Services<typeof built>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+  const mcp = yield* built;
+  const call = mcp.private();
+
+  expectTypeOf<Effect.Error<typeof call>>().toEqualTypeOf<CallFailure | SignInRequired>();
+  expectTypeOf<Effect.Services<typeof call>>().toEqualTypeOf<Credentials>();
+
+  const bearer = { transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")) };
+  const plain = (yield* ActionMcp.client([Open], bearer)).open();
+
+  expectTypeOf<Effect.Error<typeof plain>>().toEqualTypeOf<CallFailure>();
+  expectTypeOf<Effect.Services<typeof plain>>().toEqualTypeOf<never>();
+
+  // @ts-expect-error -- A call requires what the transform requires.
+  const unprovided: Effect.Effect<void, unknown> = call;
+  void unprovided;
+});

@@ -63,7 +63,10 @@ The tasks are in [ActionCli.md](ActionCli.md).
   `client`. To choose by a condition, build a command from each:
   `remotely ? ActionCli.remote(Http, options) : ActionCli.make(users, options)`.
 - `Type 'HttpClient' is not assignable to type 'never'` in the pipe that runs a remote command:
-  provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`).
+  provide `NodeHttpClient.layerUndici` (or `FetchHttpClient.layer`). Another service named there
+  is what its `client` requires: provide it too.
+- An argument of type `Binding<…>` not assignable at `remote` or `remoteCommand`, beside a
+  `client`: the client is another binding's. Make it with `ActionHttp.client` of this one.
 - A local command requires an identity service no handler yields: its action is protected, and
   requires the identity its contract declares. Provide it on the command
   ([Name the caller](ActionCli.md#name-the-caller)); do not make the contract public to satisfy
@@ -79,20 +82,18 @@ The tasks are in [ActionCli.md](ActionCli.md).
 - `--help` or a mistyped flag connects to a database, or fails reading config: services provided
   around `Command.run` are built before parsing. Provide them on the command,
   `Command.provide(layer)`.
-- `ERROR (#n): ConfigError: SchemaError(Expected string at ["NOTES_TOKEN"])` from a public
-  command, exit 1, on stdout, or on stderr under `logToStderr`: the client provided on the
-  command requires a token, and a failure of what a command is provided is `runMain`'s report,
-  not the command's JSON. Read the token with `Config.option` and add the header only when it is
-  there. Where every command needs it, keep it required and map the failure, in the Effect that
-  provides the client, to `new CliError.UserError({ cause, userMessage })`:
+- `ConfigError: …` or another error's `Tag: message` on stderr from a remote command, a public
+  one too: its `client` failed, as when a required token is not set. Read an optional one with
+  `Config.option` and add the header only when it is there. Where every command needs it, map
+  the failure to a tagged error whose `message` says what to do:
   [notes-service/src/commands.ts](../examples/notes-service/src/commands.ts).
 - `HttpClientError` whose `reason._tag` is `InvalidUrlError`, from a remote command: its client
   has no `baseUrl` and prepends no URL.
 - 401 `Unauthenticated` from a remote command: a remote command adds no headers of its own. Add
-  credentials in `client`'s `transformClient`, or on the `HttpClient` the command is provided.
+  credentials in its client's `transformClient`.
 - Another command's request goes to the API's URL, or carries its token: an `HttpClient`
   configured around the whole program rewrites every request the program makes. Configure it in
-  the `client` option, or provide it on the remote command alone.
+  the `client` option.
 - A report with a stack on stdout, `ERROR (#1): ...`, instead of JSON on stderr: a defect, or a
   failure of a layer the host provides, which `runMain` reports. Fix the defect; apply
   `ActionCli.logToStderr` to keep such reports off stdout.

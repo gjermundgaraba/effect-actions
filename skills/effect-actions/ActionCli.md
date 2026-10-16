@@ -36,10 +36,10 @@ Import `@gjermundgaraba/effect-actions/ActionCli`.
 | `make`, `remote`: `actions`              | The actions that are subcommands; default: every one.                           |
 | `make`, `remote`: `commands`             | Each subcommand's `command` options, by action name: `{ getNote: { render } }`. |
 | `make`, `remote`: `subcommands`          | Commands of your own beside the derived ones: `[exportNotes]`.                  |
-| `remoteCommand`, `remote`: `client`      | The `ActionHttp.client` options, `baseUrl` and `transformClient`.               |
+| `remoteCommand`, `remote`: `client`      | The client its commands call: `ActionHttp.client(Http, { baseUrl })`.           |
 
-Exported types: `Options<A>`, `RemoteOptions<A>`, `CommandOptions<A>`, `RemoteCommandOptions<A>`,
-and `UserError<E>`, a type only: what a command fails with when its action fails with `E`.
+Exported types: `Options<A>` of `make` and `remote`, `CommandOptions<A>` of `command` and
+`remoteCommand`, and `UserError<E>`, a type only: what a command fails with when its action fails with `E`.
 
 ## Run actions as local commands
 
@@ -81,21 +81,22 @@ Run it with Effect's own `Command.run`:
 Pass the HTTP binding to `remote`. The program imports the binding alone, never a handler; each
 command calls its action through the binding's `ActionHttp.client` method
 ([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)) and fails as that method does. The host
-provides `HttpClient` (`NodeHttpClient.layerUndici`) and says where the server is:
-[notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts) and
-[notes-service/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/cli.ts).
+provides `HttpClient` (`NodeHttpClient.layerUndici`) in
+[notes-service/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/cli.ts); the client says where the
+server is in [notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts).
 [kitchen-sink/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/cli.ts) adds a tenant header and uses
 every command option.
 
-- **Choose where the connection comes from.** A fixed URL or token goes in the `client` option:
-  `client: { baseUrl, transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)) }`.
-  One read from `Config` configures the `HttpClient` provided on the command, with
-  `Command.provideEffect(HttpClient.HttpClient, …)` as `notes-service/src/cli.ts` does, so
-  `--help` needs neither. A command of your own in `subcommands` calls through the same client.
-- **Configure the client on the command, never around the program.** Around the program it
-  rewrites every request the program makes, an absolute URL too, and sends each one the token.
-- **A token every command needs is required, its failure mapped to a `CliError.UserError`**, or a
-  missing one prints a raw `ConfigError` log line: `connection` in
+- **The connection is the `client` option**, an Effect of the binding's client run each time a
+  command runs: `client: ActionHttp.client(Http, { baseUrl, transformClient })`. One reading
+  `Config` is an `Effect.gen` returning `yield* ActionHttp.client(…)`, so `--help` reads nothing.
+  Its failures and its methods' are the command's, printed as `Tag: message`, a
+  `CliError.UserError` as its `userMessage`; what they require, the host provides. Credentials go in `transformClient`
+  ([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)).
+- **Never transform the `HttpClient` around the program**: it rewrites every request the program
+  makes, an absolute URL too, and sends each one the token.
+- **A token every command needs is required, its failure mapped to a tagged error whose `message`
+  says what to do**, or a missing one prints as `ConfigError: …`: `api` in
   [notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts). Where a public
   command must answer signed out, read it with `Config.option` and add the header when it is
   there: [kitchen-sink/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/cli.ts).
@@ -156,15 +157,15 @@ in `subcommands`: `notes export <file>` takes `Argument.String("file")`
 ([notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts)):
 
 ```ts
-const notes = ActionCli.remote(Http, { name: "notes", subcommands: [exportNotes] });
+const notes = ActionCli.remote(Http, { name: "notes", client: api, subcommands: [exportNotes] });
 ```
 
 - **Never pipe `Command.withSubcommands` onto `make` or `remote`.** It replaces the derived
   commands, which then answer with the usage text.
-- **Call the actions through a client**, in the command's own handler: `ActionHttp.client`, which
-  needs no scope and uses the `HttpClient` provided on the aggregate, or `Action.client`, acquired
-  inside `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
-  `authorize` still runs. The `client` option reaches the derived commands alone.
+- **Call the actions through a client**, in the command's own handler: `yield* api`, the Effect
+  the aggregate's `client` is, which needs no scope, or `Action.client`, acquired inside
+  `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
+  `authorize` still runs.
 - **Its output is what it prints**, with `Console.log`: the output rules below are a derived
   command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, the binding its
   client is made from, HTTP or RPC, or `toUserError([GetNote])` over `Action.client`, to fail as a derived command does: a declared

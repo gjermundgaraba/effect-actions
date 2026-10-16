@@ -1,10 +1,11 @@
 import { Context, Effect, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
-import { type CliError, Command } from "effect/cli";
+import { CliError, Command } from "effect/cli";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
+import { authorizing, Credentials, SignInRequired } from "../support/credentials.js";
 
 class Build extends Context.Service<Build, string>()("cli-types/Build") {}
 
@@ -215,10 +216,10 @@ void remoteCount;
 // @ts-expect-error -- A remote command selects an action of the binding.
 ActionCli.remoteCommand(http, Plain);
 
-const connection: ActionHttp.ClientOptions = {
+const connection = ActionHttp.client(http, {
   baseUrl: "http://api.example.com",
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("secret")),
-};
+});
 
 const connected = ActionCli.remoteCommand(http, RemoteAction, {
   client: connection,
@@ -254,6 +255,99 @@ expectTypeOf<
 
 expectTypeOf<Extract<Command.Error<typeof remoteGroup>, OwnFailure>>().toEqualTypeOf<never>();
 
+type RemoteFailure = Domain | Action.BuiltIn | HttpClientError.HttpClientError | Schema.SchemaError;
+
+const signedIn = ActionCli.remoteCommand(http, RemoteAction, {
+  client: ActionHttp.client(http, { transformClient: authorizing }),
+  render: String,
+});
+
+expectTypeOf<Command.Error<typeof signedIn>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure | SignInRequired>
+>();
+
+expectTypeOf<Command.Services<typeof signedIn>>().toEqualTypeOf<
+  HttpClient.HttpClient | Credentials
+>();
+
+expectTypeOf<Command.Error<typeof connected>>().toEqualTypeOf<ActionCli.UserError<RemoteFailure>>();
+
+expectTypeOf<Command.Error<typeof remoteGroup>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure>
+>();
+
+const signedInGroup = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: ActionHttp.client(http, { transformClient: authorizing }),
+  subcommands: [own],
+});
+
+expectTypeOf<Command.Error<typeof signedInGroup>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure | SignInRequired> | OwnFailure
+>();
+
+expectTypeOf<Command.Services<typeof signedInGroup>>().toEqualTypeOf<
+  HttpClient.HttpClient | Credentials | OneRequest
+>();
+
+// @ts-expect-error -- A run provides what the client's methods require.
+const unprovided: Command.Command<string, {}, {}, unknown, HttpClient.HttpClient> = signedInGroup;
+
+void unprovided;
+
+const configured = ActionCli.remote(http, {
+  name: "remote",
+  client: Effect.flatMap(Credentials, ({ token }) =>
+    Effect.flatMap(token, (bearer) =>
+      ActionHttp.client(http, {
+        transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(bearer)),
+      }),
+    ),
+  ),
+});
+
+expectTypeOf<Command.Error<typeof configured>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure | SignInRequired>
+>();
+
+expectTypeOf<Command.Services<typeof configured>>().toEqualTypeOf<
+  HttpClient.HttpClient | Credentials
+>();
+
+const fetched = ActionCli.remoteCommand(http, RemoteAction, {
+  client: Effect.succeed(ActionHttp.fetchClient(http)),
+});
+
+expectTypeOf<Command.Error<typeof fetched>>().toEqualTypeOf<ActionCli.UserError<RemoteFailure>>();
+
+expectTypeOf<Command.Services<typeof fetched>>().toBeNever();
+
+declare const maybeFetched: Effect.Effect<ActionHttp.Client<typeof http>> | undefined;
+
+const maybeGroup = ActionCli.remote(http, { name: "remote", client: maybeFetched });
+
+expectTypeOf<Command.Services<typeof maybeGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+const maybeCommand = ActionCli.remoteCommand(http, RemoteAction, { client: maybeFetched });
+
+expectTypeOf<Command.Services<typeof maybeCommand>>().toEqualTypeOf<HttpClient.HttpClient>();
+
+const prompting = ActionCli.remote(http, {
+  name: "remote",
+  client: Effect.andThen(
+    Effect.fail(new CliError.UserError({ cause: undefined, userMessage: "Sign in first" })),
+    ActionHttp.client(http),
+  ),
+});
+
+expectTypeOf<Command.Error<typeof prompting>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure> | CliError.UserError
+>();
+
+// @ts-expect-error -- The client is one of this binding.
+ActionCli.remote(http, { name: "remote", client: ActionHttp.client(ActionHttp.make([Count])) });
+
 const localWithOwn = ActionCli.make(local, {
   name: "local",
   actions: [One],
@@ -264,13 +358,13 @@ expectTypeOf<Command.Services<typeof localWithOwn>>().toEqualTypeOf<
   Build | OneRequest | TwoRequest
 >();
 
-const erased: ActionCli.RemoteOptions<typeof RemoteAction> = { name: "remote", subcommands: [own] };
+const erased: ActionCli.Options<typeof RemoteAction> = { name: "remote", subcommands: [own] };
 
 const erasedGroup = ActionCli.remote(http, erased);
 
 expectTypeOf<Command.Services<typeof erasedGroup>>().toEqualTypeOf<HttpClient.HttpClient>();
 
-const satisfied = { name: "remote", subcommands: [own] } satisfies ActionCli.RemoteOptions<
+const satisfied = { name: "remote", subcommands: [own] } satisfies ActionCli.Options<
   typeof RemoteAction
 >;
 
@@ -291,24 +385,16 @@ expectTypeOf<Extract<Command.Error<typeof localFailing>, OwnFailure>>().toEqualT
 // @ts-expect-error -- A subcommand of your own is an Effect CLI command.
 ActionCli.remote(http, { name: "remote", subcommands: [One] });
 
-const remoteOptions: ActionCli.RemoteOptions<typeof RemoteAction | typeof Count> = {
+const remoteOptions: ActionCli.Options<typeof RemoteAction | typeof Count> = {
   name: "remote",
-  client: connection,
   commands: { remote: { render: String } },
 };
 
-const fromAnnotatedOptions = ActionCli.remote(http, remoteOptions);
+const fromAnnotatedOptions = ActionCli.remote(http, { ...remoteOptions, client: connection });
 
 expectTypeOf<
   Command.Services<typeof fromAnnotatedOptions>
 >().toEqualTypeOf<HttpClient.HttpClient>();
-
-const remoteCommandOptions: ActionCli.RemoteCommandOptions<typeof RemoteAction> = {
-  client: connection,
-  render: String,
-};
-
-ActionCli.remoteCommand(http, RemoteAction, remoteCommandOptions);
 
 export const unconnected: ActionCli.Options<typeof RemoteAction> = {
   name: "x",

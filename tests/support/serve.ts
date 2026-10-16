@@ -39,6 +39,6 @@ export function serve(routes: Layer.Layer<unknown, unknown, Served>): Server {
 export const httpClient = <const H extends ActionHttp.Any>(
   http: H,
   handler: Handler,
-  options?: Parameters<typeof ActionHttp.client>[1],
+  options?: ActionHttp.ClientOptions,
 ): Effect.Effect<ActionHttp.Client<H>> =>
   ActionHttp.client(http, options).pipe(Effect.provide(Testing.layer(handler)));

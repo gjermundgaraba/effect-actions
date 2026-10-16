@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`ActionCli.remote` and `remoteCommand` take the client their commands call**, as `client`: an
+Effect of the binding's client, such as `ActionHttp.client(Http, { baseUrl })`, run each time a
+command runs. A command of your own calls through the same value, `yield* api`, where it rebuilt
+the client before. What the Effect fails with, a `ConfigError` reading the connection for one, is
+each command's failure, printed as `Tag: message`, or a `CliError.UserError` as its `userMessage`
+alone, as in a command of your own; what the client's methods fail with and require is each
+command's too. `RemoteOptions` and `RemoteCommandOptions` are removed: the options
+are `Options` and `CommandOptions`, beside `client`. This replaces providing a configured
+`HttpClient` with `Command.provideEffect(HttpClient.HttpClient, …)`, which still works but types
+no failure of a request beyond an `HttpClientError`.
+
+- Migrate: `client: { baseUrl, transformClient }` is
+  `client: ActionHttp.client(Http, { baseUrl, transformClient })`. A connection read from
+  `Config` is `client: Effect.gen(function* () { …; return yield* ActionHttp.client(Http, …) })`,
+  as `notes-service/src/commands.ts` does; give a command of your own the same Effect. Options
+  annotated `RemoteOptions<A>` are `Options<A>`, and take `client` beside them in the call.
+
+**A helper typed `Parameters<typeof ActionHttp.client>[1]` sees `Options<unknown, unknown>`**, the
+options of the new overload below, and no plain transform fits it.
+
+- Migrate: type it `ActionHttp.ClientOptions`, or `ActionHttp.ClientOptions<E, R>`.
+
+### Additions
+
+**A client's `transformClient` may fail and require services of its own**, as Effect's
+`HttpApiClient.makeWith` takes a client: `ActionHttp.client`, `ActionHttp.fetchClient` and
+`ActionMcp.client`. A credential read or refreshed per request,
+`(client) => HttpClient.mapRequestEffect(client, authorize)`, then fails each call with
+`authorize`'s own errors, as they are, and each call requires its services, provided on the call
+for a `fetchClient`'s. A plain transform keeps the types it had.
+
+- Migrate: a transform that wrapped such a failure in an `HttpClientError` to fit the old type
+  fails with the error itself.
+
 ## 0.17.0
 
 ### Breaking changes
