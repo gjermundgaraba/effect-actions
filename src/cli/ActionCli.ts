@@ -268,7 +268,8 @@ const checkedCommandsOf = (
  * as JSON when it is not a struct. The flag of an array of strings or numbers is repeated for each value, a boolean
  * field is a switch, `--no-<name>` sending `false` as a required one left out does, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
  * need; the host provides the identity. It prints the result on stdout; a failure is a
- * `UserError`, which `Command.run` prints on stderr. `remoteCommand` calls a server instead.
+ * `UserError`, or an Effect CLI error as it is, such as a builder's `CliError.UserError`, which
+ * `Command.run` prints on stderr. `remoteCommand` calls a server instead.
  */
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
   implementations: Apps,
@@ -278,7 +279,7 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
   string,
   never,
   {},
-  UserError<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
+  Failing<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
 > {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the command runs `action` by its one implementation among `implementations`, so its channels are what `Local` states for that implementation.
@@ -367,7 +368,7 @@ export function make<
   string,
   {},
   {},
-  | UserError<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>
+  | Failing<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>
   | Command.Error<OwnCommand<Own>>,
   | Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
   | Command.Services<OwnCommand<Own>>

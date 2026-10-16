@@ -21,6 +21,13 @@ no failure of a request beyond an `HttpClientError`.
   as `notes-service/src/commands.ts` does; give a command of your own the same Effect. Options
   annotated `RemoteOptions<A>` are `Options<A>`, and take `client` beside them in the call.
 
+**A command `ActionCli.make` or `command` derives passes an Effect CLI error through**, as one of
+your own does through `toUserError`: a builder failing with `CliError.UserError` prints its
+`userMessage` alone, and the command fails with that error as it is, not with a `UserError` whose
+`reason` it is.
+
+- Migrate: match such a failure as Effect CLI's `UserError` itself, where code read `reason`.
+
 **A helper typed `Parameters<typeof ActionHttp.client>[1]` sees `Options<unknown, unknown>`**, the
 options of the new overload below, and no plain transform fits it.
 

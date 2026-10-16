@@ -670,3 +670,23 @@ expectTypeOf<Command.Error<typeof boundListed>>().toEqualTypeOf<
 
 // @ts-expect-error -- An action of neither.
 ActionCli.make(local, { name: "local", actions: [Plain] });
+
+const unbuilt = Action.implement(
+  One,
+  Effect.as(
+    Effect.fail(new CliError.UserError({ cause: undefined, userMessage: "Set TOKEN" })),
+    () => Effect.succeed(""),
+  ),
+);
+
+const unbuiltOne = ActionCli.command(unbuilt, One);
+
+expectTypeOf<Command.Error<typeof unbuiltOne>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn> | CliError.UserError
+>();
+
+const unbuiltGroup = ActionCli.make(unbuilt, { name: "local" });
+
+expectTypeOf<Command.Error<typeof unbuiltGroup>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn> | CliError.UserError
+>();

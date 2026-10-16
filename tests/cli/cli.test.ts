@@ -1624,6 +1624,38 @@ it.effect("acquires only the builder of the selected command's implementation", 
   }),
 );
 
+it.effect(
+  "fails with a CliError.UserError its builder fails with as it is, printing its message",
+  () =>
+    Effect.gen(function* () {
+      const unset = new CliError.UserError({ cause: "no token", userMessage: "Set TOKEN" });
+
+      const Unbuilt = Action.make("unbuilt", {
+        description: "Unbuilt",
+        readOnly: true,
+        caller: Action.Anyone,
+        success: Schema.String,
+      });
+
+      const app = Action.implement(
+        Unbuilt,
+        Effect.as(Effect.fail(unset), () => Effect.succeed("")),
+      );
+
+      const [single, , singleErr] = yield* printed(exec(ActionCli.command(app, Unbuilt), []));
+
+      const [grouped, , groupedErr] = yield* printed(
+        exec(ActionCli.make(app, { name: "tool" }), ["unbuilt"]),
+      );
+
+      expect(failure(single)).toBe(unset);
+      expect(failure(grouped)).toBe(unset);
+      expect(singleErr).toEqual([expect.stringContaining("Set TOKEN")]);
+      expect(singleErr.join("\n")).not.toContain("no token");
+      expect(groupedErr).toEqual(singleErr);
+    }),
+);
+
 it.effect("makes subcommands of the listed actions only, from implementations or a binding", () =>
   Effect.gen(function* () {
     const builds: string[] = [];
