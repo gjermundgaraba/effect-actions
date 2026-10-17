@@ -1,7 +1,7 @@
 catalog:
-  vite: npm:@voidzero-dev/vite-plus-core@1.2.0
-  vite-plus: 1.2.0
-  vitest: 5.0.4
+  vite: npm:@voidzero-dev/vite-plus-core@1.3.0
+  vite-plus: 1.3.0
+  vitest: 5.0.5
 overrides:
   vite@*: "catalog:"
   vitest@*: "catalog:"
@@ -20,13 +20,13 @@ minimumReleaseAgeExclude:
   - "@effect/platform-node@4.0.5"
   - "@effect/vitest@4.0.5"
   - effect@4.0.5
-  - "@voidzero-dev/vite-plus-core@1.2.0"
-  - "@voidzero-dev/vite-plus-darwin-arm64@1.2.0"
-  - "@voidzero-dev/vite-plus-darwin-x64@1.2.0"
-  - "@voidzero-dev/vite-plus-linux-arm64-gnu@1.2.0"
-  - "@voidzero-dev/vite-plus-linux-arm64-musl@1.2.0"
-  - "@voidzero-dev/vite-plus-linux-x64-gnu@1.2.0"
-  - "@voidzero-dev/vite-plus-linux-x64-musl@1.2.0"
-  - "@voidzero-dev/vite-plus-win32-arm64-msvc@1.2.0"
-  - "@voidzero-dev/vite-plus-win32-x64-msvc@1.2.0"
-  - vite-plus@1.2.0
+  - "@voidzero-dev/vite-plus-core@1.3.0"
+  - "@voidzero-dev/vite-plus-darwin-arm64@1.3.0"
+  - "@voidzero-dev/vite-plus-darwin-x64@1.3.0"
+  - "@voidzero-dev/vite-plus-linux-arm64-gnu@1.3.0"
+  - "@voidzero-dev/vite-plus-linux-arm64-musl@1.3.0"
+  - "@voidzero-dev/vite-plus-linux-x64-gnu@1.3.0"
+  - "@voidzero-dev/vite-plus-linux-x64-musl@1.3.0"
+  - "@voidzero-dev/vite-plus-win32-arm64-msvc@1.3.0"
+  - "@voidzero-dev/vite-plus-win32-x64-msvc@1.3.0"
+  - vite-plus@1.3.0
