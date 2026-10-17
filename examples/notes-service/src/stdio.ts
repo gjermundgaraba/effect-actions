@@ -10,7 +10,8 @@ import { NoteStore } from "./notes/store.js";
 import { status } from "./status/handlers.js";
 
 // Entrypoint: an MCP server a local agent starts as a subprocess, such as
-// `claude mcp add notes -- node --import tsx examples/notes-service/src/stdio.ts`.
+// `claude mcp add notes -- "$PWD/node_modules/.bin/tsx" "$PWD/examples/notes-service/src/stdio.ts"`
+// from the repository root: mcp-tools' README says why the paths are full.
 // The same implementations as the HTTP server, and the same `authorize`. No token arrives
 // over stdio, so this host names the caller itself. It is a process of its own with services
 // of its own: this in-memory store holds its notes, not the running server's. To share them,

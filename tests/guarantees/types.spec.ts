@@ -428,7 +428,7 @@ export const configuredSurfaceTypes = () => {
     name: "test",
     version: "0",
     authentication: Login,
-    // @ts-expect-error -- The protocol revision is fixed at 2026-07-28.
+    // @ts-expect-error -- HTTP takes no `protocols`: it serves every revision the library speaks.
     protocols: [McpProtocol.v2026_07_28],
   });
   ActionMcp.runStdio(App, {

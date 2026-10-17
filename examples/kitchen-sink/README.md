@@ -253,21 +253,21 @@ search for in the file.
 
 ### ActionToolkit
 
-| Export or option                                    | File                                 |
-| --------------------------------------------------- | ------------------------------------ |
-| `make`: `actions`, `needsApproval` (a boolean rule) | `src/issues/assistant.ts`            |
-| `toolkit` given to `LanguageModel`                  | `src/issues/assistant.ts` (`triage`) |
-| `layer`, and the caller per turn                    | `src/agent.ts`                       |
-| `toolkit` and the model yielded in a builder        | `src/assistant/handlers.ts`          |
-| `layer` provided to the routes                      | `src/routes.ts` (`assistantTools`)   |
-| An approval answered in a later request             | `src/assistant/handlers.ts`          |
-| `tools.handle`, a call made by hand                 | `test/issues/assistant.test.ts`      |
+| Export or option                                          | File                                 |
+| --------------------------------------------------------- | ------------------------------------ |
+| `make`: `actions`, `needsApproval` (a boolean rule)       | `src/issues/assistant.ts`            |
+| `toolkit` given to `LanguageModel`                        | `src/issues/assistant.ts` (`triage`) |
+| `layer`, and the caller per turn                          | `src/agent.ts`                       |
+| `toolkit` and the model yielded in a builder              | `src/assistant/handlers.ts`          |
+| `layer` provided to the routes                            | `src/routes.ts` (`assistantTools`)   |
+| An approval answered in a later request (`openApprovals`) | `src/assistant/handlers.ts`          |
+| `tools.handle`, a call made by hand                       | `test/issues/assistant.test.ts`      |
 
 ### ActionCli
 
 | Export or option                                               | File                                       |
 | -------------------------------------------------------------- | ------------------------------------------ |
-| `remote`: `name`, `commands`                                   | `src/cli.ts`                               |
+| `remote`: `name`, `commands`, `client`                         | `src/cli.ts`                               |
 | `commands`: `stdin`, `positional`, `aliases`, `render`, `name` | `src/cli.ts`                               |
 | A client from `Config`, its credentials optional               | `src/cli.ts`                               |
 | `make`, with a trusted identity the host supplies              | `src/ops.ts`                               |
@@ -299,9 +299,9 @@ Left out because this application has no honest place for them:
 - `Action.implement` with a plain record of handlers: every implementation of several actions
   here has a builder. `implementation.actions`. `mcp._meta`.
 - `ActionCli.command` and `remoteCommand`, one action as one command; `make`'s and `remote`'s
-  `actions`; `remote`'s static `client` option. Both CLIs here are aggregates of every action,
-  and the remote one reads its client from `Config`. `subcommands` and `toUserError`, a command
-  written by hand: [notes-service](../notes-service/) has one.
+  `actions`. Both CLIs here are aggregates of every action, and the remote one reads its client
+  from `Config`. `subcommands` and `toUserError`, a command written by hand:
+  [notes-service](../notes-service/) has two.
 - `ActionRpc.layer`'s `actions`, `Rpc.group`, and `ActionRpc.client`'s options.
 - A binding's other fields, `Http.actions`, `Http.error` and `Http.authentication`.
 - `ActionMcp`'s `path`, `description`, `websiteUrl`, `icons` and `extensions`; `fetchClient`'s

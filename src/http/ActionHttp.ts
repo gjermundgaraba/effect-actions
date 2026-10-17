@@ -445,12 +445,13 @@ export function layer(
  * `transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. The native
  * client itself stays available: `HttpApiClient.make(Http.api)`.
  *
- * A call fails with a declared error value (the action's own, or a built-in
- * `InvalidInput`, `Unauthenticated` or `Forbidden`), a native `HttpClientError` when the
- * server could not be reached or answered with a status or body the contract does not
- * declare, or a `SchemaError` when the success does not decode. An input that does not encode
- * fails with `InvalidInput`, and nothing is sent. A call also fails with what the client
- * `transformClient` returns fails with, as it is, and requires what that client requires.
+ * A call fails with a declared error value (the action's own, the binding's, a built-in
+ * `InvalidInput`, `Unauthenticated` or `Forbidden`, or on a protected action its descriptor's),
+ * a native `HttpClientError` when the server could not be reached or answered with a status or
+ * body the contract does not declare, or a `SchemaError` when the success does not decode. An
+ * input that does not encode fails with `InvalidInput`, and nothing is sent. A call also fails
+ * with what the client `transformClient` returns fails with, as it is, and requires what that
+ * client requires.
  */
 export function client<const H extends AnyHttp>(
   binding: H,

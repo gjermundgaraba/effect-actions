@@ -26,9 +26,10 @@ first (step 5), before the examples and the pages.
    limit, with no mark or with one that understates what is lost. If an output says it was
    truncated, read that page again alone.
 2. **Start from the example closest to what you are building** ([Examples](#examples)). Its
-   README has a layout tree and a "Where to look" table naming the file for each thing. Copy its
-   layout and idioms: the examples are the reference for how code is written. An example shows
-   one way, not the rules, the alternatives or the traps: read steps 3 and 4 even when it fits.
+   README has a layout tree, and all but quickstart's a "Where to look" table naming the file
+   for each thing. Copy its layout and idioms: the examples are the reference for how code is
+   written. An example shows one way, not the rules, the alternatives or the traps: read steps
+   3 and 4 even when it fits.
 3. **Read [Action.md](Action.md) completely.** Every surface builds on it.
 4. **Read the page of each surface you serve** ([Pages](#pages)), and the example files its task
    sections link.

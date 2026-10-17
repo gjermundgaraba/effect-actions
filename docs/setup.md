@@ -13,12 +13,12 @@ When something fails, search [setup-failures.md](setup-failures.md). Reading ord
 pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
 ```
 
-| Need                                | Add                                                              |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.4`                                   |
-| Tests                               | `vitest@^5.0.3` and `@effect/vitest@~4.0.4`, as dev dependencies |
-| Type checking                       | `typescript@^7.0.2`, as a dev dependency                         |
-| Running a TypeScript entrypoint     | `tsx`, as a dev dependency: `node --import tsx <entrypoint>.ts`  |
+| Need                                | Add                                                             |
+| ----------------------------------- | --------------------------------------------------------------- |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.4`                                  |
+| Tests                               | `vitest@^5` and `@effect/vitest@~4.0.4`, as dev dependencies    |
+| Type checking                       | `typescript@^7.0.2`, as a dev dependency                        |
+| Running a TypeScript entrypoint     | `tsx`, as a dev dependency: `node --import tsx <entrypoint>.ts` |
 
 The `effect` peer admits the 4.0.x patches from the oldest whose APIs the package uses, and no
 minor release: a minor release may change the unstable Effect modules the surfaces build on.

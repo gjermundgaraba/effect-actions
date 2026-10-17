@@ -103,7 +103,7 @@ src/
 ├── server.ts          entrypoint: the HTTP server
 ├── worker.ts          entrypoint: a fetch handler for a serverless host
 ├── stdio.ts           entrypoint: MCP for a local agent
-├── commands.ts        the commands calling the server, one written by hand, and their connection
+├── commands.ts        the commands calling the server, two written by hand, and their connection
 ├── cli.ts             entrypoint: the commands
 └── browser.ts         client module: promises for a web page
 test/
