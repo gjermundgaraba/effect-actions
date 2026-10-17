@@ -29,5 +29,6 @@ minimumReleaseAgeExclude:
   - vitest
   - "@vitest/*"
   - "@gjermundgaraba/*"
+  - "@gjermundgaraba-designs/*"
   - effect
   - "@effect/*"
