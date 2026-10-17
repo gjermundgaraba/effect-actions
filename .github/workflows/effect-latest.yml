@@ -25,7 +25,7 @@ jobs:
           cache: true
           run-install: false
       - run: vp install --frozen-lockfile
-      # Every Effect package on the same newest 4.x release, as setup.md requires.
+      # Every Effect package on the same newest 4.x release, as setup-failures.md requires.
       - run: vp add -D effect@^4 @effect/platform-node@^4 @effect/vitest@^4
       - name: Show the Effect releases under test
         run: >-
