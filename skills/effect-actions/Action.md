@@ -68,7 +68,7 @@ uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `ch
   import it ([setup.md](setup.md#bundle-for-a-browser)).
 - **The name** matches `[A-Za-z0-9_-]{1,128}`, is not `then`, and is unique within each binding,
   MCP endpoint, Toolkit, CLI and client holding it.
-- **For no arguments, omit `input`.** A `Schema.Struct({})` accepts any value but `null`, and MCP
+- **For no arguments, omit `input`.** A `Schema.Struct({})` accepts any value but `null` and `undefined`, and MCP
   refuses it as a tool's input ([ActionMcp.md](ActionMcp.md#describe-tools-to-a-model)).
 - **A field callers may omit is `Schema.optional`.** On the wire it also takes `null`, read as
   left out, as a tool's schema lists; a typed client refuses `null`. `Schema.optionalKey` takes

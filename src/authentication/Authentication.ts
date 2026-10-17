@@ -143,8 +143,8 @@ const withNoStoreAndChallenge = (
 export interface RefusalResponseOptions<D extends Any = Any> {
   /**
    * The descriptor refusing, whose scheme decides the challenge: Bearer's, below, when left
-   * out; another scheme's 401 names that scheme, and nothing steps up under it. An error it
-   * declares is sent as its endpoints declare it.
+   * out; another HTTP scheme's or Basic's 401 names that scheme, an API key's none, and nothing
+   * steps up under it. An error it declares is sent as its endpoints declare it.
    */
   readonly authentication?: D | undefined;
   /** The OAuth protected resource refusing: the one given to `layer`. */
@@ -167,9 +167,9 @@ type DeclaredOf<D> = D extends { readonly error: infer E extends Errors }
  * `authorization` presented a bearer token, or the `insufficient_scope` of a `Forbidden`
  * naming scopes. Given the protected resource `layer` was, every challenge names its metadata
  * URL and a 401's its `scopesRequired`. Under a descriptor of another scheme, it is the JSON
- * and status alone, a 401 naming that scheme. An error `authentication` declares is sent as
- * its endpoints declare it, its JSON with its status. `HttpServerResponse.toWeb` gives it as a
- * web `Response`.
+ * and status alone, a 401 naming that scheme, or none for an API key. An error
+ * `authentication` declares is sent as its endpoints declare it, its JSON with its status.
+ * `HttpServerResponse.toWeb` gives it as a web `Response`.
  */
 export const refusalResponse = <D extends Any = never>(
   error: Refusal | DeclaredOf<D>,

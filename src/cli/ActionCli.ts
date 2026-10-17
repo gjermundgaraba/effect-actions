@@ -351,7 +351,7 @@ type CallServices<C, A extends Action.Any> =
  * `Command.withSubcommands` on the result would put in the derived ones' place. `remote` calls a
  * server instead. A test runs it in memory, with no process:
  * `Command.runWith(command, { version })(args)`.
- * Guide: `docs/ActionCli.md` in this package; in an application: `examples/notes-service/src/commands.ts`.
+ * Guide: `docs/ActionCli.md` in this package; in an application: `examples/assistant/src/commands.ts`.
  */
 export function make<
   const Apps extends Served,

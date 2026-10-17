@@ -70,7 +70,7 @@ export const builders = Action.layer([status, identity, issues, attachments, adm
 
 // kitchen-sink/src/server.ts
 Layer.mergeAll(
-  HttpRouter.serve(publicRoutes).pipe(Layer.provide(listen(publicPort))),
+  HttpRouter.serve(Layer.merge(publicRoutes, socket)).pipe(Layer.provide(listen(publicPort))),
   HttpRouter.serve(adminRoutes).pipe(Layer.provide(listen(adminPort))),
 ).pipe(Layer.provide(builders), Layer.provide(memory));
 ```

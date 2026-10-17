@@ -130,9 +130,9 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
 - MCP takes a write as destructive unless it states `destructiveHint: false`: one that only adds.
 - A tool's input is one object with keys. Omit `input` for a tool without arguments, and wrap a
   union, an array or a scalar in a field.
-- An argument the schema refuses, an undeclared one included, is answered by the native server
-  before the handler runs, as an `isError` result whose text is `Invalid parameters for tool
-  '<name>': …`, not `InvalidInput`. So constrain in the schema
+- An argument the schema refuses, an undeclared one included, never reaches the handler: it
+  is an `isError` result, text `Invalid parameters for tool '<name>': …`, not `InvalidInput`,
+  and to 2025-06-18 a JSON-RPC error. So constrain in the schema
   what a model may send: an id written into an upstream URL is not made safe by
   `encodeURIComponent`, which leaves `..` alone.
 - A `Schema.makeFilter` check adds nothing to the tool's listed input schema, and

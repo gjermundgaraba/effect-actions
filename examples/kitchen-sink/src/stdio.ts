@@ -14,7 +14,8 @@ import { status } from "./workspaces/handlers.js";
 import { WorkspaceRegistry } from "./workspaces/registry.js";
 
 // Entrypoint: an MCP server a local agent starts as a subprocess, such as
-// `claude mcp add tracker -- node --import tsx examples/kitchen-sink/src/stdio.ts`.
+// `claude mcp add tracker -- "$PWD/node_modules/.bin/tsx" "$PWD/examples/kitchen-sink/src/stdio.ts"`
+// from the repository root: mcp-tools' README says why the paths are full.
 // It lists the implementations it serves itself, and imports nothing of the HTTP router. They
 // are those of the `/mcp` endpoint, with its tools and features and the same `authorize`.
 // stdio is a local surface: it takes no `authentication`, since no token arrives.
