@@ -16,10 +16,10 @@ peerDependencyRules:
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - "@effect/platform-node-shared@4.0.4"
-  - "@effect/platform-node@4.0.4"
-  - "@effect/vitest@4.0.4"
-  - effect@4.0.4
+  - "@effect/platform-node-shared@4.0.5"
+  - "@effect/platform-node@4.0.5"
+  - "@effect/vitest@4.0.5"
+  - effect@4.0.5
   - "@voidzero-dev/vite-plus-core@1.2.0"
   - "@voidzero-dev/vite-plus-darwin-arm64@1.2.0"
   - "@voidzero-dev/vite-plus-darwin-x64@1.2.0"

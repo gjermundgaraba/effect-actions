@@ -20,8 +20,8 @@ pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
 | Type checking                       | `typescript@^7.0.2`, as a dev dependency                         |
 | Running a TypeScript entrypoint     | `tsx`, as a dev dependency: `node --import tsx <entrypoint>.ts`  |
 
-The `effect` peer admits only the patches of the Effect release the package is tested against:
-a minor release may change the unstable Effect modules the surfaces build on.
+The `effect` peer admits the 4.0.x patches from the oldest whose APIs the package uses, and no
+minor release: a minor release may change the unstable Effect modules the surfaces build on.
 
 Keep the tilde in `package.json`: `^4.0.4`, which npm writes for `effect@4.0.4`, admits a minor
 release outside the peer range. `npm install effect@~4.0.4` keeps it.
