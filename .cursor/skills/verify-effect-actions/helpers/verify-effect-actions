@@ -1,28 +1,29 @@
 #!/usr/bin/env bash
-# Harness for examples/notes-service. Launch, doctor, HTTP, and CLI all use the
-# run recorded in /tmp/effect-actions-verify-$RUN_ID/run.env. Cleanup deletes
+# Harness for examples/kitchen-sink. Launch, doctor, HTTP, CLI, and RPC all use
+# the run recorded in /tmp/effect-actions-verify-$RUN_ID/run.env. Cleanup deletes
 # that directory and the server process it names. It does not delete EVIDENCE_DIR.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 die() {
-  printf 'notes-verify: %s\n' "$*" >&2
+  printf 'verify-effect-actions: %s\n' "$*" >&2
   exit 1
 }
 
 usage() {
   cat <<'EOF'
 usage:
-  notes-verify launch [--run ID] [--evidence DIR]
-  notes-verify doctor [--run ID]
-  notes-verify http [--run ID] [--token ada|grace|reader|none] [--evidence NAME] METHOD PATH [--header 'Name: value']... [--data JSON]
-  notes-verify cli [--run ID] [--token ada|grace|reader|none] [--expect-exit N] [--evidence NAME] [--stdin-text TEXT | --stdin-file FILE] -- COMMAND...
-  notes-verify cleanup [--run ID]
+  verify-effect-actions launch [--run ID] [--evidence DIR]
+  verify-effect-actions doctor [--run ID]
+  verify-effect-actions http [--run ID] [--token ada|linus|grace|kay|none] [--workspace acme|globex|none] [--evidence NAME] METHOD PATH [--header 'Name: value']... [--data JSON]
+  verify-effect-actions cli [--run ID] [--token ada|linus|grace|kay|none] [--workspace acme|globex|none] [--expect-exit N] [--evidence NAME] [--stdin-text TEXT | --stdin-file FILE] -- COMMAND...
+  verify-effect-actions rpc [--run ID] [--session ada-at-acme] [--evidence NAME]
+  verify-effect-actions cleanup [--run ID]
 
 State: /tmp/effect-actions-verify-$RUN_ID/run.env
-Evidence defaults to $NOTES_VERIFY_EVIDENCE or $HOME/.cache/effect-actions-verify/$RUN_ID
-Pass NOTES_VERIFY_RUN or --run after launch. launch prints an export line.
+Evidence defaults to $EFFECT_ACTIONS_VERIFY_EVIDENCE or $HOME/.cache/effect-actions-verify/$RUN_ID
+Pass EFFECT_ACTIONS_VERIFY_RUN or --run after launch. launch prints an export line.
 EOF
 }
 
@@ -36,11 +37,11 @@ require_node() {
       process.exit(1)
     }
   '
-  [[ -x "$ROOT/node_modules/.bin/tsx" || -d "$ROOT/node_modules/tsx" ]] || die "dependencies are missing in $ROOT; run vp install (or pnpm install) from the repository root"
+  [[ -d "$ROOT/node_modules/tsx" ]] || die "dependencies are missing in $ROOT; run vp install (or pnpm install) from the repository root"
 }
 
 take_run_flag() {
-  RUN_ID="${NOTES_VERIFY_RUN:-}"
+  RUN_ID="${EFFECT_ACTIONS_VERIFY_RUN:-}"
   local -a kept=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,14 +60,14 @@ take_run_flag() {
 }
 
 load_run() {
-  [[ -n "${RUN_ID:-}" ]] || die "set NOTES_VERIFY_RUN or pass --run (launch prints it)"
+  [[ -n "${RUN_ID:-}" ]] || die "set EFFECT_ACTIONS_VERIFY_RUN or pass --run (launch prints it)"
   STATE_DIR="/tmp/effect-actions-verify-$RUN_ID"
   [[ -f "$STATE_DIR/run.env" ]] || die "no run env at $STATE_DIR/run.env"
   # shellcheck disable=SC1090
   set -a
   source "$STATE_DIR/run.env"
   set +a
-  [[ -n "${EVIDENCE_DIR:-}" && -n "${PID:-}" && -n "${PORT:-}" && -n "${NOTES_URL:-}" ]] || die "run env is incomplete"
+  [[ -n "${EVIDENCE_DIR:-}" && -n "${PID:-}" && -n "${PORT:-}" && -n "${ADMIN_PORT:-}" && -n "${TRACKER_URL:-}" ]] || die "run env is incomplete"
 }
 
 free_port() {
@@ -76,7 +77,7 @@ free_port() {
 cmd_launch() {
   require_node
   local evidence=""
-  RUN_ID="${NOTES_VERIFY_RUN:-}"
+  RUN_ID="${EFFECT_ACTIONS_VERIFY_RUN:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --run)
@@ -97,23 +98,25 @@ cmd_launch() {
   fi
   STATE_DIR="/tmp/effect-actions-verify-$RUN_ID"
   if [[ -z "$evidence" ]]; then
-    evidence="${NOTES_VERIFY_EVIDENCE:-$HOME/.cache/effect-actions-verify/$RUN_ID}"
+    evidence="${EFFECT_ACTIONS_VERIFY_EVIDENCE:-$HOME/.cache/effect-actions-verify/$RUN_ID}"
   fi
   EVIDENCE_DIR="$evidence"
   [[ ! -e "$STATE_DIR" ]] || die "state directory already exists: $STATE_DIR"
   mkdir -p "$STATE_DIR" "$EVIDENCE_DIR"
   PORT="$(free_port)"
-  [[ "$PORT" =~ ^[0-9]+$ ]] || die "could not choose a port"
+  ADMIN_PORT="$(free_port)"
+  [[ "$PORT" =~ ^[0-9]+$ && "$ADMIN_PORT" =~ ^[0-9]+$ && "$PORT" != "$ADMIN_PORT" ]] || die "could not choose ports"
   HOST="127.0.0.1"
-  NOTES_URL="http://$HOST:$PORT"
-  PUBLIC_URL="$NOTES_URL"
+  TRACKER_URL="http://$HOST:$PORT"
+  ADMIN_URL="http://$HOST:$ADMIN_PORT"
+  PUBLIC_URL="$TRACKER_URL"
+  TRACKER_RPC_URL="ws://$HOST:$PORT/rpc"
   local logfile="$EVIDENCE_DIR/server.log"
   local caller_pwd
   caller_pwd="$(pwd)"
   cd "$ROOT"
-  # Background node itself so PID is the server, not a shell wrapper.
-  HOST="$HOST" PORT="$PORT" PUBLIC_URL="$PUBLIC_URL" \
-    node --import tsx examples/notes-service/src/server.ts >"$logfile" 2>&1 &
+  HOST="$HOST" PORT="$PORT" ADMIN_PORT="$ADMIN_PORT" PUBLIC_URL="$PUBLIC_URL" \
+    node --import tsx examples/kitchen-sink/src/server.ts >"$logfile" 2>&1 &
   PID="$!"
   cd "$caller_pwd"
   cat >"$STATE_DIR/run.env" <<EOF
@@ -122,42 +125,54 @@ STATE_DIR=$STATE_DIR
 EVIDENCE_DIR=$EVIDENCE_DIR
 PID=$PID
 PORT=$PORT
+ADMIN_PORT=$ADMIN_PORT
 HOST=$HOST
-NOTES_URL=$NOTES_URL
+TRACKER_URL=$TRACKER_URL
+ADMIN_URL=$ADMIN_URL
 PUBLIC_URL=$PUBLIC_URL
+TRACKER_RPC_URL=$TRACKER_RPC_URL
 REPO_ROOT=$ROOT
 EOF
   local ready=0
   local i
-  for i in $(seq 1 50); do
+  for i in $(seq 1 80); do
     if ! kill -0 "$PID" 2>/dev/null; then
       break
     fi
-    if grep -q "Listening on $NOTES_URL" "$logfile"; then
-      local body
-      body="$(curl -sS -m 2 -X POST "$NOTES_URL/api/getStatus" -H 'content-type: application/json' --data '{}' || true)"
-      if [[ "$body" == *'"service":"notes-service"'* ]]; then
+    if grep -q "Listening on $TRACKER_URL" "$logfile" && grep -q "Listening on $ADMIN_URL" "$logfile"; then
+      local body admin_body
+      body="$(curl -sS -m 2 -X POST "$TRACKER_URL/api/v1/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+      admin_body="$(curl -sS -m 2 -X POST "$ADMIN_URL/admin/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+      if [[ "$body" == *'"service":"tracker"'* && "$admin_body" == *'"service":"tracker"'* ]]; then
         ready=1
         break
       fi
     fi
-    sleep 0.2
+    sleep 0.25
   done
   if [[ "$ready" -ne 1 ]]; then
     if kill -0 "$PID" 2>/dev/null; then
       kill "$PID" 2>/dev/null || true
       wait "$PID" 2>/dev/null || true
     fi
-    die "server did not become usable on $NOTES_URL; see $logfile"
+    die "server did not become usable on $TRACKER_URL and $ADMIN_URL; see $logfile"
   fi
-  printf 'export NOTES_VERIFY_RUN=%q\n' "$RUN_ID"
-  printf 'NOTES_URL=%s\n' "$NOTES_URL"
+  local seed_log="$EVIDENCE_DIR/seed.log"
+  if ! (cd "$ROOT" && TRACKER_URL="$TRACKER_URL" node --import tsx examples/kitchen-sink/src/seed.ts >"$seed_log" 2>&1); then
+    die "seed failed; see $seed_log"
+  fi
+  if ! grep -q "Filed ACME-1" "$seed_log"; then
+    die "seed did not file ACME-1; see $seed_log"
+  fi
+  printf 'export EFFECT_ACTIONS_VERIFY_RUN=%q\n' "$RUN_ID"
+  printf 'TRACKER_URL=%s\n' "$TRACKER_URL"
+  printf 'ADMIN_URL=%s\n' "$ADMIN_URL"
+  printf 'TRACKER_RPC_URL=%s\n' "$TRACKER_RPC_URL"
   printf 'EVIDENCE_DIR=%s\n' "$EVIDENCE_DIR"
   printf 'STATE_DIR=%s\n' "$STATE_DIR"
   printf 'PID=%s\n' "$PID"
 }
 
-# ss is not required. Match the listening IPv4 socket in /proc/net/tcp to an fd of this pid.
 port_owned_by() {
   local port="$1" pid="$2"
   node -e '
@@ -205,20 +220,26 @@ cmd_doctor() {
   fi
   local cmdline
   cmdline="$(tr '\0' ' ' <"/proc/$PID/cmdline" 2>/dev/null || true)"
-  if [[ "$cmdline" == *"examples/notes-service/src/server.ts"* ]]; then
-    note "ok cmdline examples/notes-service/src/server.ts"
+  if [[ "$cmdline" == *"examples/kitchen-sink/src/server.ts"* ]]; then
+    note "ok cmdline examples/kitchen-sink/src/server.ts"
   else
-    note "fail cmdline does not name examples/notes-service/src/server.ts ($cmdline)"
+    note "fail cmdline does not name examples/kitchen-sink/src/server.ts ($cmdline)"
     ok=0
   fi
   if port_owned_by "$PORT" "$PID"; then
-    note "ok port $NOTES_URL owned by $PID"
+    note "ok port $TRACKER_URL owned by $PID"
   else
     note "fail port $PORT is not owned by $PID"
     ok=0
   fi
+  if port_owned_by "$ADMIN_PORT" "$PID"; then
+    note "ok port $ADMIN_URL owned by $PID"
+  else
+    note "fail admin port $ADMIN_PORT is not owned by $PID"
+    ok=0
+  fi
   local health_body health_code
-  health_code="$(curl -sS -m 5 -o "$STATE_DIR/healthz.body" -w '%{http_code}' "$NOTES_URL/healthz" || true)"
+  health_code="$(curl -sS -m 5 -o "$STATE_DIR/healthz.body" -w '%{http_code}' "$TRACKER_URL/healthz" || true)"
   health_body="$(cat "$STATE_DIR/healthz.body" 2>/dev/null || true)"
   if [[ "$health_code" == "200" && "$health_body" == "ok" ]]; then
     note "ok healthz 200 ok"
@@ -227,33 +248,50 @@ cmd_doctor() {
     ok=0
   fi
   local status_body status_code
-  status_code="$(curl -sS -m 5 -o "$STATE_DIR/status.body" -w '%{http_code}' -X POST "$NOTES_URL/api/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+  status_code="$(curl -sS -m 5 -o "$STATE_DIR/status.body" -w '%{http_code}' -X POST "$TRACKER_URL/api/v1/getStatus" -H 'content-type: application/json' --data '{}' || true)"
   status_body="$(cat "$STATE_DIR/status.body" 2>/dev/null || true)"
-  if [[ "$status_code" == "200" ]] && printf '%s' "$status_body" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8")); if(j.service!=="notes-service"||typeof j.notes!=="number") process.exit(1)'; then
+  if [[ "$status_code" == "200" ]] && printf '%s' "$status_body" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8")); if(j.service!=="tracker"||j.workspaces!==2||typeof j.instance!=="string") process.exit(1)'; then
     note "ok getStatus $status_body"
   else
     note "fail getStatus code=$status_code body=$status_body"
     ok=0
   fi
+  local admin_body admin_code
+  admin_code="$(curl -sS -m 5 -o "$STATE_DIR/admin-status.body" -w '%{http_code}' -X POST "$ADMIN_URL/admin/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+  admin_body="$(cat "$STATE_DIR/admin-status.body" 2>/dev/null || true)"
+  if [[ "$admin_code" == "200" && "$admin_body" == *'"service":"tracker"'* ]]; then
+    note "ok admin getStatus $admin_body"
+  else
+    note "fail admin getStatus code=$admin_code body=$admin_body"
+    ok=0
+  fi
   local who_body who_code
-  who_code="$(curl -sS -m 5 -o "$STATE_DIR/whoami.body" -w '%{http_code}' -X POST "$NOTES_URL/api/whoAmI" -H 'content-type: application/json' -H 'authorization: Bearer ada' --data '{}' || true)"
+  who_code="$(curl -sS -m 5 -o "$STATE_DIR/whoami.body" -w '%{http_code}' -X POST "$TRACKER_URL/api/v1/whoAmI" -H 'content-type: application/json' -H 'authorization: Bearer ada' -H 'x-workspace: acme' --data '{}' || true)"
   who_body="$(cat "$STATE_DIR/whoami.body" 2>/dev/null || true)"
-  if [[ "$who_code" == "200" && "$who_body" == *'"id":"ada"'* && "$who_body" == *'"notes:write"'* ]]; then
+  if [[ "$who_code" == "200" && "$who_body" == *'"id":"ada"'* && "$who_body" == *'"workspace":"acme"'* && "$who_body" == *'"issues:write"'* ]]; then
     note "ok whoAmI $who_body"
   else
     note "fail whoAmI code=$who_code body=$who_body"
     ok=0
   fi
   local version
-  version="$(cd "$ROOT" && node --import tsx examples/notes-service/src/cli.ts --version 2>"$STATE_DIR/version.err" || true)"
-  if [[ "$version" == "notes v1.0.0" ]]; then
-    note "ok cli notes v1.0.0"
+  version="$(cd "$ROOT" && node --import tsx examples/kitchen-sink/src/cli.ts --version 2>"$STATE_DIR/version.err" || true)"
+  if [[ "$version" == "tracker v1.0.0" ]]; then
+    note "ok cli tracker v1.0.0"
   else
     note "fail cli version [$version]"
     ok=0
   fi
+  local listed
+  listed="$(cd "$ROOT" && TRACKER_URL="$TRACKER_URL" TRACKER_TOKEN=ada TRACKER_WORKSPACE=acme node --import tsx examples/kitchen-sink/src/cli.ts list-issues --json 2>"$STATE_DIR/list.err" || true)"
+  if [[ "$listed" == *'"id": "ACME-1"'* || "$listed" == *'"id":"ACME-1"'* ]]; then
+    note "ok seed ACME-1"
+  else
+    note "fail seed list [$listed]"
+    ok=0
+  fi
   if [[ "$ok" -eq 1 ]]; then
-    note "doctor ok $NOTES_URL"
+    note "doctor ok $TRACKER_URL"
     return 0
   fi
   note "doctor failed"
@@ -264,12 +302,16 @@ cmd_http() {
   take_run_flag "$@"
   set -- "${ARGS[@]+"${ARGS[@]}"}"
   load_run
-  local token="ada" evidence="" method="" path="" data=""
+  local token="ada" workspace="acme" evidence="" method="" path="" data=""
   local -a headers=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --token)
         token="$2"
+        shift 2
+        ;;
+      --workspace)
+        workspace="$2"
         shift 2
         ;;
       --evidence)
@@ -295,13 +337,20 @@ cmd_http() {
     esac
   done
   [[ -n "$method" && "$path" == /* ]] || die "http needs METHOD and an absolute PATH"
+  local base="$TRACKER_URL"
+  if [[ "$path" == /admin/* ]]; then
+    base="$ADMIN_URL"
+  fi
   if [[ -z "$data" ]]; then
     data='{}'
   fi
   local hdr="$STATE_DIR/http.headers" body="$STATE_DIR/http.body"
-  local -a curl_args=(-sS -m 20 -D "$hdr" -o "$body" -w '%{http_code}' -X "$method" "$NOTES_URL$path" -H 'content-type: application/json')
+  local -a curl_args=(-sS -m 20 -D "$hdr" -o "$body" -w '%{http_code}' -X "$method" "$base$path" -H 'content-type: application/json')
   if [[ "$token" != "none" ]]; then
     curl_args+=(-H "authorization: Bearer $token")
+  fi
+  if [[ "$workspace" != "none" ]]; then
+    curl_args+=(-H "x-workspace: $workspace")
   fi
   local header
   for header in "${headers[@]+"${headers[@]}"}"; do
@@ -320,11 +369,13 @@ cmd_http() {
   if [[ -n "$evidence" ]]; then
     {
       printf 'HTTP %s %s %s\n' "$code" "$method" "$path"
+      printf 'url: %s%s\n' "$base" "$path"
       if [[ "$token" == "none" ]]; then
         printf 'authorization: (none)\n'
       else
         printf 'authorization: Bearer %s\n' "$token"
       fi
+      printf 'workspace: %s\n' "$workspace"
       printf 'data: %s\n' "$data"
       printf -- '--- headers ---\n'
       cat "$hdr"
@@ -340,7 +391,7 @@ cmd_cli() {
   set -- "${ARGS[@]+"${ARGS[@]}"}"
   load_run
   require_node
-  local token="ada" evidence="" stdin_text="" stdin_file="" expect="0"
+  local token="ada" workspace="acme" evidence="" stdin_text="" stdin_file="" expect="0"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --)
@@ -349,6 +400,10 @@ cmd_cli() {
         ;;
       --token)
         token="$2"
+        shift 2
+        ;;
+      --workspace)
+        workspace="$2"
         shift 2
         ;;
       --evidence)
@@ -376,21 +431,28 @@ cmd_cli() {
   [[ -z "$stdin_text" || -z "$stdin_file" ]] || die "pass only one of --stdin-text and --stdin-file"
   local out="$STATE_DIR/cli.stdout" err="$STATE_DIR/cli.stderr"
   local code=0
-  run_notes_cli() {
+  run_tracker_cli() {
     cd "$ROOT"
+    local -a env_args=(TRACKER_URL="$TRACKER_URL")
     if [[ "$token" == "none" ]]; then
-      env -u NOTES_TOKEN NOTES_URL="$NOTES_URL" node --import tsx examples/notes-service/src/cli.ts "$@"
+      env_args+=(--unset=TRACKER_TOKEN)
     else
-      NOTES_URL="$NOTES_URL" NOTES_TOKEN="$token" node --import tsx examples/notes-service/src/cli.ts "$@"
+      env_args+=(TRACKER_TOKEN="$token")
     fi
+    if [[ "$workspace" == "none" ]]; then
+      env_args+=(--unset=TRACKER_WORKSPACE)
+    else
+      env_args+=(TRACKER_WORKSPACE="$workspace")
+    fi
+    env "${env_args[@]}" node --import tsx examples/kitchen-sink/src/cli.ts "$@"
   }
   set +e
   if [[ -n "$stdin_text" ]]; then
-    printf '%s' "$stdin_text" | run_notes_cli "$@" >"$out" 2>"$err"
+    printf '%s' "$stdin_text" | run_tracker_cli "$@" >"$out" 2>"$err"
   elif [[ -n "$stdin_file" ]]; then
-    run_notes_cli "$@" <"$stdin_file" >"$out" 2>"$err"
+    run_tracker_cli "$@" <"$stdin_file" >"$out" 2>"$err"
   else
-    run_notes_cli "$@" >"$out" 2>"$err"
+    run_tracker_cli "$@" >"$out" 2>"$err"
   fi
   code=$?
   set -e
@@ -401,11 +463,12 @@ cmd_cli() {
   cat "$err"
   if [[ -n "$evidence" ]]; then
     {
-      printf 'command: notes'
+      printf 'command: tracker'
       printf ' %q' "$@"
       printf '\n'
       printf 'token: %s\n' "$token"
-      printf 'NOTES_URL: %s\n' "$NOTES_URL"
+      printf 'workspace: %s\n' "$workspace"
+      printf 'TRACKER_URL: %s\n' "$TRACKER_URL"
       printf 'exit: %s\n' "$code"
       printf -- '--- stdout ---\n'
       cat "$out"
@@ -416,14 +479,64 @@ cmd_cli() {
   [[ "$code" -eq "$expect" ]]
 }
 
+cmd_rpc() {
+  take_run_flag "$@"
+  set -- "${ARGS[@]+"${ARGS[@]}"}"
+  load_run
+  require_node
+  local session="ada-at-acme" evidence=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session)
+        session="$2"
+        shift 2
+        ;;
+      --evidence)
+        evidence="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown rpc argument: $1"
+        ;;
+    esac
+  done
+  local out="$STATE_DIR/rpc.stdout" err="$STATE_DIR/rpc.stderr"
+  local code=0
+  set +e
+  (
+    cd "$ROOT"
+    TRACKER_RPC_URL="$TRACKER_RPC_URL" TRACKER_SESSION="$session" \
+      node --import tsx .cursor/skills/verify-effect-actions/helpers/rpc-list.ts
+  ) >"$out" 2>"$err"
+  code=$?
+  set -e
+  printf 'exit %s\n' "$code"
+  printf -- '--- stdout ---\n'
+  cat "$out"
+  printf -- '--- stderr ---\n'
+  cat "$err"
+  if [[ -n "$evidence" ]]; then
+    {
+      printf 'session: %s\n' "$session"
+      printf 'TRACKER_RPC_URL: %s\n' "$TRACKER_RPC_URL"
+      printf 'exit: %s\n' "$code"
+      printf -- '--- stdout ---\n'
+      cat "$out"
+      printf -- '--- stderr ---\n'
+      cat "$err"
+    } >"$EVIDENCE_DIR/$evidence"
+  fi
+  [[ "$code" -eq 0 ]]
+}
+
 cmd_cleanup() {
   take_run_flag "$@"
   if [[ -z "${RUN_ID:-}" ]]; then
-    die "set NOTES_VERIFY_RUN or pass --run"
+    die "set EFFECT_ACTIONS_VERIFY_RUN or pass --run"
   fi
   STATE_DIR="/tmp/effect-actions-verify-$RUN_ID"
   if [[ ! -f "$STATE_DIR/run.env" ]]; then
-    printf 'notes-verify: no state at %s\n' "$STATE_DIR"
+    printf 'verify-effect-actions: no state at %s\n' "$STATE_DIR"
     return 0
   fi
   # shellcheck disable=SC1090
@@ -458,6 +571,7 @@ main() {
     doctor) cmd_doctor "$@" ;;
     http) cmd_http "$@" ;;
     cli) cmd_cli "$@" ;;
+    rpc) cmd_rpc "$@" ;;
     cleanup) cmd_cleanup "$@" ;;
     -h | --help | help | "") usage ;;
     *) die "unknown command: $cmd" ;;
