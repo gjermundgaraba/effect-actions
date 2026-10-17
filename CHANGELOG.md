@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.5`. The `effect` peer stays
+`~4.0.4`: a later Effect patch raises it only when the package needs that patch.
+
 ## 0.18.0
 
 ### Breaking changes
