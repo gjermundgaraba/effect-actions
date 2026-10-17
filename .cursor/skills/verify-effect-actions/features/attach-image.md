@@ -4,8 +4,9 @@ Attach an image lets a member add a PNG to an issue and read the image's name, t
 
 ## Sub-features
 
-- `attach-http` stores a PNG on `ACME-1` and returns its id and size.
-- `attach-read` shows that attachment from `get-attachment`.
+- `attach-cli` stores a PNG on `ACME-1` from `tracker attach-image` and returns its id and size.
+- `attach-http` stores a second PNG on `ACME-1` with `POST /api/v1/attachImage`.
+- `attach-read` shows each returned attachment from `get-attachment`.
 
 ## How to get to it (user POV)
 
@@ -22,8 +23,10 @@ Preconditions:
 
 The one-pixel PNG, base64, is `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=`.
 
-- **Attach.** Run `.cursor/skills/verify-effect-actions/helpers/verify-effect-actions http --token ada --workspace acme --evidence attach-image.http.txt POST /api/v1/attachImage --data '{"issue":"ACME-1","name":"dot.png","image":{"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=","mimeType":"image/png"}}'`. Status `200`. Body `issue` is `ACME-1`, `name` is `dot.png`, `mimeType` is `image/png`, and `size` is `68`. Keep `id`.
-- **Read it back.** Run `.cursor/skills/verify-effect-actions/helpers/verify-effect-actions cli --token ada --workspace acme --evidence get-attachment.cli.txt -- get-attachment <id>`. Exit `0`. Stdout is `dot.png: image/png, 68 bytes`.
+- **CLI attach.** Run `.cursor/skills/verify-effect-actions/helpers/verify-effect-actions cli --token ada --workspace acme --evidence attach-image.cli.txt -- attach-image --issue ACME-1 --name extra.png --image '{"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=","mimeType":"image/png"}'`. Exit `0`. Stdout JSON has `issue` `ACME-1`, `name` `extra.png`, `mimeType` `image/png`, and `size` `68`. Keep `id`.
+- **Read the CLI attachment.** Run `.cursor/skills/verify-effect-actions/helpers/verify-effect-actions cli --token ada --workspace acme --evidence get-attachment-cli.cli.txt -- get-attachment <id>`. Exit `0`. Stdout is `extra.png: image/png, 68 bytes`.
+- **HTTP attach.** Run `.cursor/skills/verify-effect-actions/helpers/verify-effect-actions http --token ada --workspace acme --evidence attach-image.http.txt POST /api/v1/attachImage --data '{"issue":"ACME-1","name":"dot.png","image":{"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=","mimeType":"image/png"}}'`. Status `200`. Body `issue` is `ACME-1`, `name` is `dot.png`, `mimeType` is `image/png`, and `size` is `68`. Keep this `id`; it is not the CLI attachment's id.
+- **Read the HTTP attachment.** Run `.cursor/skills/verify-effect-actions/helpers/verify-effect-actions cli --token ada --workspace acme --evidence get-attachment-http.cli.txt -- get-attachment <id>`. Exit `0`. Stdout is `dot.png: image/png, 68 bytes`.
 
 ## Gotchas
 
