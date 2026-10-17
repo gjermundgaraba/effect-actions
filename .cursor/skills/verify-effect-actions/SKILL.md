@@ -7,7 +7,7 @@ description: "Drive examples/kitchen-sink of @gjermundgaraba/effect-actions — 
 
 Primary surface: `examples/kitchen-sink`, the reference application that serves every module. Members reach a JSON API at `POST /api/v1/<action>`, the `tracker` CLI (which calls that API), MCP at `POST /mcp`, and Effect RPC at `ws://<host>/rpc`. Operators reach `POST /admin/<action>` on a second port. One process holds both listeners and one in-memory store. Launch runs `seed.ts`, which files `ACME-1` in workspace `acme` with a screenshot and a comment.
 
-`examples/notes-service` is the small application to copy. It is a subset of this one: HTTP, a remote CLI, and MCP, without RPC, images, a second audience, or the assistant. `examples/quickstart`, `examples/mcp-tools`, `examples/assistant`, and `examples/live-rpc` are smaller slices of the same modules. This skill drives kitchen-sink so one launch reaches those surfaces. It does not start `stdio.ts`, `ops.ts`, or `agent.ts`: each is its own process and its own memory, so a note or an issue created there is not on this server.
+`examples/notes-service` is the small application to copy. It is a subset of this one: HTTP, a remote CLI, and MCP, without RPC, images, a second audience, or the assistant. `examples/quickstart`, `examples/mcp-tools`, `examples/assistant`, and `examples/live-rpc` are smaller slices of the same modules. This skill drives kitchen-sink so one launch reaches those surfaces. It does not start `stdio.ts`, `ops.ts`, or `agent.ts`: each is its own process and its own memory, so an issue created there is not on this server.
 
 Two trackers can run side by side. Each process has its own memory and its own pair of ports. Never drive a server this run did not start.
 
@@ -21,7 +21,7 @@ From the repository root, with a `node` that satisfies `package.json` `devEngine
 vp install
 ```
 
-If `vp` is not on `PATH` yet, `pnpm install` (package manager `pnpm@12.5.1`) installs it. Dependencies must be present before launch: the helper runs `node --import tsx`.
+If `vp` is not on `PATH` yet, `pnpm install` (package manager `pnpm@12.14.0`) installs it. Dependencies must be present before launch: the helper runs `node --import tsx`.
 
 ```sh
 .cursor/skills/verify-effect-actions/helpers/verify-effect-actions launch --evidence "$EFFECT_ACTIONS_VERIFY_EVIDENCE"
