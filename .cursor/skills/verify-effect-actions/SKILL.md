@@ -43,7 +43,7 @@ Ready means all of these, which launch waits for, and then the seed:
 
 A listening socket alone is not ready. There is no migration. The memory store starts empty; seed is what makes `ACME-1` exist. `getStatus` reports `workspaces` `2` (`acme` and `globex`) whether or not any issue has been filed.
 
-Launch prints `export EFFECT_ACTIONS_VERIFY_RUN=...`, `TRACKER_URL`, `ADMIN_URL`, `TRACKER_RPC_URL`, `EVIDENCE_DIR`, `STATE_DIR`, and `PID`. Export `EFFECT_ACTIONS_VERIFY_RUN` before doctor, drive, or cleanup. State lives in `/tmp/effect-actions-verify-$EFFECT_ACTIONS_VERIFY_RUN/run.env`. The server log is `$EVIDENCE_DIR/server.log` and the seed log is `$EVIDENCE_DIR/seed.log` from the start, so teardown does not eat them.
+Launch prints `export EFFECT_ACTIONS_VERIFY_RUN=...`, `TRACKER_URL`, `ADMIN_URL`, `TRACKER_RPC_URL`, `EVIDENCE_DIR`, `STATE_DIR`, and `PID`. Each value is shell-quoted, so the block can be `eval`'d when a path contains spaces. Export `EFFECT_ACTIONS_VERIFY_RUN` before doctor, drive, or cleanup. State lives in `/tmp/effect-actions-verify-$EFFECT_ACTIONS_VERIFY_RUN/run.env`. The server log is `$EVIDENCE_DIR/server.log` and the seed log is `$EVIDENCE_DIR/seed.log` from the start, so teardown does not eat them.
 
 Demo credentials:
 
@@ -63,7 +63,7 @@ Read-only. Run it before driving, and again when a call looks wrong. It does not
 
 It passes only when every line is `ok`:
 
-- `PID` from the run env is alive
+- `PID` from the run env is alive and its `/proc` start time is the `STARTED` value launch recorded
 - `/proc/$PID/cmdline` contains `examples/kitchen-sink/src/server.ts`
 - `/proc/net/tcp` shows `127.0.0.1:$PORT` and `127.0.0.1:$ADMIN_PORT` as listen sockets whose inodes are fds of that pid (`ss` is not required)
 - `GET /healthz` on the public port is `200` and body `ok`
@@ -136,7 +136,7 @@ The memory store, the scripted assistant model, and the fixed credentials are th
 .cursor/skills/verify-effect-actions/helpers/verify-effect-actions cleanup
 ```
 
-That sends `SIGTERM` to the pid in the run env, `SIGKILL` if it is still alive after about five seconds, then deletes `/tmp/effect-actions-verify-$EFFECT_ACTIONS_VERIFY_RUN`. It does not delete `$EVIDENCE_DIR`. It does not kill by process name. After a failed launch or drive, run cleanup before starting another run. Confirm the evidence files are still in `$EVIDENCE_DIR` after cleanup.
+That sends `SIGTERM` to the pid in the run env only when `/proc/<pid>` still shows the start time launch recorded, then `SIGKILL` if that same process is still alive after about five seconds, then deletes `/tmp/effect-actions-verify-$EFFECT_ACTIONS_VERIFY_RUN`. A pid whose start time differs is left alone. It does not delete `$EVIDENCE_DIR`. It does not kill by process name. `run.env` stores every value with shell quoting, so an evidence path may contain spaces. After a failed launch or drive, run cleanup before starting another run. Confirm the evidence files are still in `$EVIDENCE_DIR` after cleanup.
 
 ## Helpers
 

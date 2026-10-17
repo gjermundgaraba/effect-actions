@@ -74,6 +74,60 @@ free_port() {
   node -e 'const net = require("node:net"); const server = net.createServer(); server.listen(0, "127.0.0.1", () => { process.stdout.write(String(server.address().port)); server.close(); });'
 }
 
+# Clock ticks since boot, field 22 of /proc/pid/stat. The command name is field 2 and
+# may contain spaces, so the count starts after the closing parenthesis.
+process_started() {
+  local pid="$1" stat rest
+  [[ -r "/proc/$pid/stat" ]] || return 1
+  stat=$(<"/proc/$pid/stat") || return 1
+  rest=${stat##*)}
+  awk '{print $20}' <<<"$rest"
+}
+
+same_server() {
+  local pid="$1" started="$2" now
+  [[ -n "$pid" && -n "$started" ]] || return 1
+  now=$(process_started "$pid") || return 1
+  [[ "$now" == "$started" ]]
+}
+
+# Signal only when the pid is still the process recorded at launch.
+stop_server() {
+  local pid="$1" started="$2"
+  if ! same_server "$pid" "$started"; then
+    printf 'verify-effect-actions: pid %s is not the server this run started\n' "$pid"
+    return 0
+  fi
+  kill "$pid" 2>/dev/null || true
+  local i
+  for i in $(seq 1 25); do
+    same_server "$pid" "$started" || return 0
+    sleep 0.2
+  done
+  if same_server "$pid" "$started"; then
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+}
+
+write_run_env() {
+  {
+    printf 'RUN_ID=%q\n' "$RUN_ID"
+    printf 'STATE_DIR=%q\n' "$STATE_DIR"
+    printf 'EVIDENCE_DIR=%q\n' "$EVIDENCE_DIR"
+    printf 'PID=%q\n' "$PID"
+    printf 'STARTED=%q\n' "$STARTED"
+    printf 'PORT=%q\n' "$PORT"
+    printf 'ADMIN_PORT=%q\n' "$ADMIN_PORT"
+    printf 'HOST=%q\n' "$HOST"
+    printf 'TRACKER_URL=%q\n' "$TRACKER_URL"
+    printf 'ADMIN_URL=%q\n' "$ADMIN_URL"
+    printf 'PUBLIC_URL=%q\n' "$PUBLIC_URL"
+    printf 'TRACKER_RPC_URL=%q\n' "$TRACKER_RPC_URL"
+    printf 'REPO_ROOT=%q\n' "$ROOT"
+  } >"$STATE_DIR/run.env"
+}
+
 cmd_launch() {
   require_node
   local evidence=""
@@ -119,24 +173,12 @@ cmd_launch() {
     node --import tsx examples/kitchen-sink/src/server.ts >"$logfile" 2>&1 &
   PID="$!"
   cd "$caller_pwd"
-  cat >"$STATE_DIR/run.env" <<EOF
-RUN_ID=$RUN_ID
-STATE_DIR=$STATE_DIR
-EVIDENCE_DIR=$EVIDENCE_DIR
-PID=$PID
-PORT=$PORT
-ADMIN_PORT=$ADMIN_PORT
-HOST=$HOST
-TRACKER_URL=$TRACKER_URL
-ADMIN_URL=$ADMIN_URL
-PUBLIC_URL=$PUBLIC_URL
-TRACKER_RPC_URL=$TRACKER_RPC_URL
-REPO_ROOT=$ROOT
-EOF
+  STARTED=$(process_started "$PID") || die "server exited before its start time could be recorded"
+  write_run_env
   local ready=0
   local i
   for i in $(seq 1 80); do
-    if ! kill -0 "$PID" 2>/dev/null; then
+    if ! same_server "$PID" "$STARTED"; then
       break
     fi
     if grep -q "Listening on $TRACKER_URL" "$logfile" && grep -q "Listening on $ADMIN_URL" "$logfile"; then
@@ -151,10 +193,7 @@ EOF
     sleep 0.25
   done
   if [[ "$ready" -ne 1 ]]; then
-    if kill -0 "$PID" 2>/dev/null; then
-      kill "$PID" 2>/dev/null || true
-      wait "$PID" 2>/dev/null || true
-    fi
+    stop_server "$PID" "$STARTED"
     die "server did not become usable on $TRACKER_URL and $ADMIN_URL; see $logfile"
   fi
   local seed_log="$EVIDENCE_DIR/seed.log"
@@ -165,12 +204,12 @@ EOF
     die "seed did not file ACME-1; see $seed_log"
   fi
   printf 'export EFFECT_ACTIONS_VERIFY_RUN=%q\n' "$RUN_ID"
-  printf 'TRACKER_URL=%s\n' "$TRACKER_URL"
-  printf 'ADMIN_URL=%s\n' "$ADMIN_URL"
-  printf 'TRACKER_RPC_URL=%s\n' "$TRACKER_RPC_URL"
-  printf 'EVIDENCE_DIR=%s\n' "$EVIDENCE_DIR"
-  printf 'STATE_DIR=%s\n' "$STATE_DIR"
-  printf 'PID=%s\n' "$PID"
+  printf 'TRACKER_URL=%q\n' "$TRACKER_URL"
+  printf 'ADMIN_URL=%q\n' "$ADMIN_URL"
+  printf 'TRACKER_RPC_URL=%q\n' "$TRACKER_RPC_URL"
+  printf 'EVIDENCE_DIR=%q\n' "$EVIDENCE_DIR"
+  printf 'STATE_DIR=%q\n' "$STATE_DIR"
+  printf 'PID=%q\n' "$PID"
 }
 
 port_owned_by() {
@@ -212,10 +251,13 @@ cmd_doctor() {
   note() {
     printf '%s\n' "$*" | tee -a "$report"
   }
-  if kill -0 "$PID" 2>/dev/null; then
+  if [[ -z "${STARTED:-}" ]]; then
+    note "fail process has no recorded start time"
+    ok=0
+  elif same_server "$PID" "$STARTED"; then
     note "ok process $PID"
   else
-    note "fail process $PID is not running"
+    note "fail process $PID is not the server this run started"
     ok=0
   fi
   local cmdline
@@ -541,17 +583,8 @@ cmd_cleanup() {
   fi
   # shellcheck disable=SC1090
   source "$STATE_DIR/run.env"
-  if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
-    kill "$PID" 2>/dev/null || true
-    local i
-    for i in $(seq 1 25); do
-      kill -0 "$PID" 2>/dev/null || break
-      sleep 0.2
-    done
-    if kill -0 "$PID" 2>/dev/null; then
-      kill -9 "$PID" 2>/dev/null || true
-      wait "$PID" 2>/dev/null || true
-    fi
+  if [[ -n "${PID:-}" ]]; then
+    stop_server "$PID" "${STARTED:-}"
   fi
   local evidence="${EVIDENCE_DIR:-}"
   rm -rf "$STATE_DIR"
