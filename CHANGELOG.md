@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.18.2
+
+Corrects documentation and comments the code had outgrown. The API and its behavior are
+unchanged.
+
+### Other changes
+
+- An `Action.client` call that dies with a `SchemaError` holds the failure before it when the
+  action's errors reject the failure, undeclared or breaking a check, and after it when they
+  accept one that does not encode; `Action-failures.md` gave one order for both.
+- `docs/guarantees.md` says only HTTP, MCP and RPC log a defect, and that a `requestScoped` MCP
+  endpoint serves only 2026-07-28, and only `POST`. `ActionMcp.md` says the library, not the
+  native server, refuses an argument the schema refuses, a JSON-RPC error to a 2025-06-18
+  client; `Action.md`, that `Schema.Struct({})` refuses `undefined` as well as `null`.
+- `docs/setup.md` asks for `vitest@^5` where it named a patch release.
+- `ActionHttp.client`'s JSDoc names the binding's errors and a protected action's verifier
+  errors among a call's failures; `Authentication`'s, that an API key's 401 names no scheme;
+  `ActionCli.make`'s points to `assistant`'s commands, which call it.
+- The examples' `stdio.ts` comments give the full-path `claude mcp add` line `mcp-tools`' README
+  explains. The `kitchen-sink` README shows `remote`'s `client` and names `openApprovals`, and
+  it and `notes-service`'s count two commands written by hand.
+
 ## 0.18.1
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.5`. The `effect` peer stays
