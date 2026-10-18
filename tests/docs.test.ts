@@ -146,6 +146,7 @@ it("installs the cloudflare package beside the core, at its Effect peer range", 
 
   expect(page).toContain(`${manifest.name} ${cloudflareManifest.name}`);
   expect(page).toContain(`effect@${cloudflareManifest.peerDependencies.effect}`);
+  expect(cloudflareManifest.peerDependencies.effect).toBe(manifest.peerDependencies.effect);
 });
 
 it("gives every module the cloudflare package exports a page and a failures page", () => {

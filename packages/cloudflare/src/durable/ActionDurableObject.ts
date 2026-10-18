@@ -78,21 +78,25 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
  */
 export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.Scope = never>(
   options: Options<E, R, AE, AR>,
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance =>
-  class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance => {
+  const routes: Layer.Layer<never, E, Allowed> = options.routes;
+
+  const alarm:
+    | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)
+    | undefined = options.alarm;
+
+  return class ActionDurableObject extends DurableObject<Cloudflare.Env> {
     readonly #memoMap = Layer.makeMemoMapUnsafe();
 
     readonly #receivers = new Map<string, Receiver>();
 
     readonly #built = Deferred.makeUnsafe<void, unknown>();
 
-    readonly #routes: Layer.Layer<never, E, Allowed> = options.routes;
-
     // Why: the runtime holds back a timer set outside the callback until it returns, so a build
     // started before it would wait on itself; started inside it, the build holds every event.
     readonly #web = this.ctx.blockConcurrencyWhile(async () => {
       const web = HttpRouter.toWebHandler(
-        this.#routes.pipe(
+        routes.pipe(
           Layer.tap(() => Deferred.succeed(this.#built, undefined)),
           Layer.tapCause((cause) => Deferred.failCause(this.#built, cause)),
           Layer.provide([
@@ -141,10 +145,6 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
     }
 
     override alarm(info?: AlarmInvocationInfo) {
-      const alarm:
-        | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)
-        | undefined = options.alarm;
-
       if (alarm === undefined) {
         return Promise.reject(new Error("ActionDurableObject.make was given no alarm"));
       }
@@ -158,6 +158,7 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
       );
     }
   };
+};
 
 /** `layerWebSocket`'s options. */
 export interface LayerWebSocketOptions {

@@ -94,7 +94,11 @@ describe("layerWebSocket", () => {
   const request = (id: string | number, tag: string) =>
     JSON.stringify({ _tag: "Request", id, tag, payload: {}, headers: [] });
 
-  const heldEventAfter = (name: string, between: ReadonlyArray<string>) =>
+  const heldEventAfter = (
+    name: string,
+    between: ReadonlyArray<string>,
+    holdingFrame = request(1, "hold"),
+  ) =>
     Effect.gen(function* () {
       const stub = room(name);
 
@@ -106,7 +110,7 @@ describe("layerWebSocket", () => {
 
           if (held === undefined) throw new Error("No socket");
 
-          const holding = instance.webSocketMessage(held, request(1, "hold"));
+          const holding = instance.webSocketMessage(held, holdingFrame);
 
           await Promise.all(between.map((message) => instance.webSocketMessage(held, message)));
 
@@ -136,6 +140,28 @@ describe("layerWebSocket", () => {
   it.effect("holds it open through a refused request reusing its id", () =>
     Effect.map(heldEventAfter("holds-reused-id", [request(1, "hold")]), (settled) =>
       expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds it open through a frame the server answers with a defect", () =>
+    Effect.map(heldEventAfter("holds-defect", [JSON.stringify({ _tag: "Bogus" })]), (settled) =>
+      expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds it open through a request whose id is neither a string nor a number", () =>
+    Effect.map(
+      heldEventAfter("holds-null-id", [
+        JSON.stringify({ _tag: "Request", id: null, tag: "readNote", payload: {}, headers: [] }),
+      ]),
+      (settled) => expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds a frame's event open past an earlier request of it under the same id", () =>
+    Effect.map(
+      heldEventAfter("holds-batch", [], `[${request(1, "readNote")},${request(1, "hold")}]`),
+      (settled) => expect(settled).toBe("pending"),
     ),
   );
 

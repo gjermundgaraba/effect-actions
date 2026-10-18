@@ -96,16 +96,10 @@ export const authenticate = Authentication.layer(Login, (token: Redacted.Redacte
 
 const alarmsKey = "alarms";
 
-export class Opened extends Context.Service<Opened, number>()("test/Opened") {
-  static readonly layer = Layer.effect(Opened)(
+export class StartupRead extends Context.Service<StartupRead, void>()("test/StartupRead") {
+  static readonly layer = Layer.effect(StartupRead)(
     Effect.flatMap(Effect.service(ActionDurableObject.State), ({ storage }) =>
-      Effect.promise(async () => {
-        const opened = ((await storage.get<number>("opened")) ?? 0) + 1;
-
-        await storage.put("opened", opened);
-
-        return opened;
-      }),
+      Effect.asVoid(Effect.promise(() => storage.get("startup"))),
     ),
   );
 }
@@ -117,7 +111,7 @@ export const implementation = Action.implement(
     const released = yield* Deferred.make<void>();
     let balance = 10;
 
-    yield* Opened;
+    yield* StartupRead;
 
     return {
       whoami: () => Effect.service(CurrentUser),
@@ -136,7 +130,7 @@ export const implementation = Action.implement(
   { authorize: Action.allowAll },
 );
 
-export const startup = Layer.provideMerge(Action.layer(implementation), Opened.layer);
+export const startup = Layer.provideMerge(Action.layer(implementation), StartupRead.layer);
 
 export const slowUpstream = Layer.effectDiscard(
   Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20))),

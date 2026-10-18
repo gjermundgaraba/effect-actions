@@ -89,15 +89,15 @@ test/
 
 ## Where to look
 
-| To see                                                               | Read                                     |
-| -------------------------------------------------------------------- | ---------------------------------------- |
-| A Durable Object class serving actions, and its alarm                | `src/worker.ts`                          |
-| Rpcs on hibernating WebSockets beside JSON routes, in one object     | `src/routes.ts`                          |
-| An authorizer made for the instance's room when the routes build     | `src/routes.ts`, `src/chat/authorize.ts` |
-| A store over the object's SQLite database, setting its alarm         | `src/platform/sql-store.ts`              |
-| A startup service read from the object's state                       | `src/platform/object-name.ts`            |
-| A Worker calling an object's actions through its stub                | `src/platform/room-stubs.ts`             |
-| Routing requests and upgrades from the Worker to an object           | `src/worker.ts`                          |
-| A page's socket client, its token on each message                    | `src/browser.ts`                         |
-| Testing on the Workers runtime: an eviction, the alarm, the database | `test/worker.test.ts`, `test/platform/`  |
-| A socket that keeps the token of its upgrade request                 | `test/worker.test.ts`                    |
+| To see                                                               | Read                                            |
+| -------------------------------------------------------------------- | ----------------------------------------------- |
+| A Durable Object class serving actions, and its alarm                | `src/worker.ts`                                 |
+| Rpcs on hibernating WebSockets beside JSON routes, in one object     | `src/routes.ts`                                 |
+| An authorizer that yields the instance's room once, when it is built | `src/chat/authorize.ts`, `src/chat/handlers.ts` |
+| A store over the object's SQLite database, setting its alarm         | `src/platform/sql-store.ts`                     |
+| A startup service read from the object's state                       | `src/platform/object-name.ts`                   |
+| A Worker calling an object's actions through its stub                | `src/platform/room-stubs.ts`                    |
+| Routing requests and upgrades from the Worker to an object           | `src/worker.ts`                                 |
+| A page's socket client, its token on each message                    | `src/browser.ts`                                |
+| Testing on the Workers runtime: an eviction, the alarm, the database | `test/worker.test.ts`, `test/platform/`         |
+| A socket that keeps the token of its upgrade request                 | `test/worker.test.ts`                           |

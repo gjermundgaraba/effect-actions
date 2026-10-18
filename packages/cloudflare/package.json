@@ -1,7 +1,7 @@
 {
   "name": "@gjermundgaraba/effect-actions-cloudflare",
   "version": "0.18.2",
-  "description": "Serve effect-actions from Cloudflare Durable Objects, over hibernating WebSockets among them.",
+  "description": "Serve effect-actions from Cloudflare Durable Objects, with Effect RPC over hibernating WebSockets.",
   "keywords": [
     "cloudflare",
     "durable-objects",

@@ -29,6 +29,8 @@ const json = RpcSerialization.json;
 
 const encodeDefect = Schema.encodeSync(json.codecFor(Schema.Defect()));
 
+const isRequestId = Schema.is(Schema.Union([Schema.String, Schema.Number]));
+
 const isRequest = (message: RpcMessage.FromClientEncoded): message is RpcMessage.RequestEncoded =>
   Predicate.isTagged(message, "Request");
 
@@ -158,13 +160,17 @@ export const makeProtocol = (
             return sendTo(clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(cause)));
           }
 
-          const waits = new Map(
-            messages
-              .filter(isRequest)
-              .map((message) => [message, awaitExit(clientId, RpcMessage.RequestId(message.id))]),
-          );
+          const exits: Array<Promise<void>> = [];
 
           for (const message of messages) {
+            // Why: registered before its own write, never earlier, so the exit of a request
+            // already delivered under the same id cannot settle it. The server answers an id
+            // that is neither a string nor a number with a defect alone, so none is awaited.
+            const wait =
+              isRequest(message) && isRequestId(message.id)
+                ? awaitExit(clientId, RpcMessage.RequestId(message.id))
+                : undefined;
+
             const written = await run(
               write(
                 clientId,
@@ -177,13 +183,17 @@ export const makeProtocol = (
               ).pipe(Effect.exit),
             );
 
+            if (wait === undefined) continue;
+
             // Why: the server refuses a request whose id is in flight, or once the client ended,
             // and sends it no exit, which its message would otherwise wait for until the socket
             // closes.
-            if (Exit.isFailure(written) && isRequest(message)) waits.get(message)?.refused();
+            if (Exit.isFailure(written)) wait.refused();
+
+            exits.push(wait.exit);
           }
 
-          await Promise.all(Array.from(waits.values(), ({ exit }) => exit));
+          await Promise.all(exits);
         },
         close: async (socket) => {
           const clientId = idOf(socket);
@@ -200,11 +210,12 @@ export const makeProtocol = (
           Effect.sync(() => {
             sendTo(clientId, response);
 
+            // Why: only an exit ends a request. A defect, answering a frame the server cannot
+            // read, leaves the client's other requests running, and each of them ends with its
+            // exit: `ActionRpc.layer` disables fatal defects, so a handler's defect is one.
             if (Predicate.isTagged(response, "Exit")) {
               exited(clientId, RpcMessage.RequestId(response.requestId));
             }
-
-            if (Predicate.isTagged(response, "Defect")) allExited(clientId);
           }),
         end: (clientId) =>
           Effect.sync(() => {
