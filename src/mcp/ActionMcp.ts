@@ -117,7 +117,8 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
    * host such as Cloudflare Workers where nothing may outlive a request. It speaks MCP 2026-07-28
    * alone, so a client that opens with `initialize` is refused, and it keeps no session. It has
    * no subscriptions, so `allowSubscriptions` is ignored, and native `features` send no
-   * list-change notification and cannot use `McpServer.elicit`.
+   * list-change notification. `McpServer.elicit` reaches a client of a 2025 revision alone, on
+   * either kind of endpoint: a 2026-07-28 request cannot answer it.
    */
   readonly requestScoped?: boolean | undefined;
 }
