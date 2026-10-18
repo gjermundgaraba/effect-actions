@@ -1,9 +1,10 @@
 import { Context, Effect, Layer, Redacted, Schema } from "effect";
-import { RpcSerialization, RpcServer } from "effect/rpc";
+import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
 export class CurrentUser extends Context.Service<CurrentUser, string>()("test/CurrentUser") {}
 
@@ -15,6 +16,18 @@ export class Overdrawn extends Schema.TaggedError<Overdrawn>()(
   { httpApiStatus: 409 },
 ) {}
 
+export const noteHeader = "x-note";
+
+export class CurrentNote extends Context.Service<CurrentNote, string>()("test/CurrentNote") {}
+
+export class ResolveNote extends RpcMiddleware.Service<ResolveNote, { provides: CurrentNote }>()(
+  "test/ResolveNote",
+) {}
+
+const resolveNote = Layer.succeed(ResolveNote, (call, { headers }) =>
+  Effect.provideService(call, CurrentNote, headers[noteHeader] ?? "none"),
+);
+
 export const Whoami = Action.make("whoami", {
   description: "The signed-in user",
   readOnly: true,
@@ -23,7 +36,7 @@ export const Whoami = Action.make("whoami", {
 });
 
 export const Spend = Action.make("spend", {
-  description: "Spend from the object's balance of 10",
+  description: "Spend from the instance's balance of 10",
   readOnly: false,
   caller: CurrentUser,
   input: { amount: Schema.Int },
@@ -31,9 +44,31 @@ export const Spend = Action.make("spend", {
   error: Overdrawn,
 });
 
-export const Http = ActionHttp.make([Whoami, Spend], { authentication: Login });
+export const ReadNote = Action.make("readNote", {
+  description: "The note the call's headers carry",
+  readOnly: true,
+  caller: Action.Anyone,
+  success: Schema.String,
+});
 
-export const Rpc = ActionRpc.make([Whoami, Spend], { authentication: Login });
+export const Schedule = Action.make("schedule", {
+  description: "Set the object's alarm",
+  readOnly: false,
+  caller: Action.Anyone,
+});
+
+export const Alarms = Action.make("alarms", {
+  description: "How many alarms ran on the object",
+  readOnly: true,
+  caller: Action.Anyone,
+  success: Schema.Int,
+});
+
+const actions = [Whoami, Spend, ReadNote, Schedule, Alarms] as const;
+
+export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], { authentication: Login });
+
+export const Rpc = ActionRpc.make(actions, { authentication: Login });
 
 const users = ["ada", "grace"] as const;
 
@@ -46,9 +81,12 @@ export const authenticate = Authentication.layer(Login, (token: Redacted.Redacte
     : Effect.fail(new Action.Unauthenticated({ message: "Unknown test token." })),
 );
 
-const implementation = Action.implement(
-  [Whoami, Spend],
-  Effect.sync(() => {
+const alarmsKey = "alarms";
+
+export const implementation = Action.implement(
+  actions,
+  Effect.gen(function* () {
+    const { storage } = yield* ActionDurableObject.State;
     let balance = 10;
 
     return {
@@ -57,15 +95,43 @@ const implementation = Action.implement(
         amount > balance
           ? Effect.fail(new Overdrawn({ by: amount - balance }))
           : Effect.sync(() => ({ left: (balance -= amount) })),
+      readNote: () => Effect.service(CurrentNote),
+      schedule: () => Effect.promise(() => storage.setAlarm(Date.now() + 60_000)),
+      alarms: () =>
+        Effect.promise(() => storage.get<number>(alarmsKey)).pipe(Effect.map((n) => n ?? 0)),
     };
   }),
   { authorize: Action.allowAll },
 );
 
+export const builders = Action.layer(implementation);
+
+const rpcRoutes = ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
+  Layer.provide(resolveNote),
+);
+
 export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
-  ActionRpc.layer(Rpc, implementation).pipe(
+  rpcRoutes.pipe(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
     Layer.provide(RpcSerialization.layerJson),
   ),
-).pipe(Layer.provide(authenticate));
+).pipe(Layer.provide(authenticate), Layer.provide(builders));
+
+export const socketRoutes = Layer.mergeAll(
+  ActionHttp.layer(Http, implementation),
+  rpcRoutes.pipe(
+    Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc", headers: [noteHeader] })),
+  ),
+).pipe(Layer.provide(authenticate), Layer.provide(builders));
+
+export const alarm = Effect.gen(function* () {
+  const { storage } = yield* ActionDurableObject.State;
+  const client = yield* Action.client(implementation);
+
+  yield* client.spend({ amount: 1 }).pipe(Effect.provideService(CurrentUser, "alarm"));
+
+  const ran = (yield* Effect.promise(() => storage.get<number>(alarmsKey))) ?? 0;
+
+  yield* Effect.promise(() => storage.put(alarmsKey, ran + 1));
+}).pipe(Effect.provide(builders));

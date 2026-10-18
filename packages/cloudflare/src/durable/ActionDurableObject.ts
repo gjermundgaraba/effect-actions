@@ -1,5 +1,165 @@
-import { Layer } from "effect";
-import { FetchHttpClient, type HttpClient } from "effect/http";
+import { DurableObject } from "cloudflare:workers";
+import { Context, Deferred, Effect, Layer, type Scope } from "effect";
+import {
+  FetchHttpClient,
+  HttpRouter,
+  HttpServer,
+  type HttpClient,
+  type HttpServerRequest,
+} from "effect/http";
+import { RpcServer } from "effect/rpc";
+import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { savedOf } from "./credential.js";
+import { makeProtocol, receiversOf } from "./sockets.js";
+
+/**
+ * The object's own `DurableObjectState`, `ctx`: its storage, its id, its alarm and its sockets.
+ * A startup service of `make`'s routes and alarm, one per instance, so a store over
+ * `storage.sql` is a Layer requiring it.
+ */
+export class State extends Context.Service<State, DurableObjectState>()(
+  "effect-actions-cloudflare/ActionDurableObject/State",
+) {}
+
+type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
+
+type Allowed =
+  | State
+  | HttpRouter.HttpRouter
+  | Layer.Success<typeof HttpServer.layerServices>
+  | HttpRouter.Request<"Requires", ServedPerRequest>
+  | HttpRouter.Request<"GlobalRequires", ServedPerRequest>
+  | HttpRouter.Request<"Error", unknown>
+  | HttpRouter.Request<"GlobalError", unknown>;
+
+/** `make`'s options. */
+export interface Options<E = never, R = never, AE = never, AR = never> {
+  /**
+   * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
+   * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built when the instance is,
+   * again after every eviction, and never finalized. They may require `State`; a request-time
+   * requirement must be provided by their middleware or authentication.
+   */
+  readonly routes: Layer.Layer<never, E, R>;
+  /**
+   * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`. It may require
+   * `State` and a `Scope`, closed when it ends. A layer it and the routes both provide is built
+   * once per instance. A failure rejects `alarm`, which Cloudflare retries.
+   */
+  readonly alarm?: Effect.Effect<void, AE, AR> | undefined;
+}
+
+/**
+ * A Durable Object class serving `routes` on `fetch`, and the sockets `layerWebSocket` accepts
+ * on `webSocketMessage`, `webSocketClose` and `webSocketError`, and running `alarm`. Export it,
+ * or a class extending it, under the name the Wrangler configuration binds. Each instance
+ * builds the routes once, in its constructor, with `State` provided; the runtime evicts an
+ * idle instance and constructs a new one for the next event, so nothing the routes build is
+ * finalized, and in-memory state lasts no longer than an instance.
+ */
+export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.Scope = never>(
+  options: Options<E, R, AE, AR>,
+): typeof DurableObject<Cloudflare.Env> =>
+  class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+    readonly #memoMap = Layer.makeMemoMapUnsafe();
+
+    readonly #built = Deferred.makeUnsafe<void, unknown>();
+
+    readonly #routes: Layer.Layer<never, E, Allowed> = options.routes;
+
+    readonly #web = HttpRouter.toWebHandler(
+      this.#routes.pipe(
+        Layer.tap(() => Deferred.succeed(this.#built, undefined)),
+        Layer.tapCause((cause) => Deferred.failCause(this.#built, cause)),
+        Layer.provide([Layer.succeed(State, this.ctx), HttpServer.layerServices]),
+      ),
+      { memoMap: this.#memoMap },
+    );
+
+    override fetch(request: Request) {
+      return this.#web.handler(request);
+    }
+
+    async #receiverOf(socket: WebSocket) {
+      await Effect.runPromise(Deferred.await(this.#built));
+
+      const receivers = receiversOf(this.ctx);
+
+      const receiver = this.ctx
+        .getTags(socket)
+        .map((tag) => receivers.get(tag))
+        .find((found) => found !== undefined);
+
+      if (receiver === undefined) {
+        throw new Error(
+          "No ActionDurableObject.layerWebSocket of these routes accepted this socket",
+        );
+      }
+
+      return receiver;
+    }
+
+    override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+      return (await this.#receiverOf(socket)).message(socket, message);
+    }
+
+    override async webSocketClose(socket: WebSocket) {
+      return (await this.#receiverOf(socket)).close(socket);
+    }
+
+    override async webSocketError(socket: WebSocket) {
+      return (await this.#receiverOf(socket)).close(socket);
+    }
+
+    override alarm() {
+      const alarm: Effect.Effect<void, AE, State | Scope.Scope> | undefined = options.alarm;
+
+      if (alarm === undefined) {
+        return Promise.reject(new Error("ActionDurableObject.make was given no alarm"));
+      }
+
+      return Effect.runPromise(
+        alarm.pipe(
+          Effect.scoped,
+          Effect.provideService(State, this.ctx),
+          Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
+        ),
+      );
+    }
+  };
+
+/** `layerWebSocket`'s options. */
+export interface LayerWebSocketOptions {
+  /** The upgrade route. */
+  readonly path: HttpRouter.PathInput;
+  /**
+   * Headers of the upgrade request each message is sent again, besides the credential the
+   * binding's descriptor reads, such as one naming a room: a message's own headers win.
+   */
+  readonly headers?: ReadonlyArray<string> | undefined;
+}
+
+/**
+ * The `RpcServer.Protocol` `ActionRpc.layer` serves `binding` on in a Durable Object made by
+ * `make`: WebSockets the object accepts at `path` for the runtime to hold while it hibernates,
+ * speaking JSON, the client's `RpcSerialization.layerJson`. A socket keeps the credential the
+ * binding's descriptor reads from its upgrade request, an `Authorization` header, an API key's
+ * header or its cookie, and the headers listed, and each message is authenticated with them
+ * and its own headers, its own winning: as a long-lived host keeps the upgrade request's. The
+ * runtime answers a client's pings without waking the object.
+ */
+export const layerWebSocket = (
+  binding: ActionRpc.Any,
+  options: LayerWebSocketOptions,
+): Layer.Layer<RpcServer.Protocol, never, State | HttpRouter.HttpRouter> =>
+  Layer.effect(RpcServer.Protocol)(
+    Effect.flatMap(Effect.service(State), (state) =>
+      makeProtocol(state, {
+        path: options.path,
+        saved: savedOf(binding, options.headers ?? []),
+      }),
+    ),
+  );
 
 /**
  * An `HttpClient` whose requests go to `fetcher`, a Durable Object stub or a service binding,

@@ -27,13 +27,21 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
 
 ### Additions
 
-- **`@gjermundgaraba/effect-actions-cloudflare`, a package for Cloudflare Durable Objects**,
-  released with this one at the same version and requiring it at `~` that version. Its
-  `ActionDurableObject.layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable
-  Object stub or a service binding, so a Worker calls an object's routes with
-  `ActionHttp.client`, `ActionRpc.client` over `RpcClient.layerProtocolHttp` or
-  `ActionMcp.client`, its declared errors decoded, in place of providing
-  `FetchHttpClient.Fetch` itself.
+- **`@gjermundgaraba/effect-actions-cloudflare` serves actions from Cloudflare Durable Objects**,
+  released with this package at the same version and requiring it at `~` that version. Its
+  module `ActionDurableObject`:
+  - `make({ routes, alarm })` is a Durable Object class: each instance builds the routes once,
+    with the object's `State` as a startup service, serves them on `fetch`, hands its sockets'
+    events to them and runs `alarm`, sharing one build with the routes.
+  - `layerWebSocket(binding, { path, headers })` is the protocol `ActionRpc.layer` serves on:
+    WebSockets the runtime holds while the object hibernates. A socket keeps the credential the
+    binding's descriptor reads and the headers listed from its upgrade request, and each message
+    is authenticated with them under its own headers, as on a long-lived host. Effect's web
+    handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
+    Workers. The runtime answers a client's pings without waking the object.
+  - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
+    service binding, so a Worker calls an object's routes with `ActionHttp.client`,
+    `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
 
 ### Other changes
 

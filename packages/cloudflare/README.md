@@ -12,11 +12,22 @@ pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflar
 Its declarations name the Workers runtime's types, such as `Fetcher`: generate them with
 `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
 
-Call an object's routes from a Worker with the core's own clients, through the stub:
+Serve actions from an object, over WebSockets the runtime holds while it hibernates:
 
 ```ts
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 
+export class ChatRoom extends ActionDurableObject.make({
+  routes: ActionRpc.layer(Rpc, implementations).pipe(
+    Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+    Layer.provide(authenticate),
+  ),
+}) {}
+```
+
+Call an object's routes from a Worker with the core's own clients, through the stub:
+
+```ts
 ActionHttp.client(Http, { baseUrl: "https://object" }).pipe(
   Effect.provide(ActionDurableObject.layerHttpClient(env.ROOM.getByName("lobby"))),
 );
