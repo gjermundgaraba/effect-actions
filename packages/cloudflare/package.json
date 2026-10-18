@@ -44,9 +44,9 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
-    "@effect/vitest": "4.0.5",
+    "@effect/vitest": "catalog:",
     "@gjermundgaraba/effect-actions": "workspace:*",
-    "effect": "4.0.5"
+    "effect": "catalog:"
   },
   "peerDependencies": {
     "@gjermundgaraba/effect-actions": "workspace:~",

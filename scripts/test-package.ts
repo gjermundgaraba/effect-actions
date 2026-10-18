@@ -8,16 +8,41 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Schema } from "effect";
 import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
-import workersTypes from "../packages/cloudflare/node_modules/@cloudflare/workers-types/package.json" with { type: "json" };
 import manifest from "../package.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 const cloudflare = join(root, "packages/cloudflare");
+
+const decodeInstalled = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }));
+
+const versionIn = (directory: string, name: string) =>
+  decodeInstalled(createRequire(join(directory, "package.json"))(`${name}/package.json`)).version;
+
+const compilerOptions = {
+  target: "es2023",
+  module: "nodenext",
+  strict: true,
+  exactOptionalPropertyTypes: true,
+  noUncheckedIndexedAccess: true,
+  noImplicitOverride: true,
+  noFallthroughCasesInSwitch: true,
+  declaration: true,
+};
+
+const refuseInternalKeys = (declarations: string) => {
+  const keys = readFileSync(declarations, "utf8").match(/"~[^"]*"/g);
+
+  if (keys !== null) {
+    throw new Error(`${declarations} prints internal keys: ${[...new Set(keys)].join(", ")}`);
+  }
+};
 
 const consumer = mkdtempSync(join(tmpdir(), "effect-actions-consumer-"));
 
@@ -38,8 +63,8 @@ try {
       dependencies: {
         [manifest.name]: `file:${tarball}`,
         [cloudflareManifest.name]: `file:${cloudflareTarball}`,
-        "@cloudflare/workers-types": workersTypes.version,
-        effect: manifest.devDependencies.effect,
+        "@cloudflare/workers-types": versionIn(cloudflare, "@cloudflare/workers-types"),
+        effect: versionIn(root, "effect"),
         typescript: manifest.devDependencies.typescript,
       },
     }),
@@ -49,15 +74,8 @@ try {
     join(consumer, "tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
-        target: "es2023",
-        module: "nodenext",
-        strict: true,
-        exactOptionalPropertyTypes: true,
-        noUncheckedIndexedAccess: true,
-        noImplicitOverride: true,
-        noFallthroughCasesInSwitch: true,
+        ...compilerOptions,
         skipLibCheck: false,
-        declaration: true,
         types: [],
         lib: ["es2023", "esnext.disposable", "dom", "dom.iterable"],
       },
@@ -97,16 +115,7 @@ try {
 
   run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
 
-  const internalKeysInDeclarations = readFileSync(
-    join(consumer, "declarations.d.ts"),
-    "utf8",
-  ).match(/"~[^"]*"/g);
-
-  if (internalKeysInDeclarations !== null) {
-    throw new Error(
-      `declarations.d.ts prints internal keys: ${[...new Set(internalKeysInDeclarations)].join(", ")}`,
-    );
-  }
+  refuseInternalKeys(join(consumer, "declarations.d.ts"));
 
   run(process.execPath, ["index.js"]);
 
@@ -118,13 +127,8 @@ try {
     join(consumer, "cloudflare", "tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
-        target: "es2023",
-        module: "nodenext",
-        strict: true,
-        exactOptionalPropertyTypes: true,
-        noUncheckedIndexedAccess: true,
+        ...compilerOptions,
         skipLibCheck: true,
-        declaration: true,
         types: ["@cloudflare/workers-types"],
         lib: ["es2023"],
       },
@@ -138,16 +142,7 @@ try {
     join(consumer, "cloudflare"),
   ]);
 
-  const cloudflareInternalKeys = readFileSync(
-    join(consumer, "cloudflare", "worker.d.ts"),
-    "utf8",
-  ).match(/"~[^"]*"/g);
-
-  if (cloudflareInternalKeys !== null) {
-    throw new Error(
-      `cloudflare/worker.d.ts prints internal keys: ${[...new Set(cloudflareInternalKeys)].join(", ")}`,
-    );
-  }
+  refuseInternalKeys(join(consumer, "cloudflare", "worker.d.ts"));
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

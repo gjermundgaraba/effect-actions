@@ -25,10 +25,9 @@ jobs:
           cache: true
           run-install: false
       - run: vp install --frozen-lockfile
-      # Every Effect package on the same newest 4.x release, in both packages, as setup-failures.md
-      # requires.
-      - run: vp add -D effect@^4 @effect/platform-node@^4 @effect/vitest@^4
-      - run: vp -C packages/cloudflare add -D effect@^4 @effect/vitest@^4
+      # Every Effect package on the same newest 4.x release, in every package of the workspace, as
+      # setup-failures.md requires.
+      - run: vp update -r effect@^4 @effect/platform-node@^4 @effect/vitest@^4
       - name: Show the Effect releases under test
         run: >-
           node -e 'for (const p of ["effect", "@effect/platform-node", "@effect/vitest"])

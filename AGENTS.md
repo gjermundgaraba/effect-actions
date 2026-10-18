@@ -72,10 +72,10 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 ## Release
 
-- Both packages carry one version. When asked to release: set it in `package.json` and `packages/cloudflare/package.json`, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes both, the core first, via `.github/workflows/npm.yml`. Manual publishing must use `vp pm publish`, in each package, so `publishConfig.exports` is applied and the Cloudflare package's `workspace:~` peer becomes `~<version>`.
+- Both packages carry one version. When asked to release: set it in `package.json` and `packages/cloudflare/package.json`, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes both, the core first, via `.github/workflows/npm.yml`; a re-run skips a version already published. Manual publishing must use `vp pm publish -r` so `publishConfig.exports` is applied and the Cloudflare package's `workspace:~` peer becomes `~<version>`. npm's trusted publishing needs a package to exist: before the first tag that publishes a new package, publish it once by hand and list this repository and workflow as its trusted publisher.
 - After adding, renaming or removing public modules, run `vp run -r build` and include each package's generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` is the floor stated to consumers, lower than `devEngines` on purpose: do not align them.
-- Upgrade Effect development packages together, in both packages, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
+- Upgrade Effect development packages together, in the catalog of `pnpm-workspace.yaml` both packages read, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
 
 ## Effect
 

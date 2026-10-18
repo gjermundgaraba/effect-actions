@@ -35,7 +35,7 @@ export const Http = ActionHttp.make([Whoami, Spend], { authentication: Login });
 
 export const Rpc = ActionRpc.make([Whoami, Spend], { authentication: Login });
 
-export const users = ["ada", "grace"] as const;
+const users = ["ada", "grace"] as const;
 
 const isUser = (name: string): name is (typeof users)[number] =>
   users.some((user) => user === name);

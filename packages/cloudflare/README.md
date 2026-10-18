@@ -9,6 +9,9 @@ the same version, and requires it.
 pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.0.4
 ```
 
+Its declarations name the Workers runtime's types, such as `Fetcher`: generate them with
+`wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
+
 Call an object's routes from a Worker with the core's own clients, through the stub:
 
 ```ts

@@ -71,11 +71,11 @@
     "docs:sync": "node --import tsx scripts/sync-skill.ts"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.5",
-    "@effect/vitest": "4.0.5",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
     "@modelcontextprotocol/client": "2.3.1",
     "@types/node": "26.6.5",
-    "effect": "4.0.5",
+    "effect": "catalog:",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "catalog:",

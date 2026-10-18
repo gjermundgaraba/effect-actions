@@ -28,7 +28,9 @@
     "scripts/**/*.ts",
     "tools/oxlint/no-comments/**/*.ts",
     "tools/oxlint/tests/**/*.ts",
-    "vite.config.ts"
+    "tools/*.ts",
+    "vite.config.ts",
+    "packages/*/vite.config.ts"
   ],
   // Lint-configuration probes are fixtures another run writes and deletes mid-run.
   "exclude": ["dist", "tools/oxlint/tests/probe-*"]

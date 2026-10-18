@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect";
+import { Effect, type Layer, Schema } from "effect";
+import type { HttpClient } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
@@ -12,14 +13,21 @@ export const Ping = Action.make("ping", {
 
 export const Http = ActionHttp.make([Ping]);
 
-export const ping = (stub: DurableObjectStub) =>
-  Effect.gen(function* () {
-    const client = yield* ActionHttp.client(Http, { baseUrl: "https://object" });
+export const toObject = (stub: DurableObjectStub): Layer.Layer<HttpClient.HttpClient> =>
+  ActionDurableObject.layerHttpClient(stub);
 
-    // @ts-expect-error -- Published declarations must retain the result type through the stub.
-    const wrong: Effect.Effect<number, unknown> = client.ping();
+export const checkLayerTypes = (stub: DurableObjectStub) => {
+  // @ts-expect-error -- Published declarations must type what the layer provides.
+  const wrong: Layer.Layer<number> = ActionDurableObject.layerHttpClient(stub);
 
-    void wrong;
+  // @ts-expect-error -- Published declarations must take only something that fetches.
+  ActionDurableObject.layerHttpClient({});
 
-    return yield* client.ping();
-  }).pipe(Effect.provide(ActionDurableObject.layerHttpClient(stub)));
+  return wrong;
+};
+
+export const ping = (stub: DurableObjectStub): Effect.Effect<"pong", unknown> =>
+  ActionHttp.client(Http, { baseUrl: "https://object" }).pipe(
+    Effect.flatMap((client) => client.ping()),
+    Effect.provide(toObject(stub)),
+  );

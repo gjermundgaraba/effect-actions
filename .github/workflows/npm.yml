@@ -32,9 +32,8 @@ jobs:
       - name: Check that each package.json's exports are the build's
         run: git diff --exit-code -- package.json packages/cloudflare/package.json
       # Each package lists this repository and workflow as its npm trusted publisher, so
-      # publishing authenticates with the job's OIDC token and attaches provenance.
-      # A tag checkout is a detached HEAD, which the branch check would refuse.
-      # The core goes first, so a failed publish never leaves the Cloudflare package's peer range
-      # naming a core release that does not exist.
-      - run: vp pm publish --no-git-checks
-      - run: vp -C packages/cloudflare pm publish --no-git-checks
+      # publishing authenticates with the job's OIDC token and attaches provenance; a new package
+      # is published once by hand first (AGENTS.md#release). A recursive publish takes the core
+      # before the package depending on it and skips a version already published, so a failed
+      # run can be re-run. A tag checkout is a detached HEAD, which the branch check would refuse.
+      - run: vp pm publish -r --no-git-checks

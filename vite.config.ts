@@ -1,12 +1,5 @@
-import { globSync } from "node:fs";
-import { basename } from "node:path";
 import { defaultExclude, defineConfig } from "vite-plus";
-
-const publicModules = Object.fromEntries(
-  globSync("src/*/*.ts")
-    .map((path): [string, string] => [basename(path, ".ts"), path])
-    .filter(([module]) => /^[A-Z]/u.test(module)),
-);
+import { pack } from "./tools/pack.ts";
 
 const sourceOrLintProbe = (glob: string) => [
   `src/${glob}`,
@@ -47,15 +40,7 @@ export default defineConfig({
       "packages/*",
     ],
   },
-  pack: {
-    entry: publicModules,
-    unbundle: true,
-    deps: { resolveDepSubpath: true },
-    dts: {
-      generator: "tsgo",
-    },
-    exports: { devExports: true },
-  },
+  pack: pack(),
   fmt: {
     ignorePatterns: [
       ".agent/**",
@@ -147,11 +132,16 @@ export default defineConfig({
         },
       },
       {
-        files: sourceOrLintProbe("**"),
+        files: [...sourceOrLintProbe("**"), "packages/*/src/**"],
         rules: {
           "no-comments/no-prose-comments": ["error", { allowJsDoc: true, allowWhy: true }],
           "typescript/consistent-type-imports": "error",
           "typescript/no-import-type-side-effects": "error",
+        },
+      },
+      {
+        files: sourceOrLintProbe("**"),
+        rules: {
           "no-restricted-imports": [
             "error",
             {
@@ -193,9 +183,6 @@ export default defineConfig({
       {
         files: ["packages/*/src/**"],
         rules: {
-          "no-comments/no-prose-comments": ["error", { allowJsDoc: true, allowWhy: true }],
-          "typescript/consistent-type-imports": "error",
-          "typescript/no-import-type-side-effects": "error",
           "no-restricted-imports": [
             "error",
             {
