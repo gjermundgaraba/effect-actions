@@ -3,7 +3,7 @@ import { Cookies, type HttpServerRequest } from "effect/http";
 import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 
 /** A header kept with a socket and sent again under each of its messages' own headers. */
-export type Header = readonly [name: string, value: string];
+export type Header = [name: string, value: string];
 
 const credentialOf = (
   binding: ActionRpc.Any,
@@ -29,7 +29,7 @@ const credentialOf = (
                   Cookies.toCookieHeader(
                     Cookies.fromIterable([Cookies.makeCookieUnsafe(key, value)]),
                   ),
-                ] as const,
+                ] satisfies Header,
               ];
         }),
         Match.when("query", () => []),
@@ -47,7 +47,7 @@ const headersNamed = (
   names.flatMap((name) => {
     const value = request.headers[name.toLowerCase()];
 
-    return value === undefined ? [] : [[name.toLowerCase(), value] as const];
+    return value === undefined ? [] : [[name.toLowerCase(), value] satisfies Header];
   });
 
 /**

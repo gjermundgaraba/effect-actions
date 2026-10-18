@@ -8,8 +8,10 @@ import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { CurrentUser, Http, implementation, Rpc, socketRoutes } from "../support/app.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: socketRoutes })).toEqualTypeOf<
-  typeof DurableObject<Cloudflare.Env>
+  new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance
 >();
+
+expectTypeOf<ActionDurableObject.Instance>().toExtend<DurableObject<Cloudflare.Env>>();
 
 expectTypeOf(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })).toEqualTypeOf<
   Layer.Layer<RpcServer.Protocol, never, ActionDurableObject.State | HttpRouter.HttpRouter>
@@ -17,7 +19,7 @@ expectTypeOf(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })).toEqualT
 
 ActionDurableObject.make({
   routes: socketRoutes,
-  alarm: Effect.asVoid(Effect.all([Effect.service(ActionDurableObject.State), Effect.scope])),
+  alarm: () => Effect.asVoid(Effect.all([Effect.service(ActionDurableObject.State), Effect.scope])),
 });
 
 ActionDurableObject.make({
@@ -37,5 +39,5 @@ ActionDurableObject.make({
 ActionDurableObject.make({
   routes: socketRoutes,
   // @ts-expect-error -- The alarm has no caller unless it names one itself.
-  alarm: Effect.asVoid(Effect.service(CurrentUser)),
+  alarm: () => Effect.asVoid(Effect.service(CurrentUser)),
 });

@@ -31,12 +31,14 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   released with this package at the same version and requiring it at `~` that version. Its
   module `ActionDurableObject`:
   - `make({ routes, alarm })` is a Durable Object class: each instance builds the routes once,
-    with the object's `State` as a startup service, serves them on `fetch`, hands its sockets'
-    events to them and runs `alarm`, sharing one build with the routes.
+    with the object's `State` as a startup service, and holds every event until they are built;
+    it serves them on `fetch`, hands its sockets' events to them and runs `alarm(info)`, given
+    the runtime's retry count, sharing one build with the routes.
   - `layerWebSocket(binding, { path, headers })` is the protocol `ActionRpc.layer` serves on:
     WebSockets the runtime holds while the object hibernates. A socket keeps the credential the
     binding's descriptor reads and the headers listed from its upgrade request, and each message
-    is authenticated with them under its own headers, as on a long-lived host. Effect's web
+    is authenticated with them under its own headers, as on a long-lived host; an upgrade whose
+    kept headers exceed a socket's 16 KiB attachment answers 431. Effect's web
     handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
     Workers. The runtime answers a client's pings without waking the object.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a

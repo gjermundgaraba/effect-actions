@@ -12,6 +12,7 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { Http, noteHeader, Overdrawn } from "../support/app.js";
+import type { Room } from "../worker.js";
 import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
 const room = (name: string) => env.ROOM.getByName(name);
@@ -90,6 +91,57 @@ describe("layerWebSocket", () => {
     }),
   );
 
+  it.effect("holds a message's event open until each of its requests has its exit", () =>
+    Effect.gen(function* () {
+      const stub = room("holds");
+
+      yield* upgradeToRpc(stub);
+
+      const settled = yield* Effect.promise(() =>
+        runInDurableObject(stub, async (instance: Room, state) => {
+          const [held] = state.getWebSockets();
+
+          if (held === undefined) throw new Error("No socket");
+
+          const request = (id: string, tag: string) =>
+            JSON.stringify({ _tag: "Request", id, tag, payload: {}, headers: [] });
+
+          const holding = instance.webSocketMessage(held, request("1", "hold"));
+
+          const early = await Promise.race([
+            holding.then(() => "settled"),
+            new Promise((resolve) => setTimeout(resolve, 50, "pending")),
+          ]);
+
+          await instance.webSocketMessage(held, request("2", "release"));
+          await holding;
+
+          return early;
+        }),
+      );
+
+      expect(settled).toBe("pending");
+    }),
+  );
+
+  it.effect("refuses an upgrade whose kept headers exceed a socket's attachment with 431", () =>
+    Effect.gen(function* () {
+      const stub = room("too-large");
+
+      const response = yield* Effect.promise(() =>
+        stub.fetch("https://object/rpc", {
+          headers: { upgrade: "websocket", authorization: `Bearer ${"x".repeat(20_000)}` },
+        }),
+      );
+
+      const held = yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) => state.getWebSockets().length),
+      );
+
+      expect([response.status, held]).toEqual([431, 0]);
+    }),
+  );
+
   it.effect("answers a request to the route that is no upgrade with 426", () =>
     Effect.gen(function* () {
       const response = yield* Effect.promise(() => room("plain-get").fetch("https://object/rpc"));
@@ -122,20 +174,23 @@ describe("make", () => {
     }),
   );
 
-  it.effect("runs the alarm with the object's State, sharing the routes' build", () =>
-    Effect.gen(function* () {
-      const stub = room("alarm");
+  it.effect(
+    "runs the alarm on a woken instance once the routes are built, sharing their build",
+    () =>
+      Effect.gen(function* () {
+        const stub = room("alarm");
 
-      const client = yield* ActionHttp.client(Http, {
-        baseUrl: "https://object",
-        transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("ada")),
-      });
+        const client = yield* ActionHttp.client(Http, {
+          baseUrl: "https://object",
+          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("ada")),
+        });
 
-      yield* client.schedule();
+        yield* client.schedule();
+        yield* Effect.promise(() => evictDurableObject(stub));
 
-      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
-      expect(yield* client.alarms()).toBe(1);
-      expect(yield* client.spend({ amount: 9 })).toEqual({ left: 0 });
-    }).pipe(Effect.provide(ActionDurableObject.layerHttpClient(room("alarm")))),
+        expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+        expect(yield* client.alarms()).toBe(1);
+        expect(yield* client.spend({ amount: 9 })).toEqual({ left: 0 });
+      }).pipe(Effect.provide(ActionDurableObject.layerHttpClient(room("alarm")))),
   );
 });

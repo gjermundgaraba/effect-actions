@@ -43,7 +43,10 @@ const socket = ActionRpc.layer(Rpc, pong).pipe(
 
 export class Room extends ActionDurableObject.make({
   routes: socket,
-  alarm: Effect.asVoid(Effect.service(ActionDurableObject.State)),
+  alarm: (info) =>
+    Effect.asVoid(Effect.service(ActionDurableObject.State)).pipe(
+      Effect.when(Effect.succeed((info?.retryCount ?? 0) < 3)),
+    ),
 }) {}
 
 export const checkMakeTypes = () =>

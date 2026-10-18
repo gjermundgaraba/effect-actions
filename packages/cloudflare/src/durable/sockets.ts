@@ -1,4 +1,4 @@
-import { Effect, Predicate, Queue, Schema } from "effect";
+import { Effect, Exit, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import type { Header } from "./credential.js";
@@ -24,7 +24,7 @@ export const receiversOf = (state: DurableObjectState): Map<string, Receiver> =>
 };
 
 const Attachment = Schema.Struct({
-  headers: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+  headers: Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))),
 });
 
 const attachmentOf = Schema.decodeUnknownSync(Attachment);
@@ -78,23 +78,29 @@ export const makeProtocol = (
     );
 
     const disconnects = yield* Queue.make<number>();
-    const awaitingExit = new Map<number, Map<string, () => void>>();
+    const awaitingExit = new Map<number, Map<string, Array<() => void>>>();
 
     const exited = (clientId: number, requestId: string) => {
-      awaitingExit.get(clientId)?.get(requestId)?.();
+      for (const resolve of awaitingExit.get(clientId)?.get(requestId) ?? []) resolve();
       awaitingExit.get(clientId)?.delete(requestId);
     };
 
     const allExited = (clientId: number) => {
-      for (const resolve of awaitingExit.get(clientId)?.values() ?? []) resolve();
+      for (const waiting of awaitingExit.get(clientId)?.values() ?? []) {
+        for (const resolve of waiting) resolve();
+      }
+
       awaitingExit.delete(clientId);
     };
 
     const exitOf = (clientId: number, requestId: string) =>
       new Promise<void>((resolve) => {
-        const ofClient = awaitingExit.get(clientId) ?? new Map<string, () => void>();
+        const ofClient = awaitingExit.get(clientId) ?? new Map<string, Array<() => void>>();
 
-        awaitingExit.set(clientId, ofClient.set(requestId, resolve));
+        awaitingExit.set(
+          clientId,
+          ofClient.set(requestId, [...(ofClient.get(requestId) ?? []), resolve]),
+        );
       });
 
     const sendTo = (clientId: number, response: RpcMessage.FromServerEncoded) => {
@@ -125,20 +131,22 @@ export const makeProtocol = (
           const exits = messages.filter(isRequest).map(({ id }) => exitOf(clientId, String(id)));
 
           for (const message of messages) {
-            await run(
+            const written = await run(
               write(
                 clientId,
                 isRequest(message)
                   ? {
                       ...message,
-                      headers: [
-                        ...headers.map(([name, value]): [string, string] => [name, value]),
-                        ...message.headers,
-                      ],
+                      headers: [...headers, ...message.headers],
                     }
                   : message,
-              ),
+              ).pipe(Effect.exit),
             );
+
+            // Why: the server refuses a request whose id is in flight, or once the client ended,
+            // and sends it no exit, which its message would otherwise wait for until the socket
+            // closes.
+            if (Exit.isFailure(written) && isRequest(message)) exited(clientId, String(message.id));
           }
 
           await Promise.all(exits);
@@ -188,10 +196,20 @@ export const makeProtocol = (
 
         const { 0: client, 1: server } = new WebSocketPair();
 
-        state.acceptWebSocket(server, [group, tagOf(nextId++)]);
-        server.serializeAttachment(Attachment.make({ headers: options.saved(request) }));
+        try {
+          server.serializeAttachment(Attachment.make({ headers: options.saved(request) }));
+        } catch {
+          return HttpServerResponse.text(
+            "The credential and the headers a socket keeps exceed its attachment",
+            { status: 431 },
+          );
+        }
 
-        return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }));
+        state.acceptWebSocket(server, [group, tagOf(nextId++)]);
+
+        return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }), {
+          status: 101,
+        });
       }),
     );
 

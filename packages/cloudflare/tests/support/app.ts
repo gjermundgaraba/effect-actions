@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Deferred, Effect, Layer, Redacted, Schema } from "effect";
 import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -64,7 +64,19 @@ export const Alarms = Action.make("alarms", {
   success: Schema.Int,
 });
 
-const actions = [Whoami, Spend, ReadNote, Schedule, Alarms] as const;
+export const Hold = Action.make("hold", {
+  description: "Answer once release is called on the same instance",
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+export const Release = Action.make("release", {
+  description: "Answer every held call",
+  readOnly: false,
+  caller: Action.Anyone,
+});
+
+const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Hold, Release] as const;
 
 export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], { authentication: Login });
 
@@ -83,11 +95,28 @@ export const authenticate = Authentication.layer(Login, (token: Redacted.Redacte
 
 const alarmsKey = "alarms";
 
+export class Opened extends Context.Service<Opened, number>()("test/Opened") {
+  static readonly layer = Layer.effect(Opened)(
+    Effect.flatMap(Effect.service(ActionDurableObject.State), ({ storage }) =>
+      Effect.promise(async () => {
+        const opened = ((await storage.get<number>("opened")) ?? 0) + 1;
+
+        await storage.put("opened", opened);
+
+        return opened;
+      }),
+    ),
+  );
+}
+
 export const implementation = Action.implement(
   actions,
   Effect.gen(function* () {
     const { storage } = yield* ActionDurableObject.State;
+    const released = yield* Deferred.make<void>();
     let balance = 10;
+
+    yield* Opened;
 
     return {
       whoami: () => Effect.service(CurrentUser),
@@ -99,12 +128,18 @@ export const implementation = Action.implement(
       schedule: () => Effect.promise(() => storage.setAlarm(Date.now() + 60_000)),
       alarms: () =>
         Effect.promise(() => storage.get<number>(alarmsKey)).pipe(Effect.map((n) => n ?? 0)),
+      hold: () => Deferred.await(released),
+      release: () => Deferred.succeed(released, undefined),
     };
   }),
   { authorize: Action.allowAll },
 );
 
-export const builders = Action.layer(implementation);
+export const startup = Layer.provideMerge(Action.layer(implementation), Opened.layer);
+
+export const slowUpstream = Layer.effectDiscard(
+  Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20))),
+);
 
 const rpcRoutes = ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
   Layer.provide(resolveNote),
@@ -116,14 +151,14 @@ export const routes = Layer.mergeAll(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
     Layer.provide(RpcSerialization.layerJson),
   ),
-).pipe(Layer.provide(authenticate), Layer.provide(builders));
+).pipe(Layer.provide(authenticate), Layer.provide(startup));
 
 export const socketRoutes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
   rpcRoutes.pipe(
     Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc", headers: [noteHeader] })),
   ),
-).pipe(Layer.provide(authenticate), Layer.provide(builders));
+).pipe(Layer.provide(authenticate), Layer.provide(startup), Layer.provide(slowUpstream));
 
 export const alarm = Effect.gen(function* () {
   const { storage } = yield* ActionDurableObject.State;
@@ -134,4 +169,4 @@ export const alarm = Effect.gen(function* () {
   const ran = (yield* Effect.promise(() => storage.get<number>(alarmsKey))) ?? 0;
 
   yield* Effect.promise(() => storage.put(alarmsKey, ran + 1));
-}).pipe(Effect.provide(builders));
+}).pipe(Effect.provide(startup));

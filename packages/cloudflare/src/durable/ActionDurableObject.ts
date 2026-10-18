@@ -42,24 +42,40 @@ export interface Options<E = never, R = never, AE = never, AR = never> {
    */
   readonly routes: Layer.Layer<never, E, R>;
   /**
-   * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`. It may require
-   * `State` and a `Scope`, closed when it ends. A layer it and the routes both provide is built
+   * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
+   * runtime's `retryCount` and `isRetry`. It may require `State` and a `Scope`, closed when it
+   * ends. It runs once the routes are built, and a layer it and the routes both provide is built
    * once per instance. A failure rejects `alarm`, which Cloudflare retries.
    */
-  readonly alarm?: Effect.Effect<void, AE, AR> | undefined;
+  readonly alarm?:
+    | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, AR>)
+    | undefined;
+  /** Whether to leave out the request logger `HttpRouter.toWebHandler` adds by default. */
+  readonly disableLogger?: boolean | undefined;
+}
+
+/** An instance of a class `make` returns, with the handlers it defines. */
+export interface Instance extends DurableObject<Cloudflare.Env> {
+  fetch(request: Request): Promise<Response>;
+  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void>;
+  webSocketClose(socket: WebSocket): Promise<void>;
+  webSocketError(socket: WebSocket): Promise<void>;
+  alarm(info?: AlarmInvocationInfo): Promise<void>;
 }
 
 /**
  * A Durable Object class serving `routes` on `fetch`, and the sockets `layerWebSocket` accepts
  * on `webSocketMessage`, `webSocketClose` and `webSocketError`, and running `alarm`. Export it,
  * or a class extending it, under the name the Wrangler configuration binds. Each instance
- * builds the routes once, in its constructor, with `State` provided; the runtime evicts an
- * idle instance and constructs a new one for the next event, so nothing the routes build is
- * finalized, and in-memory state lasts no longer than an instance.
+ * builds the routes once, in its constructor, with `State` provided, and holds every event
+ * until they are built, as `blockConcurrencyWhile` does: a build that fails resets the
+ * instance, and the next event builds them again. The runtime evicts an idle instance and
+ * constructs a new one for the next event, so nothing the routes build is finalized, and
+ * in-memory state lasts no longer than an instance.
  */
 export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.Scope = never>(
   options: Options<E, R, AE, AR>,
-): typeof DurableObject<Cloudflare.Env> =>
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance =>
   class ActionDurableObject extends DurableObject<Cloudflare.Env> {
     readonly #memoMap = Layer.makeMemoMapUnsafe();
 
@@ -67,22 +83,28 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
 
     readonly #routes: Layer.Layer<never, E, Allowed> = options.routes;
 
-    readonly #web = HttpRouter.toWebHandler(
-      this.#routes.pipe(
-        Layer.tap(() => Deferred.succeed(this.#built, undefined)),
-        Layer.tapCause((cause) => Deferred.failCause(this.#built, cause)),
-        Layer.provide([Layer.succeed(State, this.ctx), HttpServer.layerServices]),
-      ),
-      { memoMap: this.#memoMap },
-    );
+    // Why: the runtime holds back a timer set outside the callback until it returns, so a build
+    // started before it would wait on itself; started inside it, the build holds every event.
+    readonly #web = this.ctx.blockConcurrencyWhile(async () => {
+      const web = HttpRouter.toWebHandler(
+        this.#routes.pipe(
+          Layer.tap(() => Deferred.succeed(this.#built, undefined)),
+          Layer.tapCause((cause) => Deferred.failCause(this.#built, cause)),
+          Layer.provide([Layer.succeed(State, this.ctx), HttpServer.layerServices]),
+        ),
+        { memoMap: this.#memoMap, disableLogger: options.disableLogger },
+      );
 
-    override fetch(request: Request) {
-      return this.#web.handler(request);
-    }
-
-    async #receiverOf(socket: WebSocket) {
       await Effect.runPromise(Deferred.await(this.#built));
 
+      return web;
+    });
+
+    override async fetch(request: Request) {
+      return (await this.#web).handler(request);
+    }
+
+    #receiverOf(socket: WebSocket) {
       const receivers = receiversOf(this.ctx);
 
       const receiver = this.ctx
@@ -99,27 +121,29 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
       return receiver;
     }
 
-    override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-      return (await this.#receiverOf(socket)).message(socket, message);
+    override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+      return this.#receiverOf(socket).message(socket, message);
     }
 
-    override async webSocketClose(socket: WebSocket) {
-      return (await this.#receiverOf(socket)).close(socket);
+    override webSocketClose(socket: WebSocket) {
+      return this.#receiverOf(socket).close(socket);
     }
 
-    override async webSocketError(socket: WebSocket) {
-      return (await this.#receiverOf(socket)).close(socket);
+    override webSocketError(socket: WebSocket) {
+      return this.#receiverOf(socket).close(socket);
     }
 
-    override alarm() {
-      const alarm: Effect.Effect<void, AE, State | Scope.Scope> | undefined = options.alarm;
+    override alarm(info?: AlarmInvocationInfo) {
+      const alarm:
+        | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)
+        | undefined = options.alarm;
 
       if (alarm === undefined) {
         return Promise.reject(new Error("ActionDurableObject.make was given no alarm"));
       }
 
       return Effect.runPromise(
-        alarm.pipe(
+        alarm(info).pipe(
           Effect.scoped,
           Effect.provideService(State, this.ctx),
           Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),

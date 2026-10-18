@@ -18,7 +18,7 @@ export class Plain extends DurableObject {
   }
 }
 
-export class Room extends ActionDurableObject.make({ routes: socketRoutes, alarm }) {}
+export class Room extends ActionDurableObject.make({ routes: socketRoutes, alarm: () => alarm }) {}
 
 export class Unreachable extends Data.TaggedError("Unreachable")<{ readonly store: string }> {}
 
