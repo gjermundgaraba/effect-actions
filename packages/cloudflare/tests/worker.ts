@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Data, Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
-import { alarm, routes, socketRoutes } from "./support/app.js";
+import { alarm, routerProvidedRoutes, routes, socketRoutes } from "./support/app.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -19,6 +19,8 @@ export class Plain extends DurableObject {
 }
 
 export class Room extends ActionDurableObject.make({ routes: socketRoutes, alarm: () => alarm }) {}
+
+export class RouterProvided extends ActionDurableObject.make({ routes: routerProvidedRoutes }) {}
 
 export class Unreachable extends Data.TaggedError("Unreachable")<{ readonly store: string }> {}
 

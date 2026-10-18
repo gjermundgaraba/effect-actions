@@ -7,10 +7,8 @@ message expires a day after it was posted, when the room's alarm runs. The Worke
 routes `/rooms/<room>/…` to the room's object and serves a lobby itself, which asks each room
 for its latest message through the room's stub.
 
-Start here to serve actions from Durable Objects. It needs `@gjermundgaraba/effect-actions`
-beside this package, and the Workers runtime's types, from `wrangler types` or
-`@cloudflare/workers-types`. The same chat on a long-lived server is live-rpc, in the core
-package's `examples/`.
+Start here to serve actions from Durable Objects. The same chat on a long-lived server is
+live-rpc, in the core package's `examples/`.
 
 ## Run it
 
@@ -21,9 +19,16 @@ vp test packages/cloudflare/examples/chat-rooms
 ```
 
 The tests run inside the Workers runtime, on the Worker `wrangler.jsonc` describes, with
-`@cloudflare/vitest-plugin`. To serve it, run Wrangler in this directory (`wrangler dev`,
-`wrangler deploy`). `browser.ts` is imported by a page, not run. The tokens are fixed names
-(`ada`, `grace`): replace them before deploying anything.
+`@cloudflare/vitest-plugin`. `browser.ts` is imported by a page, not run. The tokens are fixed
+names (`ada`, `grace`): replace them before deploying anything.
+
+In a project that installs the package, copy this directory out of
+`node_modules/@gjermundgaraba/effect-actions-cloudflare/examples/`. It imports both packages by
+name and needs `effect` beside them, `@cloudflare/workers-types` for its `tsconfig.json`, and
+`wrangler` to serve it (`wrangler dev`, `wrangler deploy` in its directory). Its tests need
+`vitest`, `@effect/vitest` and `@cloudflare/vitest-plugin`; `vite.config.ts` imports
+`defineConfig` from the repository's toolchain, `vite-plus`, which is Vitest's `vitest/config`
+elsewhere.
 
 ## When you copy this
 
@@ -34,8 +39,7 @@ The tests run inside the Workers runtime, on the Worker `wrangler.jsonc` describ
   matching `RoomName`. Every name is a room, created when first reached: yours may keep a list.
 - **`preview` is public** so the lobby can show rooms to anyone signed out. It tells them a
   room's latest message.
-- **A page reads again to keep up**: actions are unary, and a call that waited for the next
-  message would keep the object awake, billed, for as long as it waited.
+- **A page reads again to keep up**, as `ReadMessages` in `src/chat/Chat.ts` says.
 
 ## Layout
 
@@ -45,7 +49,7 @@ src/
 │   ├── Chat.ts        contract: the message, its errors, the room's actions
 │   ├── room.ts        Room, the room an instance holds: a startup service
 │   ├── store.ts       MessageStore, the service the handlers call
-│   ├── authorize.ts   the one authorization rule, made for one room: a member of it
+│   ├── authorize.ts   the one authorization rule: a member of the instance's room
 │   └── handlers.ts    Action.implement: contract to store
 ├── identity/
 │   ├── Identity.ts    contract: CurrentMember and the Login descriptor
@@ -57,8 +61,8 @@ src/
 │   └── handlers.ts    Action.implement: every room asked at once
 ├── platform/
 │   ├── sql-store.ts   MessageStore over the object's SQLite database, and its alarm
-│   ├── room.ts        Room from the object's name
-│   └── rooms.ts       Rooms over each room's stub, with the room's typed client
+│   ├── object-name.ts Room from the object's name
+│   └── room-stubs.ts  Rooms over each room's stub, with the room's typed client
 ├── Api.ts             the JSON bindings: a room's and the lobby's
 ├── Rpc.ts             the room's RPC binding
 ├── routes.ts          a room's routes and the lobby's, not yet served
@@ -74,9 +78,9 @@ test/
 - **An instance is built per wake.** The runtime evicts an idle object and constructs a new
   instance for its next event, which builds the routes again: anything in memory is gone, and
   `layerSql` creates its table if it is not there. The database and the sockets stay.
-- **The room is a startup service, the caller is not.** An instance holds one room, so
-  `routes.ts` reads `Room` when it builds and makes the authorizer for it. `CurrentMember` comes
-  from authentication, per message.
+- **The room is a startup service, the caller is not.** An instance holds one room, so the
+  authorizer yields `Room` once, when it is built, as a builder yields a store. `CurrentMember`
+  comes from authentication, per message.
 - **The entrypoint chooses everything.** `worker.ts` gives the routes the SQLite store and the
   room, gives the alarm the same store layer, so an instance builds it once for both, and gives
   the lobby the stubs.
@@ -91,8 +95,8 @@ test/
 | Rpcs on hibernating WebSockets beside JSON routes, in one object     | `src/routes.ts`                          |
 | An authorizer made for the instance's room when the routes build     | `src/routes.ts`, `src/chat/authorize.ts` |
 | A store over the object's SQLite database, setting its alarm         | `src/platform/sql-store.ts`              |
-| A startup service read from the object's state                       | `src/platform/room.ts`                   |
-| A Worker calling an object's actions through its stub                | `src/platform/rooms.ts`                  |
+| A startup service read from the object's state                       | `src/platform/object-name.ts`            |
+| A Worker calling an object's actions through its stub                | `src/platform/room-stubs.ts`             |
 | Routing requests and upgrades from the Worker to an object           | `src/worker.ts`                          |
 | A page's socket client, its token on each message                    | `src/browser.ts`                         |
 | Testing on the Workers runtime: an eviction, the alarm, the database | `test/worker.test.ts`, `test/platform/`  |

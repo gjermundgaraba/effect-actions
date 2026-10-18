@@ -56,12 +56,11 @@ it with a SQLite migration.
 - A service read from the object, such as a SQLite store, is a Layer requiring `State`
   ([chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)).
   So is what the object is, such as its name
-  ([chat-rooms/src/platform/room.ts](../examples/chat-rooms/src/platform/room.ts)).
-- An authorizer runs per call and reads request-time requirements only. One that depends on the
-  object, such as on its room, is made from it when the routes build: read the startup service
-  in `Layer.unwrap` and implement the actions with that authorizer
-  ([chat-rooms/src/routes.ts](../examples/chat-rooms/src/routes.ts),
-  [chat-rooms/src/chat/authorize.ts](../examples/chat-rooms/src/chat/authorize.ts)).
+  ([chat-rooms/src/platform/object-name.ts](../examples/chat-rooms/src/platform/object-name.ts)).
+- An authorizer that depends on the object, such as on its room, yields that startup service
+  once, when it is built: make `authorize` an Effect returning the function, as the core's
+  `Action.md` shows for a store
+  ([chat-rooms/src/chat/authorize.ts](../examples/chat-rooms/src/chat/authorize.ts)).
 - JSON routes and rpcs merge in one routes Layer: both are served on `fetch`.
 
 ## Serve rpcs over hibernating WebSockets
@@ -70,7 +69,7 @@ Provide `ActionRpc.layer` the protocol `layerWebSocket` makes for the same bindi
 the object's.
 
 ```ts
-ActionRpc.layer(RoomRpc, served).pipe(
+ActionRpc.layer(RoomRpc, room).pipe(
   Layer.provide(ActionDurableObject.layerWebSocket(RoomRpc, { path: "/rpc" })),
 );
 ```

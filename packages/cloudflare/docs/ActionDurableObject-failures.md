@@ -4,15 +4,16 @@ What you see when something is wrong, and the fix. Search for a fragment of the 
 The tasks are in [ActionDurableObject.md](ActionDurableObject.md); a surface's own failures are
 in the core's `*-failures.md` pages.
 
-- `Type 'Layer<never, never, X>' is not assignable to type 'Layer<never, never, Allowed>'` at
-  `make`'s `routes`: the routes still require `X`, and `make` provides only `State` and the
-  platform's services. Provide `X`'s Layer to the routes. Where the type names
+- `is not assignable to type 'Layer<never, never, Allowed>'` at `make`'s `routes`: the routes
+  require a service no layer provides. The union before it lists every requirement; those
+  other than `State`, `HttpRouter` and the platform's (`FileSystem`, `Path`, `HttpPlatform`,
+  `Generator`) are missing: provide their Layers to the routes. Where it names
   `Request<"Requires", X>`, a handler or an authorizer reads `X` per request: see the core's
   `ActionRpc-failures.md` and `ActionHttp-failures.md`.
-- A call over the socket dies with `Internal server error`, the object's logs naming
-  `Service not found: <key>`, though router middleware or `HttpRouter.provideRequest` provides
-  the service: those run for the upgrade request alone, never a socket's messages. List an
-  `RpcMiddleware` in `ActionRpc.layer`'s `middleware`, or make it a startup service.
+- A call over the socket dies with `Internal server error` though router middleware or
+  `HttpRouter.provideRequest` provides a service its handler reads: those run for the upgrade
+  request alone, never a socket's messages. List an `RpcMiddleware` in `ActionRpc.layer`'s
+  `middleware`, or make it a startup service.
 - `No ActionDurableObject.layerWebSocket of these routes accepted this socket`, thrown by
   `webSocketMessage`: the object holds a socket no protocol of these routes accepted, such as one
   accepted by code of your own, or by an earlier version of the routes at another `path`. Accept
@@ -31,8 +32,5 @@ in the core's `*-failures.md` pages.
 - `Unauthenticated` `A bearer token is required.` from a page's socket though the page has a
   token: a browser WebSocket sets no header on its upgrade. Send the token on each message, with
   `RpcClient.withHeaders`.
-- `Not an upgradeable ServerRequest` in the object's logs, with `RpcServer.layerProtocolWebsocket`
-  in its routes: a web handler's request cannot be upgraded by Effect's server. Use
-  `layerWebSocket`.
-- `RpcClientError` from every call, Effect's own error: the client could not reach the object.
-  Check the Worker routes the socket's URL to the object, and the path against `layerWebSocket`'s.
+- An upgrade fails with `RpcServer.layerProtocolWebsocket` in the routes: a web handler's
+  request cannot be upgraded by Effect's server. Use `layerWebSocket`.

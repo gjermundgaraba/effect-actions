@@ -6,8 +6,11 @@
     "bindings": [
       { "name": "PLAIN", "class_name": "Plain" },
       { "name": "ROOM", "class_name": "Room" },
+      { "name": "ROUTER_PROVIDED", "class_name": "RouterProvided" },
       { "name": "BROKEN", "class_name": "Broken" },
     ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Plain", "Room", "Broken"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Plain", "Room", "RouterProvided", "Broken"] },
+  ],
 }

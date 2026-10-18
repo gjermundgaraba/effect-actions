@@ -3,8 +3,8 @@ import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { MessageStore } from "./chat/store.js";
 import { RoomName } from "./lobby/Lobby.js";
-import { layerRoom } from "./platform/room.js";
-import { layerRooms } from "./platform/rooms.js";
+import { layerRoom } from "./platform/object-name.js";
+import { layerRooms } from "./platform/room-stubs.js";
 import { layerSql } from "./platform/sql-store.js";
 import { lobbyRoutes, roomRoutes } from "./routes.js";
 
@@ -39,8 +39,8 @@ export default {
 
     if (!isRoomName(room)) return lobby.handler(request);
 
-    return env.CHAT_ROOM.getByName(room).fetch(
-      new Request(new URL(`${rest}${url.search}`, url), request),
-    );
+    url.pathname = rest;
+
+    return env.CHAT_ROOM.getByName(room).fetch(new Request(url, request));
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

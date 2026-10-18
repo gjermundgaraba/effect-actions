@@ -7,6 +7,8 @@ const day = 24 * 60 * 60 * 1000;
 
 const decodeRows = Schema.decodeUnknownSync(Schema.Array(Message));
 
+const decodeRow = Schema.decodeUnknownSync(Message);
+
 // The room's messages in the object's own SQLite database, which outlives every instance: an
 // evicted instance loses its memory, never these. The Layer runs each time an instance is
 // constructed, so creating the table is idempotent.
@@ -21,13 +23,12 @@ export const layerSql = Layer.effect(MessageStore)(
       "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL)",
     );
 
-    // The object has one alarm: it is set for the oldest message's expiry, and each run expires
-    // what is due and sets it for the next.
-    const expireNextAt = (at: number) =>
+    // The object has one alarm, set for the oldest message's expiry: a message posted later
+    // expires later, so `post` sets it only when none is set. While the alarm runs none is, so
+    // each run sets it for the next message due.
+    const expireAt = (at: number) =>
       Effect.promise(async () => {
-        const set = await storage.getAlarm();
-
-        if (set === null || set > at + day) await storage.setAlarm(at + day);
+        if ((await storage.getAlarm()) === null) await storage.setAlarm(at + day);
       });
 
     return MessageStore.of({
@@ -39,16 +40,18 @@ export const layerSql = Layer.effect(MessageStore)(
       post: Effect.fn("MessageStore.post")(function* (author, text) {
         const at = yield* Clock.currentTimeMillis;
 
-        const [message] = query(
-          "INSERT INTO messages (author, text, at) VALUES (?, ?, ?) RETURNING *",
-          author,
-          text,
-          at,
+        const message = decodeRow(
+          storage.sql
+            .exec(
+              "INSERT INTO messages (author, text, at) VALUES (?, ?, ?) RETURNING *",
+              author,
+              text,
+              at,
+            )
+            .one(),
         );
 
-        if (message === undefined) return yield* Effect.die(new Error("INSERT returned no row"));
-
-        yield* expireNextAt(at);
+        yield* expireAt(at);
 
         return message;
       }),
@@ -68,7 +71,7 @@ export const layerSql = Layer.effect(MessageStore)(
 
         const [oldest] = query("SELECT * FROM messages ORDER BY at LIMIT 1");
 
-        if (oldest !== undefined) yield* expireNextAt(oldest.at);
+        if (oldest !== undefined) yield* expireAt(oldest.at);
       }),
     });
   }),

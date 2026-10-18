@@ -74,8 +74,8 @@ describe("the Worker and its rooms", () => {
 
   it.effect("refuses to delete another member's message", () =>
     Effect.gen(function* () {
-      const ada = yield* pageIn("lobby", "ada");
-      const grace = yield* pageIn("lobby", "grace");
+      const ada = yield* pageIn("general", "ada");
+      const grace = yield* pageIn("general", "grace");
       const posted = yield* ada.post("Mine.");
 
       expect(yield* grace.remove(posted.id)).toBe("not-yours");
@@ -96,6 +96,23 @@ describe("the Worker and its rooms", () => {
         ],
       });
     }).pipe(Effect.provide(worker)),
+  );
+
+  it.effect("routes only a room's own path to its object, and other names to the lobby", () =>
+    Effect.gen(function* () {
+      const status = (path: string) =>
+        Effect.promise(() =>
+          exports.default.fetch(`https://chat.example${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+          }),
+        ).pipe(Effect.map(({ status }) => status));
+
+      expect(yield* status("/rooms/design/api/preview")).toBe(200);
+      expect(yield* status("/rooms/design//elsewhere.example/api/preview")).toBe(404);
+      expect(yield* status("/rooms/Not_A_Room/api/preview")).toBe(404);
+    }),
   );
 
   it.effect("expires a message a day old when the room's alarm runs, and sets the next", () =>

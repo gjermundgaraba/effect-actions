@@ -1,4 +1,5 @@
 import { Context, Deferred, Effect, Layer, Redacted, Schema } from "effect";
+import { HttpRouter } from "effect/http";
 import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -159,6 +160,13 @@ export const socketRoutes = Layer.mergeAll(
     Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc", headers: [noteHeader] })),
   ),
 ).pipe(Layer.provide(authenticate), Layer.provide(startup), Layer.provide(slowUpstream));
+
+export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
+  Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+  HttpRouter.provideRequest(Layer.succeed(CurrentNote, "router")),
+  Layer.provide(authenticate),
+  Layer.provide(startup),
+);
 
 export const alarm = Effect.gen(function* () {
   const { storage } = yield* ActionDurableObject.State;

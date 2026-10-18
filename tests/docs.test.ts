@@ -28,13 +28,18 @@ const cloudflareDocsPages = markdownIn(join(root, cloudflare, "docs"));
 
 const docsPages = [...markdownIn(docsDirectory), ...cloudflareDocsPages];
 
+const cloudflarePages = [
+  `${cloudflare}/README.md`,
+  ...cloudflareDocsPages,
+  ...cloudflareExamples.map((example) => `${cloudflare}/examples/${example}/README.md`),
+];
+
 const pages = [
   "README.md",
   "examples/README.md",
   ...docsPages,
   ...examples.map((example) => `examples/${example}/README.md`),
-  `${cloudflare}/README.md`,
-  ...cloudflareExamples.map((example) => `${cloudflare}/examples/${example}/README.md`),
+  ...cloudflarePages.filter((page) => !docsPages.includes(page)),
 ];
 
 const withoutCode = (page: string) =>
@@ -96,6 +101,17 @@ it.each(docsPages)("%s links only inside docs/ and to examples/, which ship with
 
   expect(outside).toEqual([]);
 });
+
+it.each(cloudflarePages)(
+  "%s links only inside the cloudflare package, which ships alone",
+  (page) => {
+    const outside = linksOf(page)
+      .map(({ target }) => relative(root, join(root, dirname(page), target)))
+      .filter((path) => !path.startsWith(`${cloudflare}/`));
+
+    expect(outside).toEqual([]);
+  },
+);
 
 it.each(docsPages)("%s names no source path of the library, which does not ship", (page) => {
   const ofAnExample = new RegExp(`(?:${[...examples, ...cloudflareExamples].join("|")})/src/`, "g");

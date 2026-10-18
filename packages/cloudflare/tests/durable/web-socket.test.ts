@@ -4,7 +4,7 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
@@ -142,6 +142,19 @@ describe("layerWebSocket", () => {
     }),
   );
 
+  it.effect("never gives a socket's calls a service only router middleware provides", () =>
+    Effect.gen(function* () {
+      const socket = yield* upgradeToRpc(env.ROUTER_PROVIDED.getByName("router-provided"));
+      const client = yield* scopedClientOver(socket);
+      const exit = yield* Effect.exit(client.readNote());
+
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
+        "Internal server error",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("answers a request to the route that is no upgrade with 426", () =>
     Effect.gen(function* () {
       const response = yield* Effect.promise(() => room("plain-get").fetch("https://object/rpc"));
@@ -171,6 +184,20 @@ describe("make", () => {
       );
 
       expect(String(failure.cause)).toContain("Unreachable");
+    }),
+  );
+
+  it.effect("rejects an alarm when make was given none", () =>
+    Effect.gen(function* () {
+      const rejected = yield* Effect.flip(
+        Effect.tryPromise(() =>
+          runInDurableObject(env.ROUTER_PROVIDED.getByName("no-alarm"), (instance) =>
+            instance.alarm(),
+          ),
+        ),
+      );
+
+      expect(String(rejected.cause)).toContain("ActionDurableObject.make was given no alarm");
     }),
   );
 

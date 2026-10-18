@@ -38,8 +38,7 @@ export interface Options<E = never, R = never, AE = never, AR = never> {
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built when the instance is,
    * again after every eviction, and never finalized. They may require `State`; a request-time
-   * requirement must be provided by their middleware or authentication, and over
-   * `layerWebSocket` by a middleware `ActionRpc.layer` lists.
+   * requirement must be provided by their middleware or authentication.
    */
   readonly routes: Layer.Layer<never, E, R>;
   /**

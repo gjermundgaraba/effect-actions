@@ -1,4 +1,22 @@
 {
-  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["es2023"],
+    "moduleDetection": "force",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true
+  },
   "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"]
 }
