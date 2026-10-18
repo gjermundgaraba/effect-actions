@@ -37,9 +37,6 @@ Tasks: [Authentication.md](Authentication.md),
 - Type error at `layer` on `verify`: the verifier fails with an error that is neither a refusal
   nor one its descriptor declares, or succeeds with a value that is not the identity. Declare
   the error in the descriptor's `error`, or map it to a refusal where it is the caller's.
-- `Authentication "<name>": error _tag "<tag>" is built in, and declared on every surface` thrown
-  by `make`: an `error` entry has the `_tag` of `InvalidInput`, `Unauthenticated` or `Forbidden`.
-  Fail with the built-in refusal itself, or give the error a `_tag` of its own.
 - A startup service that the Effect building a verifier yields is unsatisfied where the server
   launches: provide it to the provider's layer,
   `Authentication.layer(Login, build).pipe(Layer.provide(Directory.layer))`, or above it.

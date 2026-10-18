@@ -18,6 +18,7 @@ import { assertDistinct } from "../contract/names.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";
+import { errorSchemas } from "../contract/declared.js";
 
 type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? true extends Types.IsUnion<E>
@@ -513,7 +514,7 @@ const userErrorOf = (errors: Action.Errors) => {
 // in a derived command as in one of your own: described again, it would print its cause beside
 // its `userMessage`.
 export const failingAsDerived = (errors: Action.Errors) => {
-  const failure = userErrorOf([...new Set(errors)]);
+  const failure = userErrorOf(errorSchemas(errors));
 
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.catchIf(

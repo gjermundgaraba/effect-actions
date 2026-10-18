@@ -114,7 +114,7 @@ describe("contracts", () => {
     }
   });
 
-  it("refuses an error with a built-in error's tag, the built-in itself included", () => {
+  it("refuses an error with a built-in error's tag, and accepts the built-in itself", () => {
     class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {
       error: Schema.String,
     }) {}
@@ -143,10 +143,25 @@ describe("contracts", () => {
         ),
         "Forbidden",
       ],
-      [Action.Forbidden, "Forbidden"],
-      [Schema.Union([Action.Unauthenticated, Schema.TaggedStruct("Late", {})]), "Unauthenticated"],
       [Action.InvalidInput.annotate({ description: "Out of stock" }), "InvalidInput"],
       [Schema.suspend(() => Forbidden), "Forbidden"],
+      [
+        Schema.TaggedStruct("Forbidden", { message: Schema.String }).pipe(
+          Schema.decodeTo(
+            Schema.Union([Schema.TaggedStruct("Local", {}), Schema.TaggedStruct("Other", {})]),
+            {
+              decode: SchemaGetter.transform(({ message }) => ({
+                _tag: message === "other" ? ("Other" as const) : ("Local" as const),
+              })),
+              encode: SchemaGetter.transform(({ _tag }) => ({
+                _tag: "Forbidden" as const,
+                message: _tag,
+              })),
+            },
+          ),
+        ),
+        "Forbidden",
+      ],
       [Schema.Struct({ _tag: Schema.Literals(["Busy", "Unauthenticated"]) }), "Unauthenticated"],
       [Schema.Struct({ _tag: Schema.Enum({ Forbidden: "Forbidden", Busy: "Busy" }) }), "Forbidden"],
     ];
@@ -159,7 +174,7 @@ describe("contracts", () => {
           caller: Action.Anyone,
           error: [error],
         }),
-      ).toThrow(`Action "guarded": error _tag "${tag}" is built in, and declared on every surface`);
+      ).toThrow(`Action "guarded": error _tag "${tag}" names two error schemas`);
     }
 
     const Allowed = Action.make("allowed", {
@@ -175,44 +190,121 @@ describe("contracts", () => {
     expect(Action.implement(Allowed, () => Effect.void).actions).toEqual([Allowed]);
   });
 
-  it.effect(
-    "tells errors sharing a _tag apart by their other fields, as members of any union",
-    () =>
-      Effect.gen(function* () {
-        const EmailInvalid = Schema.TaggedStruct("Validation", { field: Schema.Literal("email") });
-        const NameInvalid = Schema.TaggedStruct("Validation", { field: Schema.Literal("name") });
+  it("refuses two error schemas sharing a _tag, listed apart or as members of one union", () => {
+    class Missing extends Schema.TaggedError<Missing>()("NotFound", { id: Schema.String }) {}
 
-        const Register = Action.make("register", {
-          description: "",
-          readOnly: false,
-          caller: Action.Anyone,
-          input: { field: Schema.Literals(["email", "name"]) },
-          error: [EmailInvalid, NameInvalid],
-        });
+    class Archived extends Schema.TaggedError<Archived>()("NotFound", {
+      id: Schema.String,
+      archivedAt: Schema.String,
+    }) {}
 
-        const HttpListingOneOfThem = ActionHttp.make([Register], { error: [NameInvalid] });
+    const errorsSharingATag: ReadonlyArray<Action.Errors> = [
+      [Missing, Archived],
+      [Schema.Union([Missing, Archived])],
+      [Missing, Schema.TaggedStruct("NotFound", { id: Schema.String })],
+      [Missing, Schema.Struct({ _tag: Schema.Literals(["Late", "NotFound"]) })],
+      [
+        Missing,
+        Schema.Union([Missing, Schema.TaggedStruct("Gone", {})]).annotate({ httpApiStatus: 404 }),
+      ],
+      [Schema.suspend(() => Archived), Missing],
+    ];
 
-        const app = Action.implement(Register, ({ field }) =>
-          field === "email"
-            ? Effect.fail(EmailInvalid.make({ field }))
-            : Effect.fail(NameInvalid.make({ field })),
-        );
+    for (const error of errorsSharingATag) {
+      expect(() =>
+        Action.make("lookup", { description: "", readOnly: true, caller: Action.Anyone, error }),
+      ).toThrow(`Action "lookup": error _tag "NotFound" names two error schemas`);
+    }
+  });
 
-        const local = yield* Action.client(app);
+  it("accepts one error schema reached twice, listed again, through a union or suspended", () => {
+    class Missing extends Schema.TaggedError<Missing>()("NotFound", { id: Schema.String }) {}
 
-        const remote = yield* ActionHttp.client(HttpListingOneOfThem).pipe(
-          Effect.provide(Testing.layer(ActionHttp.layer(HttpListingOneOfThem, app))),
-        );
+    const Gone = Schema.TaggedStruct("Gone", {});
 
-        for (const client of [local, remote]) {
-          expect(yield* Effect.flip(client.register({ field: "email" }))).toEqual(
-            EmailInvalid.make({ field: "email" }),
-          );
-          expect(yield* Effect.flip(client.register({ field: "name" }))).toEqual(
-            NameInvalid.make({ field: "name" }),
-          );
+    const oneSchemaReachedTwice: ReadonlyArray<Action.Errors> = [
+      [Missing, Missing],
+      [Missing, Schema.Union([Missing, Gone])],
+      [Schema.Union([Missing, Missing])],
+      [Schema.suspend(() => Missing), Missing],
+      [Action.Forbidden, Missing],
+      [Schema.Union([Action.Unauthenticated, Missing])],
+      [
+        Schema.Struct({ id: Schema.String }).pipe(
+          Schema.encodeTo(
+            Schema.Union([
+              Schema.TaggedStruct("Variant", { id: Schema.String }),
+              Schema.TaggedStruct("Variant", { legacyId: Schema.String }),
+            ]),
+            {
+              decode: SchemaGetter.transform((encoded) => ({
+                id: "id" in encoded ? encoded.id : encoded.legacyId,
+              })),
+              encode: SchemaGetter.transform(({ id }) => ({ _tag: "Variant" as const, id })),
+            },
+          ),
+        ),
+      ],
+      [
+        Schema.TaggedStruct("Wire", { message: Schema.String }).pipe(
+          Schema.decodeTo(Schema.Union([Schema.TaggedStruct("Forbidden", {}), Missing]), {
+            decode: SchemaGetter.transform(({ message }) =>
+              message === ""
+                ? { _tag: "Forbidden" as const }
+                : { _tag: "NotFound" as const, id: message },
+            ),
+            encode: SchemaGetter.transform((value) => ({
+              _tag: "Wire" as const,
+              message: value._tag === "NotFound" ? value.id : "",
+            })),
+          }),
+        ),
+      ],
+    ];
+
+    for (const error of oneSchemaReachedTwice) {
+      expect(
+        Action.make("lookup", { description: "", readOnly: true, caller: Action.Anyone, error })
+          .error,
+      ).toEqual(error);
+    }
+  });
+
+  it.effect("tells variants of one _tag apart by its schema's fields, on each client", () =>
+    Effect.gen(function* () {
+      const Validation = Schema.TaggedStruct("Validation", {
+        field: Schema.Literals(["email", "name"]),
+      });
+
+      const Register = Action.make("register", {
+        description: "",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: { field: Schema.Literals(["email", "name"]) },
+        error: Validation,
+      });
+
+      const HttpListingItToo = ActionHttp.make([Register], { error: Validation });
+
+      const app = Action.implement(Register, ({ field }) =>
+        Effect.fail(Validation.make({ field })),
+      );
+
+      const local = yield* Action.client(app);
+
+      const remote = yield* ActionHttp.client(HttpListingItToo).pipe(
+        Effect.provide(Testing.layer(ActionHttp.layer(HttpListingItToo, app))),
+      );
+
+      for (const client of [local, remote]) {
+        for (const field of ["email", "name"] as const) {
+          expect(yield* Effect.flip(client.register({ field }))).toEqual({
+            _tag: "Validation",
+            field,
+          });
         }
-      }),
+      }
+    }),
   );
 
   it("answers a built-in error as itself beside a loose error schema of the action's", async () => {

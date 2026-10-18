@@ -992,12 +992,87 @@ const Http = ActionHttp.make([WhoAmI, Invoice, Audit]);
 it("refuses a binding error with a built-in error's tag, on each binding", () => {
   class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
-  const refusal = 'binding: error _tag "Forbidden" is built in, and declared on every surface';
+  const refusal = 'binding of "identity": error _tag "Forbidden" names two error schemas';
 
   expect(() => ActionHttp.make([identity], { error: [Forbidden] })).toThrow(
     `ActionHttp ${refusal}`,
   );
   expect(() => ActionRpc.make([identity], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
+  expect(ActionHttp.make([identity], { error: [Action.Forbidden] }).error).toEqual([
+    Action.Forbidden,
+  ]);
+});
+
+it("refuses a binding where a call's errors share a _tag across their sources, on each binding", () => {
+  class Down extends Schema.TaggedError<Down>()("Down", {}) {}
+
+  const Lookup = Action.make("lookup", {
+    description: "",
+    readOnly: true,
+    caller: Action.Anyone,
+    error: Down,
+  });
+
+  const Guarded = Action.make("guarded", {
+    description: "",
+    readOnly: true,
+    caller: CurrentActor,
+    error: Down,
+  });
+
+  const Verifying = Authentication.make("bindings.Verifying", CurrentActor, {
+    error: Schema.TaggedStruct("Down", { retry: Schema.Number }),
+  });
+
+  const theBinding = Schema.TaggedStruct("Down", { reason: Schema.String });
+
+  const refusals = [
+    [() => ActionHttp.make([Lookup], { error: theBinding }), 'ActionHttp binding of "lookup"'],
+    [() => ActionRpc.make([Lookup], { error: theBinding }), 'ActionRpc binding of "lookup"'],
+    [
+      () => ActionHttp.make([Guarded], { authentication: Verifying }),
+      'ActionHttp binding of "guarded"',
+    ],
+    [
+      () => ActionRpc.make([Guarded], { authentication: Verifying }),
+      'ActionRpc binding of "guarded"',
+    ],
+  ] as const;
+
+  for (const [make, what] of refusals) {
+    expect(make).toThrow(`${what}: error _tag "Down" names two error schemas`);
+  }
+
+  const LookupOfAUnion = Action.make("lookup", {
+    description: "",
+    readOnly: true,
+    caller: Action.Anyone,
+    error: Schema.Union([Down, Schema.TaggedStruct("Gone", {})]),
+  });
+
+  expect(ActionHttp.make([Lookup], { error: Down }).error).toEqual([Down]);
+  expect(ActionHttp.make([LookupOfAUnion], { error: Down }).error).toEqual([Down]);
+  expect(ActionRpc.make([LookupOfAUnion], { error: Down }).error).toEqual([Down]);
+  expect(ActionRpc.make([Lookup], { authentication: Verifying }).actions).toEqual([Lookup]);
+});
+
+it("declares an error schema reached twice once, a built-in in a union included", () => {
+  const Gone = Schema.TaggedStruct("Gone", {});
+
+  const Fetch = Action.make("fetch", {
+    description: "",
+    readOnly: true,
+    caller: Action.Anyone,
+    error: [Schema.Union([Action.Forbidden, Gone]), Gone],
+  });
+
+  const responses = OpenApi.fromApi(ActionHttp.make([Fetch]).api).paths["/api/fetch"]?.post
+    ?.responses;
+
+  expect(responses?.["403"]?.content?.["application/json"]?.schema).toEqual({
+    $ref: "#/components/schemas/ForbiddenEncoded",
+  });
+  expect(JSON.stringify(responses?.["422"]).match(/Gone/g)).toHaveLength(1);
 });
 
 describe("HTTP bindings", () => {
