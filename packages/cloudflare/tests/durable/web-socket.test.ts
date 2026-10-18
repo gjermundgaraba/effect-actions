@@ -165,6 +165,71 @@ describe("layerWebSocket", () => {
     ),
   );
 
+  it.effect("holds it open through a request reusing its id that names no action", () =>
+    Effect.map(heldEventAfter("holds-reused-unknown", [request(1, "notAnAction")]), (settled) =>
+      expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds it open through a request reusing its id without a payload", () =>
+    Effect.map(
+      heldEventAfter("holds-reused-no-payload", [
+        JSON.stringify({ _tag: "Request", id: 1, tag: "hold", headers: [] }),
+      ]),
+      (settled) => expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("answers a frame of null without rejecting its event", () =>
+    Effect.map(heldEventAfter("holds-null-frame", ["null"]), (settled) =>
+      expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds a frame's event open past a later item that is null", () =>
+    Effect.map(heldEventAfter("holds-null-item", [], `[${request(1, "hold")},null]`), (settled) =>
+      expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds a frame's event open past a later request without headers", () =>
+    Effect.map(
+      heldEventAfter(
+        "holds-headerless-item",
+        [],
+        `[${request(1, "hold")},${JSON.stringify({ _tag: "Request", id: 3, tag: "readNote", payload: {}, headers: null })}]`,
+      ),
+      (settled) => expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("ends a held event when its socket closes", () =>
+    Effect.gen(function* () {
+      const stub = room("closes-held");
+
+      yield* upgradeToRpc(stub);
+
+      const settled = yield* Effect.promise(() =>
+        runInDurableObject(stub, async (instance: Room, state) => {
+          const [held] = state.getWebSockets();
+
+          if (held === undefined) throw new Error("No socket");
+
+          const holding = instance.webSocketMessage(held, request(1, "hold"));
+
+          await instance.webSocketClose(held);
+
+          return Promise.race([
+            holding.then(() => "settled"),
+            new Promise((resolve) => setTimeout(resolve, 200, "pending")),
+          ]);
+        }),
+      );
+
+      expect(settled).toBe("settled");
+    }),
+  );
+
   it.effect("refuses an event on a socket no protocol of the routes accepted", () =>
     Effect.gen(function* () {
       const failure = yield* Effect.flip(

@@ -82,6 +82,9 @@ ActionRpc.layer(RoomRpc, room).pipe(
   listed, and no other header: Effect's own socket protocol keeps them all, so list any a
   middleware reads, such as `Origin`. Each message is authenticated with those and its own
   headers, its own winning. An API key in the query string is not kept.
+- Serve the protocol with `ActionRpc.layer` alone. A message's event lasts until each of its
+  requests has its exit, so the object stays awake while a call runs; `RpcServer.layer` answers
+  a handler's defect without an exit, which would hold the event until the socket closes.
 - Give each protocol of one object its own `path`. A router prefix does not tell two apart:
   routes with two protocols at one path, under `HttpRouter.prefixed` or not, fail to build.
 - `layerWebSocket` serves only the routes of a class `make` returns, which receives its

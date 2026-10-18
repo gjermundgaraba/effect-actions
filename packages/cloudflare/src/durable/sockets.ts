@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Predicate, Queue, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import type { Header } from "./credential.js";
@@ -87,11 +87,10 @@ export const makeProtocol = (
     }
 
     const disconnects = yield* Queue.make<number>();
-    const awaitingExit = new Map<number, Map<RpcMessage.RequestId, Array<() => void>>>();
+    const awaitingExit = new Map<number, Map<RpcMessage.RequestId, () => void>>();
 
     const waitingOf = (clientId: number) => {
-      const ofClient =
-        awaitingExit.get(clientId) ?? new Map<RpcMessage.RequestId, Array<() => void>>();
+      const ofClient = awaitingExit.get(clientId) ?? new Map<RpcMessage.RequestId, () => void>();
 
       awaitingExit.set(clientId, ofClient);
 
@@ -99,41 +98,20 @@ export const makeProtocol = (
     };
 
     const exited = (clientId: number, requestId: RpcMessage.RequestId) => {
-      for (const resolve of awaitingExit.get(clientId)?.get(requestId) ?? []) resolve();
+      awaitingExit.get(clientId)?.get(requestId)?.();
       awaitingExit.get(clientId)?.delete(requestId);
     };
 
     const allExited = (clientId: number) => {
-      for (const waiting of awaitingExit.get(clientId)?.values() ?? []) {
-        for (const resolve of waiting) resolve();
-      }
+      for (const resolve of awaitingExit.get(clientId)?.values() ?? []) resolve();
 
       awaitingExit.delete(clientId);
     };
 
-    // Why: a request the server refuses, such as one reusing an id in flight, ends its own wait
-    // alone; ending every wait of its id would release the event of the request still running.
-    const awaitExit = (clientId: number, requestId: RpcMessage.RequestId) => {
-      const waiting = waitingOf(clientId);
-      let settle = () => {};
-
-      const exit = new Promise<void>((resolve) => {
-        settle = resolve;
-        waiting.set(requestId, [...(waiting.get(requestId) ?? []), resolve]);
+    const awaitExit = (clientId: number, requestId: RpcMessage.RequestId) =>
+      new Promise<void>((resolve) => {
+        waitingOf(clientId).set(requestId, resolve);
       });
-
-      return {
-        exit,
-        refused: () => {
-          const others = (waiting.get(requestId) ?? []).filter((resolve) => resolve !== settle);
-
-          if (others.length === 0) waiting.delete(requestId);
-          else waiting.set(requestId, others);
-
-          settle();
-        },
-      };
-    };
 
     const sendTo = (clientId: number, response: RpcMessage.FromServerEncoded) => {
       const encoded = parser.encode(response);
@@ -152,7 +130,7 @@ export const makeProtocol = (
           let messages: ReadonlyArray<RpcMessage.FromClientEncoded>;
 
           try {
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a client sent: RpcServer checks each message's tag, id and payload itself, as over Effect's own socket protocol.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a client sent: RpcServer checks each message's tag, id and payload; the adapter reads a request's id through a guard and its headers in a suspended write, so a malformed message fails alone and is answered with a defect.
             messages = parser.decode(
               Predicate.isString(data) ? data : new Uint8Array(data),
             ) as ReadonlyArray<RpcMessage.FromClientEncoded>;
@@ -163,34 +141,49 @@ export const makeProtocol = (
           const exits: Array<Promise<void>> = [];
 
           for (const message of messages) {
+            const awaited =
+              isRequest(message) && isRequestId(message.id)
+                ? RpcMessage.RequestId(message.id)
+                : undefined;
+
+            // Why: a request reusing the id of one still running is dropped, as the server drops
+            // a valid one. Written, a duplicate it answers before that check, such as one naming
+            // no action, would end with an exit that also ends the running request's wait.
+            if (awaited !== undefined && waitingOf(clientId).has(awaited)) continue;
+
             // Why: registered before its own write, never earlier, so the exit of a request
             // already delivered under the same id cannot settle it. The server answers an id
             // that is neither a string nor a number with a defect alone, so none is awaited.
-            const wait =
-              isRequest(message) && isRequestId(message.id)
-                ? awaitExit(clientId, RpcMessage.RequestId(message.id))
-                : undefined;
+            const exit = awaited === undefined ? undefined : awaitExit(clientId, awaited);
 
+            // Why: suspended, so a message the adapter cannot read, such as `null` or a request
+            // without headers, fails alone and is answered, and the frame still waits for the
+            // requests it already started.
             const written = await run(
-              write(
-                clientId,
-                isRequest(message)
-                  ? {
-                      ...message,
-                      headers: [...headers, ...message.headers],
-                    }
-                  : message,
+              Effect.suspend(() =>
+                write(
+                  clientId,
+                  isRequest(message)
+                    ? { ...message, headers: [...headers, ...message.headers] }
+                    : message,
+                ),
               ).pipe(Effect.exit),
             );
 
-            if (wait === undefined) continue;
+            if (Exit.isFailure(written)) {
+              // Why: the server refuses a request once its client ended and sends it no exit,
+              // which its message would otherwise wait for until the socket closes.
+              if (awaited !== undefined) exited(clientId, awaited);
 
-            // Why: the server refuses a request whose id is in flight, or once the client ended,
-            // and sends it no exit, which its message would otherwise wait for until the socket
-            // closes.
-            if (Exit.isFailure(written)) wait.refused();
+              if (Cause.hasDies(written.cause)) {
+                sendTo(
+                  clientId,
+                  RpcMessage.ResponseDefectEncoded(encodeDefect(Cause.squash(written.cause))),
+                );
+              }
+            }
 
-            exits.push(wait.exit);
+            if (exit !== undefined) exits.push(exit);
           }
 
           await Promise.all(exits);
