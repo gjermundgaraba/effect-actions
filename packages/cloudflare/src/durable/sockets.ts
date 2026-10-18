@@ -1,4 +1,4 @@
-import { Effect, Exit, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Exit, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import type { Header } from "./credential.js";
@@ -9,19 +9,15 @@ export interface Receiver {
   readonly close: (socket: WebSocket) => Promise<void>;
 }
 
-const receivers = new WeakMap<DurableObjectState, Map<string, Receiver>>();
-
 /**
- * The receivers the protocols of an object's instance registered as they were built, under
- * their sockets' group tag: what its socket events are handed to.
+ * The receivers an instance's protocols register as they are built, under their sockets' group
+ * tag: what `make` hands its socket events to. `make` provides one per instance; without it,
+ * nothing would receive a socket's events.
  */
-export const receiversOf = (state: DurableObjectState): Map<string, Receiver> => {
-  const registered = receivers.get(state) ?? new Map<string, Receiver>();
-
-  receivers.set(state, registered);
-
-  return registered;
-};
+export const Receivers = Context.Reference<Map<string, Receiver> | undefined>(
+  "effect-actions-cloudflare/ActionDurableObject/Receivers",
+  { defaultValue: () => undefined },
+);
 
 const Attachment = Schema.Struct({
   headers: Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))),
@@ -44,6 +40,7 @@ const isRequest = (message: RpcMessage.FromClientEncoded): message is RpcMessage
  */
 export const makeProtocol = (
   state: DurableObjectState,
+  receivers: Map<string, Receiver>,
   options: {
     readonly path: HttpRouter.PathInput;
     readonly saved: (request: HttpServerRequest.HttpServerRequest) => ReadonlyArray<Header>;
@@ -77,10 +74,29 @@ export const makeProtocol = (
       ),
     );
 
-    const disconnects = yield* Queue.make<number>();
-    const awaitingExit = new Map<number, Map<string, Array<() => void>>>();
+    // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
+    // at one `path` would share their sockets' tags and answer each other's sockets.
+    if (receivers.has(group)) {
+      return yield* Effect.die(
+        new Error(
+          `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${options.path}: a router prefix does not tell them apart`,
+        ),
+      );
+    }
 
-    const exited = (clientId: number, requestId: string) => {
+    const disconnects = yield* Queue.make<number>();
+    const awaitingExit = new Map<number, Map<RpcMessage.RequestId, Array<() => void>>>();
+
+    const waitingOf = (clientId: number) => {
+      const ofClient =
+        awaitingExit.get(clientId) ?? new Map<RpcMessage.RequestId, Array<() => void>>();
+
+      awaitingExit.set(clientId, ofClient);
+
+      return ofClient;
+    };
+
+    const exited = (clientId: number, requestId: RpcMessage.RequestId) => {
       for (const resolve of awaitingExit.get(clientId)?.get(requestId) ?? []) resolve();
       awaitingExit.get(clientId)?.delete(requestId);
     };
@@ -93,15 +109,29 @@ export const makeProtocol = (
       awaitingExit.delete(clientId);
     };
 
-    const exitOf = (clientId: number, requestId: string) =>
-      new Promise<void>((resolve) => {
-        const ofClient = awaitingExit.get(clientId) ?? new Map<string, Array<() => void>>();
+    // Why: a request the server refuses, such as one reusing an id in flight, ends its own wait
+    // alone; ending every wait of its id would release the event of the request still running.
+    const awaitExit = (clientId: number, requestId: RpcMessage.RequestId) => {
+      const waiting = waitingOf(clientId);
+      let settle = () => {};
 
-        awaitingExit.set(
-          clientId,
-          ofClient.set(requestId, [...(ofClient.get(requestId) ?? []), resolve]),
-        );
+      const exit = new Promise<void>((resolve) => {
+        settle = resolve;
+        waiting.set(requestId, [...(waiting.get(requestId) ?? []), resolve]);
       });
+
+      return {
+        exit,
+        refused: () => {
+          const others = (waiting.get(requestId) ?? []).filter((resolve) => resolve !== settle);
+
+          if (others.length === 0) waiting.delete(requestId);
+          else waiting.set(requestId, others);
+
+          settle();
+        },
+      };
+    };
 
     const sendTo = (clientId: number, response: RpcMessage.FromServerEncoded) => {
       const encoded = parser.encode(response);
@@ -112,7 +142,7 @@ export const makeProtocol = (
     };
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
-      receiversOf(state).set(group, {
+      receivers.set(group, {
         message: async (socket, data) => {
           const clientId = idOf(socket);
           const { headers } = attachmentOf(socket.deserializeAttachment());
@@ -128,7 +158,11 @@ export const makeProtocol = (
             return sendTo(clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(cause)));
           }
 
-          const exits = messages.filter(isRequest).map(({ id }) => exitOf(clientId, String(id)));
+          const waits = new Map(
+            messages
+              .filter(isRequest)
+              .map((message) => [message, awaitExit(clientId, RpcMessage.RequestId(message.id))]),
+          );
 
           for (const message of messages) {
             const written = await run(
@@ -146,10 +180,10 @@ export const makeProtocol = (
             // Why: the server refuses a request whose id is in flight, or once the client ended,
             // and sends it no exit, which its message would otherwise wait for until the socket
             // closes.
-            if (Exit.isFailure(written) && isRequest(message)) exited(clientId, String(message.id));
+            if (Exit.isFailure(written) && isRequest(message)) waits.get(message)?.refused();
           }
 
-          await Promise.all(exits);
+          await Promise.all(Array.from(waits.values(), ({ exit }) => exit));
         },
         close: async (socket) => {
           const clientId = idOf(socket);
@@ -166,7 +200,9 @@ export const makeProtocol = (
           Effect.sync(() => {
             sendTo(clientId, response);
 
-            if (Predicate.isTagged(response, "Exit")) exited(clientId, String(response.requestId));
+            if (Predicate.isTagged(response, "Exit")) {
+              exited(clientId, RpcMessage.RequestId(response.requestId));
+            }
 
             if (Predicate.isTagged(response, "Defect")) allExited(clientId);
           }),

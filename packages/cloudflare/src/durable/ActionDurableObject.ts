@@ -10,7 +10,7 @@ import {
 import { RpcServer } from "effect/rpc";
 import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { savedOf } from "./credential.js";
-import { makeProtocol, receiversOf } from "./sockets.js";
+import { makeProtocol, type Receiver, Receivers } from "./sockets.js";
 
 /**
  * The object's own `DurableObjectState`, `ctx`: its storage, its id, its alarm and its sockets.
@@ -82,6 +82,8 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
   class ActionDurableObject extends DurableObject<Cloudflare.Env> {
     readonly #memoMap = Layer.makeMemoMapUnsafe();
 
+    readonly #receivers = new Map<string, Receiver>();
+
     readonly #built = Deferred.makeUnsafe<void, unknown>();
 
     readonly #routes: Layer.Layer<never, E, Allowed> = options.routes;
@@ -93,7 +95,11 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
         this.#routes.pipe(
           Layer.tap(() => Deferred.succeed(this.#built, undefined)),
           Layer.tapCause((cause) => Deferred.failCause(this.#built, cause)),
-          Layer.provide([Layer.succeed(State, this.ctx), HttpServer.layerServices]),
+          Layer.provide([
+            Layer.succeed(State, this.ctx),
+            Layer.succeed(Receivers, this.#receivers),
+            HttpServer.layerServices,
+          ]),
         ),
         { memoMap: this.#memoMap, disableLogger: options.disableLogger },
       );
@@ -108,11 +114,9 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
     }
 
     #receiverOf(socket: WebSocket) {
-      const receivers = receiversOf(this.ctx);
-
       const receiver = this.ctx
         .getTags(socket)
-        .map((tag) => receivers.get(tag))
+        .map((tag) => this.#receivers.get(tag))
         .find((found) => found !== undefined);
 
       if (receiver === undefined) {
@@ -167,14 +171,16 @@ export interface LayerWebSocketOptions {
 }
 
 /**
- * The `RpcServer.Protocol` `ActionRpc.layer` serves `binding` on in a Durable Object made by
- * `make`: WebSockets the object accepts at `path` for the runtime to hold while it hibernates,
- * speaking JSON, the client's `RpcSerialization.layerJson`. A socket keeps the credential the
- * binding's descriptor reads from its upgrade request, an `Authorization` header, an API key's
- * header or its cookie, and the headers listed, and each message is authenticated with them
- * and its own headers, its own winning: as a long-lived host keeps the upgrade request's. The
- * runtime answers a client's pings without waking the object. Router middleware around the
- * routes runs for the upgrade request alone, never for a socket's messages.
+ * The `RpcServer.Protocol` `ActionRpc.layer` serves `binding` on, in the routes of a class
+ * `make` returns: WebSockets the object accepts at `path` for the runtime to hold while it
+ * hibernates, speaking JSON, the client's `RpcSerialization.layerJson`. `binding` is the one
+ * `ActionRpc.layer` serves. A socket keeps from its upgrade request the credential the
+ * binding's descriptor reads, an `Authorization` header, an API key's header or its cookie,
+ * and the headers listed, and nothing else: Effect's own socket protocol keeps every header.
+ * Each message is authenticated with those and its own headers, its own winning. The runtime
+ * answers a client's pings without waking the object. Router middleware around the routes
+ * runs for the upgrade request alone, never for a socket's messages. Each protocol of one
+ * object needs a `path` of its own: a router prefix does not distinguish two.
  *
  * Guide: `docs/ActionDurableObject.md` in this package.
  */
@@ -183,12 +189,23 @@ export const layerWebSocket = (
   options: LayerWebSocketOptions,
 ): Layer.Layer<RpcServer.Protocol, never, State | HttpRouter.HttpRouter> =>
   Layer.effect(RpcServer.Protocol)(
-    Effect.flatMap(Effect.service(State), (state) =>
-      makeProtocol(state, {
+    Effect.gen(function* () {
+      const state = yield* State;
+      const receivers = yield* Receivers;
+
+      if (receivers === undefined) {
+        return yield* Effect.die(
+          new Error(
+            "ActionDurableObject.layerWebSocket serves only the routes of a class ActionDurableObject.make returns",
+          ),
+        );
+      }
+
+      return yield* makeProtocol(state, receivers, {
         path: options.path,
         saved: savedOf(binding, options.headers ?? []),
-      }),
-    ),
+      });
+    }),
   );
 
 /**

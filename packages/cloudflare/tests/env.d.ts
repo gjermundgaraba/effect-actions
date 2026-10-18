@@ -3,6 +3,7 @@ declare namespace Cloudflare {
     readonly PLAIN: DurableObjectNamespace<import("./worker.ts").Plain>;
     readonly ROOM: DurableObjectNamespace<import("./worker.ts").Room>;
     readonly ROUTER_PROVIDED: DurableObjectNamespace<import("./worker.ts").RouterProvided>;
+    readonly PREFIXED: DurableObjectNamespace<import("./worker.ts").Prefixed>;
     readonly BROKEN: DurableObjectNamespace<import("./worker.ts").Broken>;
   }
 }

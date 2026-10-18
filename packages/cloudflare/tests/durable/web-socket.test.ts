@@ -4,14 +4,14 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Cause, Effect, Exit } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { Cause, Effect, Exit, Layer } from "effect";
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { RpcClient } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Http, noteHeader, Overdrawn } from "../support/app.js";
+import { Http, noteHeader, Overdrawn, Rpc } from "../support/app.js";
 import type { Room } from "../worker.js";
 import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
@@ -91,36 +91,101 @@ describe("layerWebSocket", () => {
     }),
   );
 
-  it.effect("holds a message's event open until each of its requests has its exit", () =>
+  const request = (id: string | number, tag: string) =>
+    JSON.stringify({ _tag: "Request", id, tag, payload: {}, headers: [] });
+
+  const heldEventAfter = (name: string, between: ReadonlyArray<string>) =>
     Effect.gen(function* () {
-      const stub = room("holds");
+      const stub = room(name);
 
       yield* upgradeToRpc(stub);
 
-      const settled = yield* Effect.promise(() =>
+      return yield* Effect.promise(() =>
         runInDurableObject(stub, async (instance: Room, state) => {
           const [held] = state.getWebSockets();
 
           if (held === undefined) throw new Error("No socket");
 
-          const request = (id: string, tag: string) =>
-            JSON.stringify({ _tag: "Request", id, tag, payload: {}, headers: [] });
+          const holding = instance.webSocketMessage(held, request(1, "hold"));
 
-          const holding = instance.webSocketMessage(held, request("1", "hold"));
+          await Promise.all(between.map((message) => instance.webSocketMessage(held, message)));
 
           const early = await Promise.race([
             holding.then(() => "settled"),
             new Promise((resolve) => setTimeout(resolve, 50, "pending")),
           ]);
 
-          await instance.webSocketMessage(held, request("2", "release"));
+          await instance.webSocketMessage(held, request(2, "release"));
           await holding;
 
           return early;
         }),
       );
+    });
 
-      expect(settled).toBe("pending");
+  it.effect("holds a message's event open until each of its requests has its exit", () =>
+    Effect.map(heldEventAfter("holds", []), (settled) => expect(settled).toBe("pending")),
+  );
+
+  it.effect("holds it open through another request whose id is the same as a string", () =>
+    Effect.map(heldEventAfter("holds-string-id", [request("1", "readNote")]), (settled) =>
+      expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("holds it open through a refused request reusing its id", () =>
+    Effect.map(heldEventAfter("holds-reused-id", [request(1, "hold")]), (settled) =>
+      expect(settled).toBe("pending"),
+    ),
+  );
+
+  it.effect("refuses an event on a socket no protocol of the routes accepted", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        Effect.tryPromise(() =>
+          runInDurableObject(room("foreign"), async (instance: Room, state) => {
+            const { 1: server } = new WebSocketPair();
+
+            state.acceptWebSocket(server, ["foreign"]);
+
+            await instance.webSocketMessage(server, "{}");
+          }),
+        ),
+      );
+
+      expect(String(failure.cause)).toContain(
+        "No ActionDurableObject.layerWebSocket of these routes accepted this socket",
+      );
+    }),
+  );
+
+  it.effect("refuses to build outside a class make returns", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.promise(() =>
+        runInDurableObject(env.PLAIN.getByName("outside-make"), (_, state) =>
+          Effect.runPromiseExit(
+            Layer.build(
+              ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" }).pipe(
+                Layer.provide([Layer.succeed(ActionDurableObject.State, state), HttpRouter.layer]),
+              ),
+            ).pipe(Effect.scoped),
+          ),
+        ),
+      );
+
+      expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
+        "serves only the routes of a class ActionDurableObject.make returns",
+      );
+    }),
+  );
+
+  it.effect("refuses to build two protocols at one path under different prefixes", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        Effect.tryPromise(() => env.PREFIXED.getByName("prefixed").fetch("https://object/a/rpc")),
+      );
+
+      expect(String(failure.cause)).toContain("a router prefix does not tell them apart");
     }),
   );
 

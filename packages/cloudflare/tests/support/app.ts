@@ -168,6 +168,18 @@ export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
   Layer.provide(startup),
 );
 
+const mountedAt = (prefix: string) =>
+  ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
+    Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+    Layer.updateService(HttpRouter.HttpRouter, (router) => router.prefixed(prefix)),
+  );
+
+export const prefixedRoutes = Layer.mergeAll(mountedAt("/a"), mountedAt("/b")).pipe(
+  Layer.provide(resolveNote),
+  Layer.provide(authenticate),
+  Layer.provide(startup),
+);
+
 export const alarm = Effect.gen(function* () {
   const { storage } = yield* ActionDurableObject.State;
   const client = yield* Action.client(implementation);

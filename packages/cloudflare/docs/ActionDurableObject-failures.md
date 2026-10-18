@@ -18,6 +18,12 @@ in the core's `*-failures.md` pages.
   `webSocketMessage`: the object holds a socket no protocol of these routes accepted, such as one
   accepted by code of your own, or by an earlier version of the routes at another `path`. Accept
   sockets with `layerWebSocket` alone, and close those the old path accepted.
+- `Two ActionDurableObject.layerWebSocket protocols of one object serve the path <path>: a router
+  prefix does not tell them apart`, a defect when the routes build: two `ActionRpc.layer`s in one
+  object were given protocols at one `path`. Give each its own, such as `/a/rpc` and `/b/rpc`.
+- `ActionDurableObject.layerWebSocket serves only the routes of a class ActionDurableObject.make
+  returns`, a defect when the routes build: they are served by `HttpRouter.toWebHandler` or a
+  class of your own, and nothing would receive the sockets' events. Serve them with `make`.
 - `ActionDurableObject.make was given no alarm`, a rejected alarm the runtime retries: something
   set an alarm on an object made without `alarm`. Give `make` an `alarm`, or stop setting one.
 - A stub's `fetch` rejects with the routes' build failure, every request alike: the routes fail

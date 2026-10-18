@@ -14,12 +14,12 @@ Reading order: [README.md](README.md).
 
 Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 
-| API                             | Purpose                                                                          |
-| ------------------------------- | -------------------------------------------------------------------------------- |
-| `make({ routes, alarm? })`      | A Durable Object class serving `routes` on `fetch` and its sockets' events.      |
-| `State`                         | The object's `DurableObjectState`, `ctx`: a startup service of routes and alarm. |
-| `layerWebSocket(Rpc, { path })` | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves `Rpc` on.          |
-| `layerHttpClient(stub)`         | An `HttpClient` sending every request to a stub or a service binding.            |
+| API                                        | Purpose                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `make({ routes, alarm?, disableLogger? })` | A Durable Object class serving `routes` on `fetch` and its sockets' events.      |
+| `State`                                    | The object's `DurableObjectState`, `ctx`: a startup service of routes and alarm. |
+| `layerWebSocket(Rpc, { path })`            | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves `Rpc` on.          |
+| `layerHttpClient(stub)`                    | An `HttpClient` sending every request to a stub or a service binding.            |
 
 Exported types: `Options` of `make`, `LayerWebSocketOptions` of `layerWebSocket`, and `Instance`,
 an instance of the class `make` returns.
@@ -65,8 +65,8 @@ it with a SQLite migration.
 
 ## Serve rpcs over hibernating WebSockets
 
-Provide `ActionRpc.layer` the protocol `layerWebSocket` makes for the same binding, at a path of
-the object's.
+Provide `ActionRpc.layer` the protocol `layerWebSocket` makes for the binding it serves, at a
+path of the object's.
 
 ```ts
 ActionRpc.layer(RoomRpc, room).pipe(
@@ -79,8 +79,13 @@ ActionRpc.layer(RoomRpc, room).pipe(
   routes and answers it.
 - A socket keeps the credential the binding's authentication descriptor reads from its upgrade
   request, its `Authorization` header, an API key's header or its cookie, and the `headers`
-  listed. Each message is authenticated with those and its own headers, its own winning, as a
-  long-lived host keeps the upgrade request's. An API key in the query string is not kept.
+  listed, and no other header: Effect's own socket protocol keeps them all, so list any a
+  middleware reads, such as `Origin`. Each message is authenticated with those and its own
+  headers, its own winning. An API key in the query string is not kept.
+- Give each protocol of one object its own `path`. A router prefix does not tell two apart:
+  routes with two protocols at one path, under `HttpRouter.prefixed` or not, fail to build.
+- `layerWebSocket` serves only the routes of a class `make` returns, which receives its
+  sockets' events; built elsewhere, it fails to build.
 - The verifier runs for every message, so a token that expires refuses the next call. A client
   that renews its token sends the new one on its messages, or connects again.
 - A browser WebSocket sets no header on its upgrade: a page sends its token on each message,
