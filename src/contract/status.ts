@@ -3,7 +3,7 @@ import type * as Action from "./Action.js";
 
 export const httpApiStatusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 
-export const statusThroughSuspensions = (ast: SchemaAST.AST): number | undefined =>
+const statusThroughSuspensions = (ast: SchemaAST.AST): number | undefined =>
   httpApiStatusOf(ast) ??
   (SchemaAST.isSuspend(ast) ? statusThroughSuspensions(ast.thunk()) : undefined);
 

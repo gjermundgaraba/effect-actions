@@ -1,10 +1,10 @@
 import { Predicate, Schema, SchemaAST, type Types } from "effect";
 import type * as Action from "./Action.js";
-import { literalValues, members, unsuspended } from "./ast.js";
+import { literalValues, members } from "./ast.js";
 import { Anyone, assertAuthentication, type Proving } from "./caller.js";
 import { builtIns } from "./errors.js";
 import { assertOnce } from "./names.js";
-import { httpApiStatusOf, statusThroughSuspensions } from "./status.js";
+import { httpApiStatusOf } from "./status.js";
 
 export const errorList = (
   error: Action.Errors[number] | Action.Errors | undefined,
@@ -38,22 +38,21 @@ export type Certain<E extends Action.Errors> =
       ? never
       : { readonly [K in keyof E]: Single<E[K]> }[number];
 
-const schemasOf = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => {
-  const resolved = unsuspended(ast);
+const ownsNothing = (ast: SchemaAST.AST): boolean =>
+  httpApiStatusOf(ast) === undefined && ast.checks === undefined && ast.encoding === undefined;
 
-  if (statusThroughSuspensions(ast) !== httpApiStatusOf(resolved)) return [ast];
+const schemasOf = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> =>
+  !ownsNothing(ast)
+    ? [ast]
+    : SchemaAST.isSuspend(ast)
+      ? schemasOf(ast.thunk())
+      : SchemaAST.isUnion(ast)
+        ? ast.types.flatMap(schemasOf)
+        : [ast];
 
-  return SchemaAST.isUnion(resolved) &&
-    httpApiStatusOf(resolved) === undefined &&
-    resolved.checks === undefined &&
-    resolved.encoding === undefined
-    ? resolved.types.flatMap(schemasOf)
-    : [resolved];
-};
-
-// Why: A union without a status, checks or a transformation of its own decodes as its members,
-// one at a time, and HTTP gives each its own status; one with any of them is one schema. Listed
-// apart, each schema is declared once however often it is reached, through a union, a
+// Why: A union or `Schema.suspend` without a status, checks or a transformation of its own decodes
+// as what it holds, and HTTP gives each member its own status; one with any of them is one schema.
+// Listed apart, each schema is declared once however often it is reached, through a union, a
 // `Schema.suspend` or several sources, so an endpoint and its OpenAPI document name it once.
 /** `errors` as the schemas a call decodes a failure with, in order, each once. */
 export const errorSchemas = (errors: Action.Errors): Action.Errors => {

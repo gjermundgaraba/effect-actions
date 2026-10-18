@@ -162,6 +162,24 @@ describe("contracts", () => {
         ),
         "Forbidden",
       ],
+      [
+        Schema.TaggedStruct("Forbidden", { message: Schema.String }).pipe(
+          Schema.decodeTo(
+            Schema.suspend(() => Schema.TaggedStruct("Local", { message: Schema.String })),
+            {
+              decode: SchemaGetter.transform(({ message }) => ({
+                _tag: "Local" as const,
+                message,
+              })),
+              encode: SchemaGetter.transform(({ message }) => ({
+                _tag: "Forbidden" as const,
+                message,
+              })),
+            },
+          ),
+        ),
+        "Forbidden",
+      ],
       [Schema.Struct({ _tag: Schema.Literals(["Busy", "Unauthenticated"]) }), "Unauthenticated"],
       [Schema.Struct({ _tag: Schema.Enum({ Forbidden: "Forbidden", Busy: "Busy" }) }), "Forbidden"],
     ];
