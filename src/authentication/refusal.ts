@@ -2,6 +2,7 @@ import { Cause, Context, Effect, Exit, Option, Predicate, Ref, Schema } from "ef
 import { HttpServerResponse } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
+import { errorSchemas } from "../contract/declared.js";
 import { declared, httpApiStatusOf } from "../contract/status.js";
 
 type Declared = Action.Errors[number];
@@ -16,7 +17,9 @@ export const declaredResponse = (
   errors: ReadonlyArray<Declared>,
   error: Declared["Type"],
 ): HttpServerResponse.HttpServerResponse | undefined => {
-  const schema = errors.flatMap(declared).find((each) => Schema.is(each)(error));
+  const schema = errorSchemas(errors)
+    .map(declared)
+    .find((each) => Schema.is(each)(error));
 
   return schema === undefined ? undefined : responseOf(schema, error);
 };

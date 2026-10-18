@@ -228,7 +228,7 @@ const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Error
   HttpApiEndpoint.post(action.name, path, {
     payload: action.input.pipe(HttpApiSchema.asJson()),
     success: action.success,
-    error: errors.flatMap(declared),
+    error: errors.map(declared),
   });
 
 const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>

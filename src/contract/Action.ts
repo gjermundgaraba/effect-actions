@@ -1,10 +1,10 @@
 import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
 import { Anyone } from "./caller.js";
-import { assertOwnTags, errorList, projectedErrors } from "./declared.js";
+import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
 import { assertKnown, assertName, assertOnce } from "./names.js";
 import { type Call, inputOf } from "./call.js";
-import { type BuiltIn, type BuiltIns, InvalidInput, type Refusal } from "./errors.js";
+import { type BuiltIn, InvalidInput, type Refusal } from "./errors.js";
 import {
   type ActionOf,
   type Authorize,
@@ -113,7 +113,8 @@ export interface Options {
    * The declared failures: one schema, or a list of them, as `HttpApiEndpoint` takes them;
    * each keeps its own HTTP status annotation, the third argument of
    * `Schema.TaggedError<NoteNotFound>()("NoteNotFound", { id: Schema.String }, { httpApiStatus: 404 })`,
-   * and answers 422 without one. Defaults to none. None with a built-in error's `_tag`.
+   * and answers 422 without one. Defaults to none. No two schemas share a `_tag`, a built-in
+   * error's included.
    */
   readonly error?: Codec | ReadonlyArray<Codec> | undefined;
   /**
@@ -134,16 +135,6 @@ type KnownMcp<O> = { readonly mcp?: { readonly [K in UnknownMcp<O>]: never } };
 
 type ErrorMembers<G> = G extends ReadonlyArray<infer E> ? E : G;
 
-type OwnErrors<O> = O extends { readonly error: infer G }
-  ? [Extract<ErrorMembers<G>, BuiltIns>] extends [never]
-    ? unknown
-    : {
-        readonly error:
-          | Exclude<ErrorMembers<G>, BuiltIns>
-          | ReadonlyArray<Exclude<ErrorMembers<G>, BuiltIns>>;
-      }
-  : unknown;
-
 type OnlyOptions<O> = {
   readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Options>]: never;
 };
@@ -155,9 +146,7 @@ type ServiceCaller<O> = O extends { readonly caller: { readonly defaultValue: un
 // Why: Options that fail `Options` itself infer as `Options`, whose error the compiler already
 // reports. Checked against the rules too, a missing option is reported as the whole argument not
 // being assignable, in place of "Property 'description' is missing".
-type Rules<O> = Options extends O
-  ? unknown
-  : OnlyOptions<O> & ServiceCaller<O> & OwnErrors<O> & KnownMcp<O>;
+type Rules<O> = Options extends O ? unknown : OnlyOptions<O> & ServiceCaller<O> & KnownMcp<O>;
 
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
   ? K extends keyof O
@@ -274,7 +263,7 @@ export function make(name: string, options: Options): Any {
     mcp: { ...options.mcp },
   };
 
-  assertOwnTags(`Action "${action.name}"`, action.error);
+  assertDistinctTags(`Action "${action.name}"`, projectedErrors(action));
 
   return action;
 }

@@ -807,10 +807,26 @@ describe("an error a descriptor declares", () => {
     expect(publicToolPresentingCredential).toEqual(action);
   });
 
-  it("is refused where it encodes with a built-in error's _tag", () => {
+  it("is refused where it encodes with a built-in error's _tag, and accepts the built-in", () => {
+    class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+    expect(() => Authentication.make("test.Builtin", Identity, { error: Forbidden })).toThrow(
+      'Authentication "test.Builtin": error _tag "Forbidden" names two error schemas',
+    );
+    expect(
+      Authentication.make("test.Builtin", Identity, { error: Action.Forbidden }).error,
+    ).toEqual([Action.Forbidden]);
+  });
+
+  it("is refused where two of its error schemas share a _tag", () => {
     expect(() =>
-      Authentication.make("test.Builtin", Identity, { error: Action.Forbidden }),
-    ).toThrow('Authentication "test.Builtin": error _tag "Forbidden" is built in');
+      Authentication.make("test.Shared", Identity, {
+        error: [
+          Schema.TaggedStruct("Down", {}),
+          Schema.TaggedStruct("Down", { retry: Schema.Number }),
+        ],
+      }),
+    ).toThrow('Authentication "test.Shared": error _tag "Down" names two error schemas');
   });
 
   it("is the only failure besides a refusal refusalResponse renders", () => {

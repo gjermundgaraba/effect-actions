@@ -19,8 +19,6 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
   each layer its own `actions`.
 - `Duplicate action: <name>` thrown by `make`: two actions share a name, or one is listed twice.
   Rename one, or bind it under another prefix.
-- `ActionHttp binding: error _tag "Forbidden" is built in, and declared on every surface` thrown by
-  `make`: a binding error is a built-in error or reuses its tag. Drop it, or rename your own.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi`, or a combined document or
   native client lacking one binding's actions: bindings combined into one `HttpApi` need distinct
   action names and distinct prefixes. Rename or re-prefix one, or document each binding alone.

@@ -78,8 +78,9 @@ uses every option, sharing some by spreading a constant (`IssueWriteErrors`, `ch
 - **An action's `name`, `input`, `success`, `error` and `readOnly` are public**: reuse them, as
   in `Schema.Array(SaveLink.input)`.
 - **Annotate each declared error with `httpApiStatus`**, or HTTP answers it as a 422.
-- **Give each declared error its own `_tag`**: a client tells errors sharing one, or having
-  none, apart by their other fields alone, the first that decodes winning.
+- **A `_tag` names one error schema in a call**, built-in ones included, or `make` throws: reuse
+  one schema value; put variants in its fields. Errors without one are told apart by their other
+  fields, the first that decodes winning.
 - **A contract does not say where it is served**: each surface takes a list of actions. Keep
   those lists in one file beside the contracts
   ([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)): an action added

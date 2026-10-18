@@ -23,8 +23,8 @@ import {
   type VerifierFailure,
 } from "./provider.js";
 import type { Errors } from "../contract/Action.js";
-import { assertOwnTags, errorList, type ErrorsOf } from "../contract/declared.js";
-import { type Refusal, scopeToken, Unauthenticated } from "../contract/errors.js";
+import { assertDistinctTags, errorList, type ErrorsOf } from "../contract/declared.js";
+import { builtIns, type Refusal, scopeToken, Unauthenticated } from "../contract/errors.js";
 import type { Known, OptionalUnless } from "../contract/implementation.js";
 import {
   answer,
@@ -317,7 +317,7 @@ export const make = <const Name extends string, I, A, const O extends Options = 
     throw new Error(`Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key`);
   }
 
-  assertOwnTags(`Authentication "${name}"`, error);
+  assertDistinctTags(`Authentication "${name}"`, [...builtIns, ...error]);
 
   if (
     !Predicate.isTagged(security, "Http") &&

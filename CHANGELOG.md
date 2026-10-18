@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**A `_tag` names one error schema in a call, a built-in error's included.** `Action.make`,
+`Authentication.make`, `ActionHttp.make` and `ActionRpc.make` check what each call can fail with,
+the built-in errors, the action's, the binding's `error` and a protected action's
+authentication's, and throw
+`… error _tag "<tag>" names two error schemas, which a client cannot tell apart` where two
+different schemas share one. One schema is each union member, compared by identity: one reached
+twice, listed again, through a `Schema.Union` or a `Schema.suspend`, is one; two declared alike
+are two. This reverses 0.10.0, which accepted errors sharing a `_tag` and told them apart by their
+other fields: a client decodes a failure as the first schema that accepts it, so where one
+accepted the other's values the client received the wrong error, its other fields dropped, and
+Effect's `catchTag` never told them apart. Errors without a `_tag` are still accepted.
+
+The message replaces `… error _tag "<tag>" is built in, and declared on every surface`, which an
+error reusing a built-in error's `_tag` threw; a binding's message now names the action,
+`ActionHttp binding of "<name>"`.
+
+- Migrate: reuse one schema value where two declare one error; merge variants into one schema
+  whose fields tell them apart, such as
+  `Schema.TaggedStruct("Validation", { field: Schema.Literals(["email", "name"]) })` or one with a
+  tagged `reason`; or rename one of the tags. Update code matching the old message.
+
+### Other changes
+
+- A built-in error listed in an action's `error`, a binding's or an authentication's is accepted,
+  in the types and at `make`, where it was refused: every surface declares it anyway. A helper
+  whose type parameter stands for `make`'s `error` compiles.
+- An error schema a call reaches twice, through a union, a `Schema.suspend` or the binding, is
+  declared once: an endpoint's OpenAPI responses name it once.
+
 ## 0.18.2
 
 Corrects documentation and comments the code had outgrown. The API and its behavior are

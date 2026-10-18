@@ -405,7 +405,6 @@ export const builtInErrorTypes = () => {
     description: "",
     readOnly: false,
     caller: Action.Anyone,
-    // @ts-expect-error -- No action lists a built-in error: every surface declares it.
     error: [Action.Forbidden],
   });
   // @ts-expect-error -- Only those and the declared errors.
@@ -657,13 +656,6 @@ export const declaredErrorTypes = () => {
   expectTypeOf(ActionHttp.make([Find], { error: RateLimited }).error).toEqualTypeOf<
     readonly [typeof RateLimited]
   >();
-  Action.make("refused", {
-    description: "",
-    readOnly: true,
-    caller: Action.Anyone,
-    // @ts-expect-error -- Every surface declares `Forbidden` already.
-    error: Action.Forbidden,
-  });
 
   expectTypeOf<(typeof Status)["error"]>().toEqualTypeOf<ReadonlyArray<never>>();
 
