@@ -75,3 +75,7 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 - After adding, renaming or removing public modules, run `vp run build` and include the generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` is the floor stated to consumers, lower than `devEngines` on purpose: do not align them.
 - Upgrade Effect development packages together and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
+
+## Effect
+
+Before writing or reviewing Effect code, read `node_modules/effect/AGENTS.md` in the package you are changing and the examples it links under `ai-docs/`. They ship with the installed `effect`, so they match the APIs the code compiles against. For exact signatures, read that package's installed source and types in `node_modules/effect` and `node_modules/@effect/*`. Do not write Effect APIs from memory or from examples for another version.
