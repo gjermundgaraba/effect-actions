@@ -38,6 +38,7 @@ export default defineConfig({
         },
       },
       "packages/*",
+      "packages/*/examples/*",
     ],
   },
   pack: pack(),
@@ -199,7 +200,7 @@ export default defineConfig({
         },
       },
       {
-        files: ["examples/**"],
+        files: ["examples/**", "packages/*/examples/**"],
         rules: { "no-comments/no-prose-comments": "off" },
       },
     ],

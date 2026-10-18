@@ -75,6 +75,8 @@ const socket = rpc.pipe(
 
 - Provide the protocol to the rpc layer, inside what `HttpRouter.serve` serves:
   `RpcServer.layerProtocolWebsocket` and `layerProtocolHttp` add their route to that router.
+- On Cloudflare Workers, `layerProtocolWebsocket` cannot upgrade a request: serve the rpcs from
+  a Durable Object with `@gjermundgaraba/effect-actions-cloudflare`, whose sockets hibernate.
 - Export the rpc layer before it is given a protocol. `Testing.layer` cannot upgrade a
   WebSocket, so a test gives that layer the HTTP protocol ([Testing.md](Testing.md#test-rpcs)).
 - Provide a JSON serialization, the same one on the client: `RpcSerialization.layerJson`,

@@ -33,4 +33,9 @@ ActionHttp.client(Http, { baseUrl: "https://object" }).pipe(
 );
 ```
 
+Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/):
+one Durable Object per room, served over hibernating WebSockets and JSON, with an alarm and a
+Worker in front. In a project that installs it, both are in
+`node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
+
 MIT licensed.

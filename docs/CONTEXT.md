@@ -34,6 +34,15 @@ page.
 - **Refusal**: `Action.Refusal`, `Unauthenticated | Forbidden`: what authentication or an authorizer refuses a caller with. A **step-up refusal** is one an OAuth client acts on: an `Unauthenticated`, or a `Forbidden` naming `scopes` ([Authentication.md](Authentication.md#publish-oauth-discovery)).
 - **Media field**: a field of an action's success whose schema is a media kind, `Action.Image`, which an MCP tool **lifts** into a content block of its own ([ActionMcp.md](ActionMcp.md#return-images-and-other-media)).
 
+### Cloudflare
+
+Words of `@gjermundgaraba/effect-actions-cloudflare`'s pages, which are Cloudflare's own.
+
+- **Durable Object**: a class a Worker's Wrangler configuration binds, with one **object** per id or name, running in one place at a time with its own storage.
+- **Instance**: the class's instance the runtime constructs for an object, which builds its routes. The runtime **evicts** an idle one, and the object's next event constructs another.
+- **Hibernation**: an object evicted while the runtime keeps its accepted WebSockets open: a message on one constructs an instance to receive it.
+- **Stub**: what a Worker reaches an object through, `env.<BINDING>.getByName(name)`.
+
 ### Layout of an application
 
 The parts of the layout every example uses: [examples/README.md](../examples/README.md#how-they-are-laid-out).

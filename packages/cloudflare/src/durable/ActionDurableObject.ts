@@ -38,7 +38,8 @@ export interface Options<E = never, R = never, AE = never, AR = never> {
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built when the instance is,
    * again after every eviction, and never finalized. They may require `State`; a request-time
-   * requirement must be provided by their middleware or authentication.
+   * requirement must be provided by their middleware or authentication, and over
+   * `layerWebSocket` by a middleware `ActionRpc.layer` lists.
    */
   readonly routes: Layer.Layer<never, E, R>;
   /**
@@ -72,6 +73,9 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
  * instance, and the next event builds them again. The runtime evicts an idle instance and
  * constructs a new one for the next event, so nothing the routes build is finalized, and
  * in-memory state lasts no longer than an instance.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package; in an application:
+ * `examples/chat-rooms/`.
  */
 export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.Scope = never>(
   options: Options<E, R, AE, AR>,
@@ -170,7 +174,10 @@ export interface LayerWebSocketOptions {
  * binding's descriptor reads from its upgrade request, an `Authorization` header, an API key's
  * header or its cookie, and the headers listed, and each message is authenticated with them
  * and its own headers, its own winning: as a long-lived host keeps the upgrade request's. The
- * runtime answers a client's pings without waking the object.
+ * runtime answers a client's pings without waking the object. Router middleware around the
+ * routes runs for the upgrade request alone, never for a socket's messages.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export const layerWebSocket = (
   binding: ActionRpc.Any,
@@ -191,6 +198,8 @@ export const layerWebSocket = (
  * `RpcClient.layerProtocolHttp` and `ActionMcp.client` call it with. A request's URL needs a
  * host, which the fetcher ignores, such as `https://object/api`. Nothing authenticates the
  * request on its way: forward the caller's credential, as for any remote surface.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export const layerHttpClient = (
   fetcher: Pick<Fetcher, "fetch">,

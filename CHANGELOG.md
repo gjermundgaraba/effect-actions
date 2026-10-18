@@ -44,6 +44,11 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
+  - Its pages, `docs/ActionDurableObject.md` and its failures page, ship in the package, with an
+    example, chat-rooms: one object per room, its messages in the object's SQLite database, an
+    alarm expiring them, and a Worker routing pages' sockets to the rooms and asking them for a
+    lobby through their stubs. The core's `docs/README.md` routes to it and `CONTEXT.md` defines
+    Cloudflare's terms.
 
 ### Other changes
 

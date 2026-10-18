@@ -44,6 +44,15 @@ const refuseInternalKeys = (declarations: string) => {
   }
 };
 
+const refuseUnshipped = (source: string, installed: string) => {
+  for (const directory of ["docs", "examples"]) {
+    for (const entry of readdirSync(join(source, directory))) {
+      if (!existsSync(join(installed, directory, entry)))
+        throw new Error(`${directory}/${entry} is not in ${installed}`);
+    }
+  }
+};
+
 const consumer = mkdtempSync(join(tmpdir(), "effect-actions-consumer-"));
 
 const run = (command: string, args: ReadonlyArray<string>, cwd = consumer) =>
@@ -86,16 +95,10 @@ try {
 
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
   const installed = join(consumer, "node_modules", manifest.name);
+  const installedCloudflare = join(consumer, "node_modules", cloudflareManifest.name);
 
-  for (const page of readdirSync(join(root, "docs"))) {
-    if (!existsSync(join(installed, "docs", page)))
-      throw new Error(`docs/${page} is not in the package`);
-  }
-
-  for (const example of readdirSync(join(root, "examples"))) {
-    if (!existsSync(join(installed, "examples", example)))
-      throw new Error(`examples/${example} is not in the package`);
-  }
+  refuseUnshipped(root, installed);
+  refuseUnshipped(cloudflare, installedCloudflare);
 
   const quickstart = join(installed, "examples", "quickstart", "src");
 
@@ -122,6 +125,11 @@ try {
   cpSync(join(cloudflare, "scripts/package-consumer"), join(consumer, "cloudflare"), {
     recursive: true,
   });
+  cpSync(
+    join(installedCloudflare, "examples", "chat-rooms", "src"),
+    join(consumer, "cloudflare", "chat-rooms"),
+    { recursive: true },
+  );
 
   writeFileSync(
     join(consumer, "cloudflare", "tsconfig.json"),
@@ -132,7 +140,7 @@ try {
         types: ["@cloudflare/workers-types"],
         lib: ["es2023"],
       },
-      include: ["*.ts"],
+      include: ["*.ts", "chat-rooms/**/*.ts"],
     }),
   );
 
