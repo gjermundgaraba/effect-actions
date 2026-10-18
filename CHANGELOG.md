@@ -25,6 +25,16 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   `Schema.TaggedStruct("Validation", { field: Schema.Literals(["email", "name"]) })` or one with a
   tagged `reason`; or rename one of the tags. Update code matching the old message.
 
+### Additions
+
+- **`@gjermundgaraba/effect-actions-cloudflare`, a package for Cloudflare Durable Objects**,
+  released with this one at the same version and requiring it at `~` that version. Its
+  `ActionDurableObject.layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable
+  Object stub or a service binding, so a Worker calls an object's routes with
+  `ActionHttp.client`, `ActionRpc.client` over `RpcClient.layerProtocolHttp` or
+  `ActionMcp.client`, its declared errors decoded, in place of providing
+  `FetchHttpClient.Fetch` itself.
+
 ### Other changes
 
 - A built-in error listed in an action's `error`, a binding's or an authentication's is accepted,

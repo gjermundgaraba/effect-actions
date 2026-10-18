@@ -31,8 +31,21 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   test: {
-    include: ["tests/**/*.test.ts", "examples/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
-    exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "effect-actions",
+          include: [
+            "tests/**/*.test.ts",
+            "examples/**/*.test.ts",
+            "tools/oxlint/tests/**/*.test.ts",
+          ],
+          exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
+        },
+      },
+      "packages/*",
+    ],
   },
   pack: {
     entry: publicModules,
@@ -171,6 +184,27 @@ export default defineConfig({
                 {
                   group: [...anyRelativeImport, "!./*.js"],
                   message: "src/contract imports nothing outside itself: ./<file>.js alone.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["packages/*/src/**"],
+        rules: {
+          "no-comments/no-prose-comments": ["error", { allowJsDoc: true, allowWhy: true }],
+          "typescript/consistent-type-imports": "error",
+          "typescript/no-import-type-side-effects": "error",
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                {
+                  group: [...anyRelativeImport, "!./*.js", "!../[a-z]*/[A-Z]*.js"],
+                  caseSensitive: true,
+                  message:
+                    "A relative import is ./<file>.js or another domain's public ../<domain>/<Module>.js; the core is imported by its package name.",
                 },
               ],
             },

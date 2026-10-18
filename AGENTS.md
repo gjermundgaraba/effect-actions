@@ -28,7 +28,7 @@ release. Add a tool name to select part of the graph. For example, run
 
 # effect-actions
 
-`@gjermundgaraba/effect-actions`. Use the vocabulary in [docs/CONTEXT.md](docs/CONTEXT.md).
+`@gjermundgaraba/effect-actions` at the root, and `@gjermundgaraba/effect-actions-cloudflare` in `packages/cloudflare`, a pnpm workspace package released with it. Use the vocabulary in [docs/CONTEXT.md](docs/CONTEXT.md).
 
 ## Working safely and validating
 
@@ -41,6 +41,7 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 ## Design
 
+- These rules hold for both packages. `packages/cloudflare` imports the core by its package name, its public modules alone, and its tests run on workerd through `@cloudflare/vitest-plugin`, as the root `vp test`'s second project.
 - Keep flat `src/<domain>/` folders: PascalCase public modules beside lowercase private files. Shared behavior belongs in `contract`, the shared kernel, which imports no other domain; name each of its private files for the one concept it holds (`caller`, `declared`, `status`), never a catch-all such as `rules` or `utils`. Each surface owns its projection and validates only names it serves. Public modules expose consumer types as `Options`, `<Function>Options` and `Any`. Reach another domain through its public module; `vite.config.ts` names the few shared private files, and domains import without cycles.
 - Use native Effect servers, clients and composition; add no protocol runtime. Consult pinned `node_modules/effect` before inventing helpers or assuming APIs. Remove restrictions that obstruct useful native composition. Support the pinned TypeScript, without older-compiler workarounds.
 - Applications own verification, login, consent and authorization policy; the library enforces it. Operational limits belong in handlers with declared errors, record checks in data access. Separate startup dependencies from request requirements; never provide request identity at server startup.
@@ -71,10 +72,10 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 ## Release
 
-- When asked to release: set `package.json`'s version, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes via `.github/workflows/npm.yml`. Manual publishing must use `vp pm publish` so `publishConfig.exports` is applied.
-- After adding, renaming or removing public modules, run `vp run build` and include the generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
+- Both packages carry one version. When asked to release: set it in `package.json` and `packages/cloudflare/package.json`, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes both, the core first, via `.github/workflows/npm.yml`. Manual publishing must use `vp pm publish`, in each package, so `publishConfig.exports` is applied and the Cloudflare package's `workspace:~` peer becomes `~<version>`.
+- After adding, renaming or removing public modules, run `vp run -r build` and include each package's generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` is the floor stated to consumers, lower than `devEngines` on purpose: do not align them.
-- Upgrade Effect development packages together and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
+- Upgrade Effect development packages together, in both packages, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
 
 ## Effect
 

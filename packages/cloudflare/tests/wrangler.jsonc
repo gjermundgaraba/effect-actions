@@ -1,0 +1,7 @@
+{
+  "name": "effect-actions-cloudflare-tests",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "PLAIN", "class_name": "Plain" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Plain"] }],
+}
