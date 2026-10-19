@@ -117,7 +117,8 @@ export const implementation = Action.implement(
       alarms: () =>
         Effect.promise(() => storage.get<number>(alarmsKey)).pipe(Effect.map((n) => n ?? 0)),
       pause: () =>
-        Effect.sleep("100 millis").pipe(
+        Effect.promise(() => storage.put("pauseStarted", true)).pipe(
+          Effect.andThen(Effect.sleep("100 millis")),
           Effect.onInterrupt(() => Effect.promise(() => storage.put("pauseInterrupted", true))),
         ),
     };

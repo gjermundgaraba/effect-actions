@@ -4,7 +4,7 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Schedule } from "effect";
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { RpcClient } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
@@ -128,29 +128,29 @@ describe("layerWebSocket", () => {
     }),
   );
 
-  it.effect("interrupts a socket's running call when the socket closes", () =>
+  it.live("interrupts a socket's running call when the socket closes", () =>
     Effect.gen(function* () {
       const stub = room("closes");
       const socket = yield* upgradeToRpc(stub);
 
-      const after = (millis: number) =>
-        Effect.promise(() => new Promise((resolve) => setTimeout(resolve, millis)));
+      const stored = (key: string) =>
+        Effect.promise(() => runInDurableObject(stub, (_, state) => state.storage.get(key))).pipe(
+          Effect.repeat({
+            until: (value) => value === true,
+            schedule: Schedule.spaced("5 millis"),
+          }),
+          Effect.timeout("1 second"),
+        );
 
       socket.send(
         JSON.stringify({ _tag: "Request", id: 1, tag: "pause", payload: {}, headers: [] }),
       );
 
-      yield* after(20);
+      yield* stored("pauseStarted");
 
       socket.close(1000);
 
-      yield* after(50);
-
-      const interrupted = yield* Effect.promise(() =>
-        runInDurableObject(stub, (_, state) => state.storage.get("pauseInterrupted")),
-      );
-
-      expect(interrupted).toBe(true);
+      expect(yield* stored("pauseInterrupted")).toBe(true);
     }),
   );
 

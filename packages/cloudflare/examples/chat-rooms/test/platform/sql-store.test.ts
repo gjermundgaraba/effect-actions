@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Clock, Effect, Layer } from "effect";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { MessageNotFound, NotAuthor } from "../../src/chat/Chat.js";
 import { MessageStore } from "../../src/chat/store.js";
@@ -27,6 +27,25 @@ const inObject = <A, E>(
       ),
     ),
   );
+
+// A clock a millisecond later at each read, which never yields: posts running at once read
+// times of their own, where at one shared time the oldest message and the latest would set the
+// same alarm. Effect's TestClock moves on through a semaphore, which lets each post finish first.
+const tickingFrom = (start: number): Clock.Clock => {
+  let now = start;
+  const tick = () => (now += 1);
+  const nanos = () => BigInt(now) * 1_000_000n;
+
+  return {
+    currentTimeMillisUnsafe: tick,
+    currentTimeMillis: Effect.sync(tick),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: nanos,
+    monotonicTimeNanos: Effect.sync(nanos),
+    sleep: () => Effect.void,
+  };
+};
 
 describe("layerSql", () => {
   it.live("numbers a room's messages and reads those after an id", () =>
@@ -69,8 +88,9 @@ describe("layerSql", () => {
           Array.from({ length: 32 }, (_, i) => `Message ${i}.`),
           (text) => store.post("ada", text),
           { concurrency: "unbounded" },
-        );
+        ).pipe(Effect.provideService(Clock.Clock, tickingFrom(Date.now())));
 
+        expect(new Set(posted.map(({ at }) => at)).size).toBe(32);
         expect(yield* Effect.promise(() => state.storage.getAlarm())).toBe(
           Math.min(...posted.map(({ at }) => at)) + day,
         );

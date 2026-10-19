@@ -23,10 +23,15 @@ export const layerSql = Layer.effect(MessageStore)(
       "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL)",
     );
 
-    // The object has one alarm, set for the oldest message's expiry. It is read from the table
-    // and set in one step, so posts running at once each set it for the oldest message they
-    // see, and the last to set it has seen them all; reading the alarm first would let two posts
-    // both see none and the later one win.
+    // Every post looks up the oldest message: indexed, it reads one row, where a scan would read
+    // the whole table, and SQLite storage is billed by rows read.
+    storage.sql.exec("CREATE INDEX IF NOT EXISTS messages_by_at ON messages (at)");
+
+    // The object has one alarm, due no later than the oldest message's expiry: `post` and
+    // `expire` set it for the oldest message, read from the table and set in one step, so posts
+    // running at once each set it for the oldest they see, and the last to set it has seen them
+    // all; reading the alarm first would let two posts both see none and the later one win.
+    // Removing the oldest message leaves its alarm, which then finds nothing due and moves on.
     const expireOldest = Effect.promise(async () => {
       const [oldest] = query("SELECT * FROM messages ORDER BY at LIMIT 1");
 

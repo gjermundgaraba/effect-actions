@@ -114,6 +114,9 @@ alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layer
   as [chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts) does with `layerSql`.
 - Its argument is the runtime's `AlarmInvocationInfo`, `retryCount` and `isRetry`, or
   `undefined` when the object's `alarm` is called with none.
+- A class extending the one `make` returns may override `alarm`, and reaches `make`'s with
+  `await super.alarm?.(info)`: `Instance` declares Cloudflare's optional `alarm`, as a class made
+  without one has none.
 - A failure rejects the object's `alarm`, which the runtime retries with backoff, up to six
   times. An object made without an `alarm` has no handler, so the runtime refuses
   `storage.setAlarm` on it, at that call.

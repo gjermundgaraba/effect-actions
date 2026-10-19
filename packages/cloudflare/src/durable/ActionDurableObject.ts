@@ -157,9 +157,7 @@ export const make = <
       return this.#receiverOf(socket).close(socket);
     }
 
-    static withAlarm(
-      run: (info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>,
-    ) {
+    static withAlarm(run: NonNullable<typeof onAlarm>) {
       return class extends this {
         override alarm(info?: AlarmInvocationInfo) {
           return Effect.runPromise(
@@ -177,7 +175,8 @@ export const make = <
   // Why: the runtime refuses `storage.setAlarm` on an instance without an `alarm` handler, at the
   // call that sets it, so a class made without one has none, where a handler rejecting every
   // alarm would fail later, retried. Made with one, `alarm` is a method of a class extending the
-  // base, so a class extending that overrides it and calls it through `super`.
+  // base, so a class extending that overrides it and calls it through `super`; that class is
+  // declared in the base's body, `withAlarm`, to read the base's private memo map.
   return onAlarm === undefined ? ActionDurableObject : ActionDurableObject.withAlarm(onAlarm);
 };
 
