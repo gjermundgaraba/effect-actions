@@ -165,7 +165,9 @@ describe("implement", () => {
       make: () => Action.implement([Hello, Bye], new OwnHelloInheritedBye()),
     },
   ])("throws at implement for $handlers", ({ make }) => {
-    expect(make).toThrow("Missing handlers: bye");
+    expect(make).toThrow(
+      "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
+    );
   });
 
   it.effect(
@@ -212,7 +214,7 @@ describe("implement", () => {
           // @ts-expect-error -- A record names only its actions.
           stale: () => Effect.succeed("stale"),
         }),
-      ).toThrow("Unknown handlers: stale");
+      ).toThrow("Unknown handlers: stale (remove it, or list its action)");
 
       const built = Action.implement(
         [Hello],
@@ -271,7 +273,7 @@ describe("authorization", () => {
     expect(() =>
       // @ts-expect-error -- A public-only target takes no authorize.
       Action.implement(Open, () => Effect.void, { authorize: Action.allowAll }),
-    ).toThrow("A public-only target takes no authorize");
+    ).toThrow("A public-only target takes no authorize (remove it, or list a protected action)");
   });
 
   it("builds authorize once per layer graph for every surface, and runs what it built per call", async () => {

@@ -26,7 +26,8 @@ export class Tenant extends Context.Service<Tenant, Option.Option<string>>()("tr
 
 // Native router middleware. It provides `Tenant` to whatever it is provided to, per request:
 // to the verifier too, when it is provided after the authentication, in a `Layer.provide` of
-// its own: in one array with it, the members provide to the routes and not to one another.
+// its own: in one array with the authentication it would leave `Tenant` owed, since an array's
+// layers provide to the routes, not to one another.
 export const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
     Effect.provideService(route, Tenant, Option.fromNullishOr(request.headers["x-workspace"])),
@@ -41,29 +42,26 @@ provides the middleware.
 
 ## Use a scheme other than Bearer
 
-Name the scheme in `Options.security` of `Authentication.make`, whose JSDoc says what each
-scheme gives up. See `Session`
-in [kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts)
-and `authenticateSession` in
+Name the scheme in `Authentication.Options.security`, whose JSDoc says what each scheme gives
+up. See `Session` in
+[kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts) and
+`authenticateSession` in
 [kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)
 for a session cookie beside Bearer, and
 [kitchen-sink/src/admin/Admin.ts](../examples/kitchen-sink/src/admin/Admin.ts) and
 [kitchen-sink/src/admin/authenticate.ts](../examples/kitchen-sink/src/admin/authenticate.ts)
 for an API key in a header.
 
-- **A WebSocket upgrade is never preflighted**, so for rpcs over a socket under a cookie the
-  [request policy](#run-a-request-policy-before-authentication) is the only `Origin` check
-  ([ActionRpc.md](ActionRpc.md#send-request-context-with-a-call)).
-- **A scheme the deployment decides, such as a cookie name a framework prefixes over HTTPS, is
-  still one declaration**: the server builds its descriptor at startup, and from that one value
-  its binding, its endpoint, its `protect` and its provider; a browser's binding keeps a static
-  one of the name, as `Authentication.layer` says.
+For a cookie covering rpcs over a WebSocket, see
+[ActionRpc.md](ActionRpc.md#send-request-context-with-a-call). A scheme the deployment decides,
+such as a cookie name a framework prefixes over HTTPS, is still one declaration, as
+`Authentication.layer` says.
 
 ## Protect a route of your own
 
 A route of the host's own, such as a download or a WebSocket upgrade, takes
 `Authentication.protect(descriptor)`, whose rules, authorization and caching included, are on
-`protect`:
+its JSDoc:
 
 ```ts example=kitchen-sink/src/attachments/download.ts
 import { Effect, Layer } from "effect";
@@ -75,26 +73,23 @@ import { GetAttachment } from "./Attachments.js";
 import { AttachmentStore } from "./store.js";
 
 // A route of the host's own: `GET /attachments/<id>` answers the image's bytes, for an `<img>`
-// of the web app, which no action can (an action answers JSON). A descriptor covers action
-// routes alone, so this one takes `Authentication.protect(Session)`: router middleware that
-// verifies the page's cookie with the provider the web app's rpcs use, provides
-// `CurrentMember`, and answers a refusal the route fails with as an action's is answered. A
-// token holder has no use for it: `getAttachment` gives an API client the same image.
+// of the web app, which no action can (an action answers JSON), behind
+// `Authentication.protect(Session)`: the page's cookie, which the web app's rpcs use. A token
+// holder has no use for it: `getAttachment` gives an API client the same image.
 export const download = Layer.unwrap(
   Effect.map(AttachmentStore, (store) =>
     HttpRouter.add(
       "GET",
       "/attachments/:id",
       Effect.gen(function* () {
-        // The route states its own authorization. It reuses the rule of the action it mirrors.
+        // The rule of the action it mirrors.
         yield* authorize(GetAttachment);
 
         const member = yield* CurrentMember;
         const { id = "" } = yield* HttpRouter.params;
         const { image } = yield* store.get(member.workspace, id);
 
-        // Authentication marks what it covers `no-store` unless the route states its own
-        // caching. An attachment never changes, but it is one workspace's: `private`.
+        // An attachment never changes, but it is one workspace's: `private`.
         return HttpServerResponse.uint8Array(image.data, {
           contentType: image.mimeType,
           headers: {
@@ -139,8 +134,7 @@ const loopback = ["localhost", "127.0.0.1"];
 // any page's request, so a foreign Origin must be refused before authentication reads it.
 // That is why this is global router middleware (`global: true`): it runs before routing, so
 // before every route's authentication. As a layer's own `middleware` it would run inside the
-// authentication, too late. Whether it also runs before the discovery the Bearer provider
-// publishes, global middleware too, is decided where it is provided: last, in routes.ts.
+// authentication, too late.
 export const requestPolicy = HttpRouter.middleware(
   Effect.gen(function* () {
     const hosts = [...loopback, new URL(yield* publicUrl).hostname];

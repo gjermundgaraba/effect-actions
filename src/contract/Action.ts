@@ -145,7 +145,7 @@ export interface Options {
    * **Gotchas**
    *
    * - Over HTTP a declared error answers with its `httpApiStatus`, 422 without one; what the other surfaces answer is on their `layerHttp`, `runStdio`, `layer`, `make` or `command`.
-   * - Two schemas sharing a `_tag` throw at `make`, `error _tag "<tag>" names two error schemas`, or at a binding's `make`, `binding of "<name>"`, for one of its errors against the action's or the authentication's; the message says the fix, and a tagged `reason` keeps variants of one error in one schema.
+   * - Two schemas sharing a `_tag` throw at `make`, `error _tag "<tag>" names two error schemas`, or at a binding's `make`, `binding of "<name>"`, for one of its errors against the action's or the authentication's; the message says the fix.
    * - A schema reached twice, listed again, through a union or `Schema.suspend`, is one schema; a union is its members unless it has its own `httpApiStatus`, checks or a transformation, so each member's `_tag` is checked against every other error's.
    * - Errors without a `_tag` are told apart by their other fields, the first that decodes winning: a failure an earlier schema also accepts is decoded as that one.
    * - An entry that is a `Schema.suspend` whose thunk reads a `const` declared further down throws a `ReferenceError` at `make`, which reads every `_tag` when called: declare the error first.
@@ -449,12 +449,12 @@ const authorizerOf = (before: ErasedAuthorizer) =>
  *
  * **Gotchas**
  *
- * - A builder runs once per layer graph, however many surfaces serve its implementation; two servers are two graphs, and two `implement` calls are two builders, even of one builder Effect.
+ * - A builder runs once per layer graph, however many surfaces serve its implementation; two `implement` calls are two builders, even of one builder Effect.
  * - What the builder yields is shared by every call; what a handler yields is resolved per call, as the caller must be. A builder yielding the caller is refused where the server is launched.
  * - Each call has a scope of its own: a resource that must outlive a call is the builder's.
  * - Pass the builder to `implement` itself: through `.pipe(...)` or a wrapper such as `Effect.withSpan`, an `Effect.fn` handler it returns takes an `any` input. A builder written apart returns its record `satisfies Action.Handlers<typeof actions>`.
  * - A record holds one own function per action of the list and no other key, or `implement` throws, a builder's when its layer builds; an inherited method does not count.
- * - Calling the function you passed to `implement` skips authorization and the codecs: call the implementation through `client`.
+ * - Calling the function you passed to `implement` skips authorization and the codecs: call the implementation through `Action.client`.
  * - What a plain `authorize` yields is a request-time requirement of every surface; to read a store once, make `authorize` an Effect that yields it and returns the function.
  * - An authorizer fails only with `Unauthenticated` or `Forbidden`; a limit callers should see, such as a rate limit, is the handler's, declared in the action's `error`.
  */
@@ -552,14 +552,14 @@ export function implement(
 /**
  * The builders of `implementations`, as one layer providing nothing. Surfaces build them
  * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
- * are built in a graph of their own: provided above both, it runs each builder once for every
- * surface, with the services it is given.
+ * are built in a graph of their own, sharing nothing they build: provided above the server and
+ * its siblings, it runs each builder once for every surface, with the services it is given.
  *
  * **Gotchas**
  *
  * - It builds every implementation it is given, those no surface serves included, so it owes their startup services.
  * - A job merged beside `HttpRouter.serve` with no `Action.layer` above both shares the server's build only when its own side builds first, which depends on timing: put the job inside the layer the server serves, or provide this layer above both.
- * - Do not wrap a server in `Layer.fresh`: two servers already share no build. It is for two surfaces in one graph that must each have a build of their own.
+ * - Do not wrap a server in `Layer.fresh`: two servers already share no build. It is for two surfaces in one graph that must each have a build of their own; provide what they share, authentication included, outside it.
  */
 export function layer<const Apps extends Served>(
   implementations: Apps,

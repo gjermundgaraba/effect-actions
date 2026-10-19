@@ -31,12 +31,9 @@ export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
 
 [quickstart/src/Api.ts](../examples/quickstart/src/Api.ts) binds public actions with no options;
 [kitchen-sink/src/Api.ts](../examples/kitchen-sink/src/Api.ts) gives `prefix` and `error` and makes
-two bindings, one per identity. What every endpoint declares is on `make`, the rules of `prefix`,
-`error` and `authentication` on `ActionHttp.Options`, and a protected action's descriptor in
-[Authentication.md](Authentication.md#declare-how-callers-sign-in).
-
-- To keep an action off HTTP, leave it out of the binding; its implementation may still serve
-  it as a tool or a command.
+two bindings, one per identity. What every endpoint declares is on `ActionHttp.make`, the rules of
+`prefix`, `error` and `authentication` on `ActionHttp.Options`, and a protected action's descriptor
+in [Authentication.md](Authentication.md#declare-how-callers-sign-in).
 
 ## Serve the routes
 
@@ -61,8 +58,7 @@ import { status } from "./status/handlers.js";
 // Every domain's implementation, once. Each surface below takes the same list.
 const implementations = [status, notes, identity];
 
-// JSON routes at `/api/<action>`, the binding's. A protected route authenticates before it
-// reads its body; `getStatus` answers anyone.
+// JSON routes at `/api/<action>`, the binding's; `getStatus` answers anyone.
 const api = ActionHttp.layer(Http, implementations);
 
 // The host's own routes sit beside the actions' on the same router.
@@ -78,12 +74,11 @@ const openApi = HttpRouter.add(
 );
 
 // What the host serves: the JSON routes, the same actions as MCP tools at `/mcp`, and the host's
-// own routes. Listing the tools and calling `getStatus` need no token, because `getStatus` is
-// public: an endpoint of protected tools alone asks a token for the listing too. Any other call
-// answers 401 with where to sign in, and so does a client of an MCP revision with sessions when
-// it opens one, since a session may call any tool. It still requires `NoteStore`: the entrypoint
-// chooses which one, and a test chooses its own. The entrypoint also chooses how the MCP
-// endpoint runs: one server for every request, or one per request.
+// own routes. The MCP endpoint serves the public `getStatus` beside the protected tools, so a
+// signed-out 2026-07-28 client may list the tools and call `getStatus`; what else needs a token
+// is on `ActionMcp.LayerHttpOptions.authentication`. It still requires `NoteStore`: the
+// entrypoint chooses which one, and a test chooses its own. The entrypoint also chooses how the
+// MCP endpoint runs: one server for every request, or one per request.
 const serving = (requestScoped: boolean) =>
   Layer.mergeAll(
     api,
@@ -104,10 +99,10 @@ export const requestScopedRoutes = serving(true);
 ```
 
 The smallest routes are [quickstart/src/routes.ts](../examples/quickstart/src/routes.ts). What
-each route answers and what an `ErrorReporter` is given are on `layer`.
+each route answers and what an `ErrorReporter` is given are on `ActionHttp.layer`.
 
 The entrypoint serves the routes, with a request body limit; what that limit covers is on
-`layer`.
+`ActionHttp.layer`.
 
 ```ts example=notes-service/src/server.ts
 import { createServer } from "node:http";
@@ -127,8 +122,8 @@ const server = Layer.unwrap(
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
-      // Request bodies have no size limit unless the host sets one. This covers every route it
-      // serves.
+      // Request bodies have no size limit unless the host sets one. This covers every route that
+      // reads its body whole.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
       // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
       Layer.provide(NoteStore.layerMemory),
@@ -139,14 +134,13 @@ const server = Layer.unwrap(
 Layer.launch(server).pipe(NodeRuntime.runMain);
 ```
 
-- Beside rpcs, one authentication provider serves both
-  ([ActionRpc.md](ActionRpc.md#serve-the-rpcs), "The same actions as JSON too";
-  [kitchen-sink/src/server.ts](../examples/kitchen-sink/src/server.ts)).
-- A service a handler or an authorizer reads per request is provided by router middleware around
-  the layer, given as `Layer.provide(resolveTenant.layer)`
-  ([kitchen-sink/src/workspaces/tenant.ts](../examples/kitchen-sink/src/workspaces/tenant.ts)),
-  or by the layer's own `middleware`; declaring it, and why not `HttpRouter.provideRequest`, are
-  on `layer`.
+- A service a verifier, handler or authorizer reads per request is provided by router middleware
+  around the layer
+  ([kitchen-sink/src/workspaces/tenant.ts](../examples/kitchen-sink/src/workspaces/tenant.ts),
+  read by the verifier, provided in
+  [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts)), or, for a handler or
+  authorizer, by `ActionHttp.LayerOptions.middleware`; declaring it, and why not
+  `HttpRouter.provideRequest`, are on `ActionHttp.layer`.
 
 ### Split a binding across layers, and add middleware
 
@@ -155,15 +149,15 @@ Serve each action from exactly one layer. Files:
 [kitchen-sink/src/identity/quota.ts](../examples/kitchen-sink/src/identity/quota.ts). Where a
 check runs decides what it sees:
 
-| Where                                                | Runs                                     | Use it for                                                 |
-| ---------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
-| Global router middleware                             | before routing, on every route           | a Host or Origin policy, CORS                              |
-| Router middleware provided to a `layer` call         | around its routes, before authentication | a per-request service; a limit on unauthenticated requests |
-| The layer's `middleware`                             | after authentication, before decoding    | a limit keyed by the caller, counting invalid input too    |
-| The handler ([Action.md](Action.md#authorize-calls)) | after decoding and the authorizer        | a limit that holds on every surface, MCP included          |
+| Where                                                    | Runs                                     | Use it for                                                 |
+| -------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
+| Global router middleware                                 | before routing, on every route           | a Host or Origin policy, CORS                              |
+| Router middleware provided to an `ActionHttp.layer` call | around its routes, before authentication | a per-request service; a limit on unauthenticated requests |
+| `ActionHttp.LayerOptions.middleware`                     | after authentication, before decoding    | a limit keyed by the caller, counting invalid input too    |
+| The handler ([Action.md](Action.md#authorize-calls))     | after decoding and the authorizer        | a limit that holds on every surface, MCP included          |
 
-What a middleware answering with a binding error must send is on `Options.error`. A request
-policy that must run before authentication and OAuth discovery:
+What router middleware answering with a binding error must send is on `ActionHttp.Options.error`.
+A request policy that must run before authentication and OAuth discovery:
 [Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
 
 ### Publish the OpenAPI document
@@ -171,12 +165,12 @@ policy that must run before authentication and OAuth discovery:
 Give `Http.api`, a plain `HttpApi`, to `OpenApi.fromApi`, `HttpApiSwagger.layer` or
 `HttpApiScalar.layer`, on routes of the host's own: `openApi` above,
 [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) (`documentation`). What the
-document holds and omits is on `Binding.api`.
+document holds and omits is on `ActionHttp.Binding.api`.
 
 ## Call the API from Effect
 
 What a call fails with is on `ActionHttp.client`, and a token or a per-request sign-in goes
-through `transformClient`.
+through `ActionHttp.ClientOptions.transformClient`.
 
 ```ts example=quickstart/src/client.ts
 import { NodeRuntime } from "@effect/platform-node";
@@ -210,8 +204,6 @@ with `Effect.runPromise`. Files:
 [notes-service/src/browser.ts](../examples/notes-service/src/browser.ts),
 [kitchen-sink/src/sdk.ts](../examples/kitchen-sink/src/sdk.ts) (a `baseUrl`, two headers).
 
-- A page on another origin passes `baseUrl`, and the server must allow that origin with
-  `HttpRouter.cors`
-  ([kitchen-sink/src/request-policy.ts](../examples/kitchen-sink/src/request-policy.ts), `cors`);
-  sending cookies from there is on `FetchClientOptions.fetch`.
+- A page on another origin needs the server to allow it with `HttpRouter.cors`; sending cookies
+  from there is on `ActionHttp.FetchClientOptions.fetch`.
 - Bundling the page: [setup.md](setup.md#bundle-for-a-browser).

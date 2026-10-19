@@ -88,7 +88,7 @@ conversations.pipe(
   // A real `LanguageModel` plugs in here: the layer of a provider's model, with the layer of
   // that provider's client, in place of the scripted one. Nothing below this line changes.
   Effect.provide(model),
-  // Startup services only: where tasks and permissions are kept. Never a caller.
+  // Startup services only: where tasks and permissions are kept.
   Effect.provide(layer.pipe(Layer.provide([tasksFile, Permissions.layerMemory]))),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,

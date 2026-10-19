@@ -21,13 +21,12 @@ import { identity } from "./identity/handlers.js";
 import { CurrentCaller, type Member } from "./identity/Identity.js";
 import { tasks } from "./tasks/handlers.js";
 
-// `layer` holds the handlers, and requires the startup services their builders read. Neither it
-// nor `toolkit` holds a caller.
+// `actions.layer` holds the handlers, and requires the startup services their builders read;
+// neither it nor `actions.toolkit` holds a caller.
 const actions = ActionToolkit.make([tasks, identity], {
   // One rule over every call a model makes, asked before the call runs. A read runs at once. A
   // write waits for a person to approve it, except a task the caller adds to their own list:
   // `call.name` narrows `call.input` to that action's. Without a caller, it asks.
-  // This is not authorization: an approved call still passes through `authorize`.
   needsApproval: (call) =>
     !call.action.readOnly &&
     Effect.map(
@@ -48,10 +47,10 @@ export const toolkit = Toolkit.merge(
 
 export const layer = actions.layer;
 
-// Who a turn runs as is provided around that turn, never to `layer`: one toolkit serves every
-// member. This is how this example names a model's caller, and it takes a `Member`. The tools
-// themselves accept any `CurrentCaller`, so keeping the operator away from a model is this
-// function's doing, and that of every host using it.
+// One toolkit serves every member, so who a turn runs as is provided around that turn. This is
+// how this example names a model's caller, and it takes a `Member`. The tools themselves accept
+// any `CurrentCaller`, so keeping the operator away from a model is this function's doing, and
+// that of every host using it.
 export const actingFor = (member: Member) => Effect.provideService(CurrentCaller, member);
 ```
 
@@ -81,8 +80,7 @@ rules are on `ActionToolkit.Options`.
   tested over HTTP in
   [kitchen-sink/test/assistant/assistant.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/assistant/assistant.test.ts).
   Name the files as it does, the route's contract `Assistant.ts` and the loop `handlers.ts`,
-  from the first one written: a lowercase `assistant.ts` beside the contract fails with TS1149
-  ([setup-failures.md](setup-failures.md)).
+  from the first one written.
 - **The real model comes later?** Provide a scripted one from the entrypoint until then, as the
   kitchen-sink does. Reading the model with `Effect.serviceOption` hides the requirement: the
   server builds without one and every request fails.
@@ -105,9 +103,8 @@ to provide the caller among them, are on `ActionToolkit.Tools`.
 ## Name the caller
 
 Provide the identity around each turn, or each call made by hand, as `actingFor` does in
-[assistant/src/toolkit.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/toolkit.ts): the approval rule, `authorize`
-and the handlers of every call in the turn read it. Why never to `layer`, and that a protected
-tool owes it whatever its handler reads, are on `Action.Options.caller`
+[assistant/src/toolkit.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/toolkit.ts). Why never to `layer`, and that
+a protected tool owes it whatever its handler reads, are on `Action.Options.caller`
 ([Action.md](Action.md#say-who-may-call-an-action)).
 
 ## Ask for approval
@@ -126,7 +123,7 @@ A call that needs approval does not run: the turn ends with a `tool-approval-req
 - **Each request is answered on its own**: an approved call runs, a denied one does not, and one
   left unanswered stays open for a later turn; to require every answer at once, check it in the
   host. List the open ones with `ActionToolkit.openApprovals(yield* Ref.get(chat.history))`.
-  The kitchen-sink refuses an `approvalId` answered twice, which would run its call twice
+  The kitchen-sink refuses an `approvalId` answered twice
   ([Assistant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/Assistant.ts)), gives each call its own
   id ([demo-model.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/demo-model.ts)) and lets only its
   owner reach a conversation
@@ -134,9 +131,10 @@ A call that needs approval does not run: the turn ends with a `tool-approval-req
 - A denied call's result, `{ type: "execution-denied", reason }`, has `reason` `undefined` unless
   the answer gives one, so it is not JSON: a route answering it as a `Schema.Unknown` success
   answers an empty 500.
-- **If a turn fails or is interrupted once an approved call has started**:
+- **If a turn fails or is interrupted once an approved call has started**, the call may have
+  run: end the conversation and say so in the error, as
   [kitchen-sink/src/assistant/conversations.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/conversations.ts)
-  and [handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/handlers.ts). What a failed
+  and [handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/assistant/handlers.ts) do. What a failed
   `streamText` leaves is on `ActionToolkit.openApprovals`.
 - **Show the person what is asked**: [assistant/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/agent.ts)
   joins each request to its call by `toolCallId`; how to read the arguments is on

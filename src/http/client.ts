@@ -103,7 +103,10 @@ const methodsWith = <E, R>(
         http.actions.map((action) => {
           const method = native[action.name];
 
-          if (method === undefined) throw new Error(`No client method for ${action.name}`);
+          if (method === undefined)
+            throw new Error(
+              `No client method for ${action.name} (use the binding \`ActionHttp.make\` returned, whose group holds this action)`,
+            );
 
           return [action.name, checked(action, (payload) => method({ payload }))];
         }),

@@ -52,11 +52,11 @@ the installed version. Install first ([setup.md](setup.md#install)).
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [setup.md](setup.md)                                     | install, write `tsconfig.json`, import the modules, write the minimal program, lay out an application, bundle a browser client                                        |
 | [Action.md](Action.md)                                   | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors, call actions from a job, share one build across servers |
-| [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, limit request bodies, publish OpenAPI, call them from Effect or a browser                                                    |
-| [ActionMcp.md](ActionMcp.md)                             | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add prompts and resources                           |
+| [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, limit request bodies, split a binding across layers and add middleware, publish OpenAPI, call them from Effect or a browser  |
+| [ActionMcp.md](ActionMcp.md)                             | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add prompts and resources, send notifications       |
 | [ActionRpc.md](ActionRpc.md)                             | bind actions to Effect rpcs, serve them on a protocol, call them, send request context with a call                                                                    |
 | [ActionToolkit.md](ActionToolkit.md)                     | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval                                                                               |
-| [ActionCli.md](ActionCli.md)                             | run actions as local commands, or call a server from commands; shape flags, input and output; add a command of your own                                               |
+| [ActionCli.md](ActionCli.md)                             | run actions as local commands, or call a server from commands; shape flags, input and output; name the caller; add a command of your own                              |
 | [Authentication.md](Authentication.md)                   | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope                                                                         |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication                                   |
 | [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                      |
@@ -99,15 +99,15 @@ and each built-in error: grep the symbol.
   ([Authentication.md](Authentication.md#verify-credentials)), and login, consent and token
   issuance are its own. The library defines no scopes: a `Forbidden` names the scopes a call
   needs, and the library answers with the OAuth challenge
-  ([Authentication.md](Authentication.md#step-up-for-a-scope)). OAuth, its discovery and
-  step-up, is Bearer's.
+  ([Authentication.md](Authentication.md#step-up-for-a-scope)); which scheme speaks OAuth is on
+  `Authentication.Options`'s `security`.
 - **Decide who may do what.** It runs the `authorize` an implementation states and writes no rule
   of its own ([Action.md](Action.md#authorize-calls)).
-- **Filter tool discovery by caller.** `tools/list` names every tool its endpoint serves: serve
-  public tools on an endpoint of their own if signed-out callers must not see the rest
-  (`ActionMcp.LayerHttpOptions`'s `authentication`).
+- **Filter tool discovery by caller.** What `tools/list` shows a signed-out caller, and the
+  endpoint split that hides protected tools, are on `ActionMcp.LayerHttpOptions`'s
+  `authentication`.
 - **Limit requests.** A rate limit is the handler's, failing with an error its action declares, or
-  middleware's; a request body has no size limit unless the host sets one
+  middleware's ([Action.md](Action.md#authorize-calls)); the request body limit is the host's
   ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
 - **Allow browsers across origins.** CORS for JSON routes is the host's, with `HttpRouter.cors`;
   an MCP endpoint refuses a browser `Origin` it does not list

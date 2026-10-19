@@ -7,9 +7,9 @@ import { chatOver, openChat } from "../src/browser.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 
-// The page's client against the real rpcs, in memory. `openChat` needs a client protocol and
-// does not care which: a page gives it `connection(url)`, a WebSocket, and this test Effect's
-// HTTP protocol, answered by `Testing.layer`, which cannot upgrade a WebSocket.
+// The page's client against the real rpcs, in memory, served as in routes.test.ts. `openChat`
+// needs a client protocol and does not care which: a page gives it `connection(url)`, a
+// WebSocket, and this test Effect's HTTP protocol.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerJson),
   Layer.provide(

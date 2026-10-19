@@ -229,7 +229,7 @@ export interface LayerOptions<M extends Middleware = [], A extends Action.Any = 
    *
    * - A middleware requiring the identity leaves it owed on a layer serving a public action: bind the protected actions apart, or read the identity with `Effect.serviceOption`, which a public rpc's call lacks.
    * - A middleware provides a service only to those listed before it and the handlers, and only in a list written in place as a tuple: listed earlier, or in an array-typed list, it leaves the service owed.
-   * - Router middleware or `HttpRouter.provideRequest` around the layer runs once per WebSocket, at its upgrade, so its value holds for the whole connection: what differs per message needs a listed middleware.
+   * - Router middleware around the layer runs once per WebSocket, at its upgrade, so its value holds for the whole connection: what differs per message needs a listed middleware.
    */
   readonly middleware?: M;
 }
@@ -357,10 +357,10 @@ const handlerOf = (
  * its `actions` lists, as `ActionHttp.layer` selects them, under the protocol and JSON
  * serialization the host provides. Each message of a protected rpc authenticates from its own
  * headers with the binding's descriptor; then the listed `middleware` runs, the input decodes,
- * a failure answering `InvalidInput`, and the implementation's `authorize` and the handler run,
- * as on every surface. The layer fails as the builders do and needs at startup what they need;
- * per request it owes, as router request markers, what the authorizers and handlers read until
- * its `middleware` provides it, or, over a router-mounted protocol, the route's request context.
+ * and the implementation's `authorize` and the handler run, as on every surface. The layer
+ * fails as the builders do and needs at startup what they need; per request it owes, as router
+ * request markers, what the authorizers and handlers read until its `middleware` provides it,
+ * or, over a router-mounted protocol, the route's request context.
  * A protected action's identity comes from its authentication alone.
  *
  * **Gotchas**
@@ -369,6 +369,7 @@ const handlerOf = (
  * - An rpc the layer does not serve ends its call with `Unknown request tag`, as does every rpc of a second `ActionRpc.layer` given the same protocol, which never receives a message: serve a protocol's rpcs from one layer, or give the second a protocol on another path.
  * - A declared error, or `InvalidInput` for input that does not decode, is the call's typed failure; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say; the socket stays open, so a token may expire under it and a client handles `Unauthenticated` itself.
  * - A defect, an undeclared failure, a middleware that throws, or a success or an error that does not encode ends that call with an `Error` whose message is `Internal server error`, its cause logged and reported to the call's `ErrorReporter`s; the connection's other calls go on.
+ * - An `ErrorReporter` is given only what ends a call with `Internal server error`, never a declared failure, a refusal or `InvalidInput`, unlike `ActionHttp.layer`'s `Info`: an alert counting declared failures counts none from rpcs.
  * - An rpc's credential is read from its headers alone: an API key `in: "query"` never reaches authentication.
  * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no HTTP request or route: a provider publishing a `protectedResource` leaves `HttpRouter` owed, and a verifier yielding a request service leaves it owed.
  */
@@ -502,7 +503,7 @@ type NativeClient = { readonly [name: string]: NativeMethod | undefined };
  * **Gotchas**
  *
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
- * - A browser WebSocket sets no header on its upgrade, so a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.` (under Bearer): send the token on each call with `RpcClient.withHeaders`.
+ * - A browser WebSocket cannot set an `Authorization` header on its upgrade, so under Bearer a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.`: send the token on each call with `RpcClient.withHeaders`.
  * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
  */
 export function client<const B extends Any>(
@@ -527,7 +528,10 @@ export function client(
       binding.actions.map((action) => {
         const method = native[action.name];
 
-        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+        if (method === undefined)
+          throw new Error(
+            `No client method for ${action.name} (use the binding \`ActionRpc.make\` returned, whose group holds this action's rpc)`,
+          );
 
         return [action.name, checked(action, (payload) => method(payload))];
       }),

@@ -15,7 +15,8 @@ const guide = `# Triage
 const tools = Action.byName(Issues);
 
 // Effect's own MCP resources and prompts, served beside the actions' tools as an endpoint's
-// `features`: native, not actions. This guide is the same for every caller, so it needs none.
+// `features`: native, not actions. This guide is the same for every caller, so it reads no
+// caller, which `features` never receive.
 export const features = Layer.mergeAll(
   McpServer.resource({
     uri: "tracker://guides/triage",

@@ -37,21 +37,20 @@ const server = Layer.unwrap(
       });
 
     return Layer.mergeAll(
-      // Two audiences, two listeners. Each `HttpRouter.serve` builds its routes in a layer
-      // graph of its own, with a router of its own: the public port can only ever reach the
-      // members' routes, and nothing built inside one is shared with the other. The socket
-      // is merged into the public port's graph, so it is a route of that router: the request
-      // policy, global to the router, refuses a foreign Origin's upgrade as it does a request,
-      // and the rpcs spend the quota the routes spend, built once.
+      // Two audiences, two listeners, each with a router of its own: the public port can only
+      // ever reach the members' routes. The socket is merged into the public port's routes, so
+      // it is a route of that router: the request policy, global to the router, refuses a
+      // foreign Origin's upgrade as it does a request, and the rpcs spend the quota the routes
+      // spend, built once.
       HttpRouter.serve(Layer.merge(publicRoutes, socket)).pipe(Layer.provide(listen(publicPort))),
       HttpRouter.serve(adminRoutes).pipe(Layer.provide(listen(adminPort))),
     ).pipe(
-      // Request bodies have no size limit unless the host sets one. This covers every HTTP
-      // route of both ports, the MCP endpoint included.
+      // Request bodies have no size limit unless the host sets one. This covers every route
+      // that reads its body whole, on both ports, the MCP endpoint included.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, limit)),
-      // So what both ports share is provided outside both, once: the builders, then the
-      // services the builders, the verifiers and the quota are built from. A workspace an
-      // operator suspends on one port is thereby refused on the other.
+      // What both ports share is provided outside both: the builders, as routes.ts says, then
+      // the services the verifiers and the quota are built from, so a workspace an operator
+      // suspends on one port is refused on the other.
       Layer.provide(builders),
       Layer.provide(memory),
     );

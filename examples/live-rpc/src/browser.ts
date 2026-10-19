@@ -9,10 +9,9 @@ import { Rpc } from "./Rpc.js";
 // bundler gets the contracts and Effect's RPC client, no handler and nothing of Node.
 
 // Effect's own client protocol: one WebSocket, speaking the server's JSON. This layer owns
-// the socket: it opens when the layer is built and closes when the layer is released, so
-// provide it once, around the page's whole program, never around one call. Which WebSocket is
-// left to the host: a page provides `Socket.layerWebSocketConstructorGlobal`, the browser's
-// own, and client.ts provides Node's.
+// the socket, so a page provides it once, around its whole program, and every call shares
+// that one socket. Which WebSocket is left to the host: a page provides
+// `Socket.layerWebSocketConstructorGlobal`, the browser's own, and client.ts provides Node's.
 export const connection = (url: string) =>
   RpcClient.layerProtocolSocket().pipe(
     Layer.provide(Socket.layerWebSocket(url)),
@@ -29,14 +28,13 @@ export const openChat = Effect.gen(function* () {
     rooms: Effect.map(client.listRooms(), ({ rooms }) => rooms),
 
     room: (name: string, token: string) => {
-      // A browser WebSocket sets no header when it connects, so the token travels on each
-      // message, and the room beside it. A refreshed token needs no new socket.
+      // A browser WebSocket cannot set an `Authorization` header on its upgrade, so the token
+      // travels on each message, and the room beside it. A refreshed token needs no new socket.
       const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
 
       return {
         // Called again and again while the page is open, with the last id it holds. A token
-        // may expire under a socket that stays up, so the refusals are handled here. Each is
-        // a typed failure matched by its tag, and only that call fails: the socket stays open.
+        // may expire while the page stays open, so each refusal becomes what the page shows.
         read: (after: number) =>
           client.readMessages({ after }).pipe(
             here,

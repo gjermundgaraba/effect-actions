@@ -10,8 +10,7 @@ const loopback = ["localhost", "127.0.0.1"];
 // any page's request, so a foreign Origin must be refused before authentication reads it.
 // That is why this is global router middleware (`global: true`): it runs before routing, so
 // before every route's authentication. As a layer's own `middleware` it would run inside the
-// authentication, too late. Whether it also runs before the discovery the Bearer provider
-// publishes, global middleware too, is decided where it is provided: last, in routes.ts.
+// authentication, too late.
 export const requestPolicy = HttpRouter.middleware(
   Effect.gen(function* () {
     const hosts = [...loopback, new URL(yield* publicUrl).hostname];

@@ -5,10 +5,7 @@ and nearly every option. Members of a workspace file, discuss and close issues, 
 screenshots, over HTTP, MCP, Effect RPC, a CLI and an assistant, in process and behind a route.
 Operators suspend workspaces on a second port, or from a console on the host.
 
-Open it when you need a working use of one feature: the [index](#index) maps each export and
-option to the file that shows it. To start an application, copy
-[notes-service](../notes-service/) instead; it is this layout at a size you can read in one
-sitting.
+The [index](#index) maps each export and option to the file that shows it.
 
 ## Run it
 

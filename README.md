@@ -139,10 +139,8 @@ type-checked and tested with the library and ship in the package.
 ## Docs
 
 [docs/](docs/README.md) is written for coding agents: one short page per module, organized by
-task, each linking to the example files that show the task working.
-
-- [docs/README.md](docs/README.md): start here: which page answers which task, and which
-  surface to use for which caller.
+task, each linking to the example files that show the task working. Start at
+[docs/README.md](docs/README.md).
 
 ## For agents
 

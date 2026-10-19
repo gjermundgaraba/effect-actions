@@ -15,8 +15,8 @@ const server = Layer.unwrap(
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
-      // Request bodies have no size limit unless the host sets one. This covers every route it
-      // serves.
+      // Request bodies have no size limit unless the host sets one. This covers every route that
+      // reads its body whole.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
       // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
       Layer.provide(NoteStore.layerMemory),

@@ -32,7 +32,7 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()(
 ) {}
 
 // A shared error list: what any write to an existing issue may fail with. Each such action
-// spreads this one array into its `error`, here and in attachments/Attachments.ts, so an error
+// names this one array as its `error`, here and in attachments/Attachments.ts, so an error
 // added to the list is declared by all of them.
 export const IssueWriteErrors = [IssueNotFound, RateLimited] as const;
 

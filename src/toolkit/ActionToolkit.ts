@@ -71,7 +71,7 @@ export interface Tools<T extends Record<string, Tool.Any>, E, R> {
 
 /**
  * One call of a tool, as `needsApproval` receives it: its action's name, the action, and
- * the call's decoded input. Checking `name` narrows the other two to that action's.
+ * the call's decoded input.
  */
 export type ToolCall<A extends Action.Any = Action.Any> = A extends Action.Any
   ? {
@@ -119,9 +119,11 @@ interface ErasedOptions {
 const annotateIfGiven = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S | undefined) =>
   value === undefined ? tool : tool.annotate(key, value);
 
-// Why: Every hint is annotated, MCP's default where the contract leaves it out, from the
-// `hintsOf` MCP's listing spreads, so the two cannot disagree. 0.10.0 annotated a hint only where
-// given and left the rest to Effect's defaults, which MCP's listing no longer reads.
+// Why: Every hint is annotated from the `hintsOf` MCP's listing spreads, so the two cannot
+// disagree: MCP's default where the contract leaves one out, except `destructiveHint`, which MCP
+// defaults to `true` for every tool and the library to `false` for a read. 0.10.0 annotated a
+// hint only where given and left the rest to Effect's defaults, which MCP's listing no longer
+// reads.
 const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
   const { readOnlyHint, destructiveHint, idempotentHint, openWorldHint } = hintsOf(action);
   const { title, _meta } = action.mcp;
@@ -154,15 +156,15 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  * Project implementations into Effect's native AI toolkit: one tool per action, keyed by its
  * name, of the listed `actions` or, without them, of every action of the implementations.
  * Startup services build `layer`; request services, the identity `authorize` reads included,
- * are owed where the toolkit handles a call. Guide: `docs/ActionToolkit.md` in this package; a
- * loop served behind a route, with approval: `examples/kitchen-sink/src/assistant/`.
+ * are provided around each turn or call the toolkit handles. Guide: `docs/ActionToolkit.md` in
+ * this package; a loop served behind a route, with approval:
+ * `examples/kitchen-sink/src/assistant/`.
  *
  * **Gotchas**
  *
  * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say.
  * - Arguments that do not decode are a result with `isFailure: true` whose `result` is an `AiError` with `reason` a `ToolParameterValidationError`, never `InvalidInput`, and neither `authorize` nor the handler runs; undeclared arguments are dropped and the call runs.
  * - A defect, or a failure the action's errors reject, is the call's defect; a success or an error that does not encode fails the call with an `AiError`, `Failed to encode result for tool …`.
- * - The host provides the identity around each turn or call: one provided to `layer` becomes the caller of every call made without one.
  */
 export function make<
   const Apps extends Served,

@@ -56,7 +56,6 @@ export const assistant = Action.implement(
         return {
           conversation,
           text: response.text,
-          // Effect's result for a call that did not run is left out.
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),

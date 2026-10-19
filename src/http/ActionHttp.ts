@@ -233,7 +233,7 @@ export interface Binding<
    *
    * **Gotchas**
    *
-   * - Serve it with `layer`, never the native `HttpApiBuilder`: with a protected action the host then fails to build, with `Service not found: effect-actions/Authentication/Security/…`.
+   * - Serve it with `layer`, never the native `HttpApiBuilder`: its group name is typed `string`, so `HttpApiBuilder.group(api, "api", …)` is refused as `Endpoint not handled: ${string}`, and given a `string`-typed name a protected action makes the host fail to build with `Service not found: effect-actions/Authentication/Security/…`.
    * - A header that middleware reads is not in its document, whose operations list no `parameters`: rewrite it, `OpenApi.fromApi(Http.api.annotate(OpenApi.Transform, (document) => …))`, or make the value an input.
    * - An OAuth protected resource is documented as a bearer scheme: Effect has no OAuth scheme.
    * - Combined into one document, `HttpApi.make("app").addHttpApi(A.api).addHttpApi(B.api)`, a shared action name makes `OpenApi.fromApi` throw `Duplicate OpenAPI operationId`, and a shared prefix silently drops one binding's actions from the document and a native client: otherwise document each alone.
@@ -284,8 +284,8 @@ const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middle
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`, a
  * `readOnly` one too. Every endpoint declares its action's errors, the binding's `error`, and
  * the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a
- * typed failure.
- * Guide: `docs/ActionHttp.md` in this package; in an application: `examples/notes-service/src/routes.ts`.
+ * typed failure; a protected one also declares what its descriptor's verifier fails with.
+ * Guide: `docs/ActionHttp.md` in this package; in an application: `examples/notes-service/src/Api.ts`.
  */
 export function make<
   const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
@@ -390,9 +390,9 @@ const jsonContentType = () =>
  * authorization and handlers of the actions it serves need, until its `middleware` or middleware
  * around it provides them, the identity of a protected action excepted, which its authentication
  * provides; what is provided per request wins over what the layer was built with. A declared
- * error answers with its JSON at its `httpApiStatus`, 422 without one, as `Action.Options.error`
- * says, input that does not decode a 400 `InvalidInput`, and a refusal as
- * `Action.Unauthenticated` and `Action.Forbidden` say.
+ * error answers with its JSON at the status `Action.Options.error` gives it, input that does not
+ * decode a 400 `InvalidInput`, and a refusal as `Action.Unauthenticated` and `Action.Forbidden`
+ * say.
  *
  * **Gotchas**
  *
@@ -401,9 +401,10 @@ const jsonContentType = () =>
  * - A defect, an undeclared failure, or a success or an error that does not encode answers an empty 500: the cause goes to the log and to the call's `ErrorReporter`s, never to the body.
  * - A path no layer serves, or a method other than `POST` on a route, is a 404.
  * - The 415 keeps from every handler what another site's page can send without a CORS preflight, such as a form post carrying the user's cookie; the server's CORS policy decides the rest.
- * - Router middleware providing a request service `X` is declared `HttpRouter.middleware<{ provides: X }>()`: without the type argument it runs and the layer still owes `X`. `HttpRouter.provideRequest(layer)` builds its layer once, at startup, so it never provides an identity or a tenant.
- * - A request body is read whole, however large, unless the host provides `HttpServerRequest.MaxBodySize` to `HttpRouter.serve`, limiting every route it serves, MCP endpoints included. On Node a request over it gets no response, its connection closed, never a 413; `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
- * - An `ErrorReporter` the server runs with is given, as `Info`, a declared failure of a handler or `authorize` and an input that does not decode, never a refused credential: give an error class `override readonly [ErrorReporter.ignore] = true` to keep it out, and drop `Info` for a built-in error, which takes no mark.
+ * - Router middleware providing a request service `X` is declared `HttpRouter.middleware<{ provides: X }>()`: without the type argument it runs and the layer still owes `X`.
+ * - `HttpRouter.provideRequest(layer)` builds its layer once, at startup, so it never provides an identity or a tenant.
+ * - A request body is read whole, however large, unless the host provides `HttpServerRequest.MaxBodySize` to `HttpRouter.serve`, limiting every route that reads its body whole, MCP endpoints included; a body a route reads as a stream is not limited. On Node a request over it gets no response, its connection closed, never a 413; `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
+ * - An `ErrorReporter` the server runs with is given, as `Info`, a handler's declared failure and an input that does not decode, never a refusal or a refused credential: give an error class `override readonly [ErrorReporter.ignore] = true` to keep it out, and drop `Info` for a built-in error, which takes no mark.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,

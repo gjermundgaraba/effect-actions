@@ -4,9 +4,8 @@ Native Effect CLI commands for actions, with flags derived from each action's in
 `command` take implementations and run the handler in the command's own process, behind the same
 `authorize`: for a local tool, or an operator console that has the services itself. `remote` and
 `remoteCommand` take an HTTP binding and call a server, running nothing locally: for users of a
-service you already serve. `make` and `remote` derive a command for every action of the
-implementations or the binding, so a new action is a new command: list `actions` to leave some
-out.
+service you already serve. `make` and `remote` derive one command per action; which actions a
+surface serves is on `Action.make`.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionCli-failures.md](ActionCli-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -29,21 +28,17 @@ import { tasksFile } from "./platform/tasks-file.js";
 // Entrypoint: `node --import tsx examples/assistant/src/cli.ts list-tasks`.
 // The operator's own tool. No credential arrives at a terminal, so this host names the caller
 // itself: whoever runs the command, as the trusted operator. Being local earns nothing more:
-// `authorize` runs here as for a model's tool call, and admits the operator by name.
+// `authorize` runs here as for a model's tool call, and admits the operator by its kind.
 const operator: Operator = { kind: "operator", id: userInfo().username };
 
 const assistant = commands.pipe(
-  // Services go on the command, so they are built when an action runs: `--help` and a
-  // mistyped flag never open the tasks file.
   Command.provide(Layer.mergeAll(tasksFile, Permissions.layerMemory)),
   Command.provideSync(CurrentCaller, operator),
 );
 
-// A command writes its result alone to stdout: JSON, or what `render` returns. Its failure
-// goes to stderr under an `ERROR` heading, as JSON such as `{"_tag":"TaskNotFound","id":"9"}`,
-// exiting 1, and so do its handler's logs, such as the store's. A command's defect, such as a
-// tasks file that does not decode, `runMain` reports, on stdout. `logToStderr`, applied last,
-// moves that to stderr too, so `assistant list-tasks --json | jq` reads results.
+// A command's defect, such as a tasks file that does not decode, `runMain` reports on stdout.
+// `logToStderr`, applied last, moves that to stderr, so `assistant list-tasks --json | jq` reads
+// results alone.
 Command.run(assistant, { version: "1.0.0" }).pipe(
   Effect.provide(NodeServices.layer),
   ActionCli.logToStderr,
@@ -65,8 +60,9 @@ defect included, on `ActionCli.logToStderr`; matching a failure after `Command.r
 ## Call a server from commands
 
 Pass the HTTP binding to `remote`. The program imports the binding alone, never a handler. The
-connection is the `client` option of `ActionCli.remote`, an `ActionHttp.client`
-([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)):
+connection is the `client` option, an `ActionHttp.client`
+([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)), its rules on `Calling`'s `client`,
+shared by `remote` and `remoteCommand`:
 [notes-service/src/commands.ts](../examples/notes-service/src/commands.ts) requires a token,
 mapping its absence to an error that says what to do, and
 [kitchen-sink/src/cli.ts](../examples/kitchen-sink/src/cli.ts) adds a tenant header, reads an
@@ -114,7 +110,7 @@ encoded JSON value decides the kind of flag:
 ### Arguments, short flags and stdin
 
 `render`, `positional`, `aliases` and `stdin` shape one command; in an aggregate they go under
-`commands`, keyed by the action's name. Each option's rules are on `CommandOptions`:
+`commands`, keyed by the action's name. Each one's rules are on its own declaration:
 
 ```ts example=assistant/src/commands.ts
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
@@ -123,7 +119,7 @@ import { tasks } from "./tasks/handlers.js";
 
 // The same implementations as local commands, `assistant <action>`: a command runs the handler
 // in this process, behind the same `authorize`. `add-task` and `who-am-i` are as derived; the
-// others each change one thing.
+// others each change their syntax or output.
 export const commands = ActionCli.make([tasks, identity], {
   name: "assistant",
   commands: {

@@ -38,8 +38,7 @@ set of routes share each builder, as `Action.implement` says:
   `codex mcp add <name> --url <url>/mcp --bearer-token-env-var <VAR>`;
   [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/README.md#connect-a-client) has stdio and Claude Desktop.
 - Where an endpoint without `authentication` listens, and its body limit:
-  [mcp-tools/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/server.ts). A 2025 client's session, on
-  `layerHttp`, lasts until it ends it or the process stops, so limit request bodies.
+  [mcp-tools/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/server.ts).
 - **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`:
   [notes-service/src/worker.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/worker.ts).
 - The endpoint takes no layer middleware. A limit that must hold for tools goes in the handlers:
@@ -83,16 +82,17 @@ ActionMcp.runStdio([status, notes, identity], { name: "notes-service", version: 
 `ActionCli.logToStderr` moves, and what it cannot, is on `ActionCli.logToStderr`. Test the tools
 without a process: [Testing.md](Testing.md#test-mcp-tools).
 
-To try a server by hand, send one request as `request` builds it, its 2026-07-28 metadata in
-`_meta`: [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/README.md#connect-a-client) has the `curl`, with
-HTTP's five headers, and [notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/README.md#run-it) the stdio command.
+To try a server by hand, send one request as `ActionMcp.request` builds it, its 2026-07-28
+metadata in `_meta`: [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/README.md#connect-a-client) has the
+`curl`, with HTTP's five headers, and
+[notes-service](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/README.md#run-it) the stdio command.
 
 ## Describe tools to a model
 
 A tool is its contract ([Action.md](Action.md#define-a-contract)): a model knows only the action's
-name, its `description`, and its input schema with each field's `description`. `readOnly` is the
-tool's read-only hint, and the contract's `mcp` option holds its `title`, its other hints and its
-`_meta`. The server's `instructions` say what the tools are for together. See
+name, its `description`, and its input schema with each field's `description`; how the tool
+presents itself is `Action.Options`'s `mcp`. The server's `instructions` say what the tools are
+for together. See
 [mcp-tools/src/printers/Printers.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/Printers.ts) and
 [mcp-tools/src/instructions.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/instructions.ts).
 
@@ -101,7 +101,7 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
   checks reach the listed schema is on `Action.Options.input`.
 - A model acts on a declared error's `message`, so write it for the model:
   [mcp-tools/src/platform/print-farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/platform/print-farm.ts).
-- `actions` lists the tools, and only listed actions must suit MCP:
+- `ActionMcp.Options`'s `actions` lists the tools, and only listed actions must suit MCP:
   [kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts). Leave out an action a
   model should not call, or one that takes a secret ([Action.md](Action.md#define-a-contract)).
 
@@ -109,8 +109,8 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
 
 Give the success an `Action.Image` field and return its bytes and MIME type from the handler:
 `get_camera_snapshot` in
-[mcp-tools/src/printers/Printers.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/Printers.ts); `client`
-decodes it back. An action taking an image as input is no tool, so `actions` leaves it out:
+[mcp-tools/src/printers/Printers.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/Printers.ts);
+`ActionMcp.client` decodes it back. Where `ActionMcp` refuses one is on `Action.Image`:
 [kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts).
 
 ## Protect tools
@@ -124,7 +124,7 @@ sign in. What a signed-in caller may do is each implementation's
 [`authorize`](Action.md#authorize-calls), which runs on every call of a protected tool.
 
 - **One endpoint or two.** What a mixed endpoint, serving public and protected tools, shows and
-  runs signed out is on `LayerHttpOptions.authentication`.
+  runs signed out is on `ActionMcp.LayerHttpOptions`'s `authentication`.
 - Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)):
   [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts).
 
@@ -149,7 +149,8 @@ one and pass it as `features`:
 [kitchen-sink/src/issues/guide.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/guide.ts), given in
 [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) and
 [kitchen-sink/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/stdio.ts). Where their services
-come from is on `features`, and when they need a credential on `authentication`.
+come from is on `ActionMcp.Options`'s `features`, and when they need a credential on
+`ActionMcp.LayerHttpOptions`'s `authentication`.
 
 ## Send notifications from a handler
 

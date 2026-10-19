@@ -966,7 +966,7 @@ it.effect(
       expect(yield* lines(ActionCli.command(app, Settings), args)).toEqual(['"a b c"']);
 
       expect(() => ActionCli.command(app, Settings, { render: String })).toThrow(
-        "Duplicate flag: --json, claimed by field json and render's --json (rename the field or the alias, or drop `render`)",
+        "Duplicate flag: --json, claimed by field json and render's --json (rename the field, or drop `render`)",
       );
 
       const Twice = Action.make("twice", {
@@ -980,7 +980,7 @@ it.effect(
       const twice = Action.implement(Twice, () => Effect.succeed(""));
 
       const clash =
-        "Duplicate flag: --user-id, claimed by field userId and field user_id (rename the field or the alias, or drop `render`)";
+        "Duplicate flag: --user-id, claimed by field userId and field user_id (rename one field)";
 
       expect(() => ActionCli.command(twice, Twice)).toThrow(clash);
       expect(() => ActionCli.make(twice, { name: "tool" })).toThrow(clash);
@@ -1997,18 +1997,18 @@ it.effect("gives a flag the alias its options name, and shows a positional's val
       "Not a flag's input field: scale (aliases name fields read from flags, neither positional nor stdin)",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "n" } })).toThrow(
-      "Duplicate flag: --n, claimed by alias of field limit and alias of field all (rename the field or the alias, or drop `render`)",
+      "Duplicate flag: -n, claimed by alias of field limit and alias of field all (rename one alias)",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "-n" } })).toThrow(
-      "Duplicate flag: --n, claimed by alias of field limit and alias of field all (rename the field or the alias, or drop `render`)",
+      "Duplicate flag: -n, claimed by alias of field limit and alias of field all (rename one alias)",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "all" } })).toThrow(
-      "Duplicate flag: --all, claimed by field all and alias of field limit (rename the field or the alias, or drop `render`)",
+      "Duplicate flag: --all, claimed by field all and alias of field limit (rename the alias or the field)",
     );
     expect(() =>
       ActionCli.command(app, List, { aliases: { limit: "json" }, render: (text) => text }),
     ).toThrow(
-      "Duplicate flag: --json, claimed by render's --json and alias of field limit (rename the field or the alias, or drop `render`)",
+      "Duplicate flag: --json, claimed by render's --json and alias of field limit (rename the alias, or drop `render`)",
     );
   }),
 );

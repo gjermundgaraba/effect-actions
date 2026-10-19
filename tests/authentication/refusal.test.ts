@@ -197,6 +197,21 @@ describe("refusal", () => {
     );
   });
 
+  it("refuses a relative resource, which names no public URL, as Authentication.layer does", () => {
+    const relative = { ...resource, resource: "/mcp" } satisfies Authentication.ProtectedResource;
+
+    const message = `A protected resource is an absolute URL: "/mcp" is not one; give the public URL of the endpoint clients connect to, such as https://api.example.com/mcp, read from configuration`;
+
+    expect(() =>
+      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: relative }),
+    ).toThrow(message);
+    expect(() =>
+      Authentication.layer(CallerLogin, () => Effect.succeed("alice"), {
+        protectedResource: relative,
+      }),
+    ).toThrow(message);
+  });
+
   it("refuses a protected resource under another scheme, as Authentication.layer does", () => {
     const Session = Authentication.make("refusal.Session", Caller, {
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),

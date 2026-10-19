@@ -400,7 +400,7 @@ describe("ActionRpc internal errors", () => {
     },
   );
 
-  const Reported = ActionRpc.make([Crashy, GetUser], { authentication: Login });
+  const Reported = ActionRpc.make([Crashy, GetUser, RenameUser], { authentication: Login });
 
   const callReported = <E, R>(
     server: Layer.Layer<never, E, R>,
@@ -412,30 +412,39 @@ describe("ActionRpc internal errors", () => {
       yield* Effect.exit(client.crashy());
       yield* Effect.exit(client.getUser({ id: "9" }).pipe(signedInAs("alice")));
       yield* Effect.exit(client.getUser({ id: "1" }));
+      yield* Effect.exit(client.renameUser({ id: "1", name: "Bea" }).pipe(signedInAs("reader")));
+
+      const { exits } = yield* sendRawNdjson(
+        [{ tag: "getUser", payload: { id: "1", extra: true } }],
+        "alice",
+      );
+
+      return exits.map(valueOrSquashedCause);
     }).pipe(
       Effect.scoped,
       Effect.provide(
         RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
           Layer.provide(RpcSerialization.layerNdjson),
-          Layer.provide(Testing.layer(server).pipe(Layer.provide(outer))),
+          Layer.provideMerge(Testing.layer(server).pipe(Layer.provide(outer))),
         ),
       ),
       Effect.provide(Users.layerMemory),
     );
 
   it.effect(
-    "reports a defect once with its cause, and neither a declared failure, a refusal nor the generic answer",
+    "reports a defect once with its cause, and neither a declared failure, a refusal, input that does not decode nor the generic answer",
     () =>
       Effect.gen(function* () {
         const reported: Array<string> = [];
 
-        yield* callReported(
+        const [undecoded] = yield* callReported(
           servedAtRpcOverHttp(ActionRpc.layer(Reported, [crashy, userActions])).pipe(
             Layer.provide(authenticate),
             Layer.provide(ErrorReporter.layer([recorder(reported)])),
           ),
         );
 
+        expect(undecoded).toBeInstanceOf(Action.InvalidInput);
         expect(reported).toEqual([expect.stringContaining("db password hunter2")]);
       }),
   );
@@ -611,6 +620,23 @@ describe("ActionRpc selection", () => {
     );
   });
 
+  it.effect("dies naming the fix for a binding whose group lacks an action's rpc", () =>
+    Effect.gen(function* () {
+      const spread = { ...Rpc, actions: [...Rpc.actions, Crashy] };
+      const made = yield* Effect.exit(ActionRpc.client(spread));
+
+      expect(Exit.isFailure(made) && Cause.squash(made.cause)).toEqual(
+        new Error(
+          "No client method for crashy (use the binding `ActionRpc.make` returned, whose group holds this action's rpc)",
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(inMemoryProtocolTo(routes)),
+      Effect.provide(Users.layerMemory),
+    ),
+  );
+
   it.effect("dies when the provider is another descriptor's of the binding's name", () =>
     Effect.gen(function* () {
       const Impostor = Authentication.make("example.Login", CurrentActor);
@@ -623,7 +649,7 @@ describe("ActionRpc selection", () => {
 
       expect(Exit.isFailure(built) && Cause.squash(built.cause)).toEqual(
         new Error(
-          `Authentication "example.Login": the binding's descriptor is not its provider's; build both from one descriptor`,
+          `Authentication "example.Login": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
         ),
       );
     }).pipe(Effect.provide(Users.layerMemory)),

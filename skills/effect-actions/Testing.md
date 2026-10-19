@@ -188,9 +188,9 @@ To change what a credential verifies as, replace the service the verifier reads 
 or provide a test verifier: another `Authentication.layer` of the same descriptor.
 
 A typed client decodes a refusal to its error. To assert on the answer as sent, its status and
-its `www-authenticate` challenge, send the request with `HttpClient.execute`, which succeeds
-whatever the status, as that file does. The status and body of each case are on
-`ActionHttp.layer` and on each built-in error.
+its `www-authenticate` challenge, send the request with `HttpClient.execute`, as that file does;
+a tool call's request is built with `ActionMcp.request` ([Test MCP tools](#test-mcp-tools)).
+The status and body of each case are on `ActionHttp.layer` and on each built-in error.
 
 ## Test MCP tools
 
@@ -198,8 +198,8 @@ whatever the status, as that file does. The status and body of each case are on
 decodes and how it fails are on `ActionMcp.client` and `McpCallError`
 ([ActionMcp-failures.md](ActionMcp-failures.md)).
 
-For what the client's types will not send or its decoding hides, such as a status or
-`tools/list`, build the request with `ActionMcp.request`:
+For what the client's types will not send or its decoding hides, build the request with
+`ActionMcp.request`, which says how to send it:
 [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)
 asserts a 401, and
 [mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts) reads `tools/list`.
@@ -225,4 +225,4 @@ assert its class and its `message` separately, as the last test of
 `expect(error).toEqual(new Action.Forbidden({ message: "anything" }))` passes for every message,
 and so does `toStrictEqual`. Other fields are compared, so `toEqual(new NoteNotFound({ id }))`
 asserts the `id`, and `toEqual(new Action.Forbidden({ scopes: ["issues:write"] }))` still needs the
-message asserted beside it. The message is all a model reads of a tool's failure.
+message asserted beside it.

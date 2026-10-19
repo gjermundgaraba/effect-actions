@@ -40,7 +40,6 @@ program.pipe(
   // No remote caller: this host names the member the assistant acts for, around the turn.
   // DEMO ONLY: a real host names whoever asked.
   Effect.provideService(CurrentMember, members.ada),
-  // Startup services only. An identity provided here would be every caller's.
   Effect.provide(layer.pipe(Layer.provideMerge(Layer.merge(IssueStore.layerMemory, limiter)))),
   // DEMO ONLY: a scripted model. A real one is a provider's layer, in its place.
   Effect.provide(demoModel),

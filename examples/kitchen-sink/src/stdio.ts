@@ -30,7 +30,7 @@ ActionMcp.runStdio([status, identity, issues, attachments], {
   // started it, from its own login or configuration.
   Effect.provideService(CurrentMember, members.ada),
   Effect.provide([NodeStdio.layer, stores, limiter, WorkspaceRegistry.layerMemory]),
-  // stdout carries the protocol alone, so logs and failures go to stderr. Applied last.
+  // stdout carries the protocol alone, so logs and failures go to stderr.
   ActionCli.logToStderr,
   NodeRuntime.runMain,
 );

@@ -465,7 +465,7 @@ describe("layer", () => {
   );
 
   it.effect(
-    "answers it as an empty 500, logging the cause on the process console, which it.effect's TestConsole would keep",
+    "answers a route's defect as an empty 500, logging the cause on the process console, which it.effect's TestConsole would keep",
     () =>
       Effect.gen(function* () {
         const printed: Array<string> = [];

@@ -119,8 +119,7 @@ layout.
 ## Lay out an application
 
 Copy the examples' layout:
-[examples/README.md](../examples/README.md#how-they-are-laid-out). An entrypoint of a remote
-surface never provides an identity: each request brings its own.
+[examples/README.md](../examples/README.md#how-they-are-laid-out).
 
 ## Bundle for a browser
 

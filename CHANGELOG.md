@@ -26,15 +26,18 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   tagged `reason`; or rename one of the tags. Update code matching the old message.
 
 **A message the library throws says its fix.** Every message a consumer can trigger names its
-fix, most in parentheses after what failed: an invalid action name, a missing or invalid
-`caller`, `readOnly` or `authorize`, missing or unknown handlers, a duplicate action, flag,
-command, positional argument or middleware, an action listed but not held, an implementation
-that is a copy, an MCP tool whose input is not one object or whose image is misplaced, a CLI
-builder's refusals, and an authentication descriptor's. A duplicate action says whether one was
-listed twice, two share the name, or two implementations hold it. Some messages changed before
-the fix: `Missing authorize: not a function (…)` replaces
-`Missing authorize: pass an authorization function, or Action.allowAll`, and the copied
-implementation's no longer asks `is effect-actions installed twice?`.
+fix, most in parentheses after what failed. Changed: an invalid action name or `readOnly`, an
+`authorize` that is not a function or given to a public-only target, missing or unknown
+handlers, a duplicate action, flag, command, positional argument or middleware, an action listed
+but not held, an implementation none of whose actions is bound, an implementation that is a
+copy, a protected action without its descriptor, an MCP tool whose input is not one object,
+whose image is misplaced or whose name a native feature claims, a CLI without `Stdio`, a
+client method for an action a hand-spread binding's group lacks, and
+`Authentication.layer`'s and `refusalResponse`'s refusals of a resource, a scope, a fragment or
+an error. A duplicate action says whether one was listed twice, two share the name, or two
+implementations hold it. Some messages changed before the fix: `Missing authorize: not a
+function (…)` replaces `Missing authorize: pass an authorization function, or Action.allowAll`,
+and the copied implementation's no longer asks `is effect-actions installed twice?`.
 
 - Migrate: update code matching an old message; a test matching the message's start still
   passes.
@@ -43,26 +46,32 @@ implementation's no longer asks `is effect-actions installed twice?`.
 
 - A request to a JSON route whose `Content-Type` is not `application/json` is answered 415 by the
   library on every route, with `Unsupported content-type: <type> (send application/json)`, `none`
-  without the header, where a wrong type was answered by Effect's own text.
+  without the header, where a wrong type was answered by Effect's own text and a missing one
+  by `Unsupported content-type: none`.
+- A `protectedResource.resource` that is not an absolute URL, such as `/mcp`, is refused at
+  `Authentication.layer` and `refusalResponse` with the library's own message naming the fix,
+  where the platform's `TypeError: Invalid URL` was thrown. The message for a descriptor given
+  where its provider was built from another now reads
+  `Authentication "<name>": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
+  holding for an MCP endpoint and `protect` too.
 - The docs follow one model, that of `docs/Action.md`: a page is the concept, the one way to do
   each task, whole example files as its snippets and links; the rule of each option is in its
   JSDoc, and what a call answers on each surface is in the JSDoc of the declaration that
   answers it, as `**Gotchas**`: `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`,
-  `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and the
-  three built-in errors in `Action` for a refusal. All of it ships in `dist/`: grep the symbol.
+  `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and
+  `Action.Unauthenticated` and `Action.Forbidden` for a refusal. All of it ships in `dist/`:
+  grep the symbol.
   `docs/Action-in-process.md` is folded into `docs/Action.md`; `docs/guarantees.md` and
   `docs/CONTEXT.md` are gone, each term defined where it is first used. The option tables are
   gone, and the `*-failures.md` pages hold only compiler diagnostics and Effect's own errors,
   one line each. `docs/setup.md`'s `tsconfig.json` adds `"types": ["node"]`, and its install
   table `@types/node`, which the examples need.
-- `make` takes a helper's type parameter standing for `caller`, as it does for `error`: a
+- `Action.make` takes a helper's type parameter standing for `caller` or `error`: a
   `Context.Reference` is refused by `caller`'s own type, not by a rule over the options. One
   standing for `mcp` is still refused, since the hint check cannot see through it.
 - A built-in error listed in an action's `error`, a binding's or an authentication's is accepted,
-  in the types and at `make`, where it was refused: every surface declares it anyway. A helper
-  whose type parameter stands for `make`'s `error` compiles.
-- An error schema a call reaches twice, through a union, a `Schema.suspend` or the binding, is
-  declared once: an endpoint's OpenAPI responses name it once.
+  in the types and at each `make`, where it was refused: every surface declares it anyway.
+- An endpoint's OpenAPI responses name an error schema once, however often the call reaches it.
 
 ## 0.18.2
 

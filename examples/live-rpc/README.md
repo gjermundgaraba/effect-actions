@@ -18,25 +18,9 @@ node --import tsx examples/live-rpc/src/client.ts     # CHAT_URL to change, ws:/
 vp test examples/live-rpc
 ```
 
-`client.ts` runs the browser's client from Node: two members on one socket, then each refusal
-a page handles. `browser.ts` is imported by a page, not run: `openChat` for a page that is an
-Effect program, `connect(url)` for one that calls with promises.
-
-## When you copy this
-
-Four choices here show a feature. Decide each for your application before keeping it:
-
-- **`listRooms` is public** to show a public rpc beside protected ones. It tells a signed-out
-  caller every room's name and how many messages it holds; a room appears once someone posts.
-- **A message naming no room is about `lobby`**, to show a default in request context. Yours may
-  refuse instead.
-- **The room is a header, not an input**, because `authorize` sees the action and not its input:
-  the membership rule reads the room from request context. With the room in the input, the
-  check belongs in the store, never in a helper each handler must remember to call: the store's
-  method takes the member and refuses, as `MessageStore.remove` in `src/chat/store.ts` takes the
-  author and refuses with `NotAuthor`.
-- **`browser.ts` takes a message already gone as removed**, `MessageNotFound` included, since
-  that is what the page asked for. Yours may tell the user it was not there.
+`client.ts` runs the browser's client from Node: two members on one socket, then each declared
+error and refusal a page handles. `browser.ts` is imported by a page, not run: `openChat` for a
+page that is an Effect program, `connect(url)` for one that calls with promises.
 
 ## Layout
 

@@ -26,10 +26,8 @@ const inService = Effect.gen(function* () {
   });
 });
 
-// As an OAuth protected resource the provider publishes discovery (RFC 9728) and names it in
-// every challenge, so an MCP client that gets a 401 finds where to sign in, asking for the read
-// scope first. The resource is the public URL, known only to the deployment: an Effect, read
-// when the provider is built.
+// The OAuth protected resource whose discovery the provider publishes, so an MCP client that
+// gets a 401 finds where to sign in, asking for the read scope first.
 const protectedResource = Effect.map(
   publicUrl,
   (url) =>

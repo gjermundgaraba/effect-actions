@@ -69,9 +69,9 @@ export { client, McpCallError, request } from "./client.js";
 export type { Client, ClientOptions, Params, RequestOptions } from "./client.js";
 
 /**
- * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option except
- * `protocols`, the server information, `instructions` and `extensions`, the actions `A` that
- * are its tools, and the native features it serves beside them.
+ * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option but `protocols`,
+ * the server information, `instructions` and `extensions` among them, the actions `A` that are
+ * its tools, and the native features it serves beside them.
  */
 export interface Options<E = never, R = never, A extends Action.Any = Action.Any> extends Omit<
   Parameters<typeof McpServer.layerStdio>[0],
@@ -475,14 +475,14 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  *
  * **Gotchas**
  *
- * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; a media field, `Action.Image`, is lifted out of `structuredContent` into a block of its own.
+ * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; an `Action.Image` field is left out of `structuredContent` and its text, its block following them, and a success of images alone has no `structuredContent`.
  * - A declared error is an `isError: true` tool result in a 200 holding its JSON as one text block, with no `structuredContent`; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say.
  * - Arguments that do not decode never reach the handler: an `isError: true` result in a 200, text `Invalid parameters for tool '<name>': …`, or for a 2025-06-18 client a JSON-RPC error.
  * - A defect, an undeclared failure, or a success or an error that does not encode is `isError: true`, text `Tool execution failed due to an internal server error.`: the cause goes to the log and to the call's `ErrorReporter`s, never to the client.
  * - An unknown tool is a JSON-RPC error `-32602` in a 200; a body that is not JSON a JSON-RPC error `-32700` in a 200; a `Content-Type` missing or not JSON an empty 415; another HTTP method an empty 405 with `Allow: POST, DELETE`, `Allow: POST` where `requestScoped`, or the 401 of an endpoint with authentication when signed out.
  * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: any other success arrives as its text block alone, a string unquoted.
  * - A client asking for an earlier revision, such as 2025-03-26, is offered 2025-11-25, so a client speaking only that earlier one cannot connect.
- * - Limit request bodies as `ActionHttp.layer` says.
+ * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
  */
 export function layerHttp<
   const Apps extends Served,
@@ -569,13 +569,13 @@ export function layerHttp(
  * go to stderr, since stdout carries the protocol. The host supplies the `Stdio` service, and
  * provides the identity around `runStdio`; arguments are tool input only and never establish
  * request identity or authority, and each implementation's `authorize` runs for its protected
- * actions.
+ * actions. Its tool results, and how it answers each revision and an earlier one asked for, are
+ * `layerHttp`'s.
  *
  * **Gotchas**
  *
- * - Tool results and revisions are `layerHttp`'s, the earlier ones included.
  * - A line that is not JSON goes unanswered, with no `-32700` as over HTTP, and the lines after it are still answered.
- * - The layers provided around it log to stdout, among the protocol's lines: provide `ActionCli.logToStderr` around it, as its gotchas say.
+ * - The layers provided around it log to stdout, among the protocol's lines: apply `ActionCli.logToStderr` to the program, last, as its JSDoc says.
  */
 export function runStdio<
   const Apps extends Served,

@@ -81,6 +81,7 @@ export const CreateNote = Action.make("createNote", {
   error: RequestConflict,
   readOnly: false,
   caller: CurrentUser,
+  // No `idempotentHint: true`: a call without a `requestId` creates a note each time.
   mcp: { destructiveHint: false },
 });
 
@@ -99,8 +100,7 @@ export const UpdateNote = Action.make("updateNote", {
   readOnly: false,
   caller: CurrentUser,
   // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
-  // a write, as is any update of what is stored, a flag such as "read" included.
-  // `createNote` and `importNotes`, which only add, say `false`.
+  // a write. `createNote` and `importNotes`, which only add, say `false`.
 });
 
 export const DeleteNote = Action.make("deleteNote", {
@@ -111,8 +111,6 @@ export const DeleteNote = Action.make("deleteNote", {
   caller: CurrentUser,
 });
 
-// The whole list is decoded, so checked, before the handler writes any of it; the `import`
-// command only reads the file and calls this once (commands.ts).
 // Imports share note content with `createNote`, but exclude request keys because bulk creation
 // does not deduplicate.
 export const ImportNotes = Action.make("importNotes", {

@@ -52,23 +52,23 @@ export const WhoAmI = Action.make("whoAmI", {
 Name it in every binding and MCP endpoint that serves a protected action: an HTTP binding
 ([notes-service/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/Api.ts)), an MCP endpoint
 ([notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts)) and an RPC binding
-([live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/Rpc.ts)). The name's rules are on
-`Authentication.make`, the scheme's on `Options.security`; a second credential for one identity
-is in [kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts).
-A local surface takes no descriptor: the host provides the identity
-([ActionCli.md](ActionCli.md#name-the-caller), [ActionToolkit.md](ActionToolkit.md#name-the-caller),
-[ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
+([live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/Rpc.ts)); a local surface takes none
+([Action.md](Action.md#say-who-may-call-an-action)). The name's rules are on
+`Authentication.make`, the scheme's on `Authentication.Options.security`; a second credential
+for one identity is in
+[kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts).
 
 - **Protecting an action that tests already call breaks them**, at compile time
-  ([Testing-failures.md](Testing-failures.md), [ActionMcp-failures.md](ActionMcp-failures.md)),
-  and a call over HTTP without a credential gets `Unauthenticated` at run time.
+  ([Testing-failures.md](Testing-failures.md),
+  [Authentication-failures.md](Authentication-failures.md#types-and-startup)), and a call over
+  HTTP without a credential gets `Unauthenticated` at run time.
 
 ## Verify credentials
 
 Write the verifier in a server-only module, give it to `Authentication.layer` and provide that
 layer as [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts) does. What the
-verifier takes, fails with and must check itself is on `Verify`; where its layer goes, on
-`Authentication.layer`.
+verifier takes, fails with and must check itself is on `Authentication.Verify`; where its layer
+goes, on `Authentication.layer`.
 
 ```ts example=notes-service/src/identity/verifier.ts
 import { Config, Effect, Redacted } from "effect";
@@ -90,10 +90,9 @@ const verify = (token: Redacted.Redacted<string>) => {
     : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
 };
 
-// Server only: `Login`'s provider; it authenticates before the input is decoded. As an OAuth
-// protected resource it also publishes discovery, so an MCP client that gets a 401 finds where
-// to sign in, asking for read first. The resource is the server's public URL, known only at
-// startup, so it is read from config.
+// Server only: `Login`'s provider. As an OAuth protected resource it also publishes discovery,
+// so an MCP client that gets a 401 finds where to sign in, asking for read first. The resource
+// is the server's public URL, known only at startup, so it is read from config.
 export const authenticate = Authentication.layer(Login, verify, {
   protectedResource: Effect.map(
     Config.String("PUBLIC_URL").pipe(Config.withDefault("http://localhost:3000")),
@@ -111,10 +110,11 @@ export const authenticate = Authentication.layer(Login, verify, {
 
 For a verifier built from startup services, see `authenticateBearer` in
 [kitchen-sink/src/identity/authenticate.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/authenticate.ts);
-for a failure that is not the caller's, `Options.error` and `IssuerUnavailable` in
+for a failure that is not the caller's, `Authentication.Options.error` and `IssuerUnavailable` in
 [kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts); to
 test as a signed-in caller, [Testing.md](Testing.md#test-as-a-signed-in-caller). What each
-surface answers a missing or refused credential with is on `Action.Unauthenticated`, as
+surface answers a missing or refused credential with is on `Action.Unauthenticated` and
+`Action.Forbidden`, as
 [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)
 asserts, status and challenge included.
 
@@ -122,7 +122,8 @@ asserts, status and challenge included.
 
 For an MCP endpoint whose users sign in through OAuth, give the Bearer descriptor's `layer` a
 `protectedResource`, as the verifier above does. Its rules are on
-`LayerOptions.protectedResource` and on each field of `ProtectedResource`;
+`Authentication.LayerOptions.protectedResource` and on each field of
+`Authentication.ProtectedResource`;
 [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)
 asserts the discovery it serves. To restrict who reads it, see
 [Run a request policy before authentication](Authentication-advanced.md#run-a-request-policy-before-authentication).

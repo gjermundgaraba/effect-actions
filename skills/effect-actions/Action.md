@@ -36,7 +36,7 @@ errors with their statuses, described fields and the list;
 [kitchen-sink/src/issues/Issues.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/Issues.ts) uses every
 option. The rules of each option, `input`'s optional fields and `error`'s tags included, are on
 `Action.Options`; where an action must be listed to be served, and matching by object identity,
-are on `make`. The lists live in one file beside the contracts
+are on `Action.make`. The list each surface takes lives in one file beside the contracts
 ([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)).
 
 - **List an action as a tool only where a model may hold what it takes and returns.** A tool
@@ -54,14 +54,14 @@ has no one to authenticate, from the host ([ActionToolkit.md](ActionToolkit.md#n
 `CurrentUser` is declared in
 [notes-service/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/Identity.ts), and
 a public action in [notes-service/src/status/Status.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/Status.ts).
-The rules of an identity are on `caller`; a test sends each caller's credential
+The rules of an identity, never provided at startup, are on `Action.Options.caller`; a test
+sends each caller's credential instead
 ([Testing.md](Testing.md#test-as-a-signed-in-caller)).
 
 - **One protected contract serves callers with a token over HTTP and a local host without
   one**, never a public copy of it: the host provides the caller around `runStdio`
-  ([notes-service/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/stdio.ts)). A second audience
-  takes its own identity, descriptor and binding (`Operator` in
-  [kitchen-sink/src/admin/Admin.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/admin/Admin.ts)).
+  ([notes-service/src/stdio.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/stdio.ts)); a second audience is
+  `Operator` in [kitchen-sink/src/admin/Admin.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/admin/Admin.ts).
 
 ## Implement actions
 
@@ -115,7 +115,8 @@ export const notes = Action.implement(
 A plain handler, no builder, is
 [quickstart/src/greeting/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/greeting/handlers.ts). The
 builder's rules, once per layer graph, a scope per call, passing the builder to `implement`
-itself, calling through `client` and never the function you passed, are on `implement`.
+itself, calling through `Action.client` and never the function you passed, are on
+`Action.implement`.
 
 - **One implementation may hold public and protected actions**, and actions only some
   surfaces serve: group by domain.
@@ -156,13 +157,13 @@ Actions under another rule go in another `Action.implement` with its own `author
 answers on each surface is on `Forbidden`.
 Reading a store once, by an `authorize` that is an Effect returning the function, is
 [assistant/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/identity/authorize.ts); that
-rule, and that a limit is the handler's, are on `implement`.
+rule, and that a limit is the handler's, are on `Action.implement`.
 
-- **A call runs authentication, then over HTTP and RPC the layer's `middleware`, input
-  decoding, the authorizer, then the handler**, each refusing before the next. So a caller the
-  authorizer would refuse can still receive an `InvalidInput` describing the input's schema. To
-  refuse or limit before decoding, use that `middleware`
-  ([ActionHttp.md](ActionHttp.md#serve-the-routes), [ActionRpc.md](ActionRpc.md#serve-the-rpcs)).
+- **A caller the authorizer would refuse can still receive an `InvalidInput` describing the
+  input's schema**, since input is decoded before the authorizer runs. To refuse or limit before
+  decoding, use the layer's `middleware`
+  ([ActionHttp.md](ActionHttp.md#split-a-binding-across-layers-and-add-middleware),
+  [ActionRpc.md](ActionRpc.md#serve-the-rpcs)).
 - **A limiter is a service the builder yields, apart from the store**
   ([kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts),
   [kitchen-sink/src/memory.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/memory.ts)): state kept in a builder
@@ -174,18 +175,19 @@ rule, and that a limit is the handler's, are on `implement`.
 ## Fail with declared and built-in errors
 
 A handler fails with the errors its action lists in `error`, and with the three built-in
-errors, `InvalidInput`, `Unauthenticated` and `Forbidden`. What each answers on each surface,
-when to fail with `InvalidInput` yourself, and that another service's refusal is mapped before
-it is passed on, are on each class;
+errors, `InvalidInput`, `Unauthenticated` and `Forbidden`. What a refusal answers on each
+surface is on `Action.Unauthenticated` and `Action.Forbidden`; what a declared error and bad
+input answer, on each surface's `layer`, `layerHttp`, `runStdio`, `make` or `command`; when to
+fail with `InvalidInput` yourself, on that class, as
 [kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts)
-fails with `InvalidInput` for input that decodes but cannot be served.
+does.
 
 - **Map a client's `HttpClientError` and `SchemaError` to one declared error a caller can act
   on** ([mcp-tools/src/platform/print-farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/platform/print-farm.ts)).
   As defects, a model reads only a generic text.
-- **Internal failures are never sent** over HTTP, MCP and RPC: a defect's cause goes to the log
-  and to the call's `ErrorReporter`s, as each `layer` says; a Toolkit and a CLI make it the
-  call's defect.
+- **Internal failures are never sent** over HTTP, MCP and RPC: what reaches the log and the
+  call's `ErrorReporter`s is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `ActionRpc.layer`;
+  a Toolkit and a CLI make a defect the call's.
 
 ## Call actions in process
 
@@ -193,20 +195,19 @@ fails with `InvalidInput` for input that decodes but cannot be served.
 agent or a test, without a transport. It is acquired where builders live:
 [kitchen-sink/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/agent.ts) in a scoped program,
 [notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts)
-under `it.effect`. The rules are on `client`; testing with it is
+under `it.effect`. The rules are on `Action.client`; testing with it is
 [Testing.md](Testing.md#test-an-implementation-in-process).
 
 ## Share one build across servers
 
 Inside one `HttpRouter.serve` or one `Testing.layer`, a builder runs once, however many surfaces
-serve it, a toolkit's `layer` provided to the routes included. But each `HttpRouter.serve` builds
-its routes in a layer graph of its own, which reuses what is provided from outside it and shares
-nothing it builds itself: a builder's run, a built authorizer, or a service of yours such as an
-in-memory store.
+serve it, a toolkit's `layer` provided to the routes included. Each `HttpRouter.serve` is a layer
+graph of its own, the layers Effect builds together, each once, which shares nothing it builds
+with another graph: a builder's run, a built authorizer, or an in-memory store of yours.
 
 - **With one server, put everything the process runs inside the layer it serves**, a job or an
   agent beside the routes included; why a job merged beside `HttpRouter.serve` is not enough is
-  on `layer`.
+  on `Action.layer`.
 - **Otherwise, provide `Action.layer(implementations)` and the services they share above the
   server and its siblings**: a second server, a program beside it, several `Testing.layer`s.
   [kitchen-sink/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts) does it for two ports with
@@ -215,4 +216,4 @@ in-memory store.
   `Testing.layer`s, asserting one run of a builder both ports serve.
 - **Inside one layer graph, a builder runs with the services of whichever surface builds it
   first**, and services provided around one surface reach the others: provide startup services
-  once, for every surface. Where two must differ is on `layer`.
+  once, for every surface. Where two must differ is on `Action.layer`.

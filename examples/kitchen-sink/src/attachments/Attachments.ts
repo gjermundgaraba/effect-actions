@@ -25,16 +25,13 @@ export const AttachImage = Action.make("attachImage", {
   description: "Attach an image, such as a screenshot, to an issue.",
   input: { issue: Schema.String, name: Schema.String, image: Action.Image },
   success: Attachment,
-  // A write to an issue as a comment is: the errors those declare, the write limit's included.
   error: IssueWriteErrors,
   readOnly: false,
   caller: CurrentMember,
 });
 
-// `Action.Image` as a top-level field of the success: an MCP tool lifts it out of the result
-// into an image block the model sees as an image, beside the JSON of `{ attachment }`. HTTP,
-// RPC and the CLI send it as JSON. A model never reads a media field's own description, so the
-// action's description says what the image is.
+// `Action.Image` as a top-level field of the success, so an MCP tool shows the model the image
+// itself, beside the JSON of `{ attachment }`.
 export const GetAttachment = Action.make("getAttachment", {
   description: "Fetch an attachment: its name and size, and the image itself.",
   input: { id: Schema.String },

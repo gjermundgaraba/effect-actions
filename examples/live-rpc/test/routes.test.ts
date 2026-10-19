@@ -10,9 +10,8 @@ import { rpc } from "../src/routes.js";
 import { Rpc } from "../src/Rpc.js";
 
 // What the wire adds: the real rpcs, behind their real authentication and middleware,
-// answering in memory. The server gives them a WebSocket, which `Testing.layer` cannot
-// upgrade: it answers HTTP requests alone. So the test gives the same layer Effect's HTTP
-// protocol, and its client posts to it. No port is opened.
+// answering in memory. The test gives them Effect's HTTP protocol, not the server's WebSocket,
+// because `Testing.layer` answers HTTP requests; no port is opened.
 const server = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerJson),

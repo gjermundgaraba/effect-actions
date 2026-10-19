@@ -42,10 +42,9 @@ const tracker = ActionCli.remote(Http, {
         `${attachment.name}: ${image.mimeType}, ${image.data.byteLength} bytes`,
     },
   },
-  // The connection, read from `Config` when a command runs, so `--help` needs none of it. It is
-  // these commands' client, so it reaches their requests and no others. The token and the
-  // workspace are optional: `tracker get-status` is public and needs neither, and any other
-  // command without a token gets the server's 401, and without a workspace its 403.
+  // The connection. The token and the workspace are optional: `tracker get-status` is public
+  // and needs neither, and any other command without a token gets the server's 401, and without
+  // a workspace its 403.
   client: Effect.gen(function* () {
     const baseUrl = yield* Config.String("TRACKER_URL").pipe(
       Config.withDefault("http://127.0.0.1:3000"),
@@ -74,8 +73,6 @@ const tracker = ActionCli.remote(Http, {
   }),
 });
 
-// A result is printed on stdout. A failure goes to stderr, under an `ERROR` heading, as the JSON
-// HTTP sends, such as `{"_tag":"IssueNotFound","id":"ACME-9"}`, and the command exits 1.
 Command.run(tracker, { version: "1.0.0" }).pipe(
   Effect.provide([NodeHttpClient.layerUndici, NodeServices.layer]),
   ActionCli.logToStderr,

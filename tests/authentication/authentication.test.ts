@@ -98,7 +98,7 @@ const verify = (token: Redacted.Redacted<string>) =>
 const authenticate = Authentication.layer(Login, verify);
 
 describe("Authentication.make", () => {
-  it("refuses a name that is no OpenAPI component key, which it is", () => {
+  it("refuses a name that is no OpenAPI component key, which the name becomes", () => {
     for (const name of ["app/Login", "app:Login", "Log in", ""]) {
       expect(() => Authentication.make(name, Identity)).toThrow(
         `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`,
@@ -385,7 +385,7 @@ describe("Authentication.layer", () => {
       }),
   );
 
-  it("never lets a protected action's failure be cached, however enclosing middleware answers it", async () => {
+  it("never lets a protected action's failure be cached, even where enclosing middleware marks its response public", async () => {
     class Hidden extends Schema.TaggedError<Hidden>()(
       "Hidden",
       { message: Schema.String },
@@ -627,33 +627,36 @@ describe("Authentication.protect", () => {
     expect(cached.headers.get("cache-control")).toBe("private");
   });
 
-  it("no-stores a failure of the route that enclosing middleware answers, whatever caching it states", async () => {
-    class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
+  it.effect(
+    "no-stores a failure of the route that enclosing middleware answers, whatever caching it states",
+    () => {
+      class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
 
-    const answeringGoneCacheable = HttpRouter.middleware<{ handles: Gone }>()((route) =>
-      Effect.catch(route, (error) =>
-        Schema.is(Gone)(error)
-          ? Effect.succeed(
-              HttpServerResponse.text("gone", {
-                status: 410,
-                headers: { "cache-control": "public, max-age=60" },
-              }),
-            )
-          : Effect.fail(error),
-      ),
-    );
+      const answeringGoneCacheable = HttpRouter.middleware<{ handles: Gone }>()((route) =>
+        Effect.catch(route, (error) =>
+          Schema.is(Gone)(error)
+            ? Effect.succeed(
+                HttpServerResponse.text("gone", {
+                  status: 410,
+                  headers: { "cache-control": "public, max-age=60" },
+                }),
+              )
+            : Effect.fail(error),
+        ),
+      );
 
-    const web = serve(
-      HttpRouter.add("GET", "/gone", Effect.fail(new Gone())).pipe(
+      const routes = HttpRouter.add("GET", "/gone", Effect.fail(new Gone())).pipe(
         Layer.provide(Authentication.protect(Login).layer),
         Layer.provide(answeringGoneCacheable.layer),
         Layer.provide(Authentication.layer(Login, verify)),
-      ),
-    );
+      );
 
-    const gone = await web.handler(get("/gone", "Bearer alice"));
-    expect([gone.status, gone.headers.get("cache-control")]).toEqual([410, "no-store"]);
-  });
+      return Effect.gen(function* () {
+        const gone = yield* send(get("/gone", "Bearer alice"));
+        expect([gone.status, gone.headers["cache-control"]]).toEqual([410, "no-store"]);
+      }).pipe(Effect.provide(Testing.layer(routes)));
+    },
+  );
 
   it("answers the route's refusals as an action's, stepping up under Bearer, and challenges its own 401", async () => {
     const web = hostRoutesBesideAnAction();
@@ -785,7 +788,7 @@ describe("an error a descriptor declares", () => {
       }).pipe(Effect.provide(Testing.layer(routes))),
   );
 
-  it("is sent as its status and the JSON its schema encodes, its text as it is, no-store and unchallenged, on every remote surface alike", async () => {
+  it("is sent as its status and the JSON its schema encodes, its text as it is, no-store and unchallenged, on the action route, the MCP endpoint, a protect route and refusalResponse alike", async () => {
     const web = serve(routes);
 
     const action = await answerOf(await web.handler(withBearer(request(), "down")));
@@ -1018,7 +1021,7 @@ describe("a scheme other than Bearer", () => {
       );
 
       await expect(web.handler(post("/api/identify"))).rejects.toThrow(
-        `Authentication "test.MismatchedSession": the binding's descriptor is not its provider's`,
+        `Authentication "test.MismatchedSession": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
       );
     },
   );
@@ -1059,7 +1062,7 @@ describe("a scheme other than Bearer", () => {
       );
 
       await expect(web.handler(request())).rejects.toThrow(
-        `Authentication "test.MismatchedCookie": the binding's descriptor is not its provider's`,
+        `Authentication "test.MismatchedCookie": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
       );
     },
   );
@@ -1102,23 +1105,24 @@ describe("Basic", () => {
     ]);
   });
 
-  it("answers a handler's Unauthenticated with its 401 and the realm's challenge", async () => {
+  it.effect("answers a handler's Unauthenticated with its 401 and the realm's challenge", () => {
     const refusing = Action.implement(Identify, () => new Action.Unauthenticated(), {
       authorize: Action.allowAll,
     });
 
-    const web = serve(
-      ActionHttp.layer(ActionHttp.make([Identify], { authentication: Basic }), refusing).pipe(
-        Layer.provide(basic),
-      ),
-    );
+    const routes = ActionHttp.layer(
+      ActionHttp.make([Identify], { authentication: Basic }),
+      refusing,
+    ).pipe(Layer.provide(basic));
 
-    const response = await web.handler(request(`Basic ${btoa(":token")}`));
+    return Effect.gen(function* () {
+      const response = yield* send(request(`Basic ${btoa(":token")}`));
 
-    expect([response.status, response.headers.get("www-authenticate")]).toEqual([
-      401,
-      'Basic realm="test.Basic"',
-    ]);
+      expect([response.status, response.headers["www-authenticate"]]).toEqual([
+        401,
+        'Basic realm="test.Basic"',
+      ]);
+    }).pipe(Effect.provide(Testing.layer(routes)));
   });
 
   it("answers a host route's refusal as its routes do, through refusal", async () => {

@@ -13,8 +13,7 @@ import { status } from "./status/handlers.js";
 // Every domain's implementation, once. Each surface below takes the same list.
 const implementations = [status, notes, identity];
 
-// JSON routes at `/api/<action>`, the binding's. A protected route authenticates before it
-// reads its body; `getStatus` answers anyone.
+// JSON routes at `/api/<action>`, the binding's; `getStatus` answers anyone.
 const api = ActionHttp.layer(Http, implementations);
 
 // The host's own routes sit beside the actions' on the same router.
@@ -30,12 +29,11 @@ const openApi = HttpRouter.add(
 );
 
 // What the host serves: the JSON routes, the same actions as MCP tools at `/mcp`, and the host's
-// own routes. Listing the tools and calling `getStatus` need no token, because `getStatus` is
-// public: an endpoint of protected tools alone asks a token for the listing too. Any other call
-// answers 401 with where to sign in, and so does a client of an MCP revision with sessions when
-// it opens one, since a session may call any tool. It still requires `NoteStore`: the entrypoint
-// chooses which one, and a test chooses its own. The entrypoint also chooses how the MCP
-// endpoint runs: one server for every request, or one per request.
+// own routes. The MCP endpoint serves the public `getStatus` beside the protected tools, so a
+// signed-out 2026-07-28 client may list the tools and call `getStatus`; what else needs a token
+// is on `ActionMcp.LayerHttpOptions.authentication`. It still requires `NoteStore`: the
+// entrypoint chooses which one, and a test chooses its own. The entrypoint also chooses how the
+// MCP endpoint runs: one server for every request, or one per request.
 const serving = (requestScoped: boolean) =>
   Layer.mergeAll(
     api,

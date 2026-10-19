@@ -40,8 +40,7 @@ const tool = { caller: Action.Anyone, error: PrintFarmError } as const;
 // commands names them in camelCase, as notes-service does.
 //
 // A description is written for the model that picks the tool: what it does, when to call it,
-// and what it answers. `readOnly` is sent as the tool's read-only hint; `mcp` holds the other
-// hints and the title a client shows its user.
+// and what it answers.
 export const ListPrinters = Action.make("list_printers", {
   ...tool,
   description:
@@ -53,8 +52,7 @@ export const ListPrinters = Action.make("list_printers", {
   mcp: { title: "List printers" },
 });
 
-// `image` is an `Action.Image` beside an ordinary field. Over MCP it is sent as an image block
-// the model can look at, after the JSON of `{ printer }`.
+// `image` is an `Action.Image`, so a model sees the picture rather than reading its base64.
 export const GetCameraSnapshot = Action.make("get_camera_snapshot", {
   ...tool,
   description:

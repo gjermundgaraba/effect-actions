@@ -318,7 +318,7 @@ const listTools = async (handler: (request: Request) => Promise<Response>) => {
 };
 
 describe("descriptions", () => {
-  it("describes each action on every surface by its contract's description", async () => {
+  it("describes each action in OpenAPI, to MCP, on a Toolkit and in CLI help by its contract's description", async () => {
     const Describe = Action.make("describe", {
       description: "What this action does, for every caller.",
       readOnly: true,

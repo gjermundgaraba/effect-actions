@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Layer, Option, Schema, SchemaTransformation } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option, Schema, SchemaTransformation } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
@@ -243,6 +243,20 @@ it.effect("fails an unserved action's call by whether the action declares its 40
     ).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, []))));
 
     expect(reasons).toEqual(["StatusCodeError", "DecodeError"]);
+  }),
+);
+
+it.effect("refuses a hand-spread binding holding an action its api lacks, saying the fix", () =>
+  Effect.gen(function* () {
+    const spread = { ...ActionHttp.make([Count]), actions: [Count, Get] };
+
+    const exit = yield* Effect.exit(
+      ActionHttp.client(spread).pipe(Effect.provide(FetchHttpClient.layer)),
+    );
+
+    expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+      "No client method for get (use the binding `ActionHttp.make` returned",
+    );
   }),
 );
 

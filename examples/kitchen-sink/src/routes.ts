@@ -32,16 +32,14 @@ const implementations = [status, identity, issues, attachments, assistant];
 
 // JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`.
 // The quota requires the caller, and a public route has none, so `getStatus` is served by a
-// layer without it. The middleware runs inside authentication and before the input is decoded.
+// layer without it.
 const api = Layer.mergeAll(
   ActionHttp.layer(Http, implementations, { actions: [GetStatus] }),
   ActionHttp.layer(Http, implementations, { actions: MemberActions, middleware: [HttpQuota] }),
 );
 
-// The same actions as MCP tools at `/mcp`: a mixed endpoint. Discovering the server, listing the
-// tools and calling `getStatus` need no token in a 2026-07-28 request; any other request answers
-// the 401 an MCP client signs in on, the one opening a session included, since a session may
-// call any tool.
+// The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
+// beside the members' tools.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
     ActionMcp.layerHttp(implementations, {

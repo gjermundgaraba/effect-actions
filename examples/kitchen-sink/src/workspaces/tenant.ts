@@ -10,7 +10,8 @@ export class Tenant extends Context.Service<Tenant, Option.Option<string>>()("tr
 
 // Native router middleware. It provides `Tenant` to whatever it is provided to, per request:
 // to the verifier too, when it is provided after the authentication, in a `Layer.provide` of
-// its own: in one array with it, the members provide to the routes and not to one another.
+// its own: in one array with the authentication it would leave `Tenant` owed, since an array's
+// layers provide to the routes, not to one another.
 export const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
     Effect.provideService(route, Tenant, Option.fromNullishOr(request.headers["x-workspace"])),

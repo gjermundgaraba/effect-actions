@@ -30,13 +30,19 @@ export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
 ) {}
 
 // Which room a call is about is not an input of any action: it travels beside the call, in
-// this header, as the token does. The client sets it; on the server, room.ts reads it. A call
-// without the header is about the default room, so `listRooms`, which is about none, sends none.
+// this header, as the token does, because `authorize` sees the action and not its input, and
+// the membership rule needs the room. With the room in the input, that check belongs in the
+// store, as `MessageStore.remove` takes the author and refuses with `NotAuthor`, never in a
+// helper each handler must remember to call. The client sets the header; on the server,
+// room.ts reads it. A call without it is about the default room, so `listRooms`, which is
+// about none, sends none; yours may refuse such a call instead.
 export const roomHeader = "x-room";
 
 export const defaultRoom = "lobby";
 
-// Public: `caller: Action.Anyone`. A page shows the rooms before anyone has signed in.
+// Public: `caller: Action.Anyone`, so a page shows the rooms before anyone has signed in. It
+// tells a signed-out caller every room's name and how many messages it holds, a room appearing
+// once someone posts: decide whether yours may.
 export const ListRooms = Action.make("listRooms", {
   description: "List the rooms someone has posted in, and how many messages each holds.",
   success: {

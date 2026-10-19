@@ -14,7 +14,6 @@ import {
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../contract/Action.js";
 import { literalValues, members, unsuspended } from "../contract/ast.js";
-import { assertDistinct } from "../contract/names.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";
@@ -69,7 +68,7 @@ export interface Options<A extends Action.Any> {
    *
    * **Gotchas**
    *
-   * - A terminal is never read: run interactively, the command fails with `InvalidInput`, so pipe the value in.
+   * - A terminal is never read: run interactively, the command fails with `InvalidInput`.
    * - The command waits without output until stdin closes: a parent process holding the pipe, or `ssh` without `-n`, keeps it open, so redirect stdin from a file or `/dev/null`.
    */
   readonly stdin?: StdinField<A>;
@@ -476,7 +475,8 @@ const printedOutput = <A extends Action.Any>(
 
 /**
  * What a command fails with when its action fails: Effect CLI's `UserError`, typed with the
- * action's failure as its `cause` and `reason`, and whose `userMessage` is its JSON. A type only.
+ * action's failure as its `cause` and `reason`, and whose `userMessage` is its JSON, or for a
+ * failure no schema encodes, as `command` says. A type only.
  *
  * **Gotchas**
  *
@@ -695,6 +695,55 @@ const inputConfig = <A extends Action.Any>(
   };
 };
 
+interface ClaimedFlag {
+  readonly claimedBy: "field" | "alias" | "render";
+  readonly name: string;
+  readonly label: string;
+  readonly claimant: string;
+}
+
+const flagOf = (
+  claimedBy: ClaimedFlag["claimedBy"],
+  name: string,
+  claimant: string,
+): ClaimedFlag => {
+  const flag = claimedBy === "field" ? kebab(name) : name;
+
+  // Why: Effect CLI prints a one-character alias as `-n`, and every flag's own name as `--name`.
+  return {
+    claimedBy,
+    name: flag,
+    label: claimedBy === "alias" && flag.length === 1 ? `-${flag}` : `--${flag}`,
+    claimant,
+  };
+};
+
+// Why: The fix depends on who claims the flag: `render` is dropped only when its `--json` is one
+// of the two, and an alias renamed only when one is.
+const distinctFlags = (claimed: ReadonlyArray<ClaimedFlag>): void => {
+  const seen = new Map<string, ClaimedFlag>();
+
+  for (const flag of claimed) {
+    const other = seen.get(flag.name);
+
+    if (other !== undefined) {
+      const by = new Set([other.claimedBy, flag.claimedBy]);
+
+      const fix = by.has("render")
+        ? `rename the ${by.has("alias") ? "alias" : "field"}, or drop \`render\``
+        : by.size === 2
+          ? "rename the alias or the field"
+          : `rename one ${by.has("alias") ? "alias" : "field"}`;
+
+      throw new Error(
+        `Duplicate flag: ${other.label}, claimed by ${other.claimant} and ${flag.claimant} (${fix})`,
+      );
+    }
+
+    seen.set(flag.name, flag);
+  }
+};
+
 export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
@@ -713,21 +762,15 @@ export const command = <A extends Action.Any, E, R>(
 
   const failing = failingAsDerived(errors);
 
-  assertDistinct(
-    "flag",
-    [
-      ...Object.keys(flags).map((field) => [`--${kebab(field)}`, `field ${field}`] as const),
-      ...(render === undefined ? [] : [["--json", "render's --json"] as const]),
-      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
-        Predicate.isString(alias)
-          ? [[`--${alias.replace(/^-+/, "")}`, `alias of field ${field}`] as const]
-          : [],
-      ),
-    ],
-    ([flag]) => flag,
-    ([, claimant]) => claimant,
-    "rename the field or the alias, or drop `render`",
-  );
+  distinctFlags([
+    ...Object.keys(flags).map((field) => flagOf("field", field, `field ${field}`)),
+    ...(render === undefined ? [] : [flagOf("render", "json", "render's --json")]),
+    ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
+      Predicate.isString(alias)
+        ? [flagOf("alias", alias.replace(/^-+/, ""), `alias of field ${field}`)]
+        : [],
+    ),
+  ]);
 
   const args = positional.map(({ param }) => param);
 

@@ -219,7 +219,7 @@ export const providerOf = <I, Name extends string>(
       ? Effect.succeed(provider)
       : Effect.die(
           new Error(
-            `Authentication "${auth.name}": the binding's descriptor is not its provider's; build both from one descriptor`,
+            `Authentication "${auth.name}": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
           ),
         ),
   );

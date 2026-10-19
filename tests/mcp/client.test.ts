@@ -519,7 +519,9 @@ describe("request", () => {
         result: Schema.Struct({ tools: Schema.Array(Schema.Struct({ name: Schema.String })) }),
       });
 
-      const Failed = Schema.Struct({ error: Schema.Struct({ message: Schema.String }) });
+      const Failed = Schema.Struct({
+        error: Schema.Struct({ code: Schema.Finite, message: Schema.String }),
+      });
 
       const [listed, refused, unknown] = yield* againstHost(
         Effect.all([
@@ -538,7 +540,11 @@ describe("request", () => {
             HttpClient.execute(
               ActionMcp.request("tools/call", { name: "missing", arguments: {} }, headersAs()),
             ),
-            HttpClientResponse.schemaBodyJson(Failed),
+            (response) =>
+              Effect.map(HttpClientResponse.schemaBodyJson(Failed)(response), ({ error }) => ({
+                status: response.status,
+                error,
+              })),
           ),
         ]),
       );
@@ -548,6 +554,7 @@ describe("request", () => {
       expect(refused.status).toBe(403);
       expect(refused.headers["www-authenticate"]).toContain('error="insufficient_scope"');
 
+      expect([unknown.status, unknown.error.code]).toEqual([200, -32602]);
       expect(unknown.error.message).toContain("missing");
     }),
   );

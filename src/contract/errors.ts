@@ -25,9 +25,9 @@ const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
  *
  * **Gotchas**
  *
- * - Raised by the library for input that does not decode: over HTTP a 400 with its JSON; what the other surfaces answer is on their `layerHttp`, `runStdio`, `layer`, `make` or `command`.
+ * - Raised by the library for input that does not decode, before `authorize` and the handler; what each surface answers is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionToolkit.make` and `ActionCli.command`.
  * - Failed by a handler, it is answered as a declared error on every surface.
- * - What receives encoded input, a route, an MCP tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops such a field instead, as its `client` says.
+ * - What receives encoded input, a route, an MCP tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops such a field instead, as `Action.client`, `ActionHttp.client`, `ActionRpc.client` and `ActionMcp.client` say.
  * - Its message and `issues` name paths and what the schema expects, never a field's value; a path names every key it passes through, a record's keys included, so never key a record by a secret such as an email or a token.
  * - A check's message, or a schema's `message` annotation, is sent as written: never put the input in one.
  */
@@ -87,8 +87,8 @@ export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
 
 /**
- * The caller may not run this action: an implementation's `authorize` refuses, or a handler
- * fails with it. `scopes`, when given, are every OAuth scope the call needs: a refusal naming
+ * The caller may not run this action: authentication refuses the credential, an
+ * implementation's `authorize` refuses, or a handler fails with it. `scopes`, when given, are every OAuth scope the call needs: a refusal naming
  * them is answered with the `insufficient_scope` challenge an OAuth client re-authorizes on,
  * which only a server publishing discovery can follow up, so name them only where
  * re-authorizing can grant them; with fixed tokens, such as API keys, leave them out
@@ -96,8 +96,8 @@ const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
  *
  * **Gotchas**
  *
- * - Over HTTP its JSON with a 403, after the input is decoded; on a protected route under Bearer, one naming `scopes` also carries the challenge.
- * - Over MCP an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead, and after a handler's notification as `ActionMcp.LayerHttpOptions`'s `authentication` says.
+ * - Over HTTP its JSON with a 403: from authentication before the body is read, from `authorize` or a handler after the input is decoded; on a protected route under Bearer, one naming `scopes` also carries the challenge.
+ * - Over MCP, from authentication the HTTP 403 before the arguments are decoded; from `authorize` or a handler an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead, and after a handler's notification as `ActionMcp.LayerHttpOptions`'s `authentication` says.
  * - Over RPC the typed failure, never a status or a challenge; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on becomes this server's own refusal: map it to an error the action declares, or to a defect.
  */

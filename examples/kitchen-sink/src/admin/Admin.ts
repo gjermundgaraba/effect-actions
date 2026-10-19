@@ -10,7 +10,7 @@ export interface KeyOperator {
   readonly trusted: false;
 }
 
-/** What only a host supplies, on its own console. No verifier returns one, so no key names it. */
+/** What only a host supplies, on its own console. */
 export interface TrustedOperator {
   readonly id: string;
   readonly trusted: true;

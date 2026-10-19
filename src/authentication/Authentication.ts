@@ -139,6 +139,12 @@ const assertPublishableResource = (
     }
   }
 
+  if (!URL.canParse(options.resource)) {
+    throw new Error(
+      `A protected resource is an absolute URL: ${JSON.stringify(options.resource)} is not one; give the public URL of the endpoint clients connect to, such as https://api.example.com/mcp, read from configuration`,
+    );
+  }
+
   if (new URL(options.resource).href.includes("#")) {
     throw new Error(
       `A protected resource has no fragment: ${options.resource}; drop the "#", which no request URL carries, so its discovery would never answer`,
@@ -169,11 +175,8 @@ export interface RefusalResponseOptions<D extends Any = Any> {
   readonly authentication?: D | undefined;
   /**
    * The OAuth protected resource refusing, the one given to `layer`: every challenge then names
-   * its metadata URL, and a 401's its `scopesRequired`.
-   *
-   * **Gotchas**
-   *
-   * - A value, never the Effect `layer` may take: where `layer` builds the resource from configuration, build this one from the same configuration.
+   * its metadata URL, and a 401's its `scopesRequired`. Where `layer` builds the resource from
+   * configuration, build this one from the same configuration.
    */
   readonly protectedResource?: ProtectedResource | undefined;
   /**
@@ -407,17 +410,16 @@ export type Verify<A, S extends Security, R, E = never> = (
 /** What `layer` takes besides the descriptor and the verifier. */
 export interface LayerOptions<EP = never, RP = never> {
   /**
-   * Bearer only: the OAuth protected resource (RFC 9728) to publish, or an Effect building it,
-   * or `undefined`, when the provider is built. The provider then serves its discovery and names
-   * it in every challenge, so an MCP client given a 401 finds the authorization server; without
-   * it the challenge names nowhere to sign in.
+   * Bearer only: the OAuth protected resource (RFC 9728) to publish, or an Effect building it
+   * when the provider is built; left out, or built as `undefined`, nothing is published. The
+   * provider then serves its discovery and names it in every challenge, so an MCP client given a
+   * 401 finds the authorization server; without it the challenge names nowhere to sign in.
    *
    * **Gotchas**
    *
    * - Under another scheme it is a type error, or, for an `Http` scheme the types cannot tell from Bearer, a throw at `layer`.
-   * - Only the deployment knows the public URL: give it as an Effect reading configuration.
+   * - A literal URL is right in one deployment only: in every other, the published `resource` and each challenge's metadata URL name another server, where an MCP client then looks for its authorization server; give an Effect reading configuration.
    * - Discovery is public: it answers before routing, to any origin, so no authentication and no route middleware covers it; global middleware covers it only when provided after the provider, as `examples/kitchen-sink/src/routes.ts` shows.
-   * - An Effect succeeding with `undefined` publishes nothing.
    */
   readonly protectedResource?:
     | ProtectedResource

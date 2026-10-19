@@ -99,7 +99,7 @@ describe("contracts", () => {
           caller: Action.Anyone,
           success: Schema.String,
         }),
-      ).toThrow("Invalid action name");
+      ).toThrow(`Invalid action name: ${name} (use [A-Za-z0-9_-]{1,128}, other than "then")`);
     }
 
     for (const name of validNames) {
@@ -192,7 +192,9 @@ describe("contracts", () => {
           caller: Action.Anyone,
           error: [error],
         }),
-      ).toThrow(`Action "guarded": error _tag "${tag}" names two error schemas`);
+      ).toThrow(
+        `Action "guarded": error _tag "${tag}" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart; for a built-in's tag, fail with the built-in itself)`,
+      );
     }
 
     const Allowed = Action.make("allowed", {
@@ -231,7 +233,9 @@ describe("contracts", () => {
     for (const error of errorsSharingATag) {
       expect(() =>
         Action.make("lookup", { description: "", readOnly: true, caller: Action.Anyone, error }),
-      ).toThrow(`Action "lookup": error _tag "NotFound" names two error schemas`);
+      ).toThrow(
+        `Action "lookup": error _tag "NotFound" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)`,
+      );
     }
   });
 

@@ -218,7 +218,11 @@ const overHttp = <A extends Action.Any>(
       Effect.flatMap(client ?? httpClient(binding), (methods) => {
         const method = methods[action.name];
 
-        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+        if (method === undefined) {
+          throw new Error(
+            `No client method for ${action.name} (give \`client\` a client of this binding, made by \`ActionHttp.client\`, whose methods hold this action)`,
+          );
+        }
 
         return method(input);
       }),
@@ -292,7 +296,7 @@ const checkedCommandsOf = (
  *
  * **Gotchas**
  *
- * - A success is its JSON on stdout, indented by two spaces, or `render`'s text; nothing for an action without `success`. Its Effect logs and `Console` output go to stderr; the global `console.log` and other direct writes bypass Effect and reach stdout.
+ * - A success is its JSON on stdout, indented by two spaces, or `render`'s text; nothing for an action without `success`. Its Effect logs and `Console` output go to stderr; other writes as `logToStderr` says.
  * - A declared error is its JSON on stderr, under Effect CLI's `ERROR` heading, the command failing with a `UserError` whose `cause` is the error, exit 1 or its `Runtime.errorExitCode`; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say; input that does not decode, in `--input` or a flag's JSON value, is `InvalidInput`'s JSON there, while a missing flag or a rejected choice is Effect CLI's own parse error.
  * - A failure no schema encodes, a builder's or an accepted error that does not encode, is a `UserError` printed as its tag or name and its message, then its causes, never its other fields; a defect, an undeclared failure, or a success that does not encode is the command's defect, which `runMain` reports as `logToStderr` says.
  * - Provide services with `Command.provide` on the command, built when an action runs: provided around `Command.run`, they are built before parsing, so `--help` and a mistyped flag open the database.
@@ -354,7 +358,7 @@ interface Calling<C> {
    *
    * **Gotchas**
    *
-   * - Its own failures and a transport's print as `Tag: message` with their causes, a `CliError.UserError` as its `userMessage`, and a declared error as its JSON: a token read with `Config` and not set prints as `ConfigError: …`, so map it to a tagged error whose `message` says what to do, or read an optional one with `Config.option`.
+   * - A token read with `Config` and not set fails every command, a public one's too, as `ConfigError: …`, which names no fix: map it to a tagged error whose `message` says what to do, or read an optional one with `Config.option`.
    * - Credentials go in `transformClient`: a command adds no headers of its own, so without them a protected action answers `Unauthenticated`.
    * - Never transform the `HttpClient` around the program instead: it rewrites every request the program makes, an absolute URL too, and sends each one the token.
    */

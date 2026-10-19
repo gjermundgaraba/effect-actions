@@ -99,6 +99,21 @@ it.each(docsPages)("%s fences TypeScript only as a whole example file", (page) =
   for (const rest of fences) expect(rest, page).toMatch(/^ example=\S+$/);
 });
 
+it("gives every module page a -failures.md beside it, each entry one line", () => {
+  for (const page of docsPages) {
+    if (page.endsWith("-failures.md") || page === "docs/README.md") continue;
+
+    const failures = page.replace(/(-advanced)?\.md$/, "-failures.md");
+    const lines = read(failures).split("\n");
+
+    expect(lines.filter((line) => line.startsWith("- ")).length, failures).toBeGreaterThan(0);
+
+    for (const [index, line] of lines.entries()) {
+      if (line.startsWith("  ")) expect.fail(`${failures}:${index + 1} continues an entry`);
+    }
+  }
+});
+
 it.each(docsPages)("%s stays below the 16 KB safety margin for tool-output truncation", (page) => {
   expect(Buffer.byteLength(read(page))).toBeLessThan(16_000);
 });

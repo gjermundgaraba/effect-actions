@@ -722,7 +722,7 @@ describe("Action.client", () => {
 
     // @ts-expect-error -- A copy of an implementation is not one.
     expect(() => Action.client(copy)).toThrow(
-      "Not an implementation made by this Action.implement",
+      "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
     );
   });
 });

@@ -5,8 +5,6 @@ implementation, served as a JSON API and as MCP tools, with a CLI and a browser 
 same binding. Notes belong to the signed-in user; reading needs the `notes:read` scope and
 writing `notes:write`.
 
-Then follow [docs/README.md](../../docs/README.md).
-
 ## Run it
 
 From the repository root, after `vp install` (from an installed package, see
@@ -41,9 +39,10 @@ codex mcp add notes --url http://127.0.0.1:3000/mcp --bearer-token-env-var NOTES
 Cloudflare Workers ([ActionMcp.md](../../docs/ActionMcp.md#serve-tools-over-http)).
 
 The server reads `HOST` (default `127.0.0.1`), `PORT` (default 3000) and `PUBLIC_URL`, the
-address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
-Every command asks for `NOTES_TOKEN`, the public `get-status` included: without it a command
-prints one message on stderr saying to set it, and exits 1. `--help` needs none.
+address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the
+port and set `PORT`, `PUBLIC_URL` and `NOTES_URL` to match. Every command asks for
+`NOTES_TOKEN`, the public `get-status` included: without it a command prints one message on
+stderr saying to set it, and exits 1. `--help` needs none.
 
 ## Retry a creation
 
@@ -57,15 +56,8 @@ command:
 echo "First draft" | node --import tsx examples/notes-service/src/cli.ts create-note --request-id plan-1 --title Plan
 ```
 
-The key belongs to the signed-in caller and the `createNote` operation. Another caller can use
-it independently. The same caller repeating the key and content gets the original result;
-different content fails with `RequestConflict`. A new key creates a new note, even when its
-content is identical. Every attempt still runs authorization.
-
-The replay result is a snapshot of the creation. Updating or deleting the note leaves that
-snapshot intact: replay neither changes the note back nor recreates it. `importNotes` has no
-request key; each import creates new notes. Calls without a key are not idempotent, so the
-creation tool does not advertise `idempotentHint: true`.
+What a key promises, per caller, for changed content and after the note changes, is what
+[test/notes/idempotency.test.ts](test/notes/idempotency.test.ts) asserts.
 
 ## Layout
 

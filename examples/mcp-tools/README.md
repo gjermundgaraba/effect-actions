@@ -23,8 +23,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 vp test examples/mcp-tools
 ```
 
-The farm is a fake, answered in memory, so any URL, user and password work: replace it with a
-real HTTP client before deploying anything. `ALLOWED_ORIGINS` lists the browser origins the HTTP
+The farm is a fake, answered in memory, so any URL, user and password work. `ALLOWED_ORIGINS` lists the browser origins the HTTP
 endpoint accepts and answers with CORS headers, comma-separated; `HOST` is the interface it
 listens on.
 
