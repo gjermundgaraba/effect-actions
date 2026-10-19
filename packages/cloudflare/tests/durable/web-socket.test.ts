@@ -94,148 +94,133 @@ describe("layerWebSocket", () => {
   const request = (id: string | number, tag: string) =>
     JSON.stringify({ _tag: "Request", id, tag, payload: {}, headers: [] });
 
-  const heldEventAfter = (
-    name: string,
-    between: ReadonlyArray<string>,
-    holdingFrame = request(1, "hold"),
-  ) =>
+  const withHeldSocket = <A>(name: string, use: (instance: Room, held: WebSocket) => Promise<A>) =>
     Effect.gen(function* () {
       const stub = room(name);
 
       yield* upgradeToRpc(stub);
 
       return yield* Effect.promise(() =>
-        runInDurableObject(stub, async (instance: Room, state) => {
+        runInDurableObject(stub, (instance: Room, state) => {
           const [held] = state.getWebSockets();
 
           if (held === undefined) throw new Error("No socket");
 
+          return use(instance, held);
+        }),
+      );
+    });
+
+  const settledWithin = (event: Promise<void>, millis: number) =>
+    Promise.race([
+      event.then(() => "settled"),
+      new Promise((resolve) => setTimeout(resolve, millis, "pending")),
+    ]);
+
+  const heldEvents = [
+    {
+      title: "holds a message's event open until each of its requests has its exit",
+      name: "holds",
+      between: [],
+    },
+    {
+      title: "holds it open through another request whose id is the same as a string",
+      name: "holds-string-id",
+      between: [request("1", "readNote")],
+    },
+    {
+      title: "holds it open through a request reusing its id, which it drops",
+      name: "holds-reused-id",
+      between: [request(1, "hold")],
+    },
+    {
+      title: "holds it open through a frame the server answers with a defect",
+      name: "holds-defect",
+      between: [JSON.stringify({ _tag: "Bogus" })],
+    },
+    {
+      title: "holds it open through a request whose id is neither a string nor a number",
+      name: "holds-null-id",
+      between: [
+        JSON.stringify({ _tag: "Request", id: null, tag: "readNote", payload: {}, headers: [] }),
+      ],
+    },
+    {
+      title: "holds a frame's event open past an earlier request of it under the same id",
+      name: "holds-batch",
+      between: [],
+      holdingFrame: `[${request(1, "readNote")},${request(1, "hold")}]`,
+    },
+    {
+      title: "holds it open through a request reusing its id that names no action",
+      name: "holds-reused-unknown",
+      between: [request(1, "notAnAction")],
+    },
+    {
+      title: "holds it open through a request reusing its id without a payload",
+      name: "holds-reused-no-payload",
+      between: [JSON.stringify({ _tag: "Request", id: 1, tag: "hold", headers: [] })],
+    },
+    {
+      title: "answers a frame of null without rejecting its event",
+      name: "holds-null-frame",
+      between: ["null"],
+    },
+    {
+      title: "holds a frame's event open past a later item that is null",
+      name: "holds-null-item",
+      between: [],
+      holdingFrame: `[${request(1, "hold")},null]`,
+    },
+    {
+      title: "holds a frame's event open past a later request without headers",
+      name: "holds-headerless-item",
+      between: [],
+      holdingFrame: `[${request(1, "hold")},${JSON.stringify({ _tag: "Request", id: 3, tag: "readNote", payload: {}, headers: null })}]`,
+    },
+  ];
+
+  for (const { title, name, between, holdingFrame = request(1, "hold") } of heldEvents) {
+    it.effect(title, () =>
+      Effect.gen(function* () {
+        const early = yield* withHeldSocket(name, async (instance, held) => {
           const holding = instance.webSocketMessage(held, holdingFrame);
 
           await Promise.all(between.map((message) => instance.webSocketMessage(held, message)));
 
-          const early = await Promise.race([
-            holding.then(() => "settled"),
-            new Promise((resolve) => setTimeout(resolve, 50, "pending")),
-          ]);
+          const early = await settledWithin(holding, 50);
 
           await instance.webSocketMessage(held, request(2, "release"));
           await holding;
 
           return early;
-        }),
-      );
-    });
+        });
 
-  it.effect("holds a message's event open until each of its requests has its exit", () =>
-    Effect.map(heldEventAfter("holds", []), (settled) => expect(settled).toBe("pending")),
-  );
-
-  it.effect("holds it open through another request whose id is the same as a string", () =>
-    Effect.map(heldEventAfter("holds-string-id", [request("1", "readNote")]), (settled) =>
-      expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds it open through a request reusing its id, which it drops", () =>
-    Effect.map(heldEventAfter("holds-reused-id", [request(1, "hold")]), (settled) =>
-      expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds it open through a frame the server answers with a defect", () =>
-    Effect.map(heldEventAfter("holds-defect", [JSON.stringify({ _tag: "Bogus" })]), (settled) =>
-      expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds it open through a request whose id is neither a string nor a number", () =>
-    Effect.map(
-      heldEventAfter("holds-null-id", [
-        JSON.stringify({ _tag: "Request", id: null, tag: "readNote", payload: {}, headers: [] }),
-      ]),
-      (settled) => expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds a frame's event open past an earlier request of it under the same id", () =>
-    Effect.map(
-      heldEventAfter("holds-batch", [], `[${request(1, "readNote")},${request(1, "hold")}]`),
-      (settled) => expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds it open through a request reusing its id that names no action", () =>
-    Effect.map(heldEventAfter("holds-reused-unknown", [request(1, "notAnAction")]), (settled) =>
-      expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds it open through a request reusing its id without a payload", () =>
-    Effect.map(
-      heldEventAfter("holds-reused-no-payload", [
-        JSON.stringify({ _tag: "Request", id: 1, tag: "hold", headers: [] }),
-      ]),
-      (settled) => expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("answers a frame of null without rejecting its event", () =>
-    Effect.map(heldEventAfter("holds-null-frame", ["null"]), (settled) =>
-      expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds a frame's event open past a later item that is null", () =>
-    Effect.map(heldEventAfter("holds-null-item", [], `[${request(1, "hold")},null]`), (settled) =>
-      expect(settled).toBe("pending"),
-    ),
-  );
-
-  it.effect("holds a frame's event open past a later request without headers", () =>
-    Effect.map(
-      heldEventAfter(
-        "holds-headerless-item",
-        [],
-        `[${request(1, "hold")},${JSON.stringify({ _tag: "Request", id: 3, tag: "readNote", payload: {}, headers: null })}]`,
-      ),
-      (settled) => expect(settled).toBe("pending"),
-    ),
-  );
+        expect(early).toBe("pending");
+      }),
+    );
+  }
 
   it.effect("holds a message's event open until its middleware's finalizers have run", () =>
     Effect.gen(function* () {
-      const stub = room("holds-cleanup");
+      const settled = yield* withHeldSocket("holds-cleanup", async (instance, held) => {
+        const event = instance.webSocketMessage(
+          held,
+          JSON.stringify({
+            _tag: "Request",
+            id: 1,
+            tag: "readNote",
+            payload: {},
+            headers: [[noteHeader, slowCleanupNote]],
+          }),
+        );
 
-      yield* upgradeToRpc(stub);
+        const early = await settledWithin(event, 50);
 
-      const settled = yield* Effect.promise(() =>
-        runInDurableObject(stub, async (instance: Room, state) => {
-          const [held] = state.getWebSockets();
+        await event;
 
-          if (held === undefined) throw new Error("No socket");
-
-          const event = instance.webSocketMessage(
-            held,
-            JSON.stringify({
-              _tag: "Request",
-              id: 1,
-              tag: "readNote",
-              payload: {},
-              headers: [[noteHeader, slowCleanupNote]],
-            }),
-          );
-
-          const early = await Promise.race([
-            event.then(() => "settled"),
-            new Promise((resolve) => setTimeout(resolve, 50, "pending")),
-          ]);
-
-          await event;
-
-          return early;
-        }),
-      );
+        return early;
+      });
 
       expect(settled).toBe("pending");
     }),
@@ -277,26 +262,13 @@ describe("layerWebSocket", () => {
 
   it.effect("ends a held event when its socket closes", () =>
     Effect.gen(function* () {
-      const stub = room("closes-held");
+      const settled = yield* withHeldSocket("closes-held", async (instance, held) => {
+        const holding = instance.webSocketMessage(held, request(1, "hold"));
 
-      yield* upgradeToRpc(stub);
+        await instance.webSocketClose(held);
 
-      const settled = yield* Effect.promise(() =>
-        runInDurableObject(stub, async (instance: Room, state) => {
-          const [held] = state.getWebSockets();
-
-          if (held === undefined) throw new Error("No socket");
-
-          const holding = instance.webSocketMessage(held, request(1, "hold"));
-
-          await instance.webSocketClose(held);
-
-          return Promise.race([
-            holding.then(() => "settled"),
-            new Promise((resolve) => setTimeout(resolve, 200, "pending")),
-          ]);
-        }),
-      );
+        return settledWithin(holding, 200);
+      });
 
       expect(settled).toBe("settled");
     }),

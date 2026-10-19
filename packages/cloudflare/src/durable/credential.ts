@@ -45,9 +45,10 @@ const headersNamed = (
   names: ReadonlyArray<string>,
 ): ReadonlyArray<Header> =>
   names.flatMap((name) => {
-    const value = request.headers[name.toLowerCase()];
+    const lowercase = name.toLowerCase();
+    const value = request.headers[lowercase];
 
-    return value === undefined ? [] : [[name.toLowerCase(), value] satisfies Header];
+    return value === undefined ? [] : [[lowercase, value] satisfies Header];
   });
 
 /**
