@@ -16,7 +16,7 @@ const room = [preview, messages];
 // requires `MessageStore` and `Room` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(
-    Layer.provide(ActionDurableObject.layerWebSocket(RoomRpc, { path: "/rpc" })),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   ),
   ActionHttp.layer(RoomHttp, room),
 ).pipe(Layer.provide(authenticate));

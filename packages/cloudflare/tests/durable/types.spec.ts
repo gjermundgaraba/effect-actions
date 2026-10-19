@@ -5,7 +5,7 @@ import type { RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { CurrentUser, Http, implementation, Rpc, socketRoutes } from "../support/app.js";
+import { CurrentUser, Http, implementation, socketRoutes } from "../support/app.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: socketRoutes })).toEqualTypeOf<
   new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance
@@ -13,7 +13,7 @@ expectTypeOf(ActionDurableObject.make({ routes: socketRoutes })).toEqualTypeOf<
 
 expectTypeOf<ActionDurableObject.Instance>().toExtend<DurableObject<Cloudflare.Env>>();
 
-expectTypeOf(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })).toEqualTypeOf<
+expectTypeOf(ActionDurableObject.layerWebSocket({ path: "/rpc" })).toEqualTypeOf<
   Layer.Layer<RpcServer.Protocol, never, ActionDurableObject.State | HttpRouter.HttpRouter>
 >();
 

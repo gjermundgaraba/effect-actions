@@ -19,7 +19,7 @@ import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/
 
 export class ChatRoom extends ActionDurableObject.make({
   routes: ActionRpc.layer(Rpc, implementations).pipe(
-    Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
     Layer.provide(authenticate),
   ),
 }) {}

@@ -32,9 +32,9 @@ in the core's `*-failures.md` pages.
 - An upgrade answered `426 Expected a WebSocket upgrade`: the request to the socket's `path` is
   not an upgrade. Connect with a WebSocket client, or forward the page's `Request` itself from
   the Worker, which forwards its `Upgrade` header.
-- An upgrade answered `431`, `The credential and the headers a socket keeps exceed its
-  attachment`: the credential and the listed `headers` exceed the runtime's 16 KiB attachment.
-  Send a smaller token, list fewer headers, or send them on each message.
+- An upgrade answered `431`, `The headers a socket keeps exceed its attachment`: the upgrade
+  request's headers, its cookies included, exceed the runtime's 16 KiB attachment. Send fewer or
+  smaller cookies to the socket's path, or send a large token on each message.
 - `Unauthenticated` `A bearer token is required.` from a page's socket though the page has a
   token: a browser WebSocket sets no header on its upgrade. Send the token on each message, with
   `RpcClient.withHeaders`.

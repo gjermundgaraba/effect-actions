@@ -18,19 +18,18 @@ Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `make({ routes, alarm?, disableLogger? })` | A Durable Object class serving `routes` on `fetch` and its sockets' events.      |
 | `State`                                    | The object's `DurableObjectState`, `ctx`: a startup service of routes and alarm. |
-| `layerWebSocket(Rpc, { path })`            | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves `Rpc` on.          |
+| `layerWebSocket({ path })`                 | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves on.                |
 | `layerHttpClient(stub)`                    | An `HttpClient` sending every request to a stub or a service binding.            |
 
 Exported types: `Options` of `make`, `LayerWebSocketOptions` of `layerWebSocket`, and `Instance`,
 an instance of the class `make` returns.
 
-| Option                      | Meaning                                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------------------------- |
-| `make`: `routes`            | A Layer of routes, as `HttpRouter.toWebHandler` serves them: `ActionRpc.layer`, `ActionHttp.layer`. |
-| `make`: `alarm`             | A function of the runtime's alarm information to the Effect the object's `alarm` runs.              |
-| `make`: `disableLogger`     | Leave out the request logger `toWebHandler` adds.                                                   |
-| `layerWebSocket`: `path`    | The upgrade route.                                                                                  |
-| `layerWebSocket`: `headers` | Headers of the upgrade request a socket keeps and sends again under each message's own.             |
+| Option                   | Meaning                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `make`: `routes`         | A Layer of routes, as `HttpRouter.toWebHandler` serves them: `ActionRpc.layer`, `ActionHttp.layer`. |
+| `make`: `alarm`          | A function of the runtime's alarm information to the Effect the object's `alarm` runs.              |
+| `make`: `disableLogger`  | Leave out the request logger `toWebHandler` adds.                                                   |
+| `layerWebSocket`: `path` | The upgrade route.                                                                                  |
 
 ## Serve actions from an object
 
@@ -65,23 +64,20 @@ it with a SQLite migration.
 
 ## Serve rpcs over hibernating WebSockets
 
-Provide `ActionRpc.layer` the protocol `layerWebSocket` makes for the binding it serves, at a
-path of the object's.
+Provide `ActionRpc.layer` the protocol `layerWebSocket` makes, at a path of the object's.
 
 ```ts
 ActionRpc.layer(RoomRpc, room).pipe(
-  Layer.provide(ActionDurableObject.layerWebSocket(RoomRpc, { path: "/rpc" })),
+  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
 );
 ```
 
 - The object accepts each socket with the runtime's hibernation API, so an idle object is
   evicted while its sockets stay open: a message constructs a new instance, which builds the
   routes and answers it.
-- A socket keeps the credential the binding's authentication descriptor reads from its upgrade
-  request, its `Authorization` header, an API key's header or its cookie, and the `headers`
-  listed, and no other header: Effect's own socket protocol keeps them all, so list any a
-  middleware reads, such as `Origin`. Each message is authenticated with those and its own
-  headers, its own winning. An API key in the query string is not kept.
+- A socket keeps its upgrade request's headers, as Effect's own socket protocol does, its
+  credential included, and each message is authenticated with those under its own headers, its
+  own winning. An API key in the query string is not kept: a message has no URL.
 - Give each protocol of one object its own `path`. A router prefix does not tell two apart:
   routes with two protocols at one path, under `HttpRouter.prefixed` or not, fail to build.
 - `layerWebSocket` serves only the routes of a class `make` returns, which receives its
@@ -170,8 +166,8 @@ open a socket by upgrading through its `fetch`, handing `response.webSocket` to
   service only they provide is missing from every call over the socket. Provide a per-message
   service with a middleware listed in `ActionRpc.layer`'s `middleware`, and a value of the
   object's as a startup service.
-- **A socket keeps at most 16 KiB.** The credential and the listed headers it keeps are
-  refused past the runtime's attachment limit: the upgrade is answered `431`.
+- **A socket keeps at most 16 KiB.** Upgrade headers past the runtime's 16,384-byte attachment
+  limit are refused: the upgrade is answered `431`. A browser's cookies are usually a few KiB.
 - **A call waiting on memory alone can be lost.** A message's event ends once the message is
   handed to the server. A call doing I/O or waiting on a timer, such as one under
   `Effect.timeout`, keeps the object from hibernating, and it is billed as long; one waiting

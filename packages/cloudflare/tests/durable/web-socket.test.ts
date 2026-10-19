@@ -11,7 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Http, noteHeader, Overdrawn, Rpc } from "../support/app.js";
+import { Http, noteHeader, Overdrawn } from "../support/app.js";
 import type { Room } from "../worker.js";
 import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
@@ -49,7 +49,7 @@ describe("layerWebSocket", () => {
   );
 
   it.effect(
-    "keeps the credential and the listed headers across hibernation, on a new instance",
+    "keeps the upgrade request's headers, its token included, across hibernation, on a new instance",
     () =>
       Effect.gen(function* () {
         const stub = room("hibernates");
@@ -180,7 +180,7 @@ describe("layerWebSocket", () => {
         runInDurableObject(env.PLAIN.getByName("outside-make"), (_, state) =>
           Effect.runPromiseExit(
             Layer.build(
-              ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" }).pipe(
+              ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(
                 Layer.provide([Layer.succeed(ActionDurableObject.State, state), HttpRouter.layer]),
               ),
             ).pipe(Effect.scoped),
@@ -204,7 +204,7 @@ describe("layerWebSocket", () => {
     }),
   );
 
-  it.effect("refuses an upgrade whose kept headers exceed a socket's attachment with 431", () =>
+  it.effect("refuses an upgrade whose headers exceed a socket's attachment with 431", () =>
     Effect.gen(function* () {
       const stub = room("too-large");
 

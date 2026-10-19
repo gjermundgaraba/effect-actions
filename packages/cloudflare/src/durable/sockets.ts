@@ -1,7 +1,6 @@
 import { Context, Effect, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
-import type { Header } from "./credential.js";
 
 /** What an object hands a socket's events to: the protocol whose tag the socket carries. */
 export interface Receiver {
@@ -35,29 +34,26 @@ const isRequest = (message: RpcMessage.FromClientEncoded): message is RpcMessage
 /**
  * A hibernating `RpcServer.Protocol` over the object's WebSockets, speaking JSON, and its
  * upgrade route at `path`. Each socket carries two tags, its group's and its own id's, and keeps
- * `saved` of its upgrade request in its attachment, so both survive hibernation.
+ * its upgrade request's headers in its attachment, so both survive hibernation.
  */
 export const makeProtocol = (
   state: DurableObjectState,
   receivers: Map<string, Receiver>,
-  options: {
-    readonly path: HttpRouter.PathInput;
-    readonly saved: (request: HttpServerRequest.HttpServerRequest) => ReadonlyArray<Header>;
-  },
+  path: HttpRouter.PathInput,
 ) =>
   Effect.gen(function* () {
     const router = yield* HttpRouter.HttpRouter;
     const run = Effect.runPromiseWith(yield* Effect.context<never>());
     const parser = json.makeUnsafe();
 
-    const group = `effect-actions/rpc:${options.path}`;
+    const group = `effect-actions/rpc:${path}`;
 
     // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
     // at one `path` would share their sockets' tags and answer each other's sockets.
     if (receivers.has(group)) {
       return yield* Effect.die(
         new Error(
-          `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${options.path}: a router prefix does not tell them apart`,
+          `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${path}: a router prefix does not tell them apart`,
         ),
       );
     }
@@ -151,7 +147,7 @@ export const makeProtocol = (
 
     yield* router.add(
       "GET",
-      options.path,
+      path,
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
 
@@ -162,12 +158,11 @@ export const makeProtocol = (
         const { 0: client, 1: server } = new WebSocketPair();
 
         try {
-          server.serializeAttachment(Attachment.make({ headers: options.saved(request) }));
+          server.serializeAttachment(Attachment.make({ headers: Object.entries(request.headers) }));
         } catch {
-          return HttpServerResponse.text(
-            "The credential and the headers a socket keeps exceed its attachment",
-            { status: 431 },
-          );
+          return HttpServerResponse.text("The headers a socket keeps exceed its attachment", {
+            status: 431,
+          });
         }
 
         state.acceptWebSocket(server, [group, tagOf(nextId++)]);

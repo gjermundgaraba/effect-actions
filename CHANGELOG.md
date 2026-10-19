@@ -35,16 +35,15 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     they are built; it serves them on `fetch`, hands its sockets' events to them and runs
     `alarm(info)`, given the runtime's retry count, sharing one build with the routes.
     `disableLogger` leaves out the request logger.
-  - `layerWebSocket(binding, { path, headers })` is the protocol `ActionRpc.layer` serves on:
-    WebSockets the runtime holds while the object hibernates. A socket keeps the credential the
-    binding's descriptor reads and the headers listed from its upgrade request, no other, and
-    each message is authenticated with them under its own headers; an upgrade whose kept
-    headers exceed a socket's 16 KiB attachment answers 431. Each protocol of one object needs a
-    `path` of its own. Effect's web
-    handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
-    Workers. The runtime answers a client's pings without waking the object. A message's event
-    ends once the message is handed to the server: a call doing I/O or waiting on a timer keeps
-    the object from hibernating, and one waiting on memory alone is lost if it hibernates.
+  - `layerWebSocket({ path })` is the protocol `ActionRpc.layer` serves on: WebSockets the
+    runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
+    Effect's own socket protocol does, and each message is authenticated with them under its
+    own headers; an upgrade whose headers exceed a socket's 16 KiB attachment answers 431. Each
+    protocol of one object needs a `path` of its own. Effect's web handler cannot upgrade a
+    request, so `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime
+    answers a client's pings without waking the object. A message's event ends once the message
+    is handed to the server: a call doing I/O or waiting on a timer keeps the object from
+    hibernating, and one waiting on memory alone is lost if it hibernates.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.

@@ -142,13 +142,11 @@ export const routes = Layer.mergeAll(
 
 export const socketRoutes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
-  rpcRoutes.pipe(
-    Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc", headers: [noteHeader] })),
-  ),
+  rpcRoutes.pipe(Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))),
 ).pipe(Layer.provide(authenticate), Layer.provide(startup), Layer.provide(slowUpstream));
 
 export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
-  Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   HttpRouter.provideRequest(Layer.succeed(CurrentNote, "router")),
   Layer.provide(authenticate),
   Layer.provide(startup),
@@ -156,7 +154,7 @@ export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
 
 const mountedAt = (prefix: string) =>
   ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
-    Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
     Layer.updateService(HttpRouter.HttpRouter, (router) => router.prefixed(prefix)),
   );
 

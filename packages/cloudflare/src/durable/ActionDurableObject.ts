@@ -8,8 +8,6 @@ import {
   type HttpServerRequest,
 } from "effect/http";
 import { RpcServer } from "effect/rpc";
-import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { savedOf } from "./credential.js";
 import { makeProtocol, type Receiver, Receivers } from "./sockets.js";
 
 /**
@@ -164,32 +162,24 @@ export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.
 export interface LayerWebSocketOptions {
   /** The upgrade route. */
   readonly path: HttpRouter.PathInput;
-  /**
-   * Headers of the upgrade request each message is sent again, besides the credential the
-   * binding's descriptor reads, such as one naming a room: a message's own headers win.
-   */
-  readonly headers?: ReadonlyArray<string> | undefined;
 }
 
 /**
- * The `RpcServer.Protocol` `ActionRpc.layer` serves `binding` on, in the routes of a class
- * `make` returns: WebSockets the object accepts at `path` for the runtime to hold while it
- * hibernates, speaking JSON, the client's `RpcSerialization.layerJson`. `binding` is the one
- * `ActionRpc.layer` serves. A message's event ends once the message is handed to the server,
- * and its calls answer after: one doing I/O or waiting on a timer keeps the object from
- * hibernating, and one waiting on memory alone is lost if it hibernates. A socket keeps from
- * its upgrade request the credential the
- * binding's descriptor reads, an `Authorization` header, an API key's header or its cookie,
- * and the headers listed, and nothing else: Effect's own socket protocol keeps every header.
- * Each message is authenticated with those and its own headers, its own winning. The runtime
- * answers a client's pings without waking the object. Router middleware around the routes
- * runs for the upgrade request alone, never for a socket's messages. Each protocol of one
- * object needs a `path` of its own: a router prefix does not distinguish two.
+ * The `RpcServer.Protocol` `ActionRpc.layer` serves on, in the routes of a class `make`
+ * returns: WebSockets the object accepts at `path` for the runtime to hold while it hibernates,
+ * speaking JSON, the client's `RpcSerialization.layerJson`. A message's event ends once the
+ * message is handed to the server, and its calls answer after: one doing I/O or waiting on a
+ * timer keeps the object from hibernating, and one waiting on memory alone is lost if it
+ * hibernates. A socket keeps its upgrade request's headers, as Effect's own socket protocol
+ * does, its credential included, and each message is authenticated with those under its own,
+ * its own winning; an upgrade whose headers exceed the runtime's 16 KiB attachment is answered
+ * 431. The runtime answers a client's pings without waking the object. Router middleware around
+ * the routes runs for the upgrade request alone, never for a socket's messages. Each protocol
+ * of one object needs a `path` of its own: a router prefix does not distinguish two.
  *
  * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export const layerWebSocket = (
-  binding: ActionRpc.Any,
   options: LayerWebSocketOptions,
 ): Layer.Layer<RpcServer.Protocol, never, State | HttpRouter.HttpRouter> =>
   Layer.effect(RpcServer.Protocol)(
@@ -205,10 +195,7 @@ export const layerWebSocket = (
         );
       }
 
-      return yield* makeProtocol(state, receivers, {
-        path: options.path,
-        saved: savedOf(binding, options.headers ?? []),
-      });
+      return yield* makeProtocol(state, receivers, options.path);
     }),
   );
 

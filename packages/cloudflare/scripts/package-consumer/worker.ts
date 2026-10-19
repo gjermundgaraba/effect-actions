@@ -38,7 +38,7 @@ export const Rpc = ActionRpc.make([Ping]);
 const pong = Action.implement(Ping, () => Effect.succeed("pong" as const));
 
 const socket = ActionRpc.layer(Rpc, pong).pipe(
-  Layer.provide(ActionDurableObject.layerWebSocket(Rpc, { path: "/rpc" })),
+  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
 );
 
 export class Room extends ActionDurableObject.make({
