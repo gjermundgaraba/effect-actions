@@ -24,8 +24,9 @@ in the core's `*-failures.md` pages.
 - `ActionDurableObject.layerWebSocket serves only the routes of a class ActionDurableObject.make
   returns`, a defect when the routes build: they are served by `HttpRouter.toWebHandler` or a
   class of your own, and nothing would receive the sockets' events. Serve them with `make`.
-- `ActionDurableObject.make was given no alarm`, a rejected alarm the runtime retries: something
-  set an alarm on an object made without `alarm`. Give `make` an `alarm`, or stop setting one.
+- `Your Durable Object class must have an alarm() handler in order to call setAlarm()`, thrown by
+  `storage.setAlarm`: the object was made without an `alarm`. Give `make` an `alarm`, or stop
+  setting one.
 - A stub's `fetch` rejects with the routes' build failure, every request alike: the routes fail
   to build. The object is reset, and the next request builds them again; fix the failure the
   rejection names.

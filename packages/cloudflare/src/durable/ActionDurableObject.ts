@@ -66,7 +66,7 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void>;
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
-  alarm(info?: AlarmInvocationInfo): Promise<void>;
+  alarm?(info?: AlarmInvocationInfo): Promise<void>;
 }
 
 /**
@@ -94,7 +94,7 @@ export const make = <
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every request requirement against `Allowed<A>`, and `toWebHandler` gives each request the services the routes provide, `A`, as its own types say; only that subtraction, which a generic `A` keeps unresolved, is erased.
   const routes = options.routes as Layer.Layer<never, E, Allowed<never>>;
 
-  const alarm:
+  const onAlarm:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)
     | undefined = options.alarm;
 
@@ -157,18 +157,24 @@ export const make = <
       return this.#receiverOf(socket).close(socket);
     }
 
-    override alarm(info?: AlarmInvocationInfo) {
-      if (alarm === undefined) {
-        return Promise.reject(new Error("ActionDurableObject.make was given no alarm"));
-      }
+    declare readonly alarm?: (info?: AlarmInvocationInfo) => Promise<void>;
 
-      return Effect.runPromise(
-        alarm(info).pipe(
-          Effect.scoped,
-          Effect.provideService(State, this.ctx),
-          Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
-        ),
-      );
+    constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+      super(ctx, env);
+
+      // Why: the runtime refuses `storage.setAlarm` on an instance without an `alarm` handler,
+      // at the call that sets it. Made without one, an instance has none, where a handler
+      // rejecting every alarm would fail later, retried.
+      if (onAlarm !== undefined) {
+        this.alarm = (info) =>
+          Effect.runPromise(
+            onAlarm(info).pipe(
+              Effect.scoped,
+              Effect.provideService(State, this.ctx),
+              Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
+            ),
+          );
+      }
     }
   };
 };

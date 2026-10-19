@@ -112,7 +112,8 @@ alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layer
 - Its argument is the runtime's `AlarmInvocationInfo`, `retryCount` and `isRetry`, or
   `undefined` when the object's `alarm` is called with none.
 - A failure rejects the object's `alarm`, which the runtime retries with backoff, up to six
-  times. An object made without an `alarm` rejects every alarm the same way.
+  times. An object made without an `alarm` has no handler, so the runtime refuses
+  `storage.setAlarm` on it, at that call.
 - The object has one alarm. [chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)
   sets it for the oldest message's expiry and, each run, for the next.
 

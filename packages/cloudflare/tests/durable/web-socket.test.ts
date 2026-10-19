@@ -277,17 +277,19 @@ describe("make", () => {
     }),
   );
 
-  it.effect("rejects an alarm when make was given none", () =>
+  it.effect("defines no alarm handler when make was given none", () =>
     Effect.gen(function* () {
-      const rejected = yield* Effect.flip(
-        Effect.tryPromise(() =>
-          runInDurableObject(env.ROUTER_PROVIDED.getByName("no-alarm"), (instance) =>
-            instance.alarm(),
+      const handlers = yield* Effect.promise(() =>
+        Promise.all([
+          runInDurableObject(
+            env.ROUTER_PROVIDED.getByName("no-alarm"),
+            (instance) => "alarm" in instance,
           ),
-        ),
+          runInDurableObject(room("has-alarm"), (instance) => "alarm" in instance),
+        ]),
       );
 
-      expect(String(rejected.cause)).toContain("ActionDurableObject.make was given no alarm");
+      expect(handlers).toEqual([false, true]);
     }),
   );
 
