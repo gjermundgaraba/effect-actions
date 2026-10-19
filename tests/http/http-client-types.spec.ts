@@ -230,3 +230,17 @@ const authorizedFetched = ActionHttp.fetchClient(Throttling, { transformClient: 
 expectTypeOf<
   Effect.Services<ReturnType<typeof authorizedFetched.count>>
 >().toEqualTypeOf<Credentials>();
+
+expectTypeOf<ActionHttp.GroupName<undefined>>().toEqualTypeOf<"api">();
+
+expectTypeOf<ActionHttp.GroupName<"/">>().toEqualTypeOf<"/">();
+
+expectTypeOf<ActionHttp.GroupName<"/public">>().toEqualTypeOf<"public">();
+
+expectTypeOf<ActionHttp.GroupName<"/admin/v2/">>().toEqualTypeOf<"admin/v2">();
+
+expectTypeOf<ActionHttp.GroupName<`/${string}`>>().toEqualTypeOf<string>();
+
+expectTypeOf(ActionHttp.make(Notes, { prefix: "/notes" })).toEqualTypeOf<
+  ActionHttp.Binding<typeof Notes, [], undefined, "notes">
+>();

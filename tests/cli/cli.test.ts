@@ -2841,3 +2841,36 @@ it.effect(
       expect([Exit.isSuccess(result), lines]).toEqual([true, ['"open"']]);
     }),
 );
+
+it.effect("gives a positional field no flag, and a piped withSubcommands only the usage text", () =>
+  Effect.gen(function* () {
+    const Note = Action.make("note", {
+      description: "Keep a note",
+      readOnly: false,
+      caller: Action.Anyone,
+      input: { text: Schema.String },
+      success: Schema.String,
+    });
+
+    const app = Action.implement(Note, ({ text }) => Effect.succeed(text));
+    const command = ActionCli.command(app, Note, { positional: ["text"] });
+
+    expect(yield* lines(command, ["hi"])).toEqual(['"hi"']);
+
+    const flagged = failure(yield* Effect.exit(exec(command, ["--text", "hi"])));
+
+    expect(flagged).toBeInstanceOf(CliError.ShowHelp);
+
+    if (flagged instanceof CliError.ShowHelp) {
+      expect(flagged.errors[0]).toBeInstanceOf(CliError.UnrecognizedOption);
+    }
+
+    const piped = ActionCli.make(app, { name: "notes" }).pipe(
+      Command.withSubcommands([Command.make("own")]),
+    );
+
+    expect(failure(yield* Effect.exit(exec(piped, ["note", "hi"])))).toBeInstanceOf(
+      CliError.ShowHelp,
+    );
+  }),
+);

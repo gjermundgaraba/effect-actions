@@ -204,9 +204,38 @@ type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Acti
     >
   : never;
 
-type Api<Actions extends ReadonlyArray<Action.Any>, E extends Action.Errors, D> = HttpApi.HttpApi<
+type Segments<S extends string> = S extends `${infer Head}/${infer Tail}`
+  ? Head extends ""
+    ? Segments<Tail>
+    : [Head, ...Segments<Tail>]
+  : S extends ""
+    ? []
+    : [S];
+
+type Joined<S extends ReadonlyArray<string>> = S extends [
+  infer Head extends string,
+  ...infer Rest extends ReadonlyArray<string>,
+]
+  ? Rest extends []
+    ? Head
+    : `${Head}/${Joined<Rest>}`
+  : "";
+
+/** The name of the binding's `HttpApiGroup`: its `prefix` without the slashes around it, `/` at the root. */
+export type GroupName<Prefix extends `/${string}` | undefined> = Prefix extends `/${infer Rest}`
+  ? Joined<Segments<Rest>> extends ""
+    ? "/"
+    : Joined<Segments<Rest>>
+  : "api";
+
+type Api<
+  Actions extends ReadonlyArray<Action.Any>,
+  E extends Action.Errors,
+  D,
+  Name extends string,
+> = HttpApi.HttpApi<
   "actions",
-  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E, D>, true>
+  HttpApiGroup.HttpApiGroup<Name, Endpoint<Actions[number], E, D>, true>
 >;
 
 /**
@@ -218,6 +247,7 @@ export interface Binding<
   Actions extends ReadonlyArray<Action.Any>,
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
+  Name extends string = "api",
 > {
   /** Its protected actions' authentication descriptor, or `undefined` without one. */
   readonly authentication: D;
@@ -233,13 +263,13 @@ export interface Binding<
    *
    * **Gotchas**
    *
-   * - Serve it with `layer`, never the native `HttpApiBuilder`: its group name is typed `string`, so `HttpApiBuilder.group(api, "api", …)` is refused as `Endpoint not handled: ${string}`, and given a `string`-typed name a protected action makes the host fail to build with `Service not found: effect-actions/Authentication/Security/…`.
+   * - Serve it with `layer`, never the native `HttpApiBuilder`: `HttpApiBuilder.group(api, "api", …)` compiles, its group named `GroupName` of the `prefix`, and with a protected action the host then fails to build with `Service not found: effect-actions/Authentication/Security/…`.
    * - A header that middleware reads is not in its document, whose operations list no `parameters`: rewrite it, `OpenApi.fromApi(Http.api.annotate(OpenApi.Transform, (document) => …))`, or make the value an input.
    * - An OAuth protected resource is documented as a bearer scheme: Effect has no OAuth scheme.
    * - Combined into one document, `HttpApi.make("app").addHttpApi(A.api).addHttpApi(B.api)`, a shared action name makes `OpenApi.fromApi` throw `Duplicate OpenAPI operationId`, and a shared prefix silently drops one binding's actions from the document and a native client: otherwise document each alone.
    * - A binding holding no protected action documents no security scheme, so Swagger shows no Authorize button.
    */
-  readonly api: Api<Actions, E, D>;
+  readonly api: Api<Actions, E, D, Name>;
 }
 
 interface Request {
@@ -289,14 +319,14 @@ const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middle
  */
 export function make<
   const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
->(actions: Actions): Binding<Actions, [], undefined>;
+>(actions: Actions): Binding<Actions, [], undefined, "api">;
 export function make<const Actions extends ReadonlyArray<Action.Any>, const O extends Options = {}>(
   actions: Actions,
   options: O &
     RequiredAuthentication<Actions[number]> &
     Matching<Actions[number], NoInfer<DescriptorOf<O>>> &
     NoInfer<Known<O, Options>>,
-): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>>;
+): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>, GroupName<O["prefix"]>>;
 // Why: Reached only when the forms above fail. TypeScript reports a call matching no overload by
 // the last one's error, so this one tells protected actions without options to name their
 // authentication, where the first form's constraint would tell them to be public.

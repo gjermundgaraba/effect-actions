@@ -48,6 +48,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   library on every route, with `Unsupported content-type: <type> (send application/json)`, `none`
   without the header, where a wrong type was answered by Effect's own text and a missing one
   by `Unsupported content-type: none`.
+- `ActionHttp.Binding` names its `HttpApiGroup` by its `prefix` in the type, `GroupName`, where
+  it was `string`: `HttpApiBuilder.group(binding.api, "api", …)` and Effect's other tools that
+  take the group's name compile against it.
 - A `protectedResource.resource` that is not an absolute URL, such as `/mcp`, is refused at
   `Authentication.layer` and `refusalResponse` with the library's own message naming the fix,
   where the platform's `TypeError: Invalid URL` was thrown. The message for a descriptor given

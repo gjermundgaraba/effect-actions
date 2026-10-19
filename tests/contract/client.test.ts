@@ -726,3 +726,21 @@ describe("Action.client", () => {
     );
   });
 });
+
+it("never completes acquiring a client of its own implementation inside its builder", async () => {
+  const self: Action.AnyImplementation = Action.implement(
+    Ping,
+    Effect.gen(function* () {
+      yield* Effect.suspend(() => Action.client(self)).pipe(Effect.scoped);
+
+      return () => Effect.succeed(1);
+    }),
+  );
+
+  const acquired = await Effect.runPromiseExit(
+    // @ts-expect-error -- An erased implementation's startup requirements are unknown to the types; here they are none.
+    Action.client(self).pipe(Effect.scoped, Effect.timeout("200 millis")),
+  );
+
+  expect(Exit.isFailure(acquired) && Cause.pretty(acquired.cause)).toContain("TimeoutError");
+});

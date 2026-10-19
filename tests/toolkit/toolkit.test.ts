@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
 import { actors } from "../support/app/authorization.js";
 import { chat, layer as approvalHandlers } from "../support/app/toolkit-approval.js";
@@ -433,6 +433,10 @@ describe("ActionToolkit", () => {
         );
 
         expect(Exit.hasDies(withOnlyOtherImplementationsLayer)).toBe(true);
+        expect(
+          Exit.isFailure(withOnlyOtherImplementationsLayer) &&
+            Cause.pretty(withOnlyOtherImplementationsLayer.cause),
+        ).toContain("Cannot read properties of undefined (reading 'context')");
       }),
   );
 

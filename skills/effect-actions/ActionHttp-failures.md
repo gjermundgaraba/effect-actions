@@ -8,7 +8,7 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
 - A route returns 404, which a client method reports as an `HttpClientError` with `DecodeError` or `StatusCodeError`: the path lacks the prefix, no `ActionHttp.layer` call serves the action, or the binding does not hold that very action value, as when a test declares the contract again.
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `ActionHttp.layer` calls serve one action; give each layer its own `actions`.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi`: two bindings combined into one `HttpApi` share an action name; rename one, or document each binding alone.
-- `Type 'Handlers<…>' is not assignable to type '`Endpoint not handled: ${string}`'` at `HttpApiBuilder.group(binding.api, …)`, or `Service not found: effect-actions/Authentication/Security/…` when the host builds: a binding is served with the native `HttpApiBuilder`; serve it with `ActionHttp.layer`.
+- `Service not found: effect-actions/Authentication/Security/…` when the host builds: a binding holding a protected action is served with the native `HttpApiBuilder`; serve it with `ActionHttp.layer`.
 
 ## Types
 
