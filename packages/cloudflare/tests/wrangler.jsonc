@@ -6,6 +6,7 @@
     "bindings": [
       { "name": "PLAIN", "class_name": "Plain" },
       { "name": "ROOM", "class_name": "Room" },
+      { "name": "EXTENDED", "class_name": "Extended" },
       { "name": "ROUTER_PROVIDED", "class_name": "RouterProvided" },
       { "name": "PREFIXED", "class_name": "Prefixed" },
       { "name": "BROKEN", "class_name": "Broken" },
@@ -14,7 +15,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["Plain", "Room", "RouterProvided", "Prefixed", "Broken"],
+      "new_sqlite_classes": ["Plain", "Room", "Extended", "RouterProvided", "Prefixed", "Broken"],
     },
   ],
 }

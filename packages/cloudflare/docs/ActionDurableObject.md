@@ -80,6 +80,9 @@ ActionRpc.layer(RoomRpc, room).pipe(
 - A socket keeps its upgrade request's headers, as Effect's own socket protocol does, its
   credential included, and each message is authenticated with those under its own headers, its
   own winning. An API key in the query string is not kept: a message has no URL.
+- Under a cookie scheme, refuse a foreign `Origin` with router middleware around the routes: a
+  browser sends the cookie on any page's upgrade, an upgrade is never preflighted, and router
+  middleware runs for the upgrade, as the core's `Authentication-advanced.md` describes.
 - Give each protocol of one object its own `path`. A router prefix does not tell two apart:
   routes with two protocols at one path, under `HttpRouter.prefixed` or not, fail to build.
 - `layerWebSocket` serves only the routes of a class `make` returns, which receives its

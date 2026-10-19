@@ -60,13 +60,13 @@ type HandlerOf<K extends keyof DurableObject<Cloudflare.Env>> = NonNullable<
 /**
  * An instance of a class `make` returns, with the handlers it defines, each taking the
  * runtime's own arguments, so a class extending it overrides them as Cloudflare declares them.
+ * Its `alarm` is Cloudflare's own, optional: a class made without one has none.
  */
 export interface Instance extends DurableObject<Cloudflare.Env> {
-  fetch(request: Request): Promise<Response>;
-  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void>;
+  fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
+  webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
-  alarm?(info?: AlarmInvocationInfo): Promise<void>;
 }
 
 /**
@@ -98,7 +98,7 @@ export const make = <
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)
     | undefined = options.alarm;
 
-  return class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+  class ActionDurableObject extends DurableObject<Cloudflare.Env> {
     readonly #memoMap = Layer.makeMemoMapUnsafe();
 
     readonly #receivers = new Map<string, Receiver>();
@@ -157,26 +157,28 @@ export const make = <
       return this.#receiverOf(socket).close(socket);
     }
 
-    declare readonly alarm?: (info?: AlarmInvocationInfo) => Promise<void>;
-
-    constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
-      super(ctx, env);
-
-      // Why: the runtime refuses `storage.setAlarm` on an instance without an `alarm` handler,
-      // at the call that sets it. Made without one, an instance has none, where a handler
-      // rejecting every alarm would fail later, retried.
-      if (onAlarm !== undefined) {
-        this.alarm = (info) =>
-          Effect.runPromise(
-            onAlarm(info).pipe(
+    static withAlarm(
+      run: (info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>,
+    ) {
+      return class extends this {
+        override alarm(info?: AlarmInvocationInfo) {
+          return Effect.runPromise(
+            run(info).pipe(
               Effect.scoped,
               Effect.provideService(State, this.ctx),
               Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
             ),
           );
-      }
+        }
+      };
     }
-  };
+  }
+
+  // Why: the runtime refuses `storage.setAlarm` on an instance without an `alarm` handler, at the
+  // call that sets it, so a class made without one has none, where a handler rejecting every
+  // alarm would fail later, retried. Made with one, `alarm` is a method of a class extending the
+  // base, so a class extending that overrides it and calls it through `super`.
+  return onAlarm === undefined ? ActionDurableObject : ActionDurableObject.withAlarm(onAlarm);
 };
 
 /** `layerWebSocket`'s options. */

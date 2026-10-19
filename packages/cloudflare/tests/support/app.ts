@@ -116,7 +116,10 @@ export const implementation = Action.implement(
       schedule: () => Effect.promise(() => storage.setAlarm(Date.now() + 60_000)),
       alarms: () =>
         Effect.promise(() => storage.get<number>(alarmsKey)).pipe(Effect.map((n) => n ?? 0)),
-      pause: () => Effect.sleep("100 millis"),
+      pause: () =>
+        Effect.sleep("100 millis").pipe(
+          Effect.onInterrupt(() => Effect.promise(() => storage.put("pauseInterrupted", true))),
+        ),
     };
   }),
   { authorize: Action.allowAll },

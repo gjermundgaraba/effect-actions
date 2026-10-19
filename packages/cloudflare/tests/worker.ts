@@ -26,6 +26,16 @@ export class Plain extends DurableObject {
 
 export class Room extends ActionDurableObject.make({ routes: socketRoutes, alarm: () => alarm }) {}
 
+export class Extended extends ActionDurableObject.make({
+  routes: socketRoutes,
+  alarm: () => alarm,
+}) {
+  override async alarm(info?: AlarmInvocationInfo) {
+    await this.ctx.storage.put("extended", true);
+    await super.alarm?.(info);
+  }
+}
+
 export class RouterProvided extends ActionDurableObject.make({ routes: routerProvidedRoutes }) {}
 
 export class Prefixed extends ActionDurableObject.make({ routes: prefixedRoutes }) {}

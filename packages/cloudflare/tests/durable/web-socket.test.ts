@@ -120,7 +120,37 @@ describe("layerWebSocket", () => {
       );
 
       expect(lasted).toBeLessThan(100);
-      expect(yield* Effect.promise(() => reply)).toMatchObject({ _tag: "Exit" });
+      expect(yield* Effect.promise(() => reply)).toMatchObject({
+        _tag: "Exit",
+        requestId: 1,
+        exit: { _tag: "Success" },
+      });
+    }),
+  );
+
+  it.effect("interrupts a socket's running call when the socket closes", () =>
+    Effect.gen(function* () {
+      const stub = room("closes");
+      const socket = yield* upgradeToRpc(stub);
+
+      const after = (millis: number) =>
+        Effect.promise(() => new Promise((resolve) => setTimeout(resolve, millis)));
+
+      socket.send(
+        JSON.stringify({ _tag: "Request", id: 1, tag: "pause", payload: {}, headers: [] }),
+      );
+
+      yield* after(20);
+
+      socket.close(1000);
+
+      yield* after(50);
+
+      const interrupted = yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) => state.storage.get("pauseInterrupted")),
+      );
+
+      expect(interrupted).toBe(true);
     }),
   );
 
@@ -290,6 +320,26 @@ describe("make", () => {
       );
 
       expect(handlers).toEqual([false, true]);
+    }),
+  );
+
+  it.effect("runs a subclass's alarm, which reaches make's through super", () =>
+    Effect.gen(function* () {
+      const stub = env.EXTENDED.getByName("extended");
+
+      yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) => state.storage.setAlarm(Date.now() + 60_000)),
+      );
+
+      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+
+      const ran = yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) =>
+          Promise.all([state.storage.get("extended"), state.storage.get("alarms")]),
+        ),
+      );
+
+      expect(ran).toEqual([true, 1]);
     }),
   );
 

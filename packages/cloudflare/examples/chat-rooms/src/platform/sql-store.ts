@@ -23,13 +23,15 @@ export const layerSql = Layer.effect(MessageStore)(
       "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL)",
     );
 
-    // The object has one alarm, set for the oldest message's expiry: a message posted later
-    // expires later, so `post` sets it only when none is set. While the alarm runs none is, so
-    // each run sets it for the next message due.
-    const expireAt = (at: number) =>
-      Effect.promise(async () => {
-        if ((await storage.getAlarm()) === null) await storage.setAlarm(at + day);
-      });
+    // The object has one alarm, set for the oldest message's expiry. It is read from the table
+    // and set in one step, so posts running at once each set it for the oldest message they
+    // see, and the last to set it has seen them all; reading the alarm first would let two posts
+    // both see none and the later one win.
+    const expireOldest = Effect.promise(async () => {
+      const [oldest] = query("SELECT * FROM messages ORDER BY at LIMIT 1");
+
+      if (oldest !== undefined) await storage.setAlarm(oldest.at + day);
+    });
 
     return MessageStore.of({
       latest: Effect.sync(
@@ -51,7 +53,7 @@ export const layerSql = Layer.effect(MessageStore)(
             .one(),
         );
 
-        yield* expireAt(at);
+        yield* expireOldest;
 
         return message;
       }),
@@ -69,9 +71,7 @@ export const layerSql = Layer.effect(MessageStore)(
 
         storage.sql.exec("DELETE FROM messages WHERE at <= ?", now - day);
 
-        const [oldest] = query("SELECT * FROM messages ORDER BY at LIMIT 1");
-
-        if (oldest !== undefined) yield* expireAt(oldest.at);
+        yield* expireOldest;
       }),
     });
   }),

@@ -29,7 +29,7 @@ const inObject = <A, E>(
   );
 
 describe("layerSql", () => {
-  it.effect("numbers a room's messages and reads those after an id", () =>
+  it.live("numbers a room's messages and reads those after an id", () =>
     inObject((store) =>
       Effect.gen(function* () {
         const first = yield* store.post("ada", "One.");
@@ -43,7 +43,7 @@ describe("layerSql", () => {
     ),
   );
 
-  it.effect("deletes only its author's message", () =>
+  it.live("deletes only its author's message", () =>
     inObject((store) =>
       Effect.gen(function* () {
         const posted = yield* store.post("ada", "Mine.");
@@ -62,7 +62,23 @@ describe("layerSql", () => {
     ),
   );
 
-  it.effect("sets the alarm for the first message's expiry and leaves it for later ones", () =>
+  it.live("sets the alarm for the oldest message's expiry when messages are posted at once", () =>
+    inObject((store, state) =>
+      Effect.gen(function* () {
+        const posted = yield* Effect.forEach(
+          Array.from({ length: 32 }, (_, i) => `Message ${i}.`),
+          (text) => store.post("ada", text),
+          { concurrency: "unbounded" },
+        );
+
+        expect(yield* Effect.promise(() => state.storage.getAlarm())).toBe(
+          Math.min(...posted.map(({ at }) => at)) + day,
+        );
+      }),
+    ),
+  );
+
+  it.live("sets the alarm for the first message's expiry and leaves it for later ones", () =>
     inObject((store, state) =>
       Effect.gen(function* () {
         const first = yield* store.post("ada", "One.");
