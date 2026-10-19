@@ -1,0 +1,614 @@
+#!/usr/bin/env bash
+# Harness for examples/kitchen-sink. Launch, doctor, HTTP, CLI, and RPC all use
+# the run recorded in /tmp/effect-actions-verify-$RUN_ID/run.env. Cleanup deletes
+# that directory and the server process it names. It does not delete EVIDENCE_DIR.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+
+die() {
+  printf 'verify-effect-actions: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+usage:
+  verify-effect-actions launch [--run ID] [--evidence DIR]
+  verify-effect-actions doctor [--run ID]
+  verify-effect-actions http [--run ID] [--token ada|linus|grace|kay|none] [--workspace acme|globex|none] [--evidence NAME] METHOD PATH [--header 'Name: value']... [--data JSON]
+  verify-effect-actions cli [--run ID] [--token ada|linus|grace|kay|none] [--workspace acme|globex|none] [--expect-exit N] [--evidence NAME] [--stdin-text TEXT | --stdin-file FILE] -- COMMAND...
+  verify-effect-actions rpc [--run ID] [--session ada-at-acme] [--evidence NAME]
+  verify-effect-actions cleanup [--run ID]
+
+State: /tmp/effect-actions-verify-$RUN_ID/run.env
+Evidence defaults to $EFFECT_ACTIONS_VERIFY_EVIDENCE or $HOME/.cache/effect-actions-verify/$RUN_ID
+Pass EFFECT_ACTIONS_VERIFY_RUN or --run after launch. launch prints an export line.
+EOF
+}
+
+require_node() {
+  command -v node >/dev/null 2>&1 || die "node is not on PATH"
+  node -e '
+    const [major, minor] = process.versions.node.split(".").map(Number)
+    const ok = (major === 22 && minor >= 18) || (major === 24 && minor >= 11) || major >= 26
+    if (!ok) {
+      console.error("node " + process.versions.node + " does not satisfy devEngines.runtime ^22.18.0 || ^24.11.0 || >=26.0.0")
+      process.exit(1)
+    }
+  '
+  [[ -d "$ROOT/node_modules/tsx" ]] || die "dependencies are missing in $ROOT; run vp install (or pnpm install) from the repository root"
+}
+
+take_run_flag() {
+  RUN_ID="${EFFECT_ACTIONS_VERIFY_RUN:-}"
+  local -a kept=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run)
+        [[ $# -ge 2 ]] || die "--run needs an id"
+        RUN_ID="$2"
+        shift 2
+        ;;
+      *)
+        kept+=("$1")
+        shift
+        ;;
+    esac
+  done
+  ARGS=("${kept[@]+"${kept[@]}"}")
+}
+
+load_run() {
+  [[ -n "${RUN_ID:-}" ]] || die "set EFFECT_ACTIONS_VERIFY_RUN or pass --run (launch prints it)"
+  STATE_DIR="/tmp/effect-actions-verify-$RUN_ID"
+  [[ -f "$STATE_DIR/run.env" ]] || die "no run env at $STATE_DIR/run.env"
+  # shellcheck disable=SC1090
+  set -a
+  source "$STATE_DIR/run.env"
+  set +a
+  [[ -n "${EVIDENCE_DIR:-}" && -n "${PID:-}" && -n "${PORT:-}" && -n "${ADMIN_PORT:-}" && -n "${TRACKER_URL:-}" ]] || die "run env is incomplete"
+}
+
+free_port() {
+  node -e 'const net = require("node:net"); const server = net.createServer(); server.listen(0, "127.0.0.1", () => { process.stdout.write(String(server.address().port)); server.close(); });'
+}
+
+# Clock ticks since boot, field 22 of /proc/pid/stat. The command name is field 2 and
+# may contain spaces, so the count starts after the closing parenthesis.
+process_started() {
+  local pid="$1" stat rest
+  [[ -r "/proc/$pid/stat" ]] || return 1
+  stat=$(<"/proc/$pid/stat") || return 1
+  rest=${stat##*)}
+  awk '{print $20}' <<<"$rest"
+}
+
+same_server() {
+  local pid="$1" started="$2" now
+  [[ -n "$pid" && -n "$started" ]] || return 1
+  now=$(process_started "$pid") || return 1
+  [[ "$now" == "$started" ]]
+}
+
+# Signal only when the pid is still the process recorded at launch.
+stop_server() {
+  local pid="$1" started="$2"
+  if ! same_server "$pid" "$started"; then
+    printf 'verify-effect-actions: pid %s is not the server this run started\n' "$pid"
+    return 0
+  fi
+  kill "$pid" 2>/dev/null || true
+  local i
+  for i in $(seq 1 25); do
+    same_server "$pid" "$started" || return 0
+    sleep 0.2
+  done
+  if same_server "$pid" "$started"; then
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+}
+
+write_run_env() {
+  {
+    printf 'RUN_ID=%q\n' "$RUN_ID"
+    printf 'STATE_DIR=%q\n' "$STATE_DIR"
+    printf 'EVIDENCE_DIR=%q\n' "$EVIDENCE_DIR"
+    printf 'PID=%q\n' "$PID"
+    printf 'STARTED=%q\n' "$STARTED"
+    printf 'PORT=%q\n' "$PORT"
+    printf 'ADMIN_PORT=%q\n' "$ADMIN_PORT"
+    printf 'HOST=%q\n' "$HOST"
+    printf 'TRACKER_URL=%q\n' "$TRACKER_URL"
+    printf 'ADMIN_URL=%q\n' "$ADMIN_URL"
+    printf 'PUBLIC_URL=%q\n' "$PUBLIC_URL"
+    printf 'TRACKER_RPC_URL=%q\n' "$TRACKER_RPC_URL"
+    printf 'REPO_ROOT=%q\n' "$ROOT"
+  } >"$STATE_DIR/run.env"
+}
+
+cmd_launch() {
+  require_node
+  local evidence=""
+  RUN_ID="${EFFECT_ACTIONS_VERIFY_RUN:-}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run)
+        RUN_ID="$2"
+        shift 2
+        ;;
+      --evidence)
+        evidence="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown launch argument: $1"
+        ;;
+    esac
+  done
+  if [[ -z "$RUN_ID" ]]; then
+    RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+  fi
+  STATE_DIR="/tmp/effect-actions-verify-$RUN_ID"
+  if [[ -z "$evidence" ]]; then
+    evidence="${EFFECT_ACTIONS_VERIFY_EVIDENCE:-$HOME/.cache/effect-actions-verify/$RUN_ID}"
+  fi
+  EVIDENCE_DIR="$evidence"
+  [[ ! -e "$STATE_DIR" ]] || die "state directory already exists: $STATE_DIR"
+  mkdir -p "$STATE_DIR" "$EVIDENCE_DIR"
+  PORT="$(free_port)"
+  ADMIN_PORT="$(free_port)"
+  [[ "$PORT" =~ ^[0-9]+$ && "$ADMIN_PORT" =~ ^[0-9]+$ && "$PORT" != "$ADMIN_PORT" ]] || die "could not choose ports"
+  HOST="127.0.0.1"
+  TRACKER_URL="http://$HOST:$PORT"
+  ADMIN_URL="http://$HOST:$ADMIN_PORT"
+  PUBLIC_URL="$TRACKER_URL"
+  TRACKER_RPC_URL="ws://$HOST:$PORT/rpc"
+  local logfile="$EVIDENCE_DIR/server.log"
+  local caller_pwd
+  caller_pwd="$(pwd)"
+  cd "$ROOT"
+  HOST="$HOST" PORT="$PORT" ADMIN_PORT="$ADMIN_PORT" PUBLIC_URL="$PUBLIC_URL" \
+    node --import tsx examples/kitchen-sink/src/server.ts >"$logfile" 2>&1 &
+  PID="$!"
+  cd "$caller_pwd"
+  STARTED=$(process_started "$PID") || die "server exited before its start time could be recorded"
+  write_run_env
+  local ready=0
+  local i
+  for i in $(seq 1 80); do
+    if ! same_server "$PID" "$STARTED"; then
+      break
+    fi
+    if grep -q "Listening on $TRACKER_URL" "$logfile" && grep -q "Listening on $ADMIN_URL" "$logfile"; then
+      local body admin_body
+      body="$(curl -sS -m 2 -X POST "$TRACKER_URL/api/v1/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+      admin_body="$(curl -sS -m 2 -X POST "$ADMIN_URL/admin/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+      if [[ "$body" == *'"service":"tracker"'* && "$admin_body" == *'"service":"tracker"'* ]]; then
+        ready=1
+        break
+      fi
+    fi
+    sleep 0.25
+  done
+  if [[ "$ready" -ne 1 ]]; then
+    stop_server "$PID" "$STARTED"
+    die "server did not become usable on $TRACKER_URL and $ADMIN_URL; see $logfile"
+  fi
+  local seed_log="$EVIDENCE_DIR/seed.log"
+  if ! (cd "$ROOT" && TRACKER_URL="$TRACKER_URL" node --import tsx examples/kitchen-sink/src/seed.ts >"$seed_log" 2>&1); then
+    die "seed failed; see $seed_log"
+  fi
+  if ! grep -q "Filed ACME-1" "$seed_log"; then
+    die "seed did not file ACME-1; see $seed_log"
+  fi
+  printf 'export EFFECT_ACTIONS_VERIFY_RUN=%q\n' "$RUN_ID"
+  printf 'TRACKER_URL=%q\n' "$TRACKER_URL"
+  printf 'ADMIN_URL=%q\n' "$ADMIN_URL"
+  printf 'TRACKER_RPC_URL=%q\n' "$TRACKER_RPC_URL"
+  printf 'EVIDENCE_DIR=%q\n' "$EVIDENCE_DIR"
+  printf 'STATE_DIR=%q\n' "$STATE_DIR"
+  printf 'PID=%q\n' "$PID"
+}
+
+port_owned_by() {
+  local port="$1" pid="$2"
+  node -e '
+    const { readdirSync, readlinkSync, readFileSync } = require("node:fs")
+    const port = Number(process.argv[1])
+    const pid = process.argv[2]
+    const hex = port.toString(16).toUpperCase().padStart(4, "0")
+    const local = "0100007F:" + hex
+    const inodes = new Set()
+    for (const line of readFileSync("/proc/net/tcp", "utf8").split("\n").slice(1)) {
+      const fields = line.trim().split(/\s+/)
+      if (fields[1] === local && fields[3] === "0A") inodes.add(fields[9])
+    }
+    if (inodes.size === 0) process.exit(1)
+    let owned = false
+    try {
+      for (const fd of readdirSync("/proc/" + pid + "/fd")) {
+        let target = ""
+        try { target = readlinkSync("/proc/" + pid + "/fd/" + fd) } catch { continue }
+        const match = /^socket:\[(\d+)\]$/.exec(target)
+        if (match && inodes.has(match[1])) owned = true
+      }
+    } catch {
+      process.exit(1)
+    }
+    process.exit(owned ? 0 : 1)
+  ' "$port" "$pid"
+}
+
+cmd_doctor() {
+  take_run_flag "$@"
+  load_run
+  require_node
+  local ok=1
+  local report="$EVIDENCE_DIR/doctor.txt"
+  : >"$report"
+  note() {
+    printf '%s\n' "$*" | tee -a "$report"
+  }
+  if [[ -z "${STARTED:-}" ]]; then
+    note "fail process has no recorded start time"
+    ok=0
+  elif same_server "$PID" "$STARTED"; then
+    note "ok process $PID"
+  else
+    note "fail process $PID is not the server this run started"
+    ok=0
+  fi
+  local cmdline
+  cmdline="$(tr '\0' ' ' <"/proc/$PID/cmdline" 2>/dev/null || true)"
+  if [[ "$cmdline" == *"examples/kitchen-sink/src/server.ts"* ]]; then
+    note "ok cmdline examples/kitchen-sink/src/server.ts"
+  else
+    note "fail cmdline does not name examples/kitchen-sink/src/server.ts ($cmdline)"
+    ok=0
+  fi
+  if port_owned_by "$PORT" "$PID"; then
+    note "ok port $TRACKER_URL owned by $PID"
+  else
+    note "fail port $PORT is not owned by $PID"
+    ok=0
+  fi
+  if port_owned_by "$ADMIN_PORT" "$PID"; then
+    note "ok port $ADMIN_URL owned by $PID"
+  else
+    note "fail admin port $ADMIN_PORT is not owned by $PID"
+    ok=0
+  fi
+  local health_body health_code
+  health_code="$(curl -sS -m 5 -o "$STATE_DIR/healthz.body" -w '%{http_code}' "$TRACKER_URL/healthz" || true)"
+  health_body="$(cat "$STATE_DIR/healthz.body" 2>/dev/null || true)"
+  if [[ "$health_code" == "200" && "$health_body" == "ok" ]]; then
+    note "ok healthz 200 ok"
+  else
+    note "fail healthz code=$health_code body=$health_body"
+    ok=0
+  fi
+  local status_body status_code
+  status_code="$(curl -sS -m 5 -o "$STATE_DIR/status.body" -w '%{http_code}' -X POST "$TRACKER_URL/api/v1/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+  status_body="$(cat "$STATE_DIR/status.body" 2>/dev/null || true)"
+  if [[ "$status_code" == "200" ]] && printf '%s' "$status_body" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8")); if(j.service!=="tracker"||j.workspaces!==2||typeof j.instance!=="string") process.exit(1)'; then
+    note "ok getStatus $status_body"
+  else
+    note "fail getStatus code=$status_code body=$status_body"
+    ok=0
+  fi
+  local admin_body admin_code
+  admin_code="$(curl -sS -m 5 -o "$STATE_DIR/admin-status.body" -w '%{http_code}' -X POST "$ADMIN_URL/admin/getStatus" -H 'content-type: application/json' --data '{}' || true)"
+  admin_body="$(cat "$STATE_DIR/admin-status.body" 2>/dev/null || true)"
+  if [[ "$admin_code" == "200" && "$admin_body" == *'"service":"tracker"'* ]]; then
+    note "ok admin getStatus $admin_body"
+  else
+    note "fail admin getStatus code=$admin_code body=$admin_body"
+    ok=0
+  fi
+  local who_body who_code
+  who_code="$(curl -sS -m 5 -o "$STATE_DIR/whoami.body" -w '%{http_code}' -X POST "$TRACKER_URL/api/v1/whoAmI" -H 'content-type: application/json' -H 'authorization: Bearer ada' -H 'x-workspace: acme' --data '{}' || true)"
+  who_body="$(cat "$STATE_DIR/whoami.body" 2>/dev/null || true)"
+  if [[ "$who_code" == "200" && "$who_body" == *'"id":"ada"'* && "$who_body" == *'"workspace":"acme"'* && "$who_body" == *'"issues:write"'* ]]; then
+    note "ok whoAmI $who_body"
+  else
+    note "fail whoAmI code=$who_code body=$who_body"
+    ok=0
+  fi
+  local version
+  version="$(cd "$ROOT" && node --import tsx examples/kitchen-sink/src/cli.ts --version 2>"$STATE_DIR/version.err" || true)"
+  if [[ "$version" == "tracker v1.0.0" ]]; then
+    note "ok cli tracker v1.0.0"
+  else
+    note "fail cli version [$version]"
+    ok=0
+  fi
+  local listed
+  listed="$(cd "$ROOT" && TRACKER_URL="$TRACKER_URL" TRACKER_TOKEN=ada TRACKER_WORKSPACE=acme node --import tsx examples/kitchen-sink/src/cli.ts list-issues --json 2>"$STATE_DIR/list.err" || true)"
+  if [[ "$listed" == *'"id": "ACME-1"'* || "$listed" == *'"id":"ACME-1"'* ]]; then
+    note "ok seed ACME-1"
+  else
+    note "fail seed list [$listed]"
+    ok=0
+  fi
+  if [[ "$ok" -eq 1 ]]; then
+    note "doctor ok $TRACKER_URL"
+    return 0
+  fi
+  note "doctor failed"
+  return 1
+}
+
+cmd_http() {
+  take_run_flag "$@"
+  set -- "${ARGS[@]+"${ARGS[@]}"}"
+  load_run
+  local token="ada" workspace="acme" evidence="" method="" path="" data=""
+  local -a headers=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --token)
+        token="$2"
+        shift 2
+        ;;
+      --workspace)
+        workspace="$2"
+        shift 2
+        ;;
+      --evidence)
+        evidence="$2"
+        shift 2
+        ;;
+      --header)
+        headers+=("$2")
+        shift 2
+        ;;
+      --data)
+        data="$2"
+        shift 2
+        ;;
+      POST | GET)
+        method="$1"
+        path="${2:-}"
+        shift 2 || true
+        ;;
+      *)
+        die "unknown http argument: $1"
+        ;;
+    esac
+  done
+  [[ -n "$method" && "$path" == /* ]] || die "http needs METHOD and an absolute PATH"
+  local base="$TRACKER_URL"
+  if [[ "$path" == /admin/* ]]; then
+    base="$ADMIN_URL"
+  fi
+  if [[ -z "$data" ]]; then
+    data='{}'
+  fi
+  local hdr="$STATE_DIR/http.headers" body="$STATE_DIR/http.body"
+  local -a curl_args=(-sS -m 20 -D "$hdr" -o "$body" -w '%{http_code}' -X "$method" "$base$path" -H 'content-type: application/json')
+  if [[ "$token" != "none" ]]; then
+    curl_args+=(-H "authorization: Bearer $token")
+  fi
+  if [[ "$workspace" != "none" ]]; then
+    curl_args+=(-H "x-workspace: $workspace")
+  fi
+  local header
+  for header in "${headers[@]+"${headers[@]}"}"; do
+    curl_args+=(-H "$header")
+  done
+  if [[ "$method" == "POST" ]]; then
+    curl_args+=(--data "$data")
+  fi
+  local code
+  code="$(curl "${curl_args[@]}")"
+  local response
+  response="$(cat "$body")"
+  printf 'HTTP %s %s %s\n' "$code" "$method" "$path"
+  cat "$hdr"
+  printf '%s\n' "$response"
+  if [[ -n "$evidence" ]]; then
+    {
+      printf 'HTTP %s %s %s\n' "$code" "$method" "$path"
+      printf 'url: %s%s\n' "$base" "$path"
+      if [[ "$token" == "none" ]]; then
+        printf 'authorization: (none)\n'
+      else
+        printf 'authorization: Bearer %s\n' "$token"
+      fi
+      printf 'workspace: %s\n' "$workspace"
+      printf 'data: %s\n' "$data"
+      printf -- '--- headers ---\n'
+      cat "$hdr"
+      printf -- '--- body ---\n'
+      printf '%s\n' "$response"
+    } >"$EVIDENCE_DIR/$evidence"
+  fi
+  [[ "$code" =~ ^2 ]]
+}
+
+cmd_cli() {
+  take_run_flag "$@"
+  set -- "${ARGS[@]+"${ARGS[@]}"}"
+  load_run
+  require_node
+  local token="ada" workspace="acme" evidence="" stdin_text="" stdin_file="" expect="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --)
+        shift
+        break
+        ;;
+      --token)
+        token="$2"
+        shift 2
+        ;;
+      --workspace)
+        workspace="$2"
+        shift 2
+        ;;
+      --evidence)
+        evidence="$2"
+        shift 2
+        ;;
+      --expect-exit)
+        expect="$2"
+        shift 2
+        ;;
+      --stdin-text)
+        stdin_text="$2"
+        shift 2
+        ;;
+      --stdin-file)
+        stdin_file="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown cli argument before --: $1"
+        ;;
+    esac
+  done
+  [[ $# -gt 0 ]] || die "cli needs -- COMMAND..."
+  [[ -z "$stdin_text" || -z "$stdin_file" ]] || die "pass only one of --stdin-text and --stdin-file"
+  local out="$STATE_DIR/cli.stdout" err="$STATE_DIR/cli.stderr"
+  local code=0
+  run_tracker_cli() {
+    cd "$ROOT"
+    local -a env_args=(TRACKER_URL="$TRACKER_URL")
+    if [[ "$token" == "none" ]]; then
+      env_args+=(--unset=TRACKER_TOKEN)
+    else
+      env_args+=(TRACKER_TOKEN="$token")
+    fi
+    if [[ "$workspace" == "none" ]]; then
+      env_args+=(--unset=TRACKER_WORKSPACE)
+    else
+      env_args+=(TRACKER_WORKSPACE="$workspace")
+    fi
+    env "${env_args[@]}" node --import tsx examples/kitchen-sink/src/cli.ts "$@"
+  }
+  set +e
+  if [[ -n "$stdin_text" ]]; then
+    printf '%s' "$stdin_text" | run_tracker_cli "$@" >"$out" 2>"$err"
+  elif [[ -n "$stdin_file" ]]; then
+    run_tracker_cli "$@" <"$stdin_file" >"$out" 2>"$err"
+  else
+    run_tracker_cli "$@" >"$out" 2>"$err"
+  fi
+  code=$?
+  set -e
+  printf 'exit %s\n' "$code"
+  printf -- '--- stdout ---\n'
+  cat "$out"
+  printf -- '--- stderr ---\n'
+  cat "$err"
+  if [[ -n "$evidence" ]]; then
+    {
+      printf 'command: tracker'
+      printf ' %q' "$@"
+      printf '\n'
+      printf 'token: %s\n' "$token"
+      printf 'workspace: %s\n' "$workspace"
+      printf 'TRACKER_URL: %s\n' "$TRACKER_URL"
+      printf 'exit: %s\n' "$code"
+      printf -- '--- stdout ---\n'
+      cat "$out"
+      printf -- '--- stderr ---\n'
+      cat "$err"
+    } >"$EVIDENCE_DIR/$evidence"
+  fi
+  [[ "$code" -eq "$expect" ]]
+}
+
+cmd_rpc() {
+  take_run_flag "$@"
+  set -- "${ARGS[@]+"${ARGS[@]}"}"
+  load_run
+  require_node
+  local session="ada-at-acme" evidence=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session)
+        session="$2"
+        shift 2
+        ;;
+      --evidence)
+        evidence="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown rpc argument: $1"
+        ;;
+    esac
+  done
+  local out="$STATE_DIR/rpc.stdout" err="$STATE_DIR/rpc.stderr"
+  local code=0
+  set +e
+  (
+    cd "$ROOT"
+    TRACKER_RPC_URL="$TRACKER_RPC_URL" TRACKER_SESSION="$session" \
+      node --import tsx .cursor/skills/verify-effect-actions/helpers/rpc-list.ts
+  ) >"$out" 2>"$err"
+  code=$?
+  set -e
+  printf 'exit %s\n' "$code"
+  printf -- '--- stdout ---\n'
+  cat "$out"
+  printf -- '--- stderr ---\n'
+  cat "$err"
+  if [[ -n "$evidence" ]]; then
+    {
+      printf 'session: %s\n' "$session"
+      printf 'TRACKER_RPC_URL: %s\n' "$TRACKER_RPC_URL"
+      printf 'exit: %s\n' "$code"
+      printf -- '--- stdout ---\n'
+      cat "$out"
+      printf -- '--- stderr ---\n'
+      cat "$err"
+    } >"$EVIDENCE_DIR/$evidence"
+  fi
+  [[ "$code" -eq 0 ]]
+}
+
+cmd_cleanup() {
+  take_run_flag "$@"
+  if [[ -z "${RUN_ID:-}" ]]; then
+    die "set EFFECT_ACTIONS_VERIFY_RUN or pass --run"
+  fi
+  STATE_DIR="/tmp/effect-actions-verify-$RUN_ID"
+  if [[ ! -f "$STATE_DIR/run.env" ]]; then
+    printf 'verify-effect-actions: no state at %s\n' "$STATE_DIR"
+    return 0
+  fi
+  # shellcheck disable=SC1090
+  source "$STATE_DIR/run.env"
+  if [[ -n "${PID:-}" ]]; then
+    stop_server "$PID" "${STARTED:-}"
+  fi
+  local evidence="${EVIDENCE_DIR:-}"
+  rm -rf "$STATE_DIR"
+  printf 'removed %s\n' "$STATE_DIR"
+  if [[ -n "$evidence" ]]; then
+    printf 'kept %s\n' "$evidence"
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+  case "$cmd" in
+    launch) cmd_launch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    http) cmd_http "$@" ;;
+    cli) cmd_cli "$@" ;;
+    rpc) cmd_rpc "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
+    -h | --help | help | "") usage ;;
+    *) die "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"
