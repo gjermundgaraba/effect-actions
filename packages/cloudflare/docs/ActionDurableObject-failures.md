@@ -4,8 +4,8 @@ What you see when something is wrong, and the fix. Search for a fragment of the 
 The tasks are in [ActionDurableObject.md](ActionDurableObject.md); a surface's own failures are
 in the core's `*-failures.md` pages.
 
-- `is not assignable to type 'Layer<never, never, Allowed>'` at `make`'s `routes`: the routes
-  require a service no layer provides. The union before it lists every requirement; those
+- `is not assignable to type 'Allowed<never>'` at `make`'s `routes`, or `Allowed<X>` where the
+  routes provide `X` themselves: the routes require a service no layer provides. The union before it lists every requirement; those
   other than `State`, `HttpRouter` and the platform's (`FileSystem`, `Path`, `HttpPlatform`,
   `Generator`) are missing: provide their Layers to the routes. Where it names
   `Request<"Requires", X>`, a handler or an authorizer reads `X` per request: see the core's

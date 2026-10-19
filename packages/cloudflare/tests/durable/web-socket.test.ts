@@ -257,6 +257,16 @@ describe("make", () => {
     }).pipe(Effect.provide(ActionDurableObject.layerHttpClient(room("fetch")))),
   );
 
+  it.effect("gives each request a service the routes provide themselves", () =>
+    Effect.gen(function* () {
+      const response = yield* Effect.promise(() =>
+        room("greeting").fetch("https://object/greeting"),
+      );
+
+      expect(yield* Effect.promise(() => response.text())).toBe("hello");
+    }),
+  );
+
   it.effect("fails every request with the routes' build failure", () =>
     Effect.gen(function* () {
       const failure = yield* Effect.flip(

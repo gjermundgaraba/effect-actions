@@ -21,24 +21,25 @@ export class State extends Context.Service<State, DurableObjectState>()(
 
 type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
-type Allowed =
+type Allowed<A> =
   | State
   | HttpRouter.HttpRouter
   | Layer.Success<typeof HttpServer.layerServices>
-  | HttpRouter.Request<"Requires", ServedPerRequest>
-  | HttpRouter.Request<"GlobalRequires", ServedPerRequest>
+  | HttpRouter.Request<"Requires", ServedPerRequest | A>
+  | HttpRouter.Request<"GlobalRequires", ServedPerRequest | A>
   | HttpRouter.Request<"Error", unknown>
   | HttpRouter.Request<"GlobalError", unknown>;
 
 /** `make`'s options. */
-export interface Options<E = never, R = never, AE = never, AR = never> {
+export interface Options<A = never, E = never, R = never, AE = never, AR = never> {
   /**
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built when the instance is,
    * again after every eviction, and never finalized. They may require `State`; a request-time
-   * requirement must be provided by their middleware or authentication.
+   * requirement must be provided by their middleware or authentication, or be a service they
+   * provide themselves, such as one merged in with `Layer.provideMerge`.
    */
-  readonly routes: Layer.Layer<never, E, R>;
+  readonly routes: Layer.Layer<A, E, R>;
   /**
    * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
    * runtime's `retryCount` and `isRetry`. It may require `State` and a `Scope`, closed when it
@@ -52,12 +53,19 @@ export interface Options<E = never, R = never, AE = never, AR = never> {
   readonly disableLogger?: boolean | undefined;
 }
 
-/** An instance of a class `make` returns, with the handlers it defines. */
+type HandlerOf<K extends keyof DurableObject<Cloudflare.Env>> = NonNullable<
+  DurableObject<Cloudflare.Env>[K]
+>;
+
+/**
+ * An instance of a class `make` returns, with the handlers it defines, each taking the
+ * runtime's own arguments, so a class extending it overrides them as Cloudflare declares them.
+ */
 export interface Instance extends DurableObject<Cloudflare.Env> {
   fetch(request: Request): Promise<Response>;
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void>;
-  webSocketClose(socket: WebSocket): Promise<void>;
-  webSocketError(socket: WebSocket): Promise<void>;
+  webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
+  webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
   alarm(info?: AlarmInvocationInfo): Promise<void>;
 }
 
@@ -74,10 +82,17 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
  * Guide: `docs/ActionDurableObject.md` in this package; in an application:
  * `examples/chat-rooms/`.
  */
-export const make = <E, R extends Allowed, AE = never, AR extends State | Scope.Scope = never>(
-  options: Options<E, R, AE, AR>,
+export const make = <
+  A,
+  E,
+  R extends Allowed<A>,
+  AE = never,
+  AR extends State | Scope.Scope = never,
+>(
+  options: Options<A, E, R, AE, AR>,
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance => {
-  const routes: Layer.Layer<never, E, Allowed> = options.routes;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every request requirement against `Allowed<A>`, and `toWebHandler` gives each request the services the routes provide, `A`, as its own types say; only that subtraction, which a generic `A` keeps unresolved, is erased.
+  const routes = options.routes as Layer.Layer<never, E, Allowed<never>>;
 
   const alarm:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)

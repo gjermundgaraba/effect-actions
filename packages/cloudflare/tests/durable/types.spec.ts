@@ -1,5 +1,5 @@
 import type { DurableObject } from "cloudflare:workers";
-import { Effect, type Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import type { RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
@@ -21,6 +21,26 @@ ActionDurableObject.make({
   routes: socketRoutes,
   alarm: () => Effect.asVoid(Effect.all([Effect.service(ActionDurableObject.State), Effect.scope])),
 });
+
+class Merged extends Context.Service<Merged, number>()("test/Merged") {}
+
+ActionDurableObject.make({
+  routes: HttpRouter.add(
+    "GET",
+    "/merged",
+    Effect.as(Effect.service(Merged), HttpServerResponse.empty()),
+  ).pipe(Layer.provideMerge(Layer.succeed(Merged, 1))),
+});
+
+export class WithCloseCode extends ActionDurableObject.make({ routes: socketRoutes }) {
+  override webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean) {
+    return super.webSocketClose(socket, code, reason, wasClean);
+  }
+}
+
+expectTypeOf<Parameters<ActionDurableObject.Instance["webSocketError"]>>().toEqualTypeOf<
+  Parameters<NonNullable<DurableObject<Cloudflare.Env>["webSocketError"]>>
+>();
 
 ActionDurableObject.make({
   // @ts-expect-error -- A startup service other than State, here the descriptor's provider, is the routes' to provide.

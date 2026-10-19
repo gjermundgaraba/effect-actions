@@ -48,10 +48,12 @@ export class ChatRoom extends ActionDurableObject.make({
 Worker's own `fetch`; [chat-rooms/wrangler.jsonc](../examples/chat-rooms/wrangler.jsonc) binds
 it with a SQLite migration.
 
-- Set a `compatibility_date` of `2026-04-07` or later: from then the runtime replies to a
-  client's close frame itself. `layerWebSocket` sends no reply of its own.
+- Run with the compatibility flag `web_socket_auto_reply_to_close`, on by default from the
+  `compatibility_date` `2026-04-07`: with it the runtime replies to a client's close frame
+  itself. `layerWebSocket` sends no reply of its own.
 - `make` provides `State`, the router and the platform's services: provide every other service
-  the routes require to them.
+  the routes require to them, or merge it in with `Layer.provideMerge`, which also gives it to
+  every request, as `toWebHandler` does.
 - A service read from the object, such as a SQLite store, is a Layer requiring `State`
   ([chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)).
   So is what the object is, such as its name

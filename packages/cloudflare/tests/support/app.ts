@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Redacted, Schema } from "effect";
-import { HttpRouter } from "effect/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -140,9 +140,18 @@ export const routes = Layer.mergeAll(
   ),
 ).pipe(Layer.provide(authenticate), Layer.provide(startup));
 
+export class Greeting extends Context.Service<Greeting, string>()("test/Greeting") {}
+
+const greetingRoute = HttpRouter.add(
+  "GET",
+  "/greeting",
+  Effect.map(Effect.service(Greeting), (greeting) => HttpServerResponse.text(greeting)),
+).pipe(Layer.provideMerge(Layer.succeed(Greeting, "hello")));
+
 export const socketRoutes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
   rpcRoutes.pipe(Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))),
+  greetingRoute,
 ).pipe(Layer.provide(authenticate), Layer.provide(startup), Layer.provide(slowUpstream));
 
 export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
