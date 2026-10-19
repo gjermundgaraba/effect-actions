@@ -23,10 +23,9 @@ const assistant = commands.pipe(
 
 // A command writes its result alone to stdout: JSON, or what `render` returns. Its failure
 // goes to stderr under an `ERROR` heading, as JSON such as `{"_tag":"TaskNotFound","id":"9"}`,
-// exiting 1, and so do its handler's logs, such as the store's. What happens outside the
-// command is `runMain`'s to report, on stdout: a defect, such as a tasks file that does not
-// decode. `logToStderr`, applied last, moves that to stderr too, so
-// `assistant list-tasks --json | jq` reads results.
+// exiting 1, and so do its handler's logs, such as the store's. A command's defect, such as a
+// tasks file that does not decode, `runMain` reports, on stdout. `logToStderr`, applied last,
+// moves that to stderr too, so `assistant list-tasks --json | jq` reads results.
 Command.run(assistant, { version: "1.0.0" }).pipe(
   Effect.provide(NodeServices.layer),
   ActionCli.logToStderr,

@@ -111,10 +111,8 @@ export const DeleteNote = Action.make("deleteNote", {
   caller: CurrentUser,
 });
 
-// Work every surface should offer is an action, a bulk import included: the HTTP API, the MCP
-// tools and the CLI then all have it, and the whole list is decoded, so checked, before the
-// handler writes any of it. A command of your own only reads the file and calls this once
-// (commands.ts).
+// The whole list is decoded, so checked, before the handler writes any of it; the `import`
+// command only reads the file and calls this once (commands.ts).
 // Imports share note content with `createNote`, but exclude request keys because bulk creation
 // does not deduplicate.
 export const ImportNotes = Action.make("importNotes", {

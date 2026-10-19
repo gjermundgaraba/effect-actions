@@ -85,7 +85,14 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
   /**
    * Native MCP features served beside the actions' tools, such as `McpServer.resource`,
    * `McpServer.prompt` and `McpServer.toolkit` layers merged into one. They register on this
-   * server's registry; merged beside it instead, they register on another and are not served.
+   * server's registry and run with the services they were built with, and no `authorize` runs for
+   * them.
+   *
+   * **Gotchas**
+   *
+   * - Merged beside the endpoint instead of passed here, they register on another registry and are never served, without an error.
+   * - A service provided to this layer itself is built again for the features alone, so a resource reads another store than the tools write: provide it around the endpoint.
+   * - They never receive a request's services, so they cannot read the caller: content that depends on the caller is an action.
    */
   readonly features?: Layer.Layer<never, E, R> | undefined;
 }
@@ -104,6 +111,21 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
     > {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
+  /**
+   * The descriptor the protected tools' contracts name, whose provider, built by
+   * `Authentication.layer`, the routes provide. On an endpoint of protected tools only, every
+   * request authenticates before it is decoded; on a mixed one, anyone may discover the server,
+   * list its tools, cancel, and call a public tool in a 2026-07-28 request, and everything else
+   * authenticates first.
+   *
+   * **Gotchas**
+   *
+   * - A credential a request presents is still verified, on a public tool's call too: an expired or invalid one answers 401, its challenge naming `invalid_token`, on which a client refreshes it or signs in again.
+   * - `tools/list` names every tool, protected ones included: serve public tools on an endpoint of their own if signed-out callers must not see the rest.
+   * - A client of a 2025 revision opens a session, which on an endpoint serving a protected tool only a signed-in caller does: it signs in for every request there, a public tool's call and `tools/list` included.
+   * - Every prompt and resource request needs a credential, listings included: to offer them signed out, serve them on an endpoint without protected tools.
+   * - A handler that sends a notification starts the response, so a refusal after it is an `isError: true` tool result, not the 401 or 403 a client re-authorizes on: refuse in `authorize`.
+   */
   readonly authentication?: Authentication;
   /**
    * Whether MCP 2026-07-28 clients may subscribe, holding a stream open for list changes and
@@ -115,10 +137,10 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
   /**
    * `true` runs a server per request, as Effect's `McpServer.layerHttpRequestScoped` does, for a
    * host such as Cloudflare Workers where nothing may outlive a request. It speaks MCP 2026-07-28
-   * alone, so a client that opens with `initialize` is refused, and it keeps no session. It has
-   * no subscriptions, so `allowSubscriptions` is ignored, and native `features` send no
-   * list-change notification. `McpServer.elicit` reaches a client of a 2025 revision alone, on
-   * either kind of endpoint: a 2026-07-28 request cannot answer it.
+   * alone, so a client that opens with `initialize` is refused; it keeps no session and takes only
+   * `POST`, a `DELETE` answering 405. It has no subscriptions, so `allowSubscriptions` is ignored,
+   * and native `features` send no list-change notification. `McpServer.elicit` reaches no client
+   * on it, as Effect's `McpServer.layerHttpRequestScoped` says.
    */
   readonly requestScoped?: boolean | undefined;
 }
@@ -160,7 +182,7 @@ const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): v
 
   if (inputs.length > 0) {
     throw new Error(
-      `MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")}`,
+      `MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")} (wrap a union, an array or a scalar in a field, omit input for no arguments, or leave the action out of actions)`,
     );
   }
 
@@ -170,7 +192,7 @@ const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): v
 
   if (misplaced.length > 0) {
     throw new Error(
-      `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: ${misplaced.join(", ")}`,
+      `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: ${misplaced.join(", ")} (make the image such a field, or give an optional array as a required one, empty when absent; an image in input or an error is not served over MCP, so leave that action out of actions)`,
     );
   }
 };
@@ -370,7 +392,7 @@ const server = <Out, R>(
     if (namesClaimedByFeatures.length > 0) {
       return yield* Effect.die(
         new Error(
-          `Duplicate MCP tool: ${namesClaimedByFeatures.join(", ")}, claimed by an action and a native feature`,
+          `Duplicate MCP tool: ${namesClaimedByFeatures.join(", ")}, claimed by an action and a native feature (rename the native tool, or leave the action out of actions)`,
         ),
       );
     }
@@ -446,32 +468,21 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * Serve MCP tools over one Streamable HTTP endpoint, speaking MCP 2026-07-28, 2025-11-25 or
  * 2025-06-18, as the client negotiates. A 2026-07-28 request stands alone; a client of a 2025
  * revision opens a session with `initialize`, which holds what it sent there and no identity,
- * and lasts until that client ends it with a DELETE, answered 204, or the process stops. For a
- * serverless host, see `requestScoped`.
- *
- * Protected tools need the `authentication` descriptor their contracts name, and the
- * provider `Authentication.layer` builds from it. On an endpoint of protected tools only,
- * every request authenticates before it is decoded. On a mixed endpoint, anyone may discover
- * the server, list its tools, cancel, and call a public tool in a 2026-07-28 request;
- * everything else authenticates first, a session's every request included, so a protected
- * tool's description is listed to anyone but run only for its caller.
- * On a Bearer endpoint, a protected tool's call refused with `Unauthenticated`, or with
- * `Forbidden` naming scopes, is answered with its HTTP status and challenge, 401 or 403, as MCP
- * authorization requires, unless its response has started; any other failure is a tool result. Claude Code connects with
- * `claude mcp add --transport http <name> <url>`. In a tool call, what middleware provides per request wins over
- * what the endpoint was built with; native `features` read only what they were built with,
- * never a request's. Never provide an identity at startup: a tool call takes its identity
- * only from the request it authenticated.
+ * and lasts until that client ends it with a DELETE, answered 204, or the process stops. Protected
+ * tools need `authentication`; for a serverless host, see `requestScoped`. In a tool call, what
+ * middleware provides per request wins over what the endpoint was built with.
  * Guide: `docs/ActionMcp.md` in this package; in an application: `examples/mcp-tools/`.
  *
  * **Gotchas**
  *
- * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; a declared error or a refusal `isError: true` with its JSON as one text block and no `structuredContent`, in a 200; a media field, `Action.Image`, is lifted out of `structuredContent` into a block of its own.
+ * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; a media field, `Action.Image`, is lifted out of `structuredContent` into a block of its own.
+ * - A declared error is an `isError: true` tool result in a 200 holding its JSON as one text block, with no `structuredContent`; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say.
+ * - Arguments that do not decode never reach the handler: an `isError: true` result in a 200, text `Invalid parameters for tool '<name>': …`, or for a 2025-06-18 client a JSON-RPC error.
  * - A defect, an undeclared failure, or a success or an error that does not encode is `isError: true`, text `Tool execution failed due to an internal server error.`: the cause goes to the log and to the call's `ErrorReporter`s, never to the client.
- * - An unknown tool is a JSON-RPC error `-32602` in a 200; a body that is not JSON a JSON-RPC error `-32700` in a 200; a `Content-Type` missing or not JSON an empty 415; another HTTP method an empty 405 with `Allow: POST, DELETE`, or the 401 of an endpoint with authentication when signed out.
- * - On an endpoint also serving a public tool, that tool's call and `tools/list` need no credential, but one a request presents is still verified, and `tools/list` names every tool, protected ones included: serve public tools on an endpoint of their own if signed-out callers must not see the rest.
- * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object, any other success as its text block alone, a string unquoted; a 2025-06-18 client gets invalid arguments as a JSON-RPC error instead of a result. Such a client opens a session, which on an endpoint serving a protected tool only a signed-in caller does: it signs in for every request there, a public tool's call and `tools/list` included. A `requestScoped` endpoint serves only 2026-07-28, and only `POST`.
- * - A request body has no size limit unless the host sets one on the router, as `ActionHttp.layer` says.
+ * - An unknown tool is a JSON-RPC error `-32602` in a 200; a body that is not JSON a JSON-RPC error `-32700` in a 200; a `Content-Type` missing or not JSON an empty 415; another HTTP method an empty 405 with `Allow: POST, DELETE`, `Allow: POST` where `requestScoped`, or the 401 of an endpoint with authentication when signed out.
+ * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: any other success arrives as its text block alone, a string unquoted.
+ * - A client asking for an earlier revision, such as 2025-03-26, is offered 2025-11-25, so a client speaking only that earlier one cannot connect.
+ * - Limit request bodies as `ActionHttp.layer` says.
  */
 export function layerHttp<
   const Apps extends Served,
@@ -554,16 +565,17 @@ export function layerHttp(
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
  * 2026-07-28, 2025-11-25 or 2025-06-18, as the host negotiates: the whole
  * program of an MCP subprocess, which succeeds once the host closes its side and every call
- * in flight has been answered. A signal interrupts it.
- *
- * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
- * `Stdio` service and the identity. Arguments are tool input only and never establish
- * request identity or authority; each implementation's `authorize` runs for its protected actions.
+ * in flight has been answered. A signal interrupts it. Its own Effect logs and `Console` output
+ * go to stderr, since stdout carries the protocol. The host supplies the `Stdio` service, and
+ * provides the identity around `runStdio`; arguments are tool input only and never establish
+ * request identity or authority, and each implementation's `authorize` runs for its protected
+ * actions.
  *
  * **Gotchas**
  *
- * - Tool results are `layerHttp`'s, the earlier revisions' included; a line that is not JSON goes unanswered.
- * - Nothing is authenticated: provide the identity around `runStdio`, which every tool call then runs as, and a refusal is an `isError: true` result, never a status.
+ * - Tool results and revisions are `layerHttp`'s, the earlier ones included.
+ * - A line that is not JSON goes unanswered, with no `-32700` as over HTTP, and the lines after it are still answered.
+ * - The layers provided around it log to stdout, among the protocol's lines: provide `ActionCli.logToStderr` around it, as its gotchas say.
  */
 export function runStdio<
   const Apps extends Served,

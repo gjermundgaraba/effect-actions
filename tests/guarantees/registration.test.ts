@@ -815,7 +815,7 @@ describe("projection boundaries", () => {
     );
 
     const options = { name: "test", version: "0" };
-    const message = `MCP tool input must be one object with keys, such as a struct: ${Object.keys(inputs).join(", ")}`;
+    const message = `MCP tool input must be one object with keys, such as a struct: ${Object.keys(inputs).join(", ")} (wrap a union, an array or a scalar in a field, omit input for no arguments, or leave the action out of actions)`;
 
     expect(() => ActionMcp.layerHttp([status, ...refused], options)).toThrow(message);
     expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
@@ -841,7 +841,7 @@ describe("projection boundaries", () => {
     );
 
     await expect(listTools(served.handler)).rejects.toThrow(
-      "Duplicate MCP tool: ping, claimed by an action and a native feature",
+      "Duplicate MCP tool: ping, claimed by an action and a native feature (rename the native tool, or leave the action out of actions)",
     );
   });
 
@@ -1148,9 +1148,11 @@ describe("MCP registration", () => {
     ];
 
     const options = { name: "test", version: "0" };
-    expect(() => ActionMcp.layerHttp(apps, options)).toThrow("Duplicate MCP tool: same");
-    expect(() => ActionMcp.runStdio(apps, options)).toThrow("Duplicate MCP tool: same");
-    expect(() => ActionToolkit.make(apps)).toThrow("Duplicate tool: same");
+    const shared = "same, two share the name (rename one)";
+
+    expect(() => ActionMcp.layerHttp(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);
+    expect(() => ActionMcp.runStdio(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);
+    expect(() => ActionToolkit.make(apps)).toThrow(`Duplicate tool: ${shared}`);
 
     const Other = Action.make("other", {
       description: "",

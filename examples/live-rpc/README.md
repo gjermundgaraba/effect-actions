@@ -2,15 +2,9 @@
 
 A chat served as Effect RPC over a WebSocket: one connection per page, many calls on it.
 Members post, read and delete messages in the rooms they belong to; anyone may list the rooms.
-Each message on the socket carries its own token and names its room, so a socket has no
-identity of its own. A message naming no room is about the default one, `lobby`.
-
-Start here if a client keeps a connection open and calls often, or if the application already
-speaks Effect RPC. For a JSON API or MCP tools, start from [notes-service](../notes-service/).
+Each message on the socket carries its own token and names its room.
 To serve these same actions as JSON too, see
-[ActionRpc.md](../../docs/ActionRpc.md#serve-the-rpcs): kitchen-sink's `src/routes.ts` and
-`src/server.ts` merge both.
-Actions are unary, so nothing streams: the page reads again, passing the last id it holds.
+[ActionRpc.md](../../docs/ActionRpc.md#serve-the-rpcs).
 
 ## Run it
 
@@ -24,10 +18,9 @@ node --import tsx examples/live-rpc/src/client.ts     # CHAT_URL to change, ws:/
 vp test examples/live-rpc
 ```
 
-`client.ts` runs the browser's client from Node: two members on one socket, then each failure
+`client.ts` runs the browser's client from Node: two members on one socket, then each refusal
 a page handles. `browser.ts` is imported by a page, not run: `openChat` for a page that is an
-Effect program, `connect(url)` for one that calls with promises. The tokens are fixed names (`ada`,
-`grace`) and the store is memory: replace both before deploying anything.
+Effect program, `connect(url)` for one that calls with promises.
 
 ## When you copy this
 
@@ -78,7 +71,6 @@ test/
 | An RPC binding naming its authentication descriptor                    | `src/Rpc.ts`                                    |
 | The rpcs on Effect's `RpcServer`, before a protocol is chosen          | `src/routes.ts`                                 |
 | Serving them over a WebSocket, speaking JSON                           | `src/server.ts`                                 |
-| The same rpcs over Effect's HTTP protocol, for a test                  | `test/routes.test.ts`                           |
 | A verifier that runs for every message, not once per connection        | `src/identity/verifier.ts`                      |
 | Native `RpcMiddleware` providing a per-request service, with a default | `src/chat/room.ts`                              |
 | Handlers reading that service, and the rule that reads it              | `src/chat/handlers.ts`, `src/chat/authorize.ts` |

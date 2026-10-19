@@ -53,6 +53,12 @@ type ToolFor<App, Listed extends Action.Any> = App extends unknown
  * implementations: the `layer` of a `make` call serves the tools it selected in any `toolkit`
  * of the same implementations, while two implementations never run each other's handlers,
  * even with tools of one name.
+ *
+ * **Gotchas**
+ *
+ * - Two `make` calls of one implementation share their handlers: their `layer`s, given different startup services and provided together, serve both toolkits with one of them; use separate implementations for separate services.
+ * - Another implementation's `layer` with tools of the same names type-checks, and the first call dies with Effect's `Cannot read properties of undefined (reading 'context')`: provide the `layer` the same `make` returned.
+ * - `handle(name, arguments)` on `yield* toolkit` takes the JSON a model sends; its handler starts when `handle` runs, so the caller is provided around the whole `handle(...).pipe(Effect.flatMap(Stream.runCollect))`, never around the stream alone.
  */
 export interface Tools<T extends Record<string, Tool.Any>, E, R> {
   /**
@@ -79,7 +85,8 @@ export type ToolCall<A extends Action.Any = Action.Any> = A extends Action.Any
 export interface Options<A extends Action.Any> {
   /**
    * The actions that are tools, among the implementations' actions: `[GetUser, RenameUser]`.
-   * Each keeps its implementation's authorization and builder. Defaults to every action of them.
+   * Each keeps its implementation's authorization and builder. Defaults to every action of them,
+   * one added to an implementation later included.
    */
   readonly actions?: ReadonlyArray<A> | undefined;
   /**
@@ -87,6 +94,12 @@ export interface Options<A extends Action.Any> {
    * each call, with Effect's native approval context. `LanguageModel` asks for approval
    * instead of calling the tool when it is `true`. The Effect runs in the caller's context and
    * requires nothing, so it reads the caller with `Effect.serviceOption`. Defaults to none.
+   *
+   * **Gotchas**
+   *
+   * - `call` ranges over every action of the implementations, whatever `actions` lists: check `call.name` to narrow `action` and `input`.
+   * - The Effect cannot fail in its type, and one that fails anyway runs the call unapproved: end it with `Effect.orElseSucceed(() => true)` to ask when a policy cannot be read.
+   * - Approval authorizes nothing, which stays `authorize`'s, and only a model's turn asks for it: `handle` and `ActionMcp` never do.
    */
   readonly needsApproval?: (
     call: ToolCall<A>,
@@ -140,21 +153,16 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 /**
  * Project implementations into Effect's native AI toolkit: one tool per action, keyed by its
  * name, of the listed `actions` or, without them, of every action of the implementations.
- *
- * Unlike MCP, calls return the action's native success/failure values directly.
- * Build services are needed to construct `layer`; request services are needed
- * when the resulting toolkit handles a call, the identity an implementation's `authorize`
- * reads included: the caller provides it. `needsApproval` marks the calls a model must have
- * approved; it authorizes nothing, which stays `authorize`'s.
- * Guide: `docs/ActionToolkit.md` in this package; a loop served behind a route, with approval:
- * `examples/kitchen-sink/src/assistant/`.
+ * Startup services build `layer`; request services, the identity `authorize` reads included,
+ * are owed where the toolkit handles a call. Guide: `docs/ActionToolkit.md` in this package; a
+ * loop served behind a route, with approval: `examples/kitchen-sink/src/assistant/`.
  *
  * **Gotchas**
  *
- * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error or a refusal a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure.
- * - Arguments that do not decode are a result holding an `AiError` whose `reason` is a `ToolParameterValidationError`; undeclared arguments are dropped and the call runs, where a server would refuse them.
+ * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say.
+ * - Arguments that do not decode are a result with `isFailure: true` whose `result` is an `AiError` with `reason` a `ToolParameterValidationError`, never `InvalidInput`, and neither `authorize` nor the handler runs; undeclared arguments are dropped and the call runs.
  * - A defect, or a failure the action's errors reject, is the call's defect; a success or an error that does not encode fails the call with an `AiError`, `Failed to encode result for tool …`.
- * - Nothing is authenticated: the host provides the identity around the call, and `needsApproval` authorizes nothing.
+ * - The host provides the identity around each turn or call: one provided to `layer` becomes the caller of every call made without one.
  */
 export function make<
   const Apps extends Served,
@@ -218,7 +226,10 @@ export interface Approval {
   readonly toolCallId: string;
   /** The tool's name, the action's. */
   readonly name: string;
-  /** The call's arguments as the model sent them: show them as JSON. */
+  /**
+   * The call's arguments as the model sent them: show them as JSON, and decode them with
+   * `Schema.toCodecJson(<action>.input)`, the tool's parameters, only where you read a field.
+   */
   readonly params: unknown;
 }
 

@@ -109,12 +109,15 @@ const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
 /** Throws where two of the schemas `errors` decode with encode with one `_tag`. */
 export const assertDistinctTags = (what: string, errors: Action.Errors): void => {
   const seen = new Set<string>();
+  const builtInTags = new Set(builtIns.flatMap((schema) => encodedTags(schema.ast)));
 
   for (const schema of errorSchemas(errors)) {
     for (const tag of new Set(encodedTags(schema.ast))) {
       if (seen.has(tag)) {
         throw new Error(
-          `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)`,
+          `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart${
+            builtInTags.has(tag) ? "; for a built-in's tag, fail with the built-in itself" : ""
+          })`,
         );
       }
 

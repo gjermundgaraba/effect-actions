@@ -41,10 +41,10 @@ const bearerAuthorizationHeader = /^[ \t]*Bearer +(.*[^ \t])[ \t]*$/i;
 
 /**
  * The bearer token of an `Authorization` header, `authorization`, or none, read as Effect's
- * `HttpApiSecurity.bearer` reads it for routes and MCP, which a test holds equal. It is for a
- * caller the router never routes, which holds the header and no request; a route of the host's
- * own is authenticated by `protect`. The scheme is matched case-insensitively, as RFC 9110
- * requires, and the token is `Redacted`, as Effect's own decoder gives it.
+ * `HttpApiSecurity.bearer` reads it for routes and MCP: the scheme matched case-insensitively,
+ * as RFC 9110 requires, and the token `Redacted`. It is for a caller the router never routes,
+ * which holds the header and no request; a route of the host's own is authenticated by
+ * `protect`.
  */
 export const bearerTokenOf = (
   authorization: string | null | undefined,
@@ -57,11 +57,17 @@ export const bearerTokenOf = (
 /** An OAuth protected resource (RFC 9728), as `layer` publishes it. */
 export interface ProtectedResource {
   /**
-   * Exact OAuth resource identifier; its path and query select the discovery path. It has no
-   * fragment, which no request URL carries, so its discovery would never answer (RFC 9728).
+   * Exact OAuth resource identifier: the public URL of the endpoint clients connect to, such as
+   * `${url}/mcp`. Discovery is served at `/.well-known/oauth-protected-resource` followed by its
+   * path and query.
+   *
+   * **Gotchas**
+   *
+   * - Discovery answers 404, and an MCP client finds no authorization server, when a request's path and query differ from this URL's, or when the provider is provided to no served layer.
+   * - That it and `authorizationServers` are HTTPS, or loopback HTTP in development, is the deployment's to ensure: nothing checks it.
    */
   readonly resource: string;
-  /** Where clients get tokens: nonempty. */
+  /** Where clients get tokens, your authorization servers' issuers: nonempty. */
   readonly authorizationServers: Arr.NonEmptyReadonlyArray<string>;
   /**
    * Every scope the resource accepts, each an OAuth scope token, which a client requests when a
@@ -70,10 +76,14 @@ export interface ProtectedResource {
   readonly scopesSupported?: ReadonlyArray<string>;
   /**
    * The scopes every 401 names, each an OAuth scope token: what a client requests when it
-   * authenticates, rather than every scope supported. A `Forbidden` naming scopes asks for
-   * more when a call needs them.
+   * authenticates, rather than every scope supported.
+   *
+   * **Gotchas**
+   *
+   * - Give it whenever some actions need scopes others do not, or a user who only reads is asked to consent to writes on first login.
    */
   readonly scopesRequired?: Arr.NonEmptyReadonlyArray<string>;
+  /** A human-readable name of the resource, published as `resource_name`. */
   readonly resourceName?: string;
 }
 
@@ -111,18 +121,28 @@ const assertPublishableResource = (
 ): void => {
   if (options === undefined) return;
 
-  if (!oauth) throw new Error("A protected resource is published only for a Bearer scheme");
+  if (!oauth) {
+    throw new Error(
+      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor",
+    );
+  }
 
   if (Effect.isEffect(options)) return;
 
   for (const key of ["scopesSupported", "scopesRequired"] as const) {
     const invalid = options[key]?.find((scope) => !scopeToken.test(scope));
 
-    if (invalid !== undefined) throw new Error(`Invalid scope in ${key}: "${invalid}"`);
+    if (invalid !== undefined) {
+      throw new Error(
+        `Invalid scope in ${key}: "${invalid}", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
+      );
+    }
   }
 
   if (new URL(options.resource).href.includes("#")) {
-    throw new Error(`A protected resource has no fragment: ${options.resource}`);
+    throw new Error(
+      `A protected resource has no fragment: ${options.resource}; drop the "#", which no request URL carries, so its discovery would never answer`,
+    );
   }
 };
 
@@ -142,12 +162,19 @@ const withNoStoreAndChallenge = (
 /** What `refusalResponse` answers about. */
 export interface RefusalResponseOptions<D extends Any = Any> {
   /**
-   * The descriptor refusing, whose scheme decides the challenge: Bearer's, below, when left
-   * out; another HTTP scheme's or Basic's 401 names that scheme, an API key's none, and nothing
-   * steps up under it. An error it declares is sent as its endpoints declare it.
+   * The descriptor refusing, whose scheme decides the challenge as on its routes: Bearer's when
+   * left out, as `protectedResource` and `authorization` shape it; what another scheme gives up
+   * is on `Options.security`. An error it declares is sent as its endpoints declare it.
    */
   readonly authentication?: D | undefined;
-  /** The OAuth protected resource refusing: the one given to `layer`. */
+  /**
+   * The OAuth protected resource refusing, the one given to `layer`: every challenge then names
+   * its metadata URL, and a 401's its `scopesRequired`.
+   *
+   * **Gotchas**
+   *
+   * - A value, never the Effect `layer` may take: where `layer` builds the resource from configuration, build this one from the same configuration.
+   */
   readonly protectedResource?: ProtectedResource | undefined;
   /**
    * The request's `Authorization` header, as the web `Headers.get` gives it, which decides whether a
@@ -161,15 +188,12 @@ type DeclaredOf<D> = D extends { readonly error: infer E extends Errors }
   : never;
 
 /**
- * The response `layer` answers a refusal with, for a caller the router never routes, such as
- * a Node `upgrade` handler admitting a socket: its status, its JSON, `Cache-Control: no-store`
- * and its challenge, an `Unauthenticated`'s `Bearer`, naming `invalid_token` when
- * `authorization` presented a bearer token, or the `insufficient_scope` of a `Forbidden`
- * naming scopes. Given the protected resource `layer` was, every challenge names its metadata
- * URL and a 401's its `scopesRequired`. Under a descriptor of another scheme, it is the JSON
- * and status alone, a 401 naming that scheme, or none for an API key. An error
- * `authentication` declares is sent as its endpoints declare it, its JSON with its status.
- * `HttpServerResponse.toWeb` gives it as a web `Response`.
+ * The response `layer` answers a refusal with, for a caller the router never routes, such as a
+ * Node `upgrade` handler admitting a socket, which holds a header and no request: read its token
+ * with `bearerTokenOf`, verify it with the routes' verifier, and answer a failure with this. It
+ * holds the refusal's status and JSON, `Cache-Control: no-store` and the challenge `options`
+ * decide: under Bearer an `Unauthenticated`'s, or the `insufficient_scope` of a `Forbidden`
+ * naming scopes. `HttpServerResponse.toWeb` gives it as a web `Response`.
  */
 export const refusalResponse = <D extends Any = never>(
   error: Refusal | DeclaredOf<D>,
@@ -190,7 +214,9 @@ export const refusalResponse = <D extends Any = never>(
     const response = declaredResponse(authentication?.error ?? [], error);
 
     if (response === undefined) {
-      throw new Error("Not a refusal, nor an error the authentication declares");
+      throw new Error(
+        "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself",
+      );
     }
 
     return withNoStoreAndChallenge(response, challenge);
@@ -279,11 +305,24 @@ const nonBearerChallengeOf = (security: Security, name: string): string | undefi
 
 /** What `make` takes besides the name and the identity. */
 export interface Options {
-  /** The one native scheme a caller proves the identity by: Bearer when left out. */
+  /**
+   * The one native scheme a caller proves the identity by, Bearer when left out: an API key in a
+   * cookie, a header or the query, such as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`,
+   * or `HttpApiSecurity.basic`. Only Bearer speaks OAuth: discovery, challenges naming scopes, and
+   * step-up.
+   *
+   * **Gotchas**
+   *
+   * - One scheme per descriptor, with no fallback: a host accepting two credentials for one identity declares two descriptors and serves them on two bindings or endpoints.
+   */
   readonly security?: Security;
   /**
    * What the verifier may fail with besides a refusal, such as its provider being unreachable:
    * one schema, or a list. Every protected endpoint declares it, so clients decode it.
+   *
+   * **Gotchas**
+   *
+   * - A failure that is not the caller's, such as an issuer the verifier cannot reach, belongs here with `{ httpApiStatus: 503 }`: an `Unauthenticated` would have the caller sign in again.
    */
   readonly error?: Errors | Errors[number];
 }
@@ -296,10 +335,9 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
 
 /**
  * Browser-safe declaration shared by clients and remote surfaces: the `identity` it
- * authenticates, by the one native scheme `security`, Bearer unless it names another, such
- * as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`. The literal name
- * identifies the provider, like a native Context.Key name, and the scheme's OpenAPI key, so it
- * holds only letters, digits, `_`, `.` and `-`; reuse one name only for one declaration.
+ * authenticates, and the scheme a caller proves it by, `Options.security`. The literal name
+ * identifies the provider, like a native Context.Key name, and the scheme's OpenAPI key; reuse
+ * one name only for one declaration, whose values a server and a client may hold as `layer` says.
  * Guide: `docs/Authentication.md` in this package; in an application: `examples/notes-service/src/identity/`.
  */
 export const make = <const Name extends string, I, A, const O extends Options = {}>(
@@ -314,7 +352,9 @@ export const make = <const Name extends string, I, A, const O extends Options = 
   // Rejected: replacing other characters with `_`, which gives `app/Login` and `app:Login` one key,
   // which `OpenApi.fromApi` merges silently where their schemes are equal.
   if (!openApiComponentKey.test(name)) {
-    throw new Error(`Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key`);
+    throw new Error(
+      `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`,
+    );
   }
 
   assertDistinctTags(`Authentication "${name}"`, [...builtIns, ...error]);
@@ -324,7 +364,9 @@ export const make = <const Name extends string, I, A, const O extends Options = 
     !Predicate.isTagged(security, "ApiKey") &&
     !Predicate.isTagged(security, "Basic")
   ) {
-    throw new Error("Authentication takes one native HttpApiSecurity scheme");
+    throw new Error(
+      "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them",
+    );
   }
 
   return {
@@ -350,13 +392,33 @@ export type { Any, Descriptor, Provider } from "./provider.js";
 /**
  * A descriptor's verifier: the credential its scheme decodes, as Effect's own decoder gives
  * it, to the identity, or a refusal, or an error the descriptor declares, `E`. Its services
- * belong to the request.
+ * belong to the request; one it needs at startup, such as a user directory, is yielded by an
+ * Effect that builds the verifier, given to `layer` in its place.
+ *
+ * **Gotchas**
+ *
+ * - The library reads no token: its signature, expiry and audience are the verifier's to check, with your authorization server's library; fail a token issued for another resource with `Unauthenticated`.
+ * - Only a missing or empty credential is refused before it runs; Basic's reaches it when its username or its password is non-empty, so it may receive an empty username.
  */
 export type Verify<A, S extends Security, R, E = never> = (
   credential: HttpApiSecurity.HttpApiSecurity.Type<S>,
 ) => Effect.Effect<A, Refusal | E, R>;
 
+/** What `layer` takes besides the descriptor and the verifier. */
 export interface LayerOptions<EP = never, RP = never> {
+  /**
+   * Bearer only: the OAuth protected resource (RFC 9728) to publish, or an Effect building it,
+   * or `undefined`, when the provider is built. The provider then serves its discovery and names
+   * it in every challenge, so an MCP client given a 401 finds the authorization server; without
+   * it the challenge names nowhere to sign in.
+   *
+   * **Gotchas**
+   *
+   * - Under another scheme it is a type error, or, for an `Http` scheme the types cannot tell from Bearer, a throw at `layer`.
+   * - Only the deployment knows the public URL: give it as an Effect reading configuration.
+   * - Discovery is public: it answers before routing, to any origin, so no authentication and no route middleware covers it; global middleware covers it only when provided after the provider, as `examples/kitchen-sink/src/routes.ts` shows.
+   * - An Effect succeeding with `undefined` publishes nothing.
+   */
   readonly protectedResource?:
     | ProtectedResource
     | Effect.Effect<ProtectedResource | undefined, EP, RP>;
@@ -383,9 +445,14 @@ type Resource =
 // could do only if the descriptor declared them: a new concept to save one wiring order.
 /**
  * The provider of `authentication`: `verify`, or an Effect building it once per layer graph, run on
- * each remote request a protected action receives, with the credential the descriptor's
- * scheme decodes. A Bearer scheme answers each 401 with its challenge, and may publish the
- * OAuth protected resource `protectedResource`, on the `HttpRouter` it then requires.
+ * each remote request a protected action receives, and on every request presenting a credential
+ * to an MCP endpoint that serves one, with the credential the descriptor's scheme decodes. A
+ * Bearer scheme may publish the OAuth protected resource `protectedResource`, on the
+ * `HttpRouter` it then requires.
+ *
+ * **Gotchas**
+ *
+ * - Call it once per descriptor, and provide that value to every layer serving a protected action: nothing else satisfies the provider they require, neither the identity nor another descriptor's provider, which type-checks under the same name and identity, then dies when the layer builds; only a client may hold another descriptor of the name, such as one of a cookie name the server decides at startup.
  */
 export function layer<
   const Name extends string,
@@ -402,7 +469,10 @@ export function layer<
   verify:
     | Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>
     | Effect.Effect<Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>, EX, RX>,
-  options?: { readonly protectedResource?: P } & ResourceOf<S>,
+  options?: {
+    /** The OAuth protected resource to publish: its rules are on `LayerOptions.protectedResource`. */
+    readonly protectedResource?: P;
+  } & ResourceOf<S>,
 ): Layer.Layer<
   Provider<I, Name>,
   EX | Effect.Error<P>,
@@ -544,15 +614,19 @@ export type Protection<I, Name extends string> = HttpRouter.Middleware<{
 }>;
 
 /**
- * Native router middleware authenticating a route of the host's own, such as an export, a
- * page frame or a WebSocket upgrade, with `authentication`'s provider, as its actions' routes
- * are: the credential its scheme decodes, verified by the same verifier, and the identity
- * provided to the route. It answers as an action route: a missing or invalid credential with
- * the refusal, every response to the request it authenticates `no-store` unless it states its
- * own caching, and a refusal the route fails with, such as a scope check's `Forbidden`, as its
- * status, JSON and challenge, stepping up under Bearer. The layer requires the provider,
- * `layer(authentication, ...)`. An erased descriptor, `Any`, provides no service the types can
- * name: its identity is `unknown`, which would discharge every request service the route owes.
+ * Native router middleware authenticating a route of the host's own, such as an export, a page
+ * frame or a WebSocket upgrade, as its actions' routes are: the credential its scheme decodes,
+ * verified by `authentication`'s provider, which its layer requires, and the identity provided
+ * to the route. A missing or invalid credential, and a refusal the route fails with, such as a
+ * scope check's `Forbidden`, are answered as on an action route: status, JSON and challenge,
+ * stepping up under Bearer.
+ *
+ * **Gotchas**
+ *
+ * - No authorizer runs for its routes: each states its own authorization, such as by running the `authorize` of the action it mirrors.
+ * - Every response to a request it covers is `Cache-Control: no-store` unless the route states its own caching; a route that does says `private` unless its answer is the same for every caller, or a cache in front of the server may serve it to anyone.
+ * - A failure that enclosing middleware serializes is `no-store` whatever the route set: only a response the route itself returns keeps its caching.
+ * - An erased descriptor, `Any`, provides no service the types can name: its identity is `unknown`, which would discharge every request service the route owes.
  */
 export const protect = <I, A, S extends Security, Name extends string, E extends Errors>(
   authentication: Descriptor<I, A, S, Name, E>,

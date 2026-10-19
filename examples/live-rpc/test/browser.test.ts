@@ -78,7 +78,7 @@ describe("the page's client", () => {
 
   // `connect(url)` is this with a WebSocket. Each test's runtime builds its own layer, and so
   // its own store.
-  it("answers a page that is not an Effect program with promises, on one connection", async () => {
+  it("answers a page that is not an Effect program with promises, until it closes", async () => {
     const chat = chatOver(served);
 
     const posted = await chat.room("lobby", "ada").post("Deploying at noon.");

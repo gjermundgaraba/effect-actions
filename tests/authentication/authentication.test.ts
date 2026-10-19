@@ -101,7 +101,7 @@ describe("Authentication.make", () => {
   it("refuses a name that is no OpenAPI component key, which it is", () => {
     for (const name of ["app/Login", "app:Login", "Log in", ""]) {
       expect(() => Authentication.make(name, Identity)).toThrow(
-        `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key`,
+        `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`,
       );
     }
 
@@ -112,7 +112,7 @@ describe("Authentication.make", () => {
     for (const security of [{}, { bearer: HttpApiSecurity.bearer }, "Bearer"]) {
       // @ts-expect-error -- Plain JavaScript can pass anything.
       expect(() => Authentication.make("test.Refused", Identity, { security })).toThrow(
-        "Authentication takes one native HttpApiSecurity scheme",
+        "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them",
       );
     }
   });
@@ -123,7 +123,8 @@ describe("a protected action's descriptor", () => {
 
   const OtherLogin = Authentication.make("test.OtherLogin", Other);
 
-  const refused = "Protected action 'identify' requires its matching authentication descriptor";
+  const refused =
+    "Protected action 'identify' requires its matching authentication descriptor (give it the authentication whose identity the action's caller names)";
 
   it("is required, and of the identity the action declares, where plain JavaScript serves it", () => {
     for (const authentication of [undefined, OtherLogin]) {
@@ -524,7 +525,7 @@ describe("Authentication.layer's refusals", () => {
     const bad = { ...resource, scopesRequired: ["has space"] as const };
 
     expect(() => Authentication.layer(Login, verify, { protectedResource: bad })).toThrow(
-      'Invalid scope in scopesRequired: "has space"',
+      `Invalid scope in scopesRequired: "has space", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
     );
   });
 
@@ -532,7 +533,7 @@ describe("Authentication.layer's refusals", () => {
     const bad = { ...resource, scopesSupported: ["docs:read", "has space"] as const };
 
     expect(() => Authentication.layer(Login, verify, { protectedResource: bad })).toThrow(
-      'Invalid scope in scopesSupported: "has space"',
+      `Invalid scope in scopesSupported: "has space", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
     );
   });
 
@@ -624,6 +625,34 @@ describe("Authentication.protect", () => {
 
     const cached = await web.handler(get("/cached", "Bearer alice"));
     expect(cached.headers.get("cache-control")).toBe("private");
+  });
+
+  it("no-stores a failure of the route that enclosing middleware answers, whatever caching it states", async () => {
+    class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
+
+    const answeringGoneCacheable = HttpRouter.middleware<{ handles: Gone }>()((route) =>
+      Effect.catch(route, (error) =>
+        Schema.is(Gone)(error)
+          ? Effect.succeed(
+              HttpServerResponse.text("gone", {
+                status: 410,
+                headers: { "cache-control": "public, max-age=60" },
+              }),
+            )
+          : Effect.fail(error),
+      ),
+    );
+
+    const web = serve(
+      HttpRouter.add("GET", "/gone", Effect.fail(new Gone())).pipe(
+        Layer.provide(Authentication.protect(Login).layer),
+        Layer.provide(answeringGoneCacheable.layer),
+        Layer.provide(Authentication.layer(Login, verify)),
+      ),
+    );
+
+    const gone = await web.handler(get("/gone", "Bearer alice"));
+    expect([gone.status, gone.headers.get("cache-control")]).toEqual([410, "no-store"]);
   });
 
   it("answers the route's refusals as an action's, stepping up under Bearer, and challenges its own 401", async () => {
@@ -811,7 +840,7 @@ describe("an error a descriptor declares", () => {
     class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
     expect(() => Authentication.make("test.Builtin", Identity, { error: Forbidden })).toThrow(
-      'Authentication "test.Builtin": error _tag "Forbidden" names two error schemas',
+      'Authentication "test.Builtin": error _tag "Forbidden" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart; for a built-in\'s tag, fail with the built-in itself)',
     );
     expect(
       Authentication.make("test.Builtin", Identity, { error: Action.Forbidden }).error,
@@ -826,14 +855,18 @@ describe("an error a descriptor declares", () => {
           Schema.TaggedStruct("Down", { retry: Schema.Number }),
         ],
       }),
-    ).toThrow('Authentication "test.Shared": error _tag "Down" names two error schemas');
+    ).toThrow(
+      'Authentication "test.Shared": error _tag "Down" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)',
+    );
   });
 
   it("is the only failure besides a refusal refusalResponse renders", () => {
     expect(() =>
       // @ts-expect-error -- Without the descriptor declaring it, it is no answer authentication gives.
       Authentication.refusalResponse(unavailable),
-    ).toThrow("Not a refusal, nor an error the authentication declares");
+    ).toThrow(
+      "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself",
+    );
   });
 });
 
@@ -1037,7 +1070,9 @@ describe("a scheme other than Bearer", () => {
         // @ts-expect-error -- A cookie names no OAuth resource.
         protectedResource: { resource: "https://a.example", authorizationServers: ["https://as"] },
       }),
-    ).toThrow("A protected resource is published only for a Bearer scheme");
+    ).toThrow(
+      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor",
+    );
   });
 });
 
@@ -1062,6 +1097,25 @@ describe("Basic", () => {
 
     const anonymous = await web.handler(request());
     expect([anonymous.status, anonymous.headers.get("www-authenticate")]).toEqual([
+      401,
+      'Basic realm="test.Basic"',
+    ]);
+  });
+
+  it("answers a handler's Unauthenticated with its 401 and the realm's challenge", async () => {
+    const refusing = Action.implement(Identify, () => new Action.Unauthenticated(), {
+      authorize: Action.allowAll,
+    });
+
+    const web = serve(
+      ActionHttp.layer(ActionHttp.make([Identify], { authentication: Basic }), refusing).pipe(
+        Layer.provide(basic),
+      ),
+    );
+
+    const response = await web.handler(request(`Basic ${btoa(":token")}`));
+
+    expect([response.status, response.headers.get("www-authenticate")]).toEqual([
       401,
       'Basic realm="test.Basic"',
     ]);
@@ -1690,7 +1744,7 @@ describe("Authentication.layer beside other middleware", () => {
       }).pipe(Effect.provide(Testing.layer(tenantRoutes.pipe(Layer.provide(Users.layerMemory))))),
   );
 
-  it("refuses a foreign Host or Origin under the example's global policy before the tenant example's authentication", async () => {
+  it("refuses a foreign Host or Origin under a global policy before a tenant-reading verifier's authentication", async () => {
     const web = serve(
       Layer.mergeAll(requestPolicy, tenantRoutes).pipe(Layer.provide(Users.layerMemory)),
     );

@@ -16,11 +16,10 @@ export const attachments = Action.implement(
     return {
       attachImage: ({ issue, name, image }) =>
         Effect.gen(function* () {
-          // Input that decodes but cannot be served is the built-in `InvalidInput`, which
-          // every surface declares: no second error for bad input. Its `issues` name the
+          // Input that decodes but cannot be served is `InvalidInput`; its `issues` name the
           // field, as the library's own do for input that does not decode.
           if (!image.mimeType.startsWith("image/")) {
-            const message = `Expected an image, got ${image.mimeType}.`;
+            const message = "Expected an image MIME type.";
 
             return yield* new Action.InvalidInput({
               message,

@@ -86,8 +86,14 @@ describe.each([
       ),
     ).toBe(42);
 
-    const publicCallWithUnverifiedCredential = withBearer(rawToolCall("status"), "forged");
-    expect((await web.handler(publicCallWithUnverifiedCredential)).status).toBe(401);
+    const publicCallWithUnverifiedCredential = await web.handler(
+      withBearer(rawToolCall("status"), "forged"),
+    );
+
+    expect(publicCallWithUnverifiedCredential.status).toBe(401);
+    expect(publicCallWithUnverifiedCredential.headers.get("www-authenticate")).toContain(
+      'error="invalid_token"',
+    );
 
     const publicCallWithEmptyCredential = rawToolCall("status");
     publicCallWithEmptyCredential.headers.set("authorization", "Bearer");

@@ -4,48 +4,121 @@ Two ways to test, and neither opens a port. `Action.client` calls an implementat
 what its handlers and its `authorize` do. `Testing.layer` answers the real routes in memory,
 through Effect's own `HttpClient`: what a surface adds, such as authentication, statuses,
 challenges and tool results as sent. The examples put a domain's tests in `test/<domain>/` and
-tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which supplies the
-`Scope` that `Action.client` and `ActionRpc.client` require, a `TestClock` and a `TestConsole`
-(both imported from `effect/testing`).
+tests of the surfaces beside them, in `it.effect` from `@effect/vitest`, which supplies a
+`Scope`, a `TestClock` and a `TestConsole` (both imported from `effect/testing`).
 
-Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
-When something fails, search [Testing-failures.md](Testing-failures.md). Reading order:
-[SKILL.md](SKILL.md).
-
-## API
-
-Import `@gjermundgaraba/effect-actions/Testing`.
-
-| API              | Purpose                                                                      |
-| ---------------- | ---------------------------------------------------------------------------- |
-| `layer(routes)`  | A `Layer<HttpClient>` answering requests with `routes` in memory.            |
-| `layer(handler)` | A `Layer<HttpClient>` answering requests with a web handler the test serves. |
-
-MCP tools are tested with `ActionMcp.client` and `ActionMcp.request`
-([Test MCP tools](#test-mcp-tools)).
+A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [Testing-failures.md](Testing-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
 ## Test an implementation in process
 
 Acquire `Action.client(implementation)` and call its methods
-([Action.md](Action.md#call-actions-in-process)). A call runs the decoding,
-the `authorize` and the handler a server runs, but no authentication and no middleware. Provide
-the startup services around the test, as an entrypoint does, and what a request would carry, its
-caller first, around each call:
+([Action.md](Action.md#call-actions-in-process)), as
+[notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts)
+does. The rules are on `Action.client`.
 
-```ts
+```ts example=notes-service/test/notes/notes.test.ts
+import { describe, expect, it } from "@effect/vitest";
+import { Array, Effect, Exit, References } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { CurrentUser } from "../../src/identity/Identity.js";
+import { users } from "../../src/identity/users.js";
+import { notes } from "../../src/notes/handlers.js";
+import { NoteChanged, NoteNotFound } from "../../src/notes/Notes.js";
+import { NoteStore } from "../../src/notes/store.js";
+
+// What the implementation does, with no transport: `Action.client` runs the same decoding,
+// `authorize` and handler a server runs.
 const as = (user: keyof typeof users) => Effect.provideService(CurrentUser, users[user]);
 
-it.effect("keeps each user's notes their own", () =>
-  Effect.gen(function* () {
-    const client = yield* Action.client(notes);
-    const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
+describe("notes, in process", () => {
+  it.effect("keeps each user's notes their own", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client(notes);
+      const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
 
-    expect(yield* client.listNotes().pipe(as("grace"))).toEqual({ notes: [] });
-  }).pipe(Effect.provide(NoteStore.layerMemory)),
-);
+      expect(yield* client.listNotes().pipe(as("ada"))).toEqual({
+        notes: [{ id: note.id, title: "Plan" }],
+      });
+      expect(yield* client.listNotes().pipe(as("grace"))).toEqual({ notes: [] });
+
+      const missing = new NoteNotFound({ id: note.id });
+      const update = { id: note.id, body: "Mine now", revision: note.revision };
+
+      expect(yield* Effect.flip(client.getNote({ id: note.id }).pipe(as("grace")))).toEqual(
+        missing,
+      );
+      expect(yield* Effect.flip(client.updateNote(update).pipe(as("grace")))).toEqual(missing);
+      expect(yield* Effect.flip(client.deleteNote({ id: note.id }).pipe(as("grace")))).toEqual(
+        missing,
+      );
+      expect(yield* client.getNote({ id: note.id }).pipe(as("ada"))).toEqual(note);
+    }).pipe(Effect.provide(NoteStore.layerMemory)),
+  );
+
+  it.effect("deletes a note for its owner", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client(notes);
+      const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
+
+      yield* client.deleteNote({ id: note.id }).pipe(as("ada"));
+
+      expect(yield* Effect.flip(client.getNote({ id: note.id }).pipe(as("ada")))).toEqual(
+        new NoteNotFound({ id: note.id }),
+      );
+    }).pipe(Effect.provide(NoteStore.layerMemory)),
+  );
+
+  it.effect("refuses an update of a revision that is no longer current", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client(notes);
+      const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
+      const update = { id: note.id, body: "Final", revision: note.revision };
+
+      expect(yield* client.updateNote(update).pipe(as("ada"))).toMatchObject({ revision: 2 });
+      expect(yield* Effect.flip(client.updateNote(update).pipe(as("ada")))).toEqual(
+        new NoteChanged({ id: note.id, revision: 2 }),
+      );
+    }).pipe(Effect.provide(NoteStore.layerMemory)),
+  );
+
+  it.effect("lets one of two concurrent updates of the same revision through", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client(notes);
+
+      // A fiber is set aside after every `steps` steps, and two that run at once then take
+      // turns. Each count sets the first update aside at another point of its work; under
+      // three, the two do not finish.
+      const succeeded = yield* Effect.forEach(Array.range(3, 60), (steps) =>
+        Effect.gen(function* () {
+          const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
+
+          const update = (body: string) =>
+            Effect.exit(client.updateNote({ id: note.id, body, revision: 1 }).pipe(as("ada")));
+
+          const exits = yield* Effect.all([update("One"), update("Two")], {
+            concurrency: "unbounded",
+          }).pipe(Effect.provideService(References.MaxOpsBeforeYield, steps));
+
+          return exits.filter(Exit.isSuccess).length;
+        }),
+      );
+
+      expect(succeeded).toEqual(Array.range(3, 60).map(() => 1));
+    }).pipe(Effect.provide(NoteStore.layerMemory)),
+  );
+
+  it.effect("refuses a write from a caller holding the read scope alone", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client(notes);
+      const create = client.createNote({ title: "Plan", body: "Draft" });
+      const refusal = yield* Effect.flip(create.pipe(as("reader")));
+
+      expect(refusal).toBeInstanceOf(Action.Forbidden);
+      expect(refusal.message).toBe("Requires notes:write.");
+    }).pipe(Effect.provide(NoteStore.layerMemory)),
+  );
+});
 ```
-
-See [notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts).
 
 - Replace the edge, not the service under test:
   [mcp-tools/test/printers/printers.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/printers/printers.test.ts)
@@ -55,157 +128,101 @@ See [notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect
   the process adds, stdout carrying nothing but the protocol.
 - A Toolkit and a CLI need no `Testing` export: call `handle` on `yield* toolkit`, or script a
   `LanguageModel` ([assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts)),
-  and run commands with `Command.runWith`
-  ([assistant/test/commands.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/commands.test.ts)).
+  and run commands without a process
+  ([ActionCli.md](ActionCli.md#run-actions-as-local-commands)).
 
 ## Test routes in memory
 
-Export the routes still requiring what an entrypoint chooses, give the test its own, and provide
-the layer to each test:
+Export the routes still requiring what an entrypoint chooses, give the test its own services, and
+provide `Testing.layer(routes)` to each test. What it serves, the requests it reaches, a remote
+`ActionCli` command's included, and what it cannot do are on `Testing.layer`.
 
-```ts
-const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
+The smallest test:
+
+```ts example=quickstart/test/routes.test.ts
+import { expect, it } from "@effect/vitest";
+import { Effect } from "effect";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { Http } from "../src/Api.js";
+import { Greet } from "../src/greeting/Greeting.js";
+import { routes } from "../src/routes.js";
+
+// The routes answer in memory: no port, and the same code the server runs.
+it.effect("greets over HTTP and as an MCP tool", () =>
+  Effect.gen(function* () {
+    const http = yield* ActionHttp.client(Http);
+    const mcp = yield* ActionMcp.client([Greet]);
+
+    expect(yield* http.greet({ name: "Ada" })).toBe("Hello, Ada!");
+    expect(yield* mcp.greet({ name: "Ada" })).toBe("Hello, Ada!");
+  }).pipe(Effect.provide(Testing.layer(routes))),
+);
 ```
 
-Under it, `ActionHttp.client(Http)` needs no `baseUrl`, and `HttpClient.get("/healthz")` reaches
-the host's own routes. Each test builds the routes anew, so each starts from an empty store. See
-[notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts); the smallest
-test is
-[quickstart/test/greeting/greeting.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/test/greeting/greeting.test.ts).
+[notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts) provides a
+store a builder yields, calls the host's own routes with `HttpClient.get("/healthz")` and signs
+callers in.
 
-- A service the test reads too goes around `layer` with `Layer.provideMerge`, so handlers and
-  test share one instance
-  ([kitchen-sink/test/identity/session.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/session.test.ts)).
-- Two `layer`s are two servers: a second one runs every builder again, and they share only what
-  is provided around both. For two ports, that is `Action.layer(implementations)` and the
-  services ([kitchen-sink/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/routes.test.ts),
-  [Action.md](Action.md#share-one-build-across-servers)).
-- The client is `layer`'s own. A fake upstream is another `HttpClient`: provide it to the service
-  that calls out ([mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts)).
-- Every request on `layer`'s client reaches the routes, whatever its host: a client given a
-  `baseUrl`, a remote `ActionCli` command's included, runs in memory unchanged.
-- Requests run in the test's context: a `ConfigProvider` or the test clock around the test
-  reaches middleware and handlers.
-- To send raw web `Request`s too, build one `HttpRouter.toWebHandler` and dispose it yourself;
-  `Testing.layer(web.handler)` gives the typed clients the same handler
-  ([kitchen-sink/test/request-policy.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/request-policy.test.ts)).
+- A service the test reads too:
+  [kitchen-sink/test/identity/session.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/session.test.ts).
+- Several `layer`s sharing one build:
+  [kitchen-sink/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/routes.test.ts)
+  ([Action.md](Action.md#share-one-build-across-servers)).
+- A fake upstream: [mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts).
+- Raw web `Request`s beside the typed clients, through one web handler the test disposes of,
+  given to `Testing.layer(handler)`:
+  [kitchen-sink/test/request-policy.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/request-policy.test.ts).
 
 ## Test as a signed-in caller
 
-The routes keep their real authentication. Serve them behind their provider
+Serve the routes behind their provider
 ([Authentication.md](Authentication.md#verify-credentials)), and give each client its caller's
-credential:
+credential in `transformClient`, as `as` in
+[notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts) does for
+`ActionHttp.client` and `ActionMcp.client` alike.
 
-```ts
-const as = (token: string) => ({
-  transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
-});
-```
+To change what a credential verifies as, replace the service the verifier reads (`servedWith` in
+[kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)),
+or provide a test verifier: another `Authentication.layer` of the same descriptor.
 
-Both clients take it: `ActionHttp.client(Http, as("reader"))` and
-`ActionMcp.client([GetStatus, ...Notes], as("ada"))`.
-
-- Never provide the identity to `layer`, around it or to the routes. In place of the provider it
-  is a type error, since only a provider of their own descriptor satisfies a protected route;
-  beside the provider it compiles, and every public request then runs as that caller.
-- To change what a credential verifies as, replace the service the verifier reads (`servedWith`
-  in
-  [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)),
-  or provide a test verifier: another `Authentication.layer` of the same descriptor.
-
-A typed client decodes a refusal to its error. To assert on the answer as sent, build the request
-(`HttpClientRequest.post`, `bearerToken`, `bodyJsonUnsafe`) and send it with `HttpClient.execute`,
-which succeeds whatever the status. Read `response.status` and
-`response.headers["www-authenticate"]`, the challenge, as that file does. The status and body of
-each case are on `ActionHttp.layer` and on each built-in error.
+A typed client decodes a refusal to its error. To assert on the answer as sent, its status and
+its `www-authenticate` challenge, send the request with `HttpClient.execute`, which succeeds
+whatever the status, as that file does. The status and body of each case are on
+`ActionHttp.layer` and on each built-in error.
 
 ## Test MCP tools
 
-`ActionMcp.client(actions, options?)` gives one method per action, calling its tool and decoding
-the result as `ActionHttp.client` decodes a route's, an image included. Pass the contract values
-the endpoint serves, such as `implementation.actions`. Its failures:
-[ActionMcp-failures.md](ActionMcp-failures.md).
+`ActionMcp.client(actions, options?)` gives one method per action, calling its tool. What it
+decodes and how it fails are on `ActionMcp.client` and `McpCallError`
+([ActionMcp-failures.md](ActionMcp-failures.md)).
 
-A method fails with the action's declared errors and the built-in ones as decoded values, and with
-`McpCallError` for any other answer: its `reason` says which, `StatusError`, `ProtocolError`,
-`NoReply`, `UndeclaredError` or `NoStructuredContent`, with what the endpoint sent, so a test
-asserts on `reason` and `Effect.catchReason("McpCallError", "StatusError", ...)` recovers one;
-structured content that does not decode as the success is a `SchemaError`, and a request that
-fails Effect's `HttpClientError`. Only a tool's result carries the action's own errors: an HTTP
-answer other than 200 decodes as a refusal, or, given the endpoint's `authentication`, as an error
-its verifier declares for a protected tool, as `ActionHttp.client` types it; otherwise it is an
-`McpCallError`
-([kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)).
-
-A method decodes a refusal alike whether the endpoint answered a 401 or a 403 or returned a tool
-result in a 200: to assert which, send the call
-yourself and read its status.
-
-For that, and for what the client's types will not send or its decoding hides (`tools/list`, an
-`Origin` header, a refusal's challenge, a malformed call), build the request with
-`ActionMcp.request`. It returns a native `HttpClientRequest`:
-`yield* HttpClient.execute(ActionMcp.request("tools/call", { name: "whoAmI", arguments: {} }))`
-succeeds with the response whatever its status, to read `response.status`, `response.headers`
-and `yield* response.json`
-([kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)
-asserts a 401 so, and
-[mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts) reads `tools/list`).
-For a web handler or `fetch`, pass an absolute `url`: `HttpClientRequest.toWebResult(request)` is
-then a `Result` holding the web `Request`, taken with `Result.getOrThrow`.
+For what the client's types will not send or its decoding hides, such as a status or
+`tools/list`, build the request with `ActionMcp.request`:
+[kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)
+asserts a 401, and
+[mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts) reads `tools/list`.
 
 ## Test rpcs
 
-`Testing.layer` answers HTTP requests and cannot upgrade a WebSocket. Export the rpc layer without
-its protocol ([ActionRpc.md](ActionRpc.md#serve-the-rpcs)), and give it Effect's HTTP protocol in
-the test, on both sides:
-
-```ts
-const server = rpc.pipe(
-  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-  Layer.provide(RpcSerialization.layerJson),
-);
-
-const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-  Layer.provide(RpcSerialization.layerJson),
-  Layer.provide(Testing.layer(server)),
-  Layer.provide(MessageStore.layerMemory),
-);
-
-const as = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
-```
-
-Authentication is per message, so each call carries its credential and one client serves every
-caller: `client.postMessage({ text }).pipe(as("ada"))`. See
-[live-rpc/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/test/routes.test.ts);
+Export the rpc layer without its protocol ([ActionRpc.md](ActionRpc.md#serve-the-rpcs)) and
+serve it under `Testing.layer`, as
+[live-rpc/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/test/routes.test.ts) does; the protocol each
+side takes is on `Testing.layer`.
 [live-rpc/test/browser.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/test/browser.test.ts) tests a page's client
-the same way. To call JSON routes in the same test, merge both route layers into the one
-`Testing.layer` and give it to the protocol with `Layer.provideMerge`, which keeps its `HttpClient`
-for the test
-([kitchen-sink/test/identity/session.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/session.test.ts)).
-Effect's `RpcTest.makeClient` is no substitute: it asks for handlers of the
-binding's group, which `ActionRpc.layer` does not provide (`Handler<"…">` stays required).
+the same way, and
+[kitchen-sink/test/identity/session.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/session.test.ts)
+serves JSON routes and rpcs in one `Testing.layer`.
 
 ## Assert on errors
 
 Take the failure with `Effect.flip(call)`, which alone asserts only that the call failed, then
-assert its class and its `message` separately:
-
-```ts
-expect(refusal).toBeInstanceOf(Action.Forbidden);
-expect(refusal.message).toBe("Requires notes:write.");
-```
+assert its class and its `message` separately, as the last test of
+[notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts) does.
 
 `toEqual` never compares a tagged error's `message`, which is not an enumerable property:
 `expect(error).toEqual(new Action.Forbidden({ message: "anything" }))` passes for every message,
 and so does `toStrictEqual`. Other fields are compared, so `toEqual(new NoteNotFound({ id }))`
 asserts the `id`, and `toEqual(new Action.Forbidden({ scopes: ["issues:write"] }))` still needs the
 message asserted beside it. The message is all a model reads of a tool's failure.
-
-`toBeInstanceOf` narrows nothing: the flipped failure stays the union of the action's declared
-and built-in errors, so reading a field only one of them has, such as `retryAfterSeconds`, does
-not compile. Compare with `toEqual(new RateLimited({ retryAfterSeconds: 10 }))`, or narrow with
-`instanceof` first.
-
-A Toolkit raises neither a refusal nor a declared error: each is a result the model reads, so
-assert `isFailure` and `result.message`
-([assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts)).

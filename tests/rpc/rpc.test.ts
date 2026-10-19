@@ -594,10 +594,12 @@ describe("ActionRpc selection", () => {
     expect(() =>
       // @ts-expect-error -- As plain JavaScript may: Crashy is not the binding's.
       ActionRpc.layer(Rpc, [status, crashy], { actions: [Crashy] }),
-    ).toThrow("Listed in actions, but the binding does not hold it: crashy");
+    ).toThrow(
+      "Listed in actions, but the binding does not hold it: crashy (add it to the binding's actions)",
+    );
 
     expect(() => ActionRpc.layer(Rpc, crashy)).toThrow(
-      "No action of these implementations is in this RPC binding: crashy",
+      "No action of these implementations is in this RPC binding: crashy (pass an implementation of a bound action, or bind one of these)",
     );
   });
 
@@ -605,7 +607,7 @@ describe("ActionRpc selection", () => {
     class Twice extends RpcMiddleware.Service<Twice>()("rpc-test/Twice") {}
 
     expect(() => ActionRpc.layer(Rpc, status, { middleware: [Twice, Twice] })).toThrow(
-      "Duplicate middleware: rpc-test/Twice",
+      "Duplicate middleware: rpc-test/Twice (list each middleware once)",
     );
   });
 

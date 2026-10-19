@@ -57,7 +57,7 @@ const Listed = Schema.Struct({
 });
 
 describe("the tools, over MCP", () => {
-  it.effect("lists every tool with the hints its contract states", () =>
+  it.effect("lists every tool with its title and hints as sent", () =>
     Effect.gen(function* () {
       // A raw request, for what no typed client shows: here, the listing itself.
       const response = yield* HttpClient.execute(ActionMcp.request("tools/list"));

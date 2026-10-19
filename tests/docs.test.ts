@@ -90,7 +90,13 @@ it.each(docsPages)("%s links only inside docs/ and to examples/, which ship with
 it.each(docsPages)("%s names no source path of the library, which does not ship", (page) => {
   const ofAnExample = new RegExp(`(?:${examples.join("|")})/src/`, "g");
 
-  expect(read(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
+  expect(withoutCode(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
+});
+
+it.each(docsPages)("%s fences TypeScript only as a whole example file", (page) => {
+  const fences = Array.from(read(page).matchAll(/^\x60{3}ts(.*)$/gm), ([, rest = ""]) => rest);
+
+  for (const rest of fences) expect(rest, page).toMatch(/^ example=\S+$/);
 });
 
 it.each(docsPages)("%s stays below the 16 KB safety margin for tool-output truncation", (page) => {

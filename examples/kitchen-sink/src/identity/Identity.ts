@@ -22,8 +22,8 @@ export class CurrentMember extends Context.Service<CurrentMember, Member>()(
   "tracker/CurrentMember",
 ) {}
 
-// What a verifier may fail with besides a refusal. It is not the caller's fault, so it is no
-// 401: signing in again cannot help. Every protected route declares it, so clients decode it.
+// What a verifier may fail with besides a refusal: the issuer it checks tokens with is down.
+// It is not the caller's fault, so it is no 401: signing in again cannot help.
 export class IssuerUnavailable extends Schema.TaggedError<IssuerUnavailable>()(
   "IssuerUnavailable",
   { retryAfterSeconds: Schema.Finite },
@@ -31,7 +31,7 @@ export class IssuerUnavailable extends Schema.TaggedError<IssuerUnavailable>()(
 ) {}
 
 // How an API client, the CLI and an MCP client prove they are CurrentMember: a bearer token,
-// the default scheme, and the only one that speaks OAuth (discovery, challenges, step-up).
+// the default scheme.
 export const Login = Authentication.make("tracker.Login", CurrentMember, {
   error: IssuerUnavailable,
 });

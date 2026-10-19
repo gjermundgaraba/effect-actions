@@ -5,9 +5,8 @@ import { identity } from "./identity/handlers.js";
 import { CurrentCaller, type Member } from "./identity/Identity.js";
 import { tasks } from "./tasks/handlers.js";
 
-// The implementations as a native Effect AI Toolkit: a tool per action, run in this process.
-// `toolkit` goes to `LanguageModel.generateText`; `layer` holds the handlers, and requires the
-// startup services their builders read. Neither holds a caller.
+// `layer` holds the handlers, and requires the startup services their builders read. Neither it
+// nor `toolkit` holds a caller.
 const actions = ActionToolkit.make([tasks, identity], {
   // One rule over every call a model makes, asked before the call runs. A read runs at once. A
   // write waits for a person to approve it, except a task the caller adds to their own list:

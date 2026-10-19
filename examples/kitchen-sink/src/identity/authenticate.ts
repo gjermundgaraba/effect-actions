@@ -74,7 +74,7 @@ export const authenticateBearer = Authentication.layer(
 
 // `Session`'s provider: the same identity from another credential. Its verifier receives what
 // its scheme decodes, the cookie's value. A session belongs to one workspace, so it reads no
-// `Tenant`, and under a scheme other than Bearer there is no discovery and no step-up.
+// `Tenant`.
 export const authenticateSession = Authentication.layer(
   Session,
   Effect.gen(function* () {

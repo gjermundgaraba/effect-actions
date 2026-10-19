@@ -18,8 +18,7 @@ same schemas, handler and authorization.
 
 ## How to read these pages
 
-**Arriving with an error?** A message the library throws says its fix. For a compiler diagnostic
-or Effect's own error, search the `*-failures.md` pages first (step 5).
+**Arriving with an error?** A message the library throws says its fix; for any other, step 5.
 
 1. **Open one page per tool call, with your file-reading tool.** Pages are kept small to reduce
    truncation. Several in one call, however many commands it runs, can be cut by its output
@@ -45,9 +44,7 @@ A service others call is [notes-service](node_modules/@gjermundgaraba/effect-act
 Where things are, in a project that installs the package: these pages in
 `node_modules/@gjermundgaraba/effect-actions/docs/`, the examples in `examples/` beside them, and
 the declarations with their JSDoc, the reference for signatures, under `dist/`, all at
-the installed version. Install first ([setup.md](setup.md#install)): it needs TypeScript 7 and
-one Effect release. Every module is a subpath import, `@gjermundgaraba/effect-actions/Action`;
-there is no package root.
+the installed version. Install first ([setup.md](setup.md#install)).
 
 ## Pages
 
@@ -63,7 +60,6 @@ there is no package root.
 | [Authentication.md](Authentication.md)                   | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope                                                                         |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication                                   |
 | [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                      |
-| [CONTEXT.md](CONTEXT.md)                                 | look up a term the pages use                                                                                                                                          |
 
 ## Examples
 
@@ -76,10 +72,8 @@ there is no package root.
 | [live-rpc](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/)           | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token.                   | A client keeps a connection open, or the application speaks Effect RPC. |
 | [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/)   | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index.           | You need a working use of one specific feature.                         |
 
-Each example's README says where to look for what. The index in
-[kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/README.md#index) maps every export and option it uses to
-a file. Every token, user and store in the examples is a demo, marked `DEMO ONLY` where it must
-change before a deployment.
+The index in [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/README.md#index) maps every export and
+option it uses to a file.
 
 ## Choose a surface
 
@@ -104,14 +98,14 @@ and each built-in error: grep the symbol.
 - **Verify credentials or issue them.** The application writes the verifier
   ([Authentication.md](Authentication.md#verify-credentials)), and login, consent and token
   issuance are its own. The library defines no scopes: a `Forbidden` names the scopes a call
-  lacks, and the library answers with the OAuth challenge
-  ([Authentication.md](Authentication.md#publish-oauth-discovery)). OAuth, its discovery,
-  challenges and step-up, is Bearer's.
+  needs, and the library answers with the OAuth challenge
+  ([Authentication.md](Authentication.md#step-up-for-a-scope)). OAuth, its discovery and
+  step-up, is Bearer's.
 - **Decide who may do what.** It runs the `authorize` an implementation states and writes no rule
   of its own ([Action.md](Action.md#authorize-calls)).
-- **Filter tool discovery by caller.** `tools/list` names every tool its endpoint serves,
-  protected ones included, to anyone who may list them. Serve public tools on an endpoint of
-  their own if signed-out callers must not see the protected ones.
+- **Filter tool discovery by caller.** `tools/list` names every tool its endpoint serves: serve
+  public tools on an endpoint of their own if signed-out callers must not see the rest
+  (`ActionMcp.LayerHttpOptions`'s `authentication`).
 - **Limit requests.** A rate limit is the handler's, failing with an error its action declares, or
   middleware's; a request body has no size limit unless the host sets one
   ([ActionHttp.md](ActionHttp.md#serve-the-routes)).

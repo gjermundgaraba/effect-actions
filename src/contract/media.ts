@@ -14,6 +14,10 @@ export const Media = Schema.Struct({ data: Schema.Uint8Array, mimeType: Schema.S
  * as `image/png`. A top-level field of a struct success, one, optional, or a required array, or the
  * whole success, one or an array: an MCP tool lifts it into an image block of its own, and every other
  * surface sends it as JSON, the bytes in base64. `ActionMcp` refuses it anywhere else.
+ *
+ * **Gotchas**
+ *
+ * - A media field's own `description` reaches no model: describe the image in the action's `description`.
  */
 export const Image = Media.annotate({ [mediaKindAnnotation]: "image" });
 

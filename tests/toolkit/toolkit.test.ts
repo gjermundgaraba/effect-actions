@@ -150,32 +150,34 @@ describe("ActionToolkit", () => {
       }),
   );
 
-  it.effect("asks, in the approval example, before a model renames anyone but its caller", () =>
-    Effect.gen(function* () {
-      const user1OfAcme = {
-        id: "1",
-        tenantId: "acme",
-        permissions: ["users:read", "users:write"],
-      } as const;
+  it.effect(
+    "asks, in the test app's approval toolkit, before a model renames anyone but its caller",
+    () =>
+      Effect.gen(function* () {
+        const user1OfAcme = {
+          id: "1",
+          tenantId: "acme",
+          permissions: ["users:read", "users:write"],
+        } as const;
 
-      const [asked, renamed] = yield* Effect.all([
-        chat(actors.alice, "rename"),
-        chat(user1OfAcme, "rename"),
-      ]).pipe(
-        Effect.map((responses) => responses.map(approvalsAndResults)),
-        Effect.provideServiceEffect(
-          LanguageModel.LanguageModel,
-          modelCalling(["renameUser", { id: "1", name: "Bea" }]),
-        ),
-        Effect.provide(approvalHandlers.pipe(Layer.provide(Users.layerMemory))),
-      );
+        const [asked, renamed] = yield* Effect.all([
+          chat(actors.alice, "rename"),
+          chat(user1OfAcme, "rename"),
+        ]).pipe(
+          Effect.map((responses) => responses.map(approvalsAndResults)),
+          Effect.provideServiceEffect(
+            LanguageModel.LanguageModel,
+            modelCalling(["renameUser", { id: "1", name: "Bea" }]),
+          ),
+          Effect.provide(approvalHandlers.pipe(Layer.provide(Users.layerMemory))),
+        );
 
-      expect(asked).toEqual({ approvals: ["1"], results: [] });
-      expect(renamed).toEqual({
-        approvals: [],
-        results: [["renameUser", { id: "1", name: "Bea" }]],
-      });
-    }),
+        expect(asked).toEqual({ approvals: ["1"], results: [] });
+        expect(renamed).toEqual({
+          approvals: [],
+          results: [["renameUser", { id: "1", name: "Bea" }]],
+        });
+      }),
   );
 
   it.effect(
@@ -313,6 +315,34 @@ describe("ActionToolkit", () => {
         );
         expect(ran).toEqual([]);
       }),
+  );
+
+  it.effect("drops arguments the input does not declare and runs the call without them", () =>
+    Effect.gen(function* () {
+      const received: unknown[] = [];
+
+      const Rename = Action.make("rename", {
+        description: "Rename a file.",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: { name: Schema.String, owner: Schema.Struct({ id: Schema.String }) },
+        success: Schema.String,
+      });
+
+      const binding = ActionToolkit.make(
+        Action.implement(Rename, (input) => Effect.sync(() => (received.push(input), "renamed"))),
+      );
+
+      const result = yield* Effect.flatMap(binding.toolkit, (tools) =>
+        Effect.flatMap(
+          tools.handle("rename", { name: "a", owner: { id: "o", role: "admin" }, force: true }),
+          Stream.runCollect,
+        ),
+      ).pipe(Effect.provide(binding.layer));
+
+      expect(result).toMatchObject([{ isFailure: false, result: "renamed" }]);
+      expect(received).toEqual([{ name: "a", owner: { id: "o" } }]);
+    }),
   );
 
   it("runs each call with its own identity, filling in one provided to layer for a call without one", async () => {

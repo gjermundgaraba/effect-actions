@@ -15,6 +15,7 @@ export const assertDistinct = <T>(
   items: ReadonlyArray<T>,
   nameOf: (item: T) => string,
   claimantOf: (item: T) => string = nameOf,
+  fix?: string,
 ): void => {
   const seen = new Map<string, string>();
 
@@ -25,8 +26,9 @@ export const assertDistinct = <T>(
 
     if (other !== undefined) {
       const by = other === claimant ? "" : `, claimed by ${other} and ${claimant}`;
+      const hint = fix === undefined ? "" : ` (${fix})`;
 
-      throw new Error(`Duplicate ${what}: ${name}${by}`);
+      throw new Error(`Duplicate ${what}: ${name}${by}${hint}`);
     }
 
     seen.set(name, claimant);

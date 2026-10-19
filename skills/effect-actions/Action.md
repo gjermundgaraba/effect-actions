@@ -5,17 +5,16 @@ and who may call it. `Action.implement` binds contracts to handlers, behind an a
 surface takes the implementation it returns, or a list of them, and `Action.client` calls one in
 process.
 
-Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search
-[Action-failures.md](Action-failures.md). Reading order: [SKILL.md](SKILL.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`:
+[Action-failures.md](Action-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`:
 each declaration's JSDoc carries its rules and gotchas, and this page only what an example
 cannot show.
 
 ## Define a contract
 
-One `Action.make` per action, in the domain's contract file, which imports no server code, so a
-browser or a CLI can import it. Export the domain's actions as one `as const` list: `implement`
-and every surface take lists.
+One `Action.make` per action, in the domain's contract file. Export the domain's actions as one
+`as const` list ([notes-service/src/notes/Notes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/notes/Notes.ts)):
+`implement` and every surface take lists.
 
 ```ts example=quickstart/src/greeting/Greeting.ts
 import { Schema } from "effect";
@@ -36,10 +35,9 @@ export const Greet = Action.make("greet", {
 errors with their statuses, described fields and the list;
 [kitchen-sink/src/issues/Issues.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/Issues.ts) uses every
 option. The rules of each option, `input`'s optional fields and `error`'s tags included, are on
-`Action.Options`. A contract says nothing about where it is served: each surface takes a list,
-kept in one file beside the contracts
-([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)); that, and matching by
-object identity, are on `make`.
+`Action.Options`; where an action must be listed to be served, and matching by object identity,
+are on `make`. The lists live in one file beside the contracts
+([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)).
 
 - **List an action as a tool only where a model may hold what it takes and returns.** A tool
   call passes both through the model's context and records its arguments on the current span,
@@ -47,20 +45,17 @@ object identity, are on `make`.
 
 ## Say who may call an action
 
-`caller: Action.Anyone` makes a public action. An identity service, `caller: CurrentUser`, makes
-a protected one: every surface requires that identity, whether or not the handler reads it. A
-remote surface gets it by authenticating the request
-([Authentication.md](Authentication.md#declare-how-callers-sign-in)); a local surface has no one
-to authenticate, so the host provides it ([ActionToolkit.md](ActionToolkit.md#name-the-caller),
+`caller: Action.Anyone` makes a public action; an identity service, `caller: CurrentUser`, a
+protected one, whose identity a remote surface gets by authenticating the request
+([Authentication.md](Authentication.md#declare-how-callers-sign-in)) and a local surface, which
+has no one to authenticate, from the host ([ActionToolkit.md](ActionToolkit.md#name-the-caller),
 [ActionCli.md](ActionCli.md#name-the-caller), [ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
 
 `CurrentUser` is declared in
-[notes-service/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/Identity.ts),
-apart from its verifier, and a public action in
-[notes-service/src/status/Status.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/Status.ts).
-
-The rules of an identity, never provided at startup, one per action, are on `caller`; a test
-sends each caller's credential instead ([Testing.md](Testing.md#test-as-a-signed-in-caller)).
+[notes-service/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/identity/Identity.ts), and
+a public action in [notes-service/src/status/Status.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/Status.ts).
+The rules of an identity are on `caller`; a test sends each caller's credential
+([Testing.md](Testing.md#test-as-a-signed-in-caller)).
 
 - **One protected contract serves callers with a token over HTTP and a local host without
   one**, never a public copy of it: the host provides the caller around `runStdio`
@@ -72,8 +67,8 @@ sends each caller's credential instead ([Testing.md](Testing.md#test-as-a-signed
 
 `Action.implement` binds a handler to one action, or a record of handlers keyed by name to a
 list. Either may instead be a builder: an Effect, run once at startup, that returns the handler
-or the record. It is how a handler gets a startup service; what differs per call, the caller
-first, the handler reads itself.
+or the record, whose services are startup services. What a handler yields per call, the caller
+first, is a request-time requirement.
 
 ```ts example=notes-service/src/notes/handlers.ts
 import { Effect } from "effect";
@@ -128,16 +123,14 @@ itself, calling through `client` and never the function you passed, are on `impl
   after the action covers authorization, the handler and call cleanup, carrying `action.name`
   and `action.read_only` on it and its logs. Credential verification and input decoding run
   before it, so a request they reject has no action span; response encoding runs after it, so
-  it can fail after a successful one. The named authorizer below measures authorization as a
-  child of it.
+  it can fail after a successful one.
 
 ## Authorize calls
 
 An implementation holding a protected action states `{ authorize }`: a function of the called
-action that succeeds, or fails with a refusal. Every surface runs it before the handler, and
-none has a policy of its own. An implementation of public actions alone takes none
-([notes-service/src/status/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/handlers.ts)), and
-the authorizer never runs for a public action.
+action that succeeds, or fails with a refusal; no surface has a policy of its own. An
+implementation of public actions alone takes none
+([notes-service/src/status/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/status/handlers.ts)).
 
 ```ts example=notes-service/src/identity/authorize.ts
 import { Effect } from "effect";
@@ -145,11 +138,8 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentUser, scopes } from "./Identity.js";
 
 // The one rule, read from each contract: a read needs the read scope, anything else the write
-// scope. Every implementation of protected actions states it, so HTTP, MCP and stdio all run it
-// before the handler. Naming the missing scope lets an OAuth client ask for it and retry: it is
-// answered a challenge, which only a server publishing discovery (verifier.ts) can follow up.
-// Where tokens are fixed, such as API keys, name no scope: the refusal is then a plain one.
-// So `scopes` below goes when `protectedResource` in verifier.ts does: copy both or neither.
+// scope. Naming the missing scope lets an OAuth client ask for it and retry (`Forbidden`):
+// `scopes` below goes with `protectedResource` in verifier.ts, copy both or neither.
 // This named span measures authorization within the action's span, including a refusal.
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const scope = action.readOnly ? scopes.read : scopes.write;
@@ -162,8 +152,8 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
 ```
 
 Actions under another rule go in another `Action.implement` with its own `authorize`, or
-`Action.allowAll`, not a branch on `action.name`. With fixed tokens, leave `scopes` out, as the
-comment says: what a `Forbidden` with and without them answers on each surface is on `Forbidden`.
+`Action.allowAll`, not a branch on `action.name`. What a `Forbidden` with and without `scopes`
+answers on each surface is on `Forbidden`.
 Reading a store once, by an `authorize` that is an Effect returning the function, is
 [assistant/src/identity/authorize.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/src/identity/authorize.ts); that
 rule, and that a limit is the handler's, are on `implement`.
@@ -174,10 +164,9 @@ rule, and that a limit is the handler's, are on `implement`.
   refuse or limit before decoding, use that `middleware`
   ([ActionHttp.md](ActionHttp.md#serve-the-routes), [ActionRpc.md](ActionRpc.md#serve-the-rpcs)).
 - **A limiter is a service the builder yields, apart from the store**
-  ([kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts)):
-  a service is shared wherever it is provided
-  ([kitchen-sink/src/memory.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/memory.ts)), state kept in a
-  builder only within one layer graph.
+  ([kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts),
+  [kitchen-sink/src/memory.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/memory.ts)): state kept in a builder
+  lasts only within one layer graph.
 - **A check on one record belongs in the handler's data access**
   ([notes-service/src/notes/store.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/notes/store.ts)). So does a
   rule across callers, such as uniqueness.
@@ -185,31 +174,26 @@ rule, and that a limit is the handler's, are on `implement`.
 ## Fail with declared and built-in errors
 
 A handler fails with the errors its action lists in `error`, and with the three built-in
-errors, `InvalidInput`, `Unauthenticated` and `Forbidden`, which every surface declares and
-every client decodes as typed values. No other failure compiles, and a failure the schemas
-reject is the call's defect. What each answers on each surface, when to fail with
-`InvalidInput` yourself, and that another service's refusal is mapped before it is passed on,
-are on each class; [kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts)
+errors, `InvalidInput`, `Unauthenticated` and `Forbidden`. What each answers on each surface,
+when to fail with `InvalidInput` yourself, and that another service's refusal is mapped before
+it is passed on, are on each class;
+[kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts)
 fails with `InvalidInput` for input that decodes but cannot be served.
 
 - **Map a client's `HttpClientError` and `SchemaError` to one declared error a caller can act
   on** ([mcp-tools/src/platform/print-farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/platform/print-farm.ts)).
   As defects, a model reads only a generic text.
-- **Internal failures are never sent.** Over HTTP, MCP and RPC, the cause of a defect goes to
-  the log and to the call's `ErrorReporter`s: those the server runs with, provided around
-  `HttpRouter.serve` or `Testing.layer`, win over those provided to one surface's layer, which
-  only fill in what a request lacks.
+- **Internal failures are never sent** over HTTP, MCP and RPC: a defect's cause goes to the log
+  and to the call's `ErrorReporter`s, as each `layer` says; a Toolkit and a CLI make it the
+  call's defect.
 
 ## Call actions in process
 
 `Action.client(implementations)` gives the methods `ActionHttp.client` gives, for a job, an
-agent or a test. A call runs what a remote call runs, the codecs, the authorizer and the
-handler, without a transport, and owes per call what they read, the caller first. Acquiring it
-builds the implementations, so it needs a `Scope` and their startup services, and happens once,
-where builders live: [kitchen-sink/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/agent.ts) in a
-scoped program,
+agent or a test, without a transport. It is acquired where builders live:
+[kitchen-sink/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/agent.ts) in a scoped program,
 [notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts)
-under `it.effect`, which supplies the scope. The rules are on `client`; testing with it is
+under `it.effect`. The rules are on `client`; testing with it is
 [Testing.md](Testing.md#test-an-implementation-in-process).
 
 ## Share one build across servers
@@ -231,5 +215,4 @@ in-memory store.
   `Testing.layer`s, asserting one run of a builder both ports serve.
 - **Inside one layer graph, a builder runs with the services of whichever surface builds it
   first**, and services provided around one surface reach the others: provide startup services
-  once, for every surface. Where two surfaces must differ, wrap each in `Layer.fresh`, providing
-  what they share, authentication included, outside it.
+  once, for every surface. Where two must differ is on `layer`.

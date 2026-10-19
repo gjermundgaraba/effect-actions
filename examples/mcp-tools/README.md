@@ -5,11 +5,6 @@ authentication of its own. It signs in to the farm once, with its own account, a
 reach it may call every tool, so it runs as a local subprocess of an agent or on a network only
 trusted clients are on.
 
-Start here if you are putting an existing API in front of a model, then read
-[ActionMcp.md](../../docs/ActionMcp.md). For tools that need a token, its "Protect tools" shows
-how to protect them, and [notes-service](../notes-service/) is a server whose tools belong to the
-signed-in user.
-
 ## Run it
 
 From the repository root, after `vp install` (from an installed package, see
@@ -80,7 +75,9 @@ curl http://127.0.0.1:3000/mcp \
 ```
 
 It answers `{"jsonrpc":"2.0","id":1,"result":{…,"structuredContent":{"printers":[…]},"isError":false}}`.
-Every header is needed, as `ActionMcp.layerHttp` says. `tools/list` takes the same request with that method, no `MCP-Name` header,
+Every header is needed, as `ActionMcp.request` builds it, and
+[ActionMcp-failures.md](../../docs/ActionMcp-failures.md) lists what a missing one answers.
+`tools/list` takes the same request with that method, no `MCP-Name` header,
 and no `name` or `arguments`.
 
 ## Layout
@@ -105,21 +102,21 @@ test/
 
 ## Where to look
 
-| To see                                                          | Read                             |
-| --------------------------------------------------------------- | -------------------------------- |
-| Public tools described for a model, with field descriptions     | `src/printers/Printers.ts`       |
-| `readOnly`, `title`, `destructiveHint` and `idempotentHint`     | `src/printers/Printers.ts`       |
-| One declared error shared by every tool                         | `src/printers/Printers.ts`       |
-| An input a model cannot use to reach another URL                | `src/printers/Printers.ts`       |
-| A tool answering an image beside other fields                   | `src/printers/Printers.ts`       |
-| An upstream client reading `Config`, signing in once            | `src/platform/print-farm.ts`     |
-| An upstream's failures mapped to the declared error             | `src/platform/print-farm.ts`     |
-| A builder yielding a service, and handlers that only delegate   | `src/printers/handlers.ts`       |
-| Server `instructions`, shared by both transports                | `src/instructions.ts`            |
-| Allowed origins from `Config`, their CORS, and `/healthz`       | `src/routes.ts`                  |
-| A request body limit, and where an unauthenticated server binds | `src/server.ts`                  |
-| A stdio server whose logs go to stderr                          | `src/stdio.ts`                   |
-| A fake upstream provided as a Layer, to a test or an entrypoint | `src/platform/fake-farm.ts`      |
-| Testing tools and each upstream failure's message in process    | `test/printers/printers.test.ts` |
-| Testing listed hints, an image and the origin check in memory   | `test/routes.test.ts`            |
-| Testing CORS for one configured origin and for several          | `test/routes.test.ts`            |
+| To see                                                                  | Read                             |
+| ----------------------------------------------------------------------- | -------------------------------- |
+| Public tools described for a model, with field descriptions             | `src/printers/Printers.ts`       |
+| `readOnly`, `title`, `idempotentHint`, and destructive as MCP's default | `src/printers/Printers.ts`       |
+| One declared error shared by every tool                                 | `src/printers/Printers.ts`       |
+| An input a model cannot use to reach another URL                        | `src/printers/Printers.ts`       |
+| A tool answering an image beside other fields                           | `src/printers/Printers.ts`       |
+| An upstream client reading `Config`, signing in once                    | `src/platform/print-farm.ts`     |
+| An upstream's failures mapped to the declared error                     | `src/platform/print-farm.ts`     |
+| A builder yielding a service, and handlers that only delegate           | `src/printers/handlers.ts`       |
+| Server `instructions`, shared by both transports                        | `src/instructions.ts`            |
+| Allowed origins from `Config`, their CORS, and `/healthz`               | `src/routes.ts`                  |
+| A request body limit, and where an unauthenticated server binds         | `src/server.ts`                  |
+| A stdio server whose logs go to stderr                                  | `src/stdio.ts`                   |
+| A fake upstream provided as a Layer, to a test or an entrypoint         | `src/platform/fake-farm.ts`      |
+| Testing tools and the upstream's failure messages in process            | `test/printers/printers.test.ts` |
+| Testing listed hints, an image and the origin check in memory           | `test/routes.test.ts`            |
+| Testing CORS for one configured origin and for several                  | `test/routes.test.ts`            |

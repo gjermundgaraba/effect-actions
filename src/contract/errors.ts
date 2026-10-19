@@ -25,9 +25,9 @@ const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
  *
  * **Gotchas**
  *
- * - Raised by the library for input that does not decode: over HTTP a 400 with its JSON; over MCP an `isError: true` result, `Invalid parameters for tool '<name>': …`; over RPC and in a CLI the typed error; on a Toolkit an `AiError` whose `reason` is a `ToolParameterValidationError`, not this error.
- * - Failed by a handler, it is answered as a declared error on every surface, the Toolkit's `isFailure: true` result included.
- * - What receives encoded input, a route, a tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops the field as it encodes, and a Toolkit as it decodes a model's arguments.
+ * - Raised by the library for input that does not decode: over HTTP a 400 with its JSON; what the other surfaces answer is on their `layerHttp`, `runStdio`, `layer`, `make` or `command`.
+ * - Failed by a handler, it is answered as a declared error on every surface.
+ * - What receives encoded input, a route, an MCP tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops such a field instead, as its `client` says.
  * - Its message and `issues` name paths and what the schema expects, never a field's value; a path names every key it passes through, a record's keys included, so never key a record by a secret such as an email or a token.
  * - A check's message, or a schema's `message` annotation, is sent as written: never put the input in one.
  */
@@ -46,9 +46,8 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
    * schema's message, and each of its issues by path, for code that decodes input of its own,
    * such as a header or a route parameter:
    * `Schema.decodeUnknownEffect(schema)(value, { errors: "all" }).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
-   * Neither carries a value of the input: decoding runs without `reportInput`, so no issue
-   * holds one to format. A symbol key is sent as its string form, `Symbol(name)`, as JSON has
-   * no symbols, which tells it from a string key of that name.
+   * A symbol key is sent as its string form, `Symbol(name)`, as JSON has no symbols, which
+   * tells it from a string key of that name.
    */
   static readonly fromSchemaError = ({ issue, message }: Schema.SchemaError): InvalidInput =>
     new InvalidInput({
@@ -70,9 +69,9 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
  *
  * **Gotchas**
  *
- * - Over HTTP its JSON with a 401: from authentication, with the scheme's challenge, before the body is read; from `authorize` or a handler, after the input is decoded, with the scheme's challenge, none for an API key.
- * - Over MCP: from authentication, the same HTTP 401 in place of a JSON-RPC answer, before the arguments are decoded; from a protected tool's `authorize` or handler, the HTTP 401 with the challenge on an endpoint under Bearer, unless a handler's notification has started the response, and otherwise an `isError: true` tool result in a 200.
- * - Over RPC the typed failure, never a status. A local surface, a Toolkit, a CLI command, `runStdio` or `client`, authenticates nothing: the host provides the identity.
+ * - Over HTTP its JSON with a 401: from authentication before the body is read, from a protected action's `authorize` or handler after the input is decoded, each with the scheme's challenge, none for an API key.
+ * - Over MCP: from authentication, the same HTTP 401 in place of a JSON-RPC answer, before the arguments are decoded; from a protected tool's `authorize` or handler, the HTTP 401 with the challenge on an endpoint under Bearer, otherwise an `isError: true` tool result in a 200; after a handler's notification, as `ActionMcp.LayerHttpOptions`'s `authentication` says.
+ * - Over RPC the typed failure, never a status; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on tells a caller whose token is valid to sign in again: map it to an error the action declares, or to a defect.
  */
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
@@ -98,8 +97,8 @@ const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
  * **Gotchas**
  *
  * - Over HTTP its JSON with a 403, after the input is decoded; on a protected route under Bearer, one naming `scopes` also carries the challenge.
- * - Over MCP an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead, unless a handler's notification has started the response.
- * - Over RPC the typed failure, never a status or a challenge; on a Toolkit a result with `isFailure: true`, and in a CLI its JSON on stderr with exit 1, both as a declared error.
+ * - Over MCP an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead, and after a handler's notification as `ActionMcp.LayerHttpOptions`'s `authentication` says.
+ * - Over RPC the typed failure, never a status or a challenge; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on becomes this server's own refusal: map it to an error the action declares, or to a defect.
  */
 export class Forbidden extends Schema.TaggedError<Forbidden>()(
@@ -117,8 +116,7 @@ const refusals = [Unauthenticated, Forbidden] as const;
 
 /**
  * What authentication or an implementation's `authorize` refuses a caller with, instead of
- * running a handler. An error an action declares, such as a rate limit, is not a refusal. As a
- * schema, it tells a refusal apart: `Schema.is(Action.Refusal)(error)`.
+ * running a handler. As a schema, it tells a refusal apart: `Schema.is(Action.Refusal)(error)`.
  */
 export const Refusal = Schema.Union(refusals);
 

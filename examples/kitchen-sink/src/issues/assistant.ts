@@ -3,8 +3,8 @@ import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { issues } from "./handlers.js";
 import { CloseIssue, CommentOnIssue, GetIssue, ListIssues } from "./Issues.js";
 
-// The actions a model may call, listed here, where they are served: an action added to the
-// contracts later is no tool until it is listed. Filing issues is left to people.
+// The actions a model may call, listed here, where they are served. Filing issues is left to
+// people.
 const tools = [ListIssues, GetIssue, CommentOnIssue, CloseIssue] as const;
 
 // Some of the issue actions as a model's tools: Effect's native `Toolkit`, in process, with no

@@ -5,14 +5,9 @@ run, with its own tests and a README that says what it shows and where. They are
 linted and tested with the library, and they ship in the package, at
 `node_modules/@gjermundgaraba/effect-actions/examples`.
 
-| Example                         | What it is                                                                                                       | Start from it when                                                      |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [quickstart](quickstart/)       | One action, served as a JSON route and an MCP tool, called with its typed client.                                | You want the smallest thing that runs.                                  |
-| [notes-service](notes-service/) | A service with bearer authentication: a JSON API and MCP tools from one implementation, a CLI, a browser client. | You are building a service others call. Most applications are this.     |
-| [mcp-tools](mcp-tools/)         | An MCP server whose tools wrap an upstream HTTP API, over stdio and over HTTP, with an image result.             | You are putting an existing API in front of a model.                    |
-| [assistant](assistant/)         | No server: the same implementations as a model's tools, with approval of writes, and as local commands.          | A model calls your code in process, or you are building a local CLI.    |
-| [live-rpc](live-rpc/)           | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token.                   | A client keeps a connection open, or the application speaks Effect RPC. |
-| [kitchen-sink](kitchen-sink/)   | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index.           | You need a working use of one specific feature.                         |
+[quickstart](quickstart/), [notes-service](notes-service/), [mcp-tools](mcp-tools/),
+[assistant](assistant/), [live-rpc](live-rpc/) and [kitchen-sink](kitchen-sink/): which to start
+from, by what you are building, is the table in [docs/README.md](../docs/README.md#examples).
 
 ## Run one
 
@@ -25,8 +20,9 @@ vp test examples/notes-service
 ```
 
 In a project that installs the package, copy an example's directory out of `node_modules` and
-run it the same way: the examples import the package by its name. They need `tsx` and
-`@effect/platform-node` beside `effect`, and `vitest` with `@effect/vitest` for their tests.
+run it the same way: the examples import the package by its name. They need `tsx`,
+`@effect/platform-node` and `@types/node` beside `effect`, and `vitest` with `@effect/vitest` for
+their tests.
 
 ## How they are laid out
 

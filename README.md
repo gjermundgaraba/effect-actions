@@ -4,9 +4,9 @@ Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to
 native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
 underneath.
 
-**If you are a coding agent**, start at [docs/README.md](docs/README.md), not here, and read
-one page per tool call, again alone if its output says it was truncated. It routes every task,
-protecting an action and limiting request bodies included, to its page and its example.
+**If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes
+every task, protecting an action and limiting request bodies included, to its page and its
+example.
 
 ## Looks like this
 
@@ -81,12 +81,21 @@ const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greeting); // Effect RPC, o
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
 
-```ts
-const greeting = Effect.gen(function* () {
-  const client = yield* ActionHttp.client(Http, { baseUrl });
+```ts example=quickstart/src/client.ts
+import { NodeRuntime } from "@effect/platform-node";
+import { Console, Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import { Http } from "./Api.js";
 
-  return yield* client.greet({ name: "Ada" });
-});
+// Entrypoint: `node --import tsx examples/quickstart/src/client.ts`, with the server running.
+// One typed method per action of the binding.
+// DEMO ONLY: a deployed client reads its `baseUrl` from configuration (kitchen-sink/src/seed.ts).
+Effect.gen(function* () {
+  const client = yield* ActionHttp.client(Http, { baseUrl: "http://127.0.0.1:3000" });
+
+  yield* Console.log(yield* client.greet({ name: "Ada" }));
+}).pipe(Effect.provide(FetchHttpClient.layer), NodeRuntime.runMain);
 ```
 
 ## Why
@@ -106,7 +115,7 @@ pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
 ```
 
 It needs TypeScript 7 or newer and is ESM only
-([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.4` to serve or run a CLI from Node. Every module is a
+([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.4` to serve or run a CLI from Node, and `@types/node` for its `node:` imports. Every module is a
 subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
 contracts-only bundle never loads a server.
 
@@ -134,7 +143,6 @@ task, each linking to the example files that show the task working.
 
 - [docs/README.md](docs/README.md): start here: which page answers which task, and which
   surface to use for which caller.
-- [docs/CONTEXT.md](docs/CONTEXT.md): the vocabulary the docs and the code use.
 
 ## For agents
 
@@ -167,8 +175,7 @@ the pages of the installed version are beside them, in
 
 ## Status
 
-The `effect` peer admits Effect 4.0.x patches from the oldest whose APIs the package uses, since
-the modules the surfaces build on may change in a minor release (see [docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads.
+The `effect` peer is `~4.0.4` ([docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads.
 Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [what the library leaves to you](docs/README.md#what-the-library-leaves-to-you).
 
 ## Acknowledgements

@@ -4,72 +4,39 @@ JSON `POST` routes on Effect's `HttpApi`, one per action. `ActionHttp.make` bind
 mount path; the server mounts that one binding, every client calls it and the OpenAPI document is
 generated from it.
 
-Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
-When something fails, search [ActionHttp-failures.md](ActionHttp-failures.md). Reading order:
-[SKILL.md](SKILL.md).
-
-## API
-
-Import `@gjermundgaraba/effect-actions/ActionHttp`.
-
-| API                                      | Purpose                                                                 |
-| ---------------------------------------- | ----------------------------------------------------------------------- |
-| `make(actions, options?)`                | Bind a list of actions; returns a `Binding`.                            |
-| `Http.actions`                           | The bound actions.                                                      |
-| `Http.error`                             | The errors every endpoint declares besides its action's own, as a list. |
-| `Http.prefix`                            | Where the routes mount.                                                 |
-| `Http.authentication`                    | Its protected actions' authentication descriptor, or `undefined`.       |
-| `Http.api`                               | The native `HttpApi`, for OpenAPI and Effect's own tools.               |
-| `layer(Http, implementations, options?)` | Mount the routes of the bound actions the implementations hold.         |
-| `client(Http, options?)`                 | An Effect of a typed client; requires the native `HttpClient`.          |
-| `fetchClient(Http, options?)`            | The same client over `fetch`, built outside an Effect.                  |
-
-Exported types: `Binding`; `Any`, any binding; `Client<typeof Http>`, a client's type;
-`MethodError`, what one of its calls fails with; `Options` of `make`, `LayerOptions`,
-`ClientOptions` and `FetchClientOptions`.
-
-| Option                      | Meaning                                                                                           |
-| --------------------------- | ------------------------------------------------------------------------------------------------- |
-| `make`: `prefix`            | Mount path of every route; defaults to `/api`. `/` mounts at the root.                            |
-| `make`: `error`             | What middleware around the routes answers with, one schema or a list; every endpoint declares it. |
-| `make`: `authentication`    | The protected actions' descriptor, `Authentication.make(...)`; required with a protected action.  |
-| `layer`: `actions`          | The bound actions it serves: `[GetUser]`. Defaults to every one the implementations hold.         |
-| `layer`: `middleware`       | Native `HttpApiMiddleware` around every route it serves, the first innermost.                     |
-| `client`: `baseUrl`         | What routes resolve against: `https://api.example.com`. Omitted: relative ones, a page's origin.  |
-| `client`: `transformClient` | Wraps the native `HttpClient`: a token, or a sign-in per request, whose failures each call adds.  |
-| `fetchClient`: `fetch`      | Its `fetch`, beside `client`'s options. Omitted: the global `fetch`, looked up on every call.     |
-
-Each action is served at `POST <prefix>/<action>`, a `readOnly` one too. One without `success`
-answers an empty 200, with no body and no content type, so a hand-written client must not parse
-it. One without `input` still takes the body `{}`, typed as JSON. Every other status and
-body is on `layer` and on each built-in error.
+A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search
+[ActionHttp-failures.md](ActionHttp-failures.md). For one symbol,
+`grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc
+carries its rules and gotchas, and this page only what an example cannot show.
 
 ## Bind actions to routes
 
-Call `ActionHttp.make` once, in a file that imports contracts and no server code, and export the
-binding: the server, every client, the CLI and the tests import that one value.
+Call `ActionHttp.make` once, in a contract-only file, and export the binding:
 
-```ts
+```ts example=notes-service/src/Api.ts
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import { Login, WhoAmI } from "./identity/Identity.js";
+import { Notes } from "./notes/Notes.js";
+import { GetStatus } from "./status/Status.js";
+
+// The HTTP binding: every action at `POST /api/<name>`, the protected ones requiring `Login`.
+// It is plain data and imports no server code, so the server, the CLI and a browser page all
+// import this one value, and each gets its routes or its typed methods from it. An action
+// added here is also a `notes` command: commands.ts derives one per action of this binding.
 export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
   prefix: "/api",
   authentication: Login,
 });
 ```
 
-Files: [quickstart/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/Api.ts) (public actions, no options),
-[notes-service/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/Api.ts) (protected actions),
-[kitchen-sink/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Api.ts) (`prefix`, `error`, two bindings).
+[quickstart/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/Api.ts) binds public actions with no options;
+[kitchen-sink/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Api.ts) gives `prefix` and `error` and makes
+two bindings, one per identity. What every endpoint declares is on `make`, the rules of `prefix`,
+`error` and `authentication` on `ActionHttp.Options`, and a protected action's descriptor in
+[Authentication.md](Authentication.md#declare-how-callers-sign-in).
 
 - To keep an action off HTTP, leave it out of the binding; its implementation may still serve
   it as a tool or a command.
-- A binding holding a protected action names its descriptor
-  ([Authentication.md](Authentication.md#declare-how-callers-sign-in)), and has only one: a
-  second identity gets a second binding with its own `prefix`. A public action may be in both.
-- `error` declares what middleware answers with on any route, such as a quota's 429. An error a
-  handler fails with goes in its action's `error`
-  ([Action.md](Action.md#fail-with-declared-and-built-in-errors)).
-- Action names are unique within a binding. Split a large API, or two actions sharing a name,
-  into one binding per area, each with its own `prefix` and client; one host serves them all.
 
 ## Serve the routes
 
@@ -78,60 +45,115 @@ routes, provide the descriptor's provider
 ([Authentication.md](Authentication.md#verify-credentials)), and serve the result with
 `HttpRouter.serve`.
 
-```ts
+```ts example=notes-service/src/routes.ts
+import { Layer } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import { OpenApi } from "effect/http-api";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Http } from "./Api.js";
+import { identity } from "./identity/handlers.js";
+import { Login } from "./identity/Identity.js";
+import { authenticate } from "./identity/verifier.js";
+import { notes } from "./notes/handlers.js";
+import { status } from "./status/handlers.js";
+
+// Every domain's implementation, once. Each surface below takes the same list.
+const implementations = [status, notes, identity];
+
+// JSON routes at `/api/<action>`, the binding's. A protected route authenticates before it
+// reads its body; `getStatus` answers anyone.
 const api = ActionHttp.layer(Http, implementations);
 
-export const routes = Layer.mergeAll(api, mcp, health, openApi).pipe(Layer.provide(authenticate));
+// The host's own routes sit beside the actions' on the same router.
+const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
+
+// Served to anyone, which is a choice: it tells a signed-out caller every action's name and
+// shape. To keep them, leave the route out, or provide `Authentication.protect(Login).layer`
+// to it.
+const openApi = HttpRouter.add(
+  "GET",
+  "/api/openapi.json",
+  HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)),
+);
+
+// What the host serves: the JSON routes, the same actions as MCP tools at `/mcp`, and the host's
+// own routes. Listing the tools and calling `getStatus` need no token, because `getStatus` is
+// public: an endpoint of protected tools alone asks a token for the listing too. Any other call
+// answers 401 with where to sign in, and so does a client of an MCP revision with sessions when
+// it opens one, since a session may call any tool. It still requires `NoteStore`: the entrypoint
+// chooses which one, and a test chooses its own. The entrypoint also chooses how the MCP
+// endpoint runs: one server for every request, or one per request.
+const serving = (requestScoped: boolean) =>
+  Layer.mergeAll(
+    api,
+    ActionMcp.layerHttp(implementations, {
+      name: "notes-service",
+      version: "1.0.0",
+      instructions: "Notes belong to the signed-in user. Read a note before updating it.",
+      authentication: Login,
+      requestScoped,
+    }),
+    health,
+    openApi,
+  ).pipe(Layer.provide(authenticate));
+
+export const routes = serving(false);
+
+export const requestScopedRoutes = serving(true);
 ```
 
-Files: [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts) and
-[quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts);
-[notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts) and
-[notes-service/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/server.ts).
+The smallest routes are [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts). What
+each route answers and what an `ErrorReporter` is given are on `layer`.
 
-- Pass every surface the same list of implementations: the layer serves the binding's actions
-  among them. Beside rpcs, one provider and one header decoding serve both
+The entrypoint serves the routes, with a request body limit; what that limit covers is on
+`layer`.
+
+```ts example=notes-service/src/server.ts
+import { createServer } from "node:http";
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import { ByteSize, Config, Effect, Layer } from "effect";
+import { HttpRouter, HttpServerRequest } from "effect/http";
+import { NoteStore } from "./notes/store.js";
+import { routes } from "./routes.js";
+
+// Entrypoint: `node --import tsx examples/notes-service/src/server.ts`.
+// It chooses the store, reads the configuration and starts Node's HTTP server.
+const server = Layer.unwrap(
+  Effect.gen(function* () {
+    // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
+    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
+    const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
+
+    return HttpRouter.serve(routes).pipe(
+      Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
+      // Request bodies have no size limit unless the host sets one. This covers every route it
+      // serves.
+      Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
+      // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
+      Layer.provide(NoteStore.layerMemory),
+    );
+  }),
+);
+
+Layer.launch(server).pipe(NodeRuntime.runMain);
+```
+
+- Beside rpcs, one authentication provider serves both
   ([ActionRpc.md](ActionRpc.md#serve-the-rpcs), "The same actions as JSON too";
   [kitchen-sink/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts)).
-- A service a handler or an authorizer reads per request stays owed by the layer until router
-  middleware around it, `HttpRouter.provideRequest` or the layer's own `middleware` provides it.
-  Router middleware is the one that reads the request, such as a header:
-  `HttpRouter.middleware<{ provides: Tenant }>()((route) => …)`, given as
-  `Layer.provide(resolveTenant.layer)`
-  ([kitchen-sink/src/workspaces/tenant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/workspaces/tenant.ts)).
-  Without the type argument it runs and the layer still owes the service.
-  `HttpRouter.provideRequest(layer)` builds its layer once, at startup, and gives every request
-  that one value: never an identity or a tenant
-  ([Action.md](Action.md#say-who-may-call-an-action)).
-- Give the server a `host`: `NodeHttpServer.layer(createServer, { port })` without one listens on
-  every interface. The examples bind `127.0.0.1`.
-- Two listeners are two `HttpRouter.serve` calls, each building its routes on its own. What they
-  share is provided outside both
-  ([Action.md](Action.md#share-one-build-across-servers),
-  [kitchen-sink/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts)).
-
-Set a request body limit: a body has none unless the host provides one to `HttpRouter.serve`, as
-below. It covers every route of the server, MCP endpoints included, except a body a route reads
-as a stream. On Node (`NodeHttpServer`), a request over it gets no response, not a 413: its connection is
-closed. `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
-
-```ts
-Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
-```
-
-An `ErrorReporter` the server runs with is also given, with severity `Info`, what a handler
-or `authorize` fails with and an input that does not decode, a declared 404, a 403 or a 400:
-Effect's `HttpApi` reports a route's failures, of which a refused credential is none. MCP and
-RPC report a defect alone. To keep a declared error out of a tracker, give its class
-`override readonly [ErrorReporter.ignore] = true`; a built-in error takes no mark, so drop
-`Info` there.
+- A service a handler or an authorizer reads per request is provided by router middleware around
+  the layer, given as `Layer.provide(resolveTenant.layer)`
+  ([kitchen-sink/src/workspaces/tenant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/workspaces/tenant.ts)),
+  or by the layer's own `middleware`; declaring it, and why not `HttpRouter.provideRequest`, are
+  on `layer`.
 
 ### Split a binding across layers, and add middleware
 
-Several layers may serve one binding, each with its own `actions` and `middleware`; serve each
-action from exactly one. Files:
+Serve each action from exactly one layer. Files:
 [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) (`api`),
-[kitchen-sink/src/identity/quota.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/quota.ts).
+[kitchen-sink/src/identity/quota.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/quota.ts). Where a
+check runs decides what it sees:
 
 | Where                                                | Runs                                     | Use it for                                                 |
 | ---------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
@@ -140,40 +162,32 @@ action from exactly one. Files:
 | The layer's `middleware`                             | after authentication, before decoding    | a limit keyed by the caller, counting invalid input too    |
 | The handler ([Action.md](Action.md#authorize-calls)) | after decoding and the authorizer        | a limit that holds on every surface, MCP included          |
 
-- A layer middleware requiring the identity needs a layer serving protected actions only. Serve
-  the public actions from a second layer without it.
-- Router middleware answering with a binding error encodes and sends it itself,
-  `HttpServerResponse.schemaJson(QuotaExceeded)(error, { status: 429 })`, at the error's
-  `httpApiStatus`, or 422 without one: at any other status the client fails with an
-  `HttpClientError`.
-- A request policy that must run before authentication and OAuth discovery:
-  [Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
+What a middleware answering with a binding error must send is on `Options.error`. A request
+policy that must run before authentication and OAuth discovery:
+[Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication).
 
 ### Publish the OpenAPI document
 
 Give `Http.api`, a plain `HttpApi`, to `OpenApi.fromApi`, `HttpApiSwagger.layer` or
-`HttpApiScalar.layer`, on routes of the host's own. Files:
-[notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts) (`openApi`),
-[kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) (`documentation`).
-
-- The document's route is public unless you put middleware around it.
-- A header that middleware reads is not in the document: its operations list no `parameters`.
-  Add it by rewriting the document,
-  `OpenApi.fromApi(Http.api.annotate(OpenApi.Transform, (document) => …))`, or make the value an
-  input.
-- The document and the clients list every action of the binding, served or not. An action no
-  layer serves answers 404.
-- An OAuth protected resource is documented as a bearer scheme: Effect has no OAuth scheme
-  ([Authentication.md](Authentication.md#publish-oauth-discovery)).
-- Serve the binding with `ActionHttp.layer`, never with the native `HttpApiBuilder`.
-- One document over several bindings, `HttpApi.make("app").addHttpApi(A.api).addHttpApi(B.api)`,
-  works only when their prefixes differ and no action name repeats. Otherwise document each alone.
+`HttpApiScalar.layer`, on routes of the host's own: `openApi` above,
+[kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) (`documentation`). What the
+document holds and omits is on `Binding.api`.
 
 ## Call the API from Effect
 
-`ActionHttp.client` yields a client with one method per action.
+What a call fails with is on `ActionHttp.client`, and a token or a per-request sign-in goes
+through `transformClient`.
 
-```ts
+```ts example=quickstart/src/client.ts
+import { NodeRuntime } from "@effect/platform-node";
+import { Console, Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import { Http } from "./Api.js";
+
+// Entrypoint: `node --import tsx examples/quickstart/src/client.ts`, with the server running.
+// One typed method per action of the binding.
+// DEMO ONLY: a deployed client reads its `baseUrl` from configuration (kitchen-sink/src/seed.ts).
 Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http, { baseUrl: "http://127.0.0.1:3000" });
 
@@ -181,30 +195,11 @@ Effect.gen(function* () {
 }).pipe(Effect.provide(FetchHttpClient.layer), NodeRuntime.runMain);
 ```
 
-Files: [quickstart/src/client.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/client.ts),
-[kitchen-sink/src/seed.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/seed.ts) (`baseUrl` from `Config`,
-headers, errors by tag).
+[kitchen-sink/src/seed.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/seed.ts) reads `baseUrl` from `Config`,
+sends headers and handles errors by tag. `ActionMcp.client` takes the same `transformClient`, and
+`ActionCli.remote` the unyielded `ActionHttp.client(Http, …)` as its `client`.
 
-- Outside a browser, set `baseUrl`. A token or any other header goes through `transformClient`:
-  `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. A credential read or refreshed
-  as each request is sent, which may fail, is
-  `(client) => HttpClient.mapRequestEffect(client, authorize)`: each call then also fails with
-  `authorize`'s own errors, as they are, and requires its services. `ActionMcp.client` takes the
-  same transform, and `ActionCli.remote` the client itself as its `client`.
-- Leave the argument out when `{}` is a valid input. A given argument is the decoded input, so
-  it states a defaulted field.
-- A declared error is a typed failure, as its decoded value: the action's own, the binding's,
-  the verifier's, and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`. Handle
-  each with `Effect.catchTag`.
-- Anything else is Effect's own: an `HttpClientError` when the server could not be reached or
-  answered with a status or body the binding does not declare, such as a defect's empty 500; a
-  `SchemaError` when the success does not decode.
-- The client interprets no status and retries nothing. A failed write may have happened; only a
-  declared error says what the server did.
-- A handler calling another service through this client maps that service's `Unauthenticated`
-  and `Forbidden` before failing with them
-  ([Action.md](Action.md#fail-with-declared-and-built-in-errors)).
-- In a test, provide `Testing.layer(routes)` instead of a network client and leave `baseUrl` out
+- In a test, provide `Testing.layer(routes)` instead of a network client
   ([Testing.md](Testing.md#test-routes-in-memory),
   [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts)).
 
@@ -217,19 +212,6 @@ with `Effect.runPromise`. Files:
 
 - A page on another origin passes `baseUrl`, and the server must allow that origin with
   `HttpRouter.cors`
-  ([kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts), `cors`).
-- A `transformClient` requiring a service, such as the session's token, makes each call require
-  it: provide it on the call before `Effect.runPromise`.
-- An unhandled declared error rejects the promise as its decoded value, so
-  `error instanceof Action.Unauthenticated` works in a `catch`. Handle an expected one by its tag
-  before `Effect.runPromise`.
-- A page on the API's own origin sends its cookies already. From another origin, pass `fetch`:
-  `(input, init) => fetch(input, { ...init, credentials: "include" })`, and allow credentials in
-  the server's CORS, `HttpRouter.cors({ allowedOrigins, credentials: true })`. A `fetch` of your
-  own keeps `init.signal`, which aborts the request when its call is interrupted: a deadline is
-  `Effect.timeout` on the call.
-- A route answers a request not typed as JSON with 415, so what another site's page can send
-  without a CORS preflight, such as a form post carrying the user's cookie, never reaches a
-  handler; the server's CORS policy decides the rest.
-- The page imports the binding from a module with no server code
-  ([setup.md](setup.md#bundle-for-a-browser)).
+  ([kitchen-sink/src/request-policy.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/request-policy.ts), `cors`);
+  sending cookies from there is on `FetchClientOptions.fetch`.
+- Bundling the page: [setup.md](setup.md#bundle-for-a-browser).

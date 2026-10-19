@@ -289,9 +289,11 @@ describe("selecting an implementation's actions", () => {
         actions: [lookalike],
         authentication: Login,
       }),
-    ).toThrow("Listed in actions, but no implementation holds it: identity (another contract)");
+    ).toThrow(
+      "Listed in actions, but no implementation holds it: identity (another contract) (pass the implementation holding it, or list the contract it implements; one marked (another contract) is a contract of that name they do not hold: list the one they hold)",
+    );
     expect(() => ActionToolkit.make(narrowed, { actions: [identity, secret] })).toThrow(
-      "Listed in actions, but no implementation holds it: secret",
+      "Listed in actions, but no implementation holds it: secret (pass the implementation holding it, or list the contract it implements)",
     );
   });
 

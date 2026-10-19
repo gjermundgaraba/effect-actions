@@ -13,7 +13,6 @@ export const MemberActions = [WhoAmI, ...Issues, AttachImage, GetAttachment, ...
 /**
  * The MCP tools, for the HTTP endpoint and the stdio server alike. `attachImage` is left out:
  * listing it throws, since MCP takes no image as input. So is the assistant: it is a model
- * itself, and its tools are already here. An action added to a domain later is no tool until
- * it is listed here.
+ * itself, and its tools are already here.
  */
 export const Tools = [GetStatus, WhoAmI, ...Issues, GetAttachment] as const;

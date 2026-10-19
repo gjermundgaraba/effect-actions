@@ -98,10 +98,7 @@ export interface Descriptor<
   readonly name: Name;
   readonly identity: Context.Key<I, A>;
   readonly security: S;
-  /**
-   * What its verifier may fail with besides a refusal, as a list: every protected endpoint
-   * declares it, and every remote surface sends it, over HTTP with its status.
-   */
+  /** `Options.error` of `make`, as a list. */
   readonly error: E;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
   readonly "~middleware": Context.Key<SecurityMiddleware<I, Name>, unknown>;

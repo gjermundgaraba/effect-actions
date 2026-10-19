@@ -13,14 +13,22 @@ import type { ErasedValue } from "../contract/implementation.js";
  * which may return a client failing with `E` or requiring `R` of its own, as
  * `HttpApiClient.makeWith` takes one.
  */
-export interface Options<E = HttpClientError.HttpClientError, R = never> extends Pick<
-  NonNullable<Parameters<typeof HttpApiClient.make>[1]>,
-  "baseUrl"
-> {
+export interface Options<E = HttpClientError.HttpClientError, R = never> {
+  /**
+   * What the routes resolve against: `https://api.example.com`. Omitted: relative routes, which
+   * a page resolves against its own origin.
+   *
+   * **Gotchas**
+   *
+   * - Outside a browser, set it: a relative route has no page to resolve against, and the call fails with an `HttpClientError` whose `reason._tag` is `InvalidUrlError`.
+   */
+  readonly baseUrl?: NonNullable<Parameters<typeof HttpApiClient.make>[1]>["baseUrl"];
   /**
    * Wraps the native `HttpClient` the calls send with: a bearer token is
-   * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. A method also fails with what
-   * the returned client fails with beyond an `HttpClientError`, and requires what it requires.
+   * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`, and a credential read or
+   * refreshed as each request is sent `(client) => HttpClient.mapRequestEffect(client, authorize)`.
+   * A method also fails with what the returned client fails with beyond an `HttpClientError`, as
+   * it is, and requires what it requires.
    */
   readonly transformClient?:
     | ((client: HttpClient.HttpClient) => HttpClient.HttpClient.With<E, R>)
@@ -33,7 +41,7 @@ type BindingError = Action.Errors[number];
  * What one call of `A` fails with: a declared error value (the action's own, one `E` of the
  * binding's, or a built-in `InvalidInput`, `Unauthenticated` or `Forbidden`), a native
  * `HttpClientError` for a failed request or an undeclared answer, or a `SchemaError` when
- * the success does not decode. Input that does not encode is `InvalidInput`, and nothing is sent.
+ * the success does not decode.
  */
 export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | A["error"][number]["Type"]

@@ -30,18 +30,20 @@ const as = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${t
 const inRoom = (room: string) => RpcClient.withHeaders({ [roomHeader]: room });
 
 describe("the chat, over RPC", () => {
-  it.effect("answers the public rpc without a token and refuses the rest", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionRpc.client(Rpc);
-      const signedOut = yield* Effect.flip(client.readMessages({ after: 0 }));
-      const stranger = yield* Effect.flip(client.readMessages({ after: 0 }).pipe(as("mallory")));
+  it.effect(
+    "answers the public rpc without a token and refuses a protected rpc without a known token",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionRpc.client(Rpc);
+        const signedOut = yield* Effect.flip(client.readMessages({ after: 0 }));
+        const stranger = yield* Effect.flip(client.readMessages({ after: 0 }).pipe(as("mallory")));
 
-      expect(yield* client.listRooms()).toEqual({ rooms: [] });
-      expect(signedOut).toBeInstanceOf(Action.Unauthenticated);
-      expect(signedOut.message).toBe("A bearer token is required.");
-      expect(stranger).toBeInstanceOf(Action.Unauthenticated);
-      expect(stranger.message).toBe("Unknown demo token.");
-    }).pipe(Effect.provide(served)),
+        expect(yield* client.listRooms()).toEqual({ rooms: [] });
+        expect(signedOut).toBeInstanceOf(Action.Unauthenticated);
+        expect(signedOut.message).toBe("A bearer token is required.");
+        expect(stranger).toBeInstanceOf(Action.Unauthenticated);
+        expect(stranger.message).toBe("Unknown demo token.");
+      }).pipe(Effect.provide(served)),
   );
 
   it.effect("authenticates each call by its own token: two callers on one client", () =>

@@ -3,35 +3,11 @@
 What you see when something is wrong, and the fix. Search for a fragment of the message.
 The tasks are in [setup.md](setup.md).
 
-- `TS1149: File name '…/assistant.ts' differs from already included file name '…/Assistant.ts' only in casing`:
-  a lowercase file is named for its domain beside the domain's contract. Name lowercase files for
-  their role, such as `handlers.ts` or `turns.ts`: on a disk that ignores case the two are one file.
-- `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a
-  subpath from [Entry points](setup.md#entry-points), never the root or a `dist/` path.
-- A browser build fails with `Could not resolve "node:…"`, or warns
-  `Module "node:…" has been externalized for browser compatibility`: the page imports a file that
-  also holds server code, such as a contract beside its `Action.implement`, or an authentication
-  descriptor beside its `Authentication.layer`. Move contracts, identities, descriptors and
-  bindings to files that import no server code.
-- A page that loads Effect from an import map still bundles a second copy of Effect or of some
-  of its modules, or fails to resolve `effect/Schema` in the browser when its bundler
-  externalizes subpaths, as esbuild's `--external:effect` does: a module of the page imports an
-  Effect specifier the map does not serve. Serve the specifiers
-  [Bundle for a browser](setup.md#bundle-for-a-browser) lists, and import Effect through them in
-  the page's own modules too.
-- A page loading Effect from an import map fails with
-  `Failed to resolve module specifier "effect/Cause"` in Chromium: the map points at Effect's
-  published files and lacks a specifier Effect imports itself. Map `effect/Cause`,
-  `effect/Effect`, `effect/Exit` and `effect/Function` to the same files, or serve Effect from a
-  build that resolves its own imports.
-- A page fails at load with `does not provide an export named …`: it serves only the names it
-  uses of an Effect specifier, from a vendored module or a trimmed bundle, and the package
-  imports another. Serve each specifier whole.
-- Type errors inside `effect/*` modules after install, an unmet peer warning for `effect`,
-  such as `found 4.1.0`, or a start failing with `Cannot find module '…/effect/dist/…'` under an
-  `@effect/*` package: more than one Effect release is installed, or one outside the peer
-  range. Install the `effect` range [Install](setup.md#install) names, with every `@effect/*`
-  package at the version `effect` resolved to, such as `@effect/platform-node@4.0.4` beside
-  `effect@4.0.4`.
-- `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): these modules
-  are now `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`.
+- `TS1149: File name '…/assistant.ts' differs from already included file name '…/Assistant.ts' only in casing`: a lowercase file is named for its domain beside the domain's contract. Name lowercase files for their role, such as `handlers.ts` or `turns.ts`: on a disk that ignores case the two are one file.
+- `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath from [Entry points](setup.md#entry-points), never the root or a `dist/` path.
+- A browser build fails with `Could not resolve "node:…"`, or warns `Module "node:…" has been externalized for browser compatibility`: the page imports a file that also holds server code, such as a contract beside its `Action.implement`, or an authentication descriptor beside its `Authentication.layer`. Move contracts, identities, descriptors and bindings to files that import no server code.
+- A page that loads Effect from an import map still bundles a second copy of Effect or of some of its modules, or fails to resolve `effect/Schema` in the browser when its bundler externalizes subpaths, as esbuild's `--external:effect` does: a module of the page imports an Effect specifier the map does not serve. Serve the specifiers [Bundle for a browser](setup.md#bundle-for-a-browser) lists, and import Effect through them in the page's own modules too.
+- A page loading Effect from an import map fails with `Failed to resolve module specifier "effect/Cause"` in Chromium: the map points at Effect's published files and lacks a specifier Effect imports itself. Map `effect/Cause`, `effect/Effect`, `effect/Exit` and `effect/Function` to the same files, or serve Effect from a build that resolves its own imports.
+- A page fails at load with `does not provide an export named …`: it serves only the names it uses of an Effect specifier, from a vendored module or a trimmed bundle, and the package imports another. Serve each specifier whole.
+- Type errors inside `effect/*` modules after install, an unmet peer warning for `effect`, such as `found 4.1.0`, or a start failing with `Cannot find module '…/effect/dist/…'` under an `@effect/*` package: more than one Effect release is installed, or one outside the peer range. Install the `effect` range [Install](setup.md#install) names, with every `@effect/*` package at the version `effect` resolved to, such as `@effect/platform-node@4.0.4` beside `effect@4.0.4`.
+- `Cannot find module 'effect/unstable/http'` (or `…/httpapi`, `…/cli`, `…/ai`): these modules are now `effect/http`, `effect/http-api`, `effect/cli` and `effect/ai`.

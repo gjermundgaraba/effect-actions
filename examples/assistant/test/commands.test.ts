@@ -15,16 +15,21 @@ const services = Layer.mergeAll(TaskStore.layerMemory, Permissions.layerMemory);
 
 const operator: Operator = { kind: "operator", id: "root" };
 
-// Effect's own runner, given arguments instead of the process's. `it.effect` provides a console
-// that keeps what is printed, and stdin is the text given here.
+// Effect's own runner, given arguments instead of the process's, and stdin the text given here.
+// The console of `it.effect` keeps every line printed, so a run returns the lines it added.
 const run = (args: ReadonlyArray<string>, stdin = "") =>
-  Command.runWith(commands.pipe(Command.provideSync(CurrentCaller, operator)), { version: "0" })(
-    args,
-  ).pipe(
-    Effect.andThen(TestConsole.logLines),
-    Effect.provide(Stdio.layerTest({ stdin: Stream.make(new TextEncoder().encode(stdin)) })),
-    Effect.provide(NodeServices.layer),
-  );
+  Effect.gen(function* () {
+    const before = (yield* TestConsole.logLines).length;
+
+    yield* Command.runWith(commands.pipe(Command.provideSync(CurrentCaller, operator)), {
+      version: "0",
+    })(args).pipe(
+      Effect.provide(Stdio.layerTest({ stdin: Stream.make(new TextEncoder().encode(stdin)) })),
+      Effect.provide(NodeServices.layer),
+    );
+
+    return (yield* TestConsole.logLines).slice(before);
+  });
 
 describe("the commands", () => {
   it.effect("run as the operator the host names, taking an argument and stdin", () =>
@@ -47,11 +52,11 @@ describe("the commands", () => {
 
       const printed = yield* run(["list-tasks", "-a", "ada"]);
 
-      expect(printed.at(-1)).toBe("[ ] 1 Rotate the keys (ada)");
+      expect(printed).toEqual(["[ ] 1 Rotate the keys (ada)"]);
 
       const json = yield* run(["who-am-i"]);
 
-      expect(json.at(-1)).toBe(JSON.stringify({ id: "root", kind: "operator" }, undefined, 2));
+      expect(json).toEqual([JSON.stringify({ id: "root", kind: "operator" }, undefined, 2)]);
     }).pipe(Effect.provide(services)),
   );
 });

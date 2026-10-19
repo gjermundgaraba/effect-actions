@@ -184,10 +184,12 @@ describe("implement", () => {
             send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
           ),
         ).toMatchObject({
-          message: "Missing handlers: bye (add an own function per listed action to the record)",
+          message:
+            "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
         });
         expect(yield* defectOf(Layer.build(ActionToolkit.make(app).layer))).toMatchObject({
-          message: "Missing handlers: bye (add an own function per listed action to the record)",
+          message:
+            "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
         });
 
         for (const [action, args] of [
@@ -195,7 +197,8 @@ describe("implement", () => {
           [Bye, []],
         ] as const) {
           expect(yield* defectOf(exec(ActionCli.command(app, action), args))).toMatchObject({
-            message: "Missing handlers: bye (add an own function per listed action to the record)",
+            message:
+              "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
           });
         }
       }),

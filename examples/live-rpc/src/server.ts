@@ -7,8 +7,8 @@ import { MessageStore } from "./chat/store.js";
 import { rpc } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/live-rpc/src/server.ts`.
-// The composition root of the server. It chooses the protocol, the store and the port, and
-// starts Node's HTTP server. It provides no caller and no room: those arrive with each message.
+// It chooses the protocol, the store and the port, and starts Node's HTTP server. It provides
+// no caller and no room: those arrive with each message.
 
 // The rpcs over a WebSocket at `/rpc`, the router's one route: Node's HTTP server answers the
 // upgrade. `ActionRpc.layer` serves a protocol speaking JSON, and the client must speak the

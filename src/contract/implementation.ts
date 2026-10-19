@@ -53,14 +53,12 @@ export const memoized = <S, E, R>(
 
 /**
  * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
- * produced, one builder serving every surface.
- * The private fields make this class nominal: a structurally similar object, including one made by
+ * produced, one builder serving every surface. The private fields make this class nominal: a structurally similar object, including one made by
  * spreading an implementation, is not an implementation. Its type parameters may be written
  * out, as a package emitting declarations prints them: `A` its actions, `RequestServices` each
- * action name's handler's per-request requirements, `EX` and `RX` the failures and services of
+ * action name's handler's request-time requirements, `EX` and `RX` the failures and services of
  * its handlers' builder, `RA` what its authorizer reads per request, and `EAX` and `RAX` the
- * failures and services of the authorizer's builder. Public-only selections do not acquire
- * authorization. A plain authorization callback builds nothing.
+ * failures and services of the authorizer's builder.
  */
 export class Implementation<
   A extends Action.Any,
@@ -71,7 +69,7 @@ export class Implementation<
   EAX = never,
   RAX = never,
 > {
-  /** Type-only: each action's handler's per-request requirements. */
+  /** Type-only: each action's handler's request-time requirements. */
   declare readonly "~request": RequestServices;
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
@@ -117,8 +115,7 @@ export class Implementation<
   /**
    * The builders of `app`, its handlers' and its authorizer's, as a layer. Effect memoizes each
    * by reference within one layer graph, so every surface serving `app` there, and every
-   * implementation sharing its builder, shares one run. Static, so it stays off the
-   * public instance type.
+   * implementation sharing its builder, shares one run.
    */
   static layerOf(app: AnyImplementation): Layer.Layer<never, unknown, unknown> {
     const source = Implementation.own(app);
@@ -374,7 +371,7 @@ const servedBy = (
         held
           .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
           .join(", ") || "none"
-      }`,
+      } (pass an implementation of a bound action, or bind one of these)`,
     );
   }
 
@@ -405,7 +402,13 @@ export const servingOf = <D extends Proving>(
   // Why: A binding spread with another descriptor, `{ ...binding, authentication }`, type-checks,
   // so what `make` checked no longer holds for it.
   assertAuthentication(actions, binding.authentication);
-  assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
+  assertDistinct(
+    "middleware",
+    options.middleware ?? [],
+    (key) => key.key,
+    undefined,
+    "list each middleware once",
+  );
 
   return {
     apps,

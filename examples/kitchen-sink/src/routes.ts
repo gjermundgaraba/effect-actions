@@ -86,8 +86,7 @@ const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 // before them. Two things follow from that order.
 //
 // - `resolveTenant`, in a `Layer.provide` of its own after the authentication, gives the
-//   `Tenant` the Bearer verifier reads per request. In one array with `authenticateBearer` it
-//   would leave `Tenant` owed: an array's members provide to the routes, not to one another.
+//   `Tenant` the Bearer verifier reads per request; tenant.ts says why not in one array.
 // - Global middleware runs in the order it registers, and it registers when its layer is
 //   built. The request policy, provided last, is built first, so it runs before everything:
 //   before CORS, and before the OAuth discovery the Bearer provider registers when it is

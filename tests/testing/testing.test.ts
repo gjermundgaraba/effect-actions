@@ -465,7 +465,7 @@ describe("layer", () => {
   );
 
   it.effect(
-    "logs that cause on the process console, which it.effect's TestConsole would keep",
+    "answers it as an empty 500, logging the cause on the process console, which it.effect's TestConsole would keep",
     () =>
       Effect.gen(function* () {
         const printed: Array<string> = [];
@@ -477,14 +477,16 @@ describe("layer", () => {
 
         for (const spy of spies) spy.mockImplementation(print);
 
-        const status = yield* Effect.map(HttpClient.get("/crash"), ({ status }) => status).pipe(
+        const answer = yield* Effect.flatMap(HttpClient.get("/crash"), (response) =>
+          Effect.map(response.text, (body) => ({ status: response.status, body })),
+        ).pipe(
           Effect.provide(
             Testing.layer(HttpRouter.add("GET", "/crash", Effect.die(new Error("printed defect")))),
           ),
           Effect.ensuring(Effect.sync(() => spies.forEach((spy) => spy.mockRestore()))),
         );
 
-        expect(status).toBe(500);
+        expect(answer).toEqual({ status: 500, body: "" });
         expect(printed).toEqual([expect.stringContaining("printed defect")]);
       }),
   );

@@ -7,7 +7,7 @@ import { memory } from "./memory.js";
 import { adminRoutes, builders, publicRoutes, rpc } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/kitchen-sink/src/server.ts`.
-// The composition root of the server: two listeners over one set of builders and services.
+// The entrypoint of the server: two listeners over one set of builders and services.
 
 // The web app's rpcs over a WebSocket at `/rpc`: Node's HTTP server answers the upgrade. The
 // protocol is this entrypoint's choice, as the ports are. `rpc` leaves it open, so a test

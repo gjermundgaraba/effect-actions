@@ -42,9 +42,6 @@ subprocess. `sdk.ts` and `browser.ts` are imported by client code, not run. The 
 document is at `/api/v1/openapi.json`, Swagger UI at `/docs`, the MCP endpoint at `/mcp`, the
 socket at `/rpc`.
 
-Everything is a demo: stores are memory, and the credentials are fixed strings. Replace both
-before deploying anything.
-
 | Credential                                | Who                        | May                                    |
 | ----------------------------------------- | -------------------------- | -------------------------------------- |
 | `Authorization: Bearer ada`               | ada, in acme or globex     | read and write in acme, read in globex |
@@ -126,34 +123,18 @@ test/
 └── admin/                 the operators' grants; the trusted operator
 ```
 
-- **A folder per domain.** `identity/` and `admin/` are the two audiences; `workspaces/`,
-  `issues/` and `attachments/` are what they work on. In each, the PascalCase file is the
-  contract and imports no server code; the lowercase files run on the server.
-- **Top-level files are the host's.** `Actions.ts`, `Api.ts` and `Rpc.ts` say what is served
-  where, and stay browser-safe. `routes.ts` builds the surfaces. Each entrypoint chooses the
-  services, here from `memory.ts`. `server.ts` also chooses the rpcs' protocol, and a local
-  one lists the implementations it serves itself.
-- **Three callers' credentials, three descriptors.** API clients, the CLI and MCP clients send
-  a bearer token (`Login`). The web app sends its session cookie (`Session`) for the same
-  identity, on its own binding. Operators send a key (`OperatorKey`) for another identity, on
-  another port.
-- **Two limits, in two places.** The request quota is HTTP and RPC middleware
-  (`identity/quota.ts`): it counts before the input is decoded. The write limit is the
-  handlers' (`issues/write-limit.ts`): it holds on every surface, MCP and the assistant
-  included.
-
 ## Where to look
 
-| To see                                                                  | Read                                                    |
-| ----------------------------------------------------------------------- | ------------------------------------------------------- |
-| How one request is authenticated, placed in a tenant, authorized        | `src/identity/authenticate.ts`, `src/routes.ts`         |
-| Two audiences on two ports over one set of services                     | `src/server.ts`, `src/routes.ts`, `test/routes.test.ts` |
-| Which actions each surface serves, and why one is no tool               | `src/Actions.ts`                                        |
-| A limit before decoding and a limit in the handlers                     | `src/identity/quota.ts`, `src/issues/write-limit.ts`    |
-| An image for a model and a client (an action), and for a page (a route) | `src/attachments/`                                      |
-| A caller the host names itself                                          | `src/stdio.ts`, `src/ops.ts`, `src/agent.ts`            |
-| A model loop behind a route, approvals answered in a later request      | `src/assistant/handlers.ts`, `src/routes.ts`            |
-| What to test in process and what over the wire                          | `test/issues/issues.test.ts`, `test/routes.test.ts`     |
+| To see                                                                  | Read                                                                                                     |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| How one request is authenticated, placed in a tenant, authorized        | `src/identity/authenticate.ts`, `src/workspaces/tenant.ts`, `src/identity/authorize.ts`, `src/routes.ts` |
+| Two audiences on two ports over one set of services                     | `src/server.ts`, `src/routes.ts`, `test/routes.test.ts`                                                  |
+| Which actions each surface serves, and why one is no tool               | `src/Actions.ts`                                                                                         |
+| A limit before decoding and a limit in the handlers                     | `src/identity/quota.ts`, `src/issues/write-limit.ts`                                                     |
+| An image for a model and a client (an action), and for a page (a route) | `src/attachments/`                                                                                       |
+| A caller the host names itself                                          | `src/stdio.ts`, `src/ops.ts`, `src/agent.ts`                                                             |
+| A model loop behind a route, approvals answered in a later request      | `src/assistant/handlers.ts`, `src/routes.ts`                                                             |
+| What to test in process and what over the wire                          | `test/issues/issues.test.ts`, `test/routes.test.ts`                                                      |
 
 ## Index
 
@@ -316,5 +297,3 @@ Left out because this application has no honest place for them:
   `McpSchema.McpRequestContext`.
 - A tenant taken from a subdomain. The workspace is a header, so the OAuth resource the server
   publishes is one fixed URL.
-- A second way to the attachment's bytes for token holders: the download route takes the web
-  app's cookie alone, and an API client reads the image through `getAttachment`.

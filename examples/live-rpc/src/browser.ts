@@ -19,8 +19,7 @@ export const connection = (url: string) =>
     Layer.provide(RpcSerialization.layerJson),
   );
 
-// The chat as a page uses it, on the connection provided around it. The scope it needs holds
-// only the typed client built on that connection, not the socket.
+// The chat as a page uses it, on the connection provided around it.
 export const openChat = Effect.gen(function* () {
   // One typed method per action of the binding, all on the one connection.
   const client = yield* ActionRpc.client(Rpc);

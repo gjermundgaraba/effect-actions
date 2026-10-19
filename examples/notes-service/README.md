@@ -5,10 +5,7 @@ implementation, served as a JSON API and as MCP tools, with a CLI and a browser 
 same binding. Notes belong to the signed-in user; reading needs the `notes:read` scope and
 writing `notes:write`.
 
-Start here if you are building a service. The other examples follow the same layout. Then read
-[Action.md](../../docs/Action.md) and the page of each surface you serve, which
-[docs/README.md](../../docs/README.md) routes, one page per tool call. A compiler diagnostic or
-Effect's own error is quoted in a `docs/*-failures.md`.
+Then follow [docs/README.md](../../docs/README.md).
 
 ## Run it
 
@@ -48,8 +45,6 @@ address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TO
 Every command asks for `NOTES_TOKEN`, the public `get-status` included: without it a command
 prints one message on stderr saying to set it, and exits 1. `--help` needs none.
 
-The tokens are fixed names and the store is memory: replace both before deploying anything.
-
 ## Retry a creation
 
 `createNote({ title, body })` creates a new note on every call. To retry safely, add an optional
@@ -71,15 +66,6 @@ The replay result is a snapshot of the creation. Updating or deleting the note l
 snapshot intact: replay neither changes the note back nor recreates it. `importNotes` has no
 request key; each import creates new notes. Calls without a key are not idempotent, so the
 creation tool does not advertise `idempotentHint: true`.
-
-[src/notes/store.ts](src/notes/store.ts) owns creation and replay recording.
-
-**DEMO ONLY:** notes and replay records live in this process's memory, without eviction. They
-do not survive a restart or coordinate separate server instances. A deployed store must commit
-the mutation and replay record in one transaction, enforce uniqueness of caller, operation and
-key, and define a retention window. An expired key no longer protects a retry. External side
-effects need the upstream system's cooperation: a local record cannot make a separate network
-call atomic. The library supplies neither replay storage nor automatic retries.
 
 ## Layout
 
@@ -133,7 +119,7 @@ test/
 | A bulk import as one action, its command reading a file       | `src/notes/`, `src/commands.ts`  |
 | The CLI's connection, read from config when a command runs    | `src/commands.ts`                |
 | A missing token as one message, not a `ConfigError` report    | `src/commands.ts`                |
-| A promise client handling each declared error by its tag      | `src/browser.ts`                 |
+| A promise client handling a declared error by its tag         | `src/browser.ts`                 |
 | Testing handlers and authorization with no transport          | `test/notes/notes.test.ts`       |
 | Testing routes, tools and refusals in memory                  | `test/routes.test.ts`            |
 | Testing commands against the routes in memory                 | `test/commands.test.ts`          |

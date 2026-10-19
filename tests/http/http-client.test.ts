@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Layer, Option, Schema, SchemaTransformation } from "effect";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -243,6 +243,19 @@ it.effect("fails an unserved action's call by whether the action declares its 40
     ).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, []))));
 
     expect(reasons).toEqual(["StatusCodeError", "DecodeError"]);
+  }),
+);
+
+it.effect("fails a call without baseUrl outside a browser with InvalidUrlError", () =>
+  Effect.gen(function* () {
+    const failure = yield* ActionHttp.client(Http).pipe(
+      Effect.flatMap((client) => Effect.flip(client.count())),
+      Effect.provide(FetchHttpClient.layer),
+    );
+
+    expect(HttpClientError.isHttpClientError(failure) && failure.reason._tag).toBe(
+      "InvalidUrlError",
+    );
   }),
 );
 

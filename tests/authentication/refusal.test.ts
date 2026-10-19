@@ -152,7 +152,9 @@ describe("refusal", () => {
 
     expect(() =>
       Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
-    ).toThrow('Invalid scope in scopesRequired: "docs read"');
+    ).toThrow(
+      `Invalid scope in scopesRequired: "docs read", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
+    );
   });
 
   it("refuses a scopesSupported that is no scope token, as Authentication.layer does", () => {
@@ -163,7 +165,9 @@ describe("refusal", () => {
 
     expect(() =>
       Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
-    ).toThrow('Invalid scope in scopesSupported: "docs write"');
+    ).toThrow(
+      `Invalid scope in scopesSupported: "docs write", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
+    );
   });
 
   it("refuses a resource with a fragment, a bare `#` included, which its discovery would never answer, as Authentication.layer does", () => {
@@ -172,7 +176,7 @@ describe("refusal", () => {
       resource: `${resource.resource}#tools`,
     } satisfies Authentication.ProtectedResource;
 
-    const message = `A protected resource has no fragment: ${fragment.resource}`;
+    const message = `A protected resource has no fragment: ${fragment.resource}; drop the "#", which no request URL carries, so its discovery would never answer`;
 
     expect(() =>
       Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: fragment }),
@@ -188,7 +192,9 @@ describe("refusal", () => {
       Authentication.refusalResponse(new Action.Unauthenticated(), {
         protectedResource: bareHashResource,
       }),
-    ).toThrow(`A protected resource has no fragment: ${bareHashResource.resource}`);
+    ).toThrow(
+      `A protected resource has no fragment: ${bareHashResource.resource}; drop the "#", which no request URL carries, so its discovery would never answer`,
+    );
   });
 
   it("refuses a protected resource under another scheme, as Authentication.layer does", () => {
@@ -201,7 +207,9 @@ describe("refusal", () => {
         authentication: Session,
         protectedResource: resource,
       }),
-    ).toThrow("A protected resource is published only for a Bearer scheme");
+    ).toThrow(
+      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor",
+    );
   });
 });
 
@@ -314,7 +322,7 @@ describe("bearerTokenOf", () => {
   );
 });
 
-describe("the upgrade example", () => {
+describe("an upgrade handler admitting outside the router", () => {
   const Write = Action.make("write", {
     description: "Write",
     readOnly: false,
@@ -332,7 +340,7 @@ describe("the upgrade example", () => {
     "bearer alice",
     "Bearer a b",
     "Basic x",
-  ])("admits %s as the example's routes do", async (header) => {
+  ])("admits %s as the routes do", async (header) => {
     const admitted = await Effect.runPromise(
       Effect.match(admit(header), {
         onFailure: (response) => ({
