@@ -43,7 +43,7 @@ const spend = Effect.gen(function* () {
           "RateLimitExceeded",
           ({ retryAfter }) =>
             Effect.fail(new QuotaExceeded({ retryAfterSeconds: Duration.toSeconds(retryAfter) })),
-          // Any other reason is the limiter's store failing: a defect, an empty 500.
+          // Any other reason is the limiter's store failing: a defect, never the caller's.
           Effect.die,
         ),
       );

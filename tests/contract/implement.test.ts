@@ -114,7 +114,7 @@ describe("implement", () => {
 
   it("refuses duplicate actions at implement", () => {
     expect(() => Action.implement([Hello, Hello], { hello: () => Effect.succeed("hi") })).toThrow(
-      "Duplicate action: hello, listed twice (list it once;",
+      "Duplicate action: hello, listed twice (list it once)",
     );
   });
 
@@ -352,7 +352,7 @@ describe("authorization", () => {
     expect(built).toBe(1);
   });
 
-  it("serves the documented built authorizer: its store provided at startup, the actor per call", async () => {
+  it("serves a built authorizer: its store provided at startup, the actor per call", async () => {
     const Http = ActionHttp.make([WhoAmIContract], { authentication: Login });
 
     const tokenAsActorWithoutPermissions = Authentication.layer(

@@ -125,7 +125,7 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
 
 /**
  * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, the descriptor every
- * protected action names, and each call's errors distinct by `_tag`. Returns `error` as a list.
+ * protected action names, and each call's errors distinct by `_tag`. Returns the binding's `error`, as a list, and `authentication`.
  */
 export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>(
   what: string,

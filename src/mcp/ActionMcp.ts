@@ -349,6 +349,7 @@ const server = <Out, R>(
   assertOnce(
     "MCP tool",
     apps.flatMap((app) => app.actions),
+    "implementation",
   );
 
   const lifted = apps.flatMap((app) =>

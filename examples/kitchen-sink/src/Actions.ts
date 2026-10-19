@@ -12,7 +12,7 @@ export const MemberActions = [WhoAmI, ...Issues, AttachImage, GetAttachment, ...
 
 /**
  * The MCP tools, for the HTTP endpoint and the stdio server alike. `attachImage` is left out:
- * a model should not carry an image's bytes as an argument. So is the assistant: it is a model
+ * listing it throws, since MCP takes no image as input. So is the assistant: it is a model
  * itself, and its tools are already here. An action added to a domain later is no tool until
  * it is listed here.
  */

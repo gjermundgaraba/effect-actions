@@ -27,7 +27,7 @@ const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
  *
  * - Raised by the library for input that does not decode: over HTTP a 400 with its JSON; over MCP an `isError: true` result, `Invalid parameters for tool '<name>': …`; over RPC and in a CLI the typed error; on a Toolkit an `AiError` whose `reason` is a `ToolParameterValidationError`, not this error.
  * - Failed by a handler, it is answered as a declared error on every surface, the Toolkit's `isFailure: true` result included.
- * - What receives encoded input, a route, a tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; what encodes it, a typed client or a Toolkit, drops the field.
+ * - What receives encoded input, a route, a tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops the field as it encodes, and a Toolkit as it decodes a model's arguments.
  * - Its message and `issues` name paths and what the schema expects, never a field's value; a path names every key it passes through, a record's keys included, so never key a record by a secret such as an email or a token.
  * - A check's message, or a schema's `message` annotation, is sent as written: never put the input in one.
  */
@@ -70,7 +70,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
  *
  * **Gotchas**
  *
- * - Over HTTP its JSON with a 401: from authentication, with the scheme's challenge, before the body is read; from `authorize` or a handler, after the input is decoded, with the challenge on a route under Bearer.
+ * - Over HTTP its JSON with a 401: from authentication, with the scheme's challenge, before the body is read; from `authorize` or a handler, after the input is decoded, with the scheme's challenge, none for an API key.
  * - Over MCP: from authentication, the same HTTP 401 in place of a JSON-RPC answer, before the arguments are decoded; from a protected tool's `authorize` or handler, the HTTP 401 with the challenge on an endpoint under Bearer, unless a handler's notification has started the response, and otherwise an `isError: true` tool result in a 200.
  * - Over RPC the typed failure, never a status. A local surface, a Toolkit, a CLI command, `runStdio` or `client`, authenticates nothing: the host provides the identity.
  * - From another service's client, such as `ActionHttp.client`, one passed on tells a caller whose token is valid to sign in again: map it to an error the action declares, or to a defect.
@@ -127,7 +127,7 @@ export type Refusal = (typeof Refusal)["Type"];
 
 /**
  * The failures every endpoint and tool declares beyond its action's own, and any handler may
- * fail with: bad input, and every refusal. No action or binding declares them itself.
+ * fail with: bad input, and every refusal. An action or a binding need not declare them; one listed is accepted.
  */
 export const builtIns = [InvalidInput, ...refusals] as const;
 

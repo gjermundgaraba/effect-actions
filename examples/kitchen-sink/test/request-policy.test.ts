@@ -103,7 +103,7 @@ describe("the request policy", () => {
     expect(preflight.headers.get("access-control-allow-headers")).toContain("Mcp-Session-Id");
   });
 
-  it("covers the admin port too, whatever key a request carries", async () => {
+  it("covers the admin port too, a valid key included", async () => {
     const key = { "x-operator-key": "ops-key" };
     const here = await adminWeb.handler(post("http://localhost/admin/listWorkspaces", key));
 

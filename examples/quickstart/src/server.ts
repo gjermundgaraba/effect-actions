@@ -5,7 +5,7 @@ import { HttpRouter } from "effect/http";
 import { routes } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/quickstart/src/server.ts`.
-// A real server reads its port from config, `Config.Port("PORT")`, and limits request bodies:
+// DEMO ONLY: a real server reads its port from config, `Config.Port("PORT")`, and limits request bodies:
 // `Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1)))`.
 // `127.0.0.1` serves this machine alone: a server others reach reads its host from config,
 // `Config.String("HOST").pipe(Config.withDefault("127.0.0.1"))`.

@@ -95,7 +95,7 @@ const greeting = Effect.gen(function* () {
 - A handler can fail only with the errors its action declares and three built-in ones (400, 401, 403), and every client decodes them as typed values.
 - Every contract states who may call it: `caller: Action.Anyone`, or the identity service a caller must have. A surface authenticates a protected action's request before decoding its input, with the provider the application builds from its own token verifier.
 - Authorization is written once, on the implementation: `Action.implement(actions, handlers, { authorize })`, required for protected actions. Every surface runs it before each handler, and the rule reads the contract's `readOnly` instead of a hand-maintained list of mutation names.
-- Public and protected routes share one binding, one OpenAPI document and one client, and a handler's startup services are built once per [layer graph](docs/Action.md#implement-actions), however many surfaces serve it.
+- Public and protected routes share one binding, one OpenAPI document and one client, and a handler's startup services are built once per [layer graph](docs/Action.md#share-one-build-across-servers), however many surfaces serve it.
 - The pieces are Effect's own: a native `HttpApi`, `McpServer`, `RpcServer` and `RpcClient`, with no SDK runtime dependency, so OpenAPI, Swagger, Scalar and `HttpApiClient` work unchanged.
 - Tests run in memory: `Action.client` calls an implementation in process, and `Testing.layer(routes)` serves the routes and tools to typed clients without opening a port.
 

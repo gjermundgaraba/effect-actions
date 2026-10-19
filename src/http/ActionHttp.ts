@@ -350,8 +350,8 @@ const jsonContentType = () =>
  *
  * **Gotchas**
  *
- * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it. One without `input` still takes the body `{}` typed as JSON: no body is a 400, no `Content-Type` a 415.
- * - A body that is not JSON is a 400 `InvalidInput`; a `Content-Type` missing or not JSON an empty 415; both after authentication on a protected route.
+ * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it. One without `input` still takes the body `{}` typed as JSON: no body is a 400.
+ * - A body that is not JSON is a 400 `InvalidInput`; a `Content-Type` missing or not JSON a 415 whose text is `Unsupported content-type: <type>`, `none` without one; both after authentication on a protected route.
  * - A defect, an undeclared failure, or a success or an error that does not encode answers an empty 500: the cause goes to the log and to the call's `ErrorReporter`s, never to the body.
  * - A path no layer serves, or a method other than `POST` on a route, is a 404.
  */

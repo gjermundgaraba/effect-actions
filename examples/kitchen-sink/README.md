@@ -45,14 +45,15 @@ socket at `/rpc`.
 Everything is a demo: stores are memory, and the credentials are fixed strings. Replace both
 before deploying anything.
 
-| Credential                            | Who                    | May                                    |
-| ------------------------------------- | ---------------------- | -------------------------------------- |
-| `Authorization: Bearer ada`           | ada, in acme or globex | read and write in acme, read in globex |
-| `Authorization: Bearer linus`         | linus, in acme         | read                                   |
-| `Authorization: Bearer grace`         | grace, in globex       | read and write                         |
-| `Cookie: tracker_session=ada-at-acme` | ada in acme, on `/rpc` | read and write                         |
-| `X-Operator-Key: ops-key`             | operator `ops`         | list, suspend and resume workspaces    |
-| `X-Operator-Key: support-key`         | operator `support`     | list workspaces                        |
+| Credential                                | Who                        | May                                    |
+| ----------------------------------------- | -------------------------- | -------------------------------------- |
+| `Authorization: Bearer ada`               | ada, in acme or globex     | read and write in acme, read in globex |
+| `Authorization: Bearer linus`             | linus, in acme             | read                                   |
+| `Authorization: Bearer grace`             | grace, in globex           | read and write                         |
+| `Cookie: tracker_session=ada-at-acme`     | ada in acme, on `/rpc`     | read and write                         |
+| `Cookie: tracker_session=grace-at-globex` | grace in globex, on `/rpc` | read and write                         |
+| `X-Operator-Key: ops-key`                 | operator `ops`             | list, suspend and resume workspaces    |
+| `X-Operator-Key: support-key`             | operator `support`         | list workspaces                        |
 
 A bearer request names its workspace in `X-Workspace: acme`. `kay` (token `kay`, session
 `kay-at-acme`) is a member of acme granted no scope yet. The session cookie also opens
@@ -304,8 +305,9 @@ Left out because this application has no honest place for them:
   [notes-service](../notes-service/) has two.
 - `ActionRpc.layer`'s `actions`, `Rpc.group`, and `ActionRpc.client`'s options.
 - A binding's other fields, `Http.actions`, `Http.error` and `Http.authentication`.
-- `ActionMcp`'s `path`, `description`, `websiteUrl`, `icons` and `extensions`; `fetchClient`'s
-  `fetch`.
+- `ActionMcp`'s `path`, `description`, `websiteUrl`, `icons`, `extensions`, `allowSubscriptions`
+  and `requestScoped` ([notes-service](../notes-service/) has it), and `McpCallError`;
+  `fetchClient`'s `fetch`.
 - `needsApproval` as an Effect reading the caller: the rule here is a boolean of the action.
 - `Action.InvalidInput.fromSchemaError`, the `Action.Refusal` and `Action.BuiltIn` schemas, and the
   helper types: `Action.Issue`, `Errors`, `Handlers`, `Client`, `AnyImplementation`,

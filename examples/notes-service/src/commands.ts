@@ -135,7 +135,5 @@ export const commands = ActionCli.remote(Http, {
     // `notes update-note <id> --revision 1 < draft.md`: an argument, a flag and stdin together.
     updateNote: { positional: ["id"], stdin: "body" },
   },
-  // `Command.withSubcommands` on the result would replace the derived commands, so your own
-  // go here.
   subcommands: [exportNotes, importNotes],
 });

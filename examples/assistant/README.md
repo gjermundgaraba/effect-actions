@@ -61,18 +61,6 @@ test/
 └── commands.test.ts     the commands run in memory: syntax and output
 ```
 
-- **Two surfaces, no transport.** `toolkit.ts` and `commands.ts` take the same implementations.
-  Neither holds a caller or a store: `agent.ts` and `cli.ts` provide those, and so does a test.
-- **The caller comes from the host, per call.** Nothing here authenticates anyone. `agent.ts`
-  provides the member around each turn; `cli.ts` provides the operator on the command. A caller
-  is never given to the toolkit's `layer`, which is built once for every member.
-- **The operator is a type, not a flag.** `Member | Operator` is what an action may be called
-  as. Only `cli.ts` builds an `Operator`, and the demo team is typed as members, so no sign-in
-  produces one. A model's caller is named through `actingFor`, which takes a `Member`. The tools
-  themselves accept either: keeping the operator away from a model is the host's doing.
-- **Approval is not authorization.** `needsApproval` decides which of a model's calls wait for a
-  person. `authorize` decides who may call at all, and runs for an approved call too.
-
 ## Where to look
 
 | To see                                                               | Read                                               |

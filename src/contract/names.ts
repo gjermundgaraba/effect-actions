@@ -33,18 +33,25 @@ export const assertDistinct = <T>(
   }
 };
 
-export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void => {
+export const assertOnce = (
+  what: string,
+  actions: ReadonlyArray<Action.Any>,
+  listedBy: "contract" | "implementation" = "contract",
+): void => {
   const seen = new Map<string, Action.Any>();
 
   for (const action of actions) {
     const other = seen.get(action.name);
 
     if (other !== undefined) {
-      throw new Error(
-        other === action
-          ? `Duplicate ${what}: ${action.name}, listed twice (list it once; of two implementations of one contract, pass one)`
-          : `Duplicate ${what}: ${action.name}, two share the name (rename one)`,
-      );
+      const why =
+        other !== action
+          ? "two share the name (rename one)"
+          : listedBy === "contract"
+            ? "listed twice (list it once)"
+            : "held by two implementations, or one listed twice (pass one)";
+
+      throw new Error(`Duplicate ${what}: ${action.name}, ${why}`);
     }
 
     seen.set(action.name, action);

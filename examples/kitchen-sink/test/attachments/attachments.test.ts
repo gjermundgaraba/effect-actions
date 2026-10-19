@@ -39,7 +39,7 @@ const attached = Effect.gen(function* () {
 });
 
 describe("attachments, over HTTP and MCP", () => {
-  it.effect("sends an image as JSON over HTTP, and as an image block from the tool", () =>
+  it.effect("decodes an image over HTTP, and reads it as an image block from the tool", () =>
     Effect.gen(function* () {
       const attachment = yield* attached;
       const http = yield* ActionHttp.client(Http, as("ada", "acme"));
@@ -128,7 +128,6 @@ describe("attachments, over HTTP and MCP", () => {
 
       expect(mine.status).toBe(200);
       expect(Buffer.from(yield* mine.arrayBuffer).equals(screenshot)).toBe(true);
-      // The route states its own caching; everything else authentication covers is `no-store`.
       expect(mine.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
       // An uploaded image opened by its URL is a document on this origin: it gets no scripts.
       expect([

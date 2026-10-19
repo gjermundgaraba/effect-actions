@@ -95,12 +95,10 @@ export const SetPaused = Action.make("set_paused", {
   },
   success: Printer,
   readOnly: false,
-  // Destructive, MCP's default for a write: a pause interrupts a running print. Only a write
-  // that only adds, such as creating a record, says `destructiveHint: false`.
+  // Destructive, MCP's default for a write: a pause interrupts a running print.
   mcp: { title: "Pause or resume a print", idempotentHint: true },
 });
 
-// Destructive, which is MCP's default for a write, so no `destructiveHint` is stated.
 export const CancelPrint = Action.make("cancel_print", {
   ...tool,
   description:

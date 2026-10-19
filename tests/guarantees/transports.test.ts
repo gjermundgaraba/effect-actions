@@ -186,7 +186,7 @@ describe("one implementation, both transports", () => {
     ).toBe(401);
   });
 
-  it("rejects untrusted hosts and browser origins in the example host", async () => {
+  it("rejects untrusted hosts and browser origins in the test host", async () => {
     const foreign = new Request("http://evil.example/api/getUser", {
       method: "POST",
       headers: { authorization: "Bearer alice" },

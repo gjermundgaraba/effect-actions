@@ -94,8 +94,6 @@ describe("notes, in process", () => {
       const create = client.createNote({ title: "Plan", body: "Draft" });
       const refusal = yield* Effect.flip(create.pipe(as("reader")));
 
-      // `toEqual` on an error compares its fields and never its message, so the message is
-      // asserted on its own.
       expect(refusal).toBeInstanceOf(Action.Forbidden);
       expect(refusal.message).toBe("Requires notes:write.");
     }).pipe(Effect.provide(NoteStore.layerMemory)),

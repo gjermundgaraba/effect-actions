@@ -19,9 +19,10 @@ export class AttachmentNotFound extends Schema.TaggedError<AttachmentNotFound>()
   { httpApiStatus: 404 },
 ) {}
 
-// `Action.Image` is `{ data: Uint8Array, mimeType: string }`. In an input it is JSON on every
-// surface, the bytes in base64. This action is no MCP tool (see `Tools` in Actions.ts): a tool
-// call passes its arguments through the model's context, and MCP takes no image as input.
+// `Action.Image` is `{ data: Uint8Array, mimeType: string }`. In an input it is JSON over HTTP,
+// RPC and the CLI, the bytes in base64. `ActionMcp` throws for an action taking one, so this
+// action is left out of `Tools` in Actions.ts: a tool call passes its arguments through the
+// model's context.
 export const AttachImage = Action.make("attachImage", {
   description: "Attach an image, such as a screenshot, to an issue.",
   input: { issue: Schema.String, name: Schema.String, image: Action.Image },

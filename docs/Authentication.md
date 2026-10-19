@@ -115,7 +115,8 @@ verifier takes the credential and succeeds with the identity, or fails with
   [kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)).
 
 What each surface answers a missing or refused credential with is on `Action.Unauthenticated`, as
-[notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts) asserts.
+[kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)
+asserts, status and challenge included.
 
 ## Publish OAuth discovery
 

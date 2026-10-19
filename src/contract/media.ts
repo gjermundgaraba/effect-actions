@@ -11,8 +11,8 @@ export const Media = Schema.Struct({ data: Schema.Uint8Array, mimeType: Schema.S
 
 /**
  * An image, a media field of a success: `{ data: Uint8Array, mimeType: string }`, `mimeType` such
- * as `image/png`. A top-level field of a struct success, optional or an array, or the whole
- * success, one or an array: an MCP tool lifts it into an image block of its own, and every other
+ * as `image/png`. A top-level field of a struct success, one, optional, or a required array, or the
+ * whole success, one or an array: an MCP tool lifts it into an image block of its own, and every other
  * surface sends it as JSON, the bytes in base64. `ActionMcp` refuses it anywhere else.
  */
 export const Image = Media.annotate({ [mediaKindAnnotation]: "image" });

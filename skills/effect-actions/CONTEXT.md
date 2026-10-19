@@ -4,9 +4,8 @@ Vocabulary for `@gjermundgaraba/effect-actions`. The docs, the examples, the cod
 use these words with these meanings. Module names and Effect's own terms (`HttpApi`, `Tool`,
 `Toolkit`, `McpServer`, `Rpc`, `RpcGroup`, `RpcServer`, `Command`) mean what their modules say.
 
-Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
-Tasks are routed from [SKILL.md](SKILL.md), and each module's failures from its `-failures.md`
-page.
+Tasks are routed from [SKILL.md](SKILL.md); a compiler diagnostic or Effect's own error is in
+a module's `-failures.md` page.
 
 ## Terms
 
@@ -18,7 +17,7 @@ page.
 - **Identity**: the service a protected action names as its caller. A **trusted identity** is one only a host supplies, on a local surface, which no token names.
 - **Handler**: a function from an action's decoded input to an Effect of its decoded success. The services it yields per call, and an authorizer's, are **request-time requirements**.
 - **Implementation**: what `Action.implement` returns: actions bound to their handlers and, where any is protected, their authorizer. Every surface that runs handlers takes one, or a list.
-- **Builder**: an Effect given to `Action.implement` in place of handlers, which returns them, once per layer graph. The services it yields are **build-time requirements**, or **startup services** ([Action.md](Action.md#implement-actions)).
+- **Builder**: an Effect given to `Action.implement` in place of handlers, which returns them, once per layer graph. The services it yields are **startup services** ([Action.md](Action.md#implement-actions)).
 - **Layer graph**: the layers Effect builds together, each built once ([Action.md](Action.md#share-one-build-across-servers)).
 - **Host**: the application that serves the surfaces: it builds their layers, provides their services and runs the server, subprocess or CLI.
 - **Surface**: where callers reach actions. A **remote surface** authenticates its callers (`ActionHttp.layer`, `ActionMcp.layerHttp`, `ActionRpc.layer`). A **local surface** has no one to authenticate (`ActionToolkit`, a local `ActionCli` command, `ActionMcp.runStdio`, `Action.client`): the host provides the identity.
@@ -43,4 +42,3 @@ The parts of the layout every example uses: [examples/README.md](node_modules/@g
 - **Contract file**: the PascalCase file of a domain, such as `notes/Notes.ts`: its schemas, errors and actions, and the identity and descriptor it declares. It imports no server code.
 - **Routes**: `routes.ts`, the host's surfaces as one Layer. A route, singular, is one HTTP route.
 - **Entrypoint**: a file that runs the application one way, such as `server.ts`, `stdio.ts` or `cli.ts`: the **composition root**, the one place that chooses the services, the platform and, on a local surface, the caller.
-- **Demo shortcut**: what an example does in place of what a deployment needs, marked `DEMO ONLY` in a comment.

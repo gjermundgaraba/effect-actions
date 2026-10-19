@@ -1641,51 +1641,53 @@ describe("Authentication.layer beside other middleware", () => {
     }),
   );
 
-  it.effect("serves the documented tenant example", () =>
-    Effect.gen(function* () {
-      const whoAmIAt = (host: string, token?: string) =>
-        send(
-          new Request(`http://${host}/api/whoAmI`, {
-            method: "POST",
-            headers: {
-              host,
-              "content-type": "application/json",
-              ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-            },
-            body: "{}",
-          }),
-        );
+  it.effect(
+    "answers a tenant's member, refuses another tenant's and a non-member with 403, and challenges a signed-out caller",
+    () =>
+      Effect.gen(function* () {
+        const whoAmIAt = (host: string, token?: string) =>
+          send(
+            new Request(`http://${host}/api/whoAmI`, {
+              method: "POST",
+              headers: {
+                host,
+                "content-type": "application/json",
+                ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+              },
+              body: "{}",
+            }),
+          );
 
-      const alice = yield* whoAmIAt("acme.example.com", "alice");
-      expect([alice.status, alice.headers["x-actor"], yield* alice.json]).toEqual([
-        200,
-        "alice",
-        { id: "alice", tenantId: "acme" },
-      ]);
+        const alice = yield* whoAmIAt("acme.example.com", "alice");
+        expect([alice.status, alice.headers["x-actor"], yield* alice.json]).toEqual([
+          200,
+          "alice",
+          { id: "alice", tenantId: "acme" },
+        ]);
 
-      for (const [host, token] of [
-        ["acme.example.com", "bob"],
-        ["globex.example.com", "alice"],
-      ] as const) {
-        const outsider = yield* whoAmIAt(host, token);
-        expect([outsider.status, outsider.headers["x-actor"]]).toEqual([403, undefined]);
-        expect(yield* outsider.json).toMatchObject({ message: "Not a member of this tenant." });
-      }
+        for (const [host, token] of [
+          ["acme.example.com", "bob"],
+          ["globex.example.com", "alice"],
+        ] as const) {
+          const outsider = yield* whoAmIAt(host, token);
+          expect([outsider.status, outsider.headers["x-actor"]]).toEqual([403, undefined]);
+          expect(yield* outsider.json).toMatchObject({ message: "Not a member of this tenant." });
+        }
 
-      const anonymous = yield* whoAmIAt("acme.example.com");
-      expect([
-        anonymous.status,
-        anonymous.headers["www-authenticate"],
-        anonymous.headers["x-actor"],
-      ]).toEqual([401, "Bearer", undefined]);
+        const anonymous = yield* whoAmIAt("acme.example.com");
+        expect([
+          anonymous.status,
+          anonymous.headers["www-authenticate"],
+          anonymous.headers["x-actor"],
+        ]).toEqual([401, "Bearer", undefined]);
 
-      const bob = yield* whoAmIAt("other.example.com", "bob");
-      expect([bob.status, bob.headers["x-actor"], yield* bob.json]).toEqual([
-        200,
-        "bob",
-        { id: "bob", tenantId: "other" },
-      ]);
-    }).pipe(Effect.provide(Testing.layer(tenantRoutes.pipe(Layer.provide(Users.layerMemory))))),
+        const bob = yield* whoAmIAt("other.example.com", "bob");
+        expect([bob.status, bob.headers["x-actor"], yield* bob.json]).toEqual([
+          200,
+          "bob",
+          { id: "bob", tenantId: "other" },
+        ]);
+      }).pipe(Effect.provide(Testing.layer(tenantRoutes.pipe(Layer.provide(Users.layerMemory))))),
   );
 
   it("refuses a foreign Host or Origin under the example's global policy before the tenant example's authentication", async () => {

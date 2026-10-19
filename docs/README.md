@@ -17,8 +17,8 @@ or Effect's own error, search the `*-failures.md` pages first (step 5).
 2. **Start from the example closest to what you are building** ([Examples](#examples)). Its
    README has a layout tree, and all but quickstart's a "Where to look" table naming the file
    for each thing. Copy its layout and idioms: the examples are the reference for how code is
-   written. An example shows one way, not the rules, the alternatives or the traps: read steps
-   3 and 4 even when it fits.
+   written, and its comments carry the traps it shows. An example shows one way, not the rules
+   or the alternatives: read steps 3 and 4 even when it fits.
 3. **Read [Action.md](Action.md) completely.** Every surface builds on it.
 4. **Read the page of each surface you serve** ([Pages](#pages)), and the example files its task
    sections link.
@@ -33,7 +33,7 @@ A service others call is [notes-service](../examples/notes-service/) plus
 
 Where things are, in a project that installs the package: these pages in
 `node_modules/@gjermundgaraba/effect-actions/docs/`, the examples in `examples/` beside them, and
-the declarations with their JSDoc, the reference for signatures, in `dist/<Module>.d.mts`, all at
+the declarations with their JSDoc, the reference for signatures, under `dist/`, all at
 the installed version. Install first ([setup.md](setup.md#install)): it needs TypeScript 7 and
 one Effect release. Every module is a subpath import, `@gjermundgaraba/effect-actions/Action`;
 there is no package root.
@@ -84,8 +84,9 @@ change before a deployment.
 Surfaces combine: every one that runs handlers takes the same implementations, one or a list,
 and enforces each contract's `caller` and its implementation's `authorize`
 ([Action.md](Action.md#authorize-calls)). What a call answers on each surface, a success, bad
-input, a declared error, a refusal or a defect, is on that surface's `layer`, `make` or
-`command`, and on each built-in error: grep the symbol.
+input, a declared error, a refusal or a defect, is on `ActionHttp.layer`, `ActionMcp.layerHttp`
+and `runStdio`, `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client,
+and each built-in error: grep the symbol.
 
 ## What the library leaves to you
 

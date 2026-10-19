@@ -38,7 +38,7 @@ export const IssueWriteErrors = [IssueNotFound, RateLimited] as const;
 
 // An option bundle. What the two actions changing an issue share is one constant object spread
 // into `Action.make`, typed as if written inline. `readOnly` and `description` stay on each
-// action: authorization and an MCP client's hints read them.
+// action.
 const change = {
   caller: CurrentMember,
   error: IssueWriteErrors,

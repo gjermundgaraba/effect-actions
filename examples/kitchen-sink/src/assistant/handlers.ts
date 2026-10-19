@@ -56,8 +56,7 @@ export const assistant = Action.implement(
         return {
           conversation,
           text: response.text,
-          // A refusal or a declared error is a result too, which the model has read. So is
-          // Effect's result for a call that did not run: left out.
+          // Effect's result for a call that did not run is left out.
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),

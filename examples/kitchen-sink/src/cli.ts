@@ -45,7 +45,7 @@ const tracker = ActionCli.remote(Http, {
   // The connection, read from `Config` when a command runs, so `--help` needs none of it. It is
   // these commands' client, so it reaches their requests and no others. The token and the
   // workspace are optional: `tracker get-status` is public and needs neither, and any other
-  // command without them gets the server's 401.
+  // command without a token gets the server's 401, and without a workspace its 403.
   client: Effect.gen(function* () {
     const baseUrl = yield* Config.String("TRACKER_URL").pipe(
       Config.withDefault("http://127.0.0.1:3000"),

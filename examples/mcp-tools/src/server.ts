@@ -10,7 +10,7 @@ import { routes } from "./routes.js";
 // and FARM_PASSWORD set. MCP over HTTP, for clients that connect to a URL.
 // These tools are public: no route asks for a token, so where the server listens is its access
 // control, the loopback interface by default or a network only trusted clients are on. Tools
-// that need a caller take a verifier, as docs/ActionMcp.md's "Protect tools" shows.
+// that need a caller are protected as docs/ActionMcp.md's "Protect tools" shows.
 const server = Layer.unwrap(
   Effect.gen(function* () {
     const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));

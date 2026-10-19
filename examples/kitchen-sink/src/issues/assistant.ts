@@ -19,5 +19,5 @@ export const { toolkit, layer } = ActionToolkit.make(issues, {
 });
 
 // One turn of the assistant. The caller provides the model, and the member it acts for around
-// the whole turn: approval, `authorize` and the handlers all read that one caller.
+// the whole turn: `authorize` and the handlers read that one caller.
 export const triage = (prompt: string) => LanguageModel.generateText({ prompt, toolkit });

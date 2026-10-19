@@ -38,9 +38,10 @@ const api = Layer.mergeAll(
   ActionHttp.layer(Http, implementations, { actions: MemberActions, middleware: [HttpQuota] }),
 );
 
-// The same actions as MCP tools at `/mcp`: a mixed endpoint. Listing the tools and calling
-// `getStatus` need no token; any other request answers the 401 an MCP client signs in on, the
-// one opening a session included, since a session may call any tool.
+// The same actions as MCP tools at `/mcp`: a mixed endpoint. Discovering the server, listing the
+// tools and calling `getStatus` need no token in a 2026-07-28 request; any other request answers
+// the 401 an MCP client signs in on, the one opening a session included, since a session may
+// call any tool.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
     ActionMcp.layerHttp(implementations, {

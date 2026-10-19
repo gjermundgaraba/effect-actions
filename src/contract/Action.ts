@@ -691,6 +691,7 @@ export function client(
   assertOnce(
     "action",
     apps.flatMap((app) => app.actions),
+    "implementation",
   );
 
   return Effect.map(built(apps), (bound) =>

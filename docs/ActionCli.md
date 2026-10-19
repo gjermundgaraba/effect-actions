@@ -90,8 +90,9 @@ every command option.
 - **The connection is the `client` option**, an Effect of the binding's client run each time a
   command runs: `client: ActionHttp.client(Http, { baseUrl, transformClient })`. One reading
   `Config` is an `Effect.gen` returning `yield* ActionHttp.client(…)`, so `--help` reads nothing.
-  Its failures and its methods' are the command's, printed as `Tag: message`, a
-  `CliError.UserError` as its `userMessage`; what they require, the host provides. Credentials go in `transformClient`
+  Its own failures and a transport's are printed as `Tag: message` with their causes, a
+  `CliError.UserError` as its `userMessage`, and a declared error as its JSON; what they require,
+  the host provides. Credentials go in `transformClient`
   ([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)).
 - **Never transform the `HttpClient` around the program**: it rewrites every request the program
   makes, an absolute URL too, and sends each one the token.

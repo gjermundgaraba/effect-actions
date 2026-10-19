@@ -378,7 +378,7 @@ const servedBy = (
     );
   }
 
-  assertOnce("served action", actions);
+  assertOnce("served action", actions, "implementation");
 
   return served;
 };

@@ -9,9 +9,9 @@
 the built-in errors, the action's, the binding's `error` and a protected action's
 authentication's, and throw
 `… error _tag "<tag>" names two error schemas, which a client cannot tell apart` where two
-different schemas share one. One schema is each union member, compared by identity: one reached
-twice, listed again, through a `Schema.Union` or a `Schema.suspend`, is one; two declared alike
-are two. This reverses 0.10.0, which accepted errors sharing a `_tag` and told them apart by their
+different schemas share one. One schema is each union member, compared by identity, unless the union has its own
+`httpApiStatus`, checks or a transformation, which make it one schema: one reached twice, listed
+again, through a `Schema.Union` or a `Schema.suspend`, is one; two declared alike are two. This reverses 0.10.0, which accepted errors sharing a `_tag` and told them apart by their
 other fields: a client decodes a failure as the first schema that accepts it, so where one
 accepted the other's values the client received the wrong error, its other fields dropped, and
 Effect's `catchTag` never told them apart. Errors without a `_tag` are still accepted.
@@ -33,11 +33,11 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   in the JSDoc of those declarations, shipped in `dist/`, as `**Gotchas**`: grep the symbol.
   The page keeps the concepts and the tasks, with whole example files as its snippets, and
   `docs/Action-failures.md` only compiler diagnostics and Effect's own errors.
-- A failure the library throws says its fix, in parentheses at the end of the message: an
-  invalid action name, a missing authorizer, missing or unknown handlers, unknown CLI commands, a
+- A failure the library throws says its fix in the message: an invalid action name, an
+  `authorize` that is not a function, missing or unknown handlers, unknown CLI commands, a
   duplicate action, an action listed but not held, an implementation that is a copy, and two
-  error schemas sharing a `_tag`. A duplicate action says whether one was listed twice or two
-  share the name. `docs/Action-failures.md` no longer lists them.
+  error schemas sharing a `_tag`. A duplicate action says whether one was listed twice, two share
+  the name, or two implementations hold it.
 - `docs/guarantees.md` is gone. What a call answers on each surface is in the JSDoc of the
   surface that answers it, as `**Gotchas**`: `ActionHttp.layer`, `ActionMcp.layerHttp` and
   `runStdio`, `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client,

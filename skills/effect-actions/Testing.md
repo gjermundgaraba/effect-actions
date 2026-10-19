@@ -53,7 +53,7 @@ See [notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect
 - `it.effect` runs on a test clock: fork a call that waits, `TestClock.adjust`, then join it.
 - A stdio server runs the same implementations: test them here. A subprocess test adds only what
   the process adds, stdout carrying nothing but the protocol.
-- A Toolkit and a CLI need no `Testing` export: call `toolkit.handle` or script a
+- A Toolkit and a CLI need no `Testing` export: call `handle` on `yield* toolkit`, or script a
   `LanguageModel` ([assistant/test/toolkit.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/toolkit.test.ts)),
   and run commands with `Command.runWith`
   ([assistant/test/commands.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/assistant/test/commands.test.ts)).
@@ -105,8 +105,9 @@ const as = (token: string) => ({
 Both clients take it: `ActionHttp.client(Http, as("reader"))` and
 `ActionMcp.client([GetStatus, ...Notes], as("ada"))`.
 
-- Never provide the identity to `layer`, around it or to the routes. It is a type error: only a
-  provider of their own descriptor satisfies them.
+- Never provide the identity to `layer`, around it or to the routes. In place of the provider it
+  is a type error, since only a provider of their own descriptor satisfies a protected route;
+  beside the provider it compiles, and every public request then runs as that caller.
 - To change what a credential verifies as, replace the service the verifier reads (`servedWith`
   in
   [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)),

@@ -7,8 +7,8 @@ writing `notes:write`.
 
 Start here if you are building a service. The other examples follow the same layout. Then read
 [Action.md](../../docs/Action.md) and the page of each surface you serve, which
-[docs/README.md](../../docs/README.md) routes, one page per tool call. An error's message is
-quoted in a `docs/*-failures.md`.
+[docs/README.md](../../docs/README.md) routes, one page per tool call. A compiler diagnostic or
+Effect's own error is quoted in a `docs/*-failures.md`.
 
 ## Run it
 
@@ -112,19 +112,6 @@ test/
 ├── worker.test.ts     the worker's own fetch handler, with Testing.layer
 └── commands.test.ts   the commands and their connection, against the same routes in memory
 ```
-
-- **A folder per domain, not per mechanism.** Everything about notes is in `notes/`; there is no
-  `contracts/` or `handlers/` folder.
-- **The PascalCase file is the contract.** `Notes.ts`, `Identity.ts`, `Status.ts` and `Api.ts`
-  import no server code, so a browser or a CLI imports them. The lowercase files beside them run
-  on the server, each named for its role, never the domain: `notes.ts` beside `Notes.ts` is one
-  file on a disk that ignores case (TS1149).
-- **One entrypoint per way of running it.** Each chooses its own implementations: `server.ts`
-  picks the store and the HTTP server, `worker.ts` the routes for a serverless host, `stdio.ts`
-  names the local user, a test provides its own store. Nothing below an entrypoint knows which
-  it got.
-- **In a monorepo** the contract files and `Api.ts` are the package the server, the CLI and the
-  website all depend on; the lowercase files and `routes.ts` are the server.
 
 ## Where to look
 

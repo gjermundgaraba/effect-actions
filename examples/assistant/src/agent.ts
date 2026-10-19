@@ -15,8 +15,7 @@ import { actingFor, layer, toolkit } from "./toolkit.js";
 // What a turn answers with: its text, the calls the model made and what they returned.
 type Response = LanguageModel.GenerateTextResponse<typeof toolkit.tools, "opaque">;
 
-// Printing only. A refusal or a declared error is a result too: JSON the model reads and may
-// act on.
+// Printing only.
 const report = (member: Member) => (response: Response) => {
   const waiting = response.content.flatMap((part) =>
     part.type === "tool-approval-request" ? [part.toolCallId] : [],

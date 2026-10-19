@@ -71,24 +71,6 @@ test/
 └── server.test.ts     the socket itself: a listening port, connect(url), the bound on a message
 ```
 
-- **The PascalCase files are what a page imports.** `Chat.ts`, `Identity.ts` and `Rpc.ts` import
-  no server code. `browser.ts` imports them, the library's `ActionRpc`, and `effect`,
-  `effect/rpc` and `effect/socket`, nothing else, so it bundles for a browser.
-- **A request-time service is never a startup service.** `CurrentMember` comes from
-  authentication and `CurrentRoom` from middleware, both per message. Neither has a Layer, and
-  no entrypoint provides one: a value provided at startup would serve every caller as one
-  member in one room.
-- **The entrypoint chooses the protocol.** `routes.ts` exports the rpcs without one. `server.ts`
-  gives them a WebSocket, its only route. `browser.ts` leaves the WebSocket constructor to its
-  host: a page provides the browser's, `client.ts` provides Node's.
-- **The socket belongs to the Layer providing it.** `connection(url)` opens it when it is built
-  and closes it when it is released: provide it once around the page's program, or keep it in
-  a `ManagedRuntime`, as `connect(url)` does. The scope `openChat` needs holds only the client.
-- **One test file opens a port.** `Testing.layer` answers HTTP requests and cannot upgrade a
-  WebSocket, so `routes.test.ts` and `browser.test.ts` give the same rpcs Effect's HTTP protocol,
-  in memory. `server.test.ts` covers what that leaves out: it serves them over a WebSocket on a
-  port the system picks, calls with `connect(url)`, and sends a message over the server's bound.
-
 ## Where to look
 
 | To see                                                                 | Read                                            |

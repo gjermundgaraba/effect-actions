@@ -7,7 +7,7 @@ trusted clients are on.
 
 Start here if you are putting an existing API in front of a model, then read
 [ActionMcp.md](../../docs/ActionMcp.md). For tools that need a token, its "Protect tools" shows
-the verifier, and [notes-service](../notes-service/) is a server whose tools belong to the
+how to protect them, and [notes-service](../notes-service/) is a server whose tools belong to the
 signed-in user.
 
 ## Run it
@@ -80,9 +80,7 @@ curl http://127.0.0.1:3000/mcp \
 ```
 
 It answers `{"jsonrpc":"2.0","id":1,"result":{…,"structuredContent":{"printers":[…]},"isError":false}}`.
-Every header is needed: without `Accept` naming both types the answer is an empty 406, without
-`Content-Type` a 415, and without an `MCP-` header, or with one that differs from the body, a
-400 saying which. `tools/list` takes the same request with that method, no `MCP-Name` header,
+Every header is needed, as `ActionMcp.layerHttp` says. `tools/list` takes the same request with that method, no `MCP-Name` header,
 and no `name` or `arguments`.
 
 ## Layout
@@ -104,23 +102,6 @@ test/
 ├── printers/          in process, with Action.client, over fake upstreams
 └── routes.test.ts     over MCP in memory, with Testing.layer
 ```
-
-- **The upstream is a service, built once.** `farm.ts` declares what the handlers need of the
-  farm, and `platform/print-farm.ts` is its Layer over the farm's HTTP API: it reads its URL and
-  credentials from `Config`, takes whichever `HttpClient` the entrypoint provides, and signs in
-  while it is built. The handlers get it already signed in and only delegate: `handlers.ts`
-  maps each tool onto a method of `PrintFarm`, which knows nothing of tools or HTTP, so a second
-  caller of the farm, a job or another surface, takes the service alone.
-- **One declared error, mapped in one place.** A refusal, an unreachable farm, an answer of
-  another shape and one that never comes each leave `platform/print-farm.ts` as a `PrintFarmError` with a
-  message a model can act on. No handler catches anything.
-- **What a model sends is checked by the contract.** A printer id becomes part of the farm's
-  URL, so its schema admits only what is safe there, and anything else is refused before a
-  handler runs.
-- **One implementation, two transports.** `server.ts` and `stdio.ts` serve the same `printers`
-  with the same `serverInfo`; they differ in what they provide around it.
-- **The contract is the tool.** A tool's name, description, input schema, hints and title all
-  come from `Printers.ts`.
 
 ## Where to look
 

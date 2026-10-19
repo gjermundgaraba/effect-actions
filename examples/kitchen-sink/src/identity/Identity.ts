@@ -45,7 +45,8 @@ export const Session = Authentication.make("tracker.Session", CurrentMember, {
 });
 
 // What the API's request quota answers with. It is the bindings' error, not an action's:
-// middleware sends it before any action is chosen, and only HTTP and RPC have that middleware.
+// middleware sends it on any action's route, before its input is decoded, so every endpoint
+// declares it; only HTTP and RPC have that middleware.
 export class QuotaExceeded extends Schema.TaggedError<QuotaExceeded>()(
   "QuotaExceeded",
   { retryAfterSeconds: Schema.Finite },

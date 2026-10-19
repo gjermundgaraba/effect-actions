@@ -44,8 +44,6 @@ describe("tasks, in process", () => {
 
       const refusal = yield* Effect.flip(add.pipe(as(members.guest)));
 
-      // `toEqual` on an error compares its fields and never its message, so the message is
-      // asserted on its own.
       expect(refusal).toBeInstanceOf(Action.Forbidden);
       expect(refusal.message).toBe("Requires tasks:write.");
       expect(yield* client.listTasks().pipe(as(members.guest))).toEqual({ tasks: [] });

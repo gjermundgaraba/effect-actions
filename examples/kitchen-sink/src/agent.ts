@@ -38,6 +38,7 @@ const program = Effect.gen(function* () {
 program.pipe(
   Effect.scoped,
   // No remote caller: this host names the member the assistant acts for, around the turn.
+  // DEMO ONLY: a real host names whoever asked.
   Effect.provideService(CurrentMember, members.ada),
   // Startup services only. An identity provided here would be every caller's.
   Effect.provide(layer.pipe(Layer.provideMerge(Layer.merge(IssueStore.layerMemory, limiter)))),

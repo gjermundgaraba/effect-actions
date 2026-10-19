@@ -106,8 +106,7 @@ class StatusError extends Schema.TaggedError<StatusError>()("StatusError", {
 }) {}
 
 /**
- * The endpoint answered with a JSON-RPC error, such as the native server's for invalid arguments
- * or an unknown tool.
+ * The endpoint answered with a JSON-RPC error, such as the native server's for an unknown tool.
  */
 class ProtocolError extends Schema.TaggedError<ProtocolError>()("ProtocolError", {
   code: Schema.Finite,

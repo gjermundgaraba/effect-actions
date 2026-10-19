@@ -179,6 +179,7 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   assertOnce(
     "tool",
     served.flatMap((app) => app.actions),
+    "implementation",
   );
 
   // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
