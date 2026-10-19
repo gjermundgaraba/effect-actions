@@ -38,7 +38,8 @@ export const Preview = Action.make("preview", {
 const signedIn = { caller: CurrentMember } as const;
 
 // Actions are unary: nothing streams. A page keeps up by calling this again on its open socket,
-// passing the last id it has seen. A call that waits for a message would keep the object awake.
+// passing the last id it has seen. A call waiting for a message, on memory alone, would be lost
+// when the object hibernates.
 export const ReadMessages = Action.make("readMessages", {
   ...signedIn,
   description: "Read the room's messages after the given id; 0 reads them all.",

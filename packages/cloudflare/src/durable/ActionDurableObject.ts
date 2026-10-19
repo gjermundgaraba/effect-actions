@@ -175,10 +175,10 @@ export interface LayerWebSocketOptions {
  * The `RpcServer.Protocol` `ActionRpc.layer` serves `binding` on, in the routes of a class
  * `make` returns: WebSockets the object accepts at `path` for the runtime to hold while it
  * hibernates, speaking JSON, the client's `RpcSerialization.layerJson`. `binding` is the one
- * `ActionRpc.layer` serves, and only `ActionRpc.layer` serves on it: a message's event lasts
- * until each of its requests has its exit, which `ActionRpc.layer` always sends, where
- * `RpcServer.layer` answers a handler's defect without one, holding the event, and the object
- * awake, until the socket closes. A socket keeps from its upgrade request the credential the
+ * `ActionRpc.layer` serves. A message's event ends once the message is handed to the server,
+ * and its calls answer after: one doing I/O or waiting on a timer keeps the object from
+ * hibernating, and one waiting on memory alone is lost if it hibernates. A socket keeps from
+ * its upgrade request the credential the
  * binding's descriptor reads, an `Authorization` header, an API key's header or its cookie,
  * and the headers listed, and nothing else: Effect's own socket protocol keeps every header.
  * Each message is authenticated with those and its own headers, its own winning. The runtime

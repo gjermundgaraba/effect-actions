@@ -42,7 +42,9 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     headers exceed a socket's 16 KiB attachment answers 431. Each protocol of one object needs a
     `path` of its own. Effect's web
     handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
-    Workers. The runtime answers a client's pings without waking the object.
+    Workers. The runtime answers a client's pings without waking the object. A message's event
+    ends once the message is handed to the server: a call doing I/O or waiting on a timer keeps
+    the object from hibernating, and one waiting on memory alone is lost if it hibernates.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.

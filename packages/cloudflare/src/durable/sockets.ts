@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Exit, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import type { Header } from "./credential.js";
@@ -29,18 +29,13 @@ const json = RpcSerialization.json;
 
 const encodeDefect = Schema.encodeSync(json.codecFor(Schema.Defect()));
 
-const isRequestId = Schema.is(Schema.Union([Schema.String, Schema.Number]));
-
-const isHeaders = Schema.is(Schema.Array(Schema.Tuple([Schema.String, Schema.String])));
-
 const isRequest = (message: RpcMessage.FromClientEncoded): message is RpcMessage.RequestEncoded =>
   Predicate.isTagged(message, "Request");
 
 /**
  * A hibernating `RpcServer.Protocol` over the object's WebSockets, speaking JSON, and its
  * upgrade route at `path`. Each socket carries two tags, its group's and its own id's, and keeps
- * `saved` of its upgrade request in its attachment, so both survive hibernation; a message
- * resolves once every request in it has its exit.
+ * `saved` of its upgrade request in its attachment, so both survive hibernation.
  */
 export const makeProtocol = (
   state: DurableObjectState,
@@ -90,27 +85,6 @@ export const makeProtocol = (
     );
 
     const disconnects = yield* Queue.make<number>();
-    const awaitingExit = new Map<number, Map<RpcMessage.RequestId, () => void>>();
-
-    const awaitExit = (clientId: number, requestId: RpcMessage.RequestId) =>
-      new Promise<void>((resolve) => {
-        const ofClient = awaitingExit.get(clientId) ?? new Map<RpcMessage.RequestId, () => void>();
-
-        awaitingExit.set(clientId, ofClient);
-        ofClient.set(requestId, () => {
-          ofClient.delete(requestId);
-          resolve();
-        });
-      });
-
-    const exited = (clientId: number, requestId: RpcMessage.RequestId) =>
-      awaitingExit.get(clientId)?.get(requestId)?.();
-
-    const allExited = (clientId: number) => {
-      for (const resolve of awaitingExit.get(clientId)?.values() ?? []) resolve();
-
-      awaitingExit.delete(clientId);
-    };
 
     const sendTo = (clientId: number, response: RpcMessage.FromServerEncoded) => {
       const encoded = parser.encode(response);
@@ -122,108 +96,45 @@ export const makeProtocol = (
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
       receivers.set(group, {
-        message: async (socket, data) => {
+        message: (socket, data) => {
           const clientId = idOf(socket);
           const { headers } = attachmentOf(socket.deserializeAttachment());
 
-          let messages: ReadonlyArray<RpcMessage.FromClientEncoded>;
-
-          try {
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a client sent: RpcServer checks each message's tag, id and payload; the adapter reads a request's id and headers through guards and writes in a suspended effect, so a malformed message fails alone and is answered with a defect.
-            messages = parser.decode(
-              Predicate.isString(data) ? data : new Uint8Array(data),
-            ) as ReadonlyArray<RpcMessage.FromClientEncoded>;
-          } catch (cause) {
-            return sendTo(clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(cause)));
-          }
-
-          const exits: Array<Promise<void>> = [];
-
-          for (const message of messages) {
-            const request = isRequest(message);
-
-            // Why: checked here, not left to the server, which records a request before reading
-            // its headers and keeps that record when they do not read: an interrupt under its id
-            // would then be answered with an exit, ending the wait of another request.
-            if (request && !isHeaders(message.headers)) {
-              sendTo(
-                clientId,
-                RpcMessage.ResponseDefectEncoded(
-                  encodeDefect(new Error("A request's headers are [name, value] pairs")),
+          // Why: suspended, so a frame that does not parse, or a message the server cannot
+          // read, such as `null`, is answered with a defect, as Effect's own socket protocol
+          // answers it, never rejecting the event. The event ends once each message is written:
+          // a call doing I/O or waiting on a timer keeps the object from hibernating.
+          return run(
+            Effect.suspend(() =>
+              Effect.forEach(
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a client sent: RpcServer checks each message's tag, id and payload, and a message it cannot read fails as a defect, answered as one.
+                parser.decode(
+                  Predicate.isString(data) ? data : new Uint8Array(data),
+                ) as ReadonlyArray<RpcMessage.FromClientEncoded>,
+                (message) =>
+                  write(
+                    clientId,
+                    isRequest(message)
+                      ? { ...message, headers: [...headers, ...message.headers] }
+                      : message,
+                  ),
+                { discard: true },
+              ),
+            ).pipe(
+              Effect.catchDefect((defect) =>
+                Effect.sync(() =>
+                  sendTo(clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),
                 ),
-              );
-
-              continue;
-            }
-
-            const awaited =
-              request && isRequestId(message.id) ? RpcMessage.RequestId(message.id) : undefined;
-
-            // Why: a request reusing the id of one still running is dropped, as the server drops
-            // a valid one. Written, a duplicate it answers before that check, such as one naming
-            // no action, would end with an exit that also ends the running request's wait.
-            if (awaited !== undefined && awaitingExit.get(clientId)?.has(awaited)) continue;
-
-            // Why: registered before its own write, never earlier, so the exit of a request
-            // already delivered under the same id cannot settle it. The server answers an id
-            // that is neither a string nor a number with a defect alone, so none is awaited.
-            if (awaited !== undefined) exits.push(awaitExit(clientId, awaited));
-
-            // Why: suspended, so a message the server cannot read, such as `null`, fails alone
-            // and is answered, and the frame still waits for the requests it already started.
-            const written = await run(
-              Effect.suspend(() =>
-                write(
-                  clientId,
-                  request ? { ...message, headers: [...headers, ...message.headers] } : message,
-                ),
-              ).pipe(Effect.exit),
-            );
-
-            if (Exit.isFailure(written)) {
-              // Why: a request whose write failed, refused by the server once its client ended or
-              // never read, has no exit coming, which its message would otherwise wait for until
-              // the socket closes.
-              if (awaited !== undefined) exited(clientId, awaited);
-
-              if (Cause.hasDies(written.cause)) {
-                sendTo(
-                  clientId,
-                  RpcMessage.ResponseDefectEncoded(encodeDefect(Cause.squash(written.cause))),
-                );
-              }
-            }
-          }
-
-          await Promise.all(exits);
+              ),
+            ),
+          );
         },
-        close: async (socket) => {
-          const clientId = idOf(socket);
-
-          allExited(clientId);
-
-          await run(Queue.offer(disconnects, clientId));
-        },
+        close: (socket) => run(Effect.asVoid(Queue.offer(disconnects, idOf(socket)))),
       });
 
       return Effect.succeed({
         disconnects,
-        send: (clientId, response) =>
-          Effect.withFiber((fiber) =>
-            Effect.sync(() => {
-              sendTo(clientId, response);
-
-              // Why: only an exit ends a request. A defect, answering a frame the server cannot
-              // read, leaves the client's other requests running, and each of them ends with its
-              // exit: `ActionRpc.layer` disables fatal defects, so a handler's defect is one. The
-              // wait ends with the fiber sending the exit, the request's own or one the server
-              // forks for it, so the request's scope, its middleware's finalizers included, has
-              // closed first.
-              if (Predicate.isTagged(response, "Exit")) {
-                fiber.addObserver(() => exited(clientId, RpcMessage.RequestId(response.requestId)));
-              }
-            }),
-          ),
+        send: (clientId, response) => Effect.sync(() => sendTo(clientId, response)),
         end: (clientId) =>
           Effect.sync(() => {
             for (const socket of state.getWebSockets(tagOf(clientId))) socket.close(1000);

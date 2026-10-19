@@ -82,9 +82,6 @@ ActionRpc.layer(RoomRpc, room).pipe(
   listed, and no other header: Effect's own socket protocol keeps them all, so list any a
   middleware reads, such as `Origin`. Each message is authenticated with those and its own
   headers, its own winning. An API key in the query string is not kept.
-- Serve the protocol with `ActionRpc.layer` alone. A message's event lasts until each of its
-  requests has its exit, so the object stays awake while a call runs; `RpcServer.layer` answers
-  a handler's defect without an exit, which would hold the event until the socket closes.
 - Give each protocol of one object its own `path`. A router prefix does not tell two apart:
   routes with two protocols at one path, under `HttpRouter.prefixed` or not, fail to build.
 - `layerWebSocket` serves only the routes of a class `make` returns, which receives its
@@ -175,7 +172,10 @@ open a socket by upgrading through its `fetch`, handing `response.webSocket` to
   object's as a startup service.
 - **A socket keeps at most 16 KiB.** The credential and the listed headers it keeps are
   refused past the runtime's attachment limit: the upgrade is answered `431`.
-- **A call keeps the object awake.** The object is billed while a call runs, so a call that
-  waits for something to happen keeps it awake as long: a client reads again instead.
+- **A call waiting on memory alone can be lost.** A message's event ends once the message is
+  handed to the server. A call doing I/O or waiting on a timer, such as one under
+  `Effect.timeout`, keeps the object from hibernating, and it is billed as long; one waiting
+  only on another call's in-memory state, such as a `Deferred`, is lost if the object
+  hibernates, and its client never hears back. A client reads again instead.
 - **JSON only**, on the socket.
 - **Bodies are limited by the platform**: `toWebHandler` reads no `MaxBodySize`.

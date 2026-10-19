@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -25,16 +25,8 @@ export class ResolveNote extends RpcMiddleware.Service<ResolveNote, { provides: 
   "test/ResolveNote",
 ) {}
 
-export const slowCleanupNote = "slow-cleanup";
-
 const resolveNote = Layer.succeed(ResolveNote, (call, { headers }) =>
-  Effect.gen(function* () {
-    const note = headers[noteHeader] ?? "none";
-
-    if (note === slowCleanupNote) yield* Effect.addFinalizer(() => Effect.sleep("100 millis"));
-
-    return yield* Effect.provideService(call, CurrentNote, note);
-  }),
+  Effect.provideService(call, CurrentNote, headers[noteHeader] ?? "none"),
 );
 
 export const Whoami = Action.make("whoami", {
@@ -73,19 +65,13 @@ export const Alarms = Action.make("alarms", {
   success: Schema.Int,
 });
 
-export const Hold = Action.make("hold", {
-  description: "Answer once release is called on the same instance",
+export const Pause = Action.make("pause", {
+  description: "Answer after a tenth of a second",
   readOnly: true,
   caller: Action.Anyone,
 });
 
-export const Release = Action.make("release", {
-  description: "Answer every held call",
-  readOnly: false,
-  caller: Action.Anyone,
-});
-
-const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Hold, Release] as const;
+const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Pause] as const;
 
 export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], { authentication: Login });
 
@@ -116,7 +102,6 @@ export const implementation = Action.implement(
   actions,
   Effect.gen(function* () {
     const { storage } = yield* ActionDurableObject.State;
-    const released = yield* Deferred.make<void>();
     let balance = 10;
 
     yield* StartupRead;
@@ -131,8 +116,7 @@ export const implementation = Action.implement(
       schedule: () => Effect.promise(() => storage.setAlarm(Date.now() + 60_000)),
       alarms: () =>
         Effect.promise(() => storage.get<number>(alarmsKey)).pipe(Effect.map((n) => n ?? 0)),
-      hold: () => Deferred.await(released),
-      release: () => Deferred.succeed(released, undefined),
+      pause: () => Effect.sleep("100 millis"),
     };
   }),
   { authorize: Action.allowAll },
