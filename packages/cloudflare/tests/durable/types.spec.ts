@@ -61,3 +61,12 @@ ActionDurableObject.make({
   // @ts-expect-error -- The alarm has no caller unless it names one itself.
   alarm: () => Effect.asVoid(Effect.service(CurrentUser)),
 });
+
+declare const instance: ActionDurableObject.Instance;
+
+expectTypeOf(
+  instance.run(Effect.as(Effect.all([Effect.service(ActionDurableObject.State), Effect.scope]), 1)),
+).toEqualTypeOf<Promise<number>>();
+
+// @ts-expect-error -- A run has no caller unless it names one itself.
+void instance.run(Effect.service(CurrentUser));

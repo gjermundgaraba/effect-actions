@@ -10,12 +10,23 @@
       { "name": "ROUTER_PROVIDED", "class_name": "RouterProvided" },
       { "name": "PREFIXED", "class_name": "Prefixed" },
       { "name": "BROKEN", "class_name": "Broken" },
+      { "name": "COUNTED", "class_name": "Counted" },
+      { "name": "OWN_SOCKETS", "class_name": "OwnSockets" },
     ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["Plain", "Room", "Extended", "RouterProvided", "Prefixed", "Broken"],
+      "new_sqlite_classes": [
+        "Plain",
+        "Room",
+        "Extended",
+        "RouterProvided",
+        "Prefixed",
+        "Broken",
+        "Counted",
+        "OwnSockets",
+      ],
     },
   ],
 }

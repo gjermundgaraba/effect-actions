@@ -11,8 +11,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Http, noteHeader, Overdrawn } from "../support/app.js";
-import type { Room } from "../worker.js";
+import { Http, noteHeader, Overdrawn, ownTag } from "../support/app.js";
+import type { OwnSockets, Room } from "../worker.js";
 import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
 const room = (name: string) => env.ROOM.getByName(name);
@@ -229,10 +229,63 @@ describe("layerWebSocket", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses an event on a socket no protocol of the routes accepted", () =>
-    Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        Effect.tryPromise(() =>
+  const upgradeTo = (stub: DurableObjectStub, url: string) =>
+    Effect.promise(async () => {
+      const { webSocket } = await stub.fetch(url, { headers: { upgrade: "websocket" } });
+
+      if (webSocket === null) throw new Error("No WebSocket");
+
+      webSocket.accept();
+
+      return webSocket;
+    });
+
+  const nextMessage = (socket: WebSocket) =>
+    Effect.promise(
+      () =>
+        new Promise<string>((resolve) =>
+          socket.addEventListener("message", ({ data }) => resolve(String(data)), { once: true }),
+        ),
+    );
+
+  it.effect(
+    "leaves a socket the subclass accepted to its override, and serves rpcs beside it",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.OWN_SOCKETS.getByName("own-sockets");
+        const own = yield* upgradeTo(stub, "https://object/own");
+        const answer = nextMessage(own);
+
+        own.send("hello");
+
+        expect(yield* answer).toBe("hello");
+
+        const client = yield* scopedClientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        expect(yield* client.whoami()).toBe("ada");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "resolves every base handler's event on a socket no protocol of the routes accepted",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.OWN_SOCKETS.getByName("own-closes");
+
+        yield* upgradeTo(stub, "https://object/own");
+
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, async (instance: OwnSockets, state) => {
+            const [held] = state.getWebSockets(ownTag);
+
+            if (held === undefined) throw new Error("No socket");
+
+            await instance.webSocketError(held, new Error("lost"));
+            await instance.webSocketClose(held, 1000, "", true);
+          }),
+        );
+
+        yield* Effect.promise(() =>
           runInDurableObject(room("foreign"), async (instance: Room, state) => {
             const { 1: server } = new WebSocketPair();
 
@@ -240,13 +293,8 @@ describe("layerWebSocket", () => {
 
             await instance.webSocketMessage(server, "{}");
           }),
-        ),
-      );
-
-      expect(String(failure.cause)).toContain(
-        "No ActionDurableObject.layerWebSocket of these routes accepted this socket",
-      );
-    }),
+        );
+      }),
   );
 
   it.effect("refuses to build outside a class make returns", () =>
@@ -346,6 +394,42 @@ describe("make", () => {
     Effect.gen(function* () {
       const failure = yield* Effect.flip(
         Effect.tryPromise(() => env.BROKEN.getByName("broken").fetch("https://object/")),
+      );
+
+      expect(String(failure.cause)).toContain("Unreachable");
+    }),
+  );
+
+  it.effect("builds a layer once for the routes and a stub method's run, fetched first", () =>
+    Effect.gen(function* () {
+      const stub = env.COUNTED.getByName("fetched-first");
+      const response = yield* Effect.promise(() => stub.fetch("https://object/builds"));
+
+      expect(yield* Effect.promise(() => response.text())).toBe("1");
+      expect(yield* Effect.promise(() => stub.builds())).toBe(1);
+    }),
+  );
+
+  it.effect("runs a stub method on an instance never fetched once the routes are built", () =>
+    Effect.gen(function* () {
+      const stub = env.COUNTED.getByName("called-first");
+
+      expect(yield* Effect.promise(() => stub.builds())).toBe(1);
+
+      const response = yield* Effect.promise(() => stub.fetch("https://object/builds"));
+
+      expect(yield* Effect.promise(() => response.text())).toBe("1");
+    }),
+  );
+
+  it.effect("rejects run with the routes' build failure", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        Effect.tryPromise(() =>
+          runInDurableObject(env.BROKEN.getByName("broken-run"), (instance) =>
+            instance.run(Effect.void),
+          ),
+        ),
       );
 
       expect(String(failure.cause)).toContain("Unreachable");

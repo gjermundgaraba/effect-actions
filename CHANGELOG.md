@@ -34,7 +34,12 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     routes once, with the object's `State` as a startup service, and holds every event until
     they are built; it serves them on `fetch`, hands its sockets' events to them and runs
     `alarm(info)`, given the runtime's retry count, sharing one build with the routes.
-    `disableLogger` leaves out the request logger.
+    `disableLogger` leaves out the request logger. An instance's `run(effect)` runs an Effect
+    in the object once the routes are built, with `State` and a `Scope`, for the methods of a
+    class extending it, such as those a Worker calls over the stub: given the same Layer value
+    as the routes, it shares their build, as the alarm does. Its socket handlers leave a socket
+    no protocol of the routes accepted, such as one the class accepts itself, to the class's own
+    override, resolving for it.
   - `layerWebSocket({ path })` is the protocol `ActionRpc.layer` serves on: WebSockets the
     runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
     Effect's own socket protocol does, and each message is authenticated with them under its

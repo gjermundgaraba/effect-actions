@@ -4,6 +4,10 @@ import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
 import {
   alarm,
+  Builds,
+  buildsRoutes,
+  ownSocketRoutes,
+  ownTag,
   prefixedRoutes,
   routerProvidedRoutes,
   routes,
@@ -45,5 +49,21 @@ export class Unreachable extends Data.TaggedError("Unreachable")<{ readonly stor
 export class Broken extends ActionDurableObject.make({
   routes: Layer.effectDiscard(Effect.fail(new Unreachable({ store: "notes" }))),
 }) {}
+
+export class Counted extends ActionDurableObject.make({ routes: buildsRoutes }) {
+  builds() {
+    return this.run(Effect.provide(Effect.service(Builds), Builds.layer));
+  }
+}
+
+export class OwnSockets extends ActionDurableObject.make({ routes: ownSocketRoutes }) {
+  override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    if (!this.ctx.getTags(socket).includes(ownTag)) return super.webSocketMessage(socket, message);
+
+    socket.send(message);
+
+    return Promise.resolve();
+  }
+}
 
 export default { fetch: () => new Response(null, { status: 404 }) };

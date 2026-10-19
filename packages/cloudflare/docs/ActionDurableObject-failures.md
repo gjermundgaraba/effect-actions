@@ -14,10 +14,10 @@ in the core's `*-failures.md` pages.
   `HttpRouter.provideRequest` provides a service its handler reads: those run for the upgrade
   request alone, never a socket's messages. List an `RpcMiddleware` in `ActionRpc.layer`'s
   `middleware`, or make it a startup service.
-- `No ActionDurableObject.layerWebSocket of these routes accepted this socket`, thrown by
-  `webSocketMessage`: the object holds a socket no protocol of these routes accepted, such as one
-  accepted by code of your own, or by an earlier version of the routes at another `path`. Accept
-  sockets with `layerWebSocket` alone, and close those the old path accepted.
+- A socket's messages go unanswered, with no error: no protocol of these routes accepted it,
+  and `make`'s handlers leave such a socket to the class extending it. Accepted by your own code,
+  override `webSocketMessage` and answer the sockets carrying your tag; accepted by an earlier
+  version of the routes at another `path`, close it, or serve that `path` again.
 - `Two ActionDurableObject.layerWebSocket protocols of one object serve the path <path>: a router
   prefix does not tell them apart`, a defect when the routes build: two `ActionRpc.layer`s in one
   object were given protocols at one `path`. Give each its own, such as `/a/rpc` and `/b/rpc`.
@@ -32,9 +32,9 @@ in the core's `*-failures.md` pages.
   the runtime dropped the socket's attachment, where its upgrade headers are kept, as celld
   0.6.2 does when it evicts an idle object. Send the token on each message, with
   `RpcClient.withHeaders`.
-- A stub's `fetch` rejects with the routes' build failure, every request alike: the routes fail
-  to build. The object is reset, and the next request builds them again; fix the failure the
-  rejection names.
+- A stub's `fetch`, or a method calling `run`, rejects with the routes' build failure, every
+  call alike: the routes fail to build. The object is reset, and the next event builds them
+  again; fix the failure the rejection names.
 - An upgrade answered `426 Expected a WebSocket upgrade`: the request to the socket's `path` is
   not an upgrade. Connect with a WebSocket client, or forward the page's `Request` itself from
   the Worker, which forwards its `Upgrade` header.

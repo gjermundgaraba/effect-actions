@@ -67,11 +67,24 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
   webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
+  /**
+   * Runs `effect` in the object, with `State` and a `Scope`, closed when it ends, once the
+   * routes are built: a failed build rejects it. What the object's `alarm` runs through, and
+   * what a method of a class extending it runs its Effect with, such as a method a Worker calls
+   * over the object's stub. Provide the effect the same Layer value the routes are given, with
+   * `Effect.provide`: the instance builds it once for the routes, the alarm and every `run`.
+   * A Durable Object's public methods are callable over its stub, this one too, but it takes an
+   * Effect, which no stub can send: a caller over the stub gets a rejection, nothing more.
+   */
+  run<A, E>(effect: Effect.Effect<A, E, State | Scope.Scope>): Promise<A>;
 }
 
 /**
  * A Durable Object class serving `routes` on `fetch`, and the sockets `layerWebSocket` accepts
- * on `webSocketMessage`, `webSocketClose` and `webSocketError`, and running `alarm`. Export it,
+ * on `webSocketMessage`, `webSocketClose` and `webSocketError`, and running `alarm`. A socket no
+ * protocol of the routes accepted, such as one a class extending it accepts itself, is left to
+ * that class: the three handlers resolve for it, so an override answers its own sockets and
+ * calls `super` for the rest. `run` runs an Effect in the object, for its own methods. Export it,
  * or a class extending it, under the name the Wrangler configuration binds. Each instance
  * builds the routes once, in its constructor, with `State` provided, and holds every event
  * until they are built, as `blockConcurrencyWhile` does: a build that fails resets the
@@ -132,54 +145,51 @@ export const make = <
       return (await this.#web).handler(request);
     }
 
+    async run<A, E>(effect: Effect.Effect<A, E, State | Scope.Scope>): Promise<A> {
+      await this.#web;
+
+      return Effect.runPromise(
+        effect.pipe(
+          Effect.scoped,
+          Effect.provideService(State, this.ctx),
+          Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
+        ),
+      );
+    }
+
+    // Why: every socket a protocol of the routes accepts carries its tag, so one without a
+    // receiver was accepted by a class extending this one, which answers it in its own override.
     #receiverOf(socket: WebSocket) {
-      const receiver = this.ctx
+      return this.ctx
         .getTags(socket)
         .map((tag) => this.#receivers.get(tag))
         .find((found) => found !== undefined);
-
-      if (receiver === undefined) {
-        throw new Error(
-          "No ActionDurableObject.layerWebSocket of these routes accepted this socket",
-        );
-      }
-
-      return receiver;
     }
 
-    override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-      return this.#receiverOf(socket).message(socket, message);
+    override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+      await this.#receiverOf(socket)?.message(socket, message);
     }
 
-    override webSocketClose(socket: WebSocket) {
-      return this.#receiverOf(socket).close(socket);
+    override async webSocketClose(socket: WebSocket) {
+      await this.#receiverOf(socket)?.close(socket);
     }
 
-    override webSocketError(socket: WebSocket) {
-      return this.#receiverOf(socket).close(socket);
-    }
-
-    static withAlarm(run: NonNullable<typeof onAlarm>) {
-      return class extends this {
-        override alarm(info?: AlarmInvocationInfo) {
-          return Effect.runPromise(
-            run(info).pipe(
-              Effect.scoped,
-              Effect.provideService(State, this.ctx),
-              Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
-            ),
-          );
-        }
-      };
+    override async webSocketError(socket: WebSocket) {
+      await this.#receiverOf(socket)?.close(socket);
     }
   }
 
   // Why: workerd refuses `storage.setAlarm` on an instance without an `alarm` handler, at the call
   // that sets it, so a class made without one has none, where a handler rejecting every
   // alarm would fail later, retried. Made with one, `alarm` is a method of a class extending the
-  // base, so a class extending that overrides it and calls it through `super`; that class is
-  // declared in the base's body, `withAlarm`, to read the base's private memo map.
-  return onAlarm === undefined ? ActionDurableObject : ActionDurableObject.withAlarm(onAlarm);
+  // base, so a class extending that overrides it and calls it through `super`.
+  return onAlarm === undefined
+    ? ActionDurableObject
+    : class extends ActionDurableObject {
+        override alarm(info?: AlarmInvocationInfo) {
+          return this.run(onAlarm(info));
+        }
+      };
 };
 
 /** `layerWebSocket`'s options. */

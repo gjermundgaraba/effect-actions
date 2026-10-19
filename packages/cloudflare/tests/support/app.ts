@@ -187,3 +187,48 @@ export const alarm = Effect.gen(function* () {
 
   yield* Effect.promise(() => storage.put(alarmsKey, ran + 1));
 }).pipe(Effect.provide(startup));
+
+const buildsKey = "builds";
+
+export class Builds extends Context.Service<Builds, number>()("test/Builds") {
+  static readonly layer = Layer.effect(Builds)(
+    Effect.gen(function* () {
+      const { storage } = yield* ActionDurableObject.State;
+      const builds = ((yield* Effect.promise(() => storage.get<number>(buildsKey))) ?? 0) + 1;
+
+      yield* Effect.promise(() => storage.put(buildsKey, builds));
+
+      return builds;
+    }),
+  );
+}
+
+export const buildsRoutes = HttpRouter.add(
+  "GET",
+  "/builds",
+  Effect.map(Effect.service(Builds), (builds) => HttpServerResponse.text(String(builds))),
+).pipe(Layer.provideMerge(Builds.layer));
+
+export const ownTag = "own";
+
+const ownSocketRoute = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    const state = yield* ActionDurableObject.State;
+
+    yield* router.add(
+      "GET",
+      "/own",
+      Effect.sync(() => {
+        const { 0: client, 1: server } = new WebSocketPair();
+
+        state.acceptWebSocket(server, [ownTag]);
+
+        return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }), {
+          status: 101,
+        });
+      }),
+    );
+  }),
+);
+
+export const ownSocketRoutes = Layer.mergeAll(socketRoutes, ownSocketRoute);

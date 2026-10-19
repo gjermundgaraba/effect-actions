@@ -22,7 +22,7 @@ Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 | `layerHttpClient(stub)`                    | An `HttpClient` sending every request to a stub or a service binding.            |
 
 Exported types: `Options` of `make`, `LayerWebSocketOptions` of `layerWebSocket`, and `Instance`,
-an instance of the class `make` returns.
+an instance of the class `make` returns, whose `run(effect)` runs an Effect in the object.
 
 | Option                   | Meaning                                                                                             |
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
@@ -63,6 +63,9 @@ it with a SQLite migration.
   `Action.md` shows for a store
   ([chat-rooms/src/chat/authorize.ts](../examples/chat-rooms/src/chat/authorize.ts)).
 - JSON routes and rpcs merge in one routes Layer: both are served on `fetch`.
+- The routes are a module-level value, built once per instance, so they reach bindings through
+  the `env` import of `cloudflare:workers`, read as they build or serve, never as the module
+  evaluates ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
 
 ## Serve rpcs over hibernating WebSockets
 
@@ -88,6 +91,9 @@ ActionRpc.layer(RoomRpc, room).pipe(
   routes with two protocols at one path, under `HttpRouter.prefixed` or not, fail to build.
 - `layerWebSocket` serves only the routes of a class `make` returns, which receives its
   sockets' events; built elsewhere, it fails to build.
+- A socket the object accepts itself, with `State`'s `acceptWebSocket`, is left to it: `make`'s
+  handlers ignore a socket without a protocol's tag, so override `webSocketMessage`, answer the
+  sockets with your tag, read with `ctx.getTags(socket)`, and call `super` for the rest.
 - The verifier runs for every message, so a token that expires refuses the next call. A client
   that renews its token sends the new one on its messages, or connects again.
 - A browser WebSocket sets no header on its upgrade: a page sends its token on each message,
@@ -125,6 +131,22 @@ alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layer
   sets it for the oldest message's expiry and, each run, for the next.
 
 ## Call an object from a Worker
+
+Two paths. Where the Worker is the object's only caller and its API is internal, give a class
+extending the one `make` returns methods the Worker calls over the stub with Cloudflare's RPC,
+each running its Effect with `run`, provided the same Layer value as the routes, which the
+instance builds once for both. Where the object's API should be an effect-actions surface, with
+its contract, clients and authentication, call its actions over `layerHttpClient`.
+
+```ts
+const routes = pluginRoutes.pipe(Layer.provide(services));
+
+export class Plugin extends ActionDurableObject.make({ routes }) {
+  install(code: string) {
+    return this.run(Effect.provide(install(code), services));
+  }
+}
+```
 
 Provide the core's client `layerHttpClient` with the object's stub: every request goes to the
 object's `fetch` in place of the network.
