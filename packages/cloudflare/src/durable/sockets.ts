@@ -167,7 +167,7 @@ export const makeProtocol = (
             // Why: registered before its own write, never earlier, so the exit of a request
             // already delivered under the same id cannot settle it. The server answers an id
             // that is neither a string nor a number with a defect alone, so none is awaited.
-            const exit = awaited === undefined ? undefined : awaitExit(clientId, awaited);
+            if (awaited !== undefined) exits.push(awaitExit(clientId, awaited));
 
             // Why: suspended, so a message the server cannot read, such as `null`, fails alone
             // and is answered, and the frame still waits for the requests it already started.
@@ -193,8 +193,6 @@ export const makeProtocol = (
                 );
               }
             }
-
-            if (exit !== undefined) exits.push(exit);
           }
 
           await Promise.all(exits);
