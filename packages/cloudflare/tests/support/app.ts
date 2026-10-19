@@ -25,8 +25,16 @@ export class ResolveNote extends RpcMiddleware.Service<ResolveNote, { provides: 
   "test/ResolveNote",
 ) {}
 
+export const slowCleanupNote = "slow-cleanup";
+
 const resolveNote = Layer.succeed(ResolveNote, (call, { headers }) =>
-  Effect.provideService(call, CurrentNote, headers[noteHeader] ?? "none"),
+  Effect.gen(function* () {
+    const note = headers[noteHeader] ?? "none";
+
+    if (note === slowCleanupNote) yield* Effect.addFinalizer(() => Effect.sleep("100 millis"));
+
+    return yield* Effect.provideService(call, CurrentNote, note);
+  }),
 );
 
 export const Whoami = Action.make("whoami", {

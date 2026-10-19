@@ -11,7 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Http, noteHeader, Overdrawn, Rpc } from "../support/app.js";
+import { Http, noteHeader, Overdrawn, Rpc, slowCleanupNote } from "../support/app.js";
 import type { Room } from "../worker.js";
 import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
@@ -137,7 +137,7 @@ describe("layerWebSocket", () => {
     ),
   );
 
-  it.effect("holds it open through a refused request reusing its id", () =>
+  it.effect("holds it open through a request reusing its id, which it drops", () =>
     Effect.map(heldEventAfter("holds-reused-id", [request(1, "hold")]), (settled) =>
       expect(settled).toBe("pending"),
     ),
@@ -201,6 +201,78 @@ describe("layerWebSocket", () => {
       ),
       (settled) => expect(settled).toBe("pending"),
     ),
+  );
+
+  it.effect("holds a message's event open until its middleware's finalizers have run", () =>
+    Effect.gen(function* () {
+      const stub = room("holds-cleanup");
+
+      yield* upgradeToRpc(stub);
+
+      const settled = yield* Effect.promise(() =>
+        runInDurableObject(stub, async (instance: Room, state) => {
+          const [held] = state.getWebSockets();
+
+          if (held === undefined) throw new Error("No socket");
+
+          const event = instance.webSocketMessage(
+            held,
+            JSON.stringify({
+              _tag: "Request",
+              id: 1,
+              tag: "readNote",
+              payload: {},
+              headers: [[noteHeader, slowCleanupNote]],
+            }),
+          );
+
+          const early = await Promise.race([
+            event.then(() => "settled"),
+            new Promise((resolve) => setTimeout(resolve, 50, "pending")),
+          ]);
+
+          await event;
+
+          return early;
+        }),
+      );
+
+      expect(settled).toBe("pending");
+    }),
+  );
+
+  it.effect("answers a message it cannot read with a defect, and keeps no record of it", () =>
+    Effect.gen(function* () {
+      const socket = yield* upgradeToRpc(room("answers-unreadable"));
+
+      const received = yield* Effect.promise(
+        () =>
+          new Promise<ReadonlyArray<unknown>>((resolve) => {
+            const messages: Array<unknown> = [];
+
+            socket.addEventListener("message", ({ data }) =>
+              messages.push(JSON.parse(String(data))),
+            );
+            socket.send("null");
+            socket.send(
+              JSON.stringify({
+                _tag: "Request",
+                id: 5,
+                tag: "readNote",
+                payload: {},
+                headers: [null],
+              }),
+            );
+            socket.send(JSON.stringify({ _tag: "Interrupt", requestId: 5 }));
+            setTimeout(resolve, 100, messages);
+          }),
+      );
+
+      expect(received).toEqual([
+        expect.objectContaining({ _tag: "Defect" }),
+        expect.objectContaining({ _tag: "Defect" }),
+      ]);
+    }),
   );
 
   it.effect("ends a held event when its socket closes", () =>
