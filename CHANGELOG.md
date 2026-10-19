@@ -43,7 +43,10 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     request, so `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime
     answers a client's pings without waking the object. A message's event ends once the message
     is handed to the server: a call doing I/O or waiting on a timer keeps the object from
-    hibernating, and one waiting on memory alone is lost if it hibernates.
+    hibernating, and one waiting on memory alone is lost if it hibernates. A socket whose
+    runtime dropped its attachment, as celld 0.6.2 does when it evicts an idle object, keeps
+    serving with each message's own headers, and one whose attachment does not decode answers
+    each message with a defect, rather than failing the event.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.

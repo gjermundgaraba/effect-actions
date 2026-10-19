@@ -4,7 +4,7 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Cause, Effect, Exit, Layer, Schedule } from "effect";
+import { Cause, Effect, Exit, Layer, Predicate, Schedule } from "effect";
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { RpcClient } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
@@ -64,6 +64,51 @@ describe("layerWebSocket", () => {
         expect(yield* client.readNote()).toBe("kept");
         expect(yield* client.spend({ amount: 3 })).toEqual({ left: 7 });
       }).pipe(Effect.scoped),
+  );
+
+  const replaceAttachment = (
+    stub: DurableObjectStub,
+    attachment: { readonly headers: string } | undefined,
+  ) =>
+    Effect.promise(() =>
+      runInDurableObject(stub, (_, state) => {
+        const [held] = state.getWebSockets();
+
+        if (held === undefined) throw new Error("No socket");
+
+        held.serializeAttachment(attachment);
+
+        return Predicate.isNullish(held.deserializeAttachment());
+      }),
+    );
+
+  it.effect(
+    "serves a socket whose attachment the runtime dropped, with each message's own headers",
+    () =>
+      Effect.gen(function* () {
+        const stub = room("dropped-attachment");
+        const client = yield* scopedClientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        expect(yield* client.whoami()).toBe("ada");
+        expect(yield* replaceAttachment(stub, undefined)).toBe(true);
+        expect(yield* client.whoami().pipe(RpcClient.withHeaders(bearer("grace")))).toBe("grace");
+        expect(yield* Effect.flip(client.whoami())).toBeInstanceOf(Action.Unauthenticated);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("answers a message on a socket whose attachment does not decode with a defect", () =>
+    Effect.gen(function* () {
+      const stub = room("unreadable-attachment");
+      const socket = yield* upgradeToRpc(stub, bearer("ada"));
+      const client = yield* scopedClientOver(socket);
+
+      expect(yield* replaceAttachment(stub, { headers: "not pairs" })).toBe(false);
+
+      const exit = yield* Effect.exit(client.whoami().pipe(RpcClient.withHeaders(bearer("ada"))));
+
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      expect(socket.readyState).toBe(WebSocket.OPEN);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("answers a client's ping without waking the object", () =>

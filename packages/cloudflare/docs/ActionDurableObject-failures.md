@@ -25,8 +25,13 @@ in the core's `*-failures.md` pages.
   returns`, a defect when the routes build: they are served by `HttpRouter.toWebHandler` or a
   class of your own, and nothing would receive the sockets' events. Serve them with `make`.
 - `Your Durable Object class must have an alarm() handler in order to call setAlarm()`, thrown by
-  `storage.setAlarm`: the object was made without an `alarm`. Give `make` an `alarm`, or stop
-  setting one.
+  `storage.setAlarm` on workerd: the object was made without an `alarm`. Give `make` an
+  `alarm`, or stop setting one. celld 0.6.2 accepts the call instead and drops the alarm when it
+  is due, so an alarm that never runs there may mean the same.
+- `Unauthenticated` on a socket that sent its token on the upgrade, after the object was idle:
+  the runtime dropped the socket's attachment, where its upgrade headers are kept, as celld
+  0.6.2 does when it evicts an idle object. Send the token on each message, with
+  `RpcClient.withHeaders`.
 - A stub's `fetch` rejects with the routes' build failure, every request alike: the routes fail
   to build. The object is reset, and the next request builds them again; fix the failure the
   rejection names.

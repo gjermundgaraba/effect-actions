@@ -22,7 +22,7 @@ const Attachment = Schema.Struct({
   headers: Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))),
 });
 
-const attachmentOf = Schema.decodeUnknownSync(Attachment);
+const attachmentOf = Schema.decodeUnknownSync(Schema.NullishOr(Attachment));
 
 const json = RpcSerialization.json;
 
@@ -94,15 +94,21 @@ export const makeProtocol = (
       receivers.set(group, {
         message: (socket, data) => {
           const clientId = idOf(socket);
-          const { headers } = attachmentOf(socket.deserializeAttachment());
 
-          // Why: suspended, so a frame that does not parse, or a message the server cannot
-          // read, such as `null`, is answered with a defect, as Effect's own socket protocol
-          // answers it, never rejecting the event. The event ends once each message is written:
-          // a call doing I/O or waiting on a timer keeps the object from hibernating.
+          // Why: suspended, so a frame that does not parse, a message the server cannot read,
+          // such as `null`, or an attachment that does not decode is answered with a defect, as
+          // Effect's own socket protocol answers a frame, never rejecting the event, which a
+          // runtime may answer by closing the socket. The event ends once each message is
+          // written: a call doing I/O or waiting on a timer keeps the object from hibernating.
           return run(
-            Effect.suspend(() =>
-              Effect.forEach(
+            Effect.suspend(() => {
+              // Why: workerd keeps a socket's attachment across hibernation; celld 0.6.2 drops
+              // it when it evicts an idle object, and the socket arrives without one. It then has
+              // no saved headers: a message carrying its own token still authenticates, and one
+              // relying on the upgrade's is refused as unauthenticated.
+              const headers = attachmentOf(socket.deserializeAttachment())?.headers ?? [];
+
+              return Effect.forEach(
                 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a client sent: RpcServer checks each message's tag, id and payload, and a message it cannot read fails as a defect, answered as one.
                 parser.decode(
                   Predicate.isString(data) ? data : new Uint8Array(data),
@@ -115,8 +121,8 @@ export const makeProtocol = (
                       : message,
                   ),
                 { discard: true },
-              ),
-            ).pipe(
+              );
+            }).pipe(
               Effect.catchDefect((defect) =>
                 Effect.sync(() =>
                   sendTo(clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),

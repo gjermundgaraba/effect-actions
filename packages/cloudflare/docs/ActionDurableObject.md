@@ -79,7 +79,8 @@ ActionRpc.layer(RoomRpc, room).pipe(
   routes and answers it.
 - A socket keeps its upgrade request's headers, as Effect's own socket protocol does, its
   credential included, and each message is authenticated with those under its own headers, its
-  own winning. An API key in the query string is not kept: a message has no URL.
+  own winning. An API key in the query string is not kept: a message has no URL. A socket
+  whose runtime dropped them has only each message's own (see Limits).
 - Under a cookie scheme, refuse a foreign `Origin` with router middleware around the routes: a
   browser sends the cookie on any page's upgrade, an upgrade is never preflighted, and router
   middleware runs for the upgrade, as the core's `Authentication-advanced.md` describes.
@@ -118,8 +119,8 @@ alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layer
   `await super.alarm?.(info)`: `Instance` declares Cloudflare's optional `alarm`, as a class made
   without one has none.
 - A failure rejects the object's `alarm`, which the runtime retries with backoff, up to six
-  times. An object made without an `alarm` has no handler, so the runtime refuses
-  `storage.setAlarm` on it, at that call.
+  times. An object made without an `alarm` has no handler: workerd refuses `storage.setAlarm`
+  on it, at that call (see Limits).
 - The object has one alarm. [chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)
   sets it for the oldest message's expiry and, each run, for the next.
 
@@ -175,6 +176,12 @@ open a socket by upgrading through its `fetch`, handing `response.webSocket` to
   service only they provide is missing from every call over the socket. Provide a per-message
   service with a middleware listed in `ActionRpc.layer`'s `middleware`, and a value of the
   object's as a startup service.
+- **Some guarantees are workerd's, not every runtime's.** On workerd a socket's attachment, the
+  headers it keeps, survives hibernation, and `storage.setAlarm` throws on an object with no
+  `alarm` handler. celld 0.6.2, Deno's self-hosted runtime, drops the attachment when it evicts
+  an idle object, so the socket's messages carry only their own headers and one relying on the
+  upgrade's token is refused as unauthenticated; it accepts `setAlarm` without a handler and
+  consumes the alarm silently. Send a token on each message to work on both.
 - **A socket keeps at most 16 KiB.** Upgrade headers past the runtime's 16,384-byte attachment
   limit are refused: the upgrade is answered `431`. A browser's cookies are usually a few KiB.
 - **A call waiting on memory alone can be lost.** A message's event ends once the message is

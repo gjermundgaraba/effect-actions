@@ -77,7 +77,9 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
  * until they are built, as `blockConcurrencyWhile` does: a build that fails resets the
  * instance, and the next event builds them again. The runtime evicts an idle instance and
  * constructs a new one for the next event, so nothing the routes build is finalized, and
- * in-memory state lasts no longer than an instance.
+ * in-memory state lasts no longer than an instance. Made without `alarm`, the class has no
+ * alarm handler: workerd refuses `storage.setAlarm` on it, and celld 0.6.2 accepts the call and
+ * consumes the alarm silently.
  *
  * Guide: `docs/ActionDurableObject.md` in this package; in an application:
  * `examples/chat-rooms/`.
@@ -172,8 +174,8 @@ export const make = <
     }
   }
 
-  // Why: the runtime refuses `storage.setAlarm` on an instance without an `alarm` handler, at the
-  // call that sets it, so a class made without one has none, where a handler rejecting every
+  // Why: workerd refuses `storage.setAlarm` on an instance without an `alarm` handler, at the call
+  // that sets it, so a class made without one has none, where a handler rejecting every
   // alarm would fail later, retried. Made with one, `alarm` is a method of a class extending the
   // base, so a class extending that overrides it and calls it through `super`; that class is
   // declared in the base's body, `withAlarm`, to read the base's private memo map.
@@ -194,10 +196,12 @@ export interface LayerWebSocketOptions {
  * timer keeps the object from hibernating, and one waiting on memory alone is lost if it
  * hibernates. A socket keeps its upgrade request's headers, as Effect's own socket protocol
  * does, its credential included, and each message is authenticated with those under its own,
- * its own winning; an upgrade whose headers exceed the runtime's 16 KiB attachment is answered
- * 431. The runtime answers a client's pings without waking the object. Router middleware around
- * the routes runs for the upgrade request alone, never for a socket's messages. Each protocol
- * of one object needs a `path` of its own: a router prefix does not distinguish two.
+ * its own winning. workerd keeps them across hibernation; celld 0.6.2 drops them when it evicts
+ * an idle object, and the socket's messages then carry only their own. An upgrade whose headers
+ * exceed the runtime's 16 KiB attachment is answered 431. The runtime answers a client's pings
+ * without waking the object. Router middleware around the routes runs for the upgrade request
+ * alone, never for a socket's messages. Each protocol of one object needs a `path` of its own:
+ * a router prefix does not distinguish two.
  *
  * Guide: `docs/ActionDurableObject.md` in this package.
  */
