@@ -2,6 +2,13 @@ import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../identity/Identity.js";
 
+// DEMO ONLY: the rooms, fixed. Each name is one Durable Object, which the Worker reaches only
+// for a name listed here, so no caller creates an object of its own. A real application keeps
+// its rooms in a store and checks a name there before it reaches `getByName`.
+export const RoomName = Schema.Literals(["general", "design"]);
+
+export type RoomName = typeof RoomName.Type;
+
 // A message's `id` counts up within its room, so a client asks for what came after the last
 // one it holds. `at` is when it was posted, in milliseconds: messages expire a day later.
 export const Message = Schema.Struct({
@@ -27,10 +34,11 @@ export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
   { httpApiStatus: 403 },
 ) {}
 
-// Public: the lobby shows each room's latest message before anyone has signed in.
+// Public: the lobby shows anyone, signed in or not, when each room was last active. What was
+// said stays with the room's members.
 export const Preview = Action.make("preview", {
-  description: "The room's latest message, if it holds any.",
-  success: { latest: Schema.NullOr(Message) },
+  description: "When the room's latest message was posted, in milliseconds, if it holds any.",
+  success: { latestAt: Schema.NullOr(Schema.Int) },
   readOnly: true,
   caller: Action.Anyone,
 });

@@ -5,7 +5,7 @@ SQLite database and its pages' WebSockets while it hibernates. Members post, rea
 messages in the rooms they belong to over the socket, or over the room's JSON routes. A
 message expires a day after it was posted, when the room's alarm runs. The Worker in front
 routes `/rooms/<room>/…` to the room's object and serves a lobby itself, which asks each room
-for its latest message through the room's stub.
+when it was last active through the room's stub.
 
 Start here to serve actions from Durable Objects. The same chat on a long-lived server is
 live-rpc, in the core package's `examples/`.
@@ -35,10 +35,11 @@ elsewhere.
 - **A page sends its token on each message**, because a browser WebSocket sets no header on its
   upgrade. A client that can, such as a Worker or a native app, sends it once on the upgrade,
   and its socket keeps it across hibernations: `test/worker.test.ts` connects both ways.
-- **The room is the object's name**, `getByName(room)`, and the Worker accepts only names
-  matching `RoomName`. Every name is a room, created when first reached: yours may keep a list.
-- **`preview` is public** so the lobby can show rooms to anyone signed out. It tells them a
-  room's latest message.
+- **The room is the object's name**, `getByName(room)`, and the Worker reaches only the rooms
+  `RoomName` lists: any other name is refused before it reaches `getByName`, so no caller
+  creates an object. Yours may keep its rooms in a store.
+- **`preview` is public** so the lobby can show anyone signed out when each room was last
+  active. What was said stays with the room's members.
 - **A page reads again to keep up**, as `ReadMessages` in `src/chat/Chat.ts` says.
 
 ## Layout
@@ -46,7 +47,7 @@ elsewhere.
 ```text
 src/
 ├── chat/
-│   ├── Chat.ts        contract: the message, its errors, the room's actions
+│   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions
 │   ├── room.ts        Room, the room an instance holds: a startup service
 │   ├── store.ts       MessageStore, the service the handlers call
 │   ├── authorize.ts   the one authorization rule: a member of the instance's room
@@ -56,7 +57,7 @@ src/
 │   ├── members.ts     the demo members
 │   └── verifier.ts    Authentication.layer: tokens to members, server only
 ├── lobby/
-│   ├── Lobby.ts       contract: the room name, the Worker's own action
+│   ├── Lobby.ts       contract: the Worker's own action
 │   ├── rooms.ts       Rooms, the rooms as the Worker reaches them
 │   └── handlers.ts    Action.implement: every room asked at once
 ├── platform/

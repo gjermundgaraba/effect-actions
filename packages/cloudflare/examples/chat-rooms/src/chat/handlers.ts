@@ -11,7 +11,7 @@ export const preview = Action.implement(
   Effect.gen(function* () {
     const store = yield* MessageStore;
 
-    return () => Effect.map(store.latest, (latest) => ({ latest }));
+    return () => Effect.map(store.latest, (latest) => ({ latestAt: latest?.at ?? null }));
   }),
 );
 

@@ -37,7 +37,7 @@ describe("the Worker and its rooms", () => {
       const posted = yield* room.post("Mock-ups are up.");
 
       expect(yield* room.read(posted.id - 1)).toEqual([posted]);
-      expect(yield* room.preview).toEqual(posted);
+      expect(yield* room.preview).toBe(posted.at);
       expect(yield* room.remove(posted.id)).toBe("removed");
       expect(yield* room.read(posted.id - 1)).toEqual([]);
     }).pipe(Effect.scoped),
@@ -83,18 +83,15 @@ describe("the Worker and its rooms", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("answers the lobby's previews from each room's object", () =>
+  it.effect("answers the lobby's previews from each room's object, without what was said", () =>
     Effect.gen(function* () {
       const design = yield* roomAs("design", "ada");
       const posted = yield* design.postMessage({ text: "Seen from the lobby." });
       const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl: "https://chat.example" });
+      const { previews } = yield* lobby.previews();
 
-      expect(yield* lobby.previews({ rooms: ["design", "empty"] })).toEqual({
-        previews: [
-          { room: "design", latest: posted },
-          { room: "empty", latest: null },
-        ],
-      });
+      expect(previews.map(({ room }) => room)).toEqual(["general", "design"]);
+      expect(previews).toContainEqual({ room: "design", latestAt: posted.at });
     }).pipe(Effect.provide(worker)),
   );
 
@@ -112,6 +109,7 @@ describe("the Worker and its rooms", () => {
       expect(yield* status("/rooms/design/api/preview")).toBe(200);
       expect(yield* status("/rooms/design//elsewhere.example/api/preview")).toBe(404);
       expect(yield* status("/rooms/Not_A_Room/api/preview")).toBe(404);
+      expect(yield* status("/rooms/unlisted/api/preview")).toBe(404);
     }),
   );
 
@@ -119,6 +117,13 @@ describe("the Worker and its rooms", () => {
     Effect.gen(function* () {
       const design = yield* roomAs("design", "ada");
       const stub = env.CHAT_ROOM.getByName("design");
+
+      yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) => {
+          state.storage.sql.exec("DELETE FROM messages");
+        }),
+      );
+
       const old = yield* design.postMessage({ text: "From yesterday." });
       const recent = yield* design.postMessage({ text: "From today." });
 
@@ -136,8 +141,8 @@ describe("the Worker and its rooms", () => {
         runInDurableObject(stub, (_, state) => state.storage.getAlarm()),
       );
 
-      expect(messages.filter(({ id }) => id >= old.id)).toEqual([recent]);
-      expect(next).toBe(Math.min(...messages.map(({ at }) => at)) + day);
+      expect(messages).toEqual([recent]);
+      expect(next).toBe(recent.at + day);
     }).pipe(Effect.provide(worker)),
   );
 });

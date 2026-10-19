@@ -1,8 +1,8 @@
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import { RoomName } from "./chat/Chat.js";
 import { MessageStore } from "./chat/store.js";
-import { RoomName } from "./lobby/Lobby.js";
 import { layerRoom } from "./platform/object-name.js";
 import { layerRooms } from "./platform/room-stubs.js";
 import { layerSql } from "./platform/sql-store.js";

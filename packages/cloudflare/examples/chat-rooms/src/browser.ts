@@ -26,7 +26,7 @@ export const openRoom = (token: string) =>
     const signedIn = RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
     return {
-      preview: Effect.map(client.preview(), ({ latest }) => latest),
+      preview: Effect.map(client.preview(), ({ latestAt }) => latestAt),
       read: (after: number) =>
         Effect.map(client.readMessages({ after }).pipe(signedIn), ({ messages }) => messages),
       post: (text: string) => client.postMessage({ text }).pipe(signedIn),

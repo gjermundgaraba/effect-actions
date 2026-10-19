@@ -10,10 +10,10 @@ import { Rooms } from "../lobby/rooms.js";
 // up. `preview` is public, so the Worker sends no credential.
 export const layerRooms = Layer.sync(Rooms, () =>
   Rooms.of({
-    latest: (room) =>
+    latestAt: (room) =>
       ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
         Effect.flatMap((client) => client.preview()),
-        Effect.map(({ latest }) => latest),
+        Effect.map(({ latestAt }) => latestAt),
         Effect.provide(ActionDurableObject.layerHttpClient(env.CHAT_ROOM.getByName(room))),
         // A room that cannot be reached is the deployment's failure, not the caller's: the
         // lobby answers 500, and the cause is in the Worker's logs.

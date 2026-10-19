@@ -67,8 +67,11 @@ describe("layerSql", () => {
       Effect.gen(function* () {
         const first = yield* store.post("ada", "One.");
 
-        yield* store.post("ada", "Two.");
+        yield* Effect.sleep("1 millis");
 
+        const second = yield* store.post("ada", "Two.");
+
+        expect(second.at).toBeGreaterThan(first.at);
         expect(yield* Effect.promise(() => state.storage.getAlarm())).toBe(first.at + day);
       }),
     ),
