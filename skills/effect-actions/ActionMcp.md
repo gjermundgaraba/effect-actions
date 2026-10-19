@@ -61,7 +61,7 @@ export const routes = Layer.mergeAll(
 See [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/routes.ts) and `server.ts` beside it.
 Surfaces in one set of routes run each builder once, so a note written over HTTP is read as a
 tool: [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts). For two servers,
-see [Action-in-process.md](Action-in-process.md#share-one-build-across-servers).
+see [Action.md](Action.md#share-one-build-across-servers).
 
 - The endpoint speaks MCP 2026-07-28, 2025-11-25 and 2025-06-18, as the client negotiates.
   Claude Code 2.1 and Codex CLI 0.162 connect (October 2026):

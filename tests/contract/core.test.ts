@@ -431,7 +431,9 @@ describe("contracts", () => {
       caller: Action.Anyone,
     });
 
-    expect(() => Action.byName([GetUser, Again])).toThrow("Duplicate action: getUser");
+    expect(() => Action.byName([GetUser, Again])).toThrow(
+      "Duplicate action: getUser, two share the name (rename one)",
+    );
   });
 });
 

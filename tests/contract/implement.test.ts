@@ -114,7 +114,7 @@ describe("implement", () => {
 
   it("refuses duplicate actions at implement", () => {
     expect(() => Action.implement([Hello, Hello], { hello: () => Effect.succeed("hi") })).toThrow(
-      "Duplicate action: hello",
+      "Duplicate action: hello, listed twice (list it once;",
     );
   });
 
@@ -183,9 +183,11 @@ describe("implement", () => {
           yield* defectOf(
             send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
           ),
-        ).toMatchObject({ message: "Missing handlers: bye" });
+        ).toMatchObject({
+          message: "Missing handlers: bye (add an own function per listed action to the record)",
+        });
         expect(yield* defectOf(Layer.build(ActionToolkit.make(app).layer))).toMatchObject({
-          message: "Missing handlers: bye",
+          message: "Missing handlers: bye (add an own function per listed action to the record)",
         });
 
         for (const [action, args] of [
@@ -193,7 +195,7 @@ describe("implement", () => {
           [Bye, []],
         ] as const) {
           expect(yield* defectOf(exec(ActionCli.command(app, action), args))).toMatchObject({
-            message: "Missing handlers: bye",
+            message: "Missing handlers: bye (add an own function per listed action to the record)",
           });
         }
       }),
@@ -216,7 +218,7 @@ describe("implement", () => {
       );
 
       expect(yield* defectOf(Layer.build(ActionToolkit.make(built).layer))).toMatchObject({
-        message: "Unknown handlers: stale",
+        message: "Unknown handlers: stale (remove it, or list its action)",
       });
     }),
   );
@@ -232,7 +234,9 @@ describe("authorization", () => {
 
   const hello = () => Effect.succeed("hi");
   const missing = "Protected actions require authorize, or Action.allowAll";
-  const notAFunction = "Missing authorize: pass an authorization function, or Action.allowAll";
+
+  const notAFunction =
+    "Missing authorize: not a function (pass your rule, Action.allowAll, or an Effect returning one)";
 
   it.effect(
     "refuses an implementation of protected actions stating no authorize, as plain JavaScript may write it",

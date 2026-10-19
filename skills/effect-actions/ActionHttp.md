@@ -107,7 +107,7 @@ Files: [quickstart/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/ex
   every interface. The examples bind `127.0.0.1`.
 - Two listeners are two `HttpRouter.serve` calls, each building its routes on its own. What they
   share is provided outside both
-  ([Action-in-process.md](Action-in-process.md#share-one-build-across-servers),
+  ([Action.md](Action.md#share-one-build-across-servers),
   [kitchen-sink/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts)).
 
 Set a request body limit: a body has none unless the host provides one to `HttpRouter.serve`, as

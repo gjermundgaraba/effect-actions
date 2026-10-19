@@ -2,7 +2,7 @@ import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } f
 import type { Scope } from "effect";
 import { Anyone } from "./caller.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
-import { assertKnown, assertName, assertOnce } from "./names.js";
+import { assertName, assertOnce } from "./names.js";
 import { type Call, inputOf } from "./call.js";
 import { type BuiltIn, InvalidInput, type Refusal } from "./errors.js";
 import {
@@ -98,29 +98,63 @@ export { Image } from "./media.js";
 export interface Options {
   /**
    * Who may call the action: `Action.Anyone`, or the identity service a caller must have,
-   * which every surface enforces. Required: an action that names no caller is not public.
+   * which every surface enforces whether or not the handler reads it. Required: an action that
+   * names no caller is not public. A remote surface gets the identity by authenticating the
+   * request; on a local surface the host provides it.
+   *
+   * **Gotchas**
+   *
+   * - Declare the identity as a `Context.Service`, in a contract file, apart from its verifier; a `Context.Reference` is refused.
+   * - One identity per action, and every protected action one remote surface serves names the same one; a tenant is a request-time requirement of the handler, not a second identity.
+   * - No surface provides a public action an identity: an action whose answer depends on the caller is protected.
+   * - Never provide an identity at startup, to a server's layer, to `Action.layer` or around a client's acquisition: every caller would be that identity, and the types do not stop it.
    */
-  readonly caller: typeof Anyone | Context.Key<unknown, unknown>;
+  readonly caller:
+    | typeof Anyone
+    | (Context.Key<unknown, unknown> & {
+        readonly defaultValue?: "An identity is a Context.Service, not a Context.Reference";
+      });
+  /** A model reads it beside the tool; a CLI prints it in `--help`. */
   readonly description: string;
   /**
    * A schema or struct fields. Omit, or give `{}`, for an action without arguments. A field's
    * `description` annotation is what a model reads in a tool's listing and a flag's help in a CLI.
+   *
+   * **Gotchas**
+   *
+   * - Never `Schema.Struct({})` for no arguments: it accepts any value but `null` and `undefined`, and MCP refuses it as a tool's input. Omit `input`: the action then takes `{}`.
+   * - A field callers may omit is `Schema.optional`: on the wire `null` is also accepted and read as left out, as a tool's schema lists, while a typed client refuses `null`. `Schema.optionalKey` takes omission alone; `Schema.NullOr` keeps `null` as a value.
+   * - A field with a decoding default, `Schema.withDecodingDefault`, is still required by a typed client, whose argument is the decoded type.
+   * - An input that is a class encodes only its instances: a typed client given a plain object fails with `InvalidInput`, `Expected <Class>`.
    */
   readonly input?: Codec | Fields | undefined;
-  /** A schema or struct fields. Omit for an action that returns nothing: `Schema.Void`. */
+  /**
+   * A schema or struct fields. Omit for an action that returns nothing, `Schema.Void`: an empty
+   * 200 over HTTP, `null` content over MCP, nothing printed by a CLI. A top-level field whose
+   * schema is `Action.Image` is a media field, which an MCP tool lifts into a block of its own.
+   */
   readonly success?: Codec | Fields | undefined;
   /**
    * The declared failures: one schema, or a list of them, as `HttpApiEndpoint` takes them;
    * each keeps its own HTTP status annotation, the third argument of
-   * `Schema.TaggedError<NoteNotFound>()("NoteNotFound", { id: Schema.String }, { httpApiStatus: 404 })`,
-   * and answers 422 without one. Defaults to none. No two schemas share a `_tag`, a built-in
-   * error's included.
+   * `Schema.TaggedError<NoteNotFound>()("NoteNotFound", { id: Schema.String }, { httpApiStatus: 404 })`.
+   * Defaults to none. A handler fails only with these and the built-in errors; every client
+   * decodes each as a typed value.
+   *
+   * **Gotchas**
+   *
+   * - Over HTTP a declared error answers with its `httpApiStatus`, 422 without one; over MCP an `isError: true` result with its JSON as text; over RPC the typed failure; in a CLI its JSON on stderr, exit 1.
+   * - Two schemas sharing a `_tag` throw at `make`, `error _tag "<tag>" names two error schemas`, or at a binding's `make`, `binding of "<name>"`, for one of its errors against the action's or the authentication's: reuse one schema value, or merge variants into one schema whose fields tell them apart, such as a tagged `reason`; with a built-in's tag, fail with the built-in itself. A schema reached twice, listed again, through a union or `Schema.suspend`, is one schema; a union is its members unless it has its own `httpApiStatus`, checks or a transformation. Errors without a `_tag` are told apart by their other fields, the first that decodes winning.
+   * - An entry that is a `Schema.suspend` whose thunk reads a `const` declared further down throws a `ReferenceError` at `make`, which reads every `_tag` when called: declare the error first.
+   * - A failure the schemas reject, undeclared or breaking a check, is the call's defect on every surface, beside the `SchemaError` saying why; a class error built with `disableChecks` is accepted and fails to encode instead.
    */
   readonly error?: Codec | ReadonlyArray<Codec> | undefined;
   /**
    * Whether the action leaves its resource unchanged. Required: an action nobody classified
    * is the one a reviewer must check. An implementation's `authorize` may read it, and MCP's
-   * `readOnlyHint` is it; the library itself authorizes nothing with it.
+   * `readOnlyHint` is it; the library itself authorizes nothing with it. Derive authorization
+   * from it, never from an `mcp` hint: changing an action's `readOnly` then changes who may
+   * call it.
    */
   readonly readOnly: boolean;
   /** How the action's tool presents itself over MCP, and on a native Toolkit's tools. */
@@ -139,14 +173,11 @@ type OnlyOptions<O> = {
   readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Options>]: never;
 };
 
-type ServiceCaller<O> = O extends { readonly caller: { readonly defaultValue: unknown } }
-  ? { readonly caller: "An identity is a Context.Service, not a Context.Reference" }
-  : unknown;
-
-// Why: Options that fail `Options` itself infer as `Options`, whose error the compiler already
-// reports. Checked against the rules too, a missing option is reported as the whole argument not
-// being assignable, in place of "Property 'description' is missing".
-type Rules<O> = Options extends O ? unknown : OnlyOptions<O> & ServiceCaller<O> & KnownMcp<O>;
+// Why: `O` is inferred from the argument, which the compiler then never checks for excess
+// properties: a misspelled option or hint would be ignored. Options that fail `Options` itself
+// infer as `Options`, whose error the compiler already reports; checked against the rules too,
+// a missing option would be reported as the whole argument not being assignable.
+type Rules<O> = Options extends O ? unknown : OnlyOptions<O> & KnownMcp<O>;
 
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
   ? K extends keyof O
@@ -164,7 +195,11 @@ type ErrorSchemasOf<O> = ReadonlyArray<
   ErrorMembers<Extract<OptionOf<O, "error", []>, Codec | ReadonlyArray<Codec>>>
 >;
 
-/** A pure contract: schemas and transport metadata. Handlers are bound by `implement`. */
+/**
+ * A pure contract: schemas and transport metadata, bound to handlers by `implement`. Its
+ * `name`, `input`, `success`, `error` and `readOnly` are public: reuse them, as in
+ * `Schema.Array(SaveLink.input)`.
+ */
 export interface Action<
   Name extends string,
   Input extends Codec,
@@ -220,9 +255,16 @@ const codecOf = (schema: Codec | Fields): Codec =>
       : Schema.Struct(schema);
 
 /**
- * Define an action contract. Names are `[A-Za-z0-9_-]{1,128}`, other than `then`: the name
- * is also the route segment, the client method and the tool name.
+ * Define an action contract: what it takes and answers, whether it changes anything, and who
+ * may call it. The name is also the route segment, the client method and the tool name.
  * Guide: `docs/Action.md` in this package; in an application: `examples/notes-service/src/notes/`.
+ *
+ * **Gotchas**
+ *
+ * - A name is unique within each binding, MCP endpoint, Toolkit, CLI and client holding it; its form is in the message `Invalid action name` throws.
+ * - A contract says nothing about where it is served: each surface takes a list of actions, so an action added later is no tool until listed.
+ * - Surfaces match an implementation to a contract by object identity, never by name: implement, bind and list the one exported value. A list narrowed at run time is still typed as holding every member.
+ * - In a helper whose type parameter stands for `mcp`, `make` refuses the option, since it cannot check the hints: type the parameter `Action.Mcp`, or spread a constant.
  */
 export function make<const Name extends string, const O extends Options>(
   name: Name,
@@ -236,7 +278,7 @@ export function make<const Name extends string, const O extends Options>(
   O["caller"]
 >;
 export function make(name: string, options: Options): Any {
-  assertName("action name", name);
+  assertName(name);
 
   const { caller, readOnly } = options;
 
@@ -367,7 +409,9 @@ export const allowAll: Authorize<Any> = () => Effect.void;
 
 const assertAuthorizer = (before: ErasedAuthorize): ErasedAuthorize => {
   if (!Predicate.isFunction(before)) {
-    throw new Error("Missing authorize: pass an authorization function, or Action.allowAll");
+    throw new Error(
+      "Missing authorize: not a function (pass your rule, Action.allowAll, or an Effect returning one)",
+    );
   }
 
   return before;
@@ -403,6 +447,17 @@ const authorizerOf = (before: ErasedAuthorizer) =>
  * `authorize` is required when the target includes protected contracts and runs only for
  * them. `Action.allowAll` permits every authenticated caller. An Effect may build the
  * authorizer once, with startup requirements separate from its per-call requirements.
+ *
+ * **Gotchas**
+ *
+ * - A builder runs once per layer graph, however many surfaces serve its implementation; two servers are two graphs, and two `implement` calls are two builders, even of one builder Effect.
+ * - What the builder yields is shared by every call; what a handler yields is resolved per call, as the caller must be. A builder yielding the caller is refused where the server is launched.
+ * - Each call has a scope of its own: a resource that must outlive a call is the builder's.
+ * - Pass the builder to `implement` itself: through `.pipe(...)` or a wrapper such as `Effect.withSpan`, an `Effect.fn` handler it returns takes an `any` input. A builder written apart returns its record `satisfies Action.Handlers<typeof actions>`.
+ * - A record holds one own function per action of the list and no other key, or `implement` throws `Missing handlers` or `Unknown handlers`, a builder's when its layer builds; an inherited method does not count.
+ * - Calling the function you passed to `implement` skips authorization and the codecs: call the implementation through `client`.
+ * - What a plain `authorize` yields is a request-time requirement of every surface; to read a store once, make `authorize` an Effect that yields it and returns the function.
+ * - An authorizer fails only with `Unauthenticated` or `Forbidden`; a limit callers should see, such as a rate limit, is the handler's, declared in the action's `error`.
  */
 // Why: Two overloads that no call can both be a candidate for: one takes three arguments, the
 // other two. TypeScript then reports a mismatch as that of the one signature the call could have
@@ -463,7 +518,11 @@ export function implement(
       ? Object.fromEntries(Array.isArray(actions) ? [] : listed.map(({ name }) => [name, built]))
       : built;
 
-    assertKnown("handlers", Object.keys(keyed), names);
+    const unknown = Object.keys(keyed).filter((key) => !names.includes(key));
+
+    if (unknown.length > 0) {
+      throw new Error(`Unknown handlers: ${unknown.join(", ")} (remove it, or list its action)`);
+    }
 
     const bound = listed.flatMap((action) => {
       const handle = Object.hasOwn(keyed, action.name) ? keyed[action.name] : undefined;
@@ -473,7 +532,11 @@ export function implement(
 
     const missing = names.filter((name) => !bound.some(([action]) => action.name === name));
 
-    if (missing.length > 0) throw new Error(`Missing handlers: ${missing.join(", ")}`);
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing handlers: ${missing.join(", ")} (add an own function per listed action to the record)`,
+      );
+    }
 
     return bound;
   };
@@ -492,6 +555,12 @@ export function implement(
  * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
  * are built in a graph of their own: provided above both, it runs each builder once for every
  * surface, with the services it is given.
+ *
+ * **Gotchas**
+ *
+ * - It builds every implementation it is given, those no surface serves included, so it owes their startup services.
+ * - A job merged beside `HttpRouter.serve` with no `Action.layer` above both shares the server's build only when its own side builds first, which depends on timing: put the job inside the layer the server serves, or provide this layer above both.
+ * - Do not wrap a server in `Layer.fresh`: two servers already share no build. It is for two surfaces in one graph that must each have a build of their own.
  */
 export function layer<const Apps extends Served>(
   implementations: Apps,
@@ -589,6 +658,15 @@ export interface ClientOptions<A extends Any> {
  * is acquired in, and its scope holds them: in a builder, it shares their one run with every
  * surface of that graph. Acquire it where builders live, in a builder, a layer or a scoped
  * program, never per request.
+ *
+ * **Gotchas**
+ *
+ * - Provide the caller around each call, and startup services around the acquisition: a call reads its own context, never the one the client was acquired in, so one client serves every caller.
+ * - Acquiring it needs a `Scope`: `it.effect` supplies one, elsewhere `Effect.scoped` does; acquired in a handler, it builds on every request.
+ * - Two acquisitions share a build only inside one layer graph, such as under a layer provided around the program; with none around them, each builds its own.
+ * - Every implemented action has a method, whether or not a surface serves it; `actions` lists the ones to call, and an implementation holding none of them is left unbuilt.
+ * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, running nothing, for an input that does not encode.
+ * - A builder acquiring a client of its own implementation never completes: call the services both use instead.
  */
 export function client<
   const Apps extends Served,

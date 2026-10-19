@@ -155,7 +155,7 @@ export class Implementation<
   private static own<App extends AnyImplementation>(app: App): App {
     if (!(#handlers in app)) {
       throw new Error(
-        "Not an implementation made by this Action.implement: is effect-actions installed twice?",
+        "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
       );
     }
 
@@ -301,8 +301,16 @@ export type Holding<App, Listed extends Action.Any> = App extends unknown
     : App
   : never;
 
+export const notHeld = {
+  byImplementation: {
+    why: "no implementation holds it",
+    fix: "pass the implementation holding it, or list the contract it implements",
+  },
+  byBinding: { why: "the binding does not hold it", fix: "add it to the binding's actions" },
+} as const;
+
 export const assertHeld = (
-  why: string,
+  { why, fix }: (typeof notHeld)[keyof typeof notHeld],
   listed: ReadonlyArray<Action.Any>,
   held: ReadonlyArray<Action.Any>,
 ): void => {
@@ -310,11 +318,14 @@ export const assertHeld = (
 
   if (missing.length > 0) {
     const names = new Set(held.map(({ name }) => name));
+    const sameName = missing.some(({ name }) => names.has(name));
 
     throw new Error(
       `Listed in actions, but ${why}: ${missing
         .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
-        .join(", ")}`,
+        .join(
+          ", ",
+        )} (${fix}${sameName ? "; one marked (another contract) is a contract of that name they do not hold: list the one they hold" : ""})`,
     );
   }
 };
@@ -326,7 +337,7 @@ export const select = (
   if (listed === undefined) return apps;
 
   assertHeld(
-    "no implementation holds it",
+    notHeld.byImplementation,
     listed,
     apps.flatMap((app) => app.actions),
   );
@@ -346,7 +357,7 @@ const servedBy = (
   apps: ReadonlyArray<AnyImplementation>,
   listed: ReadonlyArray<Action.Any> | undefined,
 ): ReadonlyArray<AnyImplementation> => {
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, bound);
+  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, bound);
 
   const held = apps.flatMap((app) => app.actions);
   const served = select(apps, listed ?? bound.filter((action) => held.includes(action)));

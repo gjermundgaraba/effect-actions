@@ -28,7 +28,7 @@ release. Add a tool name to select part of the graph. For example, run
 
 # effect-actions
 
-`@gjermundgaraba/effect-actions`. Use the vocabulary in [docs/CONTEXT.md](docs/CONTEXT.md).
+`@gjermundgaraba/effect-actions`.
 
 ## Working safely and validating
 
@@ -51,8 +51,11 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 ## Documentation
 
-- `README.md` is the human pitch and quickstart, not a reference. `docs/` guides consumer agents through tasks, choices, traps, boundaries and failures. Avoid duplicating reference material from types, JSDoc or examples; concise behavioral summaries may accompany example links. Link to the example files that show a task; embed a snippet only where a few lines orient faster than opening the file. Edit README quickstart examples at their source first.
-- Keep docs flat and pages focused on a task or concept. Keep each page under 16,000 bytes as a safety margin against tool-output truncation, checked by `tests/docs.test.ts`; split by topic when needed. Module pages inventory exports/options in **API**, without copying generic signatures, then link examples by task. Put independently readable symptoms and fixes in `<Module>-failures.md`. Route readers through `docs/README.md`; define new terms in `docs/CONTEXT.md`; keep wire behavior once in `docs/guarantees.md`.
+The readers are coding agents, and they read two ways. Each fact has one home, chosen by how it is reached.
+
+- **Learning, read whole in order**: `README.md`, `docs/README.md`, the nearest example, then one page per surface. A page is the concept, the one way to do each task, whole example files as its snippets, and links to the example files that show the rest; it names the symbol whose JSDoc holds the rules instead of restating them, and keeps only the traps no declaration and no example can hold, such as a choice between modules or a deployment. A trap a learner must see lives as a comment in the example file that shows it, since examples are copied whole, product decisions and defects included: an example reuses a contract's schemas (`Schema.Array(CreateNote.input)`), and a change to one is reviewed as "what happens when this is copied verbatim?". Keep each page under 16,000 bytes, checked by `tests/docs.test.ts`: a longer page read through a tool loses its middle to the output cap, unnoticed, so split by topic when needed. Every `ts` fence in `docs/` is `example=<path>`, equal to a whole file under `examples/`, which compiles and is tested: add a small file to the nearest example rather than write a fragment.
+- **Looking up, by grepping one symbol or one message**: a rule about an option lives in that option's JSDoc; a wire fact at the task that produces it, and in an example test that asserts it as sent; the fix for a failure the library throws in its message. A declaration's JSDoc is one paragraph saying what it is, then optional `**Gotchas**`: one line per trap, symptom and consequence on that line, since a grep returns one line. `<Module>-failures.md` holds only what is found by a fragment of a message the library does not own, a compiler diagnostic or Effect's own error, one line per entry; its reader arrives by the message, so an entry may repeat a gotcha's sentence.
+- `README.md` is the human pitch and quickstart, not a reference; edit its examples at their source first. Route readers through `docs/README.md`. Define a term where it is first used, and prefer Effect's and TypeScript's words to new ones.
 - Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Their domains declare services; a Layer reaching a technology (a file, a database, an upstream API) is an adapter in `src/platform/`, which no domain imports. Comments teach why; mark deployment shortcuts `DEMO ONLY`.
 - Edit `docs/`, never generated `skills/effect-actions/`; run `vp run docs:sync` after docs changes.
 

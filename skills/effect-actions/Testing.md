@@ -27,7 +27,7 @@ MCP tools are tested with `ActionMcp.client` and `ActionMcp.request`
 ## Test an implementation in process
 
 Acquire `Action.client(implementation)` and call its methods
-([Action-in-process.md](Action-in-process.md#call-actions-in-process)). A call runs the decoding,
+([Action.md](Action.md#call-actions-in-process)). A call runs the decoding,
 the `authorize` and the handler a server runs, but no authentication and no middleware. Provide
 the startup services around the test, as an entrypoint does, and what a request would carry, its
 caller first, around each call:
@@ -79,7 +79,7 @@ test is
 - Two `layer`s are two servers: a second one runs every builder again, and they share only what
   is provided around both. For two ports, that is `Action.layer(implementations)` and the
   services ([kitchen-sink/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/routes.test.ts),
-  [Action-in-process.md](Action-in-process.md#share-one-build-across-servers)).
+  [Action.md](Action.md#share-one-build-across-servers)).
 - The client is `layer`'s own. A fake upstream is another `HttpClient`: provide it to the service
   that calls out ([mcp-tools/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/test/routes.test.ts)).
 - Every request on `layer`'s client reaches the routes, whatever its host: a client given a

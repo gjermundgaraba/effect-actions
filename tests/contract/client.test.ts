@@ -713,7 +713,9 @@ describe("Action.client", () => {
     const again = Action.implement(Ping, () => Effect.succeed(2));
     const ping = Action.implement(Ping, () => Effect.succeed(1));
 
-    expect(() => Action.client([ping, again])).toThrow("Duplicate action: ping");
+    expect(() => Action.client([ping, again])).toThrow(
+      "Duplicate action: ping, listed twice (list it once; of two implementations of one contract, pass one)",
+    );
 
     // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication fixture.
     const copy = { ...ping };

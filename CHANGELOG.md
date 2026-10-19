@@ -27,6 +27,20 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
 
 ### Other changes
 
+- `docs/Action-in-process.md` is folded into `docs/Action.md`, under "Call actions in process"
+  and "Share one build across servers". The rules of each option of `Action.make`, of
+  `implement`, `client` and `layer`, and what each built-in error answers on each surface, are
+  in the JSDoc of those declarations, shipped in `dist/`, as `**Gotchas**`: grep the symbol.
+  The page keeps the concepts and the tasks, with whole example files as its snippets, and
+  `docs/Action-failures.md` only compiler diagnostics and Effect's own errors.
+- A failure the library throws says its fix, in parentheses at the end of the message: an
+  invalid action name, a missing authorizer, missing or unknown handlers, unknown CLI commands, a
+  duplicate action, an action listed but not held, an implementation that is a copy, and two
+  error schemas sharing a `_tag`. A duplicate action says whether one was listed twice or two
+  share the name. `docs/Action-failures.md` no longer lists them.
+- `make` takes a helper's type parameter standing for `caller`, as it does for `error`: a
+  `Context.Reference` is refused by `caller`'s own type, not by a rule over the options. One
+  standing for `mcp` is still refused, since the hint check cannot see through it.
 - A built-in error listed in an action's `error`, a binding's or an authentication's is accepted,
   in the types and at `make`, where it was refused: every surface declares it anyway. A helper
   whose type parameter stands for `make`'s `error` compiles.

@@ -48,18 +48,10 @@ what developing the library itself takes. TypeScript 7 or newer. ESM only. No ex
 
 ## Entry points
 
-There is no package root. Import one module per subpath, as a namespace:
-
-```ts
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-```
+There is no package root. Import one module per subpath, as a namespace,
+`import * as Action from "@gjermundgaraba/effect-actions/Action"`.
+The modules: `Action`, `ActionHttp`, `ActionMcp`, `ActionRpc`, `ActionToolkit`, `ActionCli`,
+`Authentication`, `Testing`.
 
 Effect's own modules are subpaths of `effect` too: `effect/http` (`HttpRouter`, `HttpClient`,
 `FetchHttpClient`), `effect/http-api` (`OpenApi`, `HttpApiMiddleware`), `effect/rpc`

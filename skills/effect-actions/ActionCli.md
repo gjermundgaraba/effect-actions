@@ -164,7 +164,7 @@ const notes = ActionCli.remote(Http, { name: "notes", client: api, subcommands: 
   commands, which then answer with the usage text.
 - **Call the actions through a client**, in the command's own handler: `yield* api`, the Effect
   the aggregate's `client` is, which needs no scope, or `Action.client`, acquired inside
-  `Effect.scoped` ([Action-in-process.md](Action-in-process.md#call-actions-in-process)).
+  `Effect.scoped` ([Action.md](Action.md#call-actions-in-process)).
   `authorize` still runs.
 - **Its output is what it prints**, with `Console.log`: the output rules below are a derived
   command's. **Pipe its whole Effect through `ActionCli.toUserError(Http)`**, the binding its

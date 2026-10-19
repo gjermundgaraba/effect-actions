@@ -3,7 +3,7 @@ import { type CliError, Command } from "effect/cli";
 import type { HttpClient } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { projectedErrors, bindingErrors, type Declaring } from "../contract/declared.js";
-import { assertDistinct, assertKnown } from "../contract/names.js";
+import { assertDistinct } from "../contract/names.js";
 import {
   type UserError,
   command as makeCommand,
@@ -19,6 +19,7 @@ import {
   type BuildServices,
   type BuildError,
   assertHeld,
+  notHeld,
   type Holding,
   type Member,
   type RequestOf,
@@ -252,11 +253,14 @@ const checkedCommandsOf = (
 ): NonNullable<Options["commands"]> => {
   const given = commands ?? {};
 
-  assertKnown(
-    "commands",
-    Object.keys(given),
-    actions.map((action) => action.name),
-  );
+  const names = actions.map((action) => action.name);
+  const unknown = Object.keys(given).filter((key) => !names.includes(key));
+
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown commands: ${unknown.join(", ")} (key it by the action's own name, not its command's)`,
+    );
+  }
 
   return given;
 };
@@ -426,7 +430,7 @@ export function remote(
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const listed = options.actions;
 
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, binding.actions);
+  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, binding.actions);
 
   const commands = checkedCommandsOf(options.commands, binding.actions);
 

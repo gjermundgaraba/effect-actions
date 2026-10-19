@@ -1730,7 +1730,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
         name: "tool",
         commands: Object.fromEntries([["write", {}]]),
       }),
-    ).toThrow("Unknown commands: write");
+    ).toThrow("Unknown commands: write (key it by the action's own name, not its command's)");
   }),
 );
 

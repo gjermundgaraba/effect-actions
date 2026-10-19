@@ -1,9 +1,13 @@
 import type * as Action from "./Action.js";
 
-const validName = /^[A-Za-z0-9_-]{1,128}$/;
+const namePattern = "[A-Za-z0-9_-]{1,128}";
 
-export const assertName = (what: string, name: string): void => {
-  if (!validName.test(name) || name === "then") throw new Error(`Invalid ${what}: ${name}`);
+const validName = new RegExp(`^${namePattern}$`);
+
+export const assertName = (name: string): void => {
+  if (!validName.test(name) || name === "then") {
+    throw new Error(`Invalid action name: ${name} (use ${namePattern}, other than "then")`);
+  }
 };
 
 export const assertDistinct = <T>(
@@ -29,15 +33,20 @@ export const assertDistinct = <T>(
   }
 };
 
-export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void =>
-  assertDistinct(what, actions, (action) => action.name);
+export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void => {
+  const seen = new Map<string, Action.Any>();
 
-export const assertKnown = (
-  what: string,
-  keys: ReadonlyArray<string>,
-  names: ReadonlyArray<string>,
-): void => {
-  const unknown = keys.filter((key) => !names.includes(key));
+  for (const action of actions) {
+    const other = seen.get(action.name);
 
-  if (unknown.length > 0) throw new Error(`Unknown ${what}: ${unknown.join(", ")}`);
+    if (other !== undefined) {
+      throw new Error(
+        other === action
+          ? `Duplicate ${what}: ${action.name}, listed twice (list it once; of two implementations of one contract, pass one)`
+          : `Duplicate ${what}: ${action.name}, two share the name (rename one)`,
+      );
+    }
+
+    seen.set(action.name, action);
+  }
 };

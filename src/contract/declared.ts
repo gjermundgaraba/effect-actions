@@ -114,7 +114,7 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
     for (const tag of new Set(encodedTags(schema.ast))) {
       if (seen.has(tag)) {
         throw new Error(
-          `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart`,
+          `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)`,
         );
       }
 
