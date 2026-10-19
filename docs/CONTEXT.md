@@ -29,7 +29,7 @@ page.
 - **Authentication provider**: what `Authentication.layer` returns for a descriptor, holding its **verifier**: the server-only function from a credential to the identity.
 - **Layer middleware**: native `HttpApiMiddleware` or `RpcMiddleware` given to `ActionHttp.layer` or `ActionRpc.layer` as `middleware`, run around every route or rpc the layer serves.
 - **Mixed endpoint**: an MCP endpoint serving public and protected tools on one URL ([ActionMcp.md](ActionMcp.md#protect-tools)).
-- **Declared error**: an error schema listed in an action's `error`, which its handler may fail with ([guarantees.md](guarantees.md#wire-behavior)).
+- **Declared error**: an error schema listed in an action's `error`, which its handler may fail with.
 - **Built-in errors**: `Action.InvalidInput`, `Action.Unauthenticated` and `Action.Forbidden`, together `Action.BuiltIn`: errors the library produces and every surface declares ([Action.md](Action.md#fail-with-declared-and-built-in-errors)).
 - **Refusal**: `Action.Refusal`, `Unauthenticated | Forbidden`: what authentication or an authorizer refuses a caller with. A **step-up refusal** is one an OAuth client acts on: an `Unauthenticated`, or a `Forbidden` naming `scopes` ([Authentication.md](Authentication.md#publish-oauth-discovery)).
 - **Media field**: a field of an action's success whose schema is a media kind, `Action.Image`, which an MCP tool **lifts** into a content block of its own ([ActionMcp.md](ActionMcp.md#return-images-and-other-media)).

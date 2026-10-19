@@ -116,7 +116,7 @@ A typed client decodes a refusal to its error. To assert on the answer as sent, 
 (`HttpClientRequest.post`, `bearerToken`, `bodyJsonUnsafe`) and send it with `HttpClient.execute`,
 which succeeds whatever the status. Read `response.status` and
 `response.headers["www-authenticate"]`, the challenge, as that file does. The status and body of
-each case are the table in [guarantees.md](guarantees.md#wire-behavior).
+each case are on `ActionHttp.layer` and on each built-in error.
 
 ## Test MCP tools
 
@@ -137,7 +137,7 @@ its verifier declares for a protected tool, as `ActionHttp.client` types it; oth
 ([kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
 
 A method decodes a refusal alike whether the endpoint answered a 401 or a 403 or returned a tool
-result in a 200 ([guarantees.md](guarantees.md#wire-behavior)): to assert which, send the call
+result in a 200: to assert which, send the call
 yourself and read its status.
 
 For that, and for what the client's types will not send or its decoding hides (`tools/list`, an

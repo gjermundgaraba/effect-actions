@@ -134,8 +134,6 @@ task, each linking to the example files that show the task working.
 
 - [docs/README.md](docs/README.md): start here: which page answers which task, and which
   surface to use for which caller.
-- [docs/guarantees.md](docs/guarantees.md): what each case looks like on the wire, on every
-  surface, and what the library leaves to the application.
 - [docs/CONTEXT.md](docs/CONTEXT.md): the vocabulary the docs and the code use.
 
 ## For agents
@@ -171,7 +169,7 @@ the pages of the installed version are beside them, in
 
 The `effect` peer admits Effect 4.0.x patches from the oldest whose APIs the package uses, since
 the modules the surfaces build on may change in a minor release (see [docs/setup.md](docs/setup.md#install)). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads.
-Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [docs/guarantees.md](docs/guarantees.md#scope).
+Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [what the library leaves to you](docs/README.md#what-the-library-leaves-to-you).
 
 ## Acknowledgements
 

@@ -38,6 +38,11 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   duplicate action, an action listed but not held, an implementation that is a copy, and two
   error schemas sharing a `_tag`. A duplicate action says whether one was listed twice or two
   share the name. `docs/Action-failures.md` no longer lists them.
+- `docs/guarantees.md` is gone. What a call answers on each surface is in the JSDoc of the
+  surface that answers it, as `**Gotchas**`: `ActionHttp.layer`, `ActionMcp.layerHttp` and
+  `runStdio`, `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client,
+  and the three built-in errors in `Action`. What the library leaves to the application is a
+  section of `docs/README.md`.
 - `make` takes a helper's type parameter standing for `caller`, as it does for `error`: a
   `Context.Reference` is refused by `caller`'s own type, not by a rule over the options. One
   standing for `mcp` is still refused, since the hint check cannot see through it.

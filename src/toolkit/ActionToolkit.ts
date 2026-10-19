@@ -148,6 +148,13 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  * approved; it authorizes nothing, which stays `authorize`'s.
  * Guide: `docs/ActionToolkit.md` in this package; a loop served behind a route, with approval:
  * `examples/kitchen-sink/src/assistant/`.
+ *
+ * **Gotchas**
+ *
+ * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error or a refusal a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure.
+ * - Arguments that do not decode are a result holding an `AiError` whose `reason` is a `ToolParameterValidationError`; undeclared arguments are dropped and the call runs, where a server would refuse them.
+ * - A defect, or a failure the action's errors reject, is the call's defect; a success or an error that does not encode fails the call with an `AiError`, `Failed to encode result for tool …`.
+ * - Nothing is authenticated: the host provides the identity around the call, and `needsApproval` authorizes nothing.
  */
 export function make<
   const Apps extends Served,

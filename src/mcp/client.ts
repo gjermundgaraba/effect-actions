@@ -290,6 +290,11 @@ const callTool = (
  * answers with, or an error its verifier declares, given the `authentication`: a test telling a 401 or 403 from a tool result asserts the status of a request
  * `request` builds. The argument may be omitted when `{}` is a valid input. Requires the
  * native `HttpClient`, such as the one `Testing.layer` provides.
+ *
+ * **Gotchas**
+ *
+ * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
+ * - A verifier's declared error is the endpoint's HTTP answer: given the endpoint's `authentication` it is decoded; without, the call fails with an `McpCallError`.
  */
 export function client<
   const Actions extends ReadonlyArray<Action.Any>,

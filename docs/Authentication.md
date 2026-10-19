@@ -114,8 +114,7 @@ verifier takes the credential and succeeds with the identity, or fails with
   ([live-rpc/src/identity/verifier.ts](../examples/live-rpc/src/identity/verifier.ts),
   [kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)).
 
-What each surface answers a missing or refused credential with:
-[guarantees.md](guarantees.md#wire-behavior), as
+What each surface answers a missing or refused credential with is on `Action.Unauthenticated`, as
 [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts) asserts.
 
 ## Publish OAuth discovery
@@ -148,14 +147,13 @@ added. The authorizer, a handler or the verifier may fail with one:
 
 - Step-up is a Bearer descriptor's, for protected actions and routes under `protect`: the
   refusal answers the request with 401 or 403 and its challenge, over MCP in place of the tool
-  result unless the response has started ([guarantees.md](guarantees.md#wire-behavior)).
+  result unless the response has started.
 - On a public action or under another scheme, an authorizer's or a handler's refusal is
-  answered like a declared error, and RPC never steps up: a refusal is the call's typed failure
-  ([guarantees.md](guarantees.md#wire-behavior)).
+  answered like a declared error, and RPC never steps up: a refusal is the call's typed failure.
 - Name scopes only when re-authorizing can grant them: a server with fixed tokens, such as API
   keys, leaves `scopes` out. A `Forbidden` without them prompts no login
   ([kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts));
-  what it answers on each surface is in [guarantees.md](guarantees.md#wire-behavior).
+  what it answers on each surface is on `Action.Forbidden`.
 - Map another service's refusals before failing with them
   ([Action.md](Action.md#fail-with-declared-and-built-in-errors)): passed on, a `Forbidden`
   naming that service's scopes sends this server's caller to re-authorize for them.

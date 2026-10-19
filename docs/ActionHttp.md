@@ -41,8 +41,8 @@ Exported types: `Binding`; `Any`, any binding; `Client<typeof Http>`, a client's
 
 Each action is served at `POST <prefix>/<action>`, a `readOnly` one too. One without `success`
 answers an empty 200, with no body and no content type, so a hand-written client must not parse
-it. One without `input` still takes the body `{}`, typed as JSON. Statuses and bodies:
-[guarantees.md](guarantees.md#wire-behavior).
+it. One without `input` still takes the body `{}`, typed as JSON. Every other status and
+body is on `layer` and on each built-in error.
 
 ## Bind actions to routes
 

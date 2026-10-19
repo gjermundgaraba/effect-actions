@@ -63,7 +63,6 @@ there is no package root.
 | [Authentication.md](Authentication.md)                   | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope                                                                         |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication                                   |
 | [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                      |
-| [guarantees.md](guarantees.md)                           | see the status and body of one case, such as bad input, a declared error or a refusal, on each surface; what the library leaves to you                                |
 | [CONTEXT.md](CONTEXT.md)                                 | look up a term the pages use                                                                                                                                          |
 
 ## Examples
@@ -95,4 +94,26 @@ change before a deployment.
 
 Surfaces combine: every one that runs handlers takes the same implementations, one or a list,
 and enforces each contract's `caller` and its implementation's `authorize`
-([Action.md](Action.md#authorize-calls)).
+([Action.md](Action.md#authorize-calls)). What a call answers on each surface, a success, bad
+input, a declared error, a refusal or a defect, is on that surface's `layer`, `make` or
+`command`, and on each built-in error: grep the symbol.
+
+## What the library leaves to you
+
+- **Verify credentials or issue them.** The application writes the verifier
+  ([Authentication.md](Authentication.md#verify-credentials)), and login, consent and token
+  issuance are its own. The library defines no scopes: a `Forbidden` names the scopes a call
+  lacks, and the library answers with the OAuth challenge
+  ([Authentication.md](Authentication.md#publish-oauth-discovery)). OAuth, its discovery,
+  challenges and step-up, is Bearer's.
+- **Decide who may do what.** It runs the `authorize` an implementation states and writes no rule
+  of its own ([Action.md](Action.md#authorize-calls)).
+- **Filter tool discovery by caller.** `tools/list` names every tool its endpoint serves,
+  protected ones included, to anyone who may list them. Serve public tools on an endpoint of
+  their own if signed-out callers must not see the protected ones.
+- **Limit requests.** A rate limit is the handler's, failing with an error its action declares, or
+  middleware's; a request body has no size limit unless the host sets one
+  ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
+- **Allow browsers across origins.** CORS for JSON routes is the host's, with `HttpRouter.cors`;
+  an MCP endpoint refuses a browser `Origin` it does not list
+  ([ActionMcp.md](ActionMcp.md#allow-browser-clients)).

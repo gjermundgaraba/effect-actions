@@ -140,8 +140,8 @@ tool's read-only hint, and the contract's `mcp` option holds its `title`, its ot
   field's `description`, annotated before the check: after a custom one it is lost too.
 - A declared error reaches the model as an `isError` result whose text is the error's JSON. Write
   its `message` for the model, which acts on it:
-  [mcp-tools/src/platform/print-farm.ts](../examples/mcp-tools/src/platform/print-farm.ts). Every other case:
-  [guarantees.md](guarantees.md#wire-behavior).
+  [mcp-tools/src/platform/print-farm.ts](../examples/mcp-tools/src/platform/print-farm.ts). Every other case is
+  on `layerHttp`.
 - `actions` lists the tools, and only listed actions must suit MCP:
   [kitchen-sink/src/Actions.ts](../examples/kitchen-sink/src/Actions.ts). Leave out an action a
   model should not call, or one that takes a secret ([Action.md](Action.md#define-a-contract)).
@@ -198,8 +198,7 @@ sign in. What a signed-in caller may do is each implementation's
   endpoint of their own: a second `layerHttp` on another `path`.
 - No listing is filtered by caller: `authorize` refuses the call, not the sight of the tool.
 - On a Bearer endpoint, a protected tool's step-up refusal answers the request, not a tool
-  result ([Authentication.md](Authentication.md#step-up-for-a-scope),
-  [guarantees.md](guarantees.md#wire-behavior)). Once a handler has sent a notification the
+  result ([Authentication.md](Authentication.md#step-up-for-a-scope)). Once a handler has sent a notification the
   response has started, and its refusal is a tool result: refuse in `authorize`.
 - Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)):
   [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts).

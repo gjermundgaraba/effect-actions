@@ -462,6 +462,15 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * never a request's. Never provide an identity at startup: a tool call takes its identity
  * only from the request it authenticated.
  * Guide: `docs/ActionMcp.md` in this package; in an application: `examples/mcp-tools/`.
+ *
+ * **Gotchas**
+ *
+ * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; a declared error or a refusal `isError: true` with its JSON as one text block and no `structuredContent`, in a 200; a media field, `Action.Image`, is lifted out of `structuredContent` into a block of its own.
+ * - A defect, an undeclared failure, or a success or an error that does not encode is `isError: true`, text `Tool execution failed due to an internal server error.`: the cause goes to the log and to the call's `ErrorReporter`s, never to the client.
+ * - An unknown tool is a JSON-RPC error `-32602` in a 200; a body that is not JSON a JSON-RPC error `-32700` in a 200; a `Content-Type` missing or not JSON an empty 415; another HTTP method an empty 405 with `Allow: POST, DELETE`, or the 401 of an endpoint with authentication when signed out.
+ * - On an endpoint also serving a public tool, that tool's call and `tools/list` need no credential, but one a request presents is still verified, and `tools/list` names every tool, protected ones included: serve public tools on an endpoint of their own if signed-out callers must not see the rest.
+ * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object, any other success as its text block alone, a string unquoted; a 2025-06-18 client gets invalid arguments as a JSON-RPC error instead of a result. Such a client opens a session, which on an endpoint serving a protected tool only a signed-in caller does: it signs in for every request there, a public tool's call and `tools/list` included. A `requestScoped` endpoint serves only 2026-07-28, and only `POST`.
+ * - A request body has no size limit unless the host sets one on the router, as `ActionHttp.layer` says.
  */
 export function layerHttp<
   const Apps extends Served,
@@ -549,6 +558,11 @@ export function layerHttp(
  * Effect logs go to stderr, since stdout carries the protocol. The host supplies the
  * `Stdio` service and the identity. Arguments are tool input only and never establish
  * request identity or authority; each implementation's `authorize` runs for its protected actions.
+ *
+ * **Gotchas**
+ *
+ * - Tool results are `layerHttp`'s, the earlier revisions' included; a line that is not JSON goes unanswered.
+ * - Nothing is authenticated: provide the identity around `runStdio`, which every tool call then runs as, and a refusal is an `isError: true` result, never a status.
  */
 export function runStdio<
   const Apps extends Served,

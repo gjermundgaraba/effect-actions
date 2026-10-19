@@ -361,6 +361,12 @@ const handlerOf = (
  * router request markers, until its `middleware` provides them: over a router-mounted
  * protocol, the route's request context does too. The identity of a protected action is
  * provided by its authentication alone.
+ *
+ * **Gotchas**
+ *
+ * - A declared error or a refusal is the call's typed failure, never a status or a challenge, and the socket stays open; a token may expire under an open socket, so a client handles `Unauthenticated` itself.
+ * - A defect, an undeclared failure, or a success or an error that does not encode ends that call with an `Error` whose message is `Internal server error`; the connection's other calls go on.
+ * - An rpc the layer does not serve ends its call with `Unknown request tag`.
  */
 export function layer<const B extends Any, const Apps extends Served>(
   binding: B,
@@ -492,6 +498,10 @@ type NativeClient = { readonly [name: string]: NativeMethod | undefined };
  * A call fails with a declared error value (the action's own, the binding's, a built-in
  * `InvalidInput`, `Unauthenticated` or `Forbidden`, or on a protected rpc its descriptor's),
  * or with Effect's own `RpcClientError` when the server could not be reached.
+ *
+ * **Gotchas**
+ *
+ * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
  */
 export function client<const B extends Any>(
   binding: B,

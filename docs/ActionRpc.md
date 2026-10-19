@@ -130,8 +130,7 @@ It leaves the WebSocket constructor to its host: a page provides
   `connect(url)` in `browser.ts`, whose socket opens on the first call.
 - A declared error or a refusal is its call's typed failure: only that call fails, and the
   socket stays open. RPC answers no 401 or 403 challenge, and a token may expire under an open
-  socket, so the page handles `Unauthenticated` itself
-  ([guarantees.md](guarantees.md#wire-behavior)).
+  socket, so the page handles `Unauthenticated` itself.
 
 ## Send request context with a call
 

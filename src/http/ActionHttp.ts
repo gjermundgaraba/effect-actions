@@ -347,6 +347,13 @@ const jsonContentType = () =>
  * and what middleware provides per request wins over what the layer was built with. A request
  * body is read whole, however large, unless the host limits it where the routes are served:
  * `Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1)))`.
+ *
+ * **Gotchas**
+ *
+ * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it. One without `input` still takes the body `{}` typed as JSON: no body is a 400, no `Content-Type` a 415.
+ * - A body that is not JSON is a 400 `InvalidInput`; a `Content-Type` missing or not JSON an empty 415; both after authentication on a protected route.
+ * - A defect, an undeclared failure, or a success or an error that does not encode answers an empty 500: the cause goes to the log and to the call's `ErrorReporter`s, never to the body.
+ * - A path no layer serves, or a method other than `POST` on a route, is a 404.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,
@@ -452,6 +459,11 @@ export function layer(
  * input that does not encode fails with `InvalidInput`, and nothing is sent. A call also fails
  * with what the client `transformClient` returns fails with, as it is, and requires what that
  * client requires.
+ *
+ * **Gotchas**
+ *
+ * - It drops undeclared input fields as it encodes, since TypeScript lets a wider value through; the server would refuse them.
+ * - A status or body the contract does not declare, a 502 from a proxy or an HTML error page, is an `HttpClientError`, never a decoded value.
  */
 export function client<const H extends AnyHttp>(
   binding: H,

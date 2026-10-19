@@ -185,7 +185,7 @@ const notes = ActionCli.remote(Http, { name: "notes", client: api, subcommands: 
 - **Everything else a command runs writes to stderr**: its Effect logs and Effect `Console`
   output. The global `console.log` and other direct writes bypass Effect and still reach stdout.
 - **A failure of the action is printed once on stderr, under Effect CLI's `ERROR` heading, as
-  the JSON HTTP sends for it** ([guarantees.md](guarantees.md#wire-behavior)), on the last line:
+  the JSON HTTP sends for it**, on the last line:
   `{"_tag":"TaskNotFound","id":"9"}`. The process exits 1, or with the failure's
   `Runtime.errorExitCode`. A failure no schema encodes, a builder's or the transport's, prints
   as its tag or name and its message, never its other fields.

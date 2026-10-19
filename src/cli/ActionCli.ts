@@ -274,6 +274,13 @@ const checkedCommandsOf = (
  * need; the host provides the identity. It prints the result on stdout; a failure is a
  * `UserError`, or an Effect CLI error as it is, such as a builder's `CliError.UserError`, which
  * `Command.run` prints on stderr. `remoteCommand` calls a server instead.
+ *
+ * **Gotchas**
+ *
+ * - A success is its JSON on stdout, indented, or `render`'s text; nothing for an action without `success`. Everything else goes to stderr.
+ * - A declared error or a refusal is its JSON on stderr, the command failing with a `UserError` whose `cause` is the error, exit 1 by default; input that does not decode, in `--input` or a flag's JSON value, is `InvalidInput`'s JSON there, while a missing flag or a rejected choice is Effect CLI's own parse error.
+ * - An accepted error that does not encode is a `UserError` printed as its tag and message; a defect or an undeclared failure is the command's defect.
+ * - Nothing is authenticated: the host provides the identity to the command.
  */
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
   implementations: Apps,
